@@ -1,0 +1,8 @@
+[package]
+name = "selene_replay"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "selene_replay"
+path = "src/main.rs"

@@ -1,0 +1,10 @@
+[workspace]
+members = [
+  "crates/selene_kernel_contracts",
+  "crates/selene_os",
+  "crates/selene_engines",
+  "crates/selene_storage",
+  "crates/selene_tools",
+  "crates/selene_replay",
+]
+resolver = "2"
