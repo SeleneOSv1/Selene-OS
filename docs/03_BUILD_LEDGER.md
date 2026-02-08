@@ -15,3 +15,4 @@ Strict entry format:
 
 Initial log entries:
 `2026-02-08 | LEDGER_INIT | N/A | CREATED | Ledger initialized with all phases unverified (❌).`
+`2026-02-08 | ACCEPTANCE: cargo build | cargo build | PASS | Workspace builds successfully with no warnings.`
