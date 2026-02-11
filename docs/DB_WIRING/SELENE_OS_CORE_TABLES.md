@@ -1,0 +1,80 @@
+# Selene OS Core Tables DB Wiring Spec
+
+## 1) Engine Header
+
+- `engine_id`: `SELENE_OS_CORE_TABLES`
+- `purpose`: Define DB wiring for `work_orders` + `work_order_ledger` and finalize foundational OS-core tables.
+- `version`: `v1`
+- `status`: `PASS`
+
+## 2) Data Owned (authoritative)
+
+Target tables in this slice:
+- `os_core.work_orders_current` (`CURRENT`)
+- `os_core.work_order_ledger` (`LEDGER`)
+- `os_core.work_order_step_attempts` (`LEDGER-LIKE ATTEMPT HISTORY`)
+- `os_core.work_order_leases` (`CURRENT/LEASE STATE`)
+- `os_core.identities` (`CURRENT`, already locked under PH1.F)
+- `os_core.devices` (`CURRENT`, already locked under PH1.F)
+- `os_core.sessions` (`CURRENT`, already locked under PH1.F)
+- `conversation.conversation_ledger` (`LEDGER`, already locked under PH1.F)
+
+## 3) Reads (dependencies)
+
+- `work_order_ledger` replay by `work_order_event_id` for deterministic rebuild.
+- `work_orders_current` lookup by `(tenant_id, work_order_id)` for fast status reads.
+- `work_orders_current` lookup by `(tenant_id, correlation_id)` for thread binding.
+
+Required indices:
+- `ux_work_order_ledger_tenant_work_order_event`
+- `ux_work_orders_current_tenant_work_order`
+- `ux_work_orders_current_tenant_correlation`
+
+Scope rules:
+- all reads tenant-scoped
+- no cross-tenant read path
+
+## 4) Writes (outputs)
+
+- append to `work_order_ledger` via typed input contract
+- deterministic update of `work_orders_current` projection on each ledger append
+- idempotency dedupe on `(tenant_id, work_order_id, idempotency_key)`
+
+## 5) Relations & Keys
+
+Key constraints implemented:
+- `work_order_ledger` primary key: `work_order_event_id`
+- `work_order_ledger` unique idempotency: `(tenant_id, work_order_id, idempotency_key)` (nullable key)
+- `work_orders_current` primary key: `work_order_id`
+- `work_orders_current` unique tenant scope: `(tenant_id, work_order_id)`
+- `work_orders_current` unique correlation scope: `(tenant_id, correlation_id)`
+- `work_orders_current.last_event_id` FK -> `work_order_ledger.work_order_event_id`
+- `work_order_step_attempts.work_order_id` FK -> `work_orders_current.work_order_id`
+- `work_order_leases.work_order_id` FK -> `work_orders_current.work_order_id`
+
+State constraints:
+- `work_order_ledger` is append-only
+- `work_orders_current` is rebuildable from `work_order_ledger`
+
+## 6) Audit Emissions (PH1.J)
+
+- WorkOrder table slice relies on PH1.J for audit envelope; this row locks storage wiring.
+- Required correlation keys remain: `tenant_id`, `work_order_id`, `correlation_id`, `turn_id`.
+
+## 7) Acceptance Tests (DB Wiring Proof)
+
+- `AT-OS-CORE-DB-01` tenant isolation enforced
+  - `at_os_core_db_01_tenant_isolation_enforced`
+- `AT-OS-CORE-DB-02` append-only enforcement
+  - `at_os_core_db_02_append_only_enforced`
+- `AT-OS-CORE-DB-03` idempotency dedupe works
+  - `at_os_core_db_03_idempotency_dedupe_works`
+- `AT-OS-CORE-DB-04` rebuild current from ledger
+  - `at_os_core_db_04_rebuild_current_from_ledger`
+
+Implementation references:
+- kernel contracts: `crates/selene_kernel_contracts/src/ph1work.rs`
+- storage wiring: `crates/selene_storage/src/ph1f.rs`
+- migration: `crates/selene_storage/migrations/0002_work_orders_core.sql`
+- typed repo: `crates/selene_storage/src/repo.rs`
+- tests: `crates/selene_storage/tests/os_core/db_wiring.rs`

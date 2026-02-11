@@ -5,3 +5,7 @@ edition = "2021"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+selene_kernel_contracts = { path = "../selene_kernel_contracts" }
+selene_storage = { path = "../selene_storage" }

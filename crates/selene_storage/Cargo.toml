@@ -5,3 +5,110 @@ edition = "2021"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+selene_kernel_contracts = { path = "../selene_kernel_contracts" }
+
+[[test]]
+name = "db_wiring_access_tables"
+path = "tests/ph1_access_ph2_access/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_artifacts_ledger_tables"
+path = "tests/artifacts_ledger/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_engine_capability_maps_tables"
+path = "tests/engine_capability_maps/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_os_core_tables"
+path = "tests/os_core/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_pbs_tables"
+path = "tests/pbs/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1c_tables"
+path = "tests/ph1_c/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1capreq_tables"
+path = "tests/ph1_capreq/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1d_tables"
+path = "tests/ph1_d/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1e_tables"
+path = "tests/ph1_e/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1f"
+path = "tests/ph1_f/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1j"
+path = "tests/ph1_j/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1k_tables"
+path = "tests/ph1_k/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1l_tables"
+path = "tests/ph1_l/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1learn_feedback_know_tables"
+path = "tests/ph1_learn_feedback_know/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1link_tables"
+path = "tests/ph1_link/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1m_tables"
+path = "tests/ph1_m/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1nlp_tables"
+path = "tests/ph1_nlp/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1onb_tables"
+path = "tests/ph1_onb/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1persona_tables"
+path = "tests/ph1_persona/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1position_tables"
+path = "tests/ph1_position/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1tts_tables"
+path = "tests/ph1_tts/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1vid_tables"
+path = "tests/ph1_voice_id/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1w_tables"
+path = "tests/ph1_w/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1write_tables"
+path = "tests/ph1_write/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_ph1x_tables"
+path = "tests/ph1_x/db_wiring.rs"
+
+[[test]]
+name = "db_wiring_simulation_catalog_tables"
+path = "tests/simulation_catalog/db_wiring.rs"

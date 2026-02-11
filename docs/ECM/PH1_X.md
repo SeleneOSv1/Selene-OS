@@ -1,0 +1,74 @@
+# PH1.X ECM Spec
+
+## Engine Header
+- `engine_id`: `PH1.X`
+- `purpose`: Persist deterministic PH1.X conversational directives (`confirm`, `clarify`, `respond`, `dispatch`, `wait`) as bounded audit rows.
+- `data_owned`: `audit_events` writes in PH1.X scope
+- `version`: `v1`
+- `status`: `ACTIVE`
+
+## Capability List
+
+### `PH1X_CONFIRM_COMMIT_ROW`
+- `name`: Commit confirm directive
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, confirm_kind, reason_code, idempotency_key)`
+- `output_schema`: `Result<AuditEventId, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1X_CLARIFY_COMMIT_ROW`
+- `name`: Commit clarify directive
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, what_is_missing, reason_code, idempotency_key)`
+- `output_schema`: `Result<AuditEventId, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1X_RESPOND_COMMIT_ROW`
+- `name`: Commit respond directive
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, response_kind, reason_code, idempotency_key)`
+- `output_schema`: `Result<AuditEventId, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1X_DISPATCH_COMMIT_ROW`
+- `name`: Commit dispatch directive
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, dispatch_target, reason_code, idempotency_key)`
+- `output_schema`: `Result<AuditEventId, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1X_WAIT_COMMIT_ROW`
+- `name`: Commit wait directive
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, wait_kind, reason_code, idempotency_key)`
+- `output_schema`: `Result<AuditEventId, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1X_READ_AUDIT_ROWS`
+- `name`: Read PH1.X audit rows for one correlation thread
+- `input_schema`: `correlation_id`
+- `output_schema`: `AuditEvent[]`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+## Failure Modes + Reason Codes
+- PH1.X outputs must always carry deterministic PH1.X reason_code values from the PH1.X contract path.
+- storage scope/idempotency failures are fail-closed and reason-coded in PH1.X audit emissions.
+
+## Audit Emission Requirements Per Capability
+- write capabilities emit PH1.J rows using:
+  - `XConfirm` for confirm
+  - `XDispatch` for dispatch
+  - `Other` for clarify/respond/wait (with bounded directive payload keys)
+- required bounded payload keys include:
+  - `directive`
+  - `confirm_kind`
+  - `what_is_missing`
+  - `response_kind`
+  - `dispatch_target`
+  - `wait_kind`
+- read capability emits audit only in explicit replay/diagnostic mode.
+
+## Sources
+- `crates/selene_storage/src/repo.rs` (`Ph1xConversationRepo`)
+- `docs/DB_WIRING/PH1_X.md`

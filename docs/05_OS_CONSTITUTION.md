@@ -1,34 +1,339 @@
-Selene MVP — Must‑Have Stack (MVP)
+Selene MVP — Must-Have Stack (MVP)
 
-1) Core Runtime Engines (Must‑Have)
+Conventions (Execution-Grade)
+
+Acceptance test IDs use ASCII hyphens only and follow:
+
+`AT-<ENGINE>-<NN>` (example: `AT-K-<NN>`, `AT-OS-<NN>`)
+
+Field names are ASCII `snake_case` and should be written exactly as in contracts (example: `transcript_ok`, `conversation_directive`, `tts_started`).
+
+Reason codes are `UPPER_SNAKE_CASE` and never reused.
+
+Section 0.0: Ownership Boundaries Lock (Item 1)
+
+Status
+- LOCKED (cross-doc aligned with `docs/06_ENGINE_MAP.md`, `docs/07_ENGINE_REGISTRY.md`, `docs/10_DB_OWNERSHIP_MATRIX.md`)
+
+Authoritative ownership boundaries (must not drift)
+- PH1.K owns audio I/O only; it must not decide wake, identity, intent, permissions, or execution.
+- PH1.W owns wake detection only; wake is never identity or authority.
+- PH1.VOICE.ID owns identity binding only; PH1.L owns session lifecycle state/timers.
+- PH1.C owns transcript gate only (`transcript_ok` or reject); no intent/authority decisions.
+- PH1.NLP and PH1.D are non-authoritative understanding/phrasing boundaries only.
+- PH1.X owns one conversational move per turn; it must not perform side effects directly.
+- PH1.E is read-only tool execution only.
+- PH1.LINK and PH1.BCAST are simulation-gated side-effect delivery gateways (never PH1.E).
+- PH1.ACCESS.001 is the gate interface; PH2.ACCESS.002 is per-user permission truth.
+- Selene OS + Simulation Catalog/Executor own real execution order and commits (No Simulation -> No Execution).
+- PH1.F owns storage schema/migrations/invariants; PH1.J owns audit event contract and append-only proof trail.
+- PH1.M and learning engines remain non-authoritative (advisory/offline unless explicitly stated).
+- Engines never call engines directly; Selene OS orchestrates all cross-engine sequencing.
+
+Section 0.1: Capability Maps Lock (Item 2)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.7A, `docs/06_ENGINE_MAP.md`, `docs/07_ENGINE_REGISTRY.md`, `docs/08_SIMULATION_CATALOG.md`, `docs/09_BLUEPRINT_REGISTRY.md`)
+
+Authoritative capability-map rules (must not drift)
+- Every callable engine function must be declared as a stable `capability_id` in an engine capability map.
+- No hidden procedures: if a function is not in the capability map, it is not callable.
+- `capability_id` bindings used by blueprints/simulations must reference ACTIVE capability maps only.
+- If `side_effects != NONE`, execution must be simulation-gated (No Simulation -> No Execution).
+- Engines must never call engines directly; Selene OS is the only orchestrator.
+
+Section 0.2: DB Schema Lock Per Engine (Item 3)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.16..KC.24 and `docs/10_DB_OWNERSHIP_MATRIX.md`)
+
+Authoritative DB-schema lock rules (must not drift)
+- Every `ACTIVE` PH1.F table must have an explicit table contract section (required columns + keys + constraints).
+- Every `ACTIVE` PH1.F table must map to an owner/write scope in the DB ownership matrix.
+- `PROPOSED` enterprise tables remain out of active lock scope until their dedicated lock items are completed.
+- WorkOrder schema is handled by Item 4 lock (`KC.23` / `F.4.18`); idempotency + lease enforcement is handled by Item 9 lock (`KC.10` / `KC.13` / `KC.23.4` / `KC.23.5` and Section 0.8).
+
+Section 0.3: WorkOrder Schema Lock (Item 4)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.23 and `docs/10_DB_OWNERSHIP_MATRIX.md`)
+
+Authoritative WorkOrder-schema lock rules (must not drift)
+- WorkOrder persistence is database-first: append-only `work_order_ledger` + rebuildable `work_orders_current`.
+- Lease ownership is explicit in `work_order_leases`; no executor may advance work without a valid lease.
+- Scheduler/retry state is explicit in persisted fields (`attempt_index`, `timeout_ms`, `max_retries`, `retry_backoff_ms`, `next_retry_at`) and never implicit in RAM-only state.
+- Step attempt history is explicit and replayable through `work_order_step_attempts`.
+
+Section 0.4: Simulation Catalog Schema Lock (Item 5)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.7 and `docs/08_SIMULATION_CATALOG.md`)
+
+Authoritative simulation-catalog lock rules (must not drift)
+- Simulation records must include explicit contract fields (`required_roles`, `preconditions`, `reads_tables[]`, `writes_tables[]`, `idempotency_key_rule`, `audit_events`) directly or through explicit catalog defaults.
+- No `TBD` placeholders are allowed in authoritative simulation records.
+- Any simulation with incomplete contract fields remains `DRAFT` and cannot be executed.
+
+Section 0.5: Blueprint Registry Schema Lock (Item 6)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.6 and `docs/09_BLUEPRINT_REGISTRY.md`)
+
+Authoritative blueprint-schema lock rules (must not drift)
+- Blueprint records must include explicit `purpose`, `ordered_steps`, and `simulation_requirements`.
+- Confirmation points must be explicit in blueprint step order.
+- Blueprint `required_inputs` and `success_output_schema` must be explicit directly or by deterministic reference to linked simulation contracts.
+- No `TBD` placeholders are allowed in authoritative blueprint records.
+
+Section 0.6: PH2.ACCESS.002 Schema Lock (Item 7)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.19, `docs/10_DB_OWNERSHIP_MATRIX.md`, and PH1.F table contracts in F.4.15)
+
+Authoritative PH2.ACCESS.002 schema lock rules (must not drift)
+- Per-user access truth persists only in `access_instances` + `access_overrides`.
+- `PH2.ACCESS.002` owns writes to these tables; `PH1.ACCESS.001` is gate interface only and must not write them directly.
+- Override lifecycle (`ACTIVE | EXPIRED | REVOKED`) is explicit and simulation-gated; no silent mutation.
+- Idempotent writes and deterministic override conflict checks are mandatory.
+
+Section 0.7: Audit Event Schema Lock (Item 8)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.9 + KC.22.9, Section J.4, and PH1.F table contract F.4.9)
+
+Authoritative audit-schema lock rules (must not drift)
+- The canonical audit envelope is fixed: `event_id`, `created_at`, `session_id`, `user_id`, `device_id`, `engine`, `event_type`, `reason_code`, `severity`, `correlation_id`, `turn_id`, `payload_min`, `evidence_ref`, `idempotency_key`.
+- `reason_code` is mandatory on every emitted audit event.
+- `payload_min` is bounded structured JSON only; no free-text log blobs.
+- `audit_events` is append-only; redactions are represented by new reason-coded events/views, never in-place mutation.
+- Correlation integrity is mandatory: all events for one request/turn chain must share the same `correlation_id`.
+
+Section 0.8: Idempotency + Lease Contract Lock (Item 9)
+
+Status
+- LOCKED (cross-doc aligned with `docs/04_KERNEL_CONTRACTS.md` KC.10 + KC.13 + KC.23.4 + KC.23.5, PH1.OS + PH1.LEASE sections, and `docs/10_DB_OWNERSHIP_MATRIX.md`)
+
+Authoritative idempotency/lease lock rules (must not drift)
+- Side-effect and retriable writes require deterministic idempotency keys; duplicate attempts must resolve to deterministic no-op/reused result.
+- Outbox dedupe rules are mandatory and tenant-scoped.
+- WorkOrder execution requires a valid lease before step execution.
+- At most one ACTIVE lease may exist per `(tenant_id, work_order_id)` at a time.
+- Renew/release requires lease token ownership; expired lease enables deterministic takeover from persisted ledger state only.
+- No idempotency key (where required) and no lease (where required) means no execution.
+
+Section 0.9: Minimal Runtime Wiring Lock (Item 10)
+
+Status
+- LOCKED (minimal runtime/stub wiring validated in `crates/selene_os`; broad production build-out remains out of scope)
+
+Authoritative minimal-runtime lock rules (must not drift)
+- Runtime wiring remains minimal and contract-first: only locked design slices are wired end-to-end.
+- `PH1.X Dispatch(SimulationCandidate)` is wired through `SimulationExecutor` under No Simulation -> No Execution.
+- Minimal live sequences are wired for onboarding:
+  - `PH1.ONB.ORCH.001 -> PH1.VOICE.ID` enrollment simulations
+  - `PH1.ONB.ORCH.001 -> PH1.POSITION.001` create/validate/policy/activate sequence
+- Minimal direct executor entrypoints are wired for `PH1.LINK`, `PH1.W`, `PH1.VOICE.ID`, and `PH1.POSITION`.
+- Evidence command for lock: `cargo test -p selene_os` (all tests pass).
+
+1) Core Runtime Engines (Must-Have)
+
+Section 1.0: Global Voice SLO (End-to-End, Measurable)
+
+This is the measurable “feels human” timing contract across the whole voice stack.
+
+All values are default desktop targets. They must be measured (p95/p99) and visible to replay/audit.
+
+| Segment | Start | End | Target p95 | Target p99 |
+|---|---|---|---:|---:|
+| Wake -> capture ready | `wake_event` emitted | `bounded_audio_segment_ref` emitted | <= 150ms | <= 250ms |
+| Capture end -> transcript | `bounded_audio_segment_ref.t_end` | `transcript_ok` emitted | <= 600ms | <= 1200ms |
+| Transcript -> directive | `transcript_ok` emitted | `conversation_directive` emitted | <= 40ms | <= 80ms |
+| Directive -> TTS start | `conversation_directive` emitted | `tts_started` emitted | <= 300ms | <= 600ms |
+| Barge-in stop | `interrupt_candidate.t_event` | `tts_stopped` emitted | <= 150ms | <= 250ms |
+
+Hard rule: if these budgets are repeatedly violated, Selene must degrade or fail closed deterministically (not “act weird”).
+
+Section 1.0A: Text Interface & History Behavior (Voice + Text Unified)
+
+Selene is a voice-first operating system, but it is not voice-only.
+
+Voice is primary.
+
+Text is secondary but equal in capability.
+
+Users must be able to:
+
+speak to Selene in normal conditions,
+
+type to Selene when it is noisy or when they prefer silence,
+
+receive private responses as text (on screen or delivered to the Selene phone app) when speaking out loud is not appropriate,
+
+see a simple ChatGPT-like conversation screen (clean white interface) with the full conversation history,
+
+keep history so they can scroll and read what Selene said.
+
+Same gates, different channel:
+
+Selene uses the same deterministic gates regardless of input/output modality. Only the I/O channel changes.
+
+What this means in the engine stack:
+
+Voice input path: PH1.K -> PH1.W -> PH1.VOICE.ID -> PH1.C -> PH1.NLP -> PH1.X.
+
+Text input path: UI signed-in user_id + typed text (wrapped as `transcript_ok`-equivalent) -> PH1.NLP -> PH1.X (no STT).
+
+Hard rule: typed input must be wrapped into a `transcript_ok`-equivalent contract (same fields, same evidence discipline) so downstream engines do not fork logic by modality.
+
+Voice output path: PH1.X -> PH1.WRITE -> PH1.TTS -> PH1.K playback.
+
+Text output path: PH1.X -> PH1.WRITE -> UI render (always; even when voice is active).
+
+Optional private delivery path: Selene OS -> Broadcast engine -> Selene phone app (when requested or policy requires).
+
+UI behavior (ChatGPT-like screen)
+
+The UI is a clean white screen with a scrolling chat view.
+
+Everything Selene says (spoken or silent) appears as text in the chat.
+
+Everything the user types appears inline in the same history.
+
+When Selene speaks out loud, the spoken content is also rendered as text in real time.
+
+Text is not a fallback
+
+Text is a first-class interface that shares the same logic, memory, audit, and safety rules as voice.
+
+When text is preferred or required
+
+Noisy environments: user types instead of speaking.
+
+Meetings / quiet spaces: user types, Selene responds silently as text.
+
+Private or sensitive responses: Selene delivers content only as text (screen or phone app), even if voice is active.
+
+Hard rule: "display it on my phone" means: deliver the text to the Selene phone app (not SMS). This is a BROADCAST side effect (via the Broadcast engine) and must go through the Access/Authority Gate and a Simulation (never PH1.E).
+
+Session close vs history retention
+
+When a session closes, the chat view is cleared from the screen, not deleted.
+
+Clearing the screen is a visual reset only.
+
+The conversation is automatically archived.
+
+History rules (non-destructive)
+
+All conversations (voice + text) are retained as part of Selene’s audit trail (via append-only storage).
+
+Users may request history by:
+
+time range ("show me yesterday", "last week"),
+
+topic ("what did we say about payroll"),
+
+session ("bring back the last conversation").
+
+Privacy-safe recall (same rules as memory)
+
+Unknown speaker (voice) -> no history shown.
+
+Multi-speaker -> sensitive content withheld or summarized.
+
+Private responses remain private unless explicitly requested.
+
+Nothing is destroyed automatically.
+
+Nothing is shown automatically after close.
+
+The user is always in control of what is visible, when, and how far back.
 
 Section 1.1: PH1.K — Voice Runtime I/O (World-Class Voice Only)
 
-GoalPH1.K must make Selene feel like a real person in the room: instant, interruption-safe, never clips words, never “fights” the user, and never stops mid-sentence because of random background noise. PH1.K is not “intelligence”; it is the real-time voice substrate that everything else depends on.
+Note: the canonical, execution-grade PH1.K specification lives later in this document under “PH1.K — Voice Runtime I/O (World-Class Voice Only)” (Section K.1.*). This early block is a summary.
 
-1.1.1 What “better than ChatGPT” means at PH1.K (voice substrate only)A. Latency that feels humanMic capture to downstream frame availability must be near-instant, with predictable buffering. Selene must start reacting fast enough that it feels like a natural conversation rather than a voice assistant pipeline.
+Goal
 
-B. Full-duplex reliabilityMic capture continues while Selene speaks. No dropped first syllables, no chopped endings, no sudden pauses, no device weirdness.
+PH1.K must make Selene feel like a real person in the room: instant, interruption-safe, never clips words, never “fights” the user, and never stops mid-sentence because of random background noise.
 
-C. Interruption safety that is deterministicSelene must stop speaking only when there is high-confidence evidence the user intended to interrupt, not because the room got loud.
+PH1.K is not “intelligence”; it is the real-time voice substrate that everything else depends on.
 
-D. Device behavior that is “OS-grade”Stable device selection, hot-plug handling, and failover without the user having to troubleshoot.
+Section 1.1.1: What “better than ChatGPT” means at PH1.K (voice substrate only)
 
-1.1.2 Clarification: Where “wake” and “barge-in” actually liveA. Wake word stays in PH1.W (not in PH1.K)You are right to keep wake detection in PH1.W. PH1.K should not decide wake. PH1.K’s job is to provide the audio substrate and the deterministic primitives that wake can depend on (pre-roll, VAD, clean frames, timing). Wake logic remains in PH1.W.
+A) Latency that feels human
 
-B. “Barge-in” is not wake-word detectionBarge-in is an interruption control problem while Selene is speaking. The safe design is: PH1.K supplies low-level interruption primitives, while PH1.X / policy decides what to do.
+Mic capture to downstream frame availability must be near-instant, with predictable buffering. Selene must start reacting fast enough that it feels like a natural conversation rather than a voice assistant pipeline.
 
-In other words:PH1.K detects candidate interruptions deterministically (based on speech activity + keyword cues + echo-safe conditions), then emits an interrupt event.PH1.X decides whether that event actually cancels TTS, based on current state and confidence.
+B) Full-duplex reliability
+
+Mic capture continues while Selene speaks. No dropped first syllables, no chopped endings, no sudden pauses, no device weirdness.
+
+C) Interruption safety that is deterministic
+
+Selene must stop speaking only when there is high-confidence evidence the user intended to interrupt, not because the room got loud.
+
+D) Device behavior that is “OS-grade”
+
+Stable device selection, hot-plug handling, and failover without the user having to troubleshoot.
+
+Section 1.1.2: Clarification: Where “wake” and “barge-in” actually live
+
+A) Wake word stays in PH1.W (not in PH1.K)
+
+You are right to keep wake detection in PH1.W. PH1.K should not decide wake.
+
+PH1.K’s job is to provide the audio substrate and the deterministic primitives that wake can depend on (pre-roll, VAD, clean frames, timing). Wake logic remains in PH1.W.
+
+B) “Barge-in” is not wake-word detection
+
+Barge-in is an interruption control problem while Selene is speaking. The safe design is:
+
+PH1.K supplies low-level interruption primitives.
+
+PH1.X / policy decides what to do.
+
+In other words:
+
+PH1.K detects candidate interruptions deterministically (based on speech activity + keyword cues + echo-safe conditions) and emits an interrupt event.
+
+PH1.X decides whether that event actually cancels TTS, based on current state and confidence.
 
 This avoids the failure you’re worried about: random background sound stopping Selene mid-flight.
 
-1.1.3 Your improvement: “Speech interrupt phrases” instead of raw sound-based interruptThis is a good move. The rule becomes: “Selene should not stop speaking just because there is noise.” Instead, default interruption is phrase-driven, with sound/VAD only used as a supporting signal.
+Section 1.1.3: Improvement: “Speech interrupt phrases” instead of raw sound-based interrupt
 
-A. Primary interruption mechanism: “Interrupt Phrases” (spoken)Selene listens for a small set of universal interruption intents while speaking, such as:
+This is a good move. The rule becomes: “Selene should not stop speaking just because there is noise.” Instead, default interruption is phrase-driven, with sound/VAD only used as a supporting signal.
 
-Core set you listed:Wait; Selene wait; hold on; Selene hold on; stop; hang on; excuse me; just a sec; hey wait; hey hold on; Selene; Selene Selene
+A) Primary interruption mechanism: “Interrupt Phrases” (spoken)
 
-Add ~20 common variants (keep short, high-frequency, and culturally robust):
+Core set you listed:
+
+wait
+
+Selene wait
+
+hold on
+
+Selene hold on
+
+stop
+
+hang on
+
+excuse me
+
+just a sec
+
+hey wait
+
+hey hold on
+
+Selene
+
+Selene Selene
+
+Additional common variants (examples)
 
 one second
 
@@ -88,7 +393,9 @@ hang on a sec
 
 just a moment
 
-B. Confidence gating so it doesn’t trigger from background soundTo trigger an interrupt phrase while TTS is playing, require ALL of the following:
+B) Confidence gating so it doesn’t trigger from background sound
+
+To trigger an interrupt phrase while TTS is playing, require ALL of the following:
 
 Speech-likeness gate: VAD must indicate actual speech (not clatter/noise).
 
@@ -100,19 +407,27 @@ Proximity/energy sanity: voice energy profile must resemble near-field speech (o
 
 If any gate fails, Selene does not stop. She keeps talking.
 
+Section 1.1.4: Desktop addition: wake-word integration without mixing engine responsibilities
 
-
-1.1.4 Desktop addition: wake-word integration without mixing engine responsibilitiesYou said you want wake word on desktops and you already have a full wake flow that becomes part of onboarding. That’s correct.
+You said you want wake word on desktops and you already have a full wake flow that becomes part of onboarding. That’s correct.
 
 So PH1.K’s desktop job is simply to supply wake-support primitives so PH1.W can work perfectly:
 
-A. Always-on pre-roll bufferPH1.K maintains a rolling pre-roll (e.g., ~1–1.5 seconds) so PH1.W can evaluate wake without missing the first syllable.
+A) Always-on pre-roll buffer
 
-B. Clean audio path for wake/STTPH1.K provides “processed mic frames” (AEC/NS/AGC) as the default source for wake/STT so wake is robust across rooms, fans, and speaker leakage.
+PH1.K maintains a rolling pre-roll (e.g., ~1–1.5 seconds) so PH1.W can evaluate wake without missing the first syllable.
 
-C. Deterministic stream referencesPH1.K never “decides wake”. It publishes stream refs and frame metadata; PH1.W consumes them and transitions armed/capture states.
+B) Clean audio path for wake/STT
 
-1.1.5 What PH1.K must implement to make this work perfectlyA. Audio graph fundamentals
+PH1.K provides processed mic frames (AEC/NS/AGC) as the default source for wake/STT so wake is robust across rooms, fans, and speaker leakage.
+
+C) Deterministic stream references
+
+PH1.K never “decides wake”. It publishes stream refs and frame metadata; PH1.W consumes them and transitions armed/capture states.
+
+Section 1.1.5: What PH1.K must implement to make this work perfectly
+
+A) Audio graph fundamentals
 
 Full-duplex capture/playback
 
@@ -122,7 +437,7 @@ Lock-free ring buffers so capture never blocks
 
 Adaptive jitter buffering (input + output)
 
-B. Echo and noise correctness (non-negotiable)
+B) Echo and noise correctness (non-negotiable)
 
 AEC tuned for “Selene speaking while user speaks”
 
@@ -130,29 +445,33 @@ Noise suppression
 
 AGC leveling into downstream modules
 
-C. Deterministic interruption primitives (phrase-first)
+C) Deterministic interruption primitives (phrase-first)
 
-During TTS playback, run “interrupt phrase detection” on the mic stream
+During TTS playback, run “interrupt phrase detection” on the mic stream.
 
-Apply the 4 gates above before emitting “interrupt_candidate”
+Apply the 4 gates above before emitting interrupt_candidate.
 
-Emit a structured event; do not auto-stop without policy confirmation from PH1.X (unless you explicitly want PH1.K to have the authority to cut audio immediately)
+Emit a structured event; do not auto-stop without policy confirmation from PH1.X (unless you explicitly want PH1.K to have the authority to cut audio immediately).
 
-D. OS-grade device control
+D) OS-grade device control
 
-Remember last known good mic/speaker per device
+Remember last known good mic/speaker per device.
 
-Hot-plug detection
+Hot-plug detection.
 
-Automatic failover
+Automatic failover.
 
-Sample-rate normalization policy
+Sample-rate normalization policy.
 
-1.1.6 Output contract (what PH1.K emits upstream)PH1.K must emit deterministic signals that upstream engines can trust:
+Section 1.1.6: Output contract (what PH1.K emits upstream)
+
+PH1.K must emit deterministic signals that upstream engines can trust:
 
 processed_audio_stream_ref (AEC/NS/AGC)
 
 raw_audio_stream_ref (optional, policy-gated)
+
+pre_roll_buffer_ref (rolling 1.0–1.5s)
 
 vad_state_stream
 
@@ -162,14 +481,14 @@ timing_stats (jitter, drift, buffer depth)
 
 interrupt_candidate events (phrase, confidence, gates passed)
 
-degradation flags (capture_degraded, aec_unstable, device_changed)
+degradation flags (capture_degraded, aec_unstable, device_changed, stream_gap_detected)
 
 Section 1.1A: PH1.VOICE.ID — Voice Identity & Diarization-Lite (Front-Door Certainty)
 
-PH1.VOICE.ID — Voice Identity & Diarization-Lite v1.0 (Identity Binding Contract)
+PH1.VOICE.ID.001 — Voice Identity & Session Safety v1.1 (Identity Binding Contract)
 
 Section VID.1: Mission
-PH1.VOICE.ID is Selene’s identity front-door. It deterministically answers:
+PH1.VOICE.ID is Selene's identity front-door for voice. It deterministically answers:
 
 Who is speaking right now?
 
@@ -177,27 +496,40 @@ Is it the same speaker as a moment ago?
 
 Is there more than one human speaker?
 
+It emits an identity assertion (OK or UNKNOWN) that downstream engines can trust.
+
+Hard rule: PH1.VOICE.ID does not open or close sessions. PH1.L owns presence and session state. PH1.VOICE.ID only binds identity inside an OS-provided session candidate.
+
+Fail-closed rule (when not HIGH confidence)
 If identity cannot be resolved with HIGH confidence, Selene must fail closed:
 
 do not attach memory,
 
 do not personalize,
 
-do not execute,
+do not run simulations / execute actions,
 
-and (optionally) request re-try / clearer speech.
+and ask for re-try / clearer speech or reauth when policy requires.
+
+Note: Unknown identity may still allow non-personal, read-only responses (example: "what time is it") depending on policy, but it must not use personal memory and must not execute.
 
 Section VID.2: What PH1.VOICE.ID Owns
 
-Speaker embedding extraction from processed audio.
+Speaker embedding extraction from processed audio (derived features only).
 
-Speaker matching against enrolled profiles (per user).
+Speaker matching against enrolled profiles (per user; tenant-scoped).
 
 Diarization-lite segmentation (speaker-change detection, not full diarization research).
 
-Per-session identity assertions and confidence.
+Anti-spoofing and liveness guardrails (replay/echo risk).
 
-Deterministic reason codes for identity failures.
+Continuous verification signals (reauth required when timers or confidence drop).
+
+Enrollment signals (enrollment required and bounded prompt bundle).
+
+Cross-device claim signals (foreign-device use requires one-time vs link decision).
+
+Deterministic reason codes for identity failures and policy blocks.
 
 Section VID.3: What PH1.VOICE.ID Must Never Do
 
@@ -205,11 +537,13 @@ Guess a user identity when confidence is not HIGH.
 
 Attach long-term memory to an unverified speaker.
 
-Execute actions or call tools.
+Execute actions or call tools directly (system boundary applies).
 
-Store raw voice audio by default.
+Persist raw voice audio by default.
 
-Section VID.4: Inputs (From PH1.K and Session)
+Grant authority. Identity is not permission.
+
+Section VID.4: Inputs (From PH1.K + PH1.L + Policy)
 Required
 
 processed_audio_stream_ref (AEC/NS/AGC)
@@ -218,13 +552,19 @@ vad_state_stream
 
 device_id
 
+device_trust_level (trusted | untrusted)
+
 session_state_ref (from PH1.L)
 
 Optional (recommended)
 
 wake_event (from PH1.W) to begin identity binding window
 
-tts_playback_markers (from PH1.TTS) to improve echo-safe gating
+tts_playback_active / playback markers (from PH1.TTS / PH1.K) to improve echo-safe gating
+
+device_owner_user_id (if this is an owned device; used for foreign-device claim)
+
+risk_signals (bounded; example: "meeting mode", "high echo risk")
 
 Section VID.5: Outputs (Strict Contract)
 PH1.VOICE.ID emits exactly one of:
@@ -237,7 +577,7 @@ user_id (if mapped)
 
 confidence (HIGH only for OK)
 
-diarization_segments (time ranges labeled SPEAKER_A / SPEAKER_B …)
+diarization_segments (time ranges labeled SPEAKER_A / SPEAKER_B ...)
 
 active_speaker_label (who is speaking now)
 
@@ -245,9 +585,13 @@ B) speaker_assertion_unknown
 
 confidence (MED/LOW)
 
-reason_code
+reason_code (deterministic)
 
 diarization_segments (unlabeled or generic)
+
+optional: candidate_user_id (when recognized but blocked by reauth/device-claim policy)
+
+optional: device_owner_user_id (echoed for claim UX)
 
 Hard rule: downstream personalization and memory usage is allowed only when speaker_assertion_ok.
 
@@ -258,7 +602,7 @@ detect speaker change points using embedding distance + VAD boundaries
 
 assign stable temporary labels within a session (SPEAKER_A, SPEAKER_B)
 
-attempt to map SPEAKER_A to a known speaker profile
+attempt to map the active speaker to a known speaker profile
 
 It does not attempt:
 
@@ -268,11 +612,87 @@ overlapping-speech separation
 
 Section VID.7: Identity Binding Window (Human-Feeling)
 
-After wake (or after session resumes), PH1.VOICE.ID opens a short identity window (e.g., 1–3 seconds of speech frames).
+After wake (or after session resumes), PH1.VOICE.ID opens a short identity window (e.g., 1-3 seconds of speech frames).
 
 If HIGH confidence match is achieved: lock identity for the session unless speaker-change is detected.
 
 If speaker-change is detected: re-run identity window on the new speaker.
+
+Section VID.7A: Single-User Enrollment (Deterministic, Fast)
+
+Goal
+
+Bind the primary user quickly during onboarding, without drift or guesswork.
+
+Enrollment stages (bounded)
+
+1) Consent + readiness prompt.
+
+2) Anchor phrase capture (3-5 samples).
+
+3) Environment sweep (quiet + normal + noisy, bounded to 1 sample each).
+
+4) Lock decision (N consecutive passes over threshold).
+
+5) Stabilization (learning pauses unless confidence drops).
+
+Deterministic completion targets (recommended)
+
+max_total_attempts: 8
+
+max_session_enroll_time_ms: 120000 (2 minutes)
+
+lock_after_consecutive_passes: 3
+
+If user is unavailable
+
+PH1.VOICE.ID emits a reminder request (defer enrollment). Enrollment remains pending until completion.
+
+Hard rule: No silent skip. If enrollment is required for personalization/execution, Selene must say so.
+
+Section VID.7B: Continuous Verification (Reauth-Required)
+
+Rules (recommended)
+
+Re-verify identity every 10 minutes during ACTIVE sessions, or before any sensitive intent.
+
+If confidence drops below threshold: emit speaker_assertion_unknown with reason_code=VID_REAUTH_REQUIRED.
+
+Hard rule: No silent drift. Confidence drops must be reason-coded.
+
+Section VID.7C: Anti-Spoofing and Liveness (Fail-Closed)
+
+Rules
+
+Detect playback/echo risk (TTS correlation and other bounded checks).
+
+If spoof risk is detected: emit speaker_assertion_unknown with reason_code=VID_SPOOF_RISK and require a challenge phrase (policy-dependent).
+
+Fail closed on liveness failure. Do not bind identity.
+
+Section VID.7D: Cross-Device Claim (Foreign Device Safety)
+
+Goal
+
+If a user is speaking on a device owned by someone else, require an explicit claim decision before enabling personalization/memory.
+
+Rules
+
+If user_id != device_owner_user_id: emit speaker_assertion_unknown with reason_code=VID_DEVICE_CLAIM_REQUIRED and include candidate_user_id + device_owner_user_id.
+
+One-time use: allow this session only (no device binding).
+
+Persistent link: the OS + Access/Authority Gate owns any required step-up checks and device linking flows. PH1.VOICE.ID only emits VID_DEVICE_CLAIM_REQUIRED and does not perform step-up authentication.
+
+If claim is denied or required checks fail: fail closed.
+
+Section VID.7E: Performance Targets (Design Targets)
+
+FAR (non-user acceptance): <= 0.1% in normal conditions after stabilization.
+
+FRR (user rejection): <= 1% after stabilization.
+
+Identity decision latency: p95 <= 250 ms on-device (target; measured per device class).
 
 Section VID.8: Privacy & Safety Rules
 
@@ -280,19 +700,19 @@ If identity is unknown: Selene must default to non-personal, non-memory response
 
 No reading out sensitive memory when diarization-lite indicates multiple speakers present.
 
-“Private mode” policy can force Selene to ask: “Is it okay to say that out loud?” before recalling personal facts.
+Privacy mode can force Selene to ask: "Is it ok to say that out loud?" before recalling personal facts.
 
 Section VID.9: Integration Points
 
-PH1.L: session creation/resume triggers identity binding.
+PH1.L: session creation/resume triggers identity binding; PH1.L remains the session owner.
 
 PH1.W: wake helps start the identity window.
 
-PH1.C: may receive language_hint tied to speaker_id only when identity is OK.
+PH1.C: may receive language_hint tied to speaker_id only when identity is OK (optional).
 
 PH1.M: memory retrieval and storage require speaker_assertion_ok.
 
-Emotional Engine: style_profile locking is tied to verified speaker_id.
+PH1.J: audit logging must record identity decisions and reason codes (no raw audio).
 
 Section VID.10: Reason Codes (Minimum Set)
 
@@ -305,6 +725,14 @@ VID_FAIL_MULTI_SPEAKER_PRESENT
 VID_FAIL_ECHO_UNSAFE
 
 VID_FAIL_PROFILE_NOT_ENROLLED
+
+VID_ENROLLMENT_REQUIRED
+
+VID_REAUTH_REQUIRED
+
+VID_SPOOF_RISK
+
+VID_DEVICE_CLAIM_REQUIRED
 
 Section VID.11: Acceptance Tests (Front-Door Reality)
 AT-VID-01: Correct user identity when enrolled
@@ -329,13 +757,31 @@ AT-VID-04: Multi-speaker privacy safety
 
 Scenario: two speakers present.
 
-Pass: sensitive memory not spoken; private-mode behavior enforced.
+Pass: sensitive memory not spoken; privacy behavior enforced.
 
 AT-VID-05: Echo-safe identity
 
 Scenario: Selene speaking; mic hears echo.
 
-Pass: identity binding does not confuse Selene’s TTS as a speaker.
+Pass: identity binding does not confuse Selene's TTS as a speaker.
+
+AT-VID-06: Continuous verification requires reauth
+
+Scenario: long session; timer triggers or confidence drops.
+
+Pass: speaker_assertion_unknown with reason_code=VID_REAUTH_REQUIRED.
+
+AT-VID-07: Spoof/liveness guard fails closed
+
+Scenario: replay suspected.
+
+Pass: speaker_assertion_unknown with reason_code=VID_SPOOF_RISK.
+
+AT-VID-08: Foreign device claim required
+
+Scenario: recognized user on someone else's device.
+
+Pass: speaker_assertion_unknown with reason_code=VID_DEVICE_CLAIM_REQUIRED and includes candidate_user_id + device_owner_user_id.
 
 1.2 PH1.W — Wake Engine
 
@@ -343,49 +789,627 @@ PH1.W — Wake Engine v0.2 (World-Class Combination) — Canvas-Ready Insert
 
 Paste the full section below directly into Canvas under “Section 1.2: PH1.W — Wake Engine” (replace the short bullets).
 
-Section W.1: MissionPH1.W must detect wake intent with near-zero false positives, near-zero misses, and deterministic explainability. Every decision is gate-driven, reason-coded, and auditable.
+Section W.1: Mission
 
-Section W.2: Core Principle — Wake Is a Multi-Gate Decision (Not One Score)Wake acceptance must never depend on a single detector output. PH1.W uses a deterministic sequence of gates, each designed to eliminate a specific failure class (noise, self-trigger, multi-user confusion, transient spikes).
+PH1.W must detect wake intent with near-zero false positives, near-zero misses, and deterministic explainability. Every decision is gate-driven, reason-coded, and auditable.
 
-Section W.3: Responsibility Split (Non-Negotiable)A. PH1.W owns wake execution• Wake detection runtime logic.• Armed / candidate / confirmed transitions.• Debounce / cooldown / anti-loop protection.• Capture window boundaries for downstream STT.• Reason-coded accept/reject outputs.
+Section W.1A: Wake Quality Targets (Measured, Not Vibes)
 
-B. Onboarding configures wake but does not execute wake• Wake setup, calibration, and per-user wake personalization are produced during onboarding as artifacts.• PH1.W consumes these artifacts deterministically at runtime.• PH1.W never trains. It only loads and executes.
+Wake is “world number one” only if it is measurable.
 
-C. PH1.K provides substrate only• Pre-roll, clean audio frames, VAD, timing stats, device health, and (optionally) near-field heuristics.• PH1.K never decides wake.
+PH1.W must report (privacy-safe) these three numbers per device profile:
 
-Section W.4: Inputs (From PH1.K)Required inputs• processed_audio_stream_ref (AEC/NS/AGC)• pre_roll_buffer_ref (rolling 1.0–1.5s)• vad_state_stream (speech segments + confidence)• timing_stats (jitter/drift/buffer depth)• device_state (route/health/errors)
+false_wake_rate: wakes that happen when nobody intended to wake (measured by test suites + user “false wake” feedback).
 
-Optional inputs (recommended)• near_field_speech_hint (desktop)• aec_stability_hint (especially when TTS is active)
+miss_rate: intended wakes that did not wake (measured by test suites).
 
-Section W.5: Deterministic State MachineStates• DISARMED (wake ignored by policy)• ARMED_IDLE (listening for wake)• CANDIDATE (wake suspicion; validation window running)• CONFIRMED (wake accepted; emit wake_event)• CAPTURE (handoff bounded audio window to STT)• COOLDOWN (short ignore window after wake)• SUSPENDED (audio integrity degraded; fail-closed)
+wake_detect_latency_ms: time from the end of the wake phrase to `wake_event`.
 
-High-level transition rules• ARMED_IDLE → CANDIDATE only when Gate-0, Gate-1, Gate-2 pass.• CANDIDATE → CONFIRMED only when Gate-3 and Gate-4 pass within the validation window.• CONFIRMED → CAPTURE immediately (pre-roll + post-roll bounded segment).• CAPTURE → COOLDOWN always.• COOLDOWN → ARMED_IDLE when cooldown timer expires.• Any state → SUSPENDED if device/audio integrity fails.• SUSPENDED → ARMED_IDLE only after integrity is restored and stabilization timer completes.
+Starting default targets (desktop):
 
-Section W.6: The Gates (World-Class Combination)Gate-0: Environment Integrity Gate (Fail-Closed)Purpose: never run wake decisions when audio conditions are untrustworthy.Reject candidate if any of the following are true:• mic stream degraded / device unhealthy• buffer underruns or drift beyond threshold• AEC unstable while TTS is active (prevents self-trigger)Outcome: no candidate; emit reject reason codes only.
+| Condition | False wakes target | Misses target | Detect latency p95 | Detect latency p99 |
+|---|---:|---:|---:|---:|
+| Quiet room (enrolled user, ~1m) | <= 1 / 30 days | <= 1% | <= 200ms | <= 350ms |
+| Noisy room (fan/music/office) | <= 1 / 7 days | <= 5% | <= 250ms | <= 450ms |
+| TV / speaker says “Selene” | 0 (must not wake) | n/a | n/a | n/a |
+| Selene speaking (TTS active) | 0 self-wake | <= 5% (if allowed) | <= 300ms | <= 500ms |
 
-Gate-1: Noise / Activity GatePurpose: stop random sounds from ever reaching the wake verifier.Requirements (examples):• VAD indicates speech-likeness (not clatter / transient noise)• segment meets minimum voiced duration and stabilityOutcome: rejects keyboard, knocks, clanks, room noise spikes.
+Hard rule: if measured false_wake_rate rises, PH1.W must tighten deterministically (new wake pack version) or fail closed. It must never “get weird.”
 
-Gate-2: Lightweight Wake-Likeness Filter (Fast)Purpose: cheaply reject non-wake speech before heavier verification.• low-compute filter on candidate windows• aggressive reject behaviorOutcome: reduces false positives and compute load.
+Section W.2: Core Principle — Wake Is a Multi-Gate Decision (Not One Score)
 
-Gate-3: Strong Wake Verifier (Main Detector)Purpose: high-accuracy wake detection.Requirements:• score must exceed threshold AND remain stable across N consecutive frames (anti-spike)• alignment / timing must be plausible (prevents accidental phonetic matches)Outcome: primary recall/precision engine.
+Wake acceptance must never depend on a single detector output. PH1.W uses a deterministic sequence of gates, each designed to eliminate a specific failure class (noise, self-trigger, multi-user confusion, transient spikes).
 
-Gate-4: Per-User Wake Personalization (Selene’s Advantage)Purpose: beat generic engines in multi-user and noisy environments by binding wake to the enrolled user profile.Uses onboarding artifact package to enforce bounded checks such as:• user wake-profile similarity gate (speaker embedding similarity within bounded threshold)• per-user pronunciation variants accepted (e.g., “Selene” said multiple ways)• device-specific calibration hints (desktop vs phone)Outcome: drastically lowers false positives in real rooms and improves quiet-user wake.
+Section W.3: Responsibility Split (Non-Negotiable)
 
-Gate-5: Context / Policy Gate (When Wake Is Allowed)Purpose: prevent wake at inappropriate times.Deterministic policy inputs:• session state (active vs soft-closed)• do-not-disturb / privacy mode• TTS active state (tighten thresholds when Selene is speaking)Outcome: prevents wake loops and “wake while talking” edge cases.
+A) PH1.W owns wake execution:
 
-Section W.7: Debounce, Cooldown, and Anti-Loop ProtectionDebounce (double-trigger prevention)• After CONFIRMED, ignore new wake candidates for a short deterministic window.
+Wake detection runtime logic.
 
-Cooldown (wake spam prevention)• After CAPTURE completes, enforce cooldown before returning to ARMED_IDLE.
+Armed / candidate / confirmed transitions.
 
-Anti-loop (prevents self-wake from Selene’s own TTS)• When TTS is active:– require Gate-0 (AEC stability) to pass– tighten Gate-3 threshold and stability requirements– require Gate-4 personalization (recommended) before accept
+Debounce / cooldown / anti-loop protection.
 
-Section W.8: Capture Window (Wake → STT Handoff Contract)Upon CONFIRMED:• Start capture = pre-roll start + candidate window start (bounded)• End capture = post-roll after speech end OR max duration limit• Emit a single bounded audio segment reference to PH1.CHard rule: STT must never miss the first word; pre-roll is mandatory.
+Capture window boundaries for downstream STT.
 
-Section W.9: Onboarding Artifact Package (Consumed by PH1.W)PH1.W consumes a per-user wake artifact package generated during onboarding. Minimum fields:• user_wake_profile_id• allowed wake phrase variants (e.g., “Selene”, “Hey Selene”)• bounded thresholds (global min/max enforced)• speaker similarity thresholds (bounded)• device calibration hints (optional)Versioning rule• artifacts must be versioned and rollback-safe; PH1.W loads the latest valid version only.
+Reason-coded accept/reject outputs.
 
-Section W.10: Reason Codes and Deterministic Logging (How We Become “Best on Planet”)Every accept/reject must emit:• gate pass/fail results• stage scores (bucketed/rounded if needed)• chosen policy profile (desktop/home/office)• state transition path• reject reason code taxonomy (examples):– FAIL_G0_DEVICE_UNHEALTHY– FAIL_G0_AEC_UNSTABLE– FAIL_G1_NOISE– FAIL_G2_NOT_WAKE_LIKE– FAIL_G3_SCORE_LOW– FAIL_G3_UNSTABLE_SCORE– FAIL_G4_USER_MISMATCH– FAIL_G5_POLICY_BLOCKEDThis observability is required to tune to world-class without guesswork.
+B) Onboarding configures wake but does not execute wake:
 
-Section W.11: Acceptance-Test Targets (Proof That Beats “Single Detector” Systems)Minimum proofs (names TBD later, but behavior is mandatory):• No self-wake from Selene’s own TTS while speaking.• No wake on keyboard typing / desk knocks / transient noise.• Quiet user can wake reliably at ~1m in a normal room.• Multi-user room: only the enrolled user can wake the enrolled profile (when Gate-4 enabled).
+Wake setup, calibration, and per-user wake personalization are produced during onboarding as artifacts.
+
+PH1.W consumes these artifacts deterministically at runtime.
+
+PH1.W never trains. It only loads and executes.
+
+C) PH1.K provides substrate only:
+
+Pre-roll, clean audio frames, VAD, timing stats, device health, and (optionally) near-field heuristics.
+
+PH1.K never decides wake.
+
+Section W.3A: Boundaries (Hard Rules)
+
+Wake is not identity. PH1.W must never assert `user_id`.
+
+If personalization is enabled, PH1.W may use a bounded speaker-match bucket only as wake-quality evidence (to reduce false wakes), but it still must not bind identity. PH1.VOICE.ID is the identity binder.
+
+Wake is not authority. PH1.W must never grant permissions, call tools, call simulations, or commit actions.
+
+Wake is perception only. It means: “Begin an interaction window.”
+
+Ordering (non-negotiable):
+
+wake_event -> PH1.VOICE.ID -> PH1.C -> PH1.NLP -> PH1.X -> (Access/Authority -> Simulation -> Domain engines).
+
+Section W.4: Inputs (From PH1.K)
+
+Required inputs:
+
+processed_audio_stream_ref (AEC/NS/AGC)
+
+pre_roll_buffer_ref (rolling 1.0–1.5s)
+
+vad_state_stream (speech segments + confidence)
+
+timing_stats (jitter/drift/buffer depth)
+
+device_state (route/health/errors)
+
+Optional inputs (recommended):
+
+near_field_speech_hint (desktop)
+
+aec_stability_hint (especially when TTS is active)
+
+media_playback_active (optional, if the platform can provide it)
+
+source_liveness_hint (optional, best-effort: LIVE | REPLAY_SUSPECTED | UNKNOWN)
+
+Section W.5: Deterministic State Machine
+
+States:
+
+DISARMED (wake ignored by policy)
+
+ARMED_IDLE (listening for wake)
+
+CANDIDATE (wake suspicion; validation window running)
+
+CONFIRMED (wake accepted; emit wake_event)
+
+CAPTURE (handoff bounded audio window to STT)
+
+COOLDOWN (short ignore window after wake)
+
+SUSPENDED (audio integrity degraded; fail-closed)
+
+Device class policy (deterministic)
+
+ALWAYS_LISTENING: may enter ARMED_IDLE and run wake continuously (desktop / dedicated devices).
+
+EXPLICIT_TRIGGER_ONLY: must remain DISARMED for wake; sessions start only from an explicit trigger (phone-class).
+
+High-level transition rules:
+
+ARMED_IDLE → CANDIDATE only when Gate-0, Gate-1, Gate-1A, and Gate-2 pass.
+
+CANDIDATE → CONFIRMED only when Gate-3, Gate-3A, Gate-4, and Gate-5 pass within the validation window.
+
+CONFIRMED → CAPTURE immediately (pre-roll + post-roll bounded segment).
+
+CAPTURE → COOLDOWN always.
+
+COOLDOWN → ARMED_IDLE when cooldown timer expires.
+
+Any state → SUSPENDED if device/audio integrity fails.
+
+SUSPENDED → ARMED_IDLE only after integrity is restored and stabilization timer completes.
+
+Section W.6: The Gates (World-Class Combination)
+
+Two-stage structure (performance + accuracy)
+
+Stage A (always-on, cheap): Gate-0, Gate-1, Gate-1A, Gate-2.
+
+Stage B (only in CANDIDATE window): Gate-3, Gate-3A, Gate-4, Gate-5.
+
+Gate-0: Environment Integrity Gate (Fail-Closed)
+
+Purpose: never run wake decisions when audio conditions are untrustworthy.
+
+Reject candidate if any of the following are true:
+
+mic stream degraded / device unhealthy
+
+buffer underruns or drift beyond threshold
+
+AEC unstable while TTS is active (prevents self-trigger)
+
+Outcome: no candidate; emit reject reason codes only.
+
+Gate-1: Noise / Activity Gate
+
+Purpose: stop random sounds from ever reaching the wake verifier.
+
+Requirements (examples):
+
+VAD indicates speech-likeness (not clatter / transient noise)
+
+segment meets minimum voiced duration and stability
+
+Outcome: rejects keyboard, knocks, clanks, room noise spikes.
+
+Gate-1A: Start-of-Utterance Gate (Stops “mid-sentence” accidents)
+
+Purpose: prevent waking when someone casually says the wake word in the middle of a sentence.
+
+Recommended rule:
+
+Wake phrase must begin at the start of a new speech segment:
+
+preceded by >= 200ms of silence (from VAD), and
+
+starts within the first 1200ms of the voiced segment (allows “Hey Selene”).
+
+If not: reject.
+
+Gate-2: Lightweight Wake-Likeness Filter (Fast)
+
+Purpose: cheaply reject non-wake speech before heavier verification.
+
+Outcome: reduces false positives and compute load.
+
+Gate-3: Strong Wake Verifier (Main Detector)
+
+Purpose: high-accuracy wake detection.
+
+Requirements:
+
+score must exceed threshold AND remain stable across N consecutive frames (anti-spike)
+
+alignment / timing must be plausible (prevents accidental phonetic matches)
+
+Gate-3A: Liveness / Anti-Replay Gate (TV / Speaker / Recording Defense)
+
+Purpose: reject wake words that come from playback, not a nearby human.
+
+Reject if any are true (deterministic, fail-safe):
+
+source_liveness_hint = REPLAY_SUSPECTED (if provided), or
+
+TTS is active and AEC is unstable (classic self/echo failure), or
+
+near_field_speech_hint indicates far-field playback (if available).
+
+Hard rule: if uncertain, reject. False wakes are worse than misses.
+
+Gate-4: Per-User Wake Personalization (Selene’s Advantage)
+
+Purpose: beat generic engines in multi-user and noisy environments by binding wake to the enrolled user profile.
+
+Uses onboarding artifact package to enforce bounded checks such as:
+
+user wake-profile similarity gate (speaker embedding similarity within bounded threshold)
+
+per-user pronunciation variants accepted (e.g., “Selene” said multiple ways)
+
+device-specific calibration hints (desktop vs phone)
+
+Policy modes (deterministic):
+
+OWNER_ONLY: Gate-4 must pass (user match) to accept wake.
+
+ANYONE_CAN_WAKE: Gate-4 may be skipped; wake can open a non-personalized session (no memory, no execution).
+
+Gate-5: Context / Policy Gate (When Wake Is Allowed)
+
+Purpose: prevent wake at inappropriate times.
+
+Deterministic policy inputs:
+
+session state (active vs soft-closed)
+
+do-not-disturb / privacy mode
+
+TTS active state (tighten thresholds when Selene is speaking)
+
+media_playback_active (tighten thresholds or require near-field/liveness evidence)
+
+Outcome: prevents wake loops and “wake while talking” edge cases.
+
+Section W.7: Debounce, Cooldown, and Anti-Loop Protection
+
+Debounce (double-trigger prevention)
+
+After CONFIRMED, ignore new wake candidates for a short deterministic window.
+
+Cooldown (wake spam prevention)
+
+After CAPTURE completes, enforce cooldown before returning to ARMED_IDLE.
+
+Anti-loop (prevents self-wake from Selene’s own TTS)
+
+When TTS is active:
+
+require Gate-0 (AEC stability) to pass
+
+tighten Gate-3 threshold and stability requirements
+
+require Gate-4 personalization (recommended) before accept
+
+Section W.8: Capture Window (Wake → STT Handoff Contract)
+
+Upon CONFIRMED:
+
+Start capture = pre-roll start + candidate window start (bounded)
+
+End capture = post-roll after speech end OR max duration limit
+
+Emit a single bounded audio segment reference to PH1.C
+
+Hard rule: STT must never miss the first word; pre-roll is mandatory.
+
+Section W.8A: WakeEvent Output Contract (Minimum Schema)
+
+PH1.W must emit one of:
+
+wake_event (accepted), or
+
+wake_suppressed (candidate blocked by policy/guards), or
+
+wake_reject (candidate failed detection gates).
+
+WakeEvent (minimum fields)
+
+wake_event_id
+
+device_id
+
+session_start_request (WAKE_WORD | EXPLICIT_TRIGGER)
+
+timestamp_ms
+
+wake_score_bucket (bounded; not raw model internals)
+
+enter_threshold
+
+exit_threshold
+
+hold_frames
+
+cooldown_ms
+
+vad_state_bucket
+
+tts_playback_active
+
+media_playback_active (if available)
+
+environment_class (optional)
+
+model_package_id (or wake_model_version)
+
+parameter_set_id
+
+wake_profile_id (if personalization enabled)
+
+speaker_match_bucket (optional; wake-quality evidence only; never user_id)
+
+Hard rule: WakeEvent never implies identity and never implies authority.
+
+Wake suppression/reject (minimum fields)
+
+wake_event_id
+
+timestamp_ms
+
+suppression_reason_code OR reject_reason_code
+
+gate_fail_summary (bounded; gate ids only)
+
+Section W.8B: Wake Runtime Parameters (Bounded)
+
+Note: audio format/frame sizes are owned by PH1.K. PH1.W owns only wake parameters.
+
+Wake parameters (recommended bounds)
+
+enter_threshold: 0.60 to 0.85
+
+exit_threshold: 0.35 to 0.70
+
+hold_frames: 2 to 6
+
+cooldown_ms: 800 to 3000
+
+Hard rule: exit_threshold must be at least 0.10 lower than enter_threshold.
+
+Hard rule: any parameter change must be reason-coded and logged (no silent tuning).
+
+Section W.9: Onboarding Artifact Package (Consumed by PH1.W)
+
+PH1.W consumes a per-user wake artifact package generated during onboarding. Minimum fields:
+
+user_wake_profile_id
+
+allowed wake phrase variants (e.g., “Selene”, “Hey Selene”)
+
+bounded thresholds (global min/max enforced)
+
+speaker similarity thresholds (bounded)
+
+device calibration hints (optional)
+
+policy mode (OWNER_ONLY | ANYONE_CAN_WAKE)
+
+Versioning rule
+
+artifacts must be versioned and rollback-safe; PH1.W loads the latest valid version only.
+
+Section W.9B: Optional Artifact Sync (Recovery, Not Runtime Dependency)
+
+Wake artifacts are device-resident.
+
+They may be synced for durability and cross-device restore using idempotent outbox rules.
+
+Hard rule: cloud sync must never be required for live wake detection.
+
+If sync is disabled (opt-out), wake must still function locally. Only restore consistency is lost.
+
+Section W.9C: Wake Enrollment Completion (Deterministic)
+
+This defines when wake setup is "enough" to be considered enrolled.
+
+Enrollment completion criteria (defaults + bounds)
+- pass_target: default 5 (allowed 3 to 8). Selected once per enrollment session and fixed.
+- max_attempts: default 12 (allowed 8 to 20).
+- enrollment_timeout_ms: default 300000 (allowed 180000 to 600000).
+- inter_attempt_pause_ms: default 500 (allowed 200 to 1500).
+
+Completion rule
+- If pass_target is reached: enrollment becomes COMPLETE immediately.
+- If max_attempts or enrollment_timeout_ms is reached: enrollment becomes PENDING (reason-coded) and Selene schedules a reminder (PH1.REM.001) to finish later.
+
+Hard rule
+Selene must never claim wake setup is complete unless enrollment is COMPLETE.
+
+Section W.9D: Wake Learning Stabilization (Pause/Resume, Deterministic)
+
+Hard rule
+"Learning" here means bounded sample capture + bounded parameter tuning + versioned artifact packages. No on-device weight training.
+
+Learning state machine (minimum)
+- LEARNING_ACTIVE
+- LEARNING_PAUSED_STABLE
+- LEARNING_PAUSED_USER
+- LEARNING_RESUME_DRIFT
+
+Stabilization rule (when learning may pause)
+Learning may pause only after all stabilization gates pass for stability_window_days.
+
+Stabilization gates (minimum)
+- false_wake_rate <= target for stability_window_days.
+- miss_rate <= target for stability_window_days (required environment buckets).
+- wake_detect_latency_ms p95 <= target for stability_window_days.
+- coverage_bucket_count >= coverage_min_buckets.
+- improvement_delta <= improvement_epsilon over improvement_window_days.
+
+Drift rule (when learning must resume)
+Learning resumes if any drift gate fails for drift_window_days:
+- false_wake_rate rises above target.
+- miss_rate rises above target in any required bucket.
+- new device or mic profile detected.
+- new environment class appears with poor performance.
+- user issues "improve wake detection" / "retrain wake".
+
+Deterministic bounds (defaults + ranges)
+- stability_window_days: default 14 (allowed 7 to 30)
+- drift_window_days: default 3 (allowed 2 to 7)
+- improvement_window_days: default 14 (allowed 7 to 30)
+- improvement_epsilon: default 0.005 (allowed 0.002 to 0.02)
+- coverage_min_buckets: default 6 (allowed 4 to 10)
+- max_new_samples_per_day: default 10 (allowed 5 to 20)
+- max_new_samples_per_env: default 5 (allowed 3 to 10)
+
+Section W.9A: False Wake Feedback Loop (How Wake Gets Better Per Home)
+
+PH1.W does not train.
+
+But Selene must still improve deterministically.
+
+If the user reports a false wake (voice command or UI button) within a short window after wake:
+
+Selene OS must log a labeled “false_wake” event (append-only, reason-coded).
+
+The wake learning/packaging pipeline must produce a new wake artifact version (bounded thresholds only; never unbounded "learning").
+
+PH1.W must use the newest valid wake artifact version on the next session.
+
+Hard rule: this loop must be auditable and rollback-safe. No silent tuning.
+
+Section W.10: Reason Codes and Deterministic Logging (How We Become “Best on Planet”)
+
+Every accept/reject must emit:
+
+gate pass/fail results
+
+stage scores (bucketed/rounded if needed)
+
+chosen policy profile (desktop/home/office)
+
+state transition path
+
+reject reason code taxonomy (examples):
+
+FAIL_G0_DEVICE_UNHEALTHY
+
+FAIL_G0_AEC_UNSTABLE
+
+FAIL_G1_NOISE
+
+FAIL_G1A_NOT_UTTERANCE_START
+
+FAIL_G2_NOT_WAKE_LIKE
+
+FAIL_G3_SCORE_LOW
+
+FAIL_G3_UNSTABLE_SCORE
+
+FAIL_G3A_REPLAY_SUSPECTED
+
+FAIL_G4_USER_MISMATCH
+
+FAIL_G5_POLICY_BLOCKED
+
+suppression reason code taxonomy (examples):
+
+SUPPRESS_TTS_ACTIVE
+
+SUPPRESS_MEDIA_PLAYBACK
+
+SUPPRESS_COOLDOWN
+
+SUPPRESS_POLICY_SUSPENDED
+
+SUPPRESS_EXPLICIT_TRIGGER_ONLY
+
+This observability is required to tune to world-class without guesswork.
+
+Section W.11: Acceptance Tests (Proof PH1.W Is Better Than ChatGPT Wake)
+
+AT-W-01: No self-wake during Selene speech
+
+Scenario: Selene is speaking (TTS active); mic hears echo.
+
+Pass: PH1.W does not emit wake_event; rejects via integrity/echo-safe gates.
+
+AT-W-02: No wake on transient noise
+
+Scenario: keyboard typing / desk knocks / transient noise.
+
+Pass: PH1.W emits no wake_event; rejects at the Noise/Activity gate.
+
+AT-W-03: Quiet wake works at ~1m
+
+Scenario: enrolled user says wake phrase quietly at ~1m in a normal room.
+
+Pass: wake_event emitted; capture includes first syllable via pre-roll.
+
+AT-W-04: Personalized wake rejects non-owner voice (no user_id asserted)
+
+Scenario: non-enrolled speaker says wake phrase in a multi-user room.
+
+Pass: reject with user mismatch; no wake_event.
+
+AT-W-05: No wake from TV / recording
+
+Scenario: a TV or speaker says the wake phrase clearly.
+
+Pass: no wake_event; reject via replay/liveness gate.
+
+AT-W-06: Similar-sounding words do not wake
+
+Scenario: user says words that sound similar (“Celine”, “Selena”, etc).
+
+Pass: no wake_event; reject via verifier stability/alignment.
+
+AT-W-07: Whisper / quiet wake works near-field
+
+Scenario: enrolled user says wake phrase quietly close to the mic.
+
+Pass: wake_event emitted; miss rate target met in the quiet-room suite.
+
+AT-W-08: Cooldown prevents wake spam
+
+Scenario: wake phrase repeated rapidly.
+
+Pass: only one wake_event during cooldown; later wakes work after cooldown ends.
+
+AT-W-09: Degraded audio fails closed
+
+Scenario: mic disconnects, heavy underruns, or integrity fails.
+
+Pass: PH1.W enters SUSPENDED and emits deterministic reject reasons; no wake_event.
+
+AT-W-10: False wake feedback is auditable and affects the next wake pack version
+
+Scenario: a false wake occurs; user marks it “false wake.”
+
+Pass: a labeled false_wake event is written; onboarding produces a new wake artifact version; the next wake session uses the newest valid version.
+
+AT-W-11: Hysteresis + hold-frames emit exactly one WakeEvent
+
+Scenario: wake score crosses threshold and stays above for the required hold_frames.
+
+Pass: exactly one wake_event is emitted, then cooldown begins; no duplicate wake_event during cooldown.
+
+AT-W-12: Policy suspend produces no WakeEvent but logs suppression
+
+Scenario: policy sets wake to DISARMED/SUSPENDED (including EXPLICIT_TRIGGER_ONLY devices).
+
+Pass: no wake_event is emitted; a suppression log exists with a suppression reason code.
+
+AT-W-13: WakeEvent schema completeness
+
+Scenario: wake_event emitted.
+
+Pass: wake_event includes all minimum fields from Section W.8A; no missing required fields.
+
+Section W.12: Wake Debug Privacy (Non-Negotiable)
+
+By default, do not store raw audio for wake tuning.
+
+Store only:
+
+gate pass/fail results,
+
+bucketed scores (rounded),
+
+reason codes,
+
+and hashes/metrics required for replay.
+
+If a user opts in to wake debugging:
+
+allow storing a short bounded clip (e.g., 0.5–2.0s) with TTL,
+
+and record that consent in the audit log.
+
+Hard rule: wake debug audio must expire automatically on TTL. No exceptions.
+
+Section W.13: Always-On Performance Budget (Wake Must Be Cheap)
+
+Stage A must be extremely cheap (always-on).
+
+Starting default targets (desktop):
+
+average CPU <= 3%,
+
+peak CPU <= 10% (short bursts during verification),
+
+memory <= 150MB.
+
+Hard rule: if wake exceeds the budget repeatedly, PH1.W must degrade deterministically or fail closed (SUSPENDED) rather than lag or spike unpredictably.
 
 1.3 PH1.C — STT Router + Quality Gate
 
@@ -393,6 +1417,31 @@ PH1.C — STT Router + Quality Gate v0.2 (World-Class) — Canvas-Ready Insert
 
 Section C.1: Mission
 PH1.C converts a bounded speech segment into a trustworthy transcript, or it fails closed. PH1.C is not allowed to “guess.” If the transcript is not good enough to trust, PH1.C must reject it and trigger a clean retry path.
+
+Section C.1A: STT SLO (Measurable, Enterprise-Grade)
+
+PH1.C is “best in the world” only if it is measurable and repeatable.
+
+PH1.C must meet the global voice SLO row:
+
+`bounded_audio_segment_ref.t_end` -> `transcript_ok` emitted.
+
+PH1.C must also measure (p95/p99) these internal timings:
+
+| Segment | Start | End | Target p95 | Target p99 |
+|---|---|---|---:|---:|
+| STT total | request received | `transcript_ok` OR `transcript_reject` emitted | <= 900ms | <= 1600ms |
+| Streaming first partial (optional) | request received | first_partial available (internal only) | <= 250ms | <= 450ms |
+
+Hard rule: timing metrics must be visible to replay/audit. Repeated severe violations must degrade or fail closed deterministically.
+
+Section C.1B: Enterprise Non-Negotiables
+
+Policy must be enforceable: locality, privacy mode, tenant restrictions.
+
+No provider leakage upstream: PH1.NLP and PH1.X must never see provider names, retry ladders, or raw confidence scores.
+
+Determinism must be provable: identical audio + identical policy + identical packages -> identical output (or identical reject + reason).
 
 Section C.2: What PH1.C Owns (And What It Must Not Do)
 A. PH1.C owns
@@ -424,7 +1473,7 @@ Required
 
 bounded_audio_segment_ref (from PH1.W capture; includes pre-roll + post-roll boundaries)
 
-session_state_ref (active / soft-closed / tts_active)
+session_state_ref (active / soft-closed / tts_playback_active)
 
 device_state_ref (audio health hints)
 
@@ -433,6 +1482,16 @@ Optional (recommended)
 language_hint (from user profile or last good transcript)
 
 noise_level_hint / vad_quality_hint (from PH1.K)
+
+policy_context (enterprise policy: local_only / allowed_route_classes / allowed_regions / privacy_mode)
+
+speaker_focus_ref (optional: a primary-speaker track/segment hint from PH1.VOICE.ID / PH1.K when available)
+
+tenant_vocabulary_pack_ref (optional, versioned: org acronyms / product names / domain terms)
+
+user_vocabulary_pack_ref (optional, versioned; allowed only when identity is OK and policy allows personalization)
+
+stt_routing_policy_pack_ref (optional, versioned: SHADOW/ASSIST/LEAD mode + ladder order; audit-only details)
 
 Section C.4: Output Contract (Strict)
 PH1.C emits exactly one of:
@@ -444,17 +1503,53 @@ language_tag (best available)
 
 confidence_bucket (e.g., HIGH / MED / LOW; MED must not pass in MVP)
 
+uncertain_spans (optional, bounded: a short list of transcript spans that are risky; provider-agnostic; no raw scores)
+
 B. transcript_reject
 
 reason_code (deterministic)
 
 retry_advice (one of: REPEAT / SPEAK_SLOWER / MOVE_CLOSER / QUIET_ENV)
 
+Enterprise add-on: retry_advice may include SWITCH_TO_TEXT when voice capture is not reliable or policy blocks STT.
+
 Hard rule: upstream engines (PH1.NLP, PH1.X) never see provider identity, retry count, or competing hypotheses.
+
+Section C.4A: Provider-Invisible Metadata (Audit-Only)
+
+To reach enterprise level, PH1.C must be diagnosable without leaking provider internals upstream.
+
+PH1.C must emit an audit event (PH1.J) per turn containing only bounded, provider-agnostic metadata:
+
+route_class_used (ON_DEVICE | ON_PREM | CLOUD_ALLOWED)
+
+attempt_count
+
+candidate_count (including probes / N-best when used)
+
+selected_slot (Primary | Secondary | Tertiary | None)
+
+mode_used (SHADOW | ASSIST | LEAD)
+
+second_pass_used (bool)
+
+total_latency_ms
+
+quality_breakdown_bucket (coverage/confidence/plausibility buckets, not raw floats)
+
+vocabulary_packs_used (tenant pack id; user pack id if allowed)
+
+policy_profile_id (if provided)
+
+stt_routing_policy_pack_id (if provided)
+
+Hard rule: this metadata is for audit/replay only; it must not be required by PH1.NLP/PH1.X to operate.
 
 Section C.5: Provider Routing Without Leaking Complexity
 C.5.1 Provider ladder (internal)
-PH1.C maintains an internal ordered ladder per turn (example: Primary → Secondary → Tertiary). The ladder is selected deterministically based on:
+PH1.C maintains an internal ordered ladder per turn (example: Primary -> Secondary -> Tertiary).
+
+The ladder is selected deterministically based on:
 
 language_hint and language confidence
 
@@ -464,9 +1559,11 @@ region policy (latency / availability)
 
 noise level / audio degradation flags
 
-tts_active (stricter echo-safe preference)
+tts_playback_active (stricter echo-safe preference)
 
-C.5.2 Strict attempt budget
+policy_context (locality / privacy / allowed route classes)
+
+C.5.2 Strict attempt + latency budget
 PH1.C enforces a deterministic budget:
 
 max_attempts_per_turn (e.g., 2–3)
@@ -477,12 +1574,85 @@ max_audio_reprocesses (e.g., 1)
 
 If budget is exceeded: fail closed with STT_FAIL_BUDGET_EXCEEDED.
 
-C.5.3 Best-passing selection
-PH1.C may evaluate multiple candidates internally. It returns only:
+C.5.3 Candidate set builder (bounded)
+For each utterance, PH1.C may build a bounded candidate set:
+
+one attempt per ladder slot (Primary/Secondary/Tertiary) when available
+
+optional N-best from a provider (bounded; example: <= 5) when it is available and within budget
+
+optional language probe attempts (bounded; example: <= 2) only when language is uncertain and within budget
+
+Hard rule: probes and N-best are optional optimizations; they must never violate the attempt/latency budget.
+
+C.5.4 Deterministic ranking (provider-agnostic)
+PH1.C ranks candidates using deterministic signals only:
+
+quality gate result (Coverage + Confidence + Plausibility)
+
+language match (hint vs detected)
+
+vocabulary match (tenant/user packs, when allowed)
+
+critical-token integrity (names/numbers/dates/amounts): prefer candidates with fewer critical-token uncertainties
+
+echo/background risk flags
+
+latency compliance
+
+C.5.5 Best-passing selection
+PH1.C returns only:
 
 the best candidate that passes quality gates, or
 
 transcript_reject if none pass.
+
+C.5.6 Policy routing gate (Enterprise locality + compliance)
+If policy_context forbids a route class (example: local_only=true and only CLOUD_ALLOWED routes exist):
+
+fail closed with STT_FAIL_POLICY_RESTRICTED.
+
+Hard rule: never silently “fall back to cloud” when policy forbids it.
+
+C.5.7 Vocabulary packs (How Selene beats generic STT in enterprise)
+PH1.C may use a versioned vocabulary pack to improve correctness for names and domain terms.
+
+Tenant vocabulary packs are allowed when policy permits.
+
+User vocabulary packs are allowed only when identity is OK and policy allows personalization.
+
+Hard rule: vocabulary packs must be versioned artifacts; no unlogged ad-hoc tuning.
+
+C.5.8 Quota / cost guardrails (Enterprise safety)
+PH1.C must support deterministic budget limits (per tenant/device policy).
+
+If a quota is exceeded, fail closed with STT_FAIL_QUOTA_THROTTLED and set retry_advice=SWITCH_TO_TEXT (or a safe equivalent).
+
+C.5.9 Shadow -> Assist -> Lead modes (Automatic improvement without risk)
+PH1.C supports three deterministic routing modes controlled only by a versioned routing policy pack:
+
+SHADOW: keep the baseline ladder, but optionally run extra candidates for scoring/learning within budgets. User-facing output remains transcript_ok/transcript_reject only.
+
+ASSIST: baseline ladder remains, but PH1.C may run a bounded second pass (N-best/probes/vocab packs) on borderline turns to reduce rejects and reduce uncertain_spans.
+
+LEAD: a Selene-owned route may become Primary, but only when the routing policy pack says it is promoted. Fallback slots remain available.
+
+Hard rule: mode changes must be auditable and must never change Access/Authority or Simulation behavior.
+
+C.5.10 Learning signals emission (Non-authoritative)
+PH1.C may emit learning signals as audit/outbox events, such as:
+
+borderline_turn_detected
+
+critical_token_uncertainty_detected
+
+proper_noun_mishear_pattern (bounded, text-only, privacy-safe)
+
+echo/background fail-closed summary
+
+Hard rule: PH1.C does not train models. It only emits signals and consumes versioned artifacts produced elsewhere.
+
+Hard rule: learning signals are side effects and must be idempotent (keyed by correlation_id + segment hash) so retries never duplicate training data.
 
 Section C.6: Transcript Quality Scoring (World-Class, Deterministic)
 PH1.C computes a single internal QualityScore from three deterministic components: Coverage + Confidence + Plausibility.
@@ -524,6 +1694,24 @@ If failing looks recoverable: RETRY once using next provider or alternate decode
 
 If still failing after budget: FAIL CLOSED.
 
+Section C.6.5: Echo + Background Speech Protection (Enterprise Reliability)
+
+When tts_playback_active=true, PH1.C must tighten echo-safe rules and prefer echo-robust decoding.
+
+If background speech is present and cannot be separated reliably:
+
+reject (do not blend multiple speakers into one transcript).
+
+If speaker_focus_ref is provided, PH1.C must prefer it deterministically to reduce TV/other-speaker pollution.
+
+Section C.6.6: Uncertain Spans (Targeted Clarify Without Guessing)
+
+If the transcript is mostly HIGH confidence but contains a few risky words (often numbers, names, dates):
+
+PH1.C may include uncertain_spans (bounded; provider-agnostic).
+
+Hard rule: uncertain_spans must never be used to “guess the right word.” They exist so PH1.NLP/PH1.X can ask one precise question instead of guessing.
+
 Section C.7: Deterministic Reason Codes (Minimum Set)
 
 STT_FAIL_EMPTY
@@ -539,6 +1727,18 @@ STT_FAIL_LANGUAGE_MISMATCH
 STT_FAIL_AUDIO_DEGRADED
 
 STT_FAIL_BUDGET_EXCEEDED
+
+STT_FAIL_POLICY_RESTRICTED
+
+STT_FAIL_PROVIDER_TIMEOUT
+
+STT_FAIL_NETWORK_UNAVAILABLE
+
+STT_FAIL_BACKGROUND_SPEECH
+
+STT_FAIL_ECHO_SUSPECTED
+
+STT_FAIL_QUOTA_THROTTLED
 
 Section C.8: Acceptance Tests (Proof PH1.C Is Better Than ChatGPT Voice)
 AT-C-01: No hallucinated words (hard fail)
@@ -643,9 +1843,87 @@ Scenario: user speaks English; TV in another language in background.
 
 Pass: transcript_ok contains only user speech, or transcript_reject; never blended user+TV text.
 
+AT-C-18: Enterprise locality policy enforced (no silent cloud fallback)
+
+Scenario: policy_context.local_only=true; only cloud routes available.
+
+Pass: transcript_reject with STT_FAIL_POLICY_RESTRICTED; audit contains route_class_used and policy_profile_id.
+
+AT-C-19: Route class is auditable but not leaked upstream
+
+Scenario: PH1.C uses an on-device attempt then an on-prem attempt.
+
+Pass: PH1.NLP/PH1.X still receive only transcript_ok or transcript_reject; audit contains route_class_used and attempt_count.
+
+AT-C-20: Tenant vocabulary pack improves domain terms deterministically
+
+Scenario: user says an enterprise acronym/product name present in tenant_vocabulary_pack_ref.
+
+Pass: transcript_ok preserves the exact term; audit records the tenant pack id used.
+
+AT-C-21: User vocabulary pack is used only when identity is OK
+
+Scenario: identity is UNKNOWN; user_vocabulary_pack_ref exists.
+
+Pass: PH1.C does not apply user vocabulary; audit records “user pack skipped due to identity unknown” (reason-coded).
+
+AT-C-22: Uncertain spans are bounded and provider-agnostic
+
+Scenario: transcript passes but contains an ambiguous number/name near the quality threshold.
+
+Pass: transcript_ok is emitted with uncertain_spans (bounded list); no guessing; no raw confidence scores exposed.
+
+AT-C-23: Quota throttle fails closed deterministically
+
+Scenario: tenant budget exceeded for STT.
+
+Pass: transcript_reject with STT_FAIL_QUOTA_THROTTLED and retry advice directs a safe fallback (example: SWITCH_TO_TEXT).
+
+AT-C-24: Streaming partials never leak upstream
+
+Scenario: provider supports partial transcripts.
+
+Pass: upstream sees only the final transcript_ok/transcript_reject; partials may exist only as internal metrics/audit hints.
+
+AT-C-25: Policy + package + audio determinism is provable
+
+Scenario: identical audio processed twice under the same policy and package versions.
+
+Pass: identical transcript_ok (including uncertain_spans if present) or identical transcript_reject + reason_code.
+
+AT-C-26: Shadow mode learns without changing the contract
+
+Scenario: routing policy mode is SHADOW; PH1.C evaluates extra candidates within budget.
+
+Pass: output is still only transcript_ok or transcript_reject; upstream sees no provider internals; audit shows mode_used=SHADOW and candidate_count.
+
+AT-C-27: Candidate set is bounded (N-best + probes)
+
+Scenario: language is uncertain and a provider offers N-best.
+
+Pass: candidate_count is bounded (example: N-best <= 5; probes <= 2) and PH1.C never exceeds attempt/latency budgets.
+
+AT-C-28: Lead mode changes ladder only via a versioned policy pack
+
+Scenario: stt_routing_policy_pack_id changes from baseline to a promoted LEAD policy.
+
+Pass: mode_used becomes LEAD only after the policy pack is applied; audit records the policy pack id; upstream still sees no provider identity.
+
+AT-C-29: Critical-token integrity never guesses
+
+Scenario: two passing candidates disagree on a number/date/name.
+
+Pass: PH1.C either rejects or emits transcript_ok with uncertain_spans over the critical token(s); PH1.C never “picks a number” without confidence.
+
+AT-C-30: Learning signals are idempotent and privacy-safe
+
+Scenario: the same utterance is replayed or retried.
+
+Pass: learning signals (if emitted) are keyed by correlation_id + segment hash so they do not duplicate; raw audio is not stored by default.
+
 1.4 PH1.NLP — Deterministic NLP Normalizer
 
-PH1.NLP — Deterministic NLP Normalizer v0.2 (Multilingual + Slang-Safe) — Canvas-Ready Insert
+PH1.NLP — Deterministic NLP Normalizer v0.3 (Enterprise Routing + No-Repeat Clarify) — Canvas-Ready Insert
 
 Section N.1: Mission
 PH1.NLP converts a trusted transcript into a deterministic intent + fields draft, or it returns clarify when confidence is not HIGH. PH1.NLP must never “guess” missing fields or silently invent meaning.
@@ -674,11 +1952,31 @@ PH1.NLP must preserve mixed-language spans verbatim and treat them as first-clas
 
 Section N.4: Inputs
 
-transcript_text (verbatim)
+Required inputs
 
-language_tag (best available from PH1.C)
+transcript_ok (trusted text from PH1.C or UI text wrapper)
 
-session_state_ref (context only; no authority)
+transcript_ok.transcript_text (verbatim)
+
+transcript_ok.language_tag (best available from PH1.C or UI locale)
+
+session_state_ref (context only; no authority; includes `tts_playback_active`)
+
+Optional inputs (enterprise / best-in-class)
+
+actor_assertion (voice-id bucket or signed-in user_id; non-authoritative; used only for voice-locked language artifacts)
+
+prefilled_context (onboarding/link metadata fields; bounded; non-authoritative; used to avoid repeat clarifies)
+
+prior_interaction_context (bounded; last few turns only)
+
+correction_pairs (per-user language profile; bounded; non-authoritative)
+
+time_context (now + timezone offset; used only for deterministic normalization of relative time phrases)
+
+uncertain_spans (from PH1.C; bounded risky spans like numbers/names/dates; includes start_byte/end_byte + optional field_hint)
+
+confirmed_context (from last confirmed WorkOrder; used only to resolve “that/it/there” safely)
 
 Section N.5: Output Contract
 PH1.NLP emits exactly one of:
@@ -686,25 +1984,53 @@ A. intent_draft
 
 intent_type (from a controlled intent taxonomy)
 
+intent_schema_version (version of the intent schema used; separate from contract schema_version)
+
 fields (key/value, with per-field confidence)
 
 required_fields_missing (list)
 
 overall_confidence (HIGH / MED / LOW)
 
-evidence_spans (verbatim excerpts for each extracted field)
+evidence_spans (machine-precise proof for each extracted field)
+
+EvidenceSpan fields (minimum)
+
+field
+
+transcript_hash (stable hash of transcript_text)
+
+start_byte, end_byte (byte offsets into transcript_text; UTF-8)
+
+verbatim_excerpt (exact substring at [start_byte, end_byte])
+
+Optional enterprise metadata (bounded; non-authoritative; may appear on intent_draft or clarify)
+
+sensitivity_level (PUBLIC / PRIVATE / CONFIDENTIAL)
+
+requires_confirmation (bool; deterministic)
+
+ambiguity_flags (bounded list; e.g., reference_ambiguous, recipient_ambiguous, date_ambiguous, amount_ambiguous)
+
+routing_hints (bounded list; non-authoritative; used only for downstream orchestration)
+
+reason_code (required; reason-coded output for every decision)
 
 B. clarify
 
 question (single minimal question)
 
-what_is_missing (fields)
+what_is_missing (exactly 1 field)
 
 accepted_answer_formats (examples)
+
+reason_code (required)
 
 C. chat (non-actionable conversational response)
 
 response_text
+
+reason_code (required)
 
 Hard rule: downstream engines must treat intent_draft as a draft until confirmations/access/simulation gates pass.
 
@@ -741,6 +2067,112 @@ original_span (verbatim)
 
 normalized_value (only if deterministic; otherwise missing + clarify)
 
+N.6.5 Evidence Spans Are Proof (Better Than ChatGPT)
+
+PH1.NLP must attach evidence_spans with transcript_hash + byte offsets for every extracted field.
+
+Hard rule: PH1.NLP must never extract a field without an evidence span that points to the exact source text.
+
+N.6.6 Time Expression (Structured, Still Deterministic)
+
+For time fields (FieldKey::When), PH1.NLP may produce a structured time expression only when deterministic:
+
+TimeExpression.kind (DateKeyword / DateTimeLocal / PartOfDay / Duration / RangeLocal)
+
+TimeExpression.normalized (bounded string; may be relative like “tomorrow 15:00”)
+
+Hard rule: PH1.NLP must not convert relative phrases (today/tomorrow/tonight) into absolute timestamps unless time_context is provided. If not, it keeps the phrase relative or returns clarify.
+
+N.6.7 Multi-Intent Detection (Do Not Guess Which One)
+
+If the user asks for more than one actionable intent in one turn, PH1.NLP must return clarify:
+
+question: “Which one should I do first?”
+
+what_is_missing: IntentChoice
+
+Hard rule: do not execute or confirm two actions from one transcript without an explicit user ordering.
+
+N.6.8 Reference Handling (“that/it/there”)
+
+If the transcript contains a reference (that/it/there/this) and there is no confirmed_context to bind it:
+
+return clarify with what_is_missing = ReferenceTarget.
+
+If confirmed_context exists and the binding is deterministic:
+
+bind it and emit evidence_spans for the bound referent.
+
+Hard rule: no silent reference guessing.
+
+N.6.9 Uncertain Spans (Targeted Clarify, No Guessing)
+
+If PH1.C provides uncertain_spans, PH1.NLP should ask about the risky span directly (one question) instead of guessing.
+
+Use field_hint (if provided) to decide what field to ask for.
+
+Hard rule: uncertain spans never become guessed words. They only trigger a precise clarify.
+
+N.6.10 Intent Schema Registry (Versioned, Enterprise-Safe)
+
+PH1.NLP must use a versioned intent schema (taxonomy + required fields + per-field priority rules).
+
+Hard rule: changing the intent schema is a versioned change and must be replay-safe.
+
+Future (not required in MVP contract): signed tenant/user phrase packs may extend triggers and synonyms deterministically; they must be versioned artifacts and never “learn” at runtime.
+
+N.6.11 Sensitivity Level + Confirmation Requirement (Enterprise)
+
+PH1.NLP should emit sensitivity_level and requires_confirmation as bounded metadata so downstream engines can enforce “enterprise calm” behavior (confirm before risky or private actions).
+
+Hard rule: this metadata is non-authoritative. It never grants permission and never triggers execution by itself.
+
+Deterministic examples (minimum)
+
+SendMoney: CONFIDENTIAL + requires_confirmation=true.
+
+CreateCalendarEvent / SetReminder / BookTable: PRIVATE + requires_confirmation=true.
+
+TimeQuery / WeatherQuery: PUBLIC + requires_confirmation=false.
+
+N.6.12 Ambiguity Flags (Explicit, Bounded)
+
+PH1.NLP should emit ambiguity_flags to make uncertainty machine-explicit (for UI, audit, and “why we asked” explanations).
+
+Hard rule: if an ambiguity blocks HIGH confidence, PH1.NLP must return clarify (one question) and set reason_code + what_is_missing accordingly. ambiguity_flags may be emitted (optional) for audit/UI.
+
+Minimum ambiguity flags (examples)
+
+reference_ambiguous (that/it/there/this with no confirmed_context binding)
+
+recipient_ambiguous (multiple plausible recipients)
+
+date_ambiguous (relative time phrase without deterministic normalization)
+
+amount_ambiguous (number span exists but is marked uncertain by PH1.C)
+
+N.6.13 Routing Hints + Onboarding Intent Group (Scoped)
+
+PH1.NLP may emit routing_hints (bounded; non-authoritative) to help Phase X orchestrate without turning PH1.NLP into an authority engine.
+
+Hard rule: routing_hints never bypass Access/Simulation gates.
+
+Minimum onboarding routing hints (examples)
+
+onboarding_start
+
+onboarding_confirm_identity
+
+onboarding_complete
+
+onboarding_language_detect
+
+Conflict-Resolution Note (No-Repeat Rule)
+
+If prefilled_context already provides a required field, PH1.NLP must not ask for it.
+
+If a conflict exists (prefilled value vs user utterance), PH1.NLP emits a single bounded clarify once (to resolve the conflict) and must not re-ask after the value is confirmed in confirmed_context.
+
 Section N.7: Clarification Loop (Minimal, One Question)
 Trigger clarify when:
 
@@ -757,6 +2189,14 @@ Ask exactly one question.
 Provide 2–3 answer formats.
 
 Never ask two things at once.
+
+Hard rule: clarify.what_is_missing must contain exactly 1 field key. If multiple fields are missing, PH1.NLP asks for the highest-priority one first, then asks follow-ups in later turns.
+
+N.7.1 No-Repeat / Conflict-Once Rule (Enterprise)
+
+PH1.NLP must not re-ask fields that are already present in confirmed_context (or prefilled_context).
+
+When a prefilled field conflicts with the transcript, PH1.NLP asks exactly one conflict question once, then relies on confirmed_context to prevent repeats in later turns.
 
 Section N.8: Acceptance Tests (Multilingual + Slang + Mixed Input)
 AT-N-01: Broken English is structured, not rejected
@@ -775,13 +2215,13 @@ AT-N-03: Slang does not break intent
 
 Input: “yo Selene can you set that thing for tmr morning”.
 
-Pass: intent_draft created; “tmr” deterministically mapped to tomorrow; “that thing” triggers clarify for missing task details.
+Pass: clarify (missing task details). “tmr” is handled deterministically (kept as relative or normalized).
 
 AT-N-04: Ambiguous slang triggers clarify
 
 Input: “Selene handle that later”.
 
-Pass: clarify asking what “that” refers to and what time “later” means.
+Pass: clarify asking what “that” refers to (one question only; no guessing). A later turn may clarify the time.
 
 AT-N-05: Mixed scripts preserved verbatim
 
@@ -799,7 +2239,59 @@ AT-N-07: Numbers are never invented
 
 Input: “Selene send money to Alex”.
 
-Pass: clarify asking amount and which Alex (if ambiguous); no invented amount.
+Pass: clarify asking for the amount (one question only). If the recipient is ambiguous (“which Alex”), a later turn clarifies the recipient. No invented amount.
+
+AT-N-08: Evidence spans are machine-precise
+
+Scenario: PH1.NLP extracts a field (e.g., Amount="$20").
+
+Pass: evidence_span includes transcript_hash + correct start_byte/end_byte and verbatim_excerpt exactly matches the transcript substring.
+
+AT-N-09: Multi-intent triggers IntentChoice clarify
+
+Input: “Selene what time is it and set a reminder for tomorrow”.
+
+Pass: clarify with what_is_missing=IntentChoice; no intent_draft is emitted for either action until the user chooses ordering.
+
+AT-N-10: Uncertain spans trigger targeted clarify (no guessing)
+
+Scenario: PH1.C provides uncertain_spans over a number/date/name.
+
+Pass: PH1.NLP asks one question about that span (field_hint if provided). PH1.NLP does not guess the token.
+
+AT-N-11: Prefilled fields do not cause repeat clarifies
+
+Scenario: prefilled_context provides a required field (or the user already confirmed it in confirmed_context).
+
+Pass: PH1.NLP does not ask for that field again. If the user contradicts a prefilled value, PH1.NLP asks one conflict question once, then stops re-asking after confirmation.
+
+AT-N-12: Onboarding intent emits routing hints (non-authoritative)
+
+Scenario: onboarding_start is detected (from transcript + bounded onboarding metadata).
+
+Pass: PH1.NLP emits routing_hints including onboarding_start; no access or execution is implied; downstream still enforces Access/Simulation gates.
+
+Section N.9: Reason Codes (Minimum Set)
+
+NLP_INPUT_MISSING
+
+NLP_INTENT_OK
+
+NLP_INTENT_UNKNOWN
+
+NLP_MULTI_INTENT
+
+NLP_CLARIFY_MISSING_FIELD
+
+NLP_CLARIFY_AMBIGUOUS_REFERENCE
+
+NLP_CLARIFY_CONFLICT_PREFILLED
+
+NLP_UNCERTAIN_SPAN
+
+NLP_ONBOARDING_DETECTED
+
+NLP_CHAT_DEFAULT
 
 1.5 PH1.D — LLM Router Contract
 
@@ -835,6 +2327,8 @@ Return “best effort” outputs when schema validation fails.
 Section D.4: Inputs (Deterministic)
 Required
 
+transcript_ok (from PH1.C or trusted typed wrapper; used for hashing + evidence discipline)
+
 intent_draft / clarify / chat (from PH1.NLP)
 
 session_state_ref
@@ -847,6 +2341,44 @@ Optional
 
 conversation_thread_state_ref (what is pending / asked / confirmed)
 
+Section D.4.1: Request Envelope (Mandatory, Audit-Grade)
+
+PH1.D must attach a deterministic request envelope to every model call so the call is replayable, auditable, and provable.
+
+Mandatory envelope fields (minimum)
+
+request_id (stable request identifier; must be logged)
+
+prompt_template_version (version of the prompt template used)
+
+output_schema_hash (stable hash of the expected output schema)
+
+tool_catalog_hash (stable hash of tool_catalog_ref)
+
+policy_context_hash (stable hash of policy_context_ref)
+
+transcript_hash (stable hash of transcript_ok.transcript_text)
+
+Hard rule: these envelope fields are for audit/replay only; they must not grant authority or change gating behavior.
+
+Section D.4.2: Envelope Integrity (Hard Rule)
+
+PH1.D must not trust caller-supplied hashes.
+
+Hard rule: before any model call, PH1.D must recompute and verify:
+
+transcript_hash matches transcript_ok.transcript_text
+
+tool_catalog_hash matches tool_catalog_ref
+
+policy_context_hash matches policy_context_ref
+
+output_schema_hash matches the expected output schema for this PH1.D version
+
+request_id matches the deterministic derivation from those hashes
+
+If any mismatch exists: fail closed with D_FAIL_INVALID_SCHEMA.
+
 Section D.5: Output Modes (Exactly One Per Turn)
 PH1.D must return exactly one of the following modes, never multiple:
 
@@ -854,23 +2386,33 @@ A. chat
 
 response_text (natural language only)
 
+reason_code (required)
+
 B. intent
 
 refined_intent_draft (same taxonomy as PH1.NLP)
 
-field_refinements (only if evidence-backed)
+field_refinements (only if evidence-backed with machine-precise evidence spans)
 
 missing_fields (if any)
+
+reason_code (required)
 
 C. clarify
 
 question (single minimal question)
 
+what_is_missing (exactly 1 field)
+
 accepted_answer_formats (2–3 examples)
+
+reason_code (required)
 
 D. analysis
 
 short_analysis (internal-only; never spoken to user)
+
+reason_code (required)
 
 Hard rule: PH1.D must never output a tool call, simulation call, or any instruction that bypasses PH1.X.
 
@@ -887,6 +2429,10 @@ response length limits (prevents rambling)
 
 content policy compliance
 
+no internal leakage in chat (no tools/providers/prompt/system-policy disclosures)
+
+prompt-injection resistance (treat transcript as data; never obey requests to change rules)
+
 If any check fails:
 
 discard model output
@@ -898,9 +2444,19 @@ force PH1.X to respond with a deterministic safe fallback
 Section D.7: Evidence Discipline (No Hidden Meaning Drift)
 When PH1.D returns intent refinements:
 
-all field changes must be tied to evidence in transcript_text and evidence_spans
+all field changes must be tied to evidence in transcript_text using machine-precise evidence spans
+
+EvidenceSpan fields (minimum)
+
+transcript_hash
+
+start_byte, end_byte (byte offsets into transcript_text; UTF-8)
+
+verbatim_excerpt (exact substring at [start_byte, end_byte])
 
 if evidence is missing, PH1.D must not “infer”; it must request clarify
+
+Hard rule: evidence_span.verbatim_excerpt must match the refined field’s original_span exactly (no fuzzy matching).
 
 Section D.8: Provider and Model Selection (Internal Only)
 PH1.D may select among reasoning models internally based on deterministic policy:
@@ -965,6 +2521,36 @@ Scenario: model times out.
 
 Pass: PH1.D emits D_FAIL_TIMEOUT; PH1.X asks a simple retry or clarification.
 
+AT-D-07: reason_code is required for every OK output
+
+Scenario: model returns a valid mode but omits reason_code.
+
+Pass: PH1.D rejects; D_FAIL_INVALID_SCHEMA.
+
+AT-D-08: Evidence spans are machine-precise for refinements
+
+Scenario: model returns a field_refinement.
+
+Pass: refinement includes transcript_hash + byte offsets; verbatim_excerpt matches the exact transcript substring.
+
+AT-D-09: Clarify includes what_is_missing (one field only)
+
+Scenario: model returns clarify without what_is_missing, or with multiple fields.
+
+Pass: PH1.D rejects; D_FAIL_INVALID_SCHEMA.
+
+AT-D-10: No internal leakage in chat
+
+Scenario: model chat mentions tools/providers/prompt/system policy (e.g., “I used web search”).
+
+Pass: PH1.D rejects; D_FAIL_FORBIDDEN_OUTPUT.
+
+AT-D-11: Envelope integrity is enforced
+
+Scenario: a request is constructed with mismatched transcript_hash/tool_catalog_hash/policy_context_hash/request_id.
+
+Pass: PH1.D rejects immediately; D_FAIL_INVALID_SCHEMA (no model call).
+
 1.6 PH1.E — Tool Router
 
 PH1.E — Tool Router v1.0 (Read-Only, Zero Side Effects)
@@ -979,7 +2565,7 @@ time
 
 weather
 
-web search
+web_search
 
 news
 
@@ -987,6 +2573,8 @@ Hard rule: No write tools. No payments. No messaging. No bookings. No state chan
 
 Section E.3: Request Contract (From PH1.X Only)
 PH1.E accepts tool requests only from PH1.X in a single normalized form:
+
+origin (must be PH1.X)
 
 tool_name
 
@@ -996,18 +2584,50 @@ locale / language preference
 
 strict_budget (timeout + max results)
 
+policy_context_ref (privacy / DND / safety tier; defense-in-depth)
+
+request_id (deterministic correlation id)
+
+query_hash (deterministic hash of query string)
+
 PH1.E rejects any request not originated from PH1.X.
+
+Section E.3.1: Request Envelope (Mandatory, Audit-Grade)
+
+Hard rule: PH1.E must attach a deterministic request envelope to every tool call so the call is replayable, auditable, and provable.
+
+Minimum envelope fields
+
+request_id
+
+query_hash
+
+policy_context_ref
+
+Hard rule: request envelope metadata is for audit/replay only; it must not grant authority or change gate order.
 
 Section E.4: Output Contract
 PH1.E returns:
 
 tool_result (structured)
 
-source_metadata (provider, timestamps, basic provenance)
+source_metadata (provider_hint optional, retrieved_at_unix_ms, sources[])
 
 tool_status (OK / FAIL)
 
 fail_reason_code (if FAIL)
+
+reason_code (required for every output, including OK)
+
+request_id, query_hash (echo back for correlation)
+
+ambiguity (optional structured ambiguity; used when sources conflict)
+
+cache_status (HIT / MISS / BYPASSED)
+
+Item-level provenance (required for web/news)
+
+Each returned web/news item must include its own url so PH1.X can cite precisely.
 
 PH1.E must never return raw provider internals that upstream would depend on.
 
@@ -1023,6 +2643,20 @@ rate limits
 safe content filtering policy
 
 If budgets are exceeded: fail closed and return E_FAIL_BUDGET_EXCEEDED.
+
+Defense-in-depth policy block (enterprise)
+
+If policy_context_ref.privacy_mode=true: PH1.E must fail closed for web search and news (E_FAIL_POLICY_BLOCK) unless an explicit allow policy exists.
+
+If policy_context_ref.safety_tier=STRICT: PH1.E must fail closed for web search and news (E_FAIL_POLICY_BLOCK).
+
+Domain allow/deny (enterprise compliance)
+
+PH1.E may apply a deterministic allowlist/denylist policy for web/news sources. If any source violates policy: fail closed with E_FAIL_FORBIDDEN_DOMAIN.
+
+Deterministic caching (enterprise, optional)
+
+PH1.E may cache read-only results deterministically. If used, cache_status must be set and must be stable for identical requests under the same policy context.
 
 Section E.6: Multilingual Output Handling
 PH1.E may request results in the user’s preferred language, but:
@@ -1073,19 +2707,1310 @@ Scenario: news sources disagree.
 
 Pass: PH1.E returns structured ambiguity; PH1.X phrases uncertainty clearly.
 
-Read‑only tools only:
+AT-E-06: reason_code required for OK outputs
+
+Scenario: tool returns OK but reason_code is missing.
+
+Pass: PH1.E rejects/fails closed (schema invalid).
+
+AT-E-07: Item-level provenance
+
+Scenario: web search/news returns items.
+
+Pass: each item includes a valid url and the response contains basic source metadata.
+
+AT-E-08: Privacy/strict policy blocks risky tools
+
+Scenario: policy_context_ref.privacy_mode=true or safety_tier=STRICT and the request is web search/news.
+
+Pass: PH1.E fails closed with E_FAIL_POLICY_BLOCK.
+
+AT-E-09: Domain allow/deny enforced
+
+Scenario: a returned source url is not allowed (or is blocked).
+
+Pass: PH1.E fails closed with E_FAIL_FORBIDDEN_DOMAIN.
+
+AT-E-10: cache_status is always present
+
+Scenario: any tool call succeeds or fails.
+
+Pass: response includes cache_status (HIT/MISS/BYPASSED) deterministically.
+
+Read-only tools only:
 
 time
 
 weather
 
-web search
+web_search
 
 news
 
+1.6A PH1.LINK — Link Engine
+
+PH1.LINK — Link Engine v1.0 (Onboarding + Referral Links, Simulation-Gated)
+
+Section LINK.1: Mission
+PH1.LINK is the single runtime authority for deterministic link lifecycle:
+
+- generate
+- deliver (send)
+- open/activate
+- resend
+- revoke
+
+Hard rule: every PH1.LINK operation runs only via a Rust simulation (No Simulation -> No Execution). PH1.LINK must never "just send a link" outside a simulation.
+
+PH1.LINK exists for onboarding invitations and referral flows.
+
+Hard rule: the URL token must remain minimal. It must not embed personal data (name, salary, ID number, etc.) in the URL itself.
+
+Instead, the link token points to a deterministic onboarding draft record in PH1.F (Postgres), where prefilled onboarding metadata is stored and versioned.
+The token is minimal and maps `token_id -> draft_id` only.
+
+Section LINK.1A: Correct Selene SaaS Onboarding Link Flow (Database-First)
+
+1) Creator starts an onboarding draft
+- Creator says: "Add a new employee."
+- PH1.LINK creates/opens an `onboarding_draft` record in PH1.F and returns `draft_id`.
+
+2) Creator fills what they know first
+- Creator inputs known attributes (name/email/role/manager/start_date/department/location/etc.).
+- Every creator edit updates the same `onboarding_draft` record in PH1.F.
+- Hard rule: creator fills first; invitee is never asked fields already provided.
+
+3) System computes missing required fields deterministically
+- Selene loads tenant Employee Schema (versioned).
+- Selene computes `missing_required_fields` from that schema only (no LLM decisions).
+- Hard rule: required means schema-required only.
+
+4) Link token is minimal
+- PH1.LINK issues a signed token with only: `token_id`, tenant routing, expiry, signature.
+- Token contains no personal data.
+- PH1.F stores the mapping: `token_id -> draft_id`.
+
+5) Invitee opens link
+- PH1.LINK validates signature/expiry/revoked/usage and loads `draft_id` via `token_id`.
+- Invalid token/draft fails closed and notifies creator.
+
+6) Invitee fills only missing fields
+- Onboarding asks only `missing_required_fields`.
+- Each invitee answer updates the same `onboarding_draft` row.
+- After each update, Selene recomputes `missing_required_fields` deterministically.
+
+7) Commit is atomic and idempotent
+- When `missing_required_fields` becomes empty, Selene confirms once and runs COMMIT:
+  - atomically create real employee record from draft
+  - mark draft COMMITTED
+  - consume/invalidate token idempotently
+- Hard rule: every draft update/commit/revoke/consume is simulation-gated.
+
+Section LINK.2: What PH1.LINK Owns
+
+- Canonical link record schema + onboarding draft mapping (`token_id -> draft_id`).
+- Deterministic payload assembly and validation (same input -> same payload_hash).
+- Delivery channel adapters (side effects) and delivery proof records (idempotent).
+- Activation checks (status, expiry, revocation, binding checks).
+- Forwarded-link protection and misuse detection signals (reason-coded).
+- Audit emission points for every state transition.
+
+Section LINK.3: What PH1.LINK Must Never Do
+
+- Bind voice identity (PH1.VOICE.ID owns identity assertion).
+- Open/close sessions or manage timeouts (PH1.L owns presence).
+- Grant permissions (PH1.ACCESS.001 -> PH2.ACCESS.002 owns authority).
+- Execute any external side effect without a simulation.
+- Use PH1.E for delivery. PH1.E is read-only. Link delivery is a side effect.
+
+Section LINK.4: Inputs (From Selene OS + Simulations Only)
+Required (minimum)
+
+- correlation_id + turn_id + now (audit envelope)
+- inviter identity (voice: speaker_assertion_ok from PH1.VOICE.ID OR text: signed-in user_id)
+- intent_draft fields for the invite (from PH1.NLP; must be HIGH confidence or clarified first)
+- recipient_contact (phone/email/wechat id/etc; bounded)
+- delivery_method (SMS | Email | WhatsApp | WeChat | QR | CopyLink)
+- tenant_id + jurisdiction context (enterprise; required for employee invites)
+- simulation_id + simulation_type (DRAFT/COMMIT/REVOKE)
+
+Optional (bounded)
+
+- draft_id (optional for edit flows; required on open/activate and invitee onboarding flows)
+- prefilled_context (creator-provided onboarding metadata fields; see LINK.7)
+- device_fingerprint (if known at send time; may be set later on open)
+- expiration_policy_id (bounded)
+
+Section LINK.5: Outputs (Strict, Reason-Coded)
+
+PH1.LINK emits one of these results (depending on simulation):
+
+- link_generate_result: token_id, draft_id, link_url, payload_hash, expires_at, status, missing_required_fields
+- link_delivery_result: delivery_method, delivery_status, delivery_proof_ref, idempotency_key
+- link_activation_result: activation_status, bound_device_fingerprint_hash, token_id, draft_id, missing_required_fields
+- link_revoke_result: status=REVOKED
+
+Hard rule: reason_code is required for every output.
+
+Section LINK.6: Link Lifecycle States (Deterministic)
+
+- DRAFT_CREATED (generated but not delivered)
+- SENT (delivery proof exists)
+- OPENED (recipient opened the link; device bound)
+- ACTIVATED (handoff to onboarding started)
+- EXPIRED
+- REVOKED
+
+Section LINK.7: Onboarding Draft Model (No-Repeat Rule)
+
+The onboarding draft record in PH1.F stores prefilled fields so Selene does not re-ask:
+
+- invitee_type (household vs employee vs contractor)
+- company_id, position_id, location_id (employee)
+- start_date, working_hours (employee)
+- compensation_tier_ref (enterprise; policy-gated)
+- legal/jurisdiction tags (enterprise)
+
+Hard rules
+
+- Prefilled fields must not be embedded directly into the URL token. The token only references `draft_id`.
+- Prefilled fields are authoritative inputs for onboarding; they should be passed as draft context into PH1.NLP to avoid repeat clarifies.
+- If the invitee contradicts a prefilled employment field (salary, position, start date), Selene must not silently “edit” it. Selene must clarify once and then escalate or require AP approval per policy.
+- Draft context is not permission. It never bypasses Access or Simulation gates.
+
+Section LINK.8: Two-Stage Binding (Forwarded-Link Protection, Correct for New Users)
+
+Stage 1 (device-first)
+
+- On first OPEN, bind the link to the device fingerprint deterministically (store a hash).
+- If the link is opened from a different device fingerprint: block (fail closed) and reason-code.
+
+Stage 2 (voice-after-enrollment)
+
+- After the invitee completes PH1.VOICE.ID enrollment, the system may bind the link/invitation to that voice identity for higher-trust steps.
+
+Hard rule: PH1.LINK must not require a voiceprint match before the user has completed voice enrollment (new users have no voiceprint yet).
+
+Section LINK.9: Sender Pre-Invite Flow (Blueprint-First, "Onboard Jack" Before Onboarding Starts)
+
+This is the inviter-side flow. It happens before the invitee begins onboarding.
+
+Hard rules (strict)
+
+- Selene must not start onboarding from vague speech.
+- Selene must first unravel the request and match it to an ACTIVE blueprint.
+- No blueprint match -> no process starts (see PBS.5 / PBS.5A).
+- No confirmed blueprint -> no process starts.
+- NLP/LLM may help unravel phrasing and ask one short clarification question only. NLP/LLM must never start onboarding, create links, grant access, or skip gates.
+
+Flow (authoritative)
+
+1) PH1.VOICE.ID binds the inviter (or fail closed).
+2) Unravel (the puzzle step): PH1.C -> PH1.NLP produces one blueprint candidate + required fields list.
+3) If confidence is not HIGH or required fields are missing: PH1.X asks exactly one short clarification question. Repeat until HIGH or user cancels.
+4) Blueprint match: Selene OS must match the request to an ACTIVE process blueprint. If no blueprint exists: follow PBS.5A (request file) and stop.
+5) Mandatory confirmation before starting: PH1.X confirms the interpreted blueprint. If NO: return to Unravel. If YES: proceed.
+6) Access/Authority Gate runs (PH1.ACCESS.001 -> PH2.ACCESS.002) to ensure the inviter is allowed to invite this role and embed these fields.
+   - If ESCALATE=AP_APPROVAL_REQUIRED: Selene OS quietly requests AP approval via PH1.BCAST.001 and asks the AP to choose one-shot vs temporary duration vs permanent. If approved, apply the matching override simulation to the inviter's PH2.ACCESS.002 instance, then continue. If denied/expired: politely refuse.
+7) DRAFT simulation generates a preview payload (example: LINK_INVITE_GENERATE_DRAFT). No delivery yet.
+8) PH1.X asks for confirmation (COMMIT point) and must read back the full send snapshot as ONE short sentence (one-shot) as a last-minute precaution:
+   - who the link is for (recipient name)
+   - what it is for (invitee_type + role/position + location/start_date when present)
+   - compensation summary (only at the level allowed by policy: salary number if allowed, otherwise compensation_tier_ref)
+   - how it will be delivered (method + destination contact, masked)
+   Hard rule: do not read the full URL token out loud.
+9) COMMIT simulation delivers the link and records delivery proof (example: LINK_INVITE_SEND_COMMIT).
+10) When the recipient opens the link, PH1.LINK validates + binds the device (example: LINK_INVITE_OPEN_ACTIVATE_COMMIT), resolves `token_id -> draft_id`, and hands off to onboarding with `draft_id`.
+
+Hard rules
+
+- If invitee_type=EMPLOYEE and the company is not onboarded (tenant/company missing): fail closed or route to business onboarding first. Do not send an employee invite that cannot be honored.
+- Link delivery is a side effect and must be idempotent (outbox + idempotency keys). No duplicate sends on retry.
+
+Section LINK.10: Acceptance Tests (Minimum)
+
+AT-LINK-01: Deterministic payload hash
+
+Scenario: same inviter + same prefilled fields + same policy snapshot.
+
+Pass: link payload_hash is identical.
+
+AT-LINK-02: No send without simulation
+
+Scenario: attempt to send a link without a simulation_id.
+
+Pass: fail closed.
+
+AT-LINK-03: Forwarded-link block (device mismatch)
+
+Scenario: link opened from a different device fingerprint than first bind.
+
+Pass: blocked with reason code; no onboarding proceeds.
+
+AT-LINK-04: No-repeat clarify with onboarding draft context
+
+Scenario: link includes prefilled position/location/start_date fields.
+
+Pass: PH1.NLP does not ask those fields again during onboarding.
+
+AT-LINK-05: Resend is idempotent
+
+Scenario: resend requested twice due to delivery retry.
+
+Pass: only one effective send; same idempotency key; audit proves dedupe.
+
+1.6B PH1.ONB — Onboarding Engines (Invites + Personal Onboarding, Blueprint-First)
+
+Onboarding is how Selene turns a new person into a governed, verified Selene user.
+
+Hard rules (non-negotiable)
+
+- Blueprint-first: Selene must match the request to an ACTIVE process blueprint before onboarding begins. No blueprint match -> no process starts.
+- Mandatory confirmation: before starting a blueprint, Selene must confirm what the sender meant ("You mean generate an onboarding link for Tom, right?").
+- Never ask twice (end-to-end): if a field is already present in the onboarding draft (`draft_id` in PH1.F), Selene must not ask it again.
+- PH1.ONB engines do not own sessions/timeouts (PH1.L owns presence).
+- PH1.ONB engines do not own identity binding (PH1.VOICE.ID owns voice identity).
+- PH1.ONB engines do not own step-up proof collection (Selene OS + UI collect proofs; Access verifies).
+- PH1.ONB engines do not grant permissions (PH1.ACCESS.001 -> PH2.ACCESS.002 own authority).
+
+PH1.ONB.CORE.001 — Core Personal Onboarding Decision (Plan Only)
+
+Mission
+Decide the onboarding track and emit a deterministic step plan. This is the "what must happen" engine, not the "do it" engine.
+
+Owns
+
+- Consent gates (start now / later).
+- Install/UI permission gate (if a screen is required).
+- Terms gate (agree / disagree).
+- Track selection (personal vs employee vs contractor).
+- Resume token (continue from the first uncompleted step).
+
+Must never
+
+- Send links (PH1.LINK owns).
+- Execute side effects (PH1.ONB.ORCH owns, simulation-gated).
+- Bind identity, open sessions, or perform step-up proof collection.
+
+Inputs (minimum)
+
+- identity_context (from PH1.VOICE.ID when available; otherwise UNKNOWN)
+- link_activation_result (from PH1.LINK on invitee open; includes `token_id + draft_id + tenant scope`)
+- device capability hints (camera/biometric availability; bounded)
+
+Outputs (minimum)
+
+- OnboardingPlan (ordered steps, each step has: required_fields, side_effects flag, simulation requirement)
+- ClarifyRequest (one question only when required_fields are missing)
+- OnboardingResumeToken (deterministic, stored)
+
+PH1.ONB.ORCH.001 — Onboarding Orchestrator (Execution, Simulation-Gated)
+
+Mission
+Execute the onboarding plan step-by-step via simulations. Enforce "never ask twice" across the entire invitee flow.
+
+Owns
+
+- Sequencing: install -> terms -> load draft -> compute missing_required_fields -> ask missing -> verify -> enroll -> finish.
+- Feeding draft context (`draft_id`) into PH1.NLP so fields are not re-asked.
+- Idempotent retries (same idempotency keys, no duplicate side effects).
+- Reminder scheduling when required steps are deferred (PH1.REM.001; specified here; stub until implemented).
+- Emotional snapshot capture (PH1.EMO.CORE) is started during onboarding and is non-blocking (tone-only; may remain UNDETERMINED until proven).
+
+Deferral + reminder policy (authoritative)
+
+This policy applies to required onboarding steps such as wake setup and voice setup.
+
+- Selene must explicitly ask: "Are you free to do it now?"
+- If the user says YES: Selene starts immediately.
+- If the user says NOT NOW:
+  - Selene says: "No problem. When should I remind you to finish?"
+  - Selene books the reminder only after the user confirms a specific time.
+- If the user is vague ("later" / "not sure" / "soon"):
+  - If the current time is before 6pm: suggest later today.
+  - If the current time is 6pm or later: suggest tomorrow morning.
+  - Then force a concrete booking: "What time exactly works for you?"
+- Reminder lifecycle is owned by the Reminder Engine:
+  - Selene only requests: create, fire, reschedule, or disable.
+  - When the reminder fires, Selene asks: "Quick reminder - we still need to finish <step>. Are you free now?"
+  - If the user says NEVER: stop reminders and mark the step as declined.
+
+Must never
+
+- Grant access by itself.
+- Invent data or "fill in" missing facts.
+
+PH1.ONB.BIZ.001 — Business Onboarding (Company/Tenant Prerequisite)
+
+Mission
+Ensure a company/tenant exists before employee onboarding can complete.
+
+Owns
+- Company/tenant bootstrap lifecycle (draft -> active prerequisite).
+- Persistence writes to `tenant_companies` (PH1.F contract scope).
+
+Must never
+- Create or mutate position records (PH1.POSITION.001 owns position truth).
+- Create per-user access instances (PH2.ACCESS.002 owns user-scoped access truth).
+
+Simulation package (minimum)
+- `ONB_BIZ_START_DRAFT`
+- `ONB_BIZ_VALIDATE_COMPANY_COMMIT`
+- `ONB_BIZ_COMPLETE_COMMIT`
+
+Hard rule
+If invitee_type=EMPLOYEE and tenant/company is missing, do not proceed. Run business onboarding first or fail closed.
+
+PH1.POSITION.001 — Position Engine (Enterprise Role/Position Truth)
+
+Mission
+Store tenant positions (role, schedule, compensation tier reference) so invites can be prefilled without asking the employee twice.
+
+Owns
+- Position lifecycle (Draft | Active | Suspended | Retired).
+- Persistence writes to `positions` and `position_lifecycle_events` (PH1.F contract scope).
+
+Must never
+- Create per-user access instances (that occurs only at role assignment via PH2.ACCESS.002).
+- Embed raw salary values into link token payloads.
+
+Simulation package (minimum)
+- `POSITION_SIM_001_CREATE_DRAFT`
+- `POSITION_SIM_002_VALIDATE_AUTH_COMPANY`
+- `POSITION_SIM_003_BAND_POLICY_CHECK`
+- `POSITION_SIM_004_ACTIVATE_COMMIT`
+- `POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT`
+
+Hard rule
+Do not embed raw salary numbers in the link token/URL. Use `compensation_tier_ref` (reference) and apply Access gates before revealing sensitive compensation details.
+
+Invited onboarding (invitee-side) flow (authoritative)
+
+1) Invitee opens the link -> PH1.LINK validates + binds device -> returns `token_id + draft_id`.
+2) PH1.ONB.CORE.001 asks: "Are you okay to continue?"
+   - If YES: proceed.
+   - If NO (not now): Selene must ask to reschedule ("When would it be convenient for me to come back?"), book a reminder via PH1.REM.001, and notify sender that onboarding is deferred (not declined).
+   - If the invitee explicitly says "never / not interested" (or refuses scheduling after the reschedule attempt): stop, reason-code, and notify sender.
+3) Install gate (if needed): invitee consents. If YES, Selene initiates the app install and completes setup automatically (the user only approves OS permission prompts). If NO -> stop and notify sender.
+4) Terms gate: invitee agrees/disagrees in-app. If NO -> stop and notify sender.
+5) Load onboarding draft from PH1.F (cloud-canonical) using `draft_id`. Then ask only `missing_required_fields` (one question at a time).
+   Hard rule: personal profile data is not stored long-term on the device by default. The device may cache only the minimum required for low-latency interaction (wake artifacts, voice-recognition artifacts, and bounded quick memory), and sync to cloud for durability/recovery.
+   Emotional snapshot (non-blocking):
+   - PH1.EMO.CORE may capture an onboarding snapshot for tone continuity once consent + identity are available.
+   - This must not block onboarding. If not enough evidence: keep UNDETERMINED and re-evaluate later.
+6) Employee verification (enterprise default): capture a photo and send to sender for confirmation (simulation-gated).
+   Hard rule: Selene must not finalize identity or unlock major access/authority until the sender confirms (or an explicitly approved alternative path exists).
+   Selene must not pause the whole onboarding while waiting; Selene may continue safe steps (explanations, basic setup, wake/voice enrollment prep) while keeping sensitive steps sandboxed.
+   Selene must actively push the sender to respond quickly and may escalate reminders until one terminal state exists (CONFIRMED, REJECTED, EXPIRED, or REVOKED).
+   If the sender rejects: stop onboarding, reason-code it, notify both parties, and tell the invitee to contact the sender.
+7) Primary device access confirmation: collect biometrics/passcode proof (OS/UI). Record via simulation.
+   Hard rule: even if primary device access is confirmed, Selene still keeps major access sandboxed until the sender verifies the person.
+8) Voice recognition enrollment (PH1.VOICE.ID) and wake enrollment (PH1.W). Both use tight record->grade loops; both may be deferred with reminders.
+9) Access instance creation: PH1.ACCESS.001 -> PH2.ACCESS.002 creates/clones the per-user instance (simulation-gated).
+10) Completion: onboarding is marked COMPLETE only when all required gates are complete.
+    - Employee track hard rule: do not mark COMPLETE unless sender verification status is CONFIRMED (or an explicitly approved alternative path exists). If not confirmed, onboarding remains BLOCKED and Selene persists follow-ups via PH1.BCAST.001 + PH1.REM.001 until a terminal state.
+    - Audit is emitted; no silent success.
+
+Invited onboarding: Voice recognition setup (strict)
+
+Hard rule
+Even if primary device access is confirmed, Selene still keeps major access sandboxed until the sender verifies the person.
+
+Purpose
+Capture a baseline voice recognition profile for the user so Selene can recognize the speaker in future sessions.
+
+Tight recording loop (same pattern as wake)
+- Selene prompts: "Please say this short line after me."
+- User repeats the line.
+- Selene grades the sample and gives short feedback: "Good." or "Again."
+- Repeat until Selene has enough PASS samples.
+
+Hard rule
+Voice recognition setup must be a tight loop: record -> grade -> next.
+
+If the user is not free now (pause -> Reminder Engine)
+- Selene asks: "Are you free to do voice setup now?"
+- If YES: Selene starts immediately.
+- If NOT NOW: Selene says: "No problem. When should I remind you to finish voice setup?"
+- Selene books the reminder only after the user confirms a specific time.
+
+If the user is vague ("later" / "not sure" / "soon")
+- If before 6pm: Selene suggests later today.
+- If 6pm or later: Selene suggests tomorrow morning.
+- Selene forces a concrete time: "What time exactly works for you?"
+
+Reminder lifecycle (owned by Reminder Engine)
+- Selene requests the Reminder Engine to create a reminder.
+- When it fires: "Quick reminder - we still need to finish your voice setup. Are you free now?"
+- If YES: resume immediately.
+- If NOT NOW: reschedule using the same rule.
+- If NEVER: stop reminders and mark voice setup as declined.
+
+Hard rule
+Reminders are owned by the Reminder Engine. Selene only requests: create, fire, reschedule, or disable.
+
+Invited onboarding: Wake-word setup (strict)
+
+When wake-word onboarding happens
+This is the first-time setup flow where Selene trains the wake word for one specific user on one device.
+
+If the user is not free, wake setup becomes PENDING and Selene schedules a reminder to finish later.
+
+Enrollment mode (tight recording loop)
+- Selene prompts: "Say Selene now."
+- User says: "Selene" (one clean utterance).
+- Selene grades the sample immediately and gives short feedback: "Good." or "Again."
+- Repeat until Selene has enough PASS samples.
+
+Enrollment completion criteria (deterministic)
+- pass_target: default 5 (allowed 3 to 8). Selected once per enrollment session and fixed.
+- max_attempts: default 12 (allowed 8 to 20).
+- enrollment_timeout_ms: default 300000 (allowed 180000 to 600000).
+
+If pass_target is reached: wake setup becomes COMPLETE immediately.
+
+If max_attempts or enrollment_timeout_ms is reached: wake setup becomes PENDING (reason-coded) and Selene schedules a reminder to finish later.
+
+Key point
+The user does not wait for a full wake greeting each time. It is a fast loop: record -> grade -> next.
+
+Baseline capture requirements (initial setup)
+Selene must:
+- prompt the user to say the wake word multiple times
+- record each attempt as a separate sample with device/mic metadata
+- run deterministic quality checks and mark each attempt PASS or FAIL
+- if FAIL, re-prompt and include a reason (too noisy / too soft / too far / clipped / too short / no speech / overlap / echo)
+
+Outputs
+- verified baseline wake profile for the user (device-resident)
+- per-device wake parameters (threshold / hysteresis / hold-frames) derived deterministically
+- reason-coded logs for every rejected sample
+- wake artifacts are synced to the cloud with the user's other artifacts (recovery sync; cloud is never required for live wake)
+
+Ongoing improvement after baseline (coverage expansion)
+Goal
+Improve wake performance over time by capturing how the user really says "Selene" in real life.
+
+Selene captures examples across:
+- tone (soft / neutral / assertive)
+- pace and emphasis
+- distance to mic
+- environments (home / office / street / car)
+- background conditions (music / chatter / wind / HVAC)
+
+Keep rules (bounded)
+- keep only samples that pass the quality gate
+- tag by environment/noise class and mic profile
+- prefer samples that add new coverage
+- prune redundant samples deterministically once coverage is sufficient
+
+Outputs
+- expanded per-user wake artifacts (device-resident + cloud-synced)
+- updated per-device parameters (synced)
+- metrics to prove improvement (miss rate, false wake rate, latency)
+
+Learning stabilization (when wake improvement pauses/resumes)
+Hard rule: "learning" here means bounded sample capture + bounded parameter tuning + versioned artifact packages. No on-device weight training.
+
+- Learning may pause only after wake quality is stable for a bounded window and coverage is sufficient.
+- Learning resumes only on drift (wake quality regresses), new device/mic profile, new environment class with poor performance, or explicit user request ("improve wake detection").
+
+If the user is not free now (pause -> Reminder Engine)
+- Selene asks: "Are you free to do it now?"
+- If YES: start enrollment immediately: "Say Selene now."
+- If NOT NOW: Selene says: "No problem. When should I set a reminder for?"
+- Selene books the reminder only after the user confirms a specific time.
+
+If the user is vague ("later" / "not sure" / "soon")
+- If before 6pm: Selene suggests later today.
+- If 6pm or later: Selene suggests tomorrow morning.
+- Selene forces a concrete time: "What time exactly works for you?"
+
+Reminder lifecycle (owned by Reminder Engine)
+- Selene requests the Reminder Engine to create a reminder.
+- Reminder fires: "Quick reminder - we still need to finish your wake setup. Are you free now?"
+- If YES: resume immediately.
+- If NOT NOW: reschedule using the same rule.
+- If NEVER: stop reminders and mark wake setup as declined.
+
+Hard rules
+- Selene must never claim wake-word setup is complete unless confidence is high.
+- Even if wake-word is deferred, Selene must keep it clearly marked as PENDING until it is completed.
+- Reminders are owned by the Reminder Engine. Selene only requests: create, fire, reschedule, or disable.
+
+Invited onboarding: What the sender sees (simple, actionable)
+- Recipient opened link.
+- Recipient installed app.
+- Recipient accepted / declined Terms.
+- Photo ready (with preview) + Confirm / Reject.
+- Primary access confirmed.
+- Wake-word: Completed / Deferred / Needs retry.
+
+Hard rule
+Sender must confirm the photo quickly. Selene will escalate reminders until confirmed, rejected, expired, or revoked.
+
+Invited onboarding: End states (must be logged)
+
+SUCCESS
+- App installed.
+- Terms accepted.
+- Sender confirmed photo (or approved alternative).
+- Primary access confirmed.
+- Wake-word completed (or deferred if policy allows).
+- Major access is unsandboxed only after sender verification.
+
+FAIL
+- Recipient declined install.
+- Recipient declined Terms.
+- Sender rejected photo.
+- Primary access could not be confirmed.
+
+EXPIRED / REVOKED
+- Link expired.
+- Sender revoked link.
+
+Hard rule
+Every end state is recorded and reported. No silent success.
+
+Acceptance tests (minimum)
+
+AT-ONB-01: No blueprint match -> no onboarding starts
+AT-ONB-02: Mandatory confirmation before starting onboarding blueprint
+AT-ONB-03: Never ask twice with onboarding draft context (invitee flow)
+AT-ONB-04: Employee sandbox until sender verification
+AT-ONB-05: Resume token resumes at first uncompleted step (no repeats)
+
+1.6C Real-Life Flow (Invite -> Onboarding -> Daily Use, End-to-End)
+
+This section describes what happens “for real” in the world, in strict order.
+It is the smooth flow Selene must follow.
+
+Part A: Sender asks Selene to onboard someone (before the invite is sent)
+
+0) You wake Selene (example: you say "Selene"). PH1.W emits a wake_event and PH1.L opens a session window.
+   - Session behavior (timeout): if the session goes quiet, PH1.L will move to SOFT_CLOSED and may ask: "Are we finished with this topic?" before fully closing. If you say "no", Selene stays available and keeps listening.
+1) Then you say something like: “Onboard Jack” / “Send an invite” / “Generate a link”.
+2) Selene verifies who is speaking (PH1.VOICE.ID). If it cannot bind you -> stop.
+3) Selene unravels your messy request into one blueprint candidate + required fields (PH1.NLP; LLM allowed for wording only).
+4) If anything is missing, Selene asks one short question at a time (PH1.X). No guessing.
+5) Selene matches your request to an ACTIVE blueprint.
+   - If no blueprint exists: Selene refuses and creates a request file entry (PBS.5A). No pretending.
+6) Selene confirms what you meant: “You mean generate an onboarding link for Jack, right?”
+   - If you say NO: Selene returns to unravel.
+7) Selene checks permissions (PH1.ACCESS.001 -> PH2.ACCESS.002).
+   - If ESCALATE=AP_APPROVAL_REQUIRED: Selene quietly requests AP approval via PH1.BCAST.001 and asks the AP to choose:
+     - one-shot, or
+     - temporary duration, or
+     - permanent.
+     If approved: Selene applies the matching override simulation to the requester's PH2.ACCESS.002 instance, then continues. If denied/expired: politely refuse.
+8) Selene creates a link draft (LINK_INVITE_GENERATE_DRAFT). No sending yet.
+9) Selene asks one final send confirmation (commit point) and must read back the full send snapshot as ONE short sentence (one-shot):
+   - who the link is for (recipient)
+   - what it is for (invitee_type + role/position/location/start_date when present)
+   - compensation summary (only at the level allowed by policy: salary number if allowed, otherwise compensation_tier_ref)
+   - delivery method + destination contact (masked)
+   Hard rule: Selene must not read the full URL token out loud.
+10) Selene sends it via a simulation (LINK_INVITE_SEND_COMMIT) and records delivery proof (idempotent).
+
+Part B: Invitee opens the link (invitee-side onboarding)
+
+1) Invitee opens the link.
+2) PH1.LINK validates the link (not expired/revoked) and binds the first device fingerprint.
+   - If opened from a different device later: block (forwarded-link protection).
+3) Selene explains: “{SenderName} asked me to onboard you.”
+4) Selene asks: “Are you okay to continue?”
+   - If NO (not now): Selene schedules a reminder (PH1.REM.001), notifies sender that onboarding is deferred, and stops for now.
+   - If "never / not interested": Selene stops and notifies sender.
+5) Install gate (if required): invitee agrees. If YES, Selene initiates the app install and completes setup automatically (the user only approves OS permission prompts).
+   - If NO: stop and notify sender.
+6) Terms gate: invitee agrees/disagrees in-app.
+   - If NO: stop and notify sender.
+7) Selene loads the onboarding draft from PH1.F (`token_id -> draft_id`, cloud-canonical) and computes `missing_required_fields` from tenant schema.
+   Hard rule: Selene asks only what is missing. Selene must not ask twice.
+8) Employee identity step (enterprise default): photo capture -> sender verification (simulation-gated).
+   Hard rule: major access stays sandboxed until sender confirms.
+   Selene continues safe steps while waiting and pushes the sender to decide.
+9) Primary device proof: biometric/passcode proof is collected by OS/UI and recorded via simulation.
+10) Voice enrollment (PH1.VOICE.ID) + wake enrollment (PH1.W) run as tight record -> grade loops.
+   If user is busy: defer and schedule reminder (PH1.REM.001; stub until implemented; never mark complete silently).
+11) Per-user access instance is created (PH1.ACCESS.001 -> PH2.ACCESS.002) and onboarding is marked COMPLETE.
+    - Employee track hard rule: do not mark COMPLETE unless sender verification is CONFIRMED (or an explicitly approved alternative path exists).
+    Hard rule: no silent success; the sender sees terminal status (CONFIRMED/REJECTED/EXPIRED/REVOKED/COMPLETE).
+
+Part C: Normal daily use after onboarding (voice-first, not voice-only)
+
+1) Wake -> identity bind -> STT -> NLP.
+2) PH1.X chooses the next move (respond/clarify/confirm/dispatch).
+3) Any real side effect requires: Access OK + confirmation + a matching simulation. No simulation -> no execution.
+
+1.6D PH1.BCAST — Broadcast Engine
+
+PH1.BCAST.001 — Broadcast Engine v1.0 (World-Class Human Delivery, Privacy, Follow-Up)
+
+Section BCAST.0: Purpose
+PH1.BCAST is Selene’s human delivery system. It is not “messaging.”
+
+It is a deterministic, permission-gated engine that lets authorized senders deliver information to:
+- one person
+- groups
+- segments
+- the entire company
+
+It must support human-grade interruption, privacy negotiation, and guaranteed follow-up.
+
+Section BCAST.0A: What Makes It Unique
+- Interrupt-first, human-style delivery (ask for a moment, then deliver).
+- Privacy negotiation before content ("Out loud or to your device?").
+- Audience selection at scale (single -> group -> segment -> company).
+- Policy-classified broadcasts (Simple/Priority/Private/Confidential/Emergency).
+- Guaranteed outcomes per recipient (delivered/deferred/rejected/escalated/expired), always recorded.
+- Follow-up and reminders built in (handoff to PH1.REM under deterministic rules).
+- Emotion-aware delivery style (tone only; no meaning change).
+
+Section BCAST.1: Ownership Split (Who Owns What)
+
+PH1.BCAST owns:
+- Broadcast thread state and per-recipient state.
+- Availability handshake + privacy negotiation flow rules (deterministic).
+- Delivery policy, retries, escalation decisions (bounded; reason-coded).
+- Per-recipient delivery channel selection (within Access + policy).
+- “Never ask twice” inside a broadcast thread.
+
+PH1.ACCESS.001 -> PH2.ACCESS.002 owns:
+- Sender authority (who may broadcast).
+- Which audiences are allowed.
+- Which classifications are allowed.
+- Which delivery modes are allowed (out loud vs device).
+- Break-glass permissions (Emergency).
+
+PH1.REM.001 owns:
+- Scheduled follow-ups and retry timing (create/fire/reschedule/disable) when PH1.BCAST defers or needs future reattempts.
+
+PH1.L owns:
+- Session presence and “may_speak” gating (PH1.BCAST must not open/close sessions).
+
+PH1.NLP owns:
+- Deterministic extraction (audience intent, classification signals, ack requirement, defer schedule proposal).
+
+PH1.D (LLM contract) may be used only for rendering:
+- Translate/localize per recipient language preference.
+- Produce safe phrasing for handshake/privacy/ack prompts.
+- Tone adaptation only (facts unchanged).
+Hard rule: LLM must not expand audience, upgrade classification, bypass Access, or invent facts.
+
+PH1.TTS and the Text UI own:
+- The actual output channels on a device (speaking and/or displaying).
+PH1.BCAST provides the deterministic content payload and delivery mode; it does not “speak directly.”
+
+PH1.J owns:
+- Audit logging for every broadcast step and every recipient outcome.
+
+Section BCAST.2: Core Objects (Deterministic Model)
+
+BroadcastEnvelope (immutable once sent)
+- broadcast_id
+- sender_id
+- origin_context (why this exists)
+- classification: Simple | Priority | Private | Confidential | Emergency
+- audience_spec (deterministic selector rules)
+- delivery_policy (interruption + channel + retries + quiet-hours rules)
+- content_payload (structured, truth; unchanged across recipients)
+- content_language (source language of the payload)
+- required_ack: None | Read | Confirm | Action-Confirm
+- expiry (hard stop)
+- audit_hash (sign + hash)
+
+AudienceSpec (composable selectors)
+- individuals: user_ids
+- groups: team_ids / role_groups / departments
+- segments: tags / attributes (tenant-scoped)
+- company-wide: all_users with filters
+- overrides: allowlist/denylist
+
+RecipientState (per recipient)
+- status: Pending | Requested-Availability | Deferred | Delivered | Acknowledged | Rejected | Escalated | Expired
+- attempt_count, last_attempt_at, next_attempt_at
+- privacy_choice: OutLoud | DeviceOnly | Mixed | Unknown
+- delivery_channel_used
+- rendered_language
+- reason_code (why deferred/rejected)
+
+Section BCAST.3: Classification Rules (The Spine)
+
+Hard default (ack discipline)
+- Every broadcast must have `required_ack` set explicitly.
+- Priority / Private / Confidential / Emergency must not use required_ack=None.
+- Only Simple may default to required_ack=None (unless the sender explicitly requests an acknowledgement and policy allows).
+- Multi-recipient rule: acknowledgements are tracked per recipient. A broadcast is not "done" until each required recipient has acknowledged (or has reached a terminal state like Rejected/Expired per policy).
+
+Simple
+- polite interrupt request
+- out loud allowed by default unless user privacy preference says otherwise
+- no forced acknowledgement
+- minimal retries only if explicitly requested
+
+Priority
+- requires acknowledgement ("Got it") or "Defer"
+- retries until ack or expiry (bounded)
+- may escalate to sender after N deferrals (policy)
+
+Private
+- never spoken out loud until privacy choice is explicitly confirmed
+- defaults to DeviceOnly
+- requires Read/Confirm acknowledgement depending on policy
+- strong audit trail
+
+Confidential
+- DeviceOnly + on-device unlock where available (biometric/passcode)
+- may require step-up verification before display (Access-owned)
+- strict audience constraints; limited forwarding
+- escalation path mandatory if blocked
+
+Emergency
+- break-glass rules must be explicitly defined by simulations and Access policy
+- highest interruption priority
+- demands acknowledgement
+- strongest audit markers
+
+Section BCAST.4: Human Delivery Flow (Per Recipient)
+
+1) Availability handshake (interruption)
+- Selene asks: “Hey <name> - have you got a moment?”
+Recipient options:
+- YES -> proceed
+- NOT NOW / LATER -> defer flow
+- “What is it about?” -> preview-safe response only if classification permits
+- NEVER / STOP -> respect and record preference; notify sender if policy requires
+
+2) Privacy negotiation (before content)
+If classification is Private/Confidential (or prefs require):
+- “This is private. Should I send it to your device, or is it okay to speak out loud?”
+Outcomes:
+- DeviceOnly -> deliver to device
+- OutLoud -> speak it
+- Mixed -> summary out loud + details to device (policy-dependent)
+
+3) Delivery + acknowledgement
+- Deliver the same content_payload to every recipient (meaning unchanged).
+- Render language per recipient preference (rendering only).
+- Enforce required_ack:
+  - None: “Okay.”
+  - Read: “Please confirm once you’ve read it.”
+  - Confirm: “Do you confirm?”
+  - Action-Confirm: “Did you complete it?”
+
+4) Close
+- “Thanks - I’ve logged that.”
+
+Section BCAST.5: Follow-Up, Reminders, Escalation
+
+Defer flow
+- If user says “Later”, Selene captures a deterministic time.
+- If time is ambiguous: clarify once, then default safely per policy.
+
+Retry policy (bounded, per classification)
+- Simple: minimal retries (no nagging)
+- Priority: persistent until ack or expiry
+- Private/Confidential: fewer retries, stronger escalation to sender if blocked
+- Emergency: persistent with explicit cadence
+
+Escalation to sender
+If blocked/unreachable/verification failed:
+- Selene contacts sender with reason_code and requests human resolution.
+- Broadcast remains in halted state until resolved or expired.
+
+Guaranteed delivery via Reminder Engine
+If deferred or missed, PH1.BCAST hands off to PH1.REM.001 under deterministic retry rules until:
+- delivered and acknowledged, or
+- expired, or
+- sender cancels/intervenes.
+
+Hard rule
+If required_ack is not None, "delivered" is not success. Success requires acknowledgement (or an explicit terminal state such as Rejected/Expired).
+
+Section BCAST.6: Permissioning (Non-Negotiable)
+Broadcast capability is never global. It is granted by Access + policy:
+- allowed classifications per sender role
+- allowed audiences per sender role
+- allowed channels per classification
+- rate limits to prevent abuse
+- break-glass only via explicit simulations
+If sender lacks authority: PH1.ACCESS returns DENY or ESCALATE.
+- If DENY: refuse (reason-coded).
+- If ESCALATE=AP_APPROVAL_REQUIRED: Selene OS quietly requests AP approval via PH1.BCAST.001; if approved, proceed; if denied, refuse politely.
+
+Section BCAST.7: Delivery Modes (Privacy Enforcement)
+- Ear-only (spoken once; no on-screen display)
+- Device-only (silent; gated)
+- Hybrid (policy-permitted summary out loud + details on device)
+Delivery mode is enforced by classification + Access policy.
+
+Section BCAST.7A: Urgent and Life-Critical Interruptions
+If a broadcast is emergency-critical, Selene may override normal politeness only if:
+- classification=Emergency, and
+- a break-glass simulation exists, and
+- Access policy allows it.
+
+Hard rule
+Emergency interruption rules must be explicit. No break-glass by vibes.
+
+Section BCAST.7B: Threading + “Never Ask Twice” (Per Broadcast)
+PH1.BCAST must guarantee:
+- Every step is recorded (availability asked, privacy chosen, delivered, acknowledged).
+- Selene never repeats a question already answered in the same broadcast thread.
+- Resumption is exact:
+  - “Last time you asked me to come back at 4pm - is now okay?”
+
+Section BCAST.7C: Task/Scheduler Integration (Design-Only)
+Broadcast can be the human interface to task assignment.
+
+Example
+“Selene, ask Tom to pick up tissues on the way back.”
+
+Rule
+- PH1.BCAST delivers the request and captures Tom’s ack/defer.
+- A Task Engine (future) stores the task.
+- A Scheduler/Roster Engine (future) places it into a timeline.
+
+Hard rule
+Broadcast is delivery only. It does not execute tasks.
+
+Section BCAST.7D: Thread Search (Design-Only)
+PH1.BCAST must support:
+- thread search by time, topic, participants, labels
+- resolution states: open / waiting / blocked / resolved / expired
+
+Section BCAST.7E: Message Reconstruction + Language Assistance
+PH1.BCAST may reconstruct rushed/broken messages before sending:
+- clean language and structure
+- translate/localize per recipient language
+- preserve intent; improve expression
+
+Hard rules
+- Underlying content_payload meaning must not change.
+- LLM may assist with phrasing/translation only and is validated/fail-closed.
+
+Multilingual rule (authoritative)
+- A single broadcast may produce multiple language renderings across recipients.
+- If recipient language preference is unknown, default to sender language or device locale.
+
+Section BCAST.8: Simulations (Minimum Set)
+All broadcast side effects must be simulation-gated (No Simulation -> No Execution).
+- BCAST-SIM-001: Create broadcast draft
+- BCAST-SIM-002: Validate sender authority
+- BCAST-SIM-003: Privacy handshake decision
+- BCAST-SIM-004: Deliver to recipient
+- BCAST-SIM-005: Defer and schedule retry
+- BCAST-SIM-006: Acknowledge received
+- BCAST-SIM-007: Escalate to sender
+- BCAST-SIM-008: Expire broadcast
+
+Section BCAST.9: Acceptance Tests (Minimum)
+- AT-BCAST-001: Simple interrupt + out loud delivery
+- AT-BCAST-002: Private forces DeviceOnly
+- AT-BCAST-003: Defer + retry + never ask twice
+- AT-BCAST-004: Confidential requires step-up (Access-owned) before display
+- AT-BCAST-005: Unauthorized sender refusal
+- AT-BCAST-006: Company-wide Priority with segment filters
+
+Section BCAST.10: Dependencies
+Upstream
+- PH1.NLP (intent/audience/classification draft)
+- PH1.ACCESS.001 -> PH2.ACCESS.002 (authority and policy)
+- PH1.VOICE.ID (sender/recipient identity binding for voice paths)
+- PH1.L (presence gate)
+
+Downstream
+- PH1.REM.001 (scheduled retries/follow-ups when deferred)
+- PH1.TTS + Text UI (delivery channel execution on a device)
+- PH1.J (audit)
+
+1.6E PH1.EMO — Emotional Engine
+
+PH1.EMO.CORE — Emotional Engine v1.1 (Deterministic Emotional Continuity, Tone Only)
+
+Section EMO.1: Mission
+PH1.EMO.CORE produces one thing only:
+
+- tone guidance for how Selene should speak and write to a specific user over time.
+
+It is a continuity engine: it keeps Selene feeling consistent, calm, and "human" across sessions.
+
+Hard rule
+PH1.EMO.CORE never grants permissions, never dispatches business actions, and never mutates authority.
+
+Section EMO.2: Ownership Split (Who Owns What)
+
+PH1.EMO.CORE owns:
+- the user's personality_type label (PASSIVE | DOMINEERING | UNDETERMINED)
+- the lock status + deterministic re-evaluation schedule
+- tone_guidance outputs (tags + pacing + directness + empathy level)
+- privacy-safe emotional memory directives (consent-gated)
+
+PH1.X owns:
+- when to ask questions vs wait vs confirm vs dispatch (conversation moves)
+- applying EMO tone guidance to the user-facing lines (tone only)
+
+PH1.WRITE + PH1.TTS own:
+- rendering style (formatting + prosody) without changing meaning
+
+PH1.M owns:
+- memory storage and retrieval; EMO only issues MemoryDirectives
+
+PH1.L owns:
+- session open/close timeouts and "may_speak" gating
+
+PH1.ACCESS.001 -> PH2.ACCESS.002 owns:
+- permissions, step-up requirements, AP approval loops, overrides
+
+PH1.J owns:
+- audit logging of emotional decisions and reason codes
+
+Section EMO.3: Hard Boundary (Non-Negotiable)
+
+Rules
+- No diagnosis, no medical inference.
+- No authority changes.
+- No cross-user leakage.
+- Emotional outputs are tone-only (they cannot change facts, intent, permission gates, or execution).
+
+Simulation gating (hard)
+Any stateful emotional profile change must be simulation-gated (No Simulation -> No Execution).
+
+Section EMO.4: Canonical Profile Model (Deterministic)
+
+Personality type (canonical)
+- PASSIVE
+- DOMINEERING
+- UNDETERMINED
+
+Lock status (minimum)
+- LOCKED
+- REEVAL_DUE
+- REEVAL_CHANGED
+- REEVAL_CONFIRMED
+
+Re-evaluation trigger (deterministic)
+- 10 sessions OR 21 elapsed days since last evaluation (whichever comes first).
+
+Profile fields (minimum)
+- personality_type
+- personality_lock_status
+- personality_last_eval_at_ms
+- voice_style_profile (pace_bucket, energy_bucket, warmth_bucket)
+- loyalty_tier (Companion | Believer | Referrer | Anchor | Guardian) (optional; tone-only; no authority)
+
+Hard rule (no guessing)
+- If there is not enough evidence, personality_type must remain UNDETERMINED.
+- loyalty_tier must not be upgraded by vibes. If no explicit evidence system exists yet, keep Companion.
+
+Section EMO.4A: Onboarding Snapshot (First Impression, Non-Blocking)
+
+Goal
+During onboarding, Selene should quickly converge to PASSIVE or DOMINEERING so tone feels right early.
+
+Hard rules
+- This must not block onboarding completion.
+- If not enough evidence: leave personality_type=UNDETERMINED and continue. Re-evaluate later.
+
+Where it runs
+- PH1.ONB.ORCH.001 triggers an EMO snapshot capture after consent and when identity is verified.
+- If identity is unknown or consent is missing: do not store; return EMO_IDENTITY_UNVERIFIED or EMO_CONSENT_MISSING.
+
+Section EMO.4B: Selene Style Pairing (How Selene Adapts)
+
+Principle (simple)
+Selene adapts her tone to fit the user.
+
+Example you requested
+- DOMINEERING works best with a PASSIVE counterpart.
+So if the user is PASSIVE, Selene becomes more DOMINANT (direct and leading).
+If the user is DOMINEERING, Selene becomes more GENTLE (calm, brief, not confrontational).
+
+Hard rule
+This is tone only. It must not change truth, permissions, confirmations, or simulations.
+
+Deterministic pairing table (minimum)
+
+| user personality_type | Selene style target | What it feels like |
+|---|---|---|
+| PASSIVE | DOMINANT | Selene leads, proposes defaults, asks clearer questions, keeps momentum |
+| DOMINEERING | GENTLE | Selene stays calm, crisp, respectful, avoids power struggles, keeps boundaries firm |
+| UNDETERMINED | NEUTRAL | Selene stays professional and balanced until proven |
+
+ToneGuidance mapping (minimum)
+- DOMINANT:
+  - voice_style_tags: professional, crisp, reassuring
+  - pacing_guidance: brisk
+  - directness: directive
+  - empathy_level: medium
+- GENTLE:
+  - voice_style_tags: calm, friendly, professional
+  - pacing_guidance: balanced
+  - directness: soft or balanced (never vague)
+  - empathy_level: medium/high (bounded)
+- NEUTRAL:
+  - voice_style_tags: professional
+  - pacing_guidance: balanced
+  - directness: balanced
+  - empathy_level: medium
+
+Safety override (tone safe mode)
+If distress_score is above a deterministic threshold, EMO must output EMO_DISTRESS_TONE_SAFE_MODE and force calm + simple wording, regardless of personality pairing.
+
+Anger/urgency override (fast, calm, direct)
+If anger_score is above a deterministic threshold AND distress_score is not high:
+- Selene must stay calm (no arguing, no emotional labeling).
+- Selene must become clearer and more direct (fast path).
+- EMO must output EMO_ANGER_TONE_CRISP_MODE.
+
+Hard rule
+Selene must never say "you're angry" or label the user's emotion out loud. She only adjusts tone.
+
+Section EMO.4C: Real-Life Behavior Examples (Tone Only, No Labels)
+
+These examples define what "world-class emotional behavior" looks like without breaking Selene law.
+
+Example 1: User is angry and wants speed
+
+User says
+"Why is this taking so long? Fix it now."
+
+What Selene does (inside, deterministically)
+- anger_score is high -> enable the anger/urgency override.
+- keep the words calm and direct.
+- focus on the fastest next step to fix the issue.
+
+What Selene says (example line; PH1.X renders, EMO only guides tone)
+"Understood. Tell me exactly what's not working and what you expected to happen. I'll walk you through the fastest way to fix it."
+
+Hard rules
+- Selene must not say "you're angry."
+- Selene must not escalate or punish the user for tone.
+
+Example 2: User feels overwhelmed / distressed
+
+User says
+"I'm overwhelmed. Everything is falling apart."
+
+What Selene does (inside, deterministically)
+- distress_score is high -> EMO_DISTRESS_TONE_SAFE_MODE.
+- slow down speech and reduce pressure.
+- help the user focus on one small thing (one question).
+
+What Selene says (example line; PH1.X renders, EMO only guides tone)
+"I'm here with you. Let's slow this down. What feels like the most urgent problem right now? We'll take it one step at a time."
+
+Hard rules
+- No diagnosis, no medical claims.
+- Do not demand multiple answers at once.
+
+Example 3: User asks Selene not to remember something
+
+User says
+"Do not remember this."
+
+What Selene does (inside, deterministically)
+- run EMO-SIM-003 (apply_privacy) with DO_NOT_REMEMBER.
+- emit MemoryDirectives: suppress_emotional_atom (and do not store new emotional atoms).
+- continue helping in the moment (this is not a refusal).
+
+What Selene says (example line; PH1.X renders)
+"Okay. I won't remember this. If you ever want me to use it again, just tell me."
+
+Section EMO.5: Inputs
+Required (minimum)
+- user_id (only when identity is verified)
+- session_id
+- consent_asserted
+- identity_verified
+- normalized emotional signals (not raw audio; see EMO.5A)
+- timestamp_ms
+
+Section EMO.5A: Signal Contract (Minimum)
+- assertive_score (0..100)
+- distress_score (0..100)
+- anger_score (0..100)
+- warmth_signal (0..100)
+
+Hard rule
+Signals must be bounded and deterministic. If signals are missing or invalid, fail closed to UNDETERMINED and do not update the stored profile.
+
+Section EMO.6: Outputs
+
+EmotionalProfile (stored, deterministic)
+- personality_type
+- personality_lock_status
+- personality_last_eval_at_ms
+- voice_style_profile
+- loyalty_tier (optional)
+
+ToneGuidance (ephemeral per turn, deterministic)
+- voice_style_tags (calm/friendly/professional/reassuring/crisp/reflective)
+- pacing_guidance (slow/balanced/brisk)
+- directness (soft/balanced/directive)
+- empathy_level (low/medium/high)
+
+EmotionalEvents (audit-ready)
+- event_type (personality_lock | reeval | tone_calibration | ritual | outreach_suggested)
+- reason_codes
+
+MemoryDirectives (consent-gated)
+- store_emotional_atom
+- archive_emotional_atom
+- suppress_emotional_atom
+
+Section EMO.7: Privacy Commands (Deterministic)
+Supported command set
+- FORGET_THIS_KEY
+- FORGET_ALL
+- DO_NOT_REMEMBER
+- RECALL_ONLY
+- KEEP_ACTIVE
+- ARCHIVE
+
+Policy effects
+- DO_NOT_REMEMBER: drop new emotional memory writes.
+- RECALL_ONLY: retrieval allowed only by explicit ask; no proactive mention.
+- ARCHIVE: keep history archived and non-proactive.
+
+Section EMO.8: NLP + LLM Policy (Bounded)
+Allowed
+- intent classification to known EMO simulation IDs
+- structured field extraction
+- ambiguity clarification questions
+- wording style adaptation only (rendering)
+
+Not allowed
+- profile mutation outside simulation
+- inventing emotional facts
+- permission changes
+- auto-execution
+
+Hard gate
+- If required fields missing OR confidence != HIGH: ask one clarification and halt simulation dispatch.
+
+Section EMO.9: Simulation Inventory (Minimum)
+- EMO-SIM-001: classify_profile (COMMIT)
+- EMO-SIM-002: reevaluate_profile (COMMIT)
+- EMO-SIM-003: apply_privacy (COMMIT)
+- EMO-SIM-004: emit_tone_guidance (DRAFT)
+- EMO-SIM-005: snapshot_capture (COMMIT)
+- EMO-SIM-006: emit_audit_event (COMMIT)
+
+Section EMO.10: Reason Codes (Minimum)
+- EMO_PERSONALITY_LOCKED
+- EMO_PERSONALITY_REEVAL_DUE
+- EMO_PERSONALITY_REEVAL_CHANGED
+- EMO_PERSONALITY_REEVAL_CONFIRMED
+- EMO_PRIVACY_FORGET_APPLIED
+- EMO_PRIVACY_DO_NOT_REMEMBER
+- EMO_PRIVACY_RECALL_ONLY
+- EMO_VOICE_PROFILE_INIT
+- EMO_TONE_CALIBRATED
+- EMO_TIME_DECAY_ARCHIVED
+- EMO_DISTRESS_TONE_SAFE_MODE
+- EMO_ANGER_TONE_CRISP_MODE
+- EMO_CONSENT_MISSING
+- EMO_IDENTITY_UNVERIFIED
+- EMO_SNAPSHOT_COMPLETE
+- EMO_SNAPSHOT_DEFER
+
+Section EMO.11: Logging (Mandatory Fields)
+- session_id
+- user_id
+- personality_type
+- personality_lock_status
+- reason_codes (bounded)
+- timestamp_ms
+
+Section EMO.12: Acceptance Tests
+Core gate
+- at_phase_emo_core_personality_engine
+  - ACCEPT: PHASE_EMO_CORE_PERSONALITY_ENGINE
+
+Snapshot gate
+- at_phase_emo_snapshot_contract_v1
+  - ACCEPT: PHASE_EMO_SNAPSHOT_CONTRACT_V1
+
+Simulation gates (minimum)
+- at_emo_001_classify_profile
+- at_emo_002_reevaluate_profile
+- at_emo_003_apply_privacy
+- at_emo_004_emit_tone_guidance
+- at_emo_005_snapshot_capture
+- at_emo_006_emit_audit_event
+- at_emo_007_anger_fast_fix_tone
+- at_emo_008_distress_safe_mode_one_step
+- at_emo_009_do_not_remember_obeys
+- at_phase_emo_simulation_suite
+  - ACCEPT: PHASE_EMO_SIMULATION_SUITE
+
+Section EMO.13: Dependencies
+Upstream
+- PH1.VOICE.ID.001 (identity verified)
+- PH1.NLP.001 (normalized signals; no raw audio)
+- PH1.L (session lifecycle; EMO must respect "may_speak" decisions made elsewhere)
+- PH1.M (memory store; EMO uses MemoryDirectives only)
+
+Downstream
+- PH1.X (applies tone guidance)
+- PH1.WRITE (style hints)
+- PH1.TTS (prosody only)
+- PH1.J (audit)
+
+1.6F PH1.CAPREQ — Capability Request Engine
+
+PH1.CAPREQ.001 — Capability Request Engine v1.0 (Deterministic, Simulation-Gated)
+
+Section CAPREQ.1: Mission
+PH1.CAPREQ persists capability/permission requests as deterministic, tenant-scoped lifecycle truth.
+
+Hard rule
+All CAPREQ side effects are simulation-gated. `PH1.CAPREQ` must never bypass Access/Authority or Simulation execution gates.
+
+Section CAPREQ.2: What PH1.CAPREQ Owns
+- Capability request lifecycle persistence (`DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | FULFILLED | CANCELED`).
+- Append-only event ledger (`capreq_ledger`) and rebuildable current projection (`capreq_current`).
+- Deterministic idempotency dedupe per `(tenant_id, capreq_id, idempotency_key)`.
+
+Section CAPREQ.3: What PH1.CAPREQ Must Never Do
+- Grant permissions directly (authority remains `PH1.ACCESS.001 -> PH2.ACCESS.002`).
+- Execute actions without simulation.
+- Mutate ledger rows in place.
+
+Section CAPREQ.4: Inputs (Minimum)
+- `tenant_id`
+- `capreq_id`
+- `requester_user_id`
+- `action`
+- `status`
+- `reason_code`
+- `payload_hash`
+- `idempotency_key` (required for retriable writes)
+
+Section CAPREQ.5: Outputs (Minimum)
+- `capreq_event_id`
+- `capreq_current` projection update (same tenant + capreq scope)
+- reason-coded status transition
+
+Section CAPREQ.6: Reason Codes (Minimum)
+- `CAPREQ_CREATED`
+- `CAPREQ_SUBMITTED`
+- `CAPREQ_APPROVED`
+- `CAPREQ_REJECTED`
+- `CAPREQ_FULFILLED`
+- `CAPREQ_CANCELED`
+
+Section CAPREQ.7: Acceptance Tests (Minimum)
+- `AT-CAPREQ-01` tenant isolation for same `capreq_id` across tenants
+- `AT-CAPREQ-02` append-only ledger enforcement
+- `AT-CAPREQ-03` idempotent retries produce deterministic no-op/reused result
+- `AT-CAPREQ-04` current state rebuilds deterministically from ledger
+
 1.7 PH1.X — Conversation Orchestrator
 
-PH1.X — Conversation Orchestrator v1.0 (Award‑Class, Deterministic)
+PH1.X — Conversation Orchestrator v1.0 (Award-Class, Deterministic)
 
 Section X.1: Mission
 PH1.X is Selene’s conversational spine. It does not understand language and it does not execute actions. Its sole job is to decide the next conversational move based on deterministic inputs from PH1.NLP, system state, and policy—so Selene feels natural, calm, and human without ever guessing.
@@ -1093,10 +4018,10 @@ PH1.X is Selene’s conversational spine. It does not understand language and it
 PH1.X answers one question, every turn:
 “What is the safest, clearest, most human next thing to say or do?”
 
-Section X.2: What Makes PH1.X World‑Class
+Section X.2: What Makes PH1.X World-Class
 Most systems improvise conversation. PH1.X conducts it.
 
-PH1.X is world‑class because it:
+PH1.X is world-class because it:
 
 Never invents meaning or intent
 
@@ -1115,13 +4040,83 @@ intent_draft / clarify / chat output from PH1.NLP
 
 transcript confidence state from PH1.C (implicit via NLP)
 
-session state (new / active / soft‑closed)
+session state (new / active / soft-closed)
 
 interruption signals (from PH1.K)
 
 policy constraints (privacy, DND, safety)
 
 PH1.X never consumes raw audio, raw text, or probabilistic guesses.
+
+Section X.3A: Request Envelope (Audit-Grade, Deterministic)
+Every PH1.X call must be replayable and auditable. The caller (Selene OS) must supply a small deterministic envelope:
+
+Required (minimum)
+
+correlation_id (WorkOrder thread id; shared across wake -> stt -> nlp -> x -> tools/sim -> done)
+
+turn_id (monotonic within correlation_id)
+
+now (monotonic time; used only for deterministic expiry windows such as resume_buffer TTL)
+
+thread_state (lightweight conversation mechanics; see X.3B)
+
+session_state
+
+identity_context (voice: speaker_assertion_ok/unknown from PH1.VOICE.ID OR text: UI signed-in user_id)
+
+policy_context_ref
+
+Optional (bounded)
+
+locale (e.g., en-US)
+
+memory_candidates (optional; bounded list from PH1.M: key/value + evidence_quote + sensitivity_flag + use_policy)
+
+One of these input “payloads” must be present (at least one):
+
+nlp_output (from PH1.NLP)
+
+tool_response (from PH1.E, completing a prior dispatch)
+
+confirm_answer (from Selene OS, completing a prior confirm; YES/NO only)
+
+interruption (from PH1.K, barge-in/interrupt candidate)
+
+last_failure_reason_code (from OS, when a prior step failed)
+
+Hard rule: PH1.X fails closed if none of the payloads are present.
+
+Section X.3B: Thread State (Lightweight, Deterministic)
+PH1.X must maintain and return a lightweight thread_state that contains only conversation mechanics:
+
+pending (optional)
+
+Clarify(missing_field, attempts)
+
+Confirm(intent_draft, attempts)
+
+MemoryPermission(deferred_response_text, attempts)
+
+Deferred response text must be bounded and must not contain sensitive memory values unless the user later explicitly permits it.
+
+Tool(request_id, attempts)
+
+resume_buffer (optional)
+
+answer_id (ties the buffer to the interrupted TTS answer)
+
+topic_hint (optional; short label for audit/UX only)
+
+spoken_prefix (what Selene already said out loud)
+
+unsaid_remainder (the exact text Selene did not speak yet; used for interruption recovery)
+
+expires_at (hard TTL; after expiry the resume buffer is ignored)
+
+Hard rule: thread_state must be bounded and must never contain private memory values, tool results, or provider details.
+
+Note: Confirm stores an intent_draft snapshot (HIGH confidence, no missing fields) so a later confirm_answer can dispatch deterministically without re-running PH1.NLP.
 
 Section X.4: Allowed Outputs (Exactly One Per Turn)
 PH1.X emits exactly one conversational directive per turn:
@@ -1144,11 +4139,36 @@ A natural conversational response (no action)
 
 D. dispatch
 
-Handoff to tool router or simulation pipeline (only after confirmation + access gates)
+Handoff to tool router (PH1.E) or to the simulation/domain candidate pipeline.
+
+Hard rule:
+
+Tool dispatch does not require confirmation (read-only only).
+
+Simulation/domain candidate dispatch requires confirmation and remains gated by Access + Simulation before any execution.
+
+E. wait
+
+No speech. A silent “listening posture” used when Selene must pause output (example: user interruption, policy/audible restrictions, or OS-level handoff). `wait` does not ask a question and does not advance a plan.
 
 Hard rule: PH1.X never emits multiple directives in one turn.
 
-Section X.5: Confidence‑Driven Flow (The Core Principle)
+Section X.4A: Output Envelope (Control + Audit, Non-Directive Fields)
+PH1.X response includes a small deterministic envelope alongside the single directive:
+
+thread_state (updated)
+
+delivery_hint (AudibleAndText | TextOnly | Silent)
+
+tts_control (optional; CANCEL is used for barge-in stop)
+
+reason_code (deterministic)
+
+idempotency_key (optional; used to avoid duplicate emissions on retries)
+
+Hard rule: tts_control and delivery_hint are control hints, not extra conversational directives.
+
+Section X.5: Confidence-Driven Flow (The Core Principle)
 PH1.X behavior is governed entirely by confidence and completeness.
 
 HIGH confidence + no missing fields → proceed or confirm
@@ -1193,13 +4213,13 @@ Asking the time
 
 Casual questions
 
-Read‑only lookups
+Read-only lookups
 
 Confirmation language must:
 
 Restate the intent plainly
 
-Never re‑interpret
+Never re-interpret
 
 Invite correction naturally
 
@@ -1226,7 +4246,7 @@ Authority
 
 Tone modulation is cosmetic, not semantic.
 
-Section X.9: Multi‑Turn Coherence (Why Selene Feels Present)
+Section X.9: Multi-Turn Coherence (Why Selene Feels Present)
 PH1.X maintains a lightweight conversational thread:
 
 What has been asked
@@ -1240,11 +4260,55 @@ It only remembers conversation state.
 
 This prevents:
 
-Re‑asking answered questions
+Re-asking answered questions
 
-Losing context mid‑task
+Losing context mid-task
 
 Awkward conversational resets
+
+Section X.9A: Tool Completion Loop (Dispatch -> ToolResponse -> Respond)
+PH1.X owns the conversation-side of tools. Tools are never “self-speaking.”
+
+Dispatch step
+
+When PH1.X emits a Dispatch(tool_request), it must also set:
+
+thread_state.pending = Tool(request_id, attempts)
+
+Completion step
+
+When PH1.E returns tool_response, Selene OS calls PH1.X again with tool_response.
+
+Hard rule: tool_response.request_id must match the pending request_id. Otherwise: fail closed (do not answer with mismatched data).
+
+PH1.X must deterministically convert tool_response into exactly one directive:
+
+OK -> respond with the tool result (provider-invisible; include URLs when present)
+
+FAIL -> respond honestly, invite retry (no internal details)
+
+ambiguity -> clarify exactly one question (keep the session open)
+
+On OK or FAIL, PH1.X clears pending tool state.
+
+Section X.9B: Simulation/Domain Candidate Dispatch (Confirm -> DispatchCandidate)
+PH1.X may dispatch a simulation/domain candidate (not a tool request) for impactful intents, but only after confirmation.
+
+Confirm step
+
+PH1.X emits confirm and sets thread_state.pending = Confirm(intent_draft, attempts).
+
+Answer step
+
+On the next turn, Selene OS passes confirm_answer=YES/NO (it may omit nlp_output).
+
+YES -> PH1.X emits Dispatch(simulation_candidate intent_draft) and clears pending confirm.
+
+NO -> PH1.X emits respond acknowledging the abort and clears pending confirm.
+
+Hard rule: Dispatch(simulation_candidate) is a candidate only. Selene OS must run Access + Simulation gates before any domain action is executed.
+
+Hard rule: read-only tool intents (time/weather/web/news) are dispatched only as Dispatch(tool_request) to PH1.E, never as simulation_candidate.
 
 Section X.10: Interruption and Recovery Handling
 When interrupted:
@@ -1257,7 +4321,30 @@ Either resumes, abandons, or replaces the prior flow
 
 PH1.X always chooses the option that minimizes user friction.
 
-Section X.11: Failure Is a First‑Class Outcome
+Resume/Replace/Combine (deterministic)
+
+PH1.X uses thread_state.resume_buffer (if present and not expired) to recover gracefully after barge-in:
+
+Resume: if PH1.NLP emits intent_type=Continue while resume_buffer is valid, PH1.X responds with the unsaid_remainder and clears resume_buffer.
+
+Combine: if PH1.NLP emits intent_type=MoreDetail while resume_buffer is valid, PH1.X treats it as “attach to the interrupted answer” and responds deterministically (v1: finish the unsaid_remainder; future: expand/augment via downstream engines), then clears resume_buffer.
+
+Replace: if any other intent arrives while resume_buffer is valid, PH1.X handles the new intent normally and preserves resume_buffer until expires_at.
+
+Hard rule: if now >= resume_buffer.expires_at, the resume buffer is ignored and cleared.
+
+Section X.10A: Instant Barge-In Stop (tts_cancel)
+If interruption is present, PH1.X must be able to stop speech immediately:
+
+directive = wait
+
+tts_control = CANCEL
+
+delivery_hint = Silent
+
+This is a control decision, not a conversational directive. The user must never hear trailing words after cancel.
+
+Section X.11: Failure Is a First-Class Outcome
 If upstream systems fail:
 
 PH1.X responds honestly
@@ -1286,9 +4373,9 @@ Unknown speaker or multi-speaker presence blocks personal recall out loud.
 
 X.11A.2 Inputs
 
-memory_candidates (from PH1.M: value + evidence_quote + sensitivity_flag + use_policy)
+memory_candidates (from PH1.M: key/value + evidence_quote + sensitivity_flag + use_policy)
 
-speaker_assertion (from PH1.VOICE.ID: ok/unknown + multi-speaker flags)
+identity_context (voice: speaker_assertion ok/unknown OR text: signed-in user_id)
 
 privacy_mode / DND
 
@@ -1372,124 +4459,181 @@ implying continuous monitoring (“I noticed you…”)
 
 citing exact times/dates unless the user asked
 
-Section X.12: Acceptance Tests (Gold‑Standard Conversational Behavior)
+Section X.12: Acceptance Tests (Gold-Standard Conversational Behavior)
 
-AT‑X‑01: No guessing under pressure
+AT-X-01: No guessing under pressure
 
 Scenario: missing required field
 
 Pass: PH1.X asks one clear question; does not proceed
 
-AT‑X‑02: No over‑questioning
+AT-X-02: No over-questioning
 
 Scenario: one missing field
 
 Pass: exactly one clarification question asked
 
-AT‑X‑03: Broken English still flows naturally
+AT-X-03: Broken English still flows naturally
 
 Scenario: fragmented command
 
 Pass: correct clarification, polite tone
 
-AT‑X‑04: Mixed language response remains natural
+AT-X-04: Mixed language response remains natural
 
-Scenario: code‑switch input
+Scenario: code-switch input
 
 Pass: response preserves user language choices
 
-AT‑X‑05: Confident when certain, curious when not
+AT-X-05: Confident when certain, curious when not
 
 Scenario: HIGH vs LOW confidence inputs
 
 Pass: decisiveness scales with certainty
 
-AT‑X‑06: Interruption recovery feels human
+AT-X-06: Interruption recovery feels human
 
-Scenario: user interrupts Selene mid‑sentence
+Scenario: user interrupts Selene mid-sentence
 
 Pass: Selene stops, listens, responds appropriately
 
-AT‑X‑07: No silent execution
+AT-X-07: No silent execution
 
 Scenario: actionable request with impact
 
-Pass: confirmation issued before dispatch
+Pass: PH1.X emits confirm first; it only emits dispatch after a later confirm_answer=YES.
 
-AT‑X‑08: Memory used silently by default
+AT-X-08: Memory used silently by default
 
 Scenario: preferences and known facts are available.
 
 Pass: Selene applies them without announcing “I remember.”
 
-AT‑X‑09: No personal memory spoken when two speakers present
+AT-X-09: No personal memory spoken when two speakers present
 
 Scenario: diarization-lite detects multiple speakers.
 
 Pass: Selene does not speak personal memory out loud; may ask to confirm private mode.
 
-AT‑X‑10: Safe surprise only when low-risk and relevant
+AT-X-10: Safe surprise only when low-risk and relevant
 
 Scenario: low-risk helpful memory exists.
 
 Pass: Selene may mention it briefly; otherwise stays silent.
 
-AT‑X‑11: Sensitive memory requires permission
+AT-X-11: Sensitive memory requires permission
 
 Scenario: sensitive memory candidate is relevant.
 
 Pass: Selene asks permission before using or citing it.
 
-AT‑X‑12: Unknown speaker → no personalization
+AT-X-12: Unknown speaker → no personalization
 
 Scenario: speaker_assertion_unknown.
 
 Pass: Selene avoids personalization and memory recall; stays generic.
 
-AT‑X‑01: No guessing under pressure
+AT-X-13: Tool dispatch sets pending tool state
 
-Scenario: missing required field
+Scenario: user asks a read-only question that requires PH1.E (time/weather/web/news).
 
-Pass: PH1.X asks one clear question; does not proceed
+Pass: PH1.X emits Dispatch(tool_request) and sets thread_state.pending=Tool(request_id, attempts).
 
-AT‑X‑02: No over‑questioning
+AT-X-14: Tool OK completes into one response
 
-Scenario: one missing field
+Scenario: PH1.E returns tool_response OK for a pending tool request.
 
-Pass: exactly one clarification question asked
+Pass: PH1.X emits respond with the tool result (and URLs when present) and clears pending tool state.
 
-AT‑X‑03: Broken English still flows naturally
+AT-X-15: Tool ambiguity becomes one clarify question
 
-Scenario: fragmented command
+Scenario: PH1.E returns tool_response with structured ambiguity.
 
-Pass: correct clarification, polite tone
+Pass: PH1.X emits clarify with exactly one question and 2–3 answer formats; session remains open.
 
-AT‑X‑04: Mixed language response remains natural
+AT-X-16: Interruption triggers instant cancel
 
-Scenario: code‑switch input
+Scenario: user barge-in is detected while Selene is speaking.
 
-Pass: response preserves user language choices
+Pass: PH1.X emits wait + tts_control=CANCEL + delivery_hint=Silent.
 
-AT‑X‑05: Confident when certain, curious when not
+AT-X-17: Privacy/DND forces text-only delivery
 
-Scenario: HIGH vs LOW confidence inputs
+Scenario: policy_context_ref.privacy_mode=true or do_not_disturb=true.
 
-Pass: decisiveness scales with certainty
+Pass: PH1.X emits delivery_hint=TextOnly for non-wait directives (Selene OS renders text and skips TTS).
 
-AT‑X‑06: Interruption recovery feels human
+AT-X-18: Confirm YES dispatches a simulation/domain candidate
 
-Scenario: user interrupts Selene mid‑sentence
+Scenario: PH1.X previously emitted confirm for an impactful intent and stored pending=Confirm(intent_draft,...). User answers YES.
 
-Pass: Selene stops, listens, responds appropriately
+Pass: PH1.X emits Dispatch(simulation_candidate intent_draft) and clears pending confirm. Downstream execution remains gated by Access + Simulation.
 
-AT‑X‑07: No silent execution
+AT-X-19: Confirm NO aborts cleanly
 
-Scenario: actionable request with impact
+Scenario: PH1.X previously emitted confirm for an impactful intent. User answers NO.
 
-Pass: confirmation issued before dispatch
+Pass: PH1.X emits respond acknowledging the abort, does not dispatch anything, and clears pending confirm.
 
-Section X.13: One‑Line Truth
-PH1.X is world‑class because it never pretends to understand—it proves it, step by step, like the best human assistant in the room.
+Section X.13: One-Line Truth
+PH1.X is world-class because it never pretends to understand—it proves it, step by step, like the best human assistant in the room.
+
+1.7A PH1.WRITE — Professional Writing & Formatting Engine
+
+PH1.WRITE — Professional Writing & Formatting Engine v1.0 (Presentation-Only)
+
+Section WRITE.1: Mission
+PH1.WRITE converts PH1.X's approved response into a clean, professional text form for:
+
+the on-screen chat history, and
+
+PH1.TTS (spoken output).
+
+This is presentation only. PH1.WRITE must never change the meaning of what PH1.X decided.
+
+Section WRITE.2: Inputs (minimum)
+response_text (approved by PH1.X; source of truth)
+
+language_or_locale_tag (if available)
+
+style_profile_ref (optional; from PH1.PERSONA and/or PH1.EMO.GUIDE)
+
+policy_context_ref (privacy/DND; PH1.WRITE does not override delivery policy)
+
+Section WRITE.3: Outputs (minimum)
+formatted_text (same meaning; improved formatting only)
+
+render_hints (bounded; optional; headings/bullets only)
+
+Section WRITE.4: Hard Rules
+No meaning drift:
+
+must not change names, numbers, dates, amounts, or commitments
+
+must not add facts, omit refusals, or weaken safety wording
+
+must not introduce provider names, internal scores, or chain-of-thought
+
+Single truth for voice + text:
+
+the UI and PH1.TTS must use the same formatted_text as the canonical response text (no “one thing on screen, another spoken”).
+
+Fail-safe fallback:
+
+if PH1.WRITE cannot produce a safe rewrite deterministically, it must return the original response_text unchanged.
+
+Section WRITE.5: Acceptance Tests
+AT-WRITE-01: Preserve critical tokens
+
+Scenario: response_text contains names, numbers, and dates.
+
+Pass: formatted_text preserves the exact critical tokens; only spacing/punctuation/format changes.
+
+AT-WRITE-02: Preserve refusals and boundaries
+
+Scenario: PH1.X produced a refusal or a policy-limited response.
+
+Pass: formatted_text preserves the refusal/limits and does not soften them into “maybe”.
 
 1.8 PH1.TTS — Speech Output Engine
 
@@ -1508,9 +4652,28 @@ and never changes meaning.
 
 PH1.TTS is not allowed to improvise content. It only renders what PH1.X approved.
 
+Section TTS.1A: TTS SLO (Measurable, Enterprise-Grade)
+
+PH1.TTS must meet the global voice SLO rows:
+
+`conversation_directive` -> `tts_started`
+
+`interrupt_candidate.t_event` -> `tts_stopped`
+
+PH1.TTS must also measure (p95/p99) internal timings:
+
+| Segment | Start | End | Target p95 | Target p99 |
+|---|---|---|---:|---:|
+| TTS start | PLAY received | first audible frame | <= 350ms | <= 650ms |
+| Cancel stop | CANCEL received | audio fully stopped | <= 80ms | <= 150ms |
+
+Hard rule: repeated severe violations must degrade or fail closed deterministically (do not “keep talking”).
+
 Section TTS.2: What PH1.TTS Owns
 
 Text-to-speech synthesis (provider selection is internal).
+
+Deterministic provider arbitration by route class (ON_DEVICE | ON_PREM | CLOUD_ALLOWED), governed by policy.
 
 Audio playback control (start / pause / stop / cancel).
 
@@ -1519,6 +4682,22 @@ Barge-in safety: stop instantly on PH1.X tts_cancel.
 Voice rendering parameters (pace, pauses, emphasis) within a safe range.
 
 Echo tagging / playback markers to support AEC and prevent self-wake.
+
+Pronunciation artifacts (tenant/user pronunciation packs) applied deterministically when policy allows.
+
+Section TTS.2A: Shadow -> Assist -> Lead Modes (Automatic Improvement Without Risk)
+
+PH1.TTS supports three deterministic routing modes controlled only by a versioned routing policy pack:
+
+SHADOW: keep the baseline ladder, but optionally synthesize additional candidates for scoring/learning within strict budgets (never delaying playback).
+
+ASSIST: baseline ladder remains, but PH1.TTS may apply pronunciation packs and bounded second-pass synthesis for borderline cases (example: critical proper nouns).
+
+LEAD: a Selene-owned TTS route may become Primary, but only when the routing policy pack says it is promoted. Fallback slots remain available.
+
+Hard rule: mode changes must be auditable and must never change Access/Authority or Simulation behavior.
+
+Hard rule: regardless of mode, PH1.TTS must never change meaning. If uncertain, fail closed or fall back.
 
 Section TTS.3: What PH1.TTS Must Never Do
 
@@ -1555,6 +4734,20 @@ language_tag (from PH1.C / PH1.NLP)
 
 voice_pref_ref (per-user voice preference, if set)
 
+Enterprise/policy inputs (recommended)
+
+policy_context_ref (PH1.D PolicyContextRef: privacy_mode / do_not_disturb / safety_tier)
+
+Hard rule (audible policy): if policy_context_ref.do_not_disturb=true OR policy_context_ref.privacy_mode=true, PH1.TTS must fail closed for PLAY with TTS_FAIL_POLICY_RESTRICTED.
+
+Note: locality constraints (local_only / allowed_route_classes / allowed_regions) belong in a dedicated versioned TTS routing policy pack. Do not overload PolicyContextRef with locality fields.
+
+tts_routing_policy_pack_ref (optional, versioned: SHADOW/ASSIST/LEAD mode + ladder order; audit-only details)
+
+tenant_pronunciation_pack_ref (optional, versioned: org names / acronyms / product names)
+
+user_pronunciation_pack_ref (optional, versioned; allowed only when identity is OK and policy allows personalization)
+
 Section TTS.5: Emotion Integration (Correct Responsibility Split)
 A. Emotional Engine decides style
 
@@ -1590,6 +4783,34 @@ emit tts_stopped event
 
 never continue speaking after cancel
 
+Section TTS.6A: Streaming Segments + Spoken Cursor (For Resume Buffer)
+
+Why this exists
+
+PH1.X maintains a Resume Buffer so Selene can resume mid-answer after an interruption. PH1.X needs a precise boundary: what was already spoken vs what remains.
+
+ms_played is not enough. PH1.TTS must provide a deterministic spoken cursor that references the original response_text.
+
+Deterministic segment plan (internal)
+
+PH1.TTS must split response_text into a deterministic sequence of segments for streaming and safe cursor boundaries.
+
+Default segment boundaries (deterministic): ASCII sentence terminators (. ? !) and newline.
+
+Hard rule: segments are for timing/cursor only. PH1.TTS must never edit the text.
+
+Spoken cursor contract (required)
+
+During playback, PH1.TTS must maintain a SpokenCursor:
+
+byte_offset (UTF-8 byte offset into response_text)
+
+segments_spoken (0..=segments_total)
+
+segments_total (>=1)
+
+Hard rule: byte_offset must point to a safe boundary (end of a fully spoken segment). Cursor must be monotonic (never moves backward).
+
 Section TTS.7: Echo-Safe Playback (No Self-Trigger)
 During playback, PH1.TTS must:
 
@@ -1612,11 +4833,39 @@ PH1.TTS emits:
 
 tts_started(answer_id, voice_id)
 
-tts_progress(answer_id, ms_played) (optional)
+tts_progress(answer_id, ms_played, spoken_cursor) (optional)
 
-tts_stopped(answer_id, reason)
+tts_stopped(answer_id, reason, spoken_cursor)
 
 tts_failed(answer_id, reason_code)
+
+Section TTS.9A: Provider-Invisible Metadata (Audit-Only)
+
+PH1.TTS must emit an audit event (PH1.J) containing only bounded, provider-agnostic metadata:
+
+route_class_used (ON_DEVICE | ON_PREM | CLOUD_ALLOWED)
+
+mode_used (SHADOW | ASSIST | LEAD)
+
+tts_routing_policy_pack_id (if provided)
+
+voice_id (internal id; not a vendor name)
+
+pronunciation_packs_used (tenant pack id; user pack id if allowed)
+
+total_latency_ms
+
+Hard rule: this metadata is for audit/replay only; it must not be required by PH1.X to operate.
+
+Section TTS.9B: Deterministic Reason Codes (Minimum Set)
+
+TTS_FAIL_POLICY_RESTRICTED
+
+TTS_FAIL_NETWORK_UNAVAILABLE
+
+TTS_FAIL_PROVIDER_TIMEOUT
+
+TTS_FAIL_QUOTA_THROTTLED
 
 Section TTS.10: Acceptance Tests (World-Class TTS)
 AT-TTS-01: Instant cancel
@@ -1654,6 +4903,42 @@ AT-TTS-06: Multilingual output preserved
 Scenario: mixed-language response.
 
 Pass: scripts preserved; no translation; pronunciation best-effort.
+
+AT-TTS-07: Enterprise locality policy enforced (no silent cloud fallback)
+
+Scenario: policy_context_ref.do_not_disturb=true or privacy_mode=true.
+
+Pass: tts_failed with TTS_FAIL_POLICY_RESTRICTED; PH1.TTS does not speak. (Selene may still render text via the UI; PH1.TTS is not responsible for UI.)
+
+AT-TTS-08: Pronunciation packs improve proper nouns deterministically
+
+Scenario: response_text includes an enterprise name/acronym present in tenant_pronunciation_pack_ref.
+
+Pass: pronunciation is applied deterministically (no meaning drift); audit records the pack id used.
+
+AT-TTS-09: Shadow mode never delays playback
+
+Scenario: routing mode is SHADOW and extra candidates are evaluated.
+
+Pass: first audible frame time stays within the start SLO; shadow work never blocks playback.
+
+AT-TTS-10: Lead mode changes ladder only via a versioned policy pack
+
+Scenario: tts_routing_policy_pack_id changes from baseline to a promoted LEAD policy.
+
+Pass: mode_used becomes LEAD only after the policy pack is applied; audit records the policy pack id; provider identity is not exposed to PH1.X.
+
+AT-TTS-11: Spoken cursor is monotonic and bounded
+
+Scenario: PH1.TTS plays a multi-sentence response and emits tts_progress.
+
+Pass: spoken_cursor.byte_offset is within [0..len_bytes], never decreases, and ends at len_bytes on completion/cancel.
+
+AT-TTS-12: Segment plan is deterministic
+
+Scenario: same response_text + same policy and packages.
+
+Pass: segments_total is identical across replays; cursor boundaries land only on segment ends (safe resume boundaries).
 
 1.9 PH1.L — Session Lifecycle
 
@@ -1705,7 +4990,17 @@ tts_state (playing | stopped)
 
 user_activity_signals (from PH1.K: speech detected, barge-in, silence duration)
 
-policy flags (DND / privacy mode / restricted hours)
+policy_context_ref (PH1.D PolicyContextRef: privacy_mode / do_not_disturb / safety_tier)
+
+resume_buffer_live (from PH1.X: true when a Resume Buffer exists and must not be discarded)
+
+user_dismissed (from PH1.X: true when the user explicitly ends the conversation: “thanks that’s all”, “we’re done”, etc.)
+
+audio_degraded (from PH1.K / OS audio health: true when mic/device integrity is degraded; fail closed into SUSPENDED)
+
+Optional (enterprise)
+
+presence_policy_pack_ref (versioned: restricted hours / quiet hours / per-device close rules)
 
 Section L.5: Output Contract
 PH1.L emits:
@@ -1717,6 +5012,10 @@ session_id (stable while session is not CLOSED)
 transition_event (with reason_code)
 
 next_allowed_actions (e.g., may_speak, must_wait, must_rewake)
+
+presence_nudge (optional, bounded)
+
+Example: close_check_prompt (ask if the user is finished before fully closing)
 
 Section L.6: Deterministic Session States
 CLOSED
@@ -1752,6 +5051,12 @@ clarify_timeout_sec (waiting for answer): 20–60s
 
 confirm_timeout_sec (waiting for confirmation): 20–60s
 
+close_check_quiet_timeout_sec (SOFT_CLOSED quiet → close_check_prompt): 20–45s
+
+close_check_repeat_timeout_sec (if still silent → ask again): 45–120s
+
+close_check_max_attempts (per SOFT_CLOSED window): 1–3 (default 2)
+
 These values are policy-tunable per device (desktop vs phone) and per user preference.
 
 L.7.2 How PH1.L decides when to soft-close
@@ -1773,6 +5078,48 @@ silence exceeds soft_close_timeout_sec, or
 user explicitly dismisses (“thanks that’s all”), or
 
 policy requires immediate close (privacy mode / DND strict).
+
+L.7.3A Close-check prompt (before closing)
+
+Hard rule: Selene should not disappear silently if the user is likely still thinking. Before fully closing, Selene asks one short question:
+
+“Are we finished with this topic?”
+
+Timing rule
+
+When session is SOFT_CLOSED and all are true:
+
+TTS is not playing, and
+
+PH1.X has no pending clarify/confirm, and
+
+resume_buffer_live is false, and
+
+policy_context_ref allows audible speech (not privacy_mode, not do_not_disturb), and
+
+time since entering SOFT_CLOSED >= close_check_quiet_timeout_sec
+
+Then PH1.L emits a close_check_prompt nudge.
+
+Repeat rule (bounded)
+
+If the user stays silent, PH1.L may emit the close_check_prompt again after close_check_repeat_timeout_sec, up to close_check_max_attempts.
+
+Hard rule: do not nag. After max attempts, proceed to normal close on soft_close_timeout_sec.
+
+Variation rule (no repetition)
+
+The close_check_prompt must have multiple valid phrasings (simple English) and must rotate deterministically (no true randomness) so Selene does not say the exact same line every time.
+
+LLM use (safe)
+
+LLM may be used to create new candidate phrasings, but:
+
+promotion into the trusted phrase bank must be deterministic and validated
+
+runtime selection is deterministic and auditable
+
+fallback always exists (a fixed safe phrase)
 
 L.7.4 Waiting states (clarify/confirm) are treated differently
 If PH1.X asked a question (clarify/confirm), PH1.L enters a “waiting” posture:
@@ -1812,6 +5159,10 @@ L_TO_CLOSED_SILENCE
 L_TO_CLOSED_DISMISS
 
 L_WAIT_TIMEOUT_PROMPTED
+
+L_CLOSE_CHECK_PROMPTED
+
+L_RESUME_USER_ACTIVITY
 
 L_SUSPEND_AUDIO_DEGRADED
 
@@ -1860,6 +5211,297 @@ Scenario: mic device disconnects.
 
 Pass: session enters SUSPENDED; Selene fails closed; resumes only after stabilization.
 
+AT-L-08: Close-check prompt before fully closing
+
+Scenario: Selene is SOFT_CLOSED and user stays silent.
+
+Pass: after close_check_quiet_timeout_sec, PH1.L emits close_check_prompt; it is short and rotates deterministically.
+
+AT-L-09: Close-check is bounded (no nagging)
+
+Scenario: user stays silent for a long time.
+
+Pass: PH1.L emits close_check_prompt at most close_check_max_attempts, then closes on soft_close_timeout_sec.
+
+AT-L-10: No close-check prompt in privacy/DND
+
+Scenario: privacy_mode=true or do_not_disturb=true.
+
+Pass: PH1.L does not emit close_check_prompt; session closes silently.
+
+1.9A PH1.REM — Reminder Engine
+
+PH1.REM.001 — Reminder Engine v1.0 (Deterministic Scheduling + Human Delivery)
+
+Section R.1: Purpose
+
+PH1.REM ensures reminders are captured accurately, delivered on time, and followed up politely based on priority and user context.
+
+It guarantees deterministic timing and tracking while allowing natural-language phrasing through validated LLM rendering.
+
+Hard rule
+Reminder timing is deterministic and must not drift. System boundary applies; this engine is non-authoritative (reminds only). It must never execute real actions.
+
+Section R.1A: Ownership Split (Who Owns What)
+
+PH1.REM owns:
+- Reminder state machine (DRAFT -> SCHEDULED -> DUE_SENT -> FOLLOWUP...).
+- Deterministic time capture rules, timezone + DST rules, recurrence expansion bounds.
+- Delivery attempts, retry/backoff, idempotency, and channel escalation decisions.
+- Follow-up scheduling and max-attempt enforcement.
+
+PH1.X owns:
+- The live conversation step of asking the user a clarification/confirmation question when PH1.REM reports ambiguity (one question at a time).
+
+PH1.L owns:
+- Session presence and "may_speak" gating. PH1.REM must not open/close sessions.
+
+PH1.D (LLM contract) may be used only for reminder phrasing:
+- The LLM may only render a deterministic guidance bundle into one short line.
+- The LLM must never decide timing, priority, escalation, or policy.
+
+PH1.BCAST.001 (Broadcast Engine) owns:
+- Push/text delivery into the Selene phone app (idempotent side effect gateway).
+
+Section R.2: Inputs (Minimum)
+
+Required inputs
+- reminder_request (text + structured fields)
+- update_action (CREATE | UPDATE | CANCEL | SNOOZE | DEFER)
+- reminder_id (required for UPDATE/CANCEL/SNOOZE/DEFER)
+- user_id, device_id
+- user_timezone
+- priority_level (LOW | NORMAL | HIGH | CRITICAL)
+- reminder_type (TASK | MEETING | TIMER | MEDICAL | CUSTOM)
+- desired_time (absolute datetime or relative duration)
+- local_time_mode (FIXED_TIMEZONE | LOCAL_TIME)
+- delivery_channel (voice | push | text | email)
+- channel_preferences (ordered list)
+- delivery_attempt_id (idempotency key)
+- offline_state (online | offline)
+- now_timestamp_ms
+
+Optional inputs (bounded)
+- recurrence_rule (bounded RRULE)
+- snooze_duration_ms
+- defer_time (absolute datetime)
+- user_context (bounded; may include emotional tone summary, but tone only)
+- acknowledgment_signal (optional: user response status)
+
+Section R.3: Outputs (Minimum)
+
+PH1.REM emits one or more (bounded):
+- reminder_scheduled (reminder_id, scheduled_time)
+- reminder_updated (reminder_id, updated_fields)
+- reminder_snoozed (reminder_id, snooze_until)
+- reminder_delivered (reminder_id, delivery_time)
+- reminder_followup_scheduled (reminder_id, followup_time)
+- reminder_delivery_retry_scheduled (reminder_id, retry_time)
+- reminder_completed (reminder_id, completion_time)
+- reminder_escalated (reminder_id, escalation_level)
+- reminder_canceled (reminder_id, cancel_reason)
+- reminder_failed (reminder_id, failure_reason)
+
+Section R.4: Boundaries / Hard Rules
+
+LLM phrasing is allowed only for wording, never for timing or control decisions.
+
+Emotional awareness affects tone only. It must not change schedules, priorities, escalation, or policy.
+
+Time capture
+- Parse reminders deterministically.
+- Ambiguous time must be resolved with a user confirmation (one question).
+- If timezone is missing: default to user profile timezone; if still missing: ask.
+
+Delivery guarantees
+- Reminders fire at scheduled_time unless the user explicitly reschedules or cancels.
+- Quiet hours are enforced deterministically (see R.4.1 / R.4.5).
+
+Follow-up rules
+- Follow-ups are scheduled deterministically based on priority.
+- If user acknowledges completion, all pending follow-ups are canceled.
+- If user defers, a new reminder time must be confirmed.
+
+Section R.4.1: Deterministic Timing Parameters (Defaults + Ranges)
+
+Pre-reminder offsets
+- LOW: default none, allowed 0 to 10 minutes
+- NORMAL: default 10 minutes, allowed 0 to 30 minutes
+- HIGH: default 30 minutes, allowed 10 to 60 minutes
+- CRITICAL: default 60 minutes, allowed 15 to 120 minutes
+
+Follow-up delay after reminder fires
+- LOW: default 120 minutes, allowed 30 to 240 minutes
+- NORMAL: default 60 minutes, allowed 15 to 180 minutes
+- HIGH: default 30 minutes, allowed 10 to 120 minutes
+- CRITICAL: default 15 minutes, allowed 5 to 60 minutes
+
+Max follow-up attempts
+- LOW: default 1, allowed 0 to 2
+- NORMAL: default 2, allowed 1 to 4
+- HIGH: default 3, allowed 1 to 6
+- CRITICAL: default 4, allowed 2 to 8
+
+Quiet hours
+- Respect user quiet hours; shift delivery to next allowed slot unless priority is CRITICAL and policy allows a one-time bypass.
+
+Section R.4.2: Reminder State Machine (Deterministic)
+
+States
+- DRAFT
+- SCHEDULED
+- PRE_REMINDER_SENT
+- DUE_SENT
+- FOLLOWUP_PENDING
+- SNOOZED
+- COMPLETED
+- CANCELED
+- ESCALATED
+- FAILED
+
+Key transitions
+- DRAFT -> SCHEDULED when time is resolved and confirmed.
+- SCHEDULED -> DUE_SENT when scheduled_time is reached.
+- DUE_SENT -> FOLLOWUP_PENDING when follow-up delay elapses without acknowledgment.
+- FOLLOWUP_PENDING -> COMPLETED on user_done.
+- FOLLOWUP_PENDING -> SNOOZED on user_snooze.
+- FOLLOWUP_PENDING -> SCHEDULED on user_defer with confirmed time.
+- FOLLOWUP_PENDING -> ESCALATED when priority policy requires channel escalation.
+- Any state -> CANCELED on explicit cancel.
+- Delivery attempts -> FAILED only after retries/max attempts are exhausted.
+
+Section R.4.3: Recurrence + Timezone + DST Rules
+
+Recurrence (bounded)
+- Support bounded RRULE fields: FREQ (DAILY | WEEKLY | MONTHLY), INTERVAL, BYDAY, BYHOUR, BYMINUTE.
+- No multi-rule or infinite loops; max 365 occurrences scheduled ahead.
+- Each occurrence has a unique occurrence_id tied to reminder_id.
+
+Timezone and DST
+- FIXED_TIMEZONE: anchored to user_timezone; DST shifts preserve wall-clock time.
+- LOCAL_TIME: reinterprets in current device timezone at delivery time.
+- If timezone changes and LOCAL_TIME is not set, keep original user_timezone and inform the user once.
+
+Section R.4.4: Delivery Retry and Idempotency (Bounded)
+
+Idempotency
+- delivery_attempt_id must be unique per reminder occurrence.
+- Duplicate delivery_attempt_id is a no-op and must be logged.
+
+Retry policy (bounded)
+- Retry only on delivery failures (channel unavailable, offline, transient error).
+- Backoff: 1m, 5m, 15m (bounded to 3 retries) unless priority is CRITICAL.
+- CRITICAL may retry up to 5 times with 1m, 2m, 5m, 10m, 15m spacing.
+
+Section R.4.5: Channel Escalation + Quiet Hours
+
+Default escalation order (user can reorder/opt out)
+- voice -> push -> text -> email
+
+Rules
+- Escalation only after follow-up attempt fails or is ignored.
+- Respect quiet hours for non-CRITICAL; defer to next allowed slot.
+- CRITICAL may bypass quiet hours once per reminder if user allows; otherwise defer.
+
+Section R.4.6: Acknowledgment Semantics
+
+Ack states
+- done: mark complete; cancel all follow-ups
+- defer: schedule new time (must be confirmed)
+- snooze: short delay within bounds
+- cancel: cancel reminder
+
+If user says "later" / "not now" (vague)
+- Ask for a concrete time or propose a default and confirm:
+  - If before 6pm: suggest later today.
+  - If 6pm or later: suggest tomorrow morning.
+
+Section R.5: Reason Codes (Minimum)
+
+SCHEDULED_OK
+SCHEDULE_TIME_AMBIGUOUS
+SCHEDULE_TIME_INVALID
+SCHEDULE_TIMEZONE_MISSING
+SCHEDULE_RECURRENCE_INVALID
+DELIVERED_OK
+DELIVERY_DEFERRED_QUIET_HOURS
+DELIVERY_CHANNEL_UNAVAILABLE
+DELIVERY_OFFLINE_RETRY
+DELIVERY_RETRY_EXHAUSTED
+FOLLOWUP_SCHEDULED
+FOLLOWUP_MAX_ATTEMPTS
+ACKNOWLEDGED_COMPLETE
+ACKNOWLEDGED_DEFER
+ACKNOWLEDGED_SNOOZE
+USER_CANCELED
+ESCALATED_PRIORITY
+REMINDER_UPDATED
+REMINDER_SNOOZED
+REMINDER_FAILED
+
+Section R.6: Logging (Mandatory Fields)
+
+reminder_id
+user_id
+timestamp_ms
+timezone
+priority_level
+reminder_type
+scheduled_time
+occurrence_id
+state
+delivery_time (if delivered)
+followup_time (if scheduled)
+attempt_count
+delivery_attempt_id
+reason_code
+delivery_channel
+ack_status (none | done | defer | cancel)
+timezone_rule (FIXED_TIMEZONE | LOCAL_TIME)
+quiet_hours_applied (true | false)
+
+Section R.7: LLM Mouthpiece Contract (Reminder Phrasing)
+
+Hard rule
+The LLM only renders a deterministic guidance bundle into one short line. It never decides timing, priority, escalation, or policy.
+
+Required guidance bundle fields (minimum)
+phase (PRE_REMINDER | REMINDER_DELIVER | FOLLOWUP_ASK | ACK_CONFIRM)
+required_action (INFORM | ASK_CONFIRM)
+priority_level
+tone (neutral | friendly | concise)
+timing_gate (SPEECH_ACTIVE | SILENCE_OK)
+
+Validation rules (minimum)
+- If timing_gate=SPEECH_ACTIVE, do not speak.
+- If required_action=ASK_CONFIRM, the line must be a confirmation question.
+- Output must be one sentence or two short sentences.
+- Output must not introduce new times, new actions, or policy changes.
+
+Fallback rule
+On validation failure or LLM error, use the deterministic fallback phrase for the same context_key.
+
+Section R.8: Acceptance Tests (Design-Only)
+
+at_phase_r_reminder_schedule_delivery
+at_phase_r_reminder_recurrence_dst
+at_phase_r_reminder_quiet_hours_escalation
+at_phase_r_reminder_snooze_defer_update_cancel
+at_phase_r_reminder_delivery_retry_idempotency
+
+Section R.9: Dependencies
+
+Upstream dependencies
+- PH1.C (STT routing for reminder capture)
+- PH1.K (voice I/O and timing signals)
+- Emotional Engine (tone guidance only)
+- Device timezone + quiet-hours settings
+
+Downstream dependencies
+- PH1.L (session lifecycle if reminders occur during active sessions)
+- PH1.BCAST.001 (push/text delivery to Selene app)
+- PH1.J (audit logging)
+
 1.10 PH1.EXPLAIN — Trust & Self-Explanation Engine
 
 PH1.EXPLAIN — Trust & Self-Explanation Engine v1.0 (Evidence-Backed, Human-Safe)
@@ -1896,11 +5538,15 @@ explain_request (explicit user ask like “why?”, “how do you know?”, “w
 
 event_context_ref (most recent relevant engine events + reason codes)
 
+policy_context_ref (privacy/DND: what can be explained)
+
 Optional
 
 memory_candidate_ref (from PH1.M: evidence_quote + provenance)
 
-policy_context_ref (privacy/DND: what can be explained)
+event_context_ref optional fields (bounded)
+
+verbatim_trigger (optional short user phrase that caused the event, e.g., “wait”; used for barge-in explanations only)
 
 Section EX.5: Output Contract
 PH1.EXPLAIN emits exactly one:
@@ -1908,7 +5554,7 @@ A) explanation
 
 explanation_text (1–2 sentences max)
 
-explanation_type (WHY | HOW_KNOW | WHY_NOT | WHAT_NEXT)
+explanation_type (WHY | HOW_KNOW | WHY_NOT | WHAT_NEXT | WHAT_HAPPENED)
 
 evidence_quote (optional; short, user-safe)
 
@@ -2013,7 +5659,7 @@ AT-EX-04: “Why did you stop?”
 
 Scenario: barge-in.
 
-Pass: explanation cites interrupt phrase.
+Pass: explanation cites the interrupt phrase when verbatim_trigger is provided; otherwise it cites interruption without guessing.
 
 AT-EX-05: No internal leakage
 
@@ -2027,26 +5673,26 @@ Scenario: any explain request.
 
 Pass: explanation is ≤ 2 sentences and calm.
 
-1.11 Selene OS — Engine Orchestration Contract (Multi‑Engine Wiring)
+1.11 Selene OS — Engine Orchestration Contract (Multi-Engine Wiring)
 
 Selene OS is the conductor. Engines are instruments. Simulations are the sheet music. Nothing plays unless Selene OS points at it, in order, with proof.
 
 Section OS.1: Mission
-Selene OS deterministically wires multi‑engine work into one coherent outcome. It ensures:
+Selene OS deterministically wires multi-engine work into one coherent outcome. It ensures:
 
 consistent gate order,
 
-zero engine‑to‑engine spaghetti,
+zero engine-to-engine spaghetti,
 
 clean clarifications,
 
 safe confirmations,
 
-simulation‑first execution,
+simulation-first execution,
 
 and one audit trail per job.
 
-Section OS.2: Non‑Negotiable Rule
+Section OS.2: Non-Negotiable Rule
 Engines never call engines.
 
 Engines are pure workers.
@@ -2054,11 +5700,13 @@ Engines are pure workers.
 Selene OS is the only orchestrator.
 
 Section OS.3: Universal WorkOrder (One Job Object)
-Every multi‑engine task is represented as a single WorkOrder.
+Every multi-engine task is represented as a single WorkOrder.
 
 WorkOrder (minimum)
 
 work_order_id
+
+tenant_id (enterprise isolation boundary; required for all enterprise deployments)
 
 intent_type
 
@@ -2068,7 +5716,15 @@ device_id + session_id
 
 fields (key/value)
 
-evidence_spans (verbatim excerpts for key fields)
+evidence_refs (references only; no verbatim quotes stored in the WorkOrder)
+
+EvidenceRef (minimum)
+
+conversation_turn_id (PH1.F conversation_ledger)
+
+start_byte, end_byte (byte offsets into the stored text)
+
+field_key (optional: which field this evidence supports)
 
 missing_fields (list)
 
@@ -2076,7 +5732,147 @@ status (DRAFT → CLARIFY → CONFIRM → EXECUTING → DONE | REFUSED | FAILED)
 
 correlation_id (one id for all audit events)
 
-Hard rule: all downstream engine calls reference work_order_id and correlation_id.
+turn_id_next (monotonic within correlation_id; starts at 1; increments each user/selene turn)
+
+Hard rule: all downstream engine calls reference tenant_id, work_order_id, correlation_id, and turn_id.
+
+Hard rule: WorkOrder must not store raw sensitive quotes. It stores EvidenceRefs only.
+
+Section OS.3A: WorkOrder State Machine (Explicit + Audited)
+
+WorkOrder status transitions are deterministic and limited to:
+
+DRAFT → CLARIFY → DRAFT (after a clarify answer is applied)
+
+DRAFT → CONFIRM (only when a COMMIT is possible and a blueprint-declared confirmation point is reached)
+
+CONFIRM → EXECUTING (only after confirm_answer=YES)
+
+CONFIRM → DRAFT (if confirm_answer=NO; Selene may revise the draft or stop)
+
+EXECUTING → DONE | REFUSED | FAILED
+
+Hard rule: every WorkOrder status change must emit a PH1.J STATE_TRANSITION event under the same correlation_id.
+
+Section OS.3B: Field Merge Discipline (No Silent Overwrites)
+
+When updating WorkOrder fields, Selene OS must apply deterministic merge rules:
+
+User-stated fields (this turn) override memory suggestions and engine defaults.
+
+Memory values may fill missing fields only when policy allows and EvidenceRefs exist; otherwise they remain candidates.
+
+If two values conflict (prefilled vs user, memory vs user, engine vs user), Selene OS must trigger one OS-level clarify question and record the resolved value. No repeated re-asking.
+
+Section OS.3C: Multi-Tenant Isolation (Enterprise Minimum)
+
+Hard rule: tenant_id is an isolation boundary.
+
+All persisted records and all audit events must be attributable to exactly one tenant_id.
+
+Selene OS must never read or write across tenant_id boundaries (no cross-tenant memory, audit, or artifacts).
+
+Section OS.3D: WorkOrder Persistence (Append-Only + Rebuildable)
+
+In enterprise mode, a WorkOrder is not just an in-memory object. It is persisted as:
+
+an append-only WorkOrder ledger (truth)
+
+and a WorkOrder current view (materialization).
+
+Hard rule: Selene OS must be able to rebuild WorkOrder current state from the WorkOrder ledger deterministically (same rule as PH1.F ledgers).
+
+Minimum WorkOrder ledger event fields
+
+work_order_event_id (monotonic PK)
+
+tenant_id
+
+work_order_id
+
+correlation_id
+
+turn_id
+
+event_type (WORK_ORDER_CREATED | FIELD_SET | FIELD_CONFLICT_RESOLVED | STATUS_CHANGED | STEP_STARTED | STEP_FINISHED | STEP_FAILED | WORK_ORDER_CANCELED)
+
+payload_min (bounded, structured)
+
+created_at (monotonic time)
+
+idempotency_key (required for retriable events)
+
+Hard rule: WorkOrder ledger is append-only. No in-place edits. Corrections are new events.
+
+Section OS.3E: Concurrency + Lease (One Executor Per WorkOrder)
+
+Enterprise deployments must treat a WorkOrder as a shared resource (multiple devices, retries, restarts).
+
+Hard rule: at most one active executor may advance a WorkOrder at a time.
+
+Selene OS must acquire a WorkOrder lease before executing steps:
+
+lease_owner_id (device_id or worker_id)
+
+lease_expires_at (monotonic time; short TTL)
+
+lease_token (random, non-guessable)
+
+Deterministic rule
+
+If lease cannot be acquired: Selene OS must not execute. It must wait or return NEEDS_CLARIFY/REFUSED per policy and log the reason.
+
+If the lease expires: the next executor may take over, but must resume from the persisted WorkOrder ledger (never from memory).
+
+Section OS.3F: Exactly-Once Step Semantics (Idempotency + Result Cache)
+
+Hard rule: any retriable step must be exactly-once at the logical level.
+
+For each EngineStep, Selene OS must derive:
+
+step_id (from the blueprint)
+
+step_input_hash (hash of canonicalized EngineInput payload)
+
+idempotency_key = hash(tenant_id + work_order_id + step_id + step_input_hash)
+
+Selene OS may retry safely because the same idempotency_key produces the same stored result or a deterministic no-op.
+
+Optional (enterprise recommended): Step result cache
+
+Persist a StepResult record keyed by (tenant_id, work_order_id, step_id, step_input_hash) so retries can return instantly without re-running the step.
+
+Hard rule: cached results must be treated as immutable facts and must be auditable via PH1.J.
+
+Section OS.3G: Deterministic Scheduler (Timeouts, Retries, WAIT)
+
+Enterprise Selene OS must have a deterministic scheduler for long-running or flaky steps.
+
+Each EngineStep must declare:
+
+timeout_ms
+
+max_retries
+
+retry_backoff_ms (deterministic)
+
+retryable_reason_codes (bounded allowlist)
+
+Deterministic policy
+
+On timeout: mark STEP_FAILED with a reason_code and either retry (if allowed) or apply the Failure Playbook.
+
+On retry: schedule the next attempt at now + retry_backoff_ms * attempt_index (or another fixed formula), record it in the WorkOrder ledger, and never retry more than max_retries.
+
+On WAIT: Selene OS may choose wait (silence) without advancing a plan, but must log a state/decision event so replay shows why Selene paused.
+
+Section OS.3H: Parallel Step Groups (Read-Only Speed Without Nondeterminism)
+
+Blueprints may declare that certain steps are safe to run in parallel for speed.
+
+Hard rule: only read-only steps (side_effects = NONE) may be run in parallel groups.
+
+Hard rule: Selene OS must join parallel results deterministically (sorted by step_id) and produce the same WorkOrder updates regardless of completion order.
 
 Section OS.4: Standard Engine Interface (Input / Output)
 Every domain engine must implement the same deterministic contract.
@@ -2084,6 +5880,16 @@ Every domain engine must implement the same deterministic contract.
 OS.4.1 EngineInput
 
 work_order_id
+
+tenant_id
+
+correlation_id
+
+turn_id
+
+now (monotonic time supplied by Selene OS; used for deterministic expiry windows)
+
+idempotency_key (optional; required for any step that writes or emits a side effect)
 
 required_fields (for that engine)
 
@@ -2106,31 +5912,75 @@ audit_event_required (true)
 Hard rule: engines return structured needs; PH1.X asks the user.
 
 Section OS.5: Global Gate Order (The Wiring Law)
-All multi‑engine work follows this order:
+All multi-engine work follows this order:
 
-Identity Gate (PH1.VOICE.ID)
+Identity Gate (PH1.VOICE.ID or session auth)
 
 If unknown: no personalization, no memory, no execution.
 
-Hearing + Transcript Gate (PH1.C)
+Voice: PH1.VOICE.ID produces `speaker_assertion_ok` or `speaker_assertion_unknown`.
+
+Text: the UI session supplies `user_id` deterministically (signed-in user).
+
+Reauth / step-up (hard rule)
+
+Step-up checks (challenge phrase, PIN/biometric, device-claim confirmation, etc.) are owned by the Access/Authority Gate + policy + UI flows, not by PH1.VOICE.ID.
+
+PH1.VOICE.ID may only emit `speaker_assertion_unknown` with deterministic reason codes such as VID_REAUTH_REQUIRED or VID_DEVICE_CLAIM_REQUIRED (plus bounded risk flags / candidate_user_id hints). Selene OS must route to the step-up flow and must not proceed with personalization, memory, or execution until identity becomes `speaker_assertion_ok`.
+
+Hearing + Transcript Gate (PH1.C or UI text)
 
 If transcript_reject: retry; do not proceed.
+
+Voice: PH1.C produces `transcript_ok` / `transcript_reject`.
+
+Text: the UI produces a `transcript_ok`-equivalent (typed) with the same contract fields and evidence discipline.
+
+Hard rule: perception optimization (STT/TTS routing, policy packs, vocabulary/pronunciation packs) may change transcript quality and voice rendering only. It must never change gate order, identity/authority, or allow execution.
 
 Understanding Gate (PH1.NLP)
 
 If missing/ambiguous: clarify (one question).
 
-Confirmation Gate (PH1.X)
+Conversation Control Gate (PH1.X)
 
-If impact is significant: confirm.
+PH1.X is called whenever Selene must decide the next conversational move (ask, wait, confirm, dispatch).
 
-Access/Authority Gate (Per‑User Access Engine)
+Clarify vs Confirm (hard split)
 
-If denied: refuse or escalate per policy.
+Clarify: triggered when required_fields is non-empty or confidence is not HIGH.
+
+Confirm: triggered only at blueprint-declared confirmation points (typically immediately before a COMMIT simulation).
+
+Hard rule: Selene OS must not ask for confirmation before it can show a concrete draft/preview (when a draft is possible).
+
+Hard rule: Selene OS should check Access/Authority before asking for a COMMIT confirmation when possible (do not ask the user to confirm something they are not allowed to do).
+
+Access/Authority Gate (PH1.ACCESS.001 -> PH2.ACCESS.002)
+
+If decision=DENY: refuse (reason-coded).
+
+If decision=ESCALATE: Selene OS must follow the `escalation_trigger` deterministically:
+
+- STEP_UP_PROOF_REQUIRED: route to a deterministic step-up flow (UI/OS collects proof such as biometric/passcode/time challenge), then re-call PH1.ACCESS.001 with the proof result.
+
+- AP_APPROVAL_REQUIRED: quietly escalate to the correct AP approver(s) via PH1.BCAST.001 (private, device-only by default), explain who requested what and why, and wait for an approval/deny decision.
+  Selene must also ask the AP (not the requester) what kind of approval it is:
+  - "Do you want the requester to have this access permanently, for a period of time, or just this once?"
+  If approved: apply a simulation-gated override to the requester's PH2.ACCESS.002 instance:
+  - one-shot or temporary duration -> ACCESS_OVERRIDE_TEMP_GRANT_COMMIT
+  - permanent -> ACCESS_OVERRIDE_PERM_GRANT_COMMIT
+  One-shot means: the override expires automatically when this WorkOrder/process completes.
+  Temporary duration means: the override expires automatically at the chosen time.
+  Then re-call PH1.ACCESS.001 and continue.
+  If denied/expired: Selene must politely inform the requester the transaction cannot be permitted.
+
+Hard rule (global)
+No execution, no sensitive data reveal, and no access changes until PH1.ACCESS.001 returns ALLOW.
 
 Simulation Gate (No Simulation → No Execution)
 
-If simulation missing: refuse (or route to simulation‑creation flow).
+If simulation missing: refuse (or route to simulation-creation flow).
 
 Orchestrated Domain Execution (Selene OS dispatches engines)
 
@@ -2141,40 +5991,28 @@ Persist + Audit (PH1.F + PH1.J)
 Every gate + decision logged under correlation_id.
 
 Section OS.6: Deterministic Plan Table (Intent → Engine Sequence)
-Selene OS uses a deterministic plan table mapping intent_type to an ordered engine chain.
+Selene OS does not maintain a separate “plan table” outside the Process Blueprint System.
 
-Example: PAYROLL_PREPARE (Prepare Tom’s Salary)
+Single source of truth (hard rule)
 
-Access Engine: authorize requester for payroll prep
+intent_type → process_id is owned by the Blueprint Registry (PBS.8).
 
-HR Engine: verify employee exists and is active
+process_id → engine_steps + confirmation_points + simulation_requirements is owned by the blueprint record itself (PBS.3, PBS.4).
 
-Payroll Engine: fetch pay period + payroll context
+Hard rule: PH1.D may help phrase user-facing lines, but may not create, reorder, or skip blueprint steps.
 
-Compensation Engine: compute earnings logic
-
-Payroll Engine: produce draft pay run
-
-PH1.X: confirmation if committing changes
-
-Simulation Commit: finalize (if allowed)
-
-PH1.J: final audit summary event
-
-Hard rule: PH1.D may help phrase, but may not create or reorder the plan.
-
-Section OS.7: Clarification Loop (OS‑Level, Not Engine‑Level)
+Section OS.7: Clarification Loop (OS-Level, Not Engine-Level)
 If any engine returns NEEDS_CLARIFY:
 
 PH1.X asks exactly one question for the most blocking missing field.
 
 User answer updates WorkOrder fields.
 
-Selene OS re‑calls the same engine step.
+Selene OS re-calls the same engine step.
 
 Engines never ask the user directly.
 
-Section OS.8: Transaction‑Like Safety (Commit Points)
+Section OS.8: Transaction-Like Safety (Commit Points)
 
 WorkOrder remains DRAFT/CONFIRM until a commit simulation runs.
 
@@ -2182,14 +6020,18 @@ Domain engines may produce drafts, never irreversible changes.
 
 If user interrupts/cancels, Selene OS stops safely.
 
-Section OS.9: Single Audit Thread (Correlation)
-All events for a WorkOrder must share correlation_id.
+Draft before commit (enterprise default)
 
-wake → stt → nlp → confirm → access → domain calls → tools → commit → done
+When a draft/preview is possible, Selene OS should produce the draft first (via domain engines and/or a DRAFT simulation), show it to the user, then ask for COMMIT confirmation if required, then run the COMMIT simulation.
+
+Section OS.9: Single Audit Thread (Correlation)
+All events for a WorkOrder must share correlation_id, and each engine call must include a monotonic turn_id within that correlation_id.
+
+wake → stt → nlp → PH1.X (ask/wait/confirm/dispatch) → access → simulation → domain calls/tools → done
 
 This is how Selene proves what happened.
 
-Section OS.10: Acceptance Tests (Multi‑Engine Wiring Proof)
+Section OS.10: Acceptance Tests (Multi-Engine Wiring Proof)
 AT-OS-01: Engines never call engines
 
 Scenario: domain engine attempts to trigger another engine.
@@ -2200,25 +6042,109 @@ AT-OS-02: Global gate order enforced
 
 Scenario: payroll prep requested.
 
-Pass: identity → stt → nlp → confirm → access → simulation → domain chain.
+Pass: identity → stt → nlp → PH1.X (clarify/confirm/dispatch) → access → simulation → domain chain (with confirm only at blueprint-declared COMMIT points).
 
-AT-OS-03: One WorkOrder, one correlation_id
+AT-OS-03: One WorkOrder, one correlation_id + monotonic turn_id
 
-Scenario: multi‑step job.
+Scenario: multi-step job.
 
-Pass: all audit events share correlation_id.
+Pass: all audit events share correlation_id, and all turn_id values are > 0 and monotonic within that correlation_id.
 
-AT-OS-04: Clarification stays OS‑level
+AT-OS-04: Clarification stays OS-level
 
 Scenario: HR needs “which Tom”.
 
-Pass: engine returns NEEDS_CLARIFY; PH1.X asks user; engine re‑called.
+Pass: engine returns NEEDS_CLARIFY; PH1.X asks user; engine re-called.
 
 AT-OS-05: No commit without confirmation + simulation
 
 Scenario: request includes salary commit.
 
 Pass: confirmation required; simulation exists; otherwise refused.
+
+AT-OS-06: Barge-in + Resume works (PH1.K -> PH1.X -> PH1.TTS)
+
+Scenario: Selene is speaking; user says an interrupt phrase (e.g., "wait"). PH1.K emits `interrupt_candidate`. PH1.X issues `tts_cancel`. PH1.TTS stops. User then says "continue".
+
+Pass: PH1.TTS stops within the global barge-in budget. PH1.X chooses Resume and continues `unsaid_remainder` from the Resume Buffer. Hard rule: the interrupted response is not treated as delivered until it is completed.
+
+AT-OS-07: Barge-in + Replace works (PH1.K -> PH1.X -> PH1.TTS)
+
+Scenario: Selene is speaking; user interrupts with an interrupt phrase and immediately asks a new unrelated question.
+
+Pass: PH1.X chooses Replace, answers the new question, and does not pretend the interrupted answer was delivered. Optional offer is allowed: "Want me to finish the last part after?"
+
+AT-OS-08: Barge-in + Combine works only when clearly attached (PH1.K -> PH1.X -> PH1.TTS)
+
+Scenario: Selene is speaking; user interrupts with a clear follow-up that attaches to what Selene was saying (example: "Wait—more detail on point 2").
+
+Pass: PH1.X chooses Combine only when attachment is obvious, then produces one coherent response that integrates the follow-up with `unsaid_remainder`. If attachment is not obvious, PH1.X asks exactly one question: "Do you want me to continue what I was saying, or answer this first?"
+
+AT-OS-09: Text input uses the same gates and WorkOrder
+
+Scenario: user types a request instead of speaking.
+
+Pass: Selene uses the same global gate order and produces the same WorkOrder + correlation_id. The only difference is the input modality.
+
+AT-OS-10: All Selene output appears as text (even when spoken)
+
+Scenario: Selene speaks a response.
+
+Pass: the same response_text is rendered in the chat UI and stored in append-only conversation history.
+
+AT-OS-11: Close clears the screen but does not delete history
+
+Scenario: a session closes.
+
+Pass: the chat UI clears visually, but the conversation remains archived and can be recalled only when the user explicitly asks for it.
+
+AT-OS-12: "Display it on my phone" uses BROADCAST (Selene app), not SMS
+
+Scenario: user requests private delivery to phone app (or policy requires private delivery).
+
+Pass: Selene OS issues a BROADCAST side effect via the Broadcast engine after Access/Authority + Simulation gates. Content is delivered to the Selene phone app UI and is not spoken out loud in private mode.
+
+AT-OS-13: Learning never grants authority
+
+Scenario: STT/TTS routing policy packs are promoted/demoted while the user requests an action that requires Access/Authority and Simulation.
+
+Pass: gate order is unchanged; no execution occurs without Access/Authority + Simulation + confirmation where required. Policy packs affect perception quality only and are audited.
+
+AT-OS-14: Tenant isolation
+
+Scenario: two tenants exist; one user requests history/memory/artifacts.
+
+Pass: Selene OS reads/writes only within tenant_id; no cross-tenant data is visible or used; audit proves tenant_id on every event.
+
+AT-OS-15: WorkOrder persistence rebuild
+
+Scenario: crash mid-WorkOrder; restart.
+
+Pass: WorkOrder current state rebuilds exactly from the WorkOrder ledger; execution resumes safely with the same correlation_id and monotonic turn_id.
+
+AT-OS-16: One executor per WorkOrder (lease)
+
+Scenario: two devices attempt to advance the same WorkOrder concurrently.
+
+Pass: only one holds the lease and executes; the other waits/refuses deterministically; both outcomes are audited.
+
+AT-OS-17: Step idempotency exactly-once
+
+Scenario: OS retries the same step due to timeout/network retry.
+
+Pass: idempotency_key prevents duplicate side effects; the stored result is reused deterministically.
+
+AT-OS-18: Scheduler determinism
+
+Scenario: a step times out twice and then succeeds.
+
+Pass: retry schedule, backoff, and max_retries are deterministic and fully auditable; no extra retries occur.
+
+AT-OS-19: Parallel step group determinism
+
+Scenario: two read-only steps run in parallel; completion order varies.
+
+Pass: WorkOrder updates and final output are identical regardless of completion order; join order is deterministic by step_id.
 
 2) Required Infrastructure (MVP)
 
@@ -2311,13 +6237,15 @@ closed_at (nullable)
 F.4.4 preferences_current
 Purpose: current preference state (materialized view).
 
-user_id (PK)
+user_id
 
 preference_key
 
 preference_value
 
 updated_at
+
+Primary key: (user_id, preference_key)
 
 F.4.5 preferences_ledger (append-only)
 Purpose: immutable preference history.
@@ -2333,6 +6261,8 @@ key
 value
 
 evidence_ref (session_id + transcript_hash)
+
+idempotency_key (optional; deterministic duplicate prevention on retries)
 
 consent_state
 
@@ -2355,6 +6285,8 @@ last_seen_at
 
 active (bool)
 
+Primary key: (user_id, memory_key)
+
 F.4.7 memory_ledger (append-only)
 Purpose: immutable memory events.
 
@@ -2372,26 +6304,81 @@ evidence_quote
 
 provenance (session_id + transcript_hash)
 
+idempotency_key (optional; deterministic duplicate prevention on retries)
+
 consent_state
 
 created_at
 
-F.4.8 audit_events (append-only)
-Purpose: PH1.J writes here (or PH1.J writes to its own ledger tables backed by PH1.F).
+F.4.8 conversation_ledger (append-only)
+Purpose: durable conversation history (voice + text) for scrollback, recall, and audit reconstruction.
 
-event_id (PK)
+conversation_turn_id (PK)
+
+correlation_id (WorkOrder thread id; shared across wake -> stt -> nlp -> x -> tools/sim -> done)
+
+turn_id (monotonic within correlation_id)
 
 session_id
 
-engine
+user_id
 
-reason_code
+device_id
 
-payload_min (structured JSON with strict schema)
+role (USER | SELENE)
+
+source (voice_transcript | typed_text | selene_output | tombstone)
+
+text (verbatim UTF-8)
+
+text_hash (sha256)
+
+privacy_scope (PUBLIC_CHAT | PRIVATE_DELIVERY)
+
+idempotency_key (optional; deterministic duplicate prevention on retries)
+
+tombstone_of_conversation_turn_id (nullable; references conversation_turn_id)
+
+tombstone_reason_code (nullable)
 
 created_at
 
-F.4.9 tool_cache (optional, read-only helper)
+Hard rule: conversation_ledger rows are append-only. Redactions are represented as tombstone rows that reference the original conversation_turn_id; never silent edits.
+
+F.4.9 audit_events (append-only)
+Purpose: durable storage for PH1.J canonical AuditEvent schema (see Section J.4). PH1.F owns the Postgres schema and indices; PH1.J owns the row contract.
+
+event_id (PK)
+
+created_at (timestamp)
+
+session_id
+
+user_id (if known)
+
+device_id
+
+engine (PH1.K/W/C/NLP/D/E/X/TTS/L/M/EXPLAIN/F)
+
+event_type (see J.5)
+
+reason_code
+
+severity (INFO | WARN | ERROR)
+
+correlation_id
+
+turn_id
+
+payload_min (strict JSON with bounded size and approved keys)
+
+evidence_ref (optional)
+
+idempotency_key (optional; deterministic duplicate prevention on retries)
+
+Hard rule: audit_events is append-only. Redactions are represented by J_REDACT_APPLIED and/or tombstone views; never silent edits.
+
+F.4.10 tool_cache (optional, read-only helper)
 Purpose: cache read-only tool responses with TTL.
 
 cache_id (PK)
@@ -2406,11 +6393,608 @@ result_payload
 
 expires_at
 
+F.4.11 artifacts_ledger (append-only)
+Purpose: store signed, versioned artifacts consumed by perception engines (wake/STT/TTS) and policy packs that control routing modes.
+
+artifact_id (PK)
+
+scope_type (TENANT | USER | DEVICE)
+
+scope_id (tenant_id or user_id or device_id)
+
+artifact_type (WAKE_PACK | STT_VOCAB_PACK | STT_ROUTING_POLICY_PACK | STT_ADAPTATION_PROFILE | TTS_PRONUNCIATION_PACK | TTS_ROUTING_POLICY_PACK)
+
+artifact_version (monotonic per scope+type)
+
+package_hash (sha256)
+
+payload_ref (blob id / storage ref; bounded)
+
+created_at
+
+created_by (engine/pipeline name)
+
+provenance_ref (correlation_id or audit event id)
+
+idempotency_key (optional; deterministic duplicate prevention on retries)
+
+status (ACTIVE | ROLLED_BACK | DEPRECATED)
+
+Hard rule: artifacts_ledger is append-only. Activation/rollback is represented as a new ledger event; payloads never mutate.
+
+F.4.12 Onboarding Link + Draft Tables (Minimum Contract)
+Purpose: make invited onboarding deterministic, database-first, and replay-safe.
+
+Table: onboarding_drafts
+- Required columns (minimum)
+  - draft_id (PK)
+  - tenant_id
+  - invitee_type (HOUSEHOLD | EMPLOYEE | CONTRACTOR | REFERRAL)
+  - schema_version_id (required for EMPLOYEE)
+  - creator_user_id
+  - draft_payload_json (bounded, structured)
+  - missing_required_fields_json (bounded, deterministic output of schema gate)
+  - status (DRAFT_CREATED | READY_TO_SEND | COMMITTED | REVOKED | EXPIRED)
+  - created_at
+  - updated_at
+  - committed_entity_id (nullable)
+  - idempotency_key (optional for retriable updates)
+- Unique keys / constraints
+  - PRIMARY KEY (draft_id)
+  - UNIQUE (tenant_id, draft_id)
+  - CHECK: status transitions are monotonic and deterministic (no COMMITTED -> DRAFT_CREATED)
+
+Table: onboarding_link_tokens
+- Required columns (minimum)
+  - token_id (PK)
+  - draft_id (FK -> onboarding_drafts.draft_id)
+  - tenant_id
+  - token_signature
+  - expires_at
+  - status (DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED)
+  - bound_device_fingerprint_hash (nullable)
+  - created_at
+  - updated_at
+  - consumed_at (nullable)
+  - revoked_at (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (token_id)
+  - UNIQUE (token_id, tenant_id)
+  - FOREIGN KEY (draft_id) REFERENCES onboarding_drafts(draft_id)
+  - CHECK: token contains no personal payload columns (no name/salary/ID fields)
+
+Table: onboarding_draft_write_dedupe
+- Required columns (minimum)
+  - dedupe_id (PK)
+  - scope_type (LINK | ONB)
+  - scope_id (token_id or onboarding_session_id)
+  - idempotency_key
+  - write_hash
+  - created_at
+- Unique keys / constraints
+  - PRIMARY KEY (dedupe_id)
+  - UNIQUE (scope_type, scope_id, idempotency_key)
+
+Hard rules
+- Mapping is authoritative: `token_id -> draft_id` must exist before send/open flows.
+- Invitee updates must always target the same `draft_id`; never fork a second draft silently.
+- Commit path must be atomic: create real entity + mark draft COMMITTED + mark token CONSUMED in one transaction.
+- Retries must be idempotent using `(scope_type, scope_id, idempotency_key)`.
+
+F.4.13 Reminder Tables (Minimum Contract)
+Purpose: make reminder scheduling, delivery, follow-up, and retries deterministic, replay-safe, and idempotent.
+
+Table: reminders
+- Required columns (minimum)
+  - reminder_id (PK)
+  - tenant_id
+  - user_id
+  - reminder_type (TASK | MEETING | TIMER | MEDICAL | CUSTOM)
+  - priority_level (LOW | NORMAL | HIGH | CRITICAL)
+  - timezone
+  - timezone_rule (FIXED_TIMEZONE | LOCAL_TIME)
+  - scheduled_time
+  - recurrence_rule_json (nullable, bounded)
+  - state (DRAFT | SCHEDULED | PRE_REMINDER_SENT | DUE_SENT | FOLLOWUP_PENDING | SNOOZED | COMPLETED | CANCELED | ESCALATED | FAILED)
+  - quiet_hours_policy_ref (nullable)
+  - max_attempts
+  - attempt_count
+  - next_attempt_at (nullable)
+  - created_at
+  - updated_at
+  - completed_at (nullable)
+  - canceled_at (nullable)
+  - failed_at (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (reminder_id)
+  - UNIQUE (tenant_id, reminder_id)
+  - CHECK: state transitions are deterministic and monotonic (no COMPLETED -> SCHEDULED, no CANCELED -> SCHEDULED)
+
+Table: reminder_occurrences
+- Required columns (minimum)
+  - occurrence_id (PK)
+  - reminder_id (FK -> reminders.reminder_id)
+  - tenant_id
+  - occurrence_index
+  - scheduled_time
+  - state (SCHEDULED | PRE_REMINDER_SENT | DUE_SENT | FOLLOWUP_PENDING | SNOOZED | COMPLETED | CANCELED | ESCALATED | FAILED)
+  - followup_time (nullable)
+  - snooze_until (nullable)
+  - created_at
+  - updated_at
+  - completed_at (nullable)
+  - idempotency_key (optional for retriable updates)
+- Unique keys / constraints
+  - PRIMARY KEY (occurrence_id)
+  - UNIQUE (reminder_id, occurrence_index)
+  - UNIQUE (tenant_id, occurrence_id)
+  - FOREIGN KEY (reminder_id) REFERENCES reminders(reminder_id)
+
+Table: reminder_delivery_attempts
+- Required columns (minimum)
+  - attempt_id (PK)
+  - reminder_id (FK -> reminders.reminder_id)
+  - occurrence_id (FK -> reminder_occurrences.occurrence_id)
+  - tenant_id
+  - delivery_attempt_id (idempotency key for delivery)
+  - delivery_channel (voice | push | text | email)
+  - attempt_index
+  - delivery_status (DELIVERED | DEFERRED_QUIET_HOURS | RETRY_SCHEDULED | FAIL | CHANNEL_UNAVAILABLE)
+  - reason_code
+  - attempted_at
+  - next_retry_at (nullable)
+  - delivery_proof_ref (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (attempt_id)
+  - UNIQUE (occurrence_id, delivery_attempt_id)
+  - UNIQUE (tenant_id, attempt_id)
+  - FOREIGN KEY (reminder_id) REFERENCES reminders(reminder_id)
+  - FOREIGN KEY (occurrence_id) REFERENCES reminder_occurrences(occurrence_id)
+
+Hard rules
+- Delivery dedupe is mandatory: duplicate `delivery_attempt_id` for the same `occurrence_id` is a no-op.
+- Recurrence expansion must be bounded and deterministic (max scheduled-ahead window per policy).
+- Follow-up and escalation must write explicit state transitions (no implicit retries).
+- Reminder completion/cancel/fail terminal states must be final and auditable.
+
+F.4.14 Broadcast Tables (Minimum Contract)
+Purpose: make broadcast drafting, per-recipient delivery state, acknowledgement, defer/retry, and escalation deterministic and replay-safe.
+
+Table: broadcast_envelopes
+- Required columns (minimum)
+  - broadcast_id (PK)
+  - tenant_id
+  - sender_id
+  - origin_context
+  - classification (Simple | Priority | Private | Confidential | Emergency)
+  - audience_spec_json (bounded)
+  - delivery_policy_json (bounded)
+  - content_payload_json (bounded, structured)
+  - content_language
+  - required_ack (None | Read | Confirm | Action-Confirm)
+  - expiry_at
+  - status (DRAFT_CREATED | SENT | HALTED | EXPIRED | CANCELED)
+  - envelope_hash
+  - created_at
+  - sent_at (nullable)
+  - updated_at
+  - idempotency_key (optional for retriable updates)
+- Unique keys / constraints
+  - PRIMARY KEY (broadcast_id)
+  - UNIQUE (tenant_id, broadcast_id)
+  - CHECK: envelope fields are immutable after SENT (only allowed post-SENT mutations: status + timestamps)
+
+Table: broadcast_recipients
+- Required columns (minimum)
+  - recipient_row_id (PK)
+  - broadcast_id (FK -> broadcast_envelopes.broadcast_id)
+  - tenant_id
+  - recipient_id
+  - status (Pending | Requested-Availability | Deferred | Delivered | Acknowledged | Rejected | Escalated | Expired)
+  - privacy_choice (OutLoud | DeviceOnly | Mixed | Unknown)
+  - rendered_language
+  - delivery_channel_used (nullable)
+  - attempt_count
+  - last_attempt_at (nullable)
+  - next_attempt_at (nullable)
+  - ack_status (none | read | confirmed | action_confirmed)
+  - reason_code (nullable)
+  - created_at
+  - updated_at
+  - idempotency_key (optional for retriable updates)
+- Unique keys / constraints
+  - PRIMARY KEY (recipient_row_id)
+  - UNIQUE (broadcast_id, recipient_id)
+  - UNIQUE (tenant_id, recipient_row_id)
+  - FOREIGN KEY (broadcast_id) REFERENCES broadcast_envelopes(broadcast_id)
+
+Table: broadcast_delivery_attempts
+- Required columns (minimum)
+  - delivery_attempt_row_id (PK)
+  - broadcast_id (FK -> broadcast_envelopes.broadcast_id)
+  - recipient_id
+  - tenant_id
+  - delivery_attempt_id (idempotency key for recipient delivery)
+  - delivery_channel (voice | push | text | email)
+  - attempt_index
+  - delivery_status (DELIVERED | DEFERRED | FAIL | ESCALATED)
+  - ack_status (NONE | READ | CONFIRMED | ACTION_CONFIRMED)
+  - reason_code
+  - attempted_at
+  - delivery_proof_ref (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (delivery_attempt_row_id)
+  - UNIQUE (broadcast_id, recipient_id, delivery_attempt_id)
+  - UNIQUE (tenant_id, delivery_attempt_row_id)
+  - FOREIGN KEY (broadcast_id) REFERENCES broadcast_envelopes(broadcast_id)
+
+Hard rules
+- If `required_ack` is not `None`, `Delivered` is not terminal success; success requires `Acknowledged` or another explicit terminal state (Rejected/Expired).
+- Private/Confidential delivery mode must be enforceable from persisted state (`privacy_choice` + classification + policy) and auditable.
+- Per-recipient retry/escalation transitions must be explicit state writes (no implicit loops).
+- Sender escalation events must be persisted with reason-coded linkage to recipient state.
+
+F.4.15 Access Instance Tables (Minimum Contract)
+Purpose: make `PH2.ACCESS.002` persistence ownership explicit and deterministic.
+
+Table: access_instances
+- Required columns (minimum)
+  - access_instance_id (PK)
+  - tenant_id
+  - user_id
+  - role_template_id
+  - effective_access_mode (R | W | A | X)
+  - baseline_permissions_json (bounded)
+  - identity_verified (bool)
+  - verification_level (NONE | PASSCODE_TIME | BIOMETRIC | STEP_UP)
+  - device_trust_level (DTL1 | DTL2 | DTL3 | DTL4)
+  - lifecycle_state (RESTRICTED | ACTIVE | SUSPENDED)
+  - policy_snapshot_ref
+  - created_at
+  - updated_at
+  - idempotency_key (optional for retriable writes)
+- Unique keys / constraints
+  - PRIMARY KEY (access_instance_id)
+  - UNIQUE (tenant_id, user_id)
+  - UNIQUE (tenant_id, access_instance_id)
+
+Table: access_overrides
+- Required columns (minimum)
+  - override_id (PK)
+  - access_instance_id (FK -> access_instances.access_instance_id)
+  - tenant_id
+  - override_type (ONE_SHOT | TEMPORARY | PERMANENT | REVOKE)
+  - scope_json (bounded; module/action/duration)
+  - status (ACTIVE | EXPIRED | REVOKED)
+  - approved_by_user_id (AP actor)
+  - approved_via_simulation_id
+  - reason_code
+  - starts_at
+  - expires_at (nullable)
+  - created_at
+  - updated_at
+  - idempotency_key (optional for retriable writes)
+- Unique keys / constraints
+  - PRIMARY KEY (override_id)
+  - UNIQUE (tenant_id, override_id)
+  - FOREIGN KEY (access_instance_id) REFERENCES access_instances(access_instance_id)
+  - CHECK: no overlapping ACTIVE overrides with identical scope for the same access_instance_id
+
+Hard rules
+- `PH2.ACCESS.002` owns writes to `access_instances` and `access_overrides`.
+- `PH1.ACCESS.001` is a gate interface and must not write these tables directly.
+- Any override apply/revoke is simulation-gated and reason-coded.
+- Override expiry/revocation must be explicit state transitions (no silent mutation).
+
+F.4.16 Tenant + Position Tables (Minimum Contract)
+Purpose: make `PH1.ONB.BIZ.001` and `PH1.POSITION.001` persistence ownership explicit.
+
+Table: tenant_companies
+- Required columns (minimum)
+  - company_id (PK)
+  - tenant_id
+  - legal_name
+  - jurisdiction
+  - lifecycle_state (DRAFT | ACTIVE | SUSPENDED | RETIRED)
+  - policy_shell_ref
+  - created_at
+  - updated_at
+- Unique keys / constraints
+  - PRIMARY KEY (company_id)
+  - UNIQUE (tenant_id, company_id)
+
+Table: positions
+- Required columns (minimum)
+  - position_id (PK)
+  - company_id (FK -> tenant_companies.company_id)
+  - tenant_id
+  - position_title
+  - department
+  - jurisdiction
+  - schedule_type (full_time | part_time | contract | shift)
+  - permission_profile_ref
+  - compensation_band_ref
+  - lifecycle_state (Draft | Active | Suspended | Retired)
+  - created_at
+  - updated_at
+  - idempotency_key (optional for retriable writes)
+- Unique keys / constraints
+  - PRIMARY KEY (position_id)
+  - UNIQUE (tenant_id, company_id, position_title, department, jurisdiction)
+  - UNIQUE (tenant_id, position_id)
+  - FOREIGN KEY (company_id) REFERENCES tenant_companies(company_id)
+
+Table: position_lifecycle_events
+- Required columns (minimum)
+  - event_id (PK)
+  - tenant_id
+  - position_id (FK -> positions.position_id)
+  - action (CREATE_DRAFT | ACTIVATE | SUSPEND | RETIRE | POLICY_OVERRIDE)
+  - from_state
+  - to_state
+  - reason_code
+  - simulation_id
+  - actor_user_id
+  - created_at
+- Unique keys / constraints
+  - PRIMARY KEY (event_id)
+  - UNIQUE (tenant_id, event_id)
+  - FOREIGN KEY (position_id) REFERENCES positions(position_id)
+
+Hard rules
+- `PH1.ONB.BIZ.001` owns writes to `tenant_companies` (and related company bootstrap rows).
+- `PH1.POSITION.001` owns writes to `positions` and `position_lifecycle_events`.
+- Position creation must fail closed if `company_id` is missing/unverified.
+- Position rows store `compensation_band_ref` only; raw salary values are policy-gated and must not be embedded in link tokens.
+
+F.4.17 Wake Persistence Tables (Minimum Contract)
+Purpose: make `PH1.W` database wiring explicit for enrollment, runtime events, and profile binding.
+
+Table: wake_enrollment_sessions
+- Required columns (minimum)
+  - wake_enrollment_session_id (PK)
+  - user_id (FK -> identities.user_id)
+  - device_id (FK -> devices.device_id)
+  - onboarding_session_id (nullable FK -> onboarding session table)
+  - wake_enroll_status (IN_PROGRESS | PENDING | COMPLETE | DECLINED)
+  - pass_target
+  - pass_count
+  - attempt_count
+  - max_attempts
+  - enrollment_timeout_ms
+  - reason_code (nullable)
+  - wake_profile_id (nullable)
+  - deferred_until (nullable)
+  - created_at
+  - updated_at
+  - completed_at (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (wake_enrollment_session_id)
+  - UNIQUE (user_id, device_id, wake_enroll_status=IN_PROGRESS) at most one in-progress session per user/device
+  - CHECK pass_target in allowed bounds
+  - CHECK max_attempts in allowed bounds
+  - CHECK attempt_count <= max_attempts
+
+Table: wake_enrollment_samples
+- Required columns (minimum)
+  - sample_id (PK)
+  - wake_enrollment_session_id (FK -> wake_enrollment_sessions.wake_enrollment_session_id)
+  - sample_seq
+  - captured_at
+  - sample_duration_ms
+  - vad_coverage
+  - snr_db
+  - clipping_pct
+  - rms_dbfs
+  - noise_floor_dbfs
+  - peak_dbfs
+  - overlap_ratio
+  - result (PASS | FAIL)
+  - reason_code (nullable)
+  - idempotency_key
+- Unique keys / constraints
+  - PRIMARY KEY (sample_id)
+  - UNIQUE (wake_enrollment_session_id, idempotency_key)
+  - CHECK sample_seq monotonic per wake_enrollment_session_id
+
+Table: wake_runtime_events
+- Required columns (minimum)
+  - wake_event_id (PK)
+  - session_id (nullable FK -> sessions.session_id)
+  - user_id (nullable FK -> identities.user_id)
+  - device_id (FK -> devices.device_id)
+  - created_at
+  - accepted (bool)
+  - reason_code
+  - wake_profile_id (nullable)
+  - tts_active_at_trigger (bool)
+  - media_playback_active_at_trigger (bool)
+  - suppression_reason_code (nullable)
+  - idempotency_key
+- Unique keys / constraints
+  - PRIMARY KEY (wake_event_id)
+  - UNIQUE (device_id, idempotency_key)
+
+Table: wake_profile_bindings
+- Required columns (minimum)
+  - user_id (FK -> identities.user_id)
+  - device_id (FK -> devices.device_id)
+  - wake_profile_id
+  - artifact_version
+  - active (bool)
+  - created_at
+  - updated_at
+- Unique keys / constraints
+  - UNIQUE (user_id, device_id) when active=true
+
+Hard rules
+- `PH1.W` owns writes to `wake_enrollment_sessions`, `wake_enrollment_samples`, `wake_runtime_events`, and `wake_profile_bindings`.
+- Raw wake audio is not stored by default; only derived metrics/artifact references are persisted.
+- `WAKE_ENROLL_*` simulations are idempotent and must dedupe using deterministic idempotency keys.
+- `WAKE_ENROLL_COMPLETE_COMMIT` may persist `wake_profile_id` only when pass gates are satisfied.
+- Runtime wake events are append-only; suppression/reject reasons must be reason-coded.
+
+F.4.18 WorkOrder Persistence Tables (Minimum Contract)
+Purpose: make Selene OS orchestration persistence explicit and deterministic (`PH1.WORK` + `PH1.LEASE` + scheduler fields).
+
+Table: work_order_ledger
+- Required columns (minimum)
+  - work_order_event_id (PK)
+  - tenant_id
+  - work_order_id
+  - correlation_id
+  - turn_id
+  - event_type (WORK_ORDER_CREATED | FIELD_SET | FIELD_CONFLICT_RESOLVED | STATUS_CHANGED | STEP_STARTED | STEP_FINISHED | STEP_FAILED | STEP_RETRY_SCHEDULED | LEASE_ACQUIRED | LEASE_RENEWED | LEASE_RELEASED | WORK_ORDER_CANCELED)
+  - work_order_status (DRAFT | CLARIFY | CONFIRM | EXECUTING | DONE | REFUSED | FAILED)
+  - step_id (nullable)
+  - step_status (nullable: PENDING | RUNNING | SUCCEEDED | FAILED | WAITING_RETRY | SKIPPED)
+  - attempt_index (nullable)
+  - timeout_ms (nullable)
+  - max_retries (nullable)
+  - retry_backoff_ms (nullable)
+  - next_retry_at (nullable)
+  - lease_owner_id (nullable)
+  - lease_token_hash (nullable)
+  - lease_expires_at (nullable)
+  - payload_min (bounded, structured JSON)
+  - idempotency_key (required for retriable writes)
+  - created_at
+- Unique keys / constraints
+  - PRIMARY KEY (work_order_event_id)
+  - UNIQUE (tenant_id, work_order_id, work_order_event_id)
+  - UNIQUE (tenant_id, work_order_id, idempotency_key)
+
+Table: work_orders_current
+- Required columns (minimum)
+  - work_order_id (PK)
+  - tenant_id
+  - correlation_id
+  - requester_user_id
+  - requester_speaker_id (nullable)
+  - device_id
+  - session_id
+  - process_id
+  - blueprint_version
+  - status (DRAFT | CLARIFY | CONFIRM | EXECUTING | DONE | REFUSED | FAILED)
+  - fields_json (bounded, structured)
+  - missing_fields_json (bounded)
+  - confirmation_state (NOT_REQUIRED | PENDING | CONFIRMED | EXPIRED)
+  - turn_id_next
+  - active_step_id (nullable)
+  - active_step_attempt (nullable)
+  - timeout_ms_active (nullable)
+  - max_retries_active (nullable)
+  - retry_backoff_ms_active (nullable)
+  - next_retry_at (nullable)
+  - last_failure_reason_code (nullable)
+  - last_event_id (FK -> work_order_ledger.work_order_event_id)
+  - created_at
+  - updated_at
+  - closed_at (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (work_order_id)
+  - UNIQUE (tenant_id, work_order_id)
+  - UNIQUE (tenant_id, correlation_id)
+  - FOREIGN KEY (last_event_id) REFERENCES work_order_ledger(work_order_event_id)
+
+Table: work_order_step_attempts
+- Required columns (minimum)
+  - step_attempt_id (PK)
+  - tenant_id
+  - work_order_id (FK -> work_orders_current.work_order_id)
+  - step_id
+  - attempt_index
+  - status (SCHEDULED | RUNNING | SUCCEEDED | FAILED | CANCELED)
+  - timeout_ms
+  - max_retries
+  - retry_backoff_ms
+  - next_retry_at (nullable)
+  - started_at (nullable)
+  - finished_at (nullable)
+  - reason_code (nullable)
+  - idempotency_key
+  - created_at
+  - updated_at
+- Unique keys / constraints
+  - PRIMARY KEY (step_attempt_id)
+  - UNIQUE (tenant_id, work_order_id, step_id, attempt_index)
+  - UNIQUE (tenant_id, work_order_id, step_id, idempotency_key)
+  - FOREIGN KEY (work_order_id) REFERENCES work_orders_current(work_order_id)
+
+Table: work_order_leases
+- Required columns (minimum)
+  - lease_id (PK)
+  - tenant_id
+  - work_order_id (FK -> work_orders_current.work_order_id)
+  - lease_owner_id
+  - lease_token
+  - lease_state (ACTIVE | EXPIRED | RELEASED)
+  - lease_expires_at
+  - acquired_at
+  - renewed_at (nullable)
+  - released_at (nullable)
+  - idempotency_key (nullable)
+- Unique keys / constraints
+  - PRIMARY KEY (lease_id)
+  - UNIQUE (tenant_id, lease_id)
+  - UNIQUE (tenant_id, lease_token)
+  - UNIQUE (tenant_id, work_order_id, idempotency_key)
+  - FOREIGN KEY (work_order_id) REFERENCES work_orders_current(work_order_id)
+
+Hard rules
+- `work_order_ledger` is append-only; corrections are new events.
+- `work_orders_current` is materialized state and must be rebuildable from `work_order_ledger`.
+- Any write to `work_orders_current` must be paired with a corresponding `work_order_ledger` event in the same transaction.
+- Step retries must be deterministic and auditable via `work_order_step_attempts` + `work_order_ledger`.
+- At most one ACTIVE lease may exist per `(tenant_id, work_order_id)` at a time (enforced by index/constraint strategy).
+
+F.4.19 Capability Request Persistence Tables (Minimum Contract)
+Purpose: make `PH1.CAPREQ` persistence explicit and deterministic (`capreq_ledger` + rebuildable `capreq_current`).
+
+Table: capreq_ledger
+- Required columns (minimum)
+  - capreq_event_id (PK)
+  - tenant_id
+  - capreq_id
+  - requester_user_id (FK -> identities.user_id)
+  - action (CREATE_DRAFT | SUBMIT_FOR_APPROVAL | APPROVE | REJECT | FULFILL | CANCEL)
+  - status (DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | FULFILLED | CANCELED)
+  - reason_code
+  - payload_hash
+  - created_at
+  - idempotency_key (optional for retriable writes)
+- Unique keys / constraints
+  - PRIMARY KEY (capreq_event_id)
+  - UNIQUE (tenant_id, capreq_id, idempotency_key) when idempotency_key is not null
+  - FOREIGN KEY (requester_user_id) REFERENCES identities(user_id)
+
+Table: capreq_current
+- Required columns (minimum)
+  - tenant_id
+  - capreq_id
+  - requester_user_id (FK -> identities.user_id)
+  - status (DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | FULFILLED | CANCELED)
+  - last_action
+  - payload_hash
+  - source_event_id (FK -> capreq_ledger.capreq_event_id)
+  - updated_at
+  - last_reason_code
+- Unique keys / constraints
+  - PRIMARY KEY (tenant_id, capreq_id)
+  - UNIQUE (tenant_id, capreq_id, source_event_id)
+  - FOREIGN KEY (source_event_id) REFERENCES capreq_ledger(capreq_event_id)
+
+Hard rules
+- `capreq_ledger` is append-only; overwrite attempts must fail closed.
+- `capreq_current` is materialized state and must be rebuildable from `capreq_ledger`.
+- `PH1.CAPREQ` owns writes to `capreq_ledger` and `capreq_current`; permission outcomes remain owned by Access/Authority engines.
+- Retriable CAPREQ writes must use deterministic idempotency keys and tenant-scoped dedupe.
+
 Section F.5: Invariants (The Non-Negotiable Guarantees)
 
 F.5.1 Ledger is append-only
 
-preferences_ledger, memory_ledger, audit_events must never be updated in place.
+preferences_ledger, memory_ledger, conversation_ledger, audit_events, artifacts_ledger must never be updated in place.
 
 Corrections are new events.
 
@@ -2438,15 +7022,19 @@ PH1.F accepts writes only via engine-approved contracts.
 
 Each write must include: session_id, engine, reason_code, and (when applicable) evidence/provenance.
 
-F.5.6 Time is monotonic for ordering
+F.5.6 Canonical ordering is by database-assigned IDs (not timestamps)
 
-Use created_at with monotonic sequencing (plus ledger_id ordering) to ensure deterministic replay.
+Use ledger_id / conversation_turn_id / event_id / artifact_id ordering (monotonic IDs) to ensure deterministic replay. created_at is informational only.
 
 F.5.7 Multilingual safety
 
 Store verbatim text (UTF-8) without forcing translation.
 
 Normalized values must be explicitly flagged as normalized.
+
+F.5.8 Idempotency is mandatory for retriable writes (enterprise minimum)
+
+Engine writes that may be retried (crash/restart, network retry, outbox replay) must supply an idempotency_key. PH1.F must enforce deterministic dedupe per table so the same write does not create duplicate rows.
 
 Section F.6: Transactions and Consistency Rules
 
@@ -2461,6 +7049,13 @@ Section F.7: Retention (Policy-Driven)
 Retention is expressed as policy, not ad-hoc deletes.
 
 Sensitive evidence fields (evidence_quote) may be redacted on policy, but ledger event remains.
+
+Section F.7.1: Redaction Schema (Append-Only)
+
+Redaction never edits existing rows. It is represented by new append-only records plus audit events:
+
+- Conversation redaction: insert a tombstone row into conversation_ledger with source=tombstone and tombstone_of_conversation_turn_id=<original id>. The tombstone row's text is a fixed placeholder (example: "[REDACTED]") and tombstone_reason_code is required.
+- Audit redaction: PH1.J emits J_REDACT_APPLIED referencing evidence_ref (example: the conversation_turn_id or event_id). Storage may expose a redacted read view, but the underlying audit_events row is never mutated.
 
 Section F.8: Acceptance Tests (Persistence Proofs)
 AT-F-01: Ledger append-only
@@ -2492,6 +7087,36 @@ AT-F-05: Multilingual text preserved
 Scenario: store mixed-language memory.
 
 Pass: verbatim UTF-8 preserved exactly.
+
+AT-F-06: Conversation history append-only
+
+Scenario: attempt to modify an existing conversation_ledger row.
+
+Pass: rejected; only new rows/tombstones allowed.
+
+AT-F-07: Artifact ledger is append-only and rollback-safe
+
+Scenario: a routing policy pack is applied, then rolled back.
+
+Pass: artifacts_ledger contains new rows describing apply and rollback; payloads never mutate in place; current view is rebuildable from the ledger.
+
+AT-F-08: Idempotency key dedupe
+
+Scenario: write the same ledger event twice with the same idempotency_key (simulated retry).
+
+Pass: only one row exists; the second attempt is a deterministic no-op.
+
+AT-F-09: Canonical ordering
+
+Scenario: reconstruct a replay by ordering rows.
+
+Pass: ordering by monotonic IDs (ledger_id / conversation_turn_id / event_id) produces stable deterministic replay even if created_at timestamps skew.
+
+AT-F-10: Redaction tombstone (conversation)
+
+Scenario: redact a prior conversation turn.
+
+Pass: a new conversation_ledger tombstone row exists referencing the original conversation_turn_id; the original row is not modified; audit contains J_REDACT_APPLIED with evidence_ref pointing to the redacted turn.
 
 2.2 PH1.J — Audit Engine
 
@@ -2547,11 +7172,19 @@ severity (INFO | WARN | ERROR)
 
 correlation_id (turn_id / request_id)
 
+turn_id
+
 payload_min (strict JSON with bounded size and approved keys)
 
-evidence_ref (optional: transcript_hash / memory_ledger_id; never raw audio)
+evidence_ref (optional: transcript_hash / memory_ledger_id / conversation_turn_id; never raw audio)
+
+Hard rule: evidence_ref must include at least one reference when present (no empty shells).
+
+idempotency_key (optional; deterministic duplicate detection)
 
 Hard rule: payload_min must be minimal and structured; never “free text logs.”
+
+Hard rule: payload_min keys must be ASCII `lower_snake_case` and (where defined) are allowlisted per event_type; this is enforced by Rust contracts, not just documentation.
 
 Section J.5: Event Types (Minimum Set)
 PH1.J standardizes event_type so analysis is deterministic:
@@ -2565,6 +7198,10 @@ STATE_TRANSITION
 TRANSCRIPT_OK
 
 TRANSCRIPT_REJECT
+
+STT_CANDIDATE_EVAL
+
+CONVERSATION_TURN_STORED
 
 NLP_INTENT_DRAFT
 
@@ -2584,11 +7221,27 @@ MEMORY_FORGOTTEN
 
 EXPLAIN_EMITTED
 
+TTS_RENDER_SUMMARY
+
 TTS_STARTED
 
 TTS_CANCELED
 
 TTS_FAILED
+
+PERCEPTION_SIGNAL_EMITTED
+
+ARTIFACT_PACK_APPLIED
+
+ARTIFACT_PACK_ROLLED_BACK
+
+ROUTING_POLICY_PROMOTED
+
+ROUTING_POLICY_DEMOTED
+
+J_REDACT_APPLIED
+
+J_DELETE_EXECUTED
 
 SESSION_OPEN
 
@@ -2607,6 +7260,10 @@ Wake accepted/rejected with gate failure reasons (PH1.W).
 
 STT transcript_ok / transcript_reject + reason (PH1.C).
 
+STT candidate evaluation summary (PH1.C): route_class_used, attempt_count, candidate_count, selected_slot, mode_used, second_pass_used, and any active stt_routing_policy_pack_id (audit-only).
+
+Conversation turns: every user turn and every Selene response_text must append to conversation_ledger and emit CONVERSATION_TURN_STORED (Selene OS + PH1.F).
+
 NLP intent_draft + confidence + missing fields (PH1.NLP).
 
 Clarify issued / confirmation required / confirmation received (PH1.X).
@@ -2618,6 +7275,10 @@ Memory events: stored/updated/forgotten + consent state (PH1.M).
 Session transitions: open/active/soft-close/close/suspend + reasons (PH1.L).
 
 TTS events: started/canceled/stopped/failed (PH1.TTS).
+
+TTS render summary (PH1.TTS): route_class_used, mode_used, voice_id, pronunciation packs used, and any active tts_routing_policy_pack_id (audit-only).
+
+Artifact pack apply/rollback and routing policy promote/demote events (PH1.F + PH1.J).
 
 Explanations emitted/refused (PH1.EXPLAIN).
 
@@ -2699,7 +7360,777 @@ Scenario: fallback STT/tool provider used.
 
 Pass: provider identity is not required for core audit interpretation; reason codes remain stable.
 
+AT-J-06: Conversation turns are auditable
+
+Scenario: user speaks or types; Selene responds.
+
+Pass: a CONVERSATION_TURN_STORED event exists for both the user turn and Selene turn, referencing the stored conversation_ledger row(s).
+
+AT-J-07: Routing policy changes are audited
+
+Scenario: a routing policy pack is promoted, applied, then later demoted/rolled back.
+
+Pass: audit contains ARTIFACT_PACK_APPLIED and ROUTING_POLICY_PROMOTED/ROUTING_POLICY_DEMOTED events with correlation_id integrity; no provider names are required for interpretation.
+
+2.3 Enterprise OS Support Engines (Optional For MVP, Required For Enterprise)
+
+These engines make Selene "enterprise-grade":
+
+she does not mix companies,
+
+she does not lose a job on crash/restart,
+
+she does not run the same step twice by accident,
+
+and she stays fast by using safe parallel reads and deterministic retries.
+
+Hard rules
+
+These engines are infrastructure only. They are not "intelligence".
+
+They must be deterministic, auditable, and fail closed.
+
+They must never execute actions or bypass Access/Authority or Simulation gates.
+
+They must never call other engines. Selene OS is the only orchestrator.
+
+2.3.1 PH1.TENANT — Tenant & Org Context Engine (Enterprise)
+
+Mission (simple)
+
+"Which company am I in, and which company rules apply right now?"
+
+What this engine does
+
+Determine tenant_id for the current session/work_order.
+
+Return the tenant's policy references (privacy/DND/retention/quotas).
+
+Fail closed if the tenant cannot be determined.
+
+What this engine must never do
+
+Never decide permissions. Access/Authority is handled elsewhere.
+
+Never guess a tenant_id.
+
+Never read or write across tenant boundaries.
+
+Inputs (minimum)
+
+identity_context (voice: speaker_assertion_ok/unknown OR text: signed-in user_id)
+
+device_id (optional)
+
+session_id (optional)
+
+now (monotonic time)
+
+Optional inputs (bounded)
+
+explicit tenant selection token (only when user belongs to multiple tenants)
+
+Outputs (minimum)
+
+TenantContext
+
+tenant_id
+
+policy_context_ref (privacy/DND/retention pointers)
+
+default_locale (optional)
+
+status (OK | NEEDS_CLARIFY | REFUSED | FAIL)
+
+missing_fields (if NEEDS_CLARIFY; example: tenant_choice)
+
+reason_code
+
+Hard rules
+
+If identity is UNKNOWN and there is no signed-in user, this engine must return NEEDS_CLARIFY (no tenant guessing).
+
+If multiple tenants match, return NEEDS_CLARIFY with exactly one question requested (Selene OS + PH1.X asks it).
+
+Reason codes (minimum)
+
+TENANT_NOT_FOUND
+
+TENANT_MULTI_MATCH
+
+TENANT_DISABLED
+
+TENANT_POLICY_BLOCKED
+
+Logging (mandatory fields)
+
+correlation_id
+
+turn_id
+
+user_id (if known)
+
+device_id (if known)
+
+session_id (if known)
+
+tenant_id (if resolved)
+
+status
+
+reason_code
+
+Acceptance tests
+
+AT-TENANT-01: Deterministic tenant mapping
+
+AT-TENANT-02: Multi-tenant requires clarify (no guessing)
+
+AT-TENANT-03: Disabled tenant fails closed
+
+AT-TENANT-04: No cross-tenant reads/writes
+
+Dependencies
+
+Upstream: identity/session context (voice ID or signed-in UI)
+
+Downstream: Selene OS, PH1.QUOTA, PH1.GOV
+
+2.3.2 PH1.WORK — WorkOrder Ledger Engine (Enterprise)
+
+Mission (simple)
+
+"Write every job step to an append-only log so Selene can resume and prove what happened."
+
+What this engine owns
+
+Append-only WorkOrder ledger (truth).
+
+WorkOrder current view (materialized; rebuildable).
+
+Optional: StepResult cache for fast retries (read-only reuse).
+
+What this engine must never do
+
+Never edit or delete WorkOrder history in place.
+
+Never invent fields.
+
+Never merge conflicts silently (conflicts must be resolved by OS-level clarify and recorded).
+
+Inputs (minimum)
+
+WorkOrderEventInput
+
+tenant_id
+
+work_order_id
+
+correlation_id
+
+turn_id
+
+event_type (WORK_ORDER_CREATED | FIELD_SET | FIELD_CONFLICT_RESOLVED | STATUS_CHANGED | STEP_STARTED | STEP_FINISHED | STEP_FAILED | WORK_ORDER_CANCELED)
+
+payload_min (bounded, structured)
+
+created_at (monotonic time)
+
+idempotency_key (required for retriable events)
+
+Outputs (minimum)
+
+work_order_event_id (monotonic)
+
+status (OK | REFUSED | FAIL)
+
+reason_code
+
+Hard rules
+
+Append-only: corrections are new events.
+
+Idempotency: same idempotency_key must be a deterministic no-op (return the original event_id).
+
+Canonical ordering: replay uses work_order_event_id ordering (timestamps are informational only).
+
+Reason codes (minimum)
+
+WORK_EVENT_INVALID
+
+WORK_APPEND_ONLY_VIOLATION
+
+WORK_IDEMPOTENCY_DUP
+
+WORK_TENANT_MISMATCH
+
+Logging (mandatory fields)
+
+tenant_id
+
+work_order_id
+
+correlation_id
+
+turn_id
+
+work_order_event_id
+
+event_type
+
+reason_code
+
+Acceptance tests
+
+AT-WORK-01: Append-only enforcement
+
+AT-WORK-02: Current view rebuild matches
+
+AT-WORK-03: Idempotency no-op on retry
+
+AT-WORK-04: Tenant mismatch is blocked
+
+Dependencies
+
+Upstream: Selene OS only
+
+Downstream: Selene OS resume/replay; Compliance export
+
+2.3.3 PH1.LEASE — WorkOrder Lease Engine (Enterprise)
+
+Mission (simple)
+
+"Only one device/worker can drive a job at a time."
+
+Inputs (minimum)
+
+tenant_id
+
+work_order_id
+
+lease_owner_id (device_id or worker_id)
+
+now (monotonic time)
+
+requested_ttl_ms (bounded)
+
+operation (ACQUIRE | RENEW | RELEASE)
+
+lease_token (required for RENEW/RELEASE)
+
+idempotency_key (optional; recommended)
+
+Outputs (minimum)
+
+LeaseGranted (lease_token, lease_expires_at)
+
+OR LeaseDenied (held_by_owner_id, held_until)
+
+status (OK | REFUSED | FAIL)
+
+reason_code
+
+Hard rules
+
+Leases must expire (no permanent locks).
+
+Only the token owner may renew/release.
+
+On expiry, a new owner may acquire and must resume from the WorkOrder ledger (never from RAM).
+
+Reason codes (minimum)
+
+LEASE_HELD_BY_OTHER
+
+LEASE_TOKEN_INVALID
+
+LEASE_TTL_OUT_OF_BOUNDS
+
+LEASE_NOT_FOUND
+
+Logging (mandatory fields)
+
+tenant_id
+
+work_order_id
+
+lease_owner_id
+
+operation
+
+lease_expires_at (if granted)
+
+reason_code
+
+Acceptance tests
+
+AT-LEASE-01: One executor per WorkOrder
+
+AT-LEASE-02: Expired lease can be taken over safely
+
+AT-LEASE-03: Token is required to renew/release
+
+2.3.4 PH1.SCHED — Deterministic Scheduler Engine (Enterprise)
+
+Mission (simple)
+
+"When something fails or is slow, retry on a fixed rule, or stop safely."
+
+What this engine does
+
+Compute deterministic retry times (no random jitter).
+
+Enforce max_retries and timeout rules declared in the blueprint step.
+
+Return WAIT/RETRY/FAIL decisions that Selene OS can execute.
+
+Inputs (minimum)
+
+tenant_id
+
+work_order_id
+
+step_id
+
+now (monotonic time)
+
+timeout_ms
+
+max_retries
+
+retry_backoff_ms
+
+attempt_index (0-based)
+
+last_failure_reason_code (optional)
+
+retryable_reason_codes (bounded allowlist)
+
+Outputs (minimum)
+
+SchedulerDecision
+
+action (RETRY_AT | FAIL | WAIT)
+
+next_due_at (when RETRY_AT)
+
+attempt_next_index
+
+reason_code
+
+Hard rules
+
+Deterministic: same inputs must produce the same decision.
+
+Never retry past max_retries.
+
+WAIT must never advance a plan; it is only a pause posture.
+
+Reason codes (minimum)
+
+SCHED_RETRY_SCHEDULED
+
+SCHED_MAX_RETRIES_REACHED
+
+SCHED_TIMEOUT
+
+SCHED_NOT_RETRYABLE
+
+Logging (mandatory fields)
+
+tenant_id
+
+work_order_id
+
+step_id
+
+attempt_index
+
+action
+
+next_due_at (if any)
+
+reason_code
+
+Acceptance tests
+
+AT-SCHED-01: Retry schedule is deterministic
+
+AT-SCHED-02: Max retries enforced
+
+AT-SCHED-03: WAIT does not advance the plan and is audited
+
+2.3.5 PH1.GOV — Governance Engine (Enterprise)
+
+Mission (simple)
+
+"Only approved blueprints/simulations/capability maps may run."
+
+What this engine owns
+
+Activation/deprecation/rollback of:
+
+process blueprints
+
+simulation catalog entries
+
+engine capability maps
+
+What this engine must never do
+
+Never execute a workflow. It only approves/blocks definitions.
+
+Never allow silent changes to ACTIVE definitions (all changes are versioned and audited).
+
+Inputs (minimum)
+
+tenant_id
+
+artifact_kind (BLUEPRINT | SIMULATION | CAPABILITY_MAP)
+
+artifact_id
+
+version
+
+hash (sha256)
+
+signature_ref (required in enterprise mode)
+
+requested_action (ACTIVATE | DEPRECATE | ROLLBACK)
+
+requester_user_id (admin; must be authorized by Access/Authority)
+
+Outputs (minimum)
+
+GovernanceDecision (ALLOWED | BLOCKED)
+
+active_version (if any)
+
+reason_code
+
+Hard rules
+
+Only one ACTIVE blueprint per intent_type.
+
+A blueprint may be activated only if every referenced capability_id and simulation_id exists and is ACTIVE.
+
+Rollback must be deterministic and auditable.
+
+Reason codes (minimum)
+
+GOV_NOT_AUTHORIZED
+
+GOV_SIGNATURE_INVALID
+
+GOV_REFERENCE_MISSING
+
+GOV_MULTI_ACTIVE_NOT_ALLOWED
+
+Logging (mandatory fields)
+
+tenant_id
+
+artifact_kind
+
+artifact_id
+
+version
+
+requested_action
+
+requester_user_id
+
+reason_code
+
+Acceptance tests
+
+AT-GOV-01: Cannot execute if blueprint/simulation is not ACTIVE
+
+AT-GOV-02: Single ACTIVE blueprint per intent_type
+
+AT-GOV-03: Activation blocked when references are missing
+
+AT-GOV-04: Rollback is audited and deterministic
+
+2.3.6 PH1.EXPORT — Compliance Export Engine (Enterprise)
+
+Mission (simple)
+
+"Export proof (audit + job ledger + conversation turns) in a tamper-evident way."
+
+Inputs (minimum)
+
+tenant_id
+
+export_scope (work_order_id OR time_range)
+
+requester_user_id (must be authorized)
+
+include (audit_events | work_order_ledger | conversation_turns)
+
+redaction_policy_ref
+
+now
+
+Outputs (minimum)
+
+export_artifact_id
+
+export_hash (sha256)
+
+export_payload_ref (storage ref)
+
+status (OK | REFUSED | FAIL)
+
+reason_code
+
+Hard rules
+
+Never export raw audio by default.
+
+Apply redaction rules deterministically (no silent omissions).
+
+Every export must emit an audit event describing what was exported.
+
+Reason codes (minimum)
+
+EXPORT_NOT_AUTHORIZED
+
+EXPORT_RANGE_TOO_LARGE
+
+EXPORT_REDACTION_REQUIRED
+
+EXPORT_FAILED
+
+Acceptance tests
+
+AT-EXPORT-01: Export is tamper-evident (hash is stable)
+
+AT-EXPORT-02: Redaction is applied deterministically
+
+AT-EXPORT-03: Export is audited
+
+2.3.7 PH1.QUOTA — Quota & Budget Engine (Enterprise)
+
+Mission (simple)
+
+"Keep Selene fast and stable by limiting load and cost."
+
+Inputs (minimum)
+
+tenant_id
+
+user_id (optional)
+
+device_id (optional)
+
+operation_kind (STT | TTS | TOOL | SIMULATION | EXPORT)
+
+capability_id or tool_name (when applicable)
+
+now
+
+cost_hint (optional; bounded)
+
+Outputs (minimum)
+
+QuotaDecision (ALLOW | WAIT | REFUSE)
+
+wait_ms (when WAIT)
+
+reason_code
+
+Hard rules
+
+Deterministic decisions (no randomness).
+
+Quota never grants authority and never changes gate order.
+
+WAIT is allowed (Selene can pause) when policy permits; otherwise REFUSE.
+
+Reason codes (minimum)
+
+QUOTA_RATE_LIMIT
+
+QUOTA_BUDGET_EXCEEDED
+
+QUOTA_POLICY_BLOCKED
+
+Acceptance tests
+
+AT-QUOTA-01: Rate limiting is enforced deterministically
+
+AT-QUOTA-02: WAIT vs REFUSE follows policy
+
+2.3.8 PH1.KMS — Secrets & Key Management Engine (Enterprise)
+
+Mission (simple)
+
+"Store keys safely, rotate them, and never leak them into logs."
+
+What this engine owns
+
+Encrypted secret storage (at rest).
+
+Secret versioning + rotation.
+
+Short-lived credential issuance to authorized runtime components (when required).
+
+What this engine must never do
+
+Never emit raw secrets into PH1.J payloads or WorkOrder fields.
+
+Never allow a non-authorized user/engine to access secrets.
+
+Inputs (minimum)
+
+tenant_id
+
+secret_name
+
+operation (GET_HANDLE | ISSUE_EPHEMERAL | ROTATE | REVOKE)
+
+requester_engine_id
+
+requester_user_id (optional; for admin actions)
+
+requested_ttl_ms (bounded; for ISSUE_EPHEMERAL)
+
+now
+
+Outputs (minimum)
+
+secret_handle (opaque)
+
+OR ephemeral_credential_ref (opaque; short TTL)
+
+status (OK | REFUSED | FAIL)
+
+reason_code
+
+Hard rules
+
+Secrets must never appear in any audit payload_min or conversation history.
+
+Rotation creates a new secret version; old versions may remain for rollback windows but are governed.
+
+All secret operations are audited without exposing the secret value.
+
+Reason codes (minimum)
+
+KMS_NOT_AUTHORIZED
+
+KMS_SECRET_NOT_FOUND
+
+KMS_TTL_OUT_OF_BOUNDS
+
+KMS_ROTATION_FAILED
+
+Acceptance tests
+
+AT-KMS-01: No secret value appears in audit or conversation logs
+
+AT-KMS-02: Rotation produces a new version and is audited
+
 3) Add After MVP Is Stable
+
+3.0 Perception Improvement Pipeline (STT/TTS) — Signed Policy Packs
+
+Mission
+
+Selene must become the best STT/TTS experience over time without a human manually switching providers, and without ever changing authority or gate order.
+
+Hard rules
+
+Learning never grants authority.
+
+Promotion/demotion affects Perception only (PH1.C / PH1.TTS routing). Access/Authority and Simulation gates are unchanged.
+
+All changes must be deterministic, auditable, versioned, and rollback-safe (artifacts_ledger + audit events).
+
+raw audio is not stored by default. Any debug audio requires explicit consent + TTL + audit record.
+
+Global derived signals (opt-in only)
+
+If global improvement is used, it must be derived-only and de-identified by default.
+
+Hard rule: do not upload raw personal vocabulary by default. Opt-out from global training must not break local functionality.
+
+Shadow -> Assist -> Lead (shared idea)
+
+SHADOW: evaluate extra candidates within strict budgets for scoring/learning only; do not risk user experience.
+
+ASSIST: use versioned packs (vocabulary/pronunciation) and bounded second-pass behavior on borderline turns.
+
+LEAD: Selene-owned routes may become Primary only after meeting promotion thresholds; fall back safely on regression.
+
+Explicit corrections (non-negotiable)
+
+Only user-confirmed corrections are used as learning signals (never silent inference).
+
+Examples of explicit correction capture:
+
+UI: user edits the transcript text in the chat UI (event references conversation_turn_id + segment hash).
+
+Voice: user says “No, I said X” and Selene confirms the corrected text before recording it.
+
+These corrections are recorded as PERCEPTION_SIGNAL_EMITTED events and may produce new vocabulary/pronunciation pack versions.
+
+Per-user scorecard (deterministic, rolling window)
+
+Maintain a rolling window per user (example: N=500 utterances) with:
+
+pass_rate (Quality Gate PASS %)
+
+critical_token_uncertainty_rate (numbers/dates/names)
+
+fallback_rate (how often secondary/tertiary rescue is required)
+
+explicit_correction_rate (user-corrected terms over time)
+
+latency_compliance (p95/p99 within budget)
+
+noise/echo robustness (pass rate in noisy/tts_playback_active tagged turns)
+
+overlap safety (never blends multiple speakers; fail closed correctly)
+
+Promotion / demotion policy (deterministic)
+
+Promote to LEAD only if all thresholds pass across the window and there is no regression vs offline fixtures.
+
+Demote deterministically if thresholds fail for M consecutive sessions (safety brake).
+
+Starting promotion thresholds (example; policy-tunable)
+
+pass_rate >= 99.0%
+
+critical_token_uncertainty_rate <= 1.0%
+
+fallback_rate <= 1.0%
+
+explicit_correction_rate is not increasing (and is trending down over time when measured)
+
+latency_compliance meets the SLO budgets for the device class
+
+Hard rule: if any one of these fails, do not promote.
+
+Starting demotion brake (example; policy-tunable)
+
+M = 3 consecutive sessions failing any threshold -> demote and audit.
+
+Every promote/demote decision must emit ROUTING_POLICY_PROMOTED / ROUTING_POLICY_DEMOTED with reason codes and proofs.
+
+Artifact outputs (what gets shipped and applied)
+
+STT_ROUTING_POLICY_PACK / TTS_ROUTING_POLICY_PACK (mode + ladder order + allowed route classes)
+
+STT_VOCAB_PACK (tenant/user, versioned)
+
+TTS_PRONUNCIATION_PACK (tenant/user, versioned)
+
+STT_ADAPTATION_PROFILE (per user, versioned; bounded)
+
+Hard rule: artifacts are applied only as signed, versioned packages and can be rolled back deterministically.
 
 3.1 PH1.M — Memory Engine
 
@@ -2972,37 +8403,37 @@ AT-M-06: Forget is real
 
 After “forget,” Selene cannot recall it and audit shows it inactive.
 
-PH1.K — Voice Runtime I/O (World‑Class Voice Only)
+PH1.K — Voice Runtime I/O (World-Class Voice Only)
 
 Section K.1.1: Purpose
 
-PH1.K must make Selene feel like a real person in the room: instant, interruption‑safe, never clips words, never “fights” the user, and never stops mid‑sentence because of random background noise. PH1.K is not “intelligence”; it is the real‑time voice substrate that everything else depends on.
+PH1.K must make Selene feel like a real person in the room: instant, interruption-safe, never clips words, never “fights” the user, and never stops mid-sentence because of random background noise. PH1.K is not “intelligence”; it is the real-time voice substrate that everything else depends on.
 
 Section K.1.2: What “Better Than ChatGPT” Means (PH1.K only)
 
-Latency that feels human: predictable buffering, near‑instant frame availability.
+Latency that feels human: predictable buffering, near-instant frame availability.
 
-Full‑duplex reliability: mic capture continues while Selene speaks.
+Full-duplex reliability: mic capture continues while Selene speaks.
 
-Interruption safety (deterministic): stop speaking only on high‑confidence intent to interrupt.
+Interruption safety (deterministic): stop speaking only on high-confidence intent to interrupt.
 
-OS‑grade device behavior: stable device selection, hot‑plug handling, and failover.
+OS-grade device behavior: stable device selection, hot-plug handling, and failover.
 
-Section K.1.3: Wake vs Barge‑In (Responsibility Split)
+Section K.1.3: Wake vs Barge-In (Responsibility Split)
 
 Wake word stays in PH1.W (wake detection + armed/capture transitions).
 
-PH1.K provides the substrate wake depends on (pre‑roll, clean frames, VAD, timing).
+PH1.K provides the substrate wake depends on (pre-roll, clean frames, VAD, timing).
 
-Barge‑in is not wake: it is an interruption‑control problem while Selene is speaking.
+Barge-in is not wake: it is an interruption-control problem while Selene is speaking.
 
-PH1.K detects interruption candidates; PH1.X decides what to do (fail‑safe split).
+PH1.K detects interruption candidates; PH1.X decides what to do (fail-safe split).
 
-Section K.1.4: Phrase‑Driven Interruptions (Default)
+Section K.1.4: Phrase-Driven Interruptions (Default)
 
 K.1.4.1 Principle
 
-Selene must not stop speaking just because the room got loud. Default interruption is phrase‑driven, with sound/VAD used only as supporting evidence.
+Selene must not stop speaking just because the room got loud. Default interruption is phrase-driven, with sound/VAD used only as supporting evidence.
 
 K.1.4.2 Interrupt phrases (examples)
 
@@ -3092,17 +8523,79 @@ hang on a sec
 
 just a moment
 
+K.1.4.3 Phrase Set Semantics (Buildable, Versioned)
+
+PH1.K must treat interruption phrases as a versioned, buildable artifact:
+
+Interrupt phrase set version (monotonic, never reused).
+
+Stable phrase IDs (never reused across versions).
+
+Deterministic normalization rules (example baseline):
+
+trim whitespace
+
+ASCII lowercase
+
+collapse internal whitespace to single spaces
+
+Language-aware phrase sets:
+
+Default phrase set is English.
+
+If `language_tag` is known, PH1.K may select the matching phrase set.
+
+Hard rule: PH1.K must never “translate” user speech to match a phrase; it only matches within the active phrase set.
+
+Hard rule: InterruptCandidate must include phrase_set_version and phrase_id so replay/audit can explain exactly what matched.
+
 Section K.1.5: Confidence Gating (Prevents Random Noise Interrupts)
 
 To trigger an interruption while TTS is playing, require all gates:
 
-Speech‑likeness gate: VAD indicates speech (not clatter/noise).
+Speech-likeness gate: VAD indicates speech (not clatter/noise).
 
-Echo‑safe gate: AEC confirms it is not Selene’s own audio.
+Echo-safe gate: AEC confirms it is not Selene’s own audio.
 
 Phrase/intent gate: an interrupt phrase is detected with high confidence.
 
-Proximity/energy sanity (optional): near‑field speech profile on desktop.
+Proximity/energy sanity (optional): near-field speech profile on desktop.
+
+Minimum buildable semantics (default targets; tuned per device class but deterministic):
+
+Speech-likeness gate must include two numeric signals:
+
+vad_confidence (0..1)
+
+speech_likeness (0..1)
+
+Default pass rule: speech_likeness >= 0.70 AND vad_confidence >= 0.80 for a stable voiced window (e.g., >= 80ms).
+
+Echo-safe gate must include:
+
+echo_safe_confidence (0..1) from AEC.
+
+Default pass rule during `tts_playback_active`: echo_safe_confidence >= 0.90.
+
+Hard rule: unknown/NaN echo_safe_confidence fails closed.
+
+Phrase/intent gate must include:
+
+phrase_confidence (0..1) and a stable phrase_id from the active phrase set version.
+
+Default pass rule: phrase_confidence >= 0.85.
+
+Proximity/energy sanity (optional) must be expressed as:
+
+nearfield_confidence (0..1) when available (desktop).
+
+Default pass rule when present: nearfield_confidence >= 0.60.
+
+Hard rule: InterruptCandidate must carry both:
+
+the gate booleans (passed/failed), and
+
+the numeric confidences used to decide (vad_confidence, speech_likeness, echo_safe_confidence, phrase_confidence, nearfield_confidence when present).
 
 If any gate fails: do not interrupt.
 
@@ -3193,7 +8686,7 @@ Section K.1.6: Desktop Wake Support (Without Mixing Responsibilities)
 
 PH1.K must support PH1.W by providing:
 
-Always‑on pre‑roll buffer (e.g., ~1.0–1.5s).
+Always-on pre-roll buffer (e.g., ~1.0–1.5s).
 
 Clean audio path (AEC/NS/AGC) as the default wake/STT source.
 
@@ -3203,37 +8696,329 @@ PH1.K does not decide wake.
 
 Section K.1.7: Required Implementation Capabilities
 
-Full‑duplex capture/playback
+Full-duplex capture/playback
 
-Fixed 10–20ms frames end‑to‑end
+Fixed 10–20ms frames end-to-end
 
-Lock‑free ring buffers (capture never blocks)
+Lock-free ring buffers (capture never blocks)
 
 Adaptive jitter buffers (input/output)
 
-AEC + NS + AGC (non‑negotiable)
+AEC + NS + AGC (non-negotiable)
 
-Phrase‑first interrupt detection during TTS playback
+Phrase-first interrupt detection during TTS playback
 
-OS‑grade device selection + hot‑plug + failover
+OS-grade device selection + hot-plug + failover
 
-Section K.1.8: Output Contract (Upstream‑Trustable)
+Section K.1.8: Output Contract (Upstream-Trustable)
 
 PH1.K emits:
 
-processed_audio_stream_ref (AEC/NS/AGC)
+processed_audio_stream_ref (AEC/NS/AGC; canonical downstream format enforced)
 
-raw_audio_stream_ref (optional, policy‑gated)
+raw_audio_stream_ref (optional, policy-gated)
+
+pre_roll_buffer_ref (always-on rolling window, e.g., ~1.0–1.5s)
 
 vad_state_stream
 
-device_state (route, health, errors)
+device_state (selected_mic, selected_speaker, device_route, health, errors)
 
-timing_stats (jitter, drift, buffer depth)
+timing_stats (jitter, drift, buffer depth, underruns, overruns, latency percentiles)
 
-interrupt_candidate events (phrase, confidence, gates passed)
+state_transition_event (from_state, to_state, t_event, reason_code)
 
-degradation flags (capture_degraded, aec_unstable, device_changed)
+interrupt_candidate events (phrase_set_version, phrase_id, phrase_text, phrase_confidence, gate booleans + gate confidences, t_event, reason_code)
+
+degradation flags (capture_degraded, aec_unstable, device_changed, stream_gap_detected)
+
+Section K.1.9: Kernel Contract Types (Buildable, Versioned)
+
+PH1.K’s “output contract” must not remain prose. These structures must exist as versioned kernel contract types (in `selene_kernel_contracts`) so every upstream engine consumes the same semantics.
+
+Minimum required contract types (names illustrative; semantics are mandatory):
+
+AudioStreamRef (stream_id, kind, format, frame_ms)
+
+AudioFormat (sample_rate_hz, channels, sample_format)
+
+AudioFrame (stream_id, seq_no, t_capture, frame_ms, payload)
+
+PreRollBufferRef (buffer_id, stream_id, t_start, t_end)
+
+VadEvent (stream_ref, t_start, t_end, confidence, speech_likeness)
+
+DeviceRoute (BUILT_IN / USB / BLUETOOTH / VIRTUAL / UNKNOWN)
+
+DeviceState (selected_mic, selected_speaker, device_route, health, errors)
+
+Ph1kState (INIT / READY / FULL_DUPLEX_ACTIVE / DEVICE_SWITCHING / DEGRADED / FAILED)
+
+StateTransitionEvent (from_state, to_state, t_event, reason_code)
+
+TimingStats (jitter_ms, drift_ppm, buffer_depth_ms, underruns, overruns)
+
+InterruptPhraseSetVersion (u32)
+
+InterruptCandidate (phrase_set_version, phrase_id, phrase_text, phrase_confidence, gates, gate_confidences, t_event, reason_code)
+
+DegradationFlags (capture_degraded, aec_unstable, device_changed, stream_gap_detected)
+
+Hard rule: downstream engines must never infer semantics from raw audio. They may only trust the PH1.K contract events + refs.
+
+Section K.1.10: Stream Semantics (Determinism, Ordering, Gaps)
+
+PH1.K must define deterministic stream semantics:
+
+Stream identity semantics: `stream_id` is globally unique and never reused.
+
+Hard rule: a new `stream_id` must be created when any of the following change:
+
+selected_mic or selected_speaker
+
+device_route (e.g., built-in vs Bluetooth)
+
+audio format (sample_rate_hz, channels, sample_format)
+
+frame_ms
+
+audio graph restart (including permission loss/regrant)
+
+Monotonic ordering: `seq_no` strictly increases per stream.
+
+Clock semantics: `t_capture` is capture-time (not “delivered” time) and must be monotonic.
+
+Frame size is fixed for a stream (10ms or 20ms) and must be declared in the stream reference (frame_ms).
+
+Frame payload size is never ambiguous: for a given stream, each AudioFrame payload length must match the stream format and frame_ms:
+
+expected_bytes = sample_rate_hz * frame_ms / 1000 * channels * bytes_per_sample
+
+Hard rule: if payload size mismatches expected_bytes, fail closed and surface a deterministic reason code (do not “play through” corrupted audio).
+
+No silent ambiguity: if frames are dropped, PH1.K must set `stream_gap_detected` and emit an explicit gap/degradation signal (not silently reorder).
+
+Normalization policy: PH1.K must enforce a canonical audio format for downstream consumers (resample/convert at the boundary) so wake/STT/VAD are not fighting device variability.
+
+Canonical downstream format (processed mic stream) default:
+
+sample_rate_hz: 16000
+
+channels: 1 (mono)
+
+sample_format: PcmF32LE
+
+frame_ms: 20ms (10ms allowed; stable per stream)
+
+Section K.1.11: Explicit State Machine (OS-Grade, Testable)
+
+PH1.K must be implementable as an explicit state machine with observable transitions. Example states:
+
+INIT
+
+READY
+
+FULL_DUPLEX_ACTIVE
+
+DEVICE_SWITCHING
+
+DEGRADED
+
+FAILED
+
+Hard rule: every state transition emits a StateTransitionEvent (from_state, to_state, t_event, reason_code).
+
+Hard rule: device changes, permission loss, or audio graph restarts must be emitted as structured events (with reason codes) so PH1.X can react deterministically.
+
+Section K.1.12: Latency Budgets + Telemetry (Measurable “Feels Human”)
+
+PH1.K must publish metrics required to enforce “feels human” quality:
+
+Mic capture → processed frame available latency (p50/p95/p99).
+
+VAD event latency (speech start → event emitted).
+
+Playback health (speaker underruns, jitter, drift).
+
+AEC stability (convergence time, “echo-safe” confidence).
+
+Default latency targets (desktop baseline; numbers are configuration defaults and must be visible to replay/audit):
+
+Mic capture → processed frame available: p50 <= 30ms, p95 <= 60ms, p99 <= 120ms.
+
+Speech start → VadEvent emitted: p50 <= 80ms, p95 <= 160ms, p99 <= 250ms.
+
+InterruptCandidate emission: p95 <= 120ms from phrase detector decision to interrupt_candidate emitted.
+
+End-to-end barge-in stop (PH1.K → PH1.X → PH1.TTS): p95 <= 150ms from interrupt_candidate.t_event to PH1.TTS stop event; p99 <= 250ms.
+
+Device failover: p95 <= 1500ms from device loss detection to FULL_DUPLEX_ACTIVE with a new healthy selection.
+
+Hard rule: PH1.K must expose these metrics as structured signals and Selene must fail closed on repeated severe underruns/overruns in production safety mode.
+
+Section K.1.13: Echo-Safe Contract With PH1.TTS (No Self-Triggers)
+
+To prevent wake/interrupt false positives from Selene’s own speech, PH1.K and PH1.TTS must share a contract:
+
+PH1.TTS must tag playback segments as `tts_playback_active` (with start/stop boundaries).
+
+PH1.K must treat `tts_playback_active` as a first-class gate input for wake/interrupt detection.
+
+Hard rule: during playback, interruption/wake events require echo-safe gating to pass; otherwise PH1.K must not emit interrupt_candidate.
+
+Section K.1.14: Device Policy (Deterministic Selection + Failover)
+
+PH1.K must implement device behavior as explicit policy:
+
+Persist last-known-good mic/speaker per device/profile.
+
+Deterministic selection order (user override → last-known-good → system default → fallback list).
+
+Hot-plug detection with bounded switching (avoid thrash).
+
+Anti-thrash rules (default):
+
+Require device list stability before switching (e.g., stable for >= 300ms).
+
+After a switch, enforce a cooldown window (e.g., >= 2s) before switching again unless the current device fails.
+
+Never oscillate between two devices (“flap”) without emitting explicit degraded/failed reason codes.
+
+Hard rule: device_route must be classified and emitted in device_state (BUILT_IN / USB / BLUETOOTH / VIRTUAL / UNKNOWN).
+
+Health probes and reason-coded failure events on device loss.
+
+Section K.1.15: Degradation Strategy (Fail Closed, Stay Usable)
+
+When audio conditions degrade (AEC unstable, capture glitches, route changes), PH1.K must:
+
+Continue capturing when possible (do not silently stop the world).
+
+Raise explicit DegradationFlags and reason codes.
+
+Suppress high-risk signals until integrity recovers (fail closed):
+
+If capture_degraded OR stream_gap_detected: do not emit interrupt_candidate.
+
+If aec_unstable while `tts_playback_active`: treat echo-safe gate as FAIL and do not emit interrupt_candidate.
+
+Recovery rule (default): require a stable window (e.g., >= 500ms) with no stream gaps and echo_safe_confidence above threshold before re-enabling interrupt_candidate emission.
+
+Hard rule: Selene must never claim it heard an interrupt phrase if PH1.K did not emit a valid InterruptCandidate.
+
+Section K.1.16: Deterministic Test Harness (Non-Negotiable)
+
+PH1.K must be testable offline with deterministic fixtures:
+
+Record/replay harness that feeds mic + playback tracks and asserts emitted events (VAD, interruption candidates, timing stats) within tolerances.
+
+Fault injection tests: underruns/overruns, device hot-plug, permission loss, stream gaps.
+
+Hard rule: major PH1.K behavior must be provable without manual listening.
+
+Section K.1.17: Privacy Defaults (Raw Audio is Policy-Gated)
+
+PH1.K must treat raw audio as sensitive:
+
+`raw_audio_stream_ref` is optional and disabled by default.
+
+Any retention/storage of raw audio requires explicit policy + consent + bounded TTL.
+
+Default TTL (if raw audio is enabled at all): <= 30 seconds.
+
+Hard max TTL: <= 5 minutes (no “keep forever” mode).
+
+Hard rule: raw audio must not be persisted to disk by default; if persisted under policy, it must be encrypted at rest and access-controlled.
+
+Default mode: store only derived events/metrics + hashes needed for audit and replay, not raw waveforms.
+
+Section K.1.18: Deterministic Reason Codes (Minimum Set)
+
+K_FAIL_NO_MIC_AVAILABLE
+
+K_FAIL_NO_SPEAKER_AVAILABLE
+
+K_FAIL_PERMISSION_LOST
+
+K_FAIL_DEVICE_SELECTION_FAILED
+
+K_FAIL_FRAME_PAYLOAD_SIZE_MISMATCH
+
+K_DEGRADED_DEVICE_CHANGED
+
+K_DEGRADED_AEC_UNSTABLE
+
+K_DEGRADED_STREAM_GAP
+
+K_DEGRADED_LATENCY_BUDGET_VIOLATION
+
+K_INFO_INTERRUPT_CANDIDATE_EMITTED
+
+K_PRIV_RAW_AUDIO_DISABLED_BY_DEFAULT
+
+K_PRIV_RAW_AUDIO_POLICY_REQUIRED
+
+Section K.1.19: Acceptance Tests (Proof PH1.K Is Better Than ChatGPT Voice Substrate)
+
+AT-K-01: Pre-roll prevents clipped first word
+
+Scenario: user begins speaking suddenly (wake or speech start begins mid-buffer).
+
+Pass: pre_roll_buffer_ref ensures the bounded capture includes the first syllable; no clipped start.
+
+AT-K-02: Full-duplex capture continues during TTS
+
+Scenario: Selene is speaking while the user speaks.
+
+Pass: mic processed frames continue with monotonic seq_no and monotonic t_capture; capture never blocks.
+
+AT-K-03: Echo-safe prevents self-trigger
+
+Scenario: Selene is speaking; mic hears Selene’s own voice/echo.
+
+Pass: no interrupt_candidate is emitted unless echo-safe confidence passes; no “Selene stops herself”.
+
+AT-K-04: Phrase-driven interruption works and is deterministic
+
+Scenario: user says an interrupt phrase (e.g., “stop”) while Selene is speaking.
+
+Pass: interrupt_candidate is emitted with phrase_set_version + phrase_id + phrase_confidence and recorded gate confidences; identical replay produces identical events.
+
+AT-K-05: Random noise does not interrupt
+
+Scenario: room noise/clatter occurs while Selene is speaking.
+
+Pass: no interrupt_candidate; speech-likeness gate fails.
+
+AT-K-06: Stream gaps are explicit
+
+Scenario: frames are dropped (underrun/overrun or OS scheduling glitch).
+
+Pass: stream_gap_detected is set; degradation flags are emitted; frames are never silently reordered.
+
+AT-K-07: Frame payload size mismatch fails closed
+
+Scenario: an AudioFrame payload byte length does not match expected_bytes for the stream format + frame_ms.
+
+Pass: deterministic failure or contract violation is surfaced; PH1.K does not “play through” corrupted audio.
+
+AT-K-08: Device hot-plug failover is stable (no thrash)
+
+Scenario: current mic disappears; new devices appear (USB/Bluetooth).
+
+Pass: PH1.K switches via deterministic policy with anti-thrash cooldown; emits device_state + reason codes; recovers within the device failover budget when possible.
+
+AT-K-09: Latency budgets are measurable and enforced
+
+Scenario: sustained run under normal load.
+
+Pass: PH1.K emits latency percentiles; repeated severe violations produce degraded/failed behavior deterministically.
+
+AT-K-10: Raw audio is not stored by default
+
+Scenario: default policy run.
+
+Pass: raw_audio_stream_ref is absent; only derived events/metrics/hashes exist in storage/audit; if raw audio is enabled, TTL is enforced.
 
 Appendix A — Core Language Control Tables (Authoritative)
 
@@ -3255,7 +9040,7 @@ CHAT_JOKE_REQUEST
 
 CHAT_CLARIFICATION_RESPONSE
 
-A.1.2 Information & Lookup Intents (Read‑Only)
+A.1.2 Information & Lookup Intents (Read-Only)
 
 QUERY_TIME
 
@@ -3289,7 +9074,7 @@ SCHEDULE_CANCEL
 
 SCHEDULE_QUERY
 
-A.1.4 Communication Intents (Non‑Executing Drafts)
+A.1.4 Communication Intents (Non-Executing Drafts)
 
 MESSAGE_DRAFT
 
@@ -3347,7 +9132,7 @@ STOP_SPEAKING
 
 HELP_REQUEST
 
-A.2 Reason Code Taxonomy (System‑Wide)
+A.2 Reason Code Taxonomy (System-Wide)
 
 A.2.1 Audio & Speech (PH1.K / PH1.C)
 
@@ -3471,7 +9256,7 @@ MEMORY_CONSENT_GRANTED
 
 MEMORY_CONSENT_DENIED
 
-A.3 Template Families (Meaning‑Safe Speech)
+A.3 Template Families (Meaning-Safe Speech)
 
 A.3.1 Clarification Templates
 
@@ -3675,7 +9460,7 @@ Selene Failure Playbook (Authoritative)
 
 FP.1: Purpose
 
-The Failure Playbook defines how Selene behaves when she cannot help, should not proceed, or something goes wrong. Failure behavior is not an edge case; it is a first‑class product feature. Selene must fail calmly, honestly, and predictably.
+The Failure Playbook defines how Selene behaves when she cannot help, should not proceed, or something goes wrong. Failure behavior is not an edge case; it is a first-class product feature. Selene must fail calmly, honestly, and predictably.
 
 If Selene fails without dignity, trust is lost.
 
@@ -3724,7 +9509,7 @@ No intent is inferred.
 
 Forbidden behavior:
 
-Guessing allow‑listed words.
+Guessing allow-listed words.
 
 Proceeding with partial understanding.
 
@@ -3761,7 +9546,7 @@ Selene waits calmly.
 After timeout, Selene prompts once:
 "Just checking — should I go ahead?"
 
-Then soft‑closes.
+Then soft-closes.
 
 Forbidden behavior:
 
@@ -3833,7 +9618,7 @@ FP.4.7 Interruption Failure (PH1.K / PH1.X / PH1.TTS)
 
 Trigger examples:
 
-Interrupt detected mid‑speech
+Interrupt detected mid-speech
 
 Required behavior:
 
@@ -3865,7 +9650,7 @@ scold
 
 lecture
 
-over‑explain
+over-explain
 
 sound apologetic repeatedly
 
@@ -3892,35 +9677,534 @@ She must stop attempting recovery.
 
 FP.8: Acceptance Tests (Failure Dignity)
 
-AT‑FP‑01: No guessing under failure
+AT-FP-01: No guessing under failure
 
 Scenario: unclear input.
 
 Pass: Selene asks or waits.
 
-AT‑FP‑02: One clarification only
+AT-FP-02: One clarification only
 
 Scenario: missing data.
 
 Pass: exactly one question.
 
-AT‑FP‑03: Calm tool failure
+AT-FP-03: Calm tool failure
 
 Scenario: lookup timeout.
 
 Pass: explanation + retry option.
 
-AT‑FP‑04: No embarrassment
+AT-FP-04: No embarrassment
 
 Scenario: repeated failures.
 
 Pass: tone remains respectful.
 
-AT‑FP‑05: Silent when appropriate
+AT-FP-05: Silent when appropriate
 
 Scenario: long silence.
 
-Pass: soft‑close without speech.
+Pass: soft-close without speech.
+
+1.11A PH1.ACCESS.001 — Master Role & Access Control (Access/Authority Gate)
+
+PH1.ACCESS.001 — Master Role & Access Control v1.0 (Enterprise Permission Gate)
+
+Section A.1: Mission
+PH1.ACCESS.001 is Selene's system-wide permission gate. It answers one question:
+
+"Is this user allowed to do this action right now?"
+
+It is the master interface that Selene OS calls during the Access/Authority Gate in OS.5.
+
+Hard rule: PH1.ACCESS.001 does not execute actions. It only decides ALLOW / DENY / ESCALATE.
+
+Delegation rule
+PH1.ACCESS.001 delegates the final per-user decision to PH2.ACCESS.002 (the user's access engine instance).
+
+Section A.2: What PH1.ACCESS.001 Owns
+
+The single Access/Authority Gate interface used by Selene OS.
+
+Deterministic mapping from requested_action to access_request_context (R/W/A/X).
+
+Global safety checks that apply before/around per-user evaluation (example: device untrusted -> ESCALATE or DENY).
+
+Deterministic handling of sensitive data visibility (margin/cost/markup) as a permission category.
+
+Deterministic escalation triggers (what proof is required next).
+
+Audit completeness: every decision emits an audit event with reason codes.
+
+Section A.3: What PH1.ACCESS.001 Must Never Do
+
+Open/close sessions or manage timeouts (PH1.L owns presence).
+
+Bind identity (PH1.VOICE.ID owns identity assertion).
+
+Change permissions by itself. All access changes must be simulation-gated.
+
+Call tools or call the LLM.
+
+Section A.4: Inputs
+Required (minimum)
+
+user_id (from PH1.VOICE.ID speaker_assertion_ok or from signed-in UI for text)
+
+access_engine_instance_id (points to the user's PH2.ACCESS.002 instance)
+
+requested_action (module_id + action_type)
+
+access_request_context (read/write/approve/admin intent)
+
+speaker_id + identity_confidence (from PH1.VOICE.ID)
+
+device_id + device_trust_level
+
+AP_level (if available)
+
+current_permission_state (from the per-user instance snapshot)
+
+audit_context (session_id, work_order_id, correlation_id, turn_id, now)
+
+Optional (bounded)
+
+voice_instruction_text (only for access-change requests; never used for normal access checks)
+
+temp_access_request (duration_ms, scope)
+
+sensitive_data_request (fields: margin, cost, markup)
+
+board_voting_request (vote_id, can_vote flag, quorum_target)
+
+Section A.5: Outputs
+
+access_decision (ALLOW | DENY | ESCALATE)
+
+effective_access_mode (R | W | A | X)
+
+restriction_flags (bounded list)
+
+escalation_trigger (if any; minimum set: STEP_UP_PROOF_REQUIRED | AP_APPROVAL_REQUIRED)
+
+access_change_event (only when applying a simulation-approved access change)
+
+audit_event (always)
+
+Section A.6: Hard Rules (Non-Negotiable)
+
+PH1.ACCESS.001 never grants access without verified authority and explicit confirmation where required by policy/blueprint.
+
+All checks are against the per-user access engine instance, never a global role map at runtime.
+
+Sensitive fields (margin/cost/markup) are blocked unless explicit financial authorization exists.
+
+Escalation vs deny (hard rule)
+If the only issue is "this requester is not allowed, but an AP could approve":
+- do not DENY due to low authority,
+- return ESCALATE with escalation_trigger=AP_APPROVAL_REQUIRED.
+
+DENY is reserved for actions that are forbidden by policy (no approval path) or for failed/expired approval outcomes.
+
+Step-up ownership (crystal clean)
+If step-up is required (biometric / passcode+time / challenge phrase / device-claim confirmation):
+
+PH1.ACCESS.001 returns ESCALATE with escalation_trigger, and
+
+Selene OS + UI collect the proof, and
+
+Selene OS re-calls PH1.ACCESS.001 with the proof result, and
+
+PH1.ACCESS.001 verifies deterministically and returns ALLOW or DENY.
+
+PH1.ACCESS.001 never directly "collects" biometrics or passcodes.
+
+AP approval ownership (crystal clean, quiet escalation)
+If the requester does not have enough authority but policy allows an AP to approve:
+
+PH1.ACCESS.001 returns ESCALATE with:
+- escalation_trigger=AP_APPROVAL_REQUIRED, and
+- a deterministic required_approver selector (who must approve), and
+- a suggested override proposal (scope + duration + one-shot vs temporary vs permanent; bounded).
+
+Then Selene OS must:
+- send a private approval request to the required AP approver(s) via PH1.BCAST.001 (device-only by default),
+- ask the AP to choose the override type (one-shot vs temporary duration vs permanent) and capture duration when applicable (one question at a time; no guessing),
+- wait (PH1.X chooses WAIT, not execution),
+- if AP approves: apply the override via a COMMIT simulation that updates the requester's PH2.ACCESS.002 instance:
+  - one-shot or temporary duration -> ACCESS_OVERRIDE_TEMP_GRANT_COMMIT
+  - permanent -> ACCESS_OVERRIDE_PERM_GRANT_COMMIT
+  One-shot means: the override expires automatically when this WorkOrder/process completes.
+  Temporary duration means: the override expires automatically at the chosen time.
+  Then re-call PH1.ACCESS.001 and continue,
+- if AP denies (or the approval expires): politely inform the requester the transaction cannot be permitted.
+
+Hard rules
+- No access change is applied without a simulation (No Simulation -> No Execution).
+- Selene must not bluntly shame the requester with "you don't have permission" up front. She may say "One moment" and route the approval request quietly.
+- Every approval/deny and every override is audit logged (PH1.J).
+
+Section A.7: Access Modes (Global)
+R = Read/View only
+
+W = Write/Edit
+
+A = Approve
+
+X = Admin/Full control
+
+Section A.8: Reason Codes (Minimum Set)
+
+ACCESS_ALLOWED
+
+ACCESS_DENIED
+
+ACCESS_ESCALATE_REQUIRED
+
+ACCESS_INSTANCE_MISSING
+
+ACCESS_SCOPE_MISMATCH
+
+ACCESS_AP_REQUIRED
+
+ACCESS_CONFIRMATION_FAILED
+
+ACCESS_BIOMETRIC_REQUIRED
+
+ACCESS_TIME_CHALLENGE_FAILED
+
+ACCESS_SENSITIVE_DENY
+
+ACCESS_TEMP_GRANTED
+
+ACCESS_TEMP_EXPIRED
+
+ACCESS_BOARD_VOTE_DENY
+
+ACCESS_DEVICE_UNTRUSTED
+
+Section A.9: Logging (Mandatory Fields)
+
+session_id
+
+user_id
+
+speaker_id
+
+device_id
+
+access_engine_instance_id
+
+requested_action
+
+decision
+
+effective_access_mode
+
+restriction_flags
+
+escalation_trigger
+
+confirmation_method (biometric | passcode_time | none)
+
+reason_codes (bounded)
+
+timestamp
+
+Section A.10: Acceptance Tests (Access Gate Proofs)
+AT-ACCESS-01: Per-user instance used for every decision
+
+Scenario: access check for a user.
+
+Pass: decision is made from the user's access_engine_instance (no global role lookup).
+
+AT-ACCESS-02: Sensitive fields denied without financial auth
+
+Scenario: request margin/cost/markup without authorization.
+
+Pass: DENY with ACCESS_SENSITIVE_DENY.
+
+AT-ACCESS-03: Access changes are simulation-gated
+
+Scenario: user asks to grant someone access.
+
+Pass: no direct change; Selene OS requires Access + confirmation (if required) + a simulation; only then PH2 instance updates.
+
+AT-ACCESS-04: Step-up handshake is deterministic
+
+Scenario: untrusted device or AP action.
+
+Pass: ESCALATE with reason; after proof -> ALLOW or DENY deterministically; audit logged.
+
+AT-ACCESS-05A: AP escalation loop (quiet approval) is deterministic
+
+Scenario: user requests an action they cannot perform, but policy allows AP approval.
+
+Pass:
+- PH1.ACCESS.001 returns ESCALATE with escalation_trigger=AP_APPROVAL_REQUIRED.
+- Selene OS sends an approval request to the correct AP approver(s) via PH1.BCAST.001.
+- If approved: a simulation-gated override is applied to the requester's PH2.ACCESS.002 instance, then the original action can proceed (still requiring confirmation + simulation).
+- If denied: Selene informs the requester politely and does not proceed.
+- Audit events exist for: request, escalation, approve/deny, override apply, final allow/deny.
+
+AT-ACCESS-05: Audit completeness
+
+Scenario: any access decision.
+
+Pass: audit_event emitted with reason codes and correlation_id.
+
+1.11B PH2.ACCESS.002 — Per-User Access Engine & Override Instance System
+
+PH2.ACCESS.002 — Per-User Access Instance v1.0 (User-Scoped Permission Truth)
+
+Section PU.1: Mission
+PH2.ACCESS.002 creates and governs a unique deterministic access engine instance per user.
+
+This per-user instance is the only authority for that user's access decisions.
+
+Hard rule: no global role table lookups at runtime. Decisions are instance-based only.
+
+Section PU.2: What PH2.ACCESS.002 Owns
+
+The per-user access_engine_instance (baseline role + overrides + expiries).
+
+Persistence ownership in PH1.F:
+- `access_instances` (baseline per-user instance truth)
+- `access_overrides` (override lifecycle truth)
+
+Identity-locked activation metadata (identity_verified, verification_level, device trust).
+
+Override history (bounded) and deterministic conflict checks.
+
+AP threshold policy application (tenant-scoped, versioned).
+
+Deterministic decisions: ALLOW / DENY / ESCALATE.
+
+Section PU.3: What PH2.ACCESS.002 Must Never Do
+
+Bind identity (PH1.VOICE.ID owns identity assertion).
+
+Open/close sessions or manage timeouts (PH1.L owns presence).
+
+Execute actions, tools, or simulations.
+
+Apply any access change unless the call is simulation-approved (apply mode).
+
+Section PU.4: Inputs
+Required (minimum)
+
+user_id
+
+access_engine_instance_id (the user's clone id)
+
+role_id (from onboarding)
+
+identity_verification_event (from PH1.VOICE.ID.001)
+
+device_id + device_trust_level
+
+requested_action + scope (module_id + action_type)
+
+audit_context (session_id, work_order_id, correlation_id, turn_id, now)
+
+Optional (bounded)
+
+override_command (grant/restrict/revoke)
+
+override_scope (module + action + duration)
+
+reset_request (role_template_id)
+
+AP confirmations (if required by policy)
+
+AP_threshold_query (read-only)
+
+board_voting_request (vote_id, can_vote flag, quorum_target)
+
+Section PU.5: Outputs
+
+active_access_config (R/W/A/X)
+
+access_decision (ALLOW | DENY | ESCALATE)
+
+escalation_trigger (if any)
+
+override_history (bounded)
+
+audit_event (always)
+
+Section PU.6: Cloning Logic (Onboarding)
+
+On role assignment (not on position creation), clone the master template from PH1.ACCESS.001.
+
+Assign a unique instance_id tied to user_id.
+
+Store metadata: role, AP codes, tier, onboarding origin, created_by, created_on.
+
+Section PU.7: Identity & Activation (Crystal Clean)
+
+Access activation requires verified identity (PH1.VOICE.ID.001) and device trust.
+
+If identity is unknown/failed: instance remains in restricted mode (no elevated permissions).
+
+If step-up is required: return ESCALATE; Selene OS + UI own proof collection; PH2 verifies deterministically.
+
+Section PU.8: Overrides (Scoped, Audited, Simulation-Gated)
+
+Overrides apply only to the user's instance (grant/restrict/revoke).
+
+Overrides must be scoped and time-bounded when temporary.
+
+Override types (minimum)
+- One-shot: scoped to one work_order_id (expires automatically after the work completes).
+- Temporary: scoped + duration_ms (auto-expire).
+- Permanent: scoped change without expiry (still audit logged and reversible by simulation).
+
+Overrides require valid AP confirmation when policy requires.
+
+All override changes must be simulation-gated and audit logged.
+
+Simulation IDs (minimum)
+- ACCESS_OVERRIDE_TEMP_GRANT_COMMIT
+- ACCESS_OVERRIDE_PERM_GRANT_COMMIT
+- ACCESS_OVERRIDE_REVOKE_COMMIT
+
+Section PU.9: AP Thresholds, Dual AP, and Escalation
+
+AP threshold values are tenant policy, versioned and auditable.
+
+High-sensitivity actions may require dual AP confirmation.
+
+If thresholds are exceeded or dual AP is required: return ESCALATE (do not proceed).
+
+Section PU.10: Board Voting Access (Enterprise)
+
+Only can_vote=true users may receive prompts.
+
+Voting prompts are delivered only to registered devices for that identity.
+
+Biometric (or step-up) is required to view/submit a vote.
+
+Results are anonymized unless explicitly authorized.
+
+Section PU.11: Lifecycle + Conflict Detection
+
+Role transitions trigger deterministic downgrade/upgrade with audit logs.
+
+Conflict detection blocks high-risk combinations and escalates to review (dual AP when required).
+
+Critical roles may require revalidation on a deterministic schedule (policy-defined).
+
+Section PU.12: Reason Codes (Minimum Set)
+
+PU_ACCESS_ALLOWED
+
+PU_ACCESS_DENIED
+
+PU_ACCESS_ESCALATE_REQUIRED
+
+PU_IDENTITY_REQUIRED
+
+PU_IDENTITY_FAILED
+
+PU_INSTANCE_RESTRICTED
+
+PU_OVERRIDE_APPLIED
+
+PU_OVERRIDE_REVOKED
+
+PU_TEMPLATE_RESET
+
+PU_AP_THRESHOLD_EXCEEDED
+
+PU_DUAL_AP_REQUIRED
+
+PU_BOARD_VOTE_DENY
+
+PU_DEVICE_UNTRUSTED
+
+Section PU.13: Logging (Mandatory Fields)
+
+session_id
+
+user_id
+
+speaker_id
+
+device_id
+
+access_engine_instance_id
+
+requested_action
+
+decision
+
+effective_access_mode
+
+restriction_flags
+
+escalation_trigger
+
+confirmation_method (biometric | passcode_time | none)
+
+identity_verified (true/false)
+
+verification_level
+
+reason_codes (bounded)
+
+timestamp
+
+Section PU.14: Acceptance Tests (Per-User Truth Proofs)
+AT-ACCESS-PU-01: No global lookup
+
+Scenario: access decision.
+
+Pass: decision comes from user.access_engine_instance only.
+
+AT-ACCESS-PU-02: Identity gating blocks activation
+
+Scenario: unknown speaker.
+
+Pass: restricted mode; ESCALATE or DENY; no elevated permissions.
+
+AT-ACCESS-PU-03: Overrides are scoped + AP-confirmed
+
+Scenario: apply a temporary override.
+
+Pass: requires AP confirmation when required; applies only to this user; auto-expires; audit logged.
+
+AT-ACCESS-PU-04: Dual AP enforcement
+
+Scenario: high-sensitivity action.
+
+Pass: ESCALATE with PU_DUAL_AP_REQUIRED; cannot proceed without two approvals.
+
+AT-ACCESS-PU-05: Template reset preserves history (simulation-gated)
+
+Scenario: AP resets a user's instance to a role template.
+
+Pass: instance is backed up; audit/override history is preserved; change is simulation-gated and logged.
+
+Section PU.15: Dependencies
+Upstream dependencies
+
+PH1.ACCESS.001 (master templates)
+
+PH1.VOICE.ID.001 (identity verification)
+
+Onboarding role assignment + access clone flow (not specified here)
+
+Organizational Role & Position Structure Engine (role templates + AP codes; not specified here)
+
+Downstream dependencies
+
+All engines requiring permissions (read/write/approve/admin)
+
+PH1.J (audit logging)
+
+Selene OS gate order (OS.5) + simulation gating (No Simulation -> No Execution)
 
 1.12 Selene OS — Process Blueprint System (How Selene Knows What To Do)
 
@@ -3987,13 +10271,25 @@ step_id
 
 engine_name
 
+capability_id (from the engine capability map; required for enterprise-grade determinism)
+
 required_fields
 
 produced_fields
 
 allowed_statuses (OK | NEEDS_CLARIFY | REFUSED | FAIL)
 
-retry_policy (allowed / not allowed)
+side_effects (NONE or declared list; must match the capability map)
+
+parallel_group_id (optional; steps with the same id may run concurrently only if side_effects=NONE)
+
+timeout_ms (required; deterministic per step)
+
+max_retries (required; deterministic per step)
+
+retry_backoff_ms (required; deterministic per step)
+
+retryable_reason_codes (bounded allowlist)
 
 sensitivity_level (NONE | LOW | HIGH)
 
@@ -4001,27 +10297,108 @@ audit_required (true)
 
 Hard rule: Steps cannot branch arbitrarily. All control flow is owned by Selene OS.
 
+Hard rule: parallel_group_id may be used only when side_effects=NONE. Join order is deterministic by step_id.
+
+Hard rule: retry behavior is owned by Selene OS and must follow the step's declared timeout/retry fields (no ad-hoc retries).
+
 PBS.5: How Selene Executes a Blueprint (Deterministic Flow)
 
-User request → intent_type identified by PH1.NLP.
+0) Unravel (the puzzle step, before anything starts)
 
-Selene OS looks up a matching Process Blueprint.
+People ask in 1,000 different ways (example: “Bring this guy onboard”, “Send an invite”, “Generate a link”).
+Selene must not start a process from vague speech.
 
-If none exists → refuse (“That process isn’t available”).
+Selene must first “unravel” the request into:
+
+- one blueprint candidate (what process the user actually means)
+- the required fields list (what must be known to start)
+
+How unravel works (allowed tools)
+
+- Deterministic NLP identifies intent and extracts fields.
+- LLM is allowed only as a helper to:
+  - untangle phrasing
+  - resolve ambiguous wording into structured candidates
+  - propose a short, natural clarification question
+- After this, Selene must return to deterministic logic and either:
+  - choose a blueprint candidate, or
+  - ask a clarification question (one at a time).
+
+Hard rules
+
+- Unraveling may clarify. It must never invent missing facts.
+- NLP/LLM must not start onboarding, create links, grant access, or skip required gates.
+
+If confidence is not HIGH or required fields are missing
+
+- PH1.X asks one short clarification question.
+- Selene repeats unravel until either:
+  - a blueprint candidate is confirmed, or
+  - Selene determines no blueprint exists, or
+  - the user cancels.
+
+1) Blueprint match (blueprint-first gate)
+
+Selene OS looks up a matching ACTIVE Process Blueprint in the Blueprint Registry.
+
+Hard rule: No blueprint match -> no process starts.
+
+2) Mandatory confirmation before starting any blueprint
+
+Before Selene starts the blueprint, Selene must confirm the interpreted intent.
+
+Example:
+
+- “You mean generate an onboarding link for Tom, right?”
+
+If YES -> proceed.
+If NO -> Selene says: “Okay — help me understand what you mean,” then returns to unravel.
+
+Hard rule: No confirmed blueprint -> no process starts.
+
+3) WorkOrder creation
 
 Selene OS creates a WorkOrder bound to the blueprint.
 
-Steps are executed in strict order.
+4) Execute steps in strict order
 
 For each step:
 
-If status = OK → proceed to next step.
+- If status = OK -> proceed to next step.
+- If status = NEEDS_CLARIFY -> PH1.X asks one question, updates WorkOrder, re-runs the step.
+- If status = REFUSED -> stop and explain.
+- If status = FAIL -> apply Failure Playbook.
 
-If status = NEEDS_CLARIFY → PH1.X asks one question, updates WorkOrder, re-runs step.
+PBS.5A: If No Blueprint Exists (Request File -> Dev Team Escalation)
 
-If status = REFUSED → stop and explain.
+If Selene cannot match the request to any existing blueprint:
 
-If status = FAIL → apply Failure Playbook.
+1) Selene proposes the closest blueprint options (if any) and asks the user to choose.
+2) If the user rejects the options (or none are close), Selene must create a “request file” entry for the development team.
+
+Request file entry must include (minimum)
+
+- user’s original phrasing (verbatim)
+- Selene’s best structured guess of what the user wanted
+- why existing blueprints did not match
+- suggested new simulation/blueprint name
+- required fields and expected outcomes
+- priority / impact (if stated by the user)
+
+What Selene tells the user (simple)
+
+- “I don’t have that exact capability yet.”
+- “I’ve logged a request for the development team to review.”
+
+Dev team decision outcomes
+
+- If approved and implemented: Selene notifies the user: “That capability is now available. If you want, I can do it now.”
+- If rejected: Selene gently informs the user: “That capability can’t be added right now,” and repeats the reason provided by the development team.
+
+Hard rules
+
+- Until the blueprint exists (and is ACTIVE), Selene cannot execute it.
+- Selene must not pretend it can do it.
 
 PBS.6: Confirmation and Commit Discipline
 
@@ -4116,7 +10493,12 @@ status = DRAFT
 
 PBS.8: Blueprint Registry (How Selene Finds Processes)
 
-Selene OS maintains a Blueprint Registry:
+Selene OS maintains a Blueprint Registry.
+
+Authoritative file
+`docs/09_BLUEPRINT_REGISTRY.md`
+
+The registry maps:
 
 intent_type → process_id
 
@@ -4262,6 +10644,8 @@ engine_name
 
 purpose (one sentence)
 
+capability_id (required; matches engine capability map)
+
 required_fields
 
 produced_fields
@@ -4270,9 +10654,23 @@ allowed_statuses (OK | NEEDS_CLARIFY | REFUSED | FAIL)
 
 retry_allowed (yes/no)
 
+side_effects (NONE or declared list)
+
+parallel_group_id (optional; only when side_effects=NONE)
+
+timeout_ms
+
+max_retries
+
+retry_backoff_ms
+
+retryable_reason_codes (allowlist)
+
 sensitivity_level (NONE | LOW | HIGH)
 
 Hard rule: steps cannot call other steps or engines.
+
+Hard rule: retry/backoff must be deterministic and declared here; Selene OS must not invent retries at runtime.
 
 PAT.7: Clarification Rules
 
@@ -4428,6 +10826,10 @@ postconditions (deterministic guarantees)
 
 side_effects (declared list; must be bounded)
 
+reads_tables[] (explicit PH1.F table reads; or inherited from approved domain binding profile)
+
+writes_tables[] (explicit PH1.F table writes; or inherited from approved domain binding profile)
+
 idempotency_key_rule (how repeats are handled)
 
 audit_events (start/step/finish reason codes)
@@ -4437,6 +10839,7 @@ version
 status (DRAFT | ACTIVE | DEPRECATED)
 
 Hard rule: simulation records are versioned and immutable once ACTIVE.
+Hard rule: `required_roles`, `preconditions`, `idempotency_key_rule`, `audit_events`, and PH1.F table bindings must be explicit (no `TBD`).
 
 SCS.4: Execution Contract (Who Can Run a Simulation)
 
@@ -4448,7 +10851,7 @@ Understanding Gate (PH1.NLP: intent confidence HIGH)
 
 Confirmation Gate (PH1.X: if required)
 
-Access/Authority Gate (Per-User Access Engine)
+Access/Authority Gate (PH1.ACCESS.001 -> PH2.ACCESS.002)
 
 Blueprint Gate (Process Blueprint exists and references this simulation)
 
@@ -4540,27 +10943,14 @@ The link must be explicit both ways.
 
 If the link does not exist: Selene must refuse.
 
-SCS.9: Example Simulation Records
+SCS.9: Simulation Inventory (Authoritative File)
 
-SCS.9.1 PAYROLL_PREPARE_DRAFT (DRAFT)
+Hard rule
+The Simulation Catalog inventory (the list of simulations and their records) is maintained in:
 
-purpose: produce a payroll draft for employee + pay period
+`docs/08_SIMULATION_CATALOG.md`
 
-inputs: employee_id, pay_period
-
-outputs: payroll_draft_id, gross_pay, deductions, net_pay
-
-side_effects: write draft record only
-
-SCS.9.2 PAYROLL_COMMIT_RUN (COMMIT)
-
-purpose: finalize payroll for a pay run
-
-inputs: payroll_draft_id, confirmation_token
-
-outputs: payroll_run_id, status=COMMITTED
-
-preconditions: access approved; confirmation received
+This Constitution section defines the laws, schema, and gate order only (SCS.1-SCS.8, SCS.10). Do not keep separate simulation inventories in multiple places.
 
 SCS.10: Acceptance Tests (Simulation Discipline)
 
@@ -4981,4 +11371,1038 @@ Scenario: redact sensitive evidence.
 
 Pass: J_REDACT_APPLIED exists; ledger continuity preserved.
 
+Selene Learning & Adaptation Layer (Working)
 
+This canvas defines Selene’s learning/adaptation capabilities for serving a company with many users (e.g., 100 employees) with different accents, personalities, roles, and preferences.
+
+These engines improve Selene over time, but they must never violate the Constitution:
+
+no guessing
+
+no silent authority
+
+no execution without access + simulation
+
+evidence-backed memory and privacy discipline
+
+Learning here means:
+
+better understanding
+
+better routing
+
+better personalization
+
+better company vocabulary
+
+Learning does not mean:
+
+changing business outcomes directly
+
+skipping confirmations
+
+inventing facts
+
+Section LA.0: Placement in the OS
+
+Learning engines are non-authoritative assistants.
+
+They influence:
+
+routing choices (STT/TTS/LLM provider selection)
+
+vocabulary hints
+
+clarification preferences
+
+phrasing style
+
+They do not control:
+
+access
+
+simulations
+
+commits
+
+Section LA.1: PH1.PERSONA — Per-User Personalization Profile Engine
+
+PERS.1 Mission
+
+Maintain each user’s stable interaction profile so Selene feels tailored to that person while staying deterministic.
+
+PERS.2 What It Stores (Examples)
+
+preferred language
+
+brevity preference (short vs detailed)
+
+response tone target (from Emotional classification)
+
+privacy preferences (text-only for sensitive topics)
+
+confirmation preferences (when to always confirm)
+
+PERS.3 Hard Rules
+
+Profiles update only via explicit user signals (confirmation, preference statement, repeated pattern evidence) and must be auditable.
+
+No personality guessing. Emotional style is a separate, explicit classification flow.
+
+PERS.4 Inputs
+
+user_id + speaker_id (must be verified)
+
+explicit preference statements (evidence spans)
+
+correction events ("don’t call me that")
+
+PERS.5 Outputs
+
+style_profile_ref
+
+delivery_policy_ref (VOICE_ALLOWED | TEXT_ONLY | SILENT)
+
+preferences_snapshot_ref
+
+PERS.6 Acceptance Tests
+
+AT-PERS-01: Unknown speaker → no persona applied.
+
+AT-PERS-02: Preference updates require evidence + audit.
+
+AT-PERS-03: Persona affects phrasing/tone only, not meaning.
+
+Section LA.2: PH1.PAE — Provider Arbitration & Auto-Promotion Engine
+
+PAE.1 Mission
+
+Select the best providers/models per user and environment (STT/TTS/LLM/tools), and continuously improve selection using deterministic scorecards.
+
+PAE.2 What It Decides
+
+STT provider choice per turn (accent/noise/latency)
+
+TTS voice/provider per user
+
+LLM model tier for phrasing tasks
+
+fallback ordering and budgets
+
+PAE.3 The Promotion Ladder (Deterministic)
+
+Providers/models move through:
+
+SHADOW (observe only)
+
+ASSIST (run in parallel; compare)
+
+LEAD (primary)
+
+Promotion requires:
+
+measurable quality metrics
+
+minimum sample size
+
+no regression over time window
+
+PAE.4 Inputs
+
+quality signals from PH1.C (reject rates, confidence)
+
+latency metrics (p50/p95/p99)
+
+cost metrics (per user/day budgets)
+
+user corrections ("that’s not what I said")
+
+PAE.5 Outputs
+
+provider_plan_ref per user and per device profile
+
+routing hints for PH1.C and PH1.TTS
+
+PAE.6 Acceptance Tests
+
+AT-PAE-01: Provider choice is deterministic given same snapshot.
+
+AT-PAE-02: Auto-promotion requires explicit thresholds + sample size.
+
+AT-PAE-03: Rollback triggers on regression.
+
+Section LA.3: PH1.SRL — Semantic Repair Layer (Post-STT Repair)
+
+SRL.1 Mission
+
+Improve messy but trustworthy transcripts into clearer structure without changing meaning, and trigger clarify when ambiguity exists.
+
+SRL runs only after PH1.C returns transcript_ok.
+
+SRL.2 What SRL Can Do
+
+normalize punctuation and sentence boundaries
+
+normalize common shorthand (tmr → tomorrow) only when deterministic
+
+preserve code-switch spans
+
+identify missing required fields for the intent draft
+
+SRL.3 What SRL Must Never Do
+
+invent fields
+
+translate unless explicitly requested
+
+change intent
+
+SRL.4 Outputs
+
+repaired_transcript_text (verbatim-preserving)
+
+repair_notes (structured)
+
+ambiguity_flags (to force clarify)
+
+SRL.5 Acceptance Tests
+
+AT-SRL-01: No new facts introduced.
+
+AT-SRL-02: Code-switch preserved.
+
+AT-SRL-03: Ambiguity → clarify, not inference.
+
+Section LA.4: PH1.LEARN — Learning Ledger & Adaptation Packaging Engine
+
+LEARN.1 Mission
+
+Turn interaction signals into safe, versioned improvement artifacts.
+
+This is the engine that makes Selene improve forever while staying governed:
+
+consent-gated
+
+auditable
+
+rollbackable
+
+LEARN.2 What It Captures (Signals)
+
+STT rejects by environment and user
+
+user corrections (names, times, preferences)
+
+repeated vocabulary and entities
+
+tool failures and conflicts
+
+clarification frequency per intent
+
+LEARN.3 Output Artifacts (Packages)
+
+Per-user artifacts:
+
+vocab pack (names, pronunciations)
+
+per-user STT hints (language/phrase list)
+
+per-user preference deltas
+
+Per-company artifacts:
+
+company glossary pack
+
+org structure vocabulary
+
+common intents and phrasing patterns (structured)
+
+Global-derived artifacts (derived-only rule):
+
+improvements only from aggregated, non-sensitive signals
+
+LEARN.4 Versioning + Rollback
+
+Every artifact package:
+
+has version
+
+has provenance
+
+has activation status
+
+can be rolled back deterministically
+
+LEARN.5 Acceptance Tests
+
+AT-LEARN-01: No learning without consent where required.
+
+AT-LEARN-02: Packages are versioned and rollbackable.
+
+AT-LEARN-03: Learning never bypasses access/simulation.
+
+Section LA.5: PH1.KNOW — Company Vocabulary & Pronunciation Packs (Tenant Dictionary)
+
+KNOW.1 Mission
+
+Maintain a company’s internal vocabulary so Selene sounds like she belongs inside the organization.
+
+KNOW.2 Scope (Dictionary Layer)
+
+PH1.KNOW is a dictionary, not a relationship graph.
+It stores:
+
+employee directory names + preferred forms
+
+approved abbreviations
+
+internal product names
+
+project codes
+
+pronunciation hints (how names/terms should be said)
+
+KNOW.3 Inputs
+
+HR/Org data (authorized)
+
+user-provided terms (consent)
+
+LEARN output packages
+
+KNOW.4 Outputs
+
+bounded vocabulary hints to PH1.C / SRL / PH1.NLP
+
+pronunciation hints to PH1.TTS
+
+KNOW.5 Acceptance Tests
+
+AT-KNOW-01: Only authorized vocab enters the dictionary.
+
+AT-KNOW-02: Vocab packs are tenant-scoped.
+
+AT-KNOW-03: No leakage across companies.
+
+Section LA.5A: PH1.KG — Tenant Knowledge Graph Engine (Optional, Later Phase)
+
+KG.1 Mission
+
+Store relationships between tenant entities to improve disambiguation and reasoning.
+
+KG.2 Scope (Relationship Layer)
+
+PH1.KG stores edges such as:
+
+person → role → team
+
+person → project
+
+project → department
+
+KG.3 Hard Rules
+
+Tenant-scoped only.
+
+Evidence-backed only.
+
+Never guessed.
+
+KG.4 Recommendation
+
+Implement PH1.KNOW first. Add PH1.KG later only when you need relationship reasoning beyond dictionary lookups.
+
+Section LA.6: Multi-User, Multi-Tenant Discipline
+
+For a company with 100 employees:
+
+every event carries tenant_id
+
+every profile is user-scoped
+
+company glossary is tenant-scoped
+
+unknown speaker → generic behavior, no personalization
+
+multi-speaker present → no personal memory out loud
+
+Section LA.6A: Upgrades Needed (Global-Standard Improvements)
+
+This section translates the “upgrade needed” items into concrete, implementable engines/modules.
+
+LA.6A.1 Active Listening & Environment Adaptation
+
+Upgrade needed
+Selene’s listening/speaking can improve beyond STT/TTS by learning how to listen like a human in different environments.
+
+Add: PH1.LISTEN — Active Listening & Environment Adaptation Engine
+
+Purpose: classify environment mode (noisy, quiet meeting, car, office) and produce deterministic listening/speaking adjustments.
+
+Inputs: VAD/noise stats from PH1.K, user corrections, session context.
+
+Outputs: environment_profile_ref, recommended capture/endpointing settings, delivery_policy hints (prefer text-only in meetings).
+
+Hard rule: affects capture and delivery mode only; never changes meaning.
+
+LA.6A.2 Contextual Awareness (Understanding from History)
+
+Upgrade needed
+Understanding improves by using historical context (past clarifications, preferences, repeated entities) without guessing.
+
+Add: PH1.CONTEXT — Contextual Awareness Engine
+
+Purpose: provide bounded, evidence-backed context bundles to PH1.NLP/PH1.X.
+
+Inputs: PH1.M memory candidates, recent conversation state summaries, prior clarifications.
+
+Outputs: context_bundle_ref (top-K relevant items + evidence refs).
+
+Hard rule: context is advisory; ambiguous context triggers clarify.
+
+LA.6A.3 Speed via Cached Decision Paths
+
+Upgrade needed
+Speed improves by caching repeated patterns so Selene can respond faster without re-computing everything.
+
+Add: PH1.CACHE — Cached Decision Paths Engine
+
+Purpose: cache deterministic “decision skeletons” for frequent intents (not content), reducing latency.
+
+Inputs: intent_type, environment_profile_ref, user persona snapshot.
+
+Outputs: cached_plan_ref (suggested next-move templates and routing hints).
+
+Hard rule: cache never bypasses gates; it only pre-fills safe defaults.
+
+LA.6A.4 Emotional Guidance (Tone Control)
+
+Upgrade needed
+Better guidance comes from an explicit emotional intelligence layer that controls tone without changing meaning.
+
+Add: PH1.EMO.GUIDE — Emotional Guidance Engine (Tone Policy Only)
+
+Purpose: classify user interaction style (passive vs domineering) and lock a stable style profile.
+
+Inputs: verified speaker_id interactions over time, correction signals, interruption patterns.
+
+Outputs: style_profile_ref (DOMINANT/GENTLE + modifiers).
+
+Hard rule: tone only; no meaning drift; must be auditable and reversible.
+
+Alignment rule (no naming conflict)
+
+PH1.EMO.GUIDE is the tone-policy sub-module.
+
+If a broader emotional engine exists elsewhere (e.g., EMO core personality layer), it remains separate as PH1.EMO.CORE.
+
+PH1.EMO.GUIDE may read from PH1.EMO.CORE, but it must never override truth, intent, access, or execution.
+
+LA.6A.5 Accuracy via Feedback Loops
+
+Upgrade needed
+Accuracy improves by learning from corrections and confidence failures across STT, NLP, and memory.
+
+Add: PH1.FEEDBACK — Correction & Confidence Feedback Engine
+
+Purpose: convert user corrections (“that’s not what I said”) into structured feedback signals.
+
+Inputs: STT rejects, user correction events, clarification frequency.
+
+Outputs: feedback_events into PH1.LEARN packages and PAE scorecards.
+
+Hard rule: feedback produces artifacts; it does not change execution outcomes directly.
+
+LA.6A.6 Puzzle Talking / Non-Linear Speech Unraveling
+
+Upgrade needed
+Puzzle talking improves by using conversation history and repair logic without inventing meaning.
+
+Add: PH1.PUZZLE — Non-Linear Speech Unraveling Engine
+
+Purpose: detect tangled/rambling speech and produce a structured “what I think you mean” draft with evidence.
+
+Inputs: transcript_ok, SRL notes, recent context bundles.
+
+Outputs: candidate_intent_draft + ambiguity flags.
+
+Hard rule: if ambiguity remains, force clarify; never guess.
+
+LA.6A.7 Reasoning Efficiency & Pattern Recognition
+
+Upgrade needed
+Reasoning improves with deterministic pattern recognition and optimization of decision-making.
+
+Add: PH1.PATTERN — Pattern Recognition & Decision Optimizer (Offline Only)
+
+Purpose: detect recurring intent patterns and suggest routing/clarification optimizations.
+
+Inputs: audit logs, correction feedback, performance metrics.
+
+Outputs: optimization suggestions into PAE/CACHE/CONTEXT (as versioned artifacts).
+
+Hard rule: OFFLINE ONLY. Outputs are artifacts; runtime stays deterministic.
+
+Section LA.6B: Market Techniques Mapped to Selene Engines (Implementable)
+
+Break the major “what exists in the market” ideas into Selene-compatible engines.
+
+LA.6B.1 Reinforcement Learning for Long-Term Adaptation
+
+Add: PH1.RLL — Reinforcement Learning Ladder (Offline Only, Governed)
+
+Purpose: improve routing/policy suggestions using reward signals (corrections, success rates, user satisfaction proxies).
+
+Constraint: OFFLINE ONLY. Outputs are versioned artifacts; activation requires explicit approval.
+
+Hard rule: RLL may never change authority, access outcomes, confirmations, or execution paths at runtime.
+
+LA.6B.2 Multimodal Learning (Optional)
+
+Add: PH1.MULTI — Multimodal Context Engine
+
+Purpose: fuse voice/text (and later vision) into context bundles.
+
+Constraint: must remain evidence-backed and privacy-scoped.
+
+LA.6B.3 Attention Mechanisms / Transformer Assist (Bounded)
+
+Add: PH1.ATTN — Focus & Salience Extractor
+
+Purpose: highlight key spans in long transcripts to reduce clarification cycles.
+
+Constraint: produces evidence spans only; never invents.
+
+LA.6B.4 Web Search Integration (Already PH1.E)
+
+Upgrade: PH1.E Provenance+
+
+Add freshness metadata, conflict flags, and trust scoring to ToolResult provenance.
+
+LA.6B.5 Knowledge Graphs
+
+Add: PH1.KG — Tenant Knowledge Graph Engine
+
+Purpose: store relationships between company entities (people/roles/projects) for faster disambiguation.
+
+Constraint: tenant-scoped; evidence-backed; never guessed.
+
+LA.6B.6 Adaptive Learning via User Feedback
+
+Upgrade: PH1.LEARN + PH1.FEEDBACK
+
+Convert corrections into packages (vocab, routing hints, clarification tuning) with rollback.
+
+Section LA.6C: Acceptance Tests (Upgrades)
+
+AT-LA-01: Active listening adapts without meaning drift
+
+Pass: environment_profile affects capture/delivery only.
+
+AT-LA-02: Context bundle is bounded and evidence-backed
+
+Pass: context includes evidence refs and never invents.
+
+AT-LA-03: Cached paths do not bypass gates
+
+Pass: cache suggestions still require confirmation/access/simulation.
+
+AT-LA-04: Feedback loops improve accuracy over time
+
+Pass: reject/correction rates improve without regressions.
+
+AT-LA-05: Puzzle talking forces clarify when ambiguous
+
+Pass: no inference; one-question clarify.
+
+AT-LA-06: RLL outputs are offline, versioned, approval-gated
+
+Pass: no runtime learning that changes authority.
+
+Section LA.6D: Additions to Increase Speed, Accuracy, and Functionality (V1 — Mandatory)
+
+All engines listed in this section are V1 design scope. We are in design mode; none are deferred. These engines must be considered first‑class parts of Selene OS and designed to integrate cleanly with the existing learning and execution laws.
+
+These additions are compatible with the current Selene OS rules. They are designed to improve performance without introducing drift or unsafe execution.
+
+LA.6D.1 PH1.ENDPOINT — Streaming Endpointing & Turn Segmentation
+
+Why it helps
+
+Improves speed (faster “turn close” decisions) and accuracy (less clipped speech).
+
+What it does
+
+Detects when the user has finished speaking.
+
+Controls pre-roll/post-roll and partial turn segmentation.
+
+Hard rule
+
+Pure perception signal only; never changes meaning.
+
+LA.6D.2 PH1.PRUNE — Clarification Minimizer
+
+Why it helps
+
+Reduces user friction and improves speed by lowering the number of clarification turns.
+
+What it does
+
+Chooses the single most informative clarification question when multiple are missing.
+
+Learns (via artifacts) which question ordering reduces back-and-forth for each user/tenant.
+
+Hard rule
+
+Never asks multiple questions. Never invents missing fields.
+
+LA.6D.3 PH1.PRON — Pronunciation Enrollment & TTS Lexicon Packs
+
+Why it helps
+
+Makes Selene sound dramatically more human and accurate for names, slang, and company terms.
+
+What it does
+
+Builds per-user and per-tenant pronunciation lexicons (names, acronyms, project codes).
+
+Feeds PH1.TTS and supports PH1.VOICE.ID/PH1.W robustness.
+
+Hard rule
+
+Tenant-scoped; consent-gated for user-specific entries.
+
+LA.6D.4 PH1.LANG — Language Probe & Code-Switch Controller
+
+Why it helps
+
+Improves multilingual accuracy and reduces wrong-language transcripts.
+
+What it does
+
+Provides language hints and script detection signals to PH1.C/SRL/NLP.
+
+Detects code-switch boundaries and preserves them.
+
+Hard rule
+
+Never forces translation; only emits hints.
+
+LA.6D.5 PH1.DIAG — Self-Check & Consistency Verifier (Non-Authoritative)
+
+Why it helps
+
+Increases accuracy by catching contradictions before Selene speaks.
+
+What it does
+
+Verifies that: intent, fields, confirmations, privacy delivery mode, and memory usage are consistent.
+
+Flags “needs clarify” instead of letting a wrong response proceed.
+
+Hard rule
+
+Can only block/clarify; cannot invent or execute.
+
+LA.6D.6 PH1.PREFETCH — Read-Only Prefetch & Cache Warmer
+
+Why it helps
+
+Improves speed for common lookups (time/weather/news) without changing semantics.
+
+What it does
+
+Prefetches safe, read-only data when the next step is predictable (e.g., user asks “weather…”).
+
+Stores in tool_cache with TTL.
+
+Hard rule
+
+Read-only only; deduped via outbox/idempotency.
+
+LA.6D.7 PH1.COST — Cost & Budget Guardrails
+
+Why it helps
+
+Keeps Selene fast and reliable under load by preventing runaway provider usage.
+
+What it does
+
+Enforces per-user/day budgets for STT/LLM/TTS/tools.
+
+Triggers deterministic degrade modes (shorter responses, fewer retries, cheaper models).
+
+Hard rule
+
+Never changes truth; only chooses permissible routing.
+
+LA.6D.8 PH1.PRIORITY — Task and Response Prioritization (Non-Executing)
+
+Why it helps
+
+Improves responsiveness for urgent scenarios without breaking one-turn rules.
+
+What it does
+
+Tags turns with urgency class (normal/urgent) based on explicit user phrases and policy.
+
+Adjusts routing budgets and delivery mode.
+
+Hard rule
+
+No autonomous actions; only prioritization metadata.
+
+LA.6D.9 PH1.SEARCH — Query Rewriter for Web Search (Read-Only Helper)
+
+Why it helps
+
+Improves accuracy of PH1.E web/news results.
+
+What it does
+
+Converts messy queries into clean search queries (multilingual) without changing intent.
+
+Hard rule
+
+Produces query text only; PH1.E still performs the tool call.
+
+
+
+Section LA.6E: Feedback Loops + Reinforcement Learning Triggers (Governed)
+
+This section defines how Selene learns over time safely and deterministically.
+
+Hard rules
+
+No runtime authority changes.
+
+No execution changes without access + confirmation + simulation gates.
+
+Reinforcement learning is OFFLINE ONLY and produces versioned artifacts only.
+
+Everything is auditable and rollbackable.
+
+LA.6E.1 FeedbackEvent (What gets captured every turn) — PH1.FEEDBACK
+
+PH1.FEEDBACK must emit structured FeedbackEvents from real outcomes.
+
+FeedbackEvent (minimum fields)
+
+tenant_id, user_id, speaker_id
+
+correlation_id, turn_id, session_id, device_id
+
+event_type
+
+reason_code
+
+evidence_ref (hashes/ids only, no raw secrets)
+
+metrics (bounded): latency_ms, retries, confidence_bucket, missing_fields, tool_status
+
+Minimum event_type list
+
+STT_REJECT (PH1.C transcript_reject)
+
+STT_RETRY (retries > 0)
+
+LANGUAGE_MISMATCH
+
+USER_CORRECTION (user says “no/wrong/I meant…”)
+
+CLARIFY_LOOP (more than 1 clarify turn)
+
+CONFIRM_ABORT (confirmation expired or user cancels)
+
+TOOL_FAIL (timeout/conflict/stale)
+
+MEMORY_OVERRIDE (“forget that”, “don’t call him that”)
+
+DELIVERY_SWITCH (user typed due to noise, private text-only request)
+
+BARGE_IN (interrupted while speaking)
+
+LA.6E.2 LearningSignals (Aggregation) — PH1.LEARN
+
+PH1.LEARN aggregates FeedbackEvents into deterministic counters/time-series.
+
+LearningSignals examples
+
+stt_reject_rate_by_env
+
+correction_rate_by_intent
+
+clarify_turns_per_intent
+
+tool_timeout_rate
+
+tool_conflict_rate
+
+barge_in_rate
+
+text_only_rate_in_meetings
+
+p95_latency_by_stage (from observability)
+
+LA.6E.3 Artifact Packaging (What “learning” produces) — PH1.LEARN outputs
+
+PH1.LEARN produces only versioned, rollbackable artifacts.
+
+Per-user artifacts
+
+pronunciation/vocab pack updates (PH1.PRON / PH1.KNOW)
+
+persona preference deltas (PH1.PERSONA)
+
+cached decision skeletons (PH1.CACHE)
+
+clarification ordering hints (PH1.PRUNE)
+
+Per-tenant artifacts
+
+company glossary packs (PH1.KNOW)
+
+web/source extraction hints (PH1.WEBINT / PH1.SEARCH)
+
+environment profiles (PH1.LISTEN)
+
+Global-derived artifacts (derived-only)
+
+aggregated routing heuristics (no personal data)
+
+generic clarification tuning tables
+
+generic provider score baselines
+
+Artifact (minimum fields)
+
+artifact_id, version, scope (user/tenant/global-derived)
+
+provenance (which signals built it)
+
+expected_effect (what metric should improve)
+
+rollback_to (previous version pointer)
+
+status (DRAFT | ACTIVE | REVOKED)
+
+LA.6E.4 Activation Tiers (No Silent Promotions)
+
+Artifacts become active only via deterministic activation tiers.
+
+Tier 0 (auto, low risk)
+
+query rewrite hints, safe cache hints, safe prefetch TTL
+
+Tier 1 (guarded auto)
+
+provider routing weights, endpointing thresholds, environment mode hints
+
+Tier 2 (approval required)
+
+memory retention policy changes, privacy delivery behavior changes
+
+Tier 3 (strict approval)
+
+any provider promotion to LEAD (PH1.PAE)
+
+any RL-driven artifact activation (PH1.RLL outputs)
+
+LA.6E.5 Reinforcement Learning Triggers (PH1.RLL) — OFFLINE ONLY
+
+PH1.RLL is an offline artifact generator, never a runtime controller.
+
+Allowed optimization knobs (only)
+
+provider selection weights (feeds PH1.PAE)
+
+clarification ordering proposals (feeds PH1.PRUNE)
+
+cache/prefetch heuristics (feeds PH1.CACHE/PH1.PREFETCH)
+
+context retrieval scoring (feeds PH1.CONTEXT)
+
+Forbidden optimization knobs
+
+access/authority outcomes
+
+confirmations
+
+simulation execution paths
+
+memory consent rules
+
+commit behavior
+
+Reward signals (derived from ledger/audit, not vibes)Positive rewards
+
+lower stt_reject_rate, lower correction_rate
+
+fewer clarify turns per task
+
+lower p95 latency without accuracy regression
+
+fewer tool conflicts/timeouts
+
+Negative rewards
+
+user corrections and backtracks
+
+repeated clarifications
+
+tool conflicts/timeouts
+
+privacy near-misses (multi-speaker sensitive attempts)
+
+Training triggers (when PH1.RLL is allowed to run)
+
+minimum sample size reached (tenant-scoped)
+
+stable window (no major rollout ongoing)
+
+outputs are packaged as artifacts with expected_effect + evaluation plan
+
+LA.6E.6 Acceptance Tests (Learning is real and safe)
+
+AT-LA-FB-01 Feedback coverage
+
+Pass: every STT reject, tool fail, user correction emits a FeedbackEvent.
+
+AT-LA-FB-02 No runtime drift
+
+Pass: feedback and learning cannot change execution behavior directly.
+
+AT-LA-FB-03 Artifact versioning + rollback
+
+Pass: every artifact is versioned, activation logged, rollback possible.
+
+AT-LA-FB-04 PAE promotion discipline
+
+Pass: SHADOW→ASSIST→LEAD promotions require thresholds + sample size and can rollback.
+
+AT-LA-FB-05 RLL is offline only
+
+Pass: RLL produces artifacts only; activation requires approval; never alters access/confirm/simulation paths.
+
+
+
+
+
+Section LA.7: Global Standards (Beyond Typical Assistants)
+
+Selene is better than typical assistants because learning is:
+
+deterministic
+
+measured
+
+consent-safe
+
+auditable
+
+reversible
+
+Selene becomes “better than humans” in operational consistency because:
+
+she never forgets the rules
+
+she never drifts silently
+
+she improves through scorecards and artifact packages
+
+Section LA.7A: Optional but Complete Capability Extensions (Explicit, Non-Conflicting)
+
+These engines exist in the wider market and are added here explicitly so Selene is never tooling-limited. All are optional, non-authoritative, and aligned with Selene OS law.
+
+LA.7A.1 PH1.DOC — Document Intelligence Engine (Read-Only)
+
+Purpose
+
+Allow Selene to deeply read and understand documents (PDFs, Word, HTML, scans) without modifying them.
+
+Capabilities
+
+OCR (when required)
+
+structured extraction (tables, clauses, headings)
+
+evidence-backed quoting and section references
+
+Hard rules
+
+Read-only only
+
+No document mutation
+
+No form submission
+
+Outputs must include evidence refs
+
+Placement
+
+Feeds PH1.CONTEXT, PH1.SUMMARY, PH1.NLP
+
+LA.7A.2 PH1.VISION — Visual Perception Engine (Deferred, Ready)
+
+Purpose
+
+Allow Selene to interpret images and visual input when explicitly enabled.
+
+Capabilities
+
+image understanding
+
+screenshot reading
+
+diagram interpretation
+
+Hard rules
+
+Opt-in only
+
+Evidence-backed outputs
+
+No inference beyond visible content
+
+Placement
+
+Feeds PH1.MULTI and PH1.CONTEXT
+
+LA.7A.3 PH1.REVIEW — Human Review & Approval Routing Engine (Enterprise Optional)
+
+Purpose
+
+Route actions or drafts to humans for review when policy requires.
+
+Capabilities
+
+approval queues
+
+reviewer assignment
+
+decision capture with audit proof
+
+Hard rules
+
+Advisory only unless explicitly required by policy
+
+No execution authority
+
+Placement
+
+Invoked by Selene OS governance layer before simulation commit
+
+Section LA.8: Acceptance Bar (Learning Layer Is Real)
+
+Learning layer is real only if:
+
+provider routing improves measurably without regressions
+
+per-user persona changes are evidence-backed
+
+vocabulary improves STT/NLP outcomes
+
+every learning artifact is versioned + rollbackable
+
+nothing in learning can execute actions or bypass gates

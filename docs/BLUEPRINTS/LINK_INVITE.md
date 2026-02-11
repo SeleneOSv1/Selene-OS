@@ -1,0 +1,62 @@
+# LINK_INVITE Blueprint Record
+
+## 1) Blueprint Header
+- `process_id`: `LINK_INVITE`
+- `intent_type`: `LINK_INVITE`
+- `version`: `v1`
+- `status`: `ACTIVE`
+
+## 2) Required Inputs
+- `tenant_id` (required for `invitee_type=EMPLOYEE`)
+- `inviter_user_id`
+- `recipient_contact`
+- `delivery_method`
+- `invitee_type`
+- `prefilled_context` (optional)
+- `idempotency_key`
+
+## 3) Success Output Schema
+```text
+link_id: string
+token_id: string
+draft_id: string
+status: enum (DRAFT_CREATED | SENT)
+delivery_status: enum (SENT | FAIL)
+missing_required_fields: string[]
+```
+
+## 4) Ordered Engine Steps
+
+| step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
+|---|---|---|---|---|---|---:|---:|---:|---|
+| LINK_INVITE_S01 | PH1.C | PH1C_TRANSCRIPT_OK_COMMIT_ROW | correlation_id, turn_id, transcript_hash | transcript_ok evidence row | DB_WRITE | 1200 | 1 | 150 | [STT_FAIL_PROVIDER_TIMEOUT, STT_FAIL_NETWORK_UNAVAILABLE] |
+| LINK_INVITE_S02 | PH1.NLP | PH1NLP_INTENT_DRAFT_COMMIT_ROW | transcript_ok, intent_type=LINK_INVITE | intent_draft | DB_WRITE | 200 | 1 | 100 | [NLP_INPUT_MISSING] |
+| LINK_INVITE_S03 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | intent_draft | confirmation prompt state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
+| LINK_INVITE_S04 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | inviter_user_id, tenant_id, requested_action=LINK_INVITE | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
+| LINK_INVITE_S05 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_APPLY_OVERRIDE_COMMIT_ROW | access_decision=ESCALATE, approved_by_user_id, simulation_id | override_applied | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [ACCESS_IDEMPOTENCY_REPLAY] |
+| LINK_INVITE_S06 | PH1.LINK | PH1LINK_INVITE_GENERATE_DRAFT_ROW | inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id | draft_id, token_id, missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_GENERATE_RETRYABLE] |
+| LINK_INVITE_S07 | PH1.LINK | PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW | draft_id, creator_update_fields, idempotency_key | updated draft + recomputed missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_DRAFT_UPDATE_RETRYABLE] |
+| LINK_INVITE_S08 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | send_snapshot fields | commit_confirmation_state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
+| LINK_INVITE_S09 | PH1.LINK | PH1LINK_INVITE_SEND_COMMIT_ROW | link_id, delivery_method, recipient_contact, idempotency_key | delivery_status, delivery_proof_ref | DB_WRITE (simulation-gated) | 1000 | 2 | 400 | [LINK_SEND_RETRYABLE] |
+
+## 5) Confirmation Points
+- `LINK_INVITE_S03` pre-start confirmation of interpreted invite intent.
+- `LINK_INVITE_S08` pre-COMMIT confirmation of full send snapshot.
+
+## 6) Simulation Requirements
+- `LINK_INVITE_GENERATE_DRAFT`
+- `LINK_INVITE_DRAFT_UPDATE_COMMIT`
+- `LINK_INVITE_SEND_COMMIT`
+- `ACCESS_OVERRIDE_TEMP_GRANT_COMMIT` (conditional escalation path)
+- `ACCESS_OVERRIDE_PERM_GRANT_COMMIT` (conditional escalation path)
+
+## 7) Refusal Conditions
+- Access denied at `LINK_INVITE_S04` -> `ACCESS_SCOPE_VIOLATION`
+- Missing required invite fields after clarify budget -> `NLP_CLARIFY_MISSING_FIELD`
+- User declines confirmation at `LINK_INVITE_S03` or `LINK_INVITE_S08` -> `USER_DECLINED_CONFIRMATION`
+
+## 8) Acceptance Tests
+- `AT-PBS-LINK-01`: No blueprint match -> no process start.
+- `AT-PBS-LINK-02`: Mandatory confirmation before send commit.
+- `AT-PBS-LINK-03`: Every side-effect step references a simulation.
+- `AT-PBS-LINK-04`: Capability IDs resolve to active ECM entries.
