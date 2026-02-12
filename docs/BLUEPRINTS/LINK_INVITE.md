@@ -6,6 +6,10 @@
 - `version`: `v1`
 - `status`: `ACTIVE`
 
+## 1A) Contract Boundary
+- This blueprint defines orchestration flow only.
+- Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+
 ## 2) Required Inputs
 - `tenant_id` (required for `invitee_type=EMPLOYEE`)
 - `inviter_user_id`

@@ -3,7 +3,7 @@
 ## Engine Header
 - `engine_id`: `PH1.K`
 - `purpose`: Persist deterministic voice runtime substrate facts (stream refs, device/timing/interruption/degradation signals) as append-only events plus rebuildable current state.
-- `data_owned`: `audio_runtime_events`, `audio_runtime_current`
+- `data_owned`: `audio_runtime_events`, `audio_runtime_current`, `conversation_ledger` (PH1.K VAD markers only)
 - `version`: `v1`
 - `status`: `ACTIVE`
 
@@ -13,6 +13,13 @@
 - `name`: Commit one PH1.K runtime event row and project current state
 - `input_schema`: `(now, tenant_id, device_id, session_id?, event_kind, stream/device/timing/interrupt/degradation fields, idempotency_key)`
 - `output_schema`: `Result<Ph1kRuntimeEventRecord, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1K_VAD_MARKER_COMMIT_ROW`
+- `name`: Commit one bounded PH1.K VAD marker row to conversation ledger
+- `input_schema`: `(now, correlation_id, turn_id, session_id?, user_id, device_id?, vad_state, idempotency_key)`
+- `output_schema`: `Result<ConversationTurnId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
@@ -56,6 +63,7 @@
 - invalid or missing scope binding: `K_FAIL_TENANT_SCOPE_MISMATCH`
 - invalid session reference: `K_FAIL_SESSION_INVALID`
 - device binding failure: `K_FAIL_DEVICE_UNBOUND`
+- invalid VAD marker scope/content: `K_FAIL_VAD_MARKER_SCOPE_INVALID`
 - idempotency replay/no-op: `K_IDEMPOTENCY_REPLAY`
 
 ## Audit Emission Requirements Per Capability
@@ -64,6 +72,7 @@
   - `K_DEVICE_STATE_COMMIT`
   - `K_TIMING_STATS_COMMIT`
   - `K_INTERRUPT_CANDIDATE_COMMIT`
+  - `K_VAD_EVENT_MARKER_COMMIT`
   - `K_DEGRADATION_FLAGS_COMMIT`
   - `K_TTS_PLAYBACK_ACTIVE_COMMIT`
 - `PH1K_REBUILD_RUNTIME_CURRENT_ROWS` emits audit only in replay/diagnostic mode.

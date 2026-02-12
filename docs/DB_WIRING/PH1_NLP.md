@@ -48,7 +48,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.NLP`, `event_type=NlpIntentDraft`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=INTENT_DRAFT`, `intent_type`, `overall_confidence`
+  - payload: `decision=INTENT_DRAFT`, `intent_type`, `overall_confidence`, `required_fields`, `ambiguity_flags`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -60,7 +60,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.NLP`, `event_type=NlpClarify`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=CLARIFY`, `what_is_missing`
+  - payload: `decision=CLARIFY`, `what_is_missing`, `clarification_unit_id`, `accepted_answer_formats`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -105,17 +105,20 @@ PH1.NLP writes emit PH1.J audit events with:
   - `decision`
   - `intent_type`
   - `overall_confidence`
+  - `required_fields`
+  - `ambiguity_flags`
   - `what_is_missing`
+  - `clarification_unit_id`
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-NLP-DB-01` tenant isolation enforced
+- `AT-PH1-NLP-DB-01` tenant isolation enforced
   - `at_nlp_db_01_tenant_isolation_enforced`
-- `AT-NLP-DB-02` append-only enforcement for NLP ledger writes
+- `AT-PH1-NLP-DB-02` append-only enforcement for NLP ledger writes
   - `at_nlp_db_02_append_only_enforced`
-- `AT-NLP-DB-03` idempotency dedupe works
+- `AT-PH1-NLP-DB-03` idempotency dedupe works
   - `at_nlp_db_03_idempotency_dedupe_works`
-- `AT-NLP-DB-04` no PH1.NLP current-table rebuild is required
+- `AT-PH1-NLP-DB-04` no PH1.NLP current-table rebuild is required
   - `at_nlp_db_04_no_current_table_rebuild_required`
 
 Implementation references:

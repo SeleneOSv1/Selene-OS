@@ -18,13 +18,73 @@
 | PH1.NLP | docs/DB_WIRING/PH1_NLP.md | docs/ECM/PH1_NLP.md | [] | [LINK_INVITE, ONB_INVITED, ONB_BIZ_SETUP, POSITION_MANAGE, CAPREQ_MANAGE] | DONE | DONE | NA | DONE | none |
 | PH1.D | docs/DB_WIRING/PH1_D.md | docs/ECM/PH1_D.md | [] | [] | DONE | DONE | NA | NA | none |
 | PH1.X | docs/DB_WIRING/PH1_X.md | docs/ECM/PH1_X.md | [] | [LINK_INVITE, LINK_OPEN_ACTIVATE, ONB_INVITED, ONB_BIZ_SETUP, POSITION_MANAGE, CAPREQ_MANAGE] | DONE | DONE | NA | DONE | none |
+| PH1_ENDPOINT | docs/DB_WIRING/PH1_ENDPOINT.md | docs/ECM/PH1_ENDPOINT.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_LANG | docs/DB_WIRING/PH1_LANG.md | docs/ECM/PH1_LANG.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_SRL | docs/DB_WIRING/PH1_SRL.md | docs/ECM/PH1_SRL.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_PUZZLE | docs/DB_WIRING/PH1_PUZZLE.md | docs/ECM/PH1_PUZZLE.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_ATTN | docs/DB_WIRING/PH1_ATTN.md | docs/ECM/PH1_ATTN.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_DOC | docs/DB_WIRING/PH1_DOC.md | docs/ECM/PH1_DOC.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_VISION | docs/DB_WIRING/PH1_VISION.md | docs/ECM/PH1_VISION.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_PRUNE | docs/DB_WIRING/PH1_PRUNE.md | docs/ECM/PH1_PRUNE.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_DIAG | docs/DB_WIRING/PH1_DIAG.md | docs/ECM/PH1_DIAG.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_SEARCH | docs/DB_WIRING/PH1_SEARCH.md | docs/ECM/PH1_SEARCH.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_WEBINT | docs/DB_WIRING/PH1_WEBINT.md | docs/ECM/PH1_WEBINT.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_PREFETCH | docs/DB_WIRING/PH1_PREFETCH.md | docs/ECM/PH1_PREFETCH.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_EXPLAIN | docs/DB_WIRING/PH1_EXPLAIN.md | docs/ECM/PH1_EXPLAIN.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_LISTEN | docs/DB_WIRING/PH1_LISTEN.md | docs/ECM/PH1_LISTEN.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_PAE | docs/DB_WIRING/PH1_PAE.md | docs/ECM/PH1_PAE.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_CACHE | docs/DB_WIRING/PH1_CACHE.md | docs/ECM/PH1_CACHE.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_MULTI | docs/DB_WIRING/PH1_MULTI.md | docs/ECM/PH1_MULTI.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_CONTEXT | docs/DB_WIRING/PH1_CONTEXT.md | docs/ECM/PH1_CONTEXT.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_KG | docs/DB_WIRING/PH1_KG.md | docs/ECM/PH1_KG.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES) |
+| PH1_PATTERN | docs/DB_WIRING/PH1_PATTERN.md | docs/ECM/PH1_PATTERN.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES, OFFLINE_ONLY) |
+| PH1_RLL | docs/DB_WIRING/PH1_RLL.md | docs/ECM/PH1_RLL.md | [] | [] | DONE | DONE | NA | NA | none (wired in `docs/06_ENGINE_MAP.md`: YES, OFFLINE_ONLY) |
 | PH1.WRITE | docs/DB_WIRING/PH1_WRITE.md | docs/ECM/PH1_WRITE.md | [] | [] | DONE | DONE | NA | NA | none |
 | PH1.TTS | docs/DB_WIRING/PH1_TTS.md | docs/ECM/PH1_TTS.md | [] | [] | DONE | DONE | NA | NA | none |
 | PH1.E | docs/DB_WIRING/PH1_E.md | docs/ECM/PH1_E.md | [] | [] | DONE | DONE | NA | TODO | Read-only query blueprints are not yet authored in docs/BLUEPRINTS/*.md |
 | PH1.LINK | docs/DB_WIRING/PH1_LINK.md | docs/ECM/PH1_LINK.md | [LINK_INVITE_GENERATE_DRAFT, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_SEND_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT, LINK_INVITE_RESEND_COMMIT, LINK_INVITE_REVOKE_REVOKE, LINK_INVITE_EXPIRED_RECOVERY_COMMIT, LINK_INVITE_FORWARD_BLOCK_COMMIT, LINK_ROLE_PROPOSE_DRAFT, LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT, LINK_DELIVERY_FAILURE_HANDLING_COMMIT] | [LINK_INVITE, LINK_OPEN_ACTIVATE] | DONE | DONE | DONE | DONE | none |
 | PH1.ONB | docs/DB_WIRING/PH1_ONB.md | docs/ECM/PH1_ONB.md | [ONB_SESSION_START_DRAFT, ONB_BIZ_START_DRAFT, ONB_BIZ_VALIDATE_COMPANY_COMMIT, ONB_BIZ_COMPLETE_COMMIT, ONB_DRAFT_UPDATE_COMMIT, ONB_TERMS_ACCEPT_COMMIT, ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT] | [ONB_INVITED, ONB_BIZ_SETUP] | DONE | DONE | DONE | DONE | none |
 | PH1.POSITION | docs/DB_WIRING/PH1_POSITION.md | docs/ECM/PH1_POSITION.md | [POSITION_SIM_001_CREATE_DRAFT, POSITION_SIM_002_VALIDATE_AUTH_COMPANY, POSITION_SIM_003_BAND_POLICY_CHECK, POSITION_SIM_004_ACTIVATE_COMMIT, POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT] | [ONB_BIZ_SETUP, POSITION_MANAGE] | DONE | DONE | DONE | DONE | none |
-| PH1.M | docs/DB_WIRING/PH1_M.md | docs/ECM/PH1_M.md | [] | [] | DONE | DONE | NA | TODO | Memory permission flow blueprint is not yet authored in docs/BLUEPRINTS/*.md |
+| PH1.M | docs/DB_WIRING/PH1_M.md | docs/ECM/PH1_M.md | [] | [MEMORY_QUERY, MEMORY_FORGET_REQUEST, MEMORY_REMEMBER_REQUEST] | DONE | DONE | NA | DONE | none (PH1.M vNext++ design: threads DONE, graph DONE, paging DONE, auto-resume DONE, remember-everything preference DONE; patch DONE: HOT/WARM/COLD windows + pending WorkOrder continuity) |
 | PH1.PERSONA | docs/DB_WIRING/PH1_PERSONA.md | docs/ECM/PH1_PERSONA.md | [] | [] | DONE | DONE | NA | TODO | Persona usage blueprint references are not defined in docs/BLUEPRINTS/*.md |
 | PH1.LEARN_FEEDBACK_KNOW | docs/DB_WIRING/PH1_LEARN_FEEDBACK_KNOW.md | docs/ECM/PH1_LEARN_FEEDBACK_KNOW.md | [] | [] | DONE | DONE | NA | TODO | Learning/adaptation blueprint references are not defined in docs/BLUEPRINTS/*.md |
 | PH1.CAPREQ | docs/DB_WIRING/PH1_CAPREQ.md | docs/ECM/PH1_CAPREQ.md | [CAPREQ_CREATE_DRAFT, CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT, CAPREQ_APPROVE_COMMIT, CAPREQ_REJECT_COMMIT, CAPREQ_FULFILL_COMMIT, CAPREQ_CANCEL_REVOKE] | [CAPREQ_MANAGE] | DONE | DONE | DONE | DONE | none |
+| PH1.REM | docs/DB_WIRING/PH1_REM.md | docs/ECM/PH1_REM.md | [REMINDER_SCHEDULE_COMMIT, REMINDER_UPDATE_COMMIT, REMINDER_CANCEL_COMMIT, REMINDER_SNOOZE_COMMIT, REMINDER_DELIVER_PRE_COMMIT, REMINDER_DELIVER_DUE_COMMIT, REMINDER_FOLLOWUP_SCHEDULE_COMMIT, REMINDER_ESCALATE_COMMIT, REMINDER_DELIVERY_RETRY_SCHEDULE_COMMIT, REMINDER_MARK_COMPLETED_COMMIT, REMINDER_MARK_FAILED_COMMIT] | [] | TODO | TODO | WIP | TODO | Planned engine in MVP scope; 4-pack not yet authored |
+| PH1.BCAST | docs/DB_WIRING/PH1_BCAST.md | docs/ECM/PH1_BCAST.md | [BCAST-SIM-001, BCAST-SIM-002, BCAST-SIM-003, BCAST-SIM-004, BCAST-SIM-005, BCAST-SIM-006, BCAST-SIM-007, BCAST-SIM-008] | [] | TODO | TODO | WIP | TODO | Planned engine in MVP scope; 4-pack not yet authored |
+| PH1.EMO | docs/DB_WIRING/PH1_EMO.md | docs/ECM/PH1_EMO.md | [EMO-SIM-001, EMO-SIM-002, EMO-SIM-003, EMO-SIM-004, EMO-SIM-005, EMO-SIM-006] | [] | TODO | TODO | WIP | TODO | Planned engine in MVP scope; 4-pack not yet authored |
+
+## Golden Path Proofs (Design-Only)
+
+### GP-01: LINK_INVITE
+- Blueprint: `docs/BLUEPRINTS/LINK_INVITE.md`
+- Capability cross-check: all step `capability_id` values resolve in `docs/ECM/*.md` (PH1.C, PH1.NLP, PH1.X, PH1.ACCESS.001_PH2.ACCESS.002, PH1.LINK)
+- Simulation cross-check: `LINK_INVITE_GENERATE_DRAFT`, `LINK_INVITE_DRAFT_UPDATE_COMMIT`, `LINK_INVITE_SEND_COMMIT`, `ACCESS_OVERRIDE_TEMP_GRANT_COMMIT`, `ACCESS_OVERRIDE_PERM_GRANT_COMMIT` exist in `docs/08_SIMULATION_CATALOG.md`
+- DB wiring cross-check: touched engines have DB wiring docs (`docs/DB_WIRING/PH1_C.md`, `docs/DB_WIRING/PH1_NLP.md`, `docs/DB_WIRING/PH1_X.md`, `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md`, `docs/DB_WIRING/PH1_LINK.md`)
+
+### GP-02: LINK_OPEN_ACTIVATE
+- Blueprint: `docs/BLUEPRINTS/LINK_OPEN_ACTIVATE.md`
+- Capability cross-check: `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`, `PH1X_RESPOND_COMMIT_ROW` resolve in `docs/ECM/PH1_LINK.md` and `docs/ECM/PH1_X.md`
+- Simulation cross-check: `LINK_INVITE_OPEN_ACTIVATE_COMMIT` and `LINK_INVITE_FORWARD_BLOCK_COMMIT` exist in `docs/08_SIMULATION_CATALOG.md`
+- DB wiring cross-check: `docs/DB_WIRING/PH1_LINK.md` and `docs/DB_WIRING/PH1_X.md` exist for touched state
+
+### GP-03: CAPREQ_MANAGE
+- Blueprint: `docs/BLUEPRINTS/CAPREQ_MANAGE.md`
+- Capability cross-check: all CAPREQ lifecycle capabilities resolve in `docs/ECM/PH1_CAPREQ.md`; upstream step capabilities resolve in `docs/ECM/PH1_C.md`, `docs/ECM/PH1_NLP.md`, `docs/ECM/PH1_X.md`, `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
+- Simulation cross-check: `CAPREQ_CREATE_DRAFT`, `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT`, `CAPREQ_APPROVE_COMMIT`, `CAPREQ_REJECT_COMMIT`, `CAPREQ_FULFILL_COMMIT`, `CAPREQ_CANCEL_REVOKE` exist in `docs/08_SIMULATION_CATALOG.md`
+- DB wiring cross-check: touched state covered by `docs/DB_WIRING/PH1_CAPREQ.md` and upstream engine DB wiring docs
+
+## Phase A Verification Pass
+
+- `PH1.F` 4-pack present: `docs/DB_WIRING/PH1_F.md` + `docs/ECM/PH1_F.md`
+- `PH1.J` 4-pack present: `docs/DB_WIRING/PH1_J.md` + `docs/ECM/PH1_J.md`
+- `SELENE_OS_CORE_TABLES` 4-pack present: `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md` + `docs/ECM/SELENE_OS_CORE_TABLES.md`
+
+## Phase C Verification Pass
+
+- `PH1.K` contracts refreshed: `docs/DB_WIRING/PH1_K.md` + `docs/ECM/PH1_K.md`
+- `PH1.W` contracts refreshed: `docs/DB_WIRING/PH1_W.md` + `docs/ECM/PH1_W.md`
+- `PH1.C` contracts refreshed: `docs/DB_WIRING/PH1_C.md` + `docs/ECM/PH1_C.md`
+- `PH1.NLP` contracts refreshed: `docs/DB_WIRING/PH1_NLP.md` + `docs/ECM/PH1_NLP.md`
+- `PH1.D` contracts refreshed: `docs/DB_WIRING/PH1_D.md` + `docs/ECM/PH1_D.md`
+- `PH1.X` contracts refreshed: `docs/DB_WIRING/PH1_X.md` + `docs/ECM/PH1_X.md`
+- Coverage status remains `DONE/DONE` for all six Phase C engines with no open blocker entries.

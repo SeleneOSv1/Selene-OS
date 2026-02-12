@@ -17,6 +17,9 @@
   - optional FK `device_id -> devices.device_id`
   - optional FK `session_id -> sessions.session_id`
   - transcript commits use `source=VOICE_TRANSCRIPT`, `role=USER`
+  - transcript status is represented deterministically:
+    - accepted transcript -> `conversation_ledger` row present + `TranscriptOk` audit row
+    - rejected transcript -> no `conversation_ledger` row + `TranscriptReject` audit row
   - idempotent append dedupe on `(correlation_id, idempotency_key)`
   - append-only; overwrite/delete prohibited
 
@@ -61,7 +64,9 @@
   - `audit_events` (`TranscriptOk` + `SttCandidateEval`)
 - required fields:
   - transcript row: `created_at`, `correlation_id`, `turn_id`, `session_id?`, `user_id`, `device_id`, `text`, `text_hash`, `idempotency_key`
-  - audit row: `tenant_id`, `engine=PH1.C`, `event_type`, `reason_code`, `correlation_id`, `turn_id`, payload
+  - audit row: `tenant_id`, `engine=PH1.C`, `event_type`, `reason_code`, `correlation_id`, `turn_id`, payload, `evidence_ref?`
+  - provider arbitration indicators (audit payload only): `route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`
+  - evidence span indicators (audit evidence_ref): `transcript_hash`, `critical_spans[]` with `start_byte`, `end_byte`, `field_hint?`
 - idempotency_key rule (exact formula):
   - transcript dedupe key = `(correlation_id, idempotency_key)`
   - audit dedupe keys = `(correlation_id, idempotency_key + ":transcript_ok")` and `(correlation_id, idempotency_key + ":candidate_eval_ok")`
@@ -75,7 +80,8 @@
   - `audit_events` (`TranscriptReject` + `SttCandidateEval`)
 - required fields:
   - reject row: `tenant_id`, `engine=PH1.C`, `event_type=TranscriptReject`, `reason_code`, `correlation_id`, `turn_id`, payload (`transcript_hash` optional)
-  - candidate row: retry guidance metadata (`retry_advice`, `decision`)
+  - candidate row: retry guidance metadata (`retry_advice`, `decision`) + arbitration indicators (`route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`)
+  - evidence span indicators (audit evidence_ref): `transcript_hash?`, `uncertain_spans[]` with byte offsets when available
 - idempotency_key rule (exact formula):
   - audit dedupe keys = `(correlation_id, idempotency_key + ":transcript_reject")` and `(correlation_id, idempotency_key + ":candidate_eval_reject")`
 - failure reason codes (minimum examples):
@@ -114,17 +120,18 @@ PH1.C writes emit PH1.J audit events with:
   - deterministic candidate-eval reason codes for replay bucketing
 - `payload_min` allowlisted discipline:
   - `TranscriptOk` / `TranscriptReject`: `transcript_hash` only
-  - `SttCandidateEval`: bounded metadata (`decision`, `language_tag`, `confidence_bucket`, `retry_advice`)
+  - `SttCandidateEval`: bounded metadata (`decision`, `language_tag`, `confidence_bucket`, `retry_advice`, `route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`)
+  - `evidence_ref` bounded structure (when present): `transcript_hash`, `spans[]` (`start_byte`, `end_byte`, `field_hint?`)
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-C-DB-01` tenant isolation enforced
+- `AT-PH1-C-DB-01` tenant isolation enforced
   - `at_c_db_01_tenant_isolation_enforced`
-- `AT-C-DB-02` append-only enforcement for transcript/audit ledgers
+- `AT-PH1-C-DB-02` append-only enforcement for transcript/audit ledgers
   - `at_c_db_02_append_only_enforced`
-- `AT-C-DB-03` idempotency dedupe works
+- `AT-PH1-C-DB-03` idempotency dedupe works
   - `at_c_db_03_idempotency_dedupe_works`
-- `AT-C-DB-04` no PH1.C current-table rebuild is required
+- `AT-PH1-C-DB-04` no PH1.C current-table rebuild is required
   - `at_c_db_04_no_current_table_rebuild_required`
 
 Implementation references:

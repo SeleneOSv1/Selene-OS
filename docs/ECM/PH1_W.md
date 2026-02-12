@@ -15,6 +15,7 @@
 - `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `simulation_ids`: `[WAKE_ENROLL_START_DRAFT]`
 
 ### `PH1W_ENROLL_SAMPLE_COMMIT_ROW`
 - `name`: Commit one wake enrollment sample and update enrollment counters/state
@@ -22,13 +23,15 @@
 - `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `simulation_ids`: `[WAKE_ENROLL_SAMPLE_COMMIT]`
 
 ### `PH1W_ENROLL_COMPLETE_COMMIT_ROW`
 - `name`: Complete wake enrollment and bind active wake profile
-- `input_schema`: `(now, wake_enrollment_session_id, wake_profile_id, idempotency_key)`
+- `input_schema`: `(now, wake_enrollment_session_id, wake_profile_id, artifact_version, idempotency_key)`
 - `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `simulation_ids`: `[WAKE_ENROLL_COMPLETE_COMMIT]`
 
 ### `PH1W_ENROLL_DEFER_REMINDER_COMMIT_ROW`
 - `name`: Mark wake enrollment deferred/pending with deterministic reason code
@@ -36,10 +39,11 @@
 - `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `simulation_ids`: `[WAKE_ENROLL_DEFER_REMINDER_COMMIT]`
 
 ### `PH1W_RUNTIME_EVENT_COMMIT_ROW`
 - `name`: Commit wake runtime accept/reject/suppress event
-- `input_schema`: `(now, wake_event_id, session_id?, user_id?, device_id, accepted, reason_code, wake_profile_id?, tts_active_at_trigger, media_playback_active_at_trigger, suppression_reason_code?, idempotency_key)`
+- `input_schema`: `(now, wake_event_id, session_id?, user_id?, device_id, accepted, reason_code, wake_profile_id?, tts_active_at_trigger, media_playback_active_at_trigger, suppression_reason_code?, state_from, state_to, parameter_set_id?, enter_threshold?, exit_threshold?, hold_frames?, cooldown_ms?, idempotency_key)`
 - `output_schema`: `Result<WakeRuntimeEventRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -83,6 +87,7 @@
 - enrollment bound/quality validation failure: `W_ENROLL_INVALID_BOUNDS`, `W_ENROLL_SAMPLE_INVALID`
 - enrollment state/ownership violation: `W_ENROLL_ALREADY_IN_PROGRESS`, `W_ENROLL_SAMPLE_SESSION_CLOSED`, `W_ENROLL_DEVICE_OWNERSHIP_MISMATCH`
 - runtime scope validation failure: `W_RUNTIME_DEVICE_MISSING`, `W_RUNTIME_SESSION_INVALID`, `W_RUNTIME_USER_INVALID`
+- runtime state transition validation failure: `W_RUNTIME_STATE_TRANSITION_INVALID`
 - idempotency replay/no-op: `W_IDEMPOTENCY_REPLAY`
 
 ## Audit Emission Requirements Per Capability
@@ -93,6 +98,7 @@
   - `WAKE_ENROLL_DEFER_REMINDER_COMMIT`
   - `WAKE_RUNTIME_EVENT_COMMIT`
 - Runtime reject/suppress rows must preserve gate/suppression reason code taxonomy in bounded payload.
+- Runtime rows must preserve state transition and tuning snapshots (`state_from`, `state_to`, `parameter_set_id`, threshold/hysteresis fields) in bounded payload.
 - Read/guard capabilities emit audit only in explicit replay/diagnostic mode.
 
 ## Sources

@@ -48,7 +48,10 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.D`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=CHAT`, `output_mode=chat`
+  - payload:
+    - decision payload: `decision=CHAT`, `output_mode=chat`
+    - request envelope: `request_id`, `prompt_template_version`, `output_schema_hash`, `tool_catalog_hash`, `policy_context_hash`, `transcript_hash`
+    - model assignment: `model_id`, `model_route_class`, `temperature_bp`, `max_tokens`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -60,7 +63,10 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.D`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=INTENT`, `refined_intent_type`, `output_mode=intent`
+  - payload:
+    - decision payload: `decision=INTENT`, `refined_intent_type`, `output_mode=intent`
+    - request envelope: `request_id`, `prompt_template_version`, `output_schema_hash`, `tool_catalog_hash`, `policy_context_hash`, `transcript_hash`
+    - model assignment: `model_id`, `model_route_class`, `temperature_bp`, `max_tokens`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -72,7 +78,10 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.D`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=CLARIFY`, `what_is_missing`, `output_mode=clarify`
+  - payload:
+    - decision payload: `decision=CLARIFY`, `what_is_missing`, `output_mode=clarify`
+    - request envelope: `request_id`, `prompt_template_version`, `output_schema_hash`, `tool_catalog_hash`, `policy_context_hash`, `transcript_hash`
+    - model assignment: `model_id`, `model_route_class`, `temperature_bp`, `max_tokens`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -83,7 +92,10 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.D`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=ANALYSIS`, `analysis_kind`, `output_mode=analysis`
+  - payload:
+    - decision payload: `decision=ANALYSIS`, `analysis_kind`, `output_mode=analysis`
+    - request envelope: `request_id`, `prompt_template_version`, `output_schema_hash`, `tool_catalog_hash`, `policy_context_hash`, `transcript_hash`
+    - model assignment: `model_id`, `model_route_class`, `temperature_bp`, `max_tokens`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -93,7 +105,10 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.D`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `decision=FAIL_CLOSED`, `fail_code`, `output_mode=fail`
+  - payload:
+    - decision payload: `decision=FAIL_CLOSED`, `fail_code`, `output_mode=fail`
+    - request envelope: `request_id`, `prompt_template_version`, `output_schema_hash`, `tool_catalog_hash`, `policy_context_hash`, `transcript_hash`
+    - model assignment snapshot (if assigned before fail): `model_id?`, `model_route_class?`, `temperature_bp?`, `max_tokens?`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -131,16 +146,26 @@ PH1.D writes emit PH1.J audit events with:
   - `what_is_missing`
   - `analysis_kind`
   - `fail_code`
+  - `request_id`
+  - `prompt_template_version`
+  - `output_schema_hash`
+  - `tool_catalog_hash`
+  - `policy_context_hash`
+  - `transcript_hash`
+  - `model_id`
+  - `model_route_class`
+  - `temperature_bp`
+  - `max_tokens`
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-D-DB-01` tenant isolation enforced
+- `AT-PH1-D-DB-01` tenant isolation enforced
   - `at_d_db_01_tenant_isolation_enforced`
-- `AT-D-DB-02` append-only enforcement for PH1.D ledger writes
+- `AT-PH1-D-DB-02` append-only enforcement for PH1.D ledger writes
   - `at_d_db_02_append_only_enforced`
-- `AT-D-DB-03` idempotency dedupe works
+- `AT-PH1-D-DB-03` idempotency dedupe works
   - `at_d_db_03_idempotency_dedupe_works`
-- `AT-D-DB-04` no PH1.D current-table rebuild is required
+- `AT-PH1-D-DB-04` no PH1.D current-table rebuild is required
   - `at_d_db_04_no_current_table_rebuild_required`
 
 Implementation references:

@@ -12,6 +12,7 @@ Control-plane canonical docs:
 5. `docs/10_DB_OWNERSHIP_MATRIX.md` (DB ownership summary only)
 6. `docs/11_DESIGN_LOCK_SEQUENCE.md` (design lock status only)
 7. `docs/COVERAGE_MATRIX.md` (cross-link completion matrix only)
+8. `docs/12_MEMORY_ARCHITECTURE.md` (canonical PH1.M architecture contract)
 
 Detail canonical docs:
 1. `docs/DB_WIRING/*.md` (engine DB wiring contracts)
@@ -48,4 +49,34 @@ When design changes touch an engine or workflow, update canonical docs in the sa
 ## Scope Rule
 
 Current active engine scope follows `docs/DB_WIRING/00_DB_WIRING_DESIGN_LOCK_SEQUENCE.md`.
+Memory command workflows are canonical process records in:
+- `docs/BLUEPRINTS/MEMORY_QUERY.md`
+- `docs/BLUEPRINTS/MEMORY_FORGET_REQUEST.md`
+- `docs/BLUEPRINTS/MEMORY_REMEMBER_REQUEST.md`
+
+Phase C design contracts are canonical in:
+- `docs/DB_WIRING/PH1_K.md`, `docs/DB_WIRING/PH1_W.md`, `docs/DB_WIRING/PH1_C.md`, `docs/DB_WIRING/PH1_NLP.md`, `docs/DB_WIRING/PH1_D.md`, `docs/DB_WIRING/PH1_X.md`
+- `docs/ECM/PH1_K.md`, `docs/ECM/PH1_W.md`, `docs/ECM/PH1_C.md`, `docs/ECM/PH1_NLP.md`, `docs/ECM/PH1_D.md`, `docs/ECM/PH1_X.md`
 If a required contract is missing, mark `BLOCKER` in the engine detail doc and in `docs/COVERAGE_MATRIX.md`, then stop.
+
+## DOC INVARIANTS (Non-Negotiable)
+
+1. One canonical source per topic:
+- engine list: `docs/07_ENGINE_REGISTRY.md`
+- simulation inventory: `docs/08_SIMULATION_CATALOG.md`
+- blueprint mapping: `docs/09_BLUEPRINT_REGISTRY.md`
+- blueprint records: `docs/BLUEPRINTS/*.md`
+- DB ownership summary: `docs/10_DB_OWNERSHIP_MATRIX.md`
+- lock status: `docs/11_DESIGN_LOCK_SEQUENCE.md`
+- coverage status: `docs/COVERAGE_MATRIX.md`
+
+2. Summary docs must not carry duplicate inventories:
+- `docs/06_ENGINE_MAP.md`, `docs/05_OS_CONSTITUTION.md`, `docs/00_INDEX.md`, `docs/02_BUILD_PLAN.md` are summary/navigation/roadmap only.
+
+3. Detailed implementation contracts live only in:
+- `docs/DB_WIRING/*.md`
+- `docs/ECM/*.md`
+- `docs/04_KERNEL_CONTRACTS.md`
+
+4. Historical evidence remains append-only in:
+- `docs/03_BUILD_LEDGER.md`

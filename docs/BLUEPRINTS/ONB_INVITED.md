@@ -6,6 +6,10 @@
 - `version`: `v1`
 - `status`: `DRAFT`
 
+## 1A) Contract Boundary
+- This blueprint defines orchestration flow only.
+- Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+
 ## 2) Required Inputs
 - `token_id`
 - `draft_id`

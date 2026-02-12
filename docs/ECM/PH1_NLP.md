@@ -11,14 +11,14 @@
 
 ### `PH1NLP_INTENT_DRAFT_COMMIT_ROW`
 - `name`: Commit NLP intent draft decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, intent_type, overall_confidence, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, intent_type, extracted_fields, required_fields, ambiguity_flags, overall_confidence, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1NLP_CLARIFY_COMMIT_ROW`
 - `name`: Commit NLP clarify decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, what_is_missing, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, what_is_missing, clarification_unit_id, accepted_answer_formats, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -52,8 +52,11 @@
 - write capabilities emit PH1.J audit rows with bounded keys only:
   - `decision`
   - `intent_type`
+  - `required_fields`
+  - `ambiguity_flags`
   - `overall_confidence`
   - `what_is_missing`
+  - `clarification_unit_id`
 - read capability emits audit only in explicit replay/diagnostic mode.
 
 ## Sources

@@ -33,6 +33,20 @@ Status legend:
 - Treat that row as the current "next item."
 - After completion, update status to `LOCKED` and add a short note in `docs/03_BUILD_LEDGER.md`.
 
+## Continuous Canon Update Rule (Mandatory)
+
+After every engine or workflow change, update canonical docs in the same commit:
+- `docs/07_ENGINE_REGISTRY.md` (engine row/link/state)
+- `docs/10_DB_OWNERSHIP_MATRIX.md` (ownership summary/link scope)
+- `docs/COVERAGE_MATRIX.md` (coverage status)
+- `docs/08_SIMULATION_CATALOG.md` (if simulations changed)
+- `docs/09_BLUEPRINT_REGISTRY.md` + `docs/BLUEPRINTS/*.md` (if blueprint mapping/records changed)
+- `docs/11_DESIGN_LOCK_SEQUENCE.md` (if lock status changed)
+
+Hard rule:
+- No deferred doc updates.
+- No duplicate inventories across summary docs.
+
 ## Next Phase After Items 1-10
 
 - DB wiring phase is tracked in:

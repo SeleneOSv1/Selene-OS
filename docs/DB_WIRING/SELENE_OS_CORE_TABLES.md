@@ -39,6 +39,8 @@ Scope rules:
 - append to `work_order_ledger` via typed input contract
 - deterministic update of `work_orders_current` projection on each ledger append
 - idempotency dedupe on `(tenant_id, work_order_id, idempotency_key)`
+- WorkOrder status includes `CANCELED`; cancel transitions must append a new ledger event (no in-place mutation).
+- cancel path event types: `WORK_ORDER_CANCELED` and/or `STATUS_CHANGED` with required `reason_code`.
 
 ## 5) Relations & Keys
 
@@ -55,6 +57,7 @@ Key constraints implemented:
 State constraints:
 - `work_order_ledger` is append-only
 - `work_orders_current` is rebuildable from `work_order_ledger`
+- pending continuity statuses include `{DRAFT, CLARIFY, CONFIRM}` for bounded resume selectors.
 
 ## 6) Audit Emissions (PH1.J)
 

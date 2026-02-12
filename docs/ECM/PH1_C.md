@@ -11,14 +11,14 @@
 
 ### `PH1C_TRANSCRIPT_OK_COMMIT_ROW`
 - `name`: Commit accepted transcript turn plus audit events
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, transcript_text, transcript_hash, language_tag, confidence_bucket, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, transcript_text, transcript_hash, language_tag, confidence_bucket, route_class_used, attempt_count, candidate_count, selected_slot, mode_used, second_pass_used, critical_spans?, idempotency_key)`
 - `output_schema`: `Result<Ph1cTranscriptOkCommitResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1C_TRANSCRIPT_REJECT_COMMIT_ROW`
 - `name`: Commit transcript rejection audit events
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, reject_reason_code, retry_advice, transcript_hash?, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, reject_reason_code, retry_advice, transcript_hash?, route_class_used, attempt_count, candidate_count, selected_slot, mode_used, second_pass_used, uncertain_spans?, idempotency_key)`
 - `output_schema`: `Result<Ph1cTranscriptRejectCommitResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -47,7 +47,8 @@
 - `PH1C_TRANSCRIPT_REJECT_COMMIT_ROW` must emit PH1.J audit rows including:
   - `TranscriptReject`
   - `SttCandidateEval`
-- `payload_min` remains bounded and provider-invisible.
+- `payload_min` remains bounded and provider-invisible while preserving arbitration indicators (`route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`).
+- `evidence_ref` (when present) must carry bounded transcript span references only.
 
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1cSttRepo`)

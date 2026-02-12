@@ -49,6 +49,7 @@
 - invariants:
   - FK `user_id -> identities.user_id`
   - FK `device_id -> devices.device_id`
+  - `artifact_version` identifies the deterministic wake parameter/tuning package (thresholds, hold frames, cooldown) applied for that binding
   - at most one active binding per `(user_id, device_id)`
 
 ## 3) Reads (dependencies)
@@ -126,6 +127,13 @@
 - writes: `wake_runtime_events`
 - required fields:
   - `wake_event_id`, `device_id`, `created_at`, `accepted`, `reason_code`, `idempotency_key`
+  - runtime gate snapshots persisted in row scope: `tts_active_at_trigger`, `media_playback_active_at_trigger`, `suppression_reason_code?`
+  - runtime parameter/tuning snapshots persisted in PH1.J payload scope:
+    - `parameter_set_id`
+    - `enter_threshold`
+    - `exit_threshold`
+    - `hold_frames`
+    - `cooldown_ms`
 - idempotency_key rule (exact formula):
   - dedupe key = `(device_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -159,6 +167,12 @@ Unique constraints:
 State/boundary constraints:
 - wake sample/runtime ledgers are append-only
 - wake enrollment session state follows deterministic transitions (`IN_PROGRESS` -> `PENDING|COMPLETE|DECLINED`)
+- wake runtime state machine is represented by reason-coded runtime rows:
+  - `DISARMED -> ARMED_IDLE -> CANDIDATE -> CONFIRMED -> CAPTURE -> COOLDOWN -> ARMED_IDLE`
+  - any state may transition to `SUSPENDED` on audio integrity failure and only return after deterministic stabilization
+- wake session start/stop behavior is reason-coded:
+  - start: first `accepted=true` `wake_runtime_events` row for a request window
+  - stop: `CAPTURE` completion or suppression/reject row that closes that request window
 - raw wake audio is not persisted by default in this lock slice
 
 ## 6) Audit Emissions (PH1.J)
@@ -190,13 +204,13 @@ PH1.W writes must emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-W-DB-01` tenant isolation enforced
+- `AT-PH1-W-DB-01` tenant isolation enforced
   - `at_w_db_01_tenant_isolation_enforced`
-- `AT-W-DB-02` append-only enforcement for wake ledgers
+- `AT-PH1-W-DB-02` append-only enforcement for wake ledgers
   - `at_w_db_02_append_only_enforced`
-- `AT-W-DB-03` idempotency dedupe works
+- `AT-PH1-W-DB-03` idempotency dedupe works
   - `at_w_db_03_idempotency_dedupe_works`
-- `AT-W-DB-04` current-state consistency with enrollment/runtime ledgers
+- `AT-PH1-W-DB-04` current-state consistency with enrollment/runtime ledgers
   - `at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger`
 
 Implementation references:

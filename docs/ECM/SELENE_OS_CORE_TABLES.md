@@ -37,15 +37,32 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
+### `WORKORDER_LIST_PENDING`
+- `name`: List pending work orders for continuity resume offers
+- `input_schema`: `(tenant_id, requester_user_id, status_set={DRAFT|CLARIFY|CONFIRM}, recency_window, top_n)`
+- `output_schema`: `Vec<PendingWorkOrderRecord>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `WORKORDER_CANCEL`
+- `name`: Cancel one pending work order with append-only status event
+- `input_schema`: `(tenant_id, work_order_id, reason_code, idempotency_key)`
+- `output_schema`: `(work_order_id, status=CANCELED, last_event_id)`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
 ## Failure Modes + Reason Codes
 - append-only mutation attempt: `OS_WORK_ORDER_APPEND_ONLY_VIOLATION`
 - idempotency replay/no-op: `OS_WORK_ORDER_IDEMPOTENCY_REPLAY`
 - tenant scope mismatch: `OS_WORK_ORDER_TENANT_SCOPE_VIOLATION`
 - contract validation failure: `OS_WORK_ORDER_CONTRACT_VALIDATION_FAILED`
+- invalid cancel transition: `OS_WORK_ORDER_CANCEL_INVALID_STATE`
 
 ## Audit Emission Requirements Per Capability
 - `OS_WORK_ORDER_LEDGER_APPEND` must emit PH1.J events containing:
   - `tenant_id`, `work_order_id`, `correlation_id`, `turn_id`, `event_type`, `reason_code`, `idempotency_key`
+- `WORKORDER_CANCEL` must emit PH1.J event with:
+  - `event_type=WORK_ORDER_CANCELED` (or `STATUS_CHANGED` to `CANCELED`), deterministic `reason_code`, and idempotency key
 - Reads/rebuild operations should emit audit only when invoked as explicit replay/diagnostic operations.
 
 ## Sources

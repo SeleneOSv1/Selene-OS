@@ -11,35 +11,35 @@
 
 ### `PH1D_CHAT_COMMIT_ROW`
 - `name`: Commit PH1.D chat output decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, request_id, prompt_template_version, output_schema_hash, tool_catalog_hash, policy_context_hash, transcript_hash, model_id, model_route_class, temperature_bp, max_tokens, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1D_INTENT_COMMIT_ROW`
 - `name`: Commit PH1.D intent refinement decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, refined_intent_type, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, request_id, prompt_template_version, output_schema_hash, tool_catalog_hash, policy_context_hash, transcript_hash, model_id, model_route_class, temperature_bp, max_tokens, refined_intent_type, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1D_CLARIFY_COMMIT_ROW`
 - `name`: Commit PH1.D clarify decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, what_is_missing, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, request_id, prompt_template_version, output_schema_hash, tool_catalog_hash, policy_context_hash, transcript_hash, model_id, model_route_class, temperature_bp, max_tokens, what_is_missing, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1D_ANALYSIS_COMMIT_ROW`
 - `name`: Commit PH1.D analysis decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, analysis_kind, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, request_id, prompt_template_version, output_schema_hash, tool_catalog_hash, policy_context_hash, transcript_hash, model_id, model_route_class, temperature_bp, max_tokens, analysis_kind, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1D_FAIL_CLOSED_COMMIT_ROW`
 - `name`: Commit PH1.D fail-closed decision
-- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, fail_code, reason_code, idempotency_key)`
+- `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, request_id, prompt_template_version, output_schema_hash, tool_catalog_hash, policy_context_hash, transcript_hash, model_id?, model_route_class?, temperature_bp?, max_tokens?, fail_code, reason_code, idempotency_key)`
 - `output_schema`: `Result<AuditEventId, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -68,6 +68,16 @@
   - `what_is_missing`
   - `analysis_kind`
   - `fail_code`
+  - `request_id`
+  - `prompt_template_version`
+  - `output_schema_hash`
+  - `tool_catalog_hash`
+  - `policy_context_hash`
+  - `transcript_hash`
+  - `model_id`
+  - `model_route_class`
+  - `temperature_bp`
+  - `max_tokens`
 - read capability emits audit only in explicit replay/diagnostic mode.
 
 ## Sources

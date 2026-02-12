@@ -44,13 +44,30 @@
 - scope rules: no cross-tenant writes; tenant attribution required
 - why this read is required: deterministic replay and dedupe verification
 
+### WorkOrder + lease scope checks (dispatch gating references)
+- reads:
+  - `work_orders_current` by `(tenant_id, work_order_id)` for current status
+  - `work_order_leases` by `(tenant_id, work_order_id)` for active lease ownership
+- keys/joins used:
+  - deterministic key lookup on `work_orders_current(tenant_id, work_order_id)`
+  - active lease filter `lease_state='ACTIVE'` with latest `lease_expires_at`
+- required indices:
+  - `ux_work_orders_current_tenant_work_order`
+  - `ux_work_order_leases_tenant_work_order_idempotency` (tenant/work-order key path)
+- scope rules:
+  - PH1.X reads only in-tenant work-order rows bound to the current `correlation_id`
+  - PH1.X does not mutate work-order/lease tables; writes remain owned by `SELENE_OS_CORE_TABLES`
+- why this read is required:
+  - deterministic clarify/confirm/dispatch gating against current WorkOrder status
+  - deterministic no-dispatch rule when lease is missing/expired
+
 ## 4) Writes (outputs)
 
 ### Commit `confirm`
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.X`, `event_type=XConfirm`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `directive=confirm`, `confirm_kind`
+  - payload: `directive=confirm`, `confirm_kind`, `work_order_id`, `work_order_status_snapshot`, `pending_state`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 
@@ -58,7 +75,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.X`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `directive=clarify`, `what_is_missing`
+  - payload: `directive=clarify`, `what_is_missing`, `clarification_unit_id`, `work_order_id`, `work_order_status_snapshot`, `pending_state`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 
@@ -66,7 +83,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.X`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `directive=respond`, `response_kind`
+  - payload: `directive=respond`, `response_kind`, `work_order_id`, `work_order_status_snapshot`, `pending_state`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 
@@ -74,7 +91,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.X`, `event_type=XDispatch`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `directive=dispatch`, `dispatch_target`
+  - payload: `directive=dispatch`, `dispatch_target`, `work_order_id`, `work_order_status_snapshot`, `pending_state`, `lease_token_hash?`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 
@@ -82,7 +99,7 @@
 - writes: `audit_events`
 - required fields:
   - `tenant_id`, `engine=PH1.X`, `event_type=Other`, `reason_code`, `correlation_id`, `turn_id`
-  - payload: `directive=wait`, `wait_kind`
+  - payload: `directive=wait`, `wait_kind`, `work_order_id`, `work_order_status_snapshot`, `pending_state`
 - idempotency_key rule (exact formula):
   - dedupe key = `(correlation_id, idempotency_key)`
 
@@ -100,6 +117,12 @@ State/boundary constraints:
 - No PH1.X-owned current table in row 16 scope.
 - No PH1.X migration is required for this slice.
 - PH1.X remains non-authoritative; storage scope is audit-only.
+- PH1.X gating states are explicit and reason-coded:
+  - `CLARIFY` (missing/ambiguous fields)
+  - `CONFIRM` (impactful intent awaiting yes/no)
+  - `DISPATCH` (candidate handoff only)
+  - `RESPOND` / `WAIT` (non-executing output/control)
+- WorkOrder state transitions (`DRAFT -> CLARIFY -> CONFIRM -> EXECUTING`) are persisted by `SELENE_OS_CORE_TABLES`; PH1.X emits directive rows that deterministically wire back into those transitions.
 
 ## 6) Audit Emissions (PH1.J)
 
@@ -114,19 +137,24 @@ PH1.X writes emit PH1.J audit events with:
   - `directive`
   - `confirm_kind`
   - `what_is_missing`
+  - `clarification_unit_id`
   - `response_kind`
   - `dispatch_target`
   - `wait_kind`
+  - `work_order_id`
+  - `work_order_status_snapshot`
+  - `pending_state`
+  - `lease_token_hash`
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-X-DB-01` tenant isolation enforced
+- `AT-PH1-X-DB-01` tenant isolation enforced
   - `at_x_db_01_tenant_isolation_enforced`
-- `AT-X-DB-02` append-only enforcement for PH1.X ledger writes
+- `AT-PH1-X-DB-02` append-only enforcement for PH1.X ledger writes
   - `at_x_db_02_append_only_enforced`
-- `AT-X-DB-03` idempotency dedupe works
+- `AT-PH1-X-DB-03` idempotency dedupe works
   - `at_x_db_03_idempotency_dedupe_works`
-- `AT-X-DB-04` no PH1.X current-table rebuild is required
+- `AT-PH1-X-DB-04` no PH1.X current-table rebuild is required
   - `at_x_db_04_no_current_table_rebuild_required`
 
 Implementation references:

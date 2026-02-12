@@ -31,14 +31,27 @@
   - state is rebuildable from `audio_runtime_events` in deterministic event-id order
   - `device_health` in `HEALTHY | DEGRADED | FAILED` when present
 
+### `os_core.conversation_ledger` (PH1.K VAD markers only)
+- `truth_type`: `LEDGER`
+- `primary key`: `conversation_turn_id`
+- invariants:
+  - FK `user_id -> identities.user_id`
+  - optional FK `device_id -> devices.device_id`
+  - optional FK `session_id -> sessions.session_id`
+  - PH1.K writes only bounded VAD boundary markers with `source=PH1_K_VAD` and `role=SYSTEM`
+  - text content is fixed marker text only (no transcript payload)
+  - idempotent append dedupe on `(correlation_id, idempotency_key)`
+  - append-only; overwrite/delete prohibited
+
 ## 3) Reads (dependencies)
 
 ### Device/session FK checks
-- reads: `devices.device_id`, `sessions.session_id` (optional)
+- reads: `devices.device_id`, `sessions.session_id` (optional), `identities.user_id` (for VAD marker writes)
 - keys/joins used: direct FK existence lookups
 - required indices:
   - `devices(device_id)` (PK)
   - `sessions(session_id)` (PK)
+  - `identities(user_id)` (PK)
 - scope rules: PH1.K runtime writes are device-scoped and tenant-bound
 - why this read is required: fail closed before runtime event persistence
 
@@ -46,11 +59,13 @@
 - reads:
   - `audio_runtime_events` by `(tenant_id, device_id)` and event id
   - `audio_runtime_current` by `(tenant_id, device_id)`
+  - `conversation_ledger` by `(correlation_id, turn_id)` for VAD marker replay
 - keys/joins used: deterministic key lookups and ordered replay
 - required indices:
   - `ux_audio_runtime_events_dedupe`
   - `ix_audio_runtime_events_tenant_device_time`
   - `audio_runtime_current(tenant_id, device_id)` (PK)
+  - `conversation_ledger(correlation_id, turn_id)`
 - scope rules: no cross-tenant reads for one device binding
 - why this read is required: deterministic idempotency and current-state rebuild
 
@@ -62,9 +77,10 @@
   - `tenant_id`, `device_id`, `event_kind`, `created_at`, `idempotency_key`
   - plus event-kind fields:
     - `STREAM_REFS`: `processed_stream_id`, `pre_roll_buffer_id`
+    - `VAD_EVENT`: `vad_state`, `vad_confidence`
     - `DEVICE_STATE`: `selected_mic`, `selected_speaker`, `device_health`
     - `TIMING_STATS`: `jitter_ms`, `drift_ppm`, `buffer_depth_ms`, `underruns`, `overruns`
-    - `INTERRUPT_CANDIDATE`: `phrase_id`, `phrase_text`, `reason_code`
+    - `INTERRUPT_CANDIDATE`: `phrase_id`, `phrase_text`, `reason_code` (`phrase_text` must be one normalized phrase from the PH1.K interrupt phrase set)
     - `DEGRADATION_FLAGS`: `capture_degraded`, `aec_unstable`, `device_changed`, `stream_gap_detected`
     - `TTS_PLAYBACK_ACTIVE`: `tts_playback_active`
 - ledger event_type (if ledger): `K_RUNTIME_EVENT_COMMIT`
@@ -75,6 +91,23 @@
   - `K_FAIL_SESSION_INVALID`
   - `K_FAIL_TENANT_SCOPE_MISMATCH`
   - `K_FAIL_EVENT_FIELDS_INVALID`
+
+### Append PH1.K VAD marker to conversation ledger
+- writes: `conversation_ledger` (bounded marker row only)
+- required fields:
+  - `correlation_id`, `turn_id`, `session_id?`, `user_id`, `device_id`, `created_at`, `idempotency_key`
+  - marker payload fields:
+    - `source=PH1_K_VAD`
+    - `role=SYSTEM`
+    - `text="[VAD_EVENT:<state>]"` where `<state>` is one of `SPEECH_START | SPEECH_END | SILENCE_WINDOW`
+    - `text_hash`
+    - `privacy_scope=INTERNAL_ONLY`
+- ledger event_type (if ledger): `K_VAD_EVENT_MARKER_COMMIT`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(correlation_id, idempotency_key)`
+- failure reason codes (minimum examples):
+  - `K_FAIL_VAD_MARKER_SCOPE_INVALID`
+  - `K_FAIL_VAD_MARKER_FIELDS_INVALID`
 
 ### Materialize/update PH1.K current runtime state
 - writes: `audio_runtime_current`
@@ -95,6 +128,9 @@ FKs:
 - `audio_runtime_current.device_id -> devices.device_id`
 - `audio_runtime_current.session_id -> sessions.session_id` (nullable)
 - `audio_runtime_current.last_event_id -> audio_runtime_events.event_id`
+- `conversation_ledger.user_id -> identities.user_id`
+- `conversation_ledger.device_id -> devices.device_id` (nullable)
+- `conversation_ledger.session_id -> sessions.session_id` (nullable)
 
 Unique constraints:
 - `audio_runtime_events(event_id)` (PK)
@@ -105,6 +141,7 @@ State/boundary constraints:
 - `audio_runtime_events` is append-only.
 - `audio_runtime_current` must be derivable from `audio_runtime_events` only.
 - PH1.K persists substrate facts only; it does not persist intent/authority decisions.
+- PH1.K must not persist raw transcript text or sensitive phrase content; interrupt rows persist only normalized interrupt phrases and VAD rows persist bounded markers.
 
 ## 6) Audit Emissions (PH1.J)
 
@@ -114,6 +151,7 @@ PH1.K runtime writes must emit PH1.J audit events with:
   - `K_DEVICE_STATE_COMMIT`
   - `K_TIMING_STATS_COMMIT`
   - `K_INTERRUPT_CANDIDATE_COMMIT`
+  - `K_VAD_EVENT_MARKER_COMMIT`
   - `K_DEGRADATION_FLAGS_COMMIT`
   - `K_TTS_PLAYBACK_ACTIVE_COMMIT`
 - `reason_code(s)`:
@@ -129,6 +167,8 @@ PH1.K runtime writes must emit PH1.J audit events with:
   - `event_kind`
   - `processed_stream_id`
   - `pre_roll_buffer_id`
+  - `vad_state`
+  - `vad_confidence`
   - `device_health`
   - `tts_playback_active`
   - `interrupt_phrase_id`
@@ -137,13 +177,13 @@ PH1.K runtime writes must emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-K-DB-01` tenant isolation enforced
+- `AT-PH1-K-DB-01` tenant isolation enforced
   - `at_k_db_01_tenant_isolation_enforced`
-- `AT-K-DB-02` append-only enforcement for PH1.K runtime ledger
+- `AT-PH1-K-DB-02` append-only enforcement for PH1.K runtime ledger
   - `at_k_db_02_append_only_enforced`
-- `AT-K-DB-03` idempotency dedupe works
+- `AT-PH1-K-DB-03` idempotency dedupe works
   - `at_k_db_03_idempotency_dedupe_works`
-- `AT-K-DB-04` current-table rebuild from runtime ledger is deterministic
+- `AT-PH1-K-DB-04` current-table rebuild from runtime ledger is deterministic
   - `at_k_db_04_current_table_rebuild_from_ledger`
 
 Implementation references:
