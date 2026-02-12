@@ -43,6 +43,8 @@ Direction lock:
 | PH1.WRITE | D Output | Output | Non-Authoritative | Presentation-only formatting | `docs/DB_WIRING/PH1_WRITE.md` | `docs/ECM/PH1_WRITE.md` |
 | PH1.TTS | D Output | Output | Authoritative (playback) | Speech rendering with cancel safety | `docs/DB_WIRING/PH1_TTS.md` | `docs/ECM/PH1_TTS.md` |
 | PH1.E | E Onboarding/Tools | Control | Authoritative (read-only tools) | Tool routing for read-only queries | `docs/DB_WIRING/PH1_E.md` | `docs/ECM/PH1_E.md` |
+| PH1.BCAST | E Onboarding/Tools | Control | Authoritative (broadcast lifecycle only) | Broadcast lifecycle orchestrator (draft/deliver/ack/defer/retry/expire; simulation-gated for external delivery; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_BCAST.md` | `docs/ECM/PH1_BCAST.md` |
+| PH1.DELIVERY | E Onboarding/Tools | Control | Authoritative (delivery attempt truth only) | Provider gateway for SMS/Email/WhatsApp/WeChat delivery attempts (simulation-gated; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_DELIVERY.md` | `docs/ECM/PH1_DELIVERY.md` |
 | PH1.LINK | E Onboarding/Tools | Control/Governance | Authoritative | Invite link lifecycle (simulation-gated) | `docs/DB_WIRING/PH1_LINK.md` | `docs/ECM/PH1_LINK.md` |
 | PH1.ONB | E Onboarding/Tools | Governance/Control | Authoritative | Onboarding orchestration | `docs/DB_WIRING/PH1_ONB.md` | `docs/ECM/PH1_ONB.md` |
 | PH1.POSITION | E Onboarding/Tools | Governance/Storage | Authoritative | Position truth lifecycle | `docs/DB_WIRING/PH1_POSITION.md` | `docs/ECM/PH1_POSITION.md` |
@@ -86,7 +88,6 @@ These engines are planned in current MVP design scope but do not yet have finali
 | engine_id | phase | layer | authority | primary_role | db_wiring | ecm |
 |---|---|---|---|---|---|---|
 | PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder state machine) | Deterministic reminder scheduling/delivery orchestration | `docs/DB_WIRING/PH1_REM.md` (stub) | `docs/ECM/PH1_REM.md` (stub) |
-| PH1.BCAST | E Onboarding/Tools | Control | Authoritative (simulation-gated delivery) | Broadcast delivery lifecycle with ack/defer/escalation states | `docs/DB_WIRING/PH1_BCAST.md` (stub) | `docs/ECM/PH1_BCAST.md` (stub) |
 | PH1.EMO | F Memory/Learning | Learning | Non-Authoritative (tone-only) | Emotional continuity and tone guidance profile lifecycle | `docs/DB_WIRING/PH1_EMO.md` (stub) | `docs/ECM/PH1_EMO.md` (stub) |
 
 ## Maintenance

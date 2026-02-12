@@ -26,7 +26,12 @@
 ### `ACCESS_GATE_DECIDE_ROW`
 - `name`: Read-only access gate decision
 - `input_schema`: `(user_id, access_engine_instance_id, requested_action, access_request_context, device_trust_level, sensitive_data_request, now)`
-- `output_schema`: `Result<AccessGateDecisionRecord, StorageError>`
+- `output_schema`: `Result<AccessGateDecisionRecord, StorageError>` where `AccessGateDecisionRecord` includes:
+  - `access_decision` in `ALLOW | DENY | ESCALATE`
+  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED`)
+  - `required_approver_selector` (optional)
+  - `requested_scope` (optional)
+  - `requested_duration` (optional)
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
@@ -49,6 +54,12 @@
 - idempotency replay/no-op: `ACCESS_IDEMPOTENCY_REPLAY`
 - tenant/user scope mismatch: `ACCESS_SCOPE_VIOLATION`
 - contract validation failure: `ACCESS_CONTRACT_VALIDATION_FAILED`
+- policy denies all approval paths: `ACCESS_DENY_NO_APPROVAL_PATH`
+
+## Escalation Rule (Deterministic)
+- `ACCESS_GATE_DECIDE_ROW` must return `ESCALATE` (not `DENY`) when action is approvable by AP policy.
+- `DENY` is valid only when no approval path exists (`ACCESS_DENY_NO_APPROVAL_PATH`).
+- Selene OS orchestrates all escalation delivery and override application; this engine never triggers PH1.BCAST/PH1.DELIVERY directly.
 
 ## Audit Emission Requirements Per Capability
 - Write capabilities must emit PH1.J events with:

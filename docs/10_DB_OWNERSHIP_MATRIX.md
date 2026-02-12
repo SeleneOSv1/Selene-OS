@@ -57,7 +57,8 @@ Detailed contracts source:
 | PH1.CAPREQ | Capability request lifecycle tables | `docs/DB_WIRING/PH1_CAPREQ.md` |
 | PH1.EXPLAIN | Planned; expected explanation mapping + audit-only writes scope (to be locked) | `docs/DB_WIRING/PH1_EXPLAIN.md` (stub) |
 | PH1.REM | Planned; reminder scheduling/delivery tables scope (to be locked) | `docs/DB_WIRING/PH1_REM.md` (stub) |
-| PH1.BCAST | Planned; broadcast envelope/recipient/delivery tables scope (to be locked) | `docs/DB_WIRING/PH1_BCAST.md` (stub) |
+| PH1.BCAST | `comms.broadcast_envelopes_ledger/current`, `comms.broadcast_recipients_current`, `comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_ack_ledger` (broadcast lifecycle truth) | `docs/DB_WIRING/PH1_BCAST.md` |
+| PH1.DELIVERY | `comms.delivery_attempts_ledger/current`, `comms.delivery_provider_health` (provider send/status attempt truth) | `docs/DB_WIRING/PH1_DELIVERY.md` |
 | PH1.EMO | Planned; emotional profile/privacy directive tables scope (to be locked) | `docs/DB_WIRING/PH1_EMO.md` (stub) |
 
 ## Non-Duplication Rule

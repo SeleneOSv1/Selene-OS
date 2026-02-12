@@ -19,6 +19,15 @@ Target tables in this slice:
 - `os_core.sessions` (`CURRENT`, already locked under PH1.F)
 - `conversation.conversation_ledger` (`LEDGER`, already locked under PH1.F)
 
+`work_orders_current` continuity/anti-repeat fields (design-level lock):
+- `asked_fields_json` (bounded map: `field_key -> {asked_at, attempts}`)
+- `resolved_fields_json` (bounded map of resolved clarifications/conflicts)
+- `prompt_dedupe_keys_json` (bounded set of used prompt dedupe keys)
+- `external_approval_pending` (bool)
+- `external_approval_request_id` (nullable string)
+- `external_approval_target_user_id` (nullable string)
+- `external_approval_expires_at` (nullable timestamp)
+
 ## 3) Reads (dependencies)
 
 - `work_order_ledger` replay by `work_order_event_id` for deterministic rebuild.
@@ -41,6 +50,13 @@ Scope rules:
 - idempotency dedupe on `(tenant_id, work_order_id, idempotency_key)`
 - WorkOrder status includes `CANCELED`; cancel transitions must append a new ledger event (no in-place mutation).
 - cancel path event types: `WORK_ORDER_CANCELED` and/or `STATUS_CHANGED` with required `reason_code`.
+- anti-repeat rules:
+  - if value already exists in `fields_json` or prefilled context, Selene OS must not ask again
+  - if `prompt_dedupe_key` already exists and no state change occurred, Selene OS suppresses repeat
+  - if conflict appears later, Selene OS asks once, writes resolution to `resolved_fields_json`, and suppresses further repeats
+- external approval wait rules:
+  - when `external_approval_pending=true`, Selene OS emits one wait message and then remains in wait posture
+  - no repeated approval nags until approval state changes or timeout expires
 
 ## 5) Relations & Keys
 
@@ -58,6 +74,7 @@ State constraints:
 - `work_order_ledger` is append-only
 - `work_orders_current` is rebuildable from `work_order_ledger`
 - pending continuity statuses include `{DRAFT, CLARIFY, CONFIRM}` for bounded resume selectors.
+- pending continuity selectors are filtered by recency window and deterministic ordering (most recent first unless policy overrides).
 
 ## 6) Audit Emissions (PH1.J)
 
@@ -74,6 +91,10 @@ State constraints:
   - `at_os_core_db_03_idempotency_dedupe_works`
 - `AT-OS-CORE-DB-04` rebuild current from ledger
   - `at_os_core_db_04_rebuild_current_from_ledger`
+- `AT-OS-20` never-ask-twice enforced through `asked_fields_json` + `prompt_dedupe_keys_json`
+  - `at_os_20_never_ask_twice_enforced`
+- `AT-OS-21` external approval wait state does not spam user and resumes only after approval response
+  - `at_os_21_external_approval_wait_no_spam`
 
 Implementation references:
 - kernel contracts: `crates/selene_kernel_contracts/src/ph1work.rs`

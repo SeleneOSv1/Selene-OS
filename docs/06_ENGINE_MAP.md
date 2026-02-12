@@ -78,13 +78,23 @@ Assists (called by Selene OS, never engine-to-engine):
 - PH1.SEARCH/PH1.WEBINT/PH1.PREFETCH assist planning and evidence interpretation; PH1.E executes tools only.
 - PH1.DOC/PH1.VISION are invoked only when user documents/images are provided; outputs are evidence bundles for PH1.CONTEXT/PH1.NLP.
 
+Broadcast/delivery side-effect wiring (Selene OS orchestrated):
+- Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.
+- For approved delivery paths: Selene OS runs simulation commit steps, then calls PH1.BCAST lifecycle capabilities.
+- For per-recipient provider sends: Selene OS calls PH1.DELIVERY inside COMMIT simulation context and feeds resulting proof/status back into PH1.BCAST lifecycle state.
+- AP escalation wiring:
+  - Access returns `ESCALATE` (`AP_APPROVAL_REQUIRED`) ->
+  - Selene OS opens PH1.BCAST approval flow ->
+  - Selene OS applies override through Access simulations ->
+  - Selene OS re-checks access before any execution.
+
 Learning wiring (not in-turn execution path):
 - PH1.LISTEN/PH1.PAE/PH1.CACHE/PH1.MULTI/PH1.CONTEXT feed hints and policy snapshots only (no execution path).
 - PH1.PATTERN/PH1.RLL produce OFFLINE artifact proposals only.
 
 Wiring class declaration:
 - ALWAYS_ON: `PH1.K`, `PH1.W`, `PH1.VOICE.ID`, `PH1.C`, `PH1.SRL`, `PH1.NLP`, `PH1.X`, `PH1.CONTEXT`
-- TURN_OPTIONAL: `PH1.PUZZLE`, `PH1.ENDPOINT`, `PH1.LANG`, `PH1.ATTN`, `PH1.DOC`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.WEBINT`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.PAE`, `PH1.CACHE`, `PH1.MULTI`, `PH1.KG`
+- TURN_OPTIONAL: `PH1.PUZZLE`, `PH1.ENDPOINT`, `PH1.LANG`, `PH1.ATTN`, `PH1.DOC`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.WEBINT`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.PAE`, `PH1.CACHE`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`
 - OFFLINE_ONLY: `PH1.PATTERN`, `PH1.RLL`
 
 ## Design Hygiene

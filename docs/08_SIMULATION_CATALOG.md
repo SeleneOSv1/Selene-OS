@@ -98,6 +98,15 @@ Locked schema rules:
 | BCAST-SIM-006 | COMMIT | Broadcast | Record recipient acknowledgement (Read/Confirm/Action-Confirm) | DRAFT | v1 | Update recipient state to ACKNOWLEDGED |
 | BCAST-SIM-007 | COMMIT | Broadcast | Escalate to sender with reason codes when blocked/unreachable | DRAFT | v1 | Deliver escalation + state write |
 | BCAST-SIM-008 | COMMIT | Broadcast | Expire a broadcast (hard stop) | DRAFT | v1 | Mark expired + notify if required |
+| BCAST_CREATE_DRAFT | DRAFT | Broadcast | Create canonical broadcast envelope draft used by PH1.BCAST lifecycle | DRAFT | v1 | Append draft lifecycle event + current projection update |
+| BCAST_DELIVER_COMMIT | COMMIT | Broadcast | Commit one recipient delivery request from approved broadcast envelope | DRAFT | v1 | Append delivery attempt + recipient state transition |
+| BCAST_DEFER_COMMIT | COMMIT | Broadcast | Commit recipient defer decision and deterministic retry schedule | DRAFT | v1 | Append defer lifecycle event + retry schedule update |
+| BCAST_ACK_COMMIT | COMMIT | Broadcast | Commit recipient acknowledgement (READ/CONFIRM/ACTION_CONFIRM) | DRAFT | v1 | Append ack lifecycle event + recipient state transition |
+| BCAST_ESCALATE_COMMIT | COMMIT | Broadcast | Commit escalation-to-sender lifecycle update for blocked/unreachable recipients | DRAFT | v1 | Append escalation lifecycle event |
+| BCAST_EXPIRE_COMMIT | COMMIT | Broadcast | Commit broadcast expiry and close unresolved recipient states | DRAFT | v1 | Append expire lifecycle event + envelope close |
+| BCAST_CANCEL_COMMIT | COMMIT | Broadcast | Commit broadcast cancellation by sender/policy | DRAFT | v1 | Append cancel lifecycle event + envelope close |
+| DELIVERY_SEND_COMMIT | COMMIT | Delivery | Commit provider send request for a prepared recipient payload | DRAFT | v1 | Append delivery provider attempt + proof reference |
+| DELIVERY_CANCEL_COMMIT | COMMIT | Delivery | Commit provider cancel request for an in-flight delivery attempt | DRAFT | v1 | Append provider cancel attempt + status update |
 | TENANT_CONTEXT_RESOLVE_DRAFT | DRAFT | Tenant | Resolve tenant and policy context before enterprise execution | DRAFT | v1 | Write context resolution result only |
 | QUOTA_CHECK_DRAFT | DRAFT | Quota | Evaluate deterministic budget/quota gates for a request | DRAFT | v1 | Write quota decision result only |
 | KMS_HANDLE_ISSUE_COMMIT | COMMIT | KMS | Issue short-lived credential handle for approved runtime use | DRAFT | v1 | Write handle issue/audit row |
@@ -132,7 +141,8 @@ Hard rules
 | CapabilityRequest | [`access_instances`, `access_overrides`, `capreq_current`] | [`capreq_ledger`, `capreq_current`] |
 | Reminder | [`reminders`, `reminder_occurrences`] | [`reminders`, `reminder_occurrences`, `reminder_delivery_attempts`] |
 | Emotional | [`preferences_current`, `memory_current`] | [`preferences_ledger`, `artifacts_ledger`, `audit_events`] |
-| Broadcast | [`broadcast_envelopes`, `broadcast_recipients`] | [`broadcast_envelopes`, `broadcast_recipients`, `broadcast_delivery_attempts`] |
+| Broadcast | [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`] | [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`, `comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_ack_ledger`] |
+| Delivery | [`comms.delivery_attempts_current`, `comms.delivery_provider_health`] | [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`] |
 | Tenant | [`tenant_companies`] | [`tenant_companies`] |
 | Quota | [`artifacts_ledger`] | [`artifacts_ledger`] |
 | KMS | [`governance_definitions`] | [`governance_definitions`] |
@@ -2196,6 +2206,301 @@ status: EXPIRED
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (broadcast_id)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_CREATE_DRAFT (DRAFT)
+
+- name: Broadcast Create Draft (Canonical)
+- owning_domain: Broadcast
+- simulation_type: DRAFT
+- purpose: Create deterministic broadcast envelope draft before any delivery commit path
+- triggers: BCAST_DRAFT_CREATE (process step)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: none (draft)
+- input_schema (minimum):
+```text
+tenant_id: string
+sender_user_id: string
+classification: enum (SIMPLE | PRIORITY | PRIVATE | CONFIDENTIAL | EMERGENCY)
+audience_spec: object (bounded)
+content_payload_ref: string
+expiry_at: timestamp_ms (optional)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+status: DRAFT_CREATED
+envelope_hash: string
+```
+- preconditions: sender identity verified; tenant scope valid; requested classification allowed by policy
+- postconditions: envelope draft exists; no external delivery call performed
+- side_effects: append lifecycle draft event + update envelope current projection
+- reads_tables[]: [`comms.broadcast_envelopes_current`]
+- writes_tables[]: [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`]
+- idempotency_key_rule: idempotent on (tenant_id + sender_user_id + envelope_hash + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_DELIVER_COMMIT (COMMIT)
+
+- name: Broadcast Deliver Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit one recipient delivery request for an approved broadcast envelope
+- triggers: BCAST_DELIVER_COMMIT_STEP (process step)
+- required_roles: POLICY_ROLE_BOUND + ACCESS_ALLOWED
+- required_approvals: policy-dependent (already resolved before commit)
+- required_confirmations: required for sender-confirm flows
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+recipient_id: string
+delivery_channel: enum (VOICE | PUSH | TEXT | EMAIL)
+delivery_payload_ref: string
+simulation_context: object
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+recipient_id: string
+recipient_status: enum (REQUESTED_AVAILABILITY | DELIVERED | DEFERRED | REJECTED | ESCALATED)
+delivery_request_ref: string
+```
+- preconditions: access decision is ALLOW; simulation context present; envelope not expired/canceled
+- postconditions: recipient transition recorded; delivery request is eligible for PH1.DELIVERY send commit
+- side_effects: append recipient delivery attempt + recipient state transition
+- reads_tables[]: [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + recipient_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_DEFER_COMMIT (COMMIT)
+
+- name: Broadcast Defer Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit defer choice and deterministic retry schedule for a broadcast recipient
+- triggers: BCAST_DEFER_COMMIT_STEP (process step)
+- required_roles: recipient or policy-authorized actor
+- required_approvals: none
+- required_confirmations: required if defer target time is ambiguous
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+recipient_id: string
+defer_until: timestamp_ms (optional)
+defer_duration_ms: int (optional)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+recipient_id: string
+recipient_status: DEFERRED
+next_retry_at: timestamp_ms
+```
+- preconditions: recipient is in pending or delivered-without-ack state; defer policy bounds pass
+- postconditions: deterministic retry schedule persisted
+- side_effects: append defer lifecycle event + update recipient retry schedule
+- reads_tables[]: [`comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + recipient_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_ACK_COMMIT (COMMIT)
+
+- name: Broadcast Ack Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit recipient acknowledgment against required ack mode
+- triggers: BCAST_ACK_COMMIT_STEP (process step)
+- required_roles: recipient or policy-authorized actor
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+recipient_id: string
+ack_type: enum (READ | CONFIRM | ACTION_CONFIRM)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+recipient_id: string
+recipient_status: ACKNOWLEDGED
+ack_record_id: string
+```
+- preconditions: recipient received broadcast; ack_type satisfies envelope required_ack
+- postconditions: ack state recorded and pending retries canceled
+- side_effects: append ack event + recipient state transition
+- reads_tables[]: [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_ack_ledger`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + recipient_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_ESCALATE_COMMIT (COMMIT)
+
+- name: Broadcast Escalate Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit escalation lifecycle update to sender for blocked or unreachable recipients
+- triggers: BCAST_ESCALATE_COMMIT_STEP (process step)
+- required_roles: policy-authorized system actor
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+recipient_id: string (optional)
+escalation_reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+escalation_status: enum (RECORDED | SENT)
+recipient_status: ESCALATED
+```
+- preconditions: recipient has retry exhausted or policy-blocked path
+- postconditions: escalation recorded and recipient state updated
+- side_effects: append escalation lifecycle event
+- reads_tables[]: [`comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + escalation_reason_code + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_EXPIRE_COMMIT (COMMIT)
+
+- name: Broadcast Expire Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit broadcast expiry and close unresolved recipient states
+- triggers: BCAST_EXPIRE_COMMIT_STEP (process step)
+- required_roles: policy-authorized system actor
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+expired_at: timestamp_ms
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+status: EXPIRED
+expired_recipients_count: int
+```
+- preconditions: envelope exists and not terminal; expiry policy reached
+- postconditions: envelope closed and unresolved recipient states marked expired
+- side_effects: append expire lifecycle event + envelope close projection
+- reads_tables[]: [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### BCAST_CANCEL_COMMIT (COMMIT)
+
+- name: Broadcast Cancel Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Commit sender/policy cancellation of a broadcast before expiry
+- triggers: BCAST_CANCEL_COMMIT_STEP (process step)
+- required_roles: sender authority or policy-authorized actor
+- required_approvals: policy-dependent
+- required_confirmations: required for sender-triggered cancel
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+cancel_reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+status: CANCELED
+```
+- preconditions: envelope exists and not terminal
+- postconditions: envelope canceled; unresolved recipients closed with cancel reason
+- side_effects: append cancel lifecycle event + envelope close projection
+- reads_tables[]: [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### DELIVERY_SEND_COMMIT (COMMIT)
+
+- name: Delivery Send Commit (Canonical)
+- owning_domain: Delivery
+- simulation_type: COMMIT
+- purpose: Commit provider send request and persist delivery proof reference
+- triggers: DELIVERY_SEND_COMMIT_STEP (process step)
+- required_roles: POLICY_ROLE_BOUND + ACCESS_ALLOWED
+- required_approvals: none (already resolved pre-commit)
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+message_id: string
+recipient: string
+channel: enum (SMS | EMAIL | WHATSAPP | WECHAT | APP_PUSH)
+payload_hash: string
+provider: string
+simulation_context: object
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+delivery_attempt_id: string
+provider_message_ref: string (optional)
+delivery_status: enum (QUEUED | SENT | FAILED)
+```
+- preconditions: simulation_context present; provider routing allowed by policy; secrets resolved via handles
+- postconditions: provider attempt persisted with deterministic status mapping
+- side_effects: append provider send attempt + update current attempt projection
+- reads_tables[]: [`comms.delivery_attempts_current`, `comms.delivery_provider_health`]
+- writes_tables[]: [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`]
+- idempotency_key_rule: idempotent on (tenant_id + message_id + recipient + channel + payload_hash + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### DELIVERY_CANCEL_COMMIT (COMMIT)
+
+- name: Delivery Cancel Commit (Canonical)
+- owning_domain: Delivery
+- simulation_type: COMMIT
+- purpose: Commit provider cancel request for an in-flight delivery attempt
+- triggers: DELIVERY_CANCEL_COMMIT_STEP (process step)
+- required_roles: policy-authorized actor
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+delivery_attempt_id: string
+provider: string
+simulation_context: object
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+delivery_attempt_id: string
+cancel_status: enum (CANCELED | NOT_SUPPORTED | FAILED)
+```
+- preconditions: simulation_context present; attempt exists and is cancel-eligible
+- postconditions: cancel result recorded deterministically and projected
+- side_effects: append provider cancel attempt + update current attempt projection
+- reads_tables[]: [`comms.delivery_attempts_current`]
+- writes_tables[]: [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`]
+- idempotency_key_rule: idempotent on (tenant_id + delivery_attempt_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ONB_BIZ_START_DRAFT (DRAFT)

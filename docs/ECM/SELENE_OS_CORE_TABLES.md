@@ -19,7 +19,14 @@
 ### `OS_WORK_ORDER_CURRENT_READ`
 - `name`: Read work order current state
 - `input_schema`: `(tenant_id, work_order_id)`
-- `output_schema`: `Option<WorkOrderCurrentRecord>`
+- `output_schema`: `Option<WorkOrderCurrentRecord>` including continuity fields:
+  - `asked_fields_json`
+  - `resolved_fields_json`
+  - `prompt_dedupe_keys_json`
+  - `external_approval_pending`
+  - `external_approval_request_id`
+  - `external_approval_target_user_id`
+  - `external_approval_expires_at`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
@@ -50,6 +57,10 @@
 - `output_schema`: `(work_order_id, status=CANCELED, last_event_id)`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
+
+## Continuity + No-Repeat Rules
+- Selene OS uses `asked_fields_json` and `prompt_dedupe_keys_json` to enforce global never-ask-twice behavior.
+- If `external_approval_pending=true`, Selene OS should enter wait posture (single wait notice, no repeated prompts) until state changes.
 
 ## Failure Modes + Reason Codes
 - append-only mutation attempt: `OS_WORK_ORDER_APPEND_ONLY_VIOLATION`

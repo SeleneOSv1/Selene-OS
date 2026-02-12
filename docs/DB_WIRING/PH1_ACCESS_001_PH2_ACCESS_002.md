@@ -92,6 +92,30 @@
   - `ACCESS_DEVICE_UNTRUSTED`
   - `ACCESS_SENSITIVE_DENY`
 
+### Read-only gate decision output contract (universal)
+- output fields (deterministic):
+  - `access_decision` in `ALLOW | DENY | ESCALATE`
+  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED`)
+  - `required_approver_selector` (optional; deterministic selector payload)
+  - `requested_scope` (optional; bounded)
+  - `requested_duration` (optional; bounded)
+- decision rule:
+  - if requester is an in-tenant employee and action is approvable by AP policy, return `ESCALATE` (never silent `DENY`)
+  - return `DENY` only when policy forbids an approval path
+
+### OS-orchestrated escalation contract (design)
+- Selene OS handles escalation; PH1.ACCESS/PH2.ACCESS never sends notifications.
+- flow:
+  - gate returns `ESCALATE` with `AP_APPROVAL_REQUIRED`
+  - Selene OS uses PH1.BCAST (simulation-gated) to contact approver
+  - Selene OS waits in deterministic pending state (no repeated prompts)
+  - approver response is one of: `ONE_SHOT | TEMPORARY(duration) | PERMANENT | DENY`
+  - Selene OS applies approval result via existing PH2 override simulations
+  - Selene OS re-runs access check before any execution path
+- fail-closed:
+  - approver denies -> final refusal to requester with reason code
+  - no override write -> no execution
+
 ## 5) Relations & Keys
 
 FKs:
@@ -150,6 +174,10 @@ PH1.ACCESS/PH2.ACCESS writes and gate outcomes must emit PH1.J audit events with
   - `at_access_db_03_idempotency_dedupe_works`
 - `AT-ACCESS-DB-04` current-table scope consistency (no PH2 current projection rebuild table in this slice)
   - `at_access_db_04_current_table_no_ledger_rebuild_required`
+- `AT-ACCESS-06` ESCALATE path triggers AP approval request via PH1.BCAST and applies override only via simulation
+  - `at_access_06_escalate_via_bcast_and_simulation_only`
+- `AT-ACCESS-07` AP denied returns final refusal and executes no side effects
+  - `at_access_07_ap_denied_final_refusal_no_side_effects`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
