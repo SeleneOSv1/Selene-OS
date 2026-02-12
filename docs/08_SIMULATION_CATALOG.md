@@ -107,6 +107,8 @@ Locked schema rules:
 | BCAST_CANCEL_COMMIT | COMMIT | Broadcast | Commit broadcast cancellation by sender/policy | DRAFT | v1 | Append cancel lifecycle event + envelope close |
 | DELIVERY_SEND_COMMIT | COMMIT | Delivery | Commit provider send request for a prepared recipient payload | DRAFT | v1 | Append delivery provider attempt + proof reference |
 | DELIVERY_CANCEL_COMMIT | COMMIT | Delivery | Commit provider cancel request for an in-flight delivery attempt | DRAFT | v1 | Append provider cancel attempt + status update |
+| SMS_SETUP_SIM | COMMIT | OnboardingSms | Commit SMS app setup completion state for a user | DRAFT | v1 | Append SMS setup lifecycle event + current projection update |
+| LEARN_MODEL_UPDATE_SIM | COMMIT | LearningAdaptive | Commit learning feedback updates for draft/language adaptation hints | DRAFT | v1 | Append learning feedback events + current hint projection update |
 | TENANT_CONTEXT_RESOLVE_DRAFT | DRAFT | Tenant | Resolve tenant and policy context before enterprise execution | DRAFT | v1 | Write context resolution result only |
 | QUOTA_CHECK_DRAFT | DRAFT | Quota | Evaluate deterministic budget/quota gates for a request | DRAFT | v1 | Write quota decision result only |
 | KMS_HANDLE_ISSUE_COMMIT | COMMIT | KMS | Issue short-lived credential handle for approved runtime use | DRAFT | v1 | Write handle issue/audit row |
@@ -143,6 +145,9 @@ Hard rules
 | Emotional | [`preferences_current`, `memory_current`] | [`preferences_ledger`, `artifacts_ledger`, `audit_events`] |
 | Broadcast | [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`] | [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`, `comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_ack_ledger`] |
 | Delivery | [`comms.delivery_attempts_current`, `comms.delivery_provider_health`] | [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`] |
+| OnboardingSms | [`comms.sms_app_setup_current`] | [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`] |
+| Language | [`conversation_ledger`] | [`audit_events`] |
+| LearningAdaptive | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`] | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`] |
 | Tenant | [`tenant_companies`] | [`tenant_companies`] |
 | Quota | [`artifacts_ledger`] | [`artifacts_ledger`] |
 | KMS | [`governance_definitions`] | [`governance_definitions`] |
@@ -2501,6 +2506,71 @@ cancel_status: enum (CANCELED | NOT_SUPPORTED | FAILED)
 - reads_tables[]: [`comms.delivery_attempts_current`]
 - writes_tables[]: [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`]
 - idempotency_key_rule: idempotent on (tenant_id + delivery_attempt_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### SMS_SETUP_SIM (COMMIT)
+
+- name: SMS App Setup Commit
+- owning_domain: OnboardingSms
+- simulation_type: COMMIT
+- purpose: Commit one user SMS app setup state transition for send/receive readiness
+- triggers: MESSAGE_COMPOSE_AND_SEND and onboarding setup flows
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: required when permissions are not yet granted
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+sms_read_permission_ok: bool
+sms_send_permission_ok: bool
+setup_source: enum (ONBOARDING | FIRST_SEND_REQUEST | SETTINGS)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+sms_app_setup_complete: bool
+setup_state: enum (IN_PROGRESS | COMPLETE | BLOCKED)
+```
+- preconditions: identity verified; user scope valid
+- postconditions: setup lifecycle event appended and current setup projection updated
+- side_effects: append setup event + update setup current state
+- reads_tables[]: [`comms.sms_app_setup_current`]
+- writes_tables[]: [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`]
+- idempotency_key_rule: idempotent on (tenant_id + user_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### LEARN_MODEL_UPDATE_SIM (COMMIT)
+
+- name: Learning Adaptive Feedback Commit
+- owning_domain: LearningAdaptive
+- simulation_type: COMMIT
+- purpose: Commit learning feedback updates that influence future draft and language hint ranking
+- triggers: post-send feedback and correction loops
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+feedback_type: enum (DRAFT_CORRECTION | LANGUAGE_USAGE)
+feedback_payload_ref: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+feedback_event_id: string
+quality_delta_bucket: string
+```
+- preconditions: feedback payload exists and belongs to requester scope
+- postconditions: feedback event is appended and current adaptation projection updated
+- side_effects: append learning feedback event + update adaptation projection
+- reads_tables[]: [`learning.adaptive_feedback_current`]
+- writes_tables[]: [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`]
+- idempotency_key_rule: idempotent on (tenant_id + user_id + feedback_type + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ONB_BIZ_START_DRAFT (DRAFT)

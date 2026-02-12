@@ -92,13 +92,13 @@ Row 25 lock proof is ledger discipline:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-LEARN-DB-01` tenant isolation enforced
+- `AT-LEARNDB-01` tenant isolation enforced
   - `at_learn_db_01_tenant_isolation_enforced`
-- `AT-LEARN-DB-02` append-only enforced
+- `AT-LEARNDB-02` append-only enforced
   - `at_learn_db_02_append_only_enforced`
-- `AT-LEARN-DB-03` idempotency dedupe works
+- `AT-LEARNDB-03` idempotency dedupe works
   - `at_learn_db_03_idempotency_dedupe_works`
-- `AT-LEARN-DB-04` ledger-only (no current-table rebuild in this row)
+- `AT-LEARNDB-04` ledger-only (no current-table rebuild in this row)
   - `at_learn_db_04_ledger_only_no_current_rebuild_required`
 
 Implementation references:

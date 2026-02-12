@@ -28,7 +28,7 @@
 - `input_schema`: `(user_id, access_engine_instance_id, requested_action, access_request_context, device_trust_level, sensitive_data_request, now)`
 - `output_schema`: `Result<AccessGateDecisionRecord, StorageError>` where `AccessGateDecisionRecord` includes:
   - `access_decision` in `ALLOW | DENY | ESCALATE`
-  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED`)
+  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED` and `SMS_APP_SETUP_REQUIRED`)
   - `required_approver_selector` (optional)
   - `requested_scope` (optional)
   - `requested_duration` (optional)
@@ -55,9 +55,11 @@
 - tenant/user scope mismatch: `ACCESS_SCOPE_VIOLATION`
 - contract validation failure: `ACCESS_CONTRACT_VALIDATION_FAILED`
 - policy denies all approval paths: `ACCESS_DENY_NO_APPROVAL_PATH`
+- SMS setup required before SMS send path: `ACCESS_SMS_SETUP_REQUIRED`
 
 ## Escalation Rule (Deterministic)
 - `ACCESS_GATE_DECIDE_ROW` must return `ESCALATE` (not `DENY`) when action is approvable by AP policy.
+- `ACCESS_GATE_DECIDE_ROW` must return `ESCALATE` when SMS delivery is requested and `sms_app_setup_complete=false` (`ACCESS_SMS_SETUP_REQUIRED`).
 - `DENY` is valid only when no approval path exists (`ACCESS_DENY_NO_APPROVAL_PATH`).
 - Selene OS orchestrates all escalation delivery and override application; this engine never triggers PH1.BCAST/PH1.DELIVERY directly.
 

@@ -95,12 +95,13 @@
 ### Read-only gate decision output contract (universal)
 - output fields (deterministic):
   - `access_decision` in `ALLOW | DENY | ESCALATE`
-  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED`)
+  - `escalation_trigger` (optional; includes `AP_APPROVAL_REQUIRED` and `SMS_APP_SETUP_REQUIRED`)
   - `required_approver_selector` (optional; deterministic selector payload)
   - `requested_scope` (optional; bounded)
   - `requested_duration` (optional; bounded)
 - decision rule:
   - if requester is an in-tenant employee and action is approvable by AP policy, return `ESCALATE` (never silent `DENY`)
+  - if `requested_action` requires SMS delivery and `sms_app_setup_complete=false`, return `ESCALATE` with `SMS_APP_SETUP_REQUIRED`
   - return `DENY` only when policy forbids an approval path
 
 ### OS-orchestrated escalation contract (design)
@@ -115,6 +116,7 @@
 - fail-closed:
   - approver denies -> final refusal to requester with reason code
   - no override write -> no execution
+  - SMS setup unresolved -> no SMS delivery execution path
 
 ## 5) Relations & Keys
 
@@ -178,6 +180,8 @@ PH1.ACCESS/PH2.ACCESS writes and gate outcomes must emit PH1.J audit events with
   - `at_access_06_escalate_via_bcast_and_simulation_only`
 - `AT-ACCESS-07` AP denied returns final refusal and executes no side effects
   - `at_access_07_ap_denied_final_refusal_no_side_effects`
+- `AT-ACCESS-08` SMS delivery request with incomplete setup returns `ESCALATE`/`SMS_APP_SETUP_REQUIRED`
+  - `at_access_08_sms_setup_required_escalate`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

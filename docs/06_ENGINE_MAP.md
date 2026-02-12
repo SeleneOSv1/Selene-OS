@@ -31,6 +31,12 @@ This file is non-canonical by design.
 - `PH1.VOICE.ID`: `docs/DB_WIRING/PH1_VOICE_ID.md` + `docs/ECM/PH1_VOICE_ID.md`
 - `PH1.ACCESS.001_PH2.ACCESS.002`: `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` + `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
 
+## Phase E Navigation (Onboarding/Delivery Controls)
+
+- `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
+- `PH1.BCAST`: `docs/DB_WIRING/PH1_BCAST.md` + `docs/ECM/PH1_BCAST.md`
+- `PH1.DELIVERY`: `docs/DB_WIRING/PH1_DELIVERY.md` + `docs/ECM/PH1_DELIVERY.md`
+
 ## Phase C Navigation (Perception + Understanding + Orchestration)
 
 - `PH1.K`: `docs/DB_WIRING/PH1_K.md` + `docs/ECM/PH1_K.md`
@@ -43,6 +49,7 @@ This file is non-canonical by design.
 ## Phase F Navigation (Memory/Learning)
 
 - `PH1.M (vNext++)`: `docs/DB_WIRING/PH1_M.md` + `docs/ECM/PH1_M.md` + `docs/12_MEMORY_ARCHITECTURE.md` (threads + graph + paging + tiered auto-resume + pending WorkOrder continuity + retention mode)
+- `PH1.LEARNING_ADAPTIVE`: `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` + `docs/ECM/PH1_LEARNING_ADAPTIVE.md`
 - Memory workflow blueprints:
   - `docs/BLUEPRINTS/MEMORY_QUERY.md`
   - `docs/BLUEPRINTS/MEMORY_FORGET_REQUEST.md`
@@ -68,6 +75,14 @@ Always-on turn (voice):
 PH1.K -> PH1.W -> PH1.VOICE.ID -> PH1.C -> PH1.SRL -> (PH1.PUZZLE optional) -> PH1.NLP -> PH1.X
 ```
 
+Pre-intent multilingual normalization (voice and text paths):
+
+```text
+PH1.LANG -> PH1.SRL -> PH1.NLP
+```
+
+This pipeline normalizes broken/fragmented/code-switched utterances before intent routing.
+
 Assists (called by Selene OS, never engine-to-engine):
 - PH1.ENDPOINT assists capture boundaries (inputs from PH1.K/PH1.C; outputs endpoint hints to Selene OS, which passes them to PH1.C/PH1.K).
 - PH1.LANG assists PH1.C/PH1.SRL/PH1.NLP.
@@ -80,6 +95,7 @@ Assists (called by Selene OS, never engine-to-engine):
 
 Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 - Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.
+- If delivery method is SMS and `sms_app_setup_complete=false`, Selene OS routes to `PH1.ONBOARDING_SMS` before continuing.
 - For approved delivery paths: Selene OS runs simulation commit steps, then calls PH1.BCAST lifecycle capabilities.
 - For per-recipient provider sends: Selene OS calls PH1.DELIVERY inside COMMIT simulation context and feeds resulting proof/status back into PH1.BCAST lifecycle state.
 - AP escalation wiring:
@@ -90,11 +106,12 @@ Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 
 Learning wiring (not in-turn execution path):
 - PH1.LISTEN/PH1.PAE/PH1.CACHE/PH1.MULTI/PH1.CONTEXT feed hints and policy snapshots only (no execution path).
+- PH1.LEARNING_ADAPTIVE consumes user corrections/feedback and emits ranking hints for future PH1.WRITE/PH1.NLP quality.
 - PH1.PATTERN/PH1.RLL produce OFFLINE artifact proposals only.
 
 Wiring class declaration:
 - ALWAYS_ON: `PH1.K`, `PH1.W`, `PH1.VOICE.ID`, `PH1.C`, `PH1.SRL`, `PH1.NLP`, `PH1.X`, `PH1.CONTEXT`
-- TURN_OPTIONAL: `PH1.PUZZLE`, `PH1.ENDPOINT`, `PH1.LANG`, `PH1.ATTN`, `PH1.DOC`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.WEBINT`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.PAE`, `PH1.CACHE`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`
+- TURN_OPTIONAL: `PH1.PUZZLE`, `PH1.ENDPOINT`, `PH1.LANG`, `PH1.ATTN`, `PH1.DOC`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.WEBINT`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.PAE`, `PH1.CACHE`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.ONBOARDING_SMS`, `PH1.LEARNING_ADAPTIVE`
 - OFFLINE_ONLY: `PH1.PATTERN`, `PH1.RLL`
 
 ## Design Hygiene

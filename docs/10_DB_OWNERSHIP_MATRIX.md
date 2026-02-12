@@ -42,6 +42,7 @@ Detailed contracts source:
 | PH1.WRITE | Presentation audit writes only | `docs/DB_WIRING/PH1_WRITE.md` |
 | PH1.TTS | TTS audit/runtime rows as scoped | `docs/DB_WIRING/PH1_TTS.md` |
 | PH1.E | Tool router audit/cache rows as scoped | `docs/DB_WIRING/PH1_E.md` |
+| PH1.ONBOARDING_SMS | `comms.sms_app_setup_ledger/current` (SMS app setup lifecycle truth before SMS send) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | Onboarding draft/token lifecycle tables | `docs/DB_WIRING/PH1_LINK.md` |
 | PH1.ONB | Onboarding orchestration tables | `docs/DB_WIRING/PH1_ONB.md` |
 | PH1.POSITION | Position + lifecycle tables | `docs/DB_WIRING/PH1_POSITION.md` |
@@ -54,6 +55,7 @@ Detailed contracts source:
 | PH1.M | `memory_metrics_ledger` (Q12-MEM..Q18-MEM quality telemetry; non-authoritative) | `docs/DB_WIRING/PH1_M.md` |
 | PH1.PERSONA | Persona-related bounded writes (if present) | `docs/DB_WIRING/PH1_PERSONA.md` |
 | PH1.LEARN_FEEDBACK_KNOW | Learning feedback/artifact tables as scoped | `docs/DB_WIRING/PH1_LEARN_FEEDBACK_KNOW.md` |
+| PH1.LEARNING_ADAPTIVE | `learning.adaptive_feedback_ledger/current`, `learning.adaptive_language_usage_ledger` (non-authoritative quality adaptation signals) | `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` |
 | PH1.CAPREQ | Capability request lifecycle tables | `docs/DB_WIRING/PH1_CAPREQ.md` |
 | PH1.EXPLAIN | Planned; expected explanation mapping + audit-only writes scope (to be locked) | `docs/DB_WIRING/PH1_EXPLAIN.md` (stub) |
 | PH1.REM | Planned; reminder scheduling/delivery tables scope (to be locked) | `docs/DB_WIRING/PH1_REM.md` (stub) |

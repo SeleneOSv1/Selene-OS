@@ -45,12 +45,14 @@ Direction lock:
 | PH1.E | E Onboarding/Tools | Control | Authoritative (read-only tools) | Tool routing for read-only queries | `docs/DB_WIRING/PH1_E.md` | `docs/ECM/PH1_E.md` |
 | PH1.BCAST | E Onboarding/Tools | Control | Authoritative (broadcast lifecycle only) | Broadcast lifecycle orchestrator (draft/deliver/ack/defer/retry/expire; simulation-gated for external delivery; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_BCAST.md` | `docs/ECM/PH1_BCAST.md` |
 | PH1.DELIVERY | E Onboarding/Tools | Control | Authoritative (delivery attempt truth only) | Provider gateway for SMS/Email/WhatsApp/WeChat delivery attempts (simulation-gated; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_DELIVERY.md` | `docs/ECM/PH1_DELIVERY.md` |
+| PH1.ONBOARDING_SMS | E Onboarding/Tools | Control | Authoritative (setup lifecycle only) | SMS app setup verification/confirmation before any SMS send path (placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` | `docs/ECM/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | E Onboarding/Tools | Control/Governance | Authoritative | Invite link lifecycle (simulation-gated) | `docs/DB_WIRING/PH1_LINK.md` | `docs/ECM/PH1_LINK.md` |
 | PH1.ONB | E Onboarding/Tools | Governance/Control | Authoritative | Onboarding orchestration | `docs/DB_WIRING/PH1_ONB.md` | `docs/ECM/PH1_ONB.md` |
 | PH1.POSITION | E Onboarding/Tools | Governance/Storage | Authoritative | Position truth lifecycle | `docs/DB_WIRING/PH1_POSITION.md` | `docs/ECM/PH1_POSITION.md` |
 | PH1.M | F Memory/Learning | Storage/Learning | Non-Authoritative | Memory Engine vNext (atoms + retrieval + emotional threads + device persistence via Engine B; canonical narrative: `docs/12_MEMORY_ARCHITECTURE.md`) | `docs/DB_WIRING/PH1_M.md` | `docs/ECM/PH1_M.md` |
 | PH1.PERSONA | F Memory/Learning | Learning | Non-Authoritative | User style/tone profile hints | `docs/DB_WIRING/PH1_PERSONA.md` | `docs/ECM/PH1_PERSONA.md` |
 | PH1.LEARN_FEEDBACK_KNOW | F Memory/Learning | Learning | Non-Authoritative | Feedback + learning artifacts + knowledge packs | `docs/DB_WIRING/PH1_LEARN_FEEDBACK_KNOW.md` | `docs/ECM/PH1_LEARN_FEEDBACK_KNOW.md` |
+| PH1.LEARNING_ADAPTIVE | F Memory/Learning | Learning | Non-Authoritative | Adaptive learning from draft/language feedback to improve future phrasing hints (placement: TURN_OPTIONAL async) | `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` | `docs/ECM/PH1_LEARNING_ADAPTIVE.md` |
 | PH1.CAPREQ | G Capability Requests | Governance/Control | Authoritative (simulation-gated lifecycle) | Capability request lifecycle state machine | `docs/DB_WIRING/PH1_CAPREQ.md` | `docs/ECM/PH1_CAPREQ.md` |
 
 ## Phase C Extension Engines (Wiring Web Added)
@@ -60,7 +62,7 @@ All rows below are non-executing assist engines. Actions remain controlled by Se
 | engine_id | phase | layer | authority | primary_role | placement (wiring class) | db_wiring | ecm |
 |---|---|---|---|---|---|---|---|
 | PH1.ENDPOINT | C Perception/NLP/X | Perception Assist | Non-Authoritative | Capture endpoint boundary assist | TURN_OPTIONAL (after PH1.K, before PH1.C finalization) | `docs/DB_WIRING/PH1_ENDPOINT.md` | `docs/ECM/PH1_ENDPOINT.md` |
-| PH1.LANG | C Perception/NLP/X | Understanding Assist | Non-Authoritative | Language hinting for C/SRL/NLP | TURN_OPTIONAL (language ambiguity trigger) | `docs/DB_WIRING/PH1_LANG.md` | `docs/ECM/PH1_LANG.md` |
+| PH1.LANG | C Perception/NLP/X | Understanding Assist | Non-Authoritative | Multilingual detection, segmentation, and response-language mapping for C/SRL/NLP | TURN_OPTIONAL (pre-intent normalization + ambiguity trigger) | `docs/DB_WIRING/PH1_LANG.md` | `docs/ECM/PH1_LANG.md` |
 | PH1.SRL | C Perception/NLP/X | Understanding | Non-Authoritative | Semantic role labeling scaffold | ALWAYS_ON (after PH1.C transcript_ok) | `docs/DB_WIRING/PH1_SRL.md` | `docs/ECM/PH1_SRL.md` |
 | PH1.PUZZLE | C Perception/NLP/X | Understanding Assist | Non-Authoritative | Ambiguity candidate generation | TURN_OPTIONAL (after PH1.SRL when ambiguous) | `docs/DB_WIRING/PH1_PUZZLE.md` | `docs/ECM/PH1_PUZZLE.md` |
 | PH1.ATTN | C Perception/NLP/X | Understanding Assist | Non-Authoritative | Attention weighting hints | TURN_OPTIONAL (NLP/context ranking assist) | `docs/DB_WIRING/PH1_ATTN.md` | `docs/ECM/PH1_ATTN.md` |

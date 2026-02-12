@@ -35,6 +35,18 @@ Section 1: Constitutional Laws (High-Level)
 7) Auditability Law
 - Every critical gate decision must be reason-coded and auditable.
 
+8) Global Never-Ask-Twice Law
+- If a question is already answered and persisted with valid context, Selene must not re-ask it.
+- Re-asking is allowed only for explicit user correction/change or deterministic invalidation/expiry.
+
+9) SMS Setup Gate Law
+- SMS delivery is blocked until SMS onboarding/setup is complete for that user.
+- Setup state is simulation-gated and must be auditable.
+
+10) Multilingual Normalization Law
+- Broken/fragmented/code-switched input must be normalized before final intent routing.
+- Selene must respond in the detected/selected user language context.
+
 Section 2: Canonical Pointer Map (Authoritative References)
 
 Memory
@@ -52,6 +64,13 @@ Perception and Conversation
 
 Access
 - `PH1.ACCESS.001 + PH2.ACCESS.002`: `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` + `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
+
+Onboarding and Messaging Setup
+- `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
+- `MESSAGE_COMPOSE_AND_SEND` process: `docs/BLUEPRINTS/MESSAGE_COMPOSE_AND_SEND.md`
+
+Learning Adaptation
+- `PH1.LEARNING_ADAPTIVE`: `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` + `docs/ECM/PH1_LEARNING_ADAPTIVE.md`
 
 Process and Execution
 - Blueprints index: `docs/09_BLUEPRINT_REGISTRY.md`
