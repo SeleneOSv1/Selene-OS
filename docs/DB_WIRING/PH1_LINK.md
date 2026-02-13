@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `send`, `open/activate`, `revoke`, recovery/forward-block/failure handling) with idempotent delivery proof history and strict token->draft mapping.
+- `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `open/activate`, `revoke`, recovery/forward-block) with strict token->draft mapping and deterministic binding guards.
 - canonical identifier rule: canonical external identifier is `token_id` (`onboarding_link_tokens.token_id`); `link_id` is deprecated alias only.
 - `version`: `v1`
 - `status`: `PASS`
@@ -37,10 +37,9 @@
   - retries resolve deterministically as no-op/reused result
 
 ### PH1.F in-memory lifecycle slice (runtime lock for this row)
-- `links` (current-state map) + `link_delivery_proofs` (append-only proof ledger)
+- `links` (current-state map)
 - invariants:
-  - link delivery proofs are append-only
-  - resend/failure handling is idempotent
+  - lifecycle transitions are deterministic and replay-safe
   - activated links enforce deterministic device binding; mismatch becomes `BLOCKED`
 
 ## 3) Reads (dependencies)
@@ -84,14 +83,7 @@
 - idempotency key rule:
   - dedupe on `(draft_id, idempotency_key)`
 
-### `LINK_INVITE_SEND_COMMIT`
-- writes: token status transition (`DRAFT_CREATED -> SENT`) + delivery proof append
-- required fields:
-  - `token_id`, `delivery_method`, recipient hash, `delivery_proof_ref`, idempotency key
-- idempotency key rule:
-  - dedupe on `(token_id, delivery_method, recipient_contact_hash, idempotency_key)`
-- legacy scope note:
-  - `LINK_INVITE_SEND_COMMIT` is legacy; link delivery is performed by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
+Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT` is legacy and must not be used; link delivery is performed only by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
 
 ### `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
 - writes: token status transition to `ACTIVATED`, bound device fingerprint hash
@@ -108,7 +100,6 @@
 ### additional locked simulations (v1 slice)
 - `LINK_INVITE_EXPIRED_RECOVERY_COMMIT`
 - `LINK_INVITE_FORWARD_BLOCK_COMMIT`
-- `LINK_DELIVERY_FAILURE_HANDLING_COMMIT`
 
 ## 5) Relations & Keys
 
@@ -131,18 +122,17 @@ State/boundary constraints:
 
 PH1.LINK emits deterministic proof artifacts and reason-coded outcomes:
 - link draft generation outcome (`payload_hash`, `expires_at`, `status`)
-- delivery proof records (`delivery_proof_ref`, status, idempotency key)
 - activation/block/revoke outcomes (bounded status transitions)
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 - `AT-LINK-DB-01` tenant isolation enforced
   - `at_link_db_01_tenant_isolation_enforced`
-- `AT-LINK-DB-02` append-only enforcement for delivery proof ledger
+- `AT-LINK-DB-02` append-only enforcement for draft-write dedupe ledger
   - `at_link_db_02_append_only_enforced`
 - `AT-LINK-DB-03` idempotency dedupe works
   - `at_link_db_03_idempotency_dedupe_works`
-- `AT-LINK-DB-04` current-state consistency with lifecycle + proof history
+- `AT-LINK-DB-04` current-state consistency with lifecycle transitions + token/draft mapping
   - `at_link_db_04_current_table_consistency_with_lifecycle_and_proofs`
 
 Implementation references:

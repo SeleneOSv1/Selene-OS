@@ -2,8 +2,8 @@
 
 ## Engine Header
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle with token->draft mapping, delivery proofs, activation binding, revoke/recovery, and forward-block guards.
-- `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime maps/proofs
+- `purpose`: Persist deterministic onboarding/referral link lifecycle with token->draft mapping, activation binding, revoke/recovery, and forward-block guards.
+- `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime state
 - `version`: `v1`
 - `status`: `ACTIVE`
 
@@ -29,21 +29,6 @@
 - `output_schema`: `Option<LinkRecord>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
-
-### `PH1LINK_DELIVERY_PROOFS_FOR_LINK_ROW`
-- `name`: Read delivery proof history for one link
-- `input_schema`: `token_id`
-- `output_schema`: `LinkDeliveryProofRecord[]`
-- `allowed_callers`: `SELENE_OS_ONLY`
-- `side_effects`: `NONE`
-
-### `PH1LINK_INVITE_SEND_COMMIT_ROW`
-- `name`: Commit link send + append delivery proof
-- `input_schema`: `(now, token_id, delivery_method, recipient_contact, idempotency_key)`
-- `output_schema`: `Result<LinkDeliveryProofRecord, StorageError>`
-- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
-- `side_effects`: `DECLARED (DB_WRITE)`
-- `legacy_note`: `PH1LINK_INVITE_SEND_COMMIT_ROW` is legacy and is not referenced by `LINK_INVITE`; `token_id` is canonical (`link_id` deprecated alias). Link delivery is handled by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
 
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
@@ -73,26 +58,12 @@
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
-### `PH1LINK_DELIVERY_FAILURE_HANDLING_COMMIT_ROW`
-- `name`: Commit delivery failure handling/retry proof row
-- `input_schema`: `(now, token_id, attempt, idempotency_key)`
-- `output_schema`: `Result<LinkDeliveryProofRecord, StorageError>`
-- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
-- `side_effects`: `DECLARED (DB_WRITE)`
-
-### `PH1LINK_APPEND_ONLY_GUARD`
-- `name`: Guard against overwrite of link delivery proof ledger rows
-- `input_schema`: `delivery_proof_ref`
-- `output_schema`: `Result<(), StorageError>`
-- `allowed_callers`: `SELENE_OS_ONLY`
-- `side_effects`: `NONE`
-
 ## Failure Modes + Reason Codes
 - PH1.LINK uses deterministic reason-coded outcomes from simulation and lifecycle guards:
   - tenant scope mismatch
   - invalid token state transition
   - forwarded-device block
-  - delivery idempotency replay
+  - idempotency replay
 - all failure paths are fail-closed and auditable.
 
 ## Audit Emission Requirements Per Capability
@@ -103,3 +74,6 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1LinkRepo`)
 - `docs/DB_WIRING/PH1_LINK.md`
+
+## Legacy (Do Not Wire)
+- `LINK_INVITE_SEND_COMMIT` is legacy and must not be wired to PH1.LINK. Use `LINK_DELIVER_INVITE` with `PH1.BCAST` + `PH1.DELIVERY`.
