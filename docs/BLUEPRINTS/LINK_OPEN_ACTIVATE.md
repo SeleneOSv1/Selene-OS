@@ -11,11 +11,14 @@
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
 
 ## 1B) Handoff Contract
-- `LINK_OPEN_ACTIVATE` output is authoritative for `token_id` validity, first-open `device_fingerprint` binding, and `draft_id` resolution.
+- `LINK_OPEN_ACTIVATE` output is authoritative for:
+  - token validity (`expired/revoked/invalid`)
+  - first-open `device_fingerprint` binding
+  - `draft_id` resolution
 - On success, Selene OS starts `ONB_INVITED` with:
   - `draft_id` (required)
-  - `token_id` (required at activation; optional for ONB trace/audit)
   - `device_fingerprint` (required)
+  - `token_id` (required at activation; optional for ONB trace/audit only)
 
 ## 2) Required Inputs
 - `token_id`
@@ -32,7 +35,6 @@ bound_device_fingerprint_hash: string
 ```
 
 ## 4) Ordered Engine Steps
-
 | step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
 |---|---|---|---|---|---|---:|---:|---:|---|
 | LINK_OPEN_S01 | PH1.LINK | PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW | token_id, device_fingerprint, idempotency_key | activation_status, draft_id, missing_required_fields, bound_device_fingerprint_hash | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [LINK_OPEN_RETRYABLE] |

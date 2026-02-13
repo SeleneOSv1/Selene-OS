@@ -11,7 +11,7 @@
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
 
 ## 2) Required Inputs
-- `tenant_id` (if applicable)
+- `tenant_id` (optional; required for employee/company policy)
 - `requester_user_id`
 - `recipient_contact`
 - `delivery_method` (`SELENE_APP | SMS | WHATSAPP | WECHAT | EMAIL`)
@@ -27,7 +27,6 @@ reason_code: string
 ```
 
 ## 4) Ordered Engine Steps
-
 | step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
 |---|---|---|---|---|---|---:|---:|---:|---|
 | LINK_DELIVER_S01 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | requester_user_id, recipient_contact, delivery_method, link_url, classification | send_confirmation_state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
