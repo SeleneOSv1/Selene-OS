@@ -97,7 +97,8 @@ Assists (called by Selene OS, never engine-to-engine):
 - PH1.SEARCH/PH1.WEBINT/PH1.PREFETCH assist planning and evidence interpretation; PH1.E executes tools only.
 - PH1.DOC/PH1.VISION are invoked only when user documents/images are provided; outputs are evidence bundles for PH1.CONTEXT/PH1.NLP.
 - Before prompting: `Selene OS -> PH1.POLICY (prompt dedupe) -> PH1.X`
-- Before interruption: `Selene OS -> PH1.POLICY (interrupt policy) -> PH1.BCAST/PH1.REM/PH1.DELIVERY`
+- Prompt dedupe is enforced via PH1.POLICY before PH1.X clarify.
+- Message interruption lifecycle is PH1.BCAST (BCAST.MHP).
 
 Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 - Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.

@@ -34,7 +34,7 @@ Direction lock:
 | PH1.L | B Identity/Access | Control | Authoritative | Session lifecycle state/timers | `docs/DB_WIRING/PH1_L.md` | `docs/ECM/PH1_L.md` |
 | PH1.VOICE.ID | B Identity/Access | Perception | Authoritative | Speaker identity assertion | `docs/DB_WIRING/PH1_VOICE_ID.md` | `docs/ECM/PH1_VOICE_ID.md` |
 | PH1.ACCESS.001_PH2.ACCESS.002 | B Identity/Access | Governance | Authoritative | Access gate + per-user permission truth | `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` | `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md` |
-| PH1.POLICY | B Identity/Access | Control | Authoritative (policy decision only) | Global deterministic prompt/interrupt policy decisions (placement: ALWAYS_ON) | `docs/DB_WIRING/PH1_POLICY.md` | `docs/ECM/PH1_POLICY.md` |
+| PH1.POLICY | B Identity/Access | Control | Authoritative (policy decision only) | Global Rule Base + Snapshot (prompt discipline; placement: ALWAYS_ON) | `docs/DB_WIRING/PH1_POLICY.md` | `docs/ECM/PH1_POLICY.md` |
 | PH1.K | C Perception/NLP/X | Perception | Authoritative (I/O) | Voice runtime audio substrate | `docs/DB_WIRING/PH1_K.md` | `docs/ECM/PH1_K.md` |
 | PH1.W | C Perception/NLP/X | Perception | Authoritative (wake) | Wake detection and capture boundaries | `docs/DB_WIRING/PH1_W.md` | `docs/ECM/PH1_W.md` |
 | PH1.C | C Perception/NLP/X | Perception | Authoritative (transcript gate) | STT routing + transcript quality gate | `docs/DB_WIRING/PH1_C.md` | `docs/ECM/PH1_C.md` |

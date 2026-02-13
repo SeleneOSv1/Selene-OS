@@ -58,6 +58,10 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+## OS-Level Policy Orchestration Notes
+- Selene OS must call `PH1.POLICY::POLICY_PROMPT_DEDUP_DECIDE` before emitting clarify/confirm prompts.
+- These policy calls add decision shaping only; they do not add execution authority and do not bypass Access + Simulation gates.
+
 ## Continuity + No-Repeat Rules
 - Selene OS uses `asked_fields_json` and `prompt_dedupe_keys_json` to enforce global never-ask-twice behavior.
 - If `external_approval_pending=true`, Selene OS should enter wait posture (single wait notice, no repeated prompts) until state changes.

@@ -80,6 +80,13 @@ Scope rules:
   - all voice/text interaction paths apply pre-intent normalization pipeline `PH1.LANG -> PH1.SRL -> PH1.NLP`
   - broken/fragmented/code-switched utterances must be segmented and normalized before intent dispatch
 
+## 4A) Global Policy Gate (PH1.POLICY) — System-Wide
+
+- Before PH1.X emits any clarify/confirm prompt, Selene OS must call `POLICY_PROMPT_DEDUP_DECIDE` and enforce the returned decision.
+- PH1.POLICY returns decisions only; Selene OS remains the orchestrator and sole enforcer.
+- PH1.POLICY has no execution authority and cannot mutate WorkOrders or runtime state.
+- Interruption lifecycle for messages is canonical in PH1.BCAST Section BCAST.MHP; reminders use PH1.REM timing.
+
 ## 5) Relations & Keys
 
 Key constraints implemented:
