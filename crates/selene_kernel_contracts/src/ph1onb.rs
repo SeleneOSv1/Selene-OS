@@ -2,7 +2,7 @@
 
 use crate::ph1_voice_id::UserId;
 use crate::ph1j::{CorrelationId, DeviceId, TurnId};
-use crate::ph1link::{LinkId, PrefilledContextRef};
+use crate::ph1link::{PrefilledContextRef, TokenId};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1ONB_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
@@ -160,7 +160,7 @@ fn validate_opt_id(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnbSessionStartDraftRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
     pub tenant_id: Option<String>,
     pub device_fingerprint: String,
@@ -168,7 +168,7 @@ pub struct OnbSessionStartDraftRequest {
 
 impl Validate for OnbSessionStartDraftRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if let Some(r) = &self.prefilled_context_ref {
             r.validate()?;
         }
@@ -660,13 +660,13 @@ impl Ph1OnbRequest {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
     ) -> Result<Self, ContractViolation> {
         let req = OnbSessionStartDraftRequest {
-            link_id,
+            token_id,
             prefilled_context_ref,
             tenant_id,
             device_fingerprint,

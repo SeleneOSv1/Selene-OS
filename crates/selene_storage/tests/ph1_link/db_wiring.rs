@@ -76,7 +76,7 @@ fn at_link_db_01_tenant_isolation_enforced() {
         )
         .unwrap();
 
-    assert_ne!(a.link_id, b.link_id);
+    assert_ne!(a.token_id, b.token_id);
 
     let mismatch = s.ph1link_invite_generate_draft_row(
         MonotonicTimeNs(102),
@@ -115,7 +115,7 @@ fn at_link_db_02_append_only_enforced() {
     let proof = s
         .ph1link_invite_send_commit_row(
             MonotonicTimeNs(201),
-            link.link_id,
+            link.token_id,
             DeliveryMethod::Email,
             "append@example.com".to_string(),
             "link-append".to_string(),
@@ -160,14 +160,14 @@ fn at_link_db_03_idempotency_dedupe_works() {
             Some("default".to_string()),
         )
         .unwrap();
-    assert_eq!(l1.link_id, l2.link_id);
+    assert_eq!(l1.token_id, l2.token_id);
     assert!(p1.was_new);
     assert!(!p2.was_new);
 
     let s1 = s
         .ph1link_invite_send_commit_row(
             MonotonicTimeNs(302),
-            l1.link_id.clone(),
+            l1.token_id.clone(),
             DeliveryMethod::Email,
             "idem@example.com".to_string(),
             "link-send-idem".to_string(),
@@ -176,14 +176,17 @@ fn at_link_db_03_idempotency_dedupe_works() {
     let s2 = s
         .ph1link_invite_send_commit_row(
             MonotonicTimeNs(303),
-            l1.link_id.clone(),
+            l1.token_id.clone(),
             DeliveryMethod::Email,
             "idem@example.com".to_string(),
             "link-send-idem".to_string(),
         )
         .unwrap();
     assert_eq!(s1.delivery_proof_ref, s2.delivery_proof_ref);
-    assert_eq!(s.ph1link_delivery_proofs_for_link_row(&l1.link_id).len(), 1);
+    assert_eq!(
+        s.ph1link_delivery_proofs_for_link_row(&l1.token_id).len(),
+        1
+    );
 }
 
 #[test]
@@ -210,43 +213,43 @@ fn at_link_db_04_current_table_consistency_with_lifecycle_and_proofs() {
 
     s.ph1link_invite_send_commit_row(
         MonotonicTimeNs(401),
-        link.link_id.clone(),
+        link.token_id.clone(),
         DeliveryMethod::Email,
         "life@example.com".to_string(),
         "link-life-send".to_string(),
     )
     .unwrap();
     assert_eq!(
-        s.ph1link_get_link_row(&link.link_id).unwrap().status,
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
         LinkStatus::Sent
     );
 
     let (status, _, _) = s
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(402),
-            link.link_id.clone(),
+            link.token_id.clone(),
             "fp_primary".to_string(),
         )
         .unwrap();
     assert_eq!(status, LinkStatus::Activated);
     assert_eq!(
-        s.ph1link_get_link_row(&link.link_id).unwrap().status,
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
         LinkStatus::Activated
     );
 
     let (blocked_status, _) = s
-        .ph1link_invite_forward_block_commit_row(link.link_id.clone(), "fp_other".to_string())
+        .ph1link_invite_forward_block_commit_row(link.token_id.clone(), "fp_other".to_string())
         .unwrap();
     assert_eq!(blocked_status, LinkStatus::Blocked);
     assert_eq!(
-        s.ph1link_get_link_row(&link.link_id).unwrap().status,
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
         LinkStatus::Blocked
     );
 
     // Row 20 uses current-state `links` plus append-only `link_delivery_proofs`; no separate
     // rebuildable current projection exists for this slice.
     assert_eq!(
-        s.ph1link_delivery_proofs_for_link_row(&link.link_id).len(),
+        s.ph1link_delivery_proofs_for_link_row(&link.token_id).len(),
         1
     );
 }

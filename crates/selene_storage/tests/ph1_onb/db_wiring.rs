@@ -55,7 +55,7 @@ fn seed_activated_link(
     recipient_contact: &str,
     tenant_id: Option<String>,
     prefilled_context: Option<PrefilledContext>,
-) -> selene_kernel_contracts::ph1link::LinkId {
+) -> selene_kernel_contracts::ph1link::TokenId {
     let (link, _) = store
         .ph1link_invite_generate_draft_row(
             MonotonicTimeNs(now),
@@ -72,7 +72,7 @@ fn seed_activated_link(
     store
         .ph1link_invite_send_commit_row(
             MonotonicTimeNs(now + 1),
-            link.link_id.clone(),
+            link.token_id.clone(),
             DeliveryMethod::Email,
             recipient_contact.to_string(),
             format!("onb-link-send-{now}"),
@@ -82,12 +82,12 @@ fn seed_activated_link(
     store
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(now + 2),
-            link.link_id.clone(),
+            link.token_id.clone(),
             format!("fp_{now}"),
         )
         .unwrap();
 
-    link.link_id
+    link.token_id
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn at_onb_db_03_idempotency_dedupe_works() {
     let d = device("tenant_a_device_1");
     seed_identity_device(&mut s, u.clone(), d.clone());
 
-    let link_id = seed_activated_link(
+    let token_id = seed_activated_link(
         &mut s,
         500,
         u.clone(),
@@ -239,7 +239,7 @@ fn at_onb_db_03_idempotency_dedupe_works() {
     let started = s
         .ph1onb_session_start_draft_row(
             MonotonicTimeNs(503),
-            link_id,
+            token_id,
             None,
             Some("tenant_a".to_string()),
             "fp_onb_idem".to_string(),
@@ -305,7 +305,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
     let d = device("tenant_a_device_1");
     seed_identity_device(&mut s, u.clone(), d.clone());
 
-    let link_id = seed_activated_link(
+    let token_id = seed_activated_link(
         &mut s,
         600,
         u.clone(),
@@ -318,7 +318,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
     let started = s
         .ph1onb_session_start_draft_row(
             MonotonicTimeNs(603),
-            link_id,
+            token_id,
             None,
             Some("tenant_a".to_string()),
             "fp_onb_flow".to_string(),

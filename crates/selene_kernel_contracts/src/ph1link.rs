@@ -97,9 +97,9 @@ pub enum LinkStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LinkId(String);
+pub struct TokenId(String);
 
-impl LinkId {
+impl TokenId {
     pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
         let id = id.into();
         let v = Self(id);
@@ -112,23 +112,23 @@ impl LinkId {
     }
 }
 
-impl Validate for LinkId {
+impl Validate for TokenId {
     fn validate(&self) -> Result<(), ContractViolation> {
         if self.0.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
-                field: "link_id",
+                field: "token_id",
                 reason: "must not be empty",
             });
         }
         if self.0.len() > 64 {
             return Err(ContractViolation::InvalidValue {
-                field: "link_id",
+                field: "token_id",
                 reason: "must be <= 64 chars",
             });
         }
         if !self.0.is_ascii() {
             return Err(ContractViolation::InvalidValue {
-                field: "link_id",
+                field: "token_id",
                 reason: "must be ASCII",
             });
         }
@@ -336,7 +336,7 @@ impl Validate for PrefilledContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkRecord {
     pub schema_version: SchemaVersion,
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub payload_hash: String,
     pub status: LinkStatus,
     pub created_at: MonotonicTimeNs,
@@ -354,7 +354,7 @@ pub struct LinkRecord {
 impl LinkRecord {
     #[allow(clippy::too_many_arguments)]
     pub fn v1(
-        link_id: LinkId,
+        token_id: TokenId,
         payload_hash: String,
         status: LinkStatus,
         created_at: MonotonicTimeNs,
@@ -370,7 +370,7 @@ impl LinkRecord {
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
-            link_id,
+            token_id,
             payload_hash,
             status,
             created_at,
@@ -397,7 +397,7 @@ impl Validate for LinkRecord {
                 reason: "must match PH1LINK_CONTRACT_VERSION",
             });
         }
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.payload_hash.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "link_record.payload_hash",
@@ -495,7 +495,7 @@ impl Validate for LinkRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkGenerateResult {
     pub schema_version: SchemaVersion,
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub link_url: String,
     pub payload_hash: String,
     pub expires_at: MonotonicTimeNs,
@@ -505,7 +505,7 @@ pub struct LinkGenerateResult {
 
 impl LinkGenerateResult {
     pub fn v1(
-        link_id: LinkId,
+        token_id: TokenId,
         link_url: String,
         payload_hash: String,
         expires_at: MonotonicTimeNs,
@@ -514,7 +514,7 @@ impl LinkGenerateResult {
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
-            link_id,
+            token_id,
             link_url,
             payload_hash,
             expires_at,
@@ -534,7 +534,7 @@ impl Validate for LinkGenerateResult {
                 reason: "must match PH1LINK_CONTRACT_VERSION",
             });
         }
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.link_url.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "link_generate_result.link_url",
@@ -720,7 +720,7 @@ pub enum RecoveryDeliveryStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkExpiredRecoveryResult {
     pub schema_version: SchemaVersion,
-    pub new_link_id: LinkId,
+    pub new_link_id: TokenId,
     pub new_link_url: String,
     pub delivery_status: RecoveryDeliveryStatus,
     pub delivery_proof_ref: Option<DeliveryProofRef>,
@@ -728,7 +728,7 @@ pub struct LinkExpiredRecoveryResult {
 
 impl LinkExpiredRecoveryResult {
     pub fn v1(
-        new_link_id: LinkId,
+        new_link_id: TokenId,
         new_link_url: String,
         delivery_status: RecoveryDeliveryStatus,
         delivery_proof_ref: Option<DeliveryProofRef>,
@@ -1176,7 +1176,7 @@ impl Validate for InviteGenerateDraftRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteSendCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub delivery_method: DeliveryMethod,
     pub recipient_contact: String,
     pub idempotency_key: String,
@@ -1184,7 +1184,7 @@ pub struct InviteSendCommitRequest {
 
 impl Validate for InviteSendCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.recipient_contact.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_send_commit_request.recipient_contact",
@@ -1215,13 +1215,13 @@ impl Validate for InviteSendCommitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteOpenActivateCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub device_fingerprint: String,
 }
 
 impl Validate for InviteOpenActivateCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.device_fingerprint.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_open_activate_commit_request.device_fingerprint",
@@ -1240,7 +1240,7 @@ impl Validate for InviteOpenActivateCommitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteResendCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub delivery_method: DeliveryMethod,
     pub recipient_contact: String,
     pub idempotency_key: String,
@@ -1248,7 +1248,7 @@ pub struct InviteResendCommitRequest {
 
 impl Validate for InviteResendCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.recipient_contact.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_resend_commit_request.recipient_contact",
@@ -1279,13 +1279,13 @@ impl Validate for InviteResendCommitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteRevokeRevokeRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub reason: String,
 }
 
 impl Validate for InviteRevokeRevokeRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.reason.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_revoke_revoke_request.reason",
@@ -1304,7 +1304,7 @@ impl Validate for InviteRevokeRevokeRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteExpiredRecoveryCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub delivery_method: Option<DeliveryMethod>,
     pub recipient_contact: Option<String>,
     pub idempotency_key: Option<String>,
@@ -1312,7 +1312,7 @@ pub struct InviteExpiredRecoveryCommitRequest {
 
 impl Validate for InviteExpiredRecoveryCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if let Some(c) = &self.recipient_contact {
             if c.trim().is_empty() {
                 return Err(ContractViolation::InvalidValue {
@@ -1347,13 +1347,13 @@ impl Validate for InviteExpiredRecoveryCommitRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteForwardBlockCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub device_fingerprint: String,
 }
 
 impl Validate for InviteForwardBlockCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.device_fingerprint.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_forward_block_commit_request.device_fingerprint",
@@ -1398,7 +1398,7 @@ impl Validate for RoleProposeDraftRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DualRoleConflictEscalateDraftRequest {
     pub tenant_id: Option<String>,
-    pub link_id: Option<LinkId>,
+    pub token_id: Option<TokenId>,
     pub note: String,
 }
 
@@ -1409,7 +1409,7 @@ impl Validate for DualRoleConflictEscalateDraftRequest {
             &self.tenant_id,
             64,
         )?;
-        if let Some(id) = &self.link_id {
+        if let Some(id) = &self.token_id {
             id.validate()?;
         }
         if self.note.trim().is_empty() {
@@ -1430,14 +1430,14 @@ impl Validate for DualRoleConflictEscalateDraftRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeliveryFailureHandlingCommitRequest {
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub attempt: u8,
     pub idempotency_key: String,
 }
 
 impl Validate for DeliveryFailureHandlingCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.link_id.validate()?;
+        self.token_id.validate()?;
         if self.attempt == 0 {
             return Err(ContractViolation::InvalidValue {
                 field: "delivery_failure_handling_commit_request.attempt",
@@ -1510,13 +1510,13 @@ impl Ph1LinkRequest {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         delivery_method: DeliveryMethod,
         recipient_contact: String,
         idempotency_key: String,
     ) -> Result<Self, ContractViolation> {
         let req = InviteSendCommitRequest {
-            link_id,
+            token_id,
             delivery_method,
             recipient_contact,
             idempotency_key,
@@ -1538,11 +1538,11 @@ impl Ph1LinkRequest {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<Self, ContractViolation> {
         let req = InviteOpenActivateCommitRequest {
-            link_id,
+            token_id,
             device_fingerprint,
         };
         let r = Self {
@@ -1562,13 +1562,13 @@ impl Ph1LinkRequest {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         delivery_method: DeliveryMethod,
         recipient_contact: String,
         idempotency_key: String,
     ) -> Result<Self, ContractViolation> {
         let req = InviteResendCommitRequest {
-            link_id,
+            token_id,
             delivery_method,
             recipient_contact,
             idempotency_key,
@@ -1590,10 +1590,10 @@ impl Ph1LinkRequest {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         reason: String,
     ) -> Result<Self, ContractViolation> {
-        let req = InviteRevokeRevokeRequest { link_id, reason };
+        let req = InviteRevokeRevokeRequest { token_id, reason };
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
             correlation_id,

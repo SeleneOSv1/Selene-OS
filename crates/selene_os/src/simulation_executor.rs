@@ -1449,14 +1449,14 @@ mod tests {
         let _ = store
             .ph1link_invite_open_activate_commit(
                 MonotonicTimeNs(3),
-                link_rec.link_id.clone(),
+                link_rec.token_id.clone(),
                 "voice-device-fp-1".to_string(),
             )
             .unwrap();
         let onb = store
             .ph1onb_session_start_draft(
                 MonotonicTimeNs(4),
-                link_rec.link_id,
+                link_rec.token_id,
                 None,
                 Some("tenant_1".to_string()),
                 "voice-device-fp-1".to_string(),

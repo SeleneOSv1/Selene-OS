@@ -92,7 +92,7 @@ impl Ph1LinkRuntime {
                         "NONE",
                         "DRAFT_CREATED",
                         reason_codes::LINK_OK_GENERATE_DRAFT,
-                        Some(format!("link_create:{}", link_rec.link_id.as_str())),
+                        Some(format!("link_create:{}", link_rec.token_id.as_str())),
                     )?;
                 }
 
@@ -100,14 +100,17 @@ impl Ph1LinkRuntime {
                     .prefilled_context
                     .as_ref()
                     .map(|_| {
-                        PrefilledContextRef::new(format!("prefilled:{}", link_rec.link_id.as_str()))
+                        PrefilledContextRef::new(format!(
+                            "prefilled:{}",
+                            link_rec.token_id.as_str()
+                        ))
                     })
                     .transpose()
                     .map_err(StorageError::ContractViolation)?;
 
-                let link_url = format!("{}/{}", self.config.base_url, link_rec.link_id.as_str());
+                let link_url = format!("{}/{}", self.config.base_url, link_rec.token_id.as_str());
                 let out = LinkGenerateResult::v1(
-                    link_rec.link_id.clone(),
+                    link_rec.token_id.clone(),
                     link_url,
                     parts.payload_hash,
                     link_rec.expires_at,
@@ -135,7 +138,7 @@ impl Ph1LinkRuntime {
             selene_kernel_contracts::ph1link::LinkRequest::InviteSendCommit(r) => {
                 let proof = store.ph1link_invite_send_commit(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.delivery_method,
                     r.recipient_contact.clone(),
                     r.idempotency_key.clone(),
@@ -152,7 +155,7 @@ impl Ph1LinkRuntime {
                     reason_codes::LINK_OK_SEND_COMMIT,
                     Some(format!(
                         "link_send:{}:{}",
-                        r.link_id.as_str(),
+                        r.token_id.as_str(),
                         proof.delivery_proof_ref.as_str()
                     )),
                 )?;
@@ -184,7 +187,7 @@ impl Ph1LinkRuntime {
             selene_kernel_contracts::ph1link::LinkRequest::InviteOpenActivateCommit(r) => {
                 let (status, bound_hash, ctx_ref) = store.ph1link_invite_open_activate_commit(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.device_fingerprint.clone(),
                 )?;
 
@@ -203,7 +206,7 @@ impl Ph1LinkRuntime {
                         _ => "OTHER",
                     },
                     reason_codes::LINK_OK_OPEN_ACTIVATE,
-                    Some(format!("link_open:{}", r.link_id.as_str())),
+                    Some(format!("link_open:{}", r.token_id.as_str())),
                 )?;
 
                 let out = LinkActivationResult::v1(status, bound_hash, ctx_ref)
@@ -228,7 +231,7 @@ impl Ph1LinkRuntime {
             selene_kernel_contracts::ph1link::LinkRequest::InviteResendCommit(r) => {
                 let proof = store.ph1link_invite_send_commit(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.delivery_method,
                     r.recipient_contact.clone(),
                     r.idempotency_key.clone(),
@@ -259,7 +262,7 @@ impl Ph1LinkRuntime {
             }
 
             selene_kernel_contracts::ph1link::LinkRequest::InviteRevokeRevoke(r) => {
-                store.ph1link_invite_revoke_revoke(r.link_id.clone(), r.reason.clone())?;
+                store.ph1link_invite_revoke_revoke(r.token_id.clone(), r.reason.clone())?;
 
                 self.audit_transition(
                     store,
@@ -270,7 +273,7 @@ impl Ph1LinkRuntime {
                     "ANY",
                     "REVOKED",
                     reason_codes::LINK_OK_REVOKE,
-                    Some(format!("link_revoke:{}", r.link_id.as_str())),
+                    Some(format!("link_revoke:{}", r.token_id.as_str())),
                 )?;
 
                 let out = LinkRevokeResult::v1(LinkStatus::Revoked)
@@ -300,7 +303,7 @@ impl Ph1LinkRuntime {
 
                 let new_link = store.ph1link_invite_expired_recovery_commit(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.delivery_method,
                     r.recipient_contact.clone(),
                     idempotency_key.clone(),
@@ -320,7 +323,7 @@ impl Ph1LinkRuntime {
                     ) {
                         let proof = store.ph1link_invite_send_commit(
                             req.now,
-                            new_link.link_id.clone(),
+                            new_link.token_id.clone(),
                             method,
                             contact,
                             format!("recovery_send:{idempotency_key}"),
@@ -341,15 +344,15 @@ impl Ph1LinkRuntime {
                     reason_codes::LINK_OK_EXPIRED_RECOVERY_COMMIT,
                     Some(format!(
                         "link_recovery:{}:{}",
-                        r.link_id.as_str(),
+                        r.token_id.as_str(),
                         idempotency_key
                     )),
                 )?;
 
                 let new_link_url =
-                    format!("{}/{}", self.config.base_url, new_link.link_id.as_str());
+                    format!("{}/{}", self.config.base_url, new_link.token_id.as_str());
                 let out = LinkExpiredRecoveryResult::v1(
-                    new_link.link_id.clone(),
+                    new_link.token_id.clone(),
                     new_link_url,
                     delivery_status,
                     delivery_proof_ref,
@@ -374,7 +377,7 @@ impl Ph1LinkRuntime {
 
             selene_kernel_contracts::ph1link::LinkRequest::InviteForwardBlockCommit(r) => {
                 let (status, bound) = store.ph1link_invite_forward_block_commit(
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.device_fingerprint.clone(),
                 )?;
 
@@ -387,7 +390,7 @@ impl Ph1LinkRuntime {
                     "ANY",
                     "BLOCKED",
                     reason_codes::LINK_OK_FORWARD_BLOCK_COMMIT,
-                    Some(format!("link_forward_block:{}", r.link_id.as_str())),
+                    Some(format!("link_forward_block:{}", r.token_id.as_str())),
                 )?;
 
                 let out = LinkActivationResult::v1(status, bound, None)
@@ -452,7 +455,7 @@ impl Ph1LinkRuntime {
                 let case_id = store.ph1link_dual_role_conflict_escalate_draft(
                     req.now,
                     r.tenant_id.clone(),
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.note.clone(),
                 )?;
 
@@ -491,7 +494,7 @@ impl Ph1LinkRuntime {
             selene_kernel_contracts::ph1link::LinkRequest::DeliveryFailureHandlingCommit(r) => {
                 let proof = store.ph1link_delivery_failure_handling_commit(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.attempt,
                     r.idempotency_key.clone(),
                 )?;
@@ -507,7 +510,7 @@ impl Ph1LinkRuntime {
                     reason_codes::LINK_OK_DELIVERY_FAILURE_HANDLING_COMMIT,
                     Some(format!(
                         "link_delivery_failure:{}:{}",
-                        r.link_id.as_str(),
+                        r.token_id.as_str(),
                         r.idempotency_key
                     )),
                 )?;
@@ -648,7 +651,7 @@ mod tests {
         let (link_id_1, payload_hash_1) = match out1 {
             Ph1LinkResponse::Ok(o) => {
                 let g = o.link_generate_result.expect("generate result");
-                (g.link_id.as_str().to_string(), g.payload_hash)
+                (g.token_id.as_str().to_string(), g.payload_hash)
             }
             _ => panic!("expected OK"),
         };
@@ -672,7 +675,7 @@ mod tests {
         let (link_id_2, payload_hash_2) = match out2 {
             Ph1LinkResponse::Ok(o) => {
                 let g = o.link_generate_result.expect("generate result");
-                (g.link_id.as_str().to_string(), g.payload_hash)
+                (g.token_id.as_str().to_string(), g.payload_hash)
             }
             _ => panic!("expected OK"),
         };
@@ -701,8 +704,8 @@ mod tests {
         .unwrap();
 
         let out = rt.run(&mut store, &gen).unwrap();
-        let link_id = match out {
-            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().link_id,
+        let token_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
 
@@ -710,7 +713,7 @@ mod tests {
             CorrelationId(2),
             TurnId(2),
             now(20),
-            link_id.clone(),
+            token_id.clone(),
             "device_fp_a".to_string(),
         )
         .unwrap();
@@ -729,7 +732,7 @@ mod tests {
             CorrelationId(2),
             TurnId(3),
             now(21),
-            link_id,
+            token_id,
             "device_fp_b".to_string(),
         )
         .unwrap();
@@ -764,8 +767,8 @@ mod tests {
         .unwrap();
 
         let out = rt.run(&mut store, &gen).unwrap();
-        let link_id = match out {
-            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().link_id,
+        let token_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
 
@@ -773,7 +776,7 @@ mod tests {
             CorrelationId(3),
             TurnId(2),
             now(11),
-            link_id.clone(),
+            token_id.clone(),
             DeliveryMethod::Email,
             "jack@example.com".to_string(),
             "idem_1".to_string(),
@@ -791,7 +794,7 @@ mod tests {
             CorrelationId(3),
             TurnId(3),
             now(12),
-            link_id,
+            token_id,
             DeliveryMethod::Email,
             "jack@example.com".to_string(),
             "idem_1".to_string(),
@@ -828,7 +831,7 @@ mod tests {
 
         let out = rt.run(&mut store, &gen).unwrap();
         let expired_link_id = match out {
-            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().link_id,
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
 
@@ -841,7 +844,7 @@ mod tests {
             simulation_id: LINK_INVITE_EXPIRED_RECOVERY_COMMIT.to_string(),
             simulation_type: SimulationType::Commit,
             request: LinkRequest::InviteExpiredRecoveryCommit(InviteExpiredRecoveryCommitRequest {
-                link_id: expired_link_id.clone(),
+                token_id: expired_link_id.clone(),
                 delivery_method: Some(DeliveryMethod::Email),
                 recipient_contact: Some("jack@example.com".to_string()),
                 idempotency_key: Some("idem_recover_1".to_string()),
@@ -893,8 +896,8 @@ mod tests {
         .unwrap();
 
         let out = rt.run(&mut store, &gen).unwrap();
-        let link_id = match out {
-            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().link_id,
+        let token_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
 
@@ -903,7 +906,7 @@ mod tests {
             CorrelationId(7),
             TurnId(2),
             now(20),
-            link_id.clone(),
+            token_id.clone(),
             "device_fp_a".to_string(),
         )
         .unwrap();
@@ -918,7 +921,7 @@ mod tests {
             simulation_id: LINK_INVITE_FORWARD_BLOCK_COMMIT.to_string(),
             simulation_type: SimulationType::Commit,
             request: LinkRequest::InviteForwardBlockCommit(InviteForwardBlockCommitRequest {
-                link_id,
+                token_id,
                 device_fingerprint: "device_fp_b".to_string(),
             }),
         };
@@ -981,7 +984,7 @@ mod tests {
             request: LinkRequest::DualRoleConflictEscalateDraft(
                 DualRoleConflictEscalateDraftRequest {
                     tenant_id: Some("tenant_1".to_string()),
-                    link_id: None,
+                    token_id: None,
                     note: "conflict: already an employee, cannot invite as agent".to_string(),
                 },
             ),
@@ -1030,8 +1033,8 @@ mod tests {
         .unwrap();
 
         let out = rt.run(&mut store, &gen).unwrap();
-        let link_id = match out {
-            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().link_id,
+        let token_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
 
@@ -1044,7 +1047,7 @@ mod tests {
             simulation_type: SimulationType::Commit,
             request: LinkRequest::DeliveryFailureHandlingCommit(
                 DeliveryFailureHandlingCommitRequest {
-                    link_id,
+                    token_id,
                     attempt: 1,
                     idempotency_key: "idem_fail_1".to_string(),
                 },

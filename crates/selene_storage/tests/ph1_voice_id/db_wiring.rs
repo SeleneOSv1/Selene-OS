@@ -67,7 +67,7 @@ fn seed_onboarding_session(
     let (status, _, _) = store
         .ph1link_invite_open_activate_commit(
             MonotonicTimeNs(now_base + 1),
-            link.link_id.clone(),
+            link.token_id.clone(),
             device_fingerprint.to_string(),
         )
         .unwrap();
@@ -76,7 +76,7 @@ fn seed_onboarding_session(
     store
         .ph1onb_session_start_draft(
             MonotonicTimeNs(now_base + 2),
-            link.link_id,
+            link.token_id,
             None,
             None,
             device_fingerprint.to_string(),

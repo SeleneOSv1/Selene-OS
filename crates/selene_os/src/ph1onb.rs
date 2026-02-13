@@ -148,7 +148,7 @@ impl Ph1OnbOrchRuntime {
             OnbRequest::SessionStartDraft(r) => {
                 let out = store.ph1onb_session_start_draft(
                     req.now,
-                    r.link_id.clone(),
+                    r.token_id.clone(),
                     r.prefilled_context_ref.clone(),
                     r.tenant_id.clone(),
                     r.device_fingerprint.clone(),
@@ -984,7 +984,7 @@ mod tests {
             .unwrap();
     }
 
-    fn make_activated_link(store: &mut Ph1fStore) -> selene_kernel_contracts::ph1link::LinkId {
+    fn make_activated_link(store: &mut Ph1fStore) -> selene_kernel_contracts::ph1link::TokenId {
         // Create a link draft + open/activate it.
         let req = Ph1LinkRequest::invite_generate_draft_v1(
             corr(),
@@ -1001,9 +1001,9 @@ mod tests {
         .unwrap();
         let link_rt = crate::ph1link::Ph1LinkRuntime::new(crate::ph1link::Ph1LinkConfig::mvp_v1());
         let out = link_rt.run(store, &req).unwrap();
-        let link_id = match out {
+        let token_id = match out {
             selene_kernel_contracts::ph1link::Ph1LinkResponse::Ok(ok) => {
-                ok.link_generate_result.unwrap().link_id
+                ok.link_generate_result.unwrap().token_id
             }
             _ => panic!("expected ok"),
         };
@@ -1012,19 +1012,19 @@ mod tests {
             corr(),
             turn(),
             MonotonicTimeNs(now().0 + 1),
-            link_id.clone(),
+            token_id.clone(),
             "device_fp_1".to_string(),
         )
         .unwrap();
         let _ = link_rt.run(store, &open).unwrap();
-        link_id
+        token_id
     }
 
     #[test]
     fn onb_happy_path_employee_minimal() {
         let rt = Ph1OnbOrchRuntime::default();
         let mut store = store_with_inviter();
-        let link_id = make_activated_link(&mut store);
+        let token_id = make_activated_link(&mut store);
 
         // Start session.
         let start = Ph1OnbRequest {
@@ -1035,7 +1035,7 @@ mod tests {
             simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
             simulation_type: SimulationType::Draft,
             request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
-                link_id,
+                token_id,
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
@@ -1206,7 +1206,7 @@ mod tests {
     fn onb_live_sequence_calls_voice_id_enroll_start_sample_complete() {
         let rt = Ph1OnbOrchRuntime::default();
         let mut store = store_with_inviter();
-        let link_id = make_activated_link(&mut store);
+        let token_id = make_activated_link(&mut store);
 
         // Create onboarding session.
         let start = Ph1OnbRequest {
@@ -1217,7 +1217,7 @@ mod tests {
             simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
             simulation_type: SimulationType::Draft,
             request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
-                link_id,
+                token_id,
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
@@ -1312,7 +1312,7 @@ mod tests {
     fn onb_live_sequence_calls_voice_id_enroll_defer_when_requested() {
         let rt = Ph1OnbOrchRuntime::default();
         let mut store = store_with_inviter();
-        let link_id = make_activated_link(&mut store);
+        let token_id = make_activated_link(&mut store);
 
         let start = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
@@ -1322,7 +1322,7 @@ mod tests {
             simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
             simulation_type: SimulationType::Draft,
             request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
-                link_id,
+                token_id,
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),

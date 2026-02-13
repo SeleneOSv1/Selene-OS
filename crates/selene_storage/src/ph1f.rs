@@ -30,7 +30,7 @@ use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
     deterministic_contact_hash_hex, deterministic_device_fingerprint_hash_hex,
     deterministic_payload_hash_hex, DeliveryMethod, DeliveryProofRef, DeliveryStatus, InviteeType,
-    LinkId, LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef,
+    LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind,
@@ -378,28 +378,28 @@ pub struct Ph1fStore {
     conversation_ledger: Vec<ConversationTurnRecord>,
 
     // PH1.LINK current-state store (authoritative via simulations; audit remains append-only proof).
-    links: BTreeMap<LinkId, LinkRecord>,
+    links: BTreeMap<TokenId, LinkRecord>,
     next_link_seq: u64,
     // Idempotency detection for link draft generation:
-    // (inviter_user_id, payload_hash, expiration_policy_id) -> link_id
-    link_draft_idempotency_index: BTreeMap<(UserId, String, Option<String>), LinkId>,
+    // (inviter_user_id, payload_hash, expiration_policy_id) -> token_id
+    link_draft_idempotency_index: BTreeMap<(UserId, String, Option<String>), TokenId>,
 
     // PH1.LINK delivery proof ledger (append-only).
     link_delivery_proofs: BTreeMap<DeliveryProofRef, LinkDeliveryProofRecord>,
     next_link_delivery_proof_seq: u64,
     // Idempotency detection for delivery attempts:
-    // (link_id, delivery_method, recipient_contact_hash, idempotency_key) -> delivery_proof_ref
+    // (token_id, delivery_method, recipient_contact_hash, idempotency_key) -> delivery_proof_ref
     link_delivery_idempotency_index:
-        BTreeMap<(LinkId, DeliveryMethod, String, String), DeliveryProofRef>,
+        BTreeMap<(TokenId, DeliveryMethod, String, String), DeliveryProofRef>,
 
     // Additional PH1.LINK simulations (v1): recovery, forward-block attempts, role proposals,
     // dual-role conflict escalation, delivery failure handling.
     // Idempotency: (expired_link_id, idempotency_key) -> new_link_id
-    link_recovery_idempotency_index: BTreeMap<(LinkId, String), LinkId>,
-    // Idempotency: record (link_id, presented_device_fingerprint_hash) once.
-    link_forward_block_attempts: BTreeSet<(LinkId, String)>,
-    // Idempotency: (link_id, idempotency_key) -> delivery_proof_ref
-    link_delivery_failure_idempotency_index: BTreeMap<(LinkId, String), DeliveryProofRef>,
+    link_recovery_idempotency_index: BTreeMap<(TokenId, String), TokenId>,
+    // Idempotency: record (token_id, presented_device_fingerprint_hash) once.
+    link_forward_block_attempts: BTreeSet<(TokenId, String)>,
+    // Idempotency: (token_id, idempotency_key) -> delivery_proof_ref
+    link_delivery_failure_idempotency_index: BTreeMap<(TokenId, String), DeliveryProofRef>,
 
     // Role proposal drafts (sandbox).
     link_role_proposals: BTreeMap<String, LinkRoleProposalRecord>,
@@ -408,16 +408,16 @@ pub struct Ph1fStore {
 
     // Dual-role conflict escalation drafts (sandbox).
     link_dual_role_conflict_cases: BTreeMap<String, LinkDualRoleConflictCaseRecord>,
-    // Idempotency: (tenant_id, link_id, note_hash) -> escalation_case_id
+    // Idempotency: (tenant_id, token_id, note_hash) -> escalation_case_id
     link_dual_role_conflict_idempotency_index:
-        BTreeMap<(Option<String>, Option<LinkId>, String), String>,
+        BTreeMap<(Option<String>, Option<TokenId>, String), String>,
 
     // ------------------------
     // PH1.ONB (Onboarding) - current-state store + idempotency indexes.
     // ------------------------
     onboarding_sessions: BTreeMap<OnboardingSessionId, OnboardingSessionRecord>,
-    // Idempotency: ONB_SESSION_START_DRAFT is idempotent on link_id.
-    onboarding_session_by_link: BTreeMap<LinkId, OnboardingSessionId>,
+    // Idempotency: ONB_SESSION_START_DRAFT is idempotent on token_id.
+    onboarding_session_by_link: BTreeMap<TokenId, OnboardingSessionId>,
     // Idempotency: (session_id + idempotency_key) per commit simulation.
     onb_terms_idempotency_index: BTreeMap<(OnboardingSessionId, String), TermsStatus>,
     onb_photo_idempotency_index: BTreeMap<(OnboardingSessionId, String), String>,
@@ -637,7 +637,7 @@ pub struct LinkDeliveryProofRecord {
     pub schema_version: SchemaVersion,
     pub delivery_proof_ref: DeliveryProofRef,
     pub created_at: MonotonicTimeNs,
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub delivery_method: DeliveryMethod,
     pub recipient_contact_hash: String,
     pub delivery_status: DeliveryStatus,
@@ -659,7 +659,7 @@ pub struct LinkDualRoleConflictCaseRecord {
     pub escalation_case_id: String,
     pub created_at: MonotonicTimeNs,
     pub tenant_id: Option<String>,
-    pub link_id: Option<LinkId>,
+    pub token_id: Option<TokenId>,
     pub note: String,
 }
 
@@ -667,7 +667,7 @@ pub struct LinkDualRoleConflictCaseRecord {
 pub struct OnboardingSessionRecord {
     pub schema_version: SchemaVersion,
     pub onboarding_session_id: OnboardingSessionId,
-    pub link_id: LinkId,
+    pub token_id: TokenId,
     pub invitee_type: InviteeType,
     pub tenant_id: Option<String>,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
@@ -2495,7 +2495,7 @@ impl Ph1fStore {
                     .get(existing_id)
                     .cloned()
                     .ok_or(StorageError::ForeignKeyViolation {
-                        table: "links.link_id",
+                        table: "links.token_id",
                         key: existing_id.as_str().to_string(),
                     })?;
 
@@ -2514,12 +2514,12 @@ impl Ph1fStore {
 
         let link_seq = self.next_link_seq;
         self.next_link_seq = self.next_link_seq.saturating_add(1);
-        let link_id = LinkId::new(format!("link_{link_seq}_{payload_hash}"))?;
+        let token_id = TokenId::new(format!("link_{link_seq}_{payload_hash}"))?;
 
         let recipient_contact_hash = deterministic_contact_hash_hex(&recipient_contact);
 
         let rec = LinkRecord::v1(
-            link_id.clone(),
+            token_id.clone(),
             payload_hash.clone(),
             LinkStatus::DraftCreated,
             now,
@@ -2534,8 +2534,8 @@ impl Ph1fStore {
             None,
         )?;
 
-        self.links.insert(link_id.clone(), rec.clone());
-        self.link_draft_idempotency_index.insert(idx_key, link_id);
+        self.links.insert(token_id.clone(), rec.clone());
+        self.link_draft_idempotency_index.insert(idx_key, token_id);
 
         Ok((
             rec,
@@ -2546,34 +2546,34 @@ impl Ph1fStore {
         ))
     }
 
-    pub fn ph1link_get_link(&self, link_id: &LinkId) -> Option<&LinkRecord> {
-        self.links.get(link_id)
+    pub fn ph1link_get_link(&self, token_id: &TokenId) -> Option<&LinkRecord> {
+        self.links.get(token_id)
     }
 
     pub fn ph1link_delivery_proofs_for_link(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
     ) -> Vec<&LinkDeliveryProofRecord> {
         self.link_delivery_proofs
             .values()
-            .filter(|p| &p.link_id == link_id)
+            .filter(|p| &p.token_id == token_id)
             .collect()
     }
 
     pub fn ph1link_invite_send_commit(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         delivery_method: DeliveryMethod,
         recipient_contact: String,
         idempotency_key: String,
     ) -> Result<LinkDeliveryProofRecord, StorageError> {
         let rec = self
             .links
-            .get_mut(&link_id)
+            .get_mut(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.link_id",
-                key: link_id.as_str().to_string(),
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
             })?;
 
         if matches!(rec.status, LinkStatus::Expired | LinkStatus::Revoked) {
@@ -2587,7 +2587,7 @@ impl Ph1fStore {
 
         let recipient_contact_hash = deterministic_contact_hash_hex(&recipient_contact);
         let idx_key = (
-            link_id.clone(),
+            token_id.clone(),
             delivery_method,
             recipient_contact_hash.clone(),
             idempotency_key.clone(),
@@ -2611,7 +2611,7 @@ impl Ph1fStore {
             schema_version: SchemaVersion(1),
             delivery_proof_ref: proof_ref.clone(),
             created_at: now,
-            link_id: link_id.clone(),
+            token_id: token_id.clone(),
             delivery_method,
             recipient_contact_hash,
             delivery_status: DeliveryStatus::Sent,
@@ -2633,15 +2633,15 @@ impl Ph1fStore {
     pub fn ph1link_invite_open_activate_commit(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>, Option<PrefilledContextRef>), StorageError> {
         let rec = self
             .links
-            .get_mut(&link_id)
+            .get_mut(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.link_id",
-                key: link_id.as_str().to_string(),
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
             })?;
 
         // Expiry gate.
@@ -2673,7 +2673,7 @@ impl Ph1fStore {
         let ctx_ref = rec
             .prefilled_context
             .as_ref()
-            .map(|_| PrefilledContextRef::new(format!("prefilled:{}", rec.link_id.as_str())))
+            .map(|_| PrefilledContextRef::new(format!("prefilled:{}", rec.token_id.as_str())))
             .transpose()?;
 
         Ok((
@@ -2685,15 +2685,15 @@ impl Ph1fStore {
 
     pub fn ph1link_invite_revoke_revoke(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         reason: String,
     ) -> Result<(), StorageError> {
         let rec = self
             .links
-            .get_mut(&link_id)
+            .get_mut(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.link_id",
-                key: link_id.as_str().to_string(),
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
             })?;
         rec.status = LinkStatus::Revoked;
         rec.revoked_reason = Some(reason);
@@ -2703,7 +2703,7 @@ impl Ph1fStore {
     pub fn ph1link_invite_expired_recovery_commit(
         &mut self,
         now: MonotonicTimeNs,
-        expired_link_id: LinkId,
+        expired_link_id: TokenId,
         delivery_method: Option<DeliveryMethod>,
         recipient_contact: Option<String>,
         idempotency_key: String,
@@ -2712,7 +2712,7 @@ impl Ph1fStore {
             self.links
                 .get_mut(&expired_link_id)
                 .ok_or(StorageError::ForeignKeyViolation {
-                    table: "links.link_id",
+                    table: "links.token_id",
                     key: expired_link_id.as_str().to_string(),
                 })?;
 
@@ -2743,7 +2743,7 @@ impl Ph1fStore {
         if let Some(existing_new_id) = self.link_recovery_idempotency_index.get(&idx_key) {
             return self.links.get(existing_new_id).cloned().ok_or(
                 StorageError::ForeignKeyViolation {
-                    table: "links.link_id",
+                    table: "links.token_id",
                     key: existing_new_id.as_str().to_string(),
                 },
             );
@@ -2755,7 +2755,7 @@ impl Ph1fStore {
 
         let link_seq = self.next_link_seq;
         self.next_link_seq = self.next_link_seq.saturating_add(1);
-        let link_id = LinkId::new(format!("link_{link_seq}_{}", old.payload_hash))?;
+        let token_id = TokenId::new(format!("link_{link_seq}_{}", old.payload_hash))?;
 
         let new_delivery_method = delivery_method.unwrap_or(old.delivery_method);
         let new_recipient_contact_hash = match recipient_contact {
@@ -2764,7 +2764,7 @@ impl Ph1fStore {
         };
 
         let rec = LinkRecord::v1(
-            link_id.clone(),
+            token_id.clone(),
             old.payload_hash.clone(),
             LinkStatus::DraftCreated,
             now,
@@ -2779,24 +2779,24 @@ impl Ph1fStore {
             None,
         )?;
 
-        self.links.insert(link_id.clone(), rec.clone());
+        self.links.insert(token_id.clone(), rec.clone());
         self.link_recovery_idempotency_index
-            .insert(idx_key, link_id);
+            .insert(idx_key, token_id);
 
         Ok(rec)
     }
 
     pub fn ph1link_invite_forward_block_commit(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         presented_device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>), StorageError> {
         let rec = self
             .links
-            .get_mut(&link_id)
+            .get_mut(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.link_id",
-                key: link_id.as_str().to_string(),
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
             })?;
 
         let presented_hash =
@@ -2818,7 +2818,7 @@ impl Ph1fStore {
             }));
         }
 
-        let key = (link_id.clone(), presented_hash);
+        let key = (token_id.clone(), presented_hash);
         if self.link_forward_block_attempts.contains(&key) {
             rec.status = LinkStatus::Blocked;
             return Ok((LinkStatus::Blocked, Some(bound)));
@@ -2862,11 +2862,11 @@ impl Ph1fStore {
         &mut self,
         now: MonotonicTimeNs,
         tenant_id: Option<String>,
-        link_id: Option<LinkId>,
+        token_id: Option<TokenId>,
         note: String,
     ) -> Result<String, StorageError> {
         let note_hash = hash_hex_64(&note);
-        let idx_key = (tenant_id.clone(), link_id.clone(), note_hash.clone());
+        let idx_key = (tenant_id.clone(), token_id.clone(), note_hash.clone());
         if let Some(existing) = self.link_dual_role_conflict_idempotency_index.get(&idx_key) {
             return Ok(existing.clone());
         }
@@ -2877,7 +2877,7 @@ impl Ph1fStore {
             escalation_case_id: escalation_case_id.clone(),
             created_at: now,
             tenant_id,
-            link_id,
+            token_id,
             note,
         };
 
@@ -2892,16 +2892,16 @@ impl Ph1fStore {
     pub fn ph1link_delivery_failure_handling_commit(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         attempt: u8,
         idempotency_key: String,
     ) -> Result<LinkDeliveryProofRecord, StorageError> {
         let rec = self
             .links
-            .get_mut(&link_id)
+            .get_mut(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.link_id",
-                key: link_id.as_str().to_string(),
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
             })?;
 
         if matches!(rec.status, LinkStatus::Expired | LinkStatus::Revoked) {
@@ -2913,7 +2913,7 @@ impl Ph1fStore {
             ));
         }
 
-        let idx_key = (link_id.clone(), idempotency_key.clone());
+        let idx_key = (token_id.clone(), idempotency_key.clone());
         if let Some(existing_proof_ref) = self.link_delivery_failure_idempotency_index.get(&idx_key)
         {
             return self
@@ -2941,7 +2941,7 @@ impl Ph1fStore {
             schema_version: SchemaVersion(1),
             delivery_proof_ref: proof_ref.clone(),
             created_at: now,
-            link_id: link_id.clone(),
+            token_id: token_id.clone(),
             delivery_method: rec.delivery_method,
             recipient_contact_hash: rec.recipient_contact_hash.clone(),
             delivery_status,
@@ -2976,7 +2976,7 @@ impl Ph1fStore {
     pub fn ph1onb_session_start_draft(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
@@ -2984,10 +2984,10 @@ impl Ph1fStore {
         // Preconditions: link exists and is ACTIVATED.
         let link = self
             .links
-            .get(&link_id)
+            .get(&token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "onboarding_sessions.link_id",
-                key: link_id.as_str().to_string(),
+                table: "onboarding_sessions.token_id",
+                key: token_id.as_str().to_string(),
             })?;
         if link.status != LinkStatus::Activated {
             return Err(StorageError::ContractViolation(
@@ -3024,7 +3024,7 @@ impl Ph1fStore {
             }
         }
 
-        if let Some(existing) = self.onboarding_session_by_link.get(&link_id) {
+        if let Some(existing) = self.onboarding_session_by_link.get(&token_id) {
             let rec = self.onboarding_sessions.get(existing).ok_or(
                 StorageError::ForeignKeyViolation {
                     table: "onboarding_sessions.onboarding_session_id",
@@ -3071,14 +3071,14 @@ impl Ph1fStore {
             prefilled_context_ref
         } else if link.prefilled_context.is_some() {
             Some(
-                PrefilledContextRef::new(format!("prefilled:{}", link.link_id.as_str()))
+                PrefilledContextRef::new(format!("prefilled:{}", link.token_id.as_str()))
                     .map_err(StorageError::ContractViolation)?,
             )
         } else {
             None
         };
 
-        let session_hash = hash_hex_64(link_id.as_str());
+        let session_hash = hash_hex_64(token_id.as_str());
         let onboarding_session_id = OnboardingSessionId::new(format!("onb_{session_hash}"))?;
 
         let df_hash = deterministic_device_fingerprint_hash_hex(&device_fingerprint);
@@ -3086,7 +3086,7 @@ impl Ph1fStore {
         let rec = OnboardingSessionRecord {
             schema_version: SchemaVersion(1),
             onboarding_session_id: onboarding_session_id.clone(),
-            link_id: link_id.clone(),
+            token_id: token_id.clone(),
             invitee_type: link.invitee_type,
             tenant_id: effective_tenant_id.clone(),
             prefilled_context_ref: effective_prefilled_context_ref.clone(),
@@ -3109,7 +3109,7 @@ impl Ph1fStore {
         self.onboarding_sessions
             .insert(onboarding_session_id.clone(), rec);
         self.onboarding_session_by_link
-            .insert(link_id.clone(), onboarding_session_id.clone());
+            .insert(token_id.clone(), onboarding_session_id.clone());
 
         let next_step =
             if link.invitee_type == InviteeType::Employee && effective_tenant_id.is_none() {
@@ -3129,15 +3129,15 @@ impl Ph1fStore {
 
     fn ph1onb_validate_employee_position_prereq(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
         effective_tenant_id: Option<&str>,
     ) -> Result<(), StorageError> {
         let link = self
             .links
-            .get(link_id)
+            .get(token_id)
             .ok_or(StorageError::ForeignKeyViolation {
-                table: "onboarding_sessions.link_id",
-                key: link_id.as_str().to_string(),
+                table: "onboarding_sessions.token_id",
+                key: token_id.as_str().to_string(),
             })?;
 
         let Some(prefilled) = link.prefilled_context.as_ref() else {
@@ -3479,7 +3479,7 @@ impl Ph1fStore {
             verification_status,
             primary_device_confirmed,
             terms_status,
-            link_id,
+            token_id,
             existing_tenant_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
@@ -3493,7 +3493,7 @@ impl Ph1fStore {
                 rec.verification_status,
                 rec.primary_device_confirmed,
                 rec.terms_status,
-                rec.link_id.clone(),
+                rec.token_id.clone(),
                 rec.tenant_id.clone(),
             )
         };
@@ -3528,7 +3528,7 @@ impl Ph1fStore {
         let effective_tenant_id = tenant_id.clone().or(existing_tenant_id);
         if invitee_type == InviteeType::Employee {
             self.ph1onb_validate_employee_position_prereq(
-                &link_id,
+                &token_id,
                 effective_tenant_id.as_deref(),
             )?;
         }
@@ -3606,7 +3606,7 @@ impl Ph1fStore {
             verification_status,
             terms_status,
             access_engine_instance_id,
-            link_id,
+            token_id,
             tenant_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
@@ -3620,7 +3620,7 @@ impl Ph1fStore {
                 rec.verification_status,
                 rec.terms_status,
                 rec.access_engine_instance_id.clone(),
-                rec.link_id.clone(),
+                rec.token_id.clone(),
                 rec.tenant_id.clone(),
             )
         };
@@ -3652,7 +3652,7 @@ impl Ph1fStore {
             ));
         }
         if invitee_type == InviteeType::Employee {
-            self.ph1onb_validate_employee_position_prereq(&link_id, tenant_id.as_deref())?;
+            self.ph1onb_validate_employee_position_prereq(&token_id, tenant_id.as_deref())?;
         }
 
         let rec = self
@@ -8716,7 +8716,7 @@ mod tests {
             OnboardingSessionRecord {
                 schema_version: SchemaVersion(1),
                 onboarding_session_id: onb_id.clone(),
-                link_id: LinkId::new("link_1").unwrap(),
+                token_id: TokenId::new("link_1").unwrap(),
                 invitee_type: InviteeType::Employee,
                 tenant_id: Some("tenant_1".to_string()),
                 prefilled_context_ref: None,

@@ -26,7 +26,7 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
-    DeliveryMethod, DeliveryProofRef, LinkId, LinkStatus, PrefilledContext, PrefilledContextRef,
+    DeliveryMethod, DeliveryProofRef, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{MemoryKey, MemoryLedgerEvent, MemoryUsePolicy};
 use selene_kernel_contracts::ph1onb::{
@@ -981,18 +981,18 @@ pub trait Ph1LinkRepo {
 
     fn ph1link_get_link_row(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
     ) -> Option<&selene_kernel_contracts::ph1link::LinkRecord>;
 
     fn ph1link_delivery_proofs_for_link_row(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
     ) -> Vec<&LinkDeliveryProofRecord>;
 
     fn ph1link_invite_send_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         delivery_method: DeliveryMethod,
         recipient_contact: String,
         idempotency_key: String,
@@ -1001,20 +1001,20 @@ pub trait Ph1LinkRepo {
     fn ph1link_invite_open_activate_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>, Option<PrefilledContextRef>), StorageError>;
 
     fn ph1link_invite_revoke_revoke_row(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         reason: String,
     ) -> Result<(), StorageError>;
 
     fn ph1link_invite_expired_recovery_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        expired_link_id: LinkId,
+        expired_link_id: TokenId,
         delivery_method: Option<DeliveryMethod>,
         recipient_contact: Option<String>,
         idempotency_key: String,
@@ -1022,14 +1022,14 @@ pub trait Ph1LinkRepo {
 
     fn ph1link_invite_forward_block_commit_row(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         presented_device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>), StorageError>;
 
     fn ph1link_delivery_failure_handling_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         attempt: u8,
         idempotency_key: String,
     ) -> Result<LinkDeliveryProofRecord, StorageError>;
@@ -1045,7 +1045,7 @@ pub trait Ph1OnbRepo {
     fn ph1onb_session_start_draft_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
@@ -2809,29 +2809,29 @@ impl Ph1LinkRepo for Ph1fStore {
 
     fn ph1link_get_link_row(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
     ) -> Option<&selene_kernel_contracts::ph1link::LinkRecord> {
-        self.ph1link_get_link(link_id)
+        self.ph1link_get_link(token_id)
     }
 
     fn ph1link_delivery_proofs_for_link_row(
         &self,
-        link_id: &LinkId,
+        token_id: &TokenId,
     ) -> Vec<&LinkDeliveryProofRecord> {
-        self.ph1link_delivery_proofs_for_link(link_id)
+        self.ph1link_delivery_proofs_for_link(token_id)
     }
 
     fn ph1link_invite_send_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         delivery_method: DeliveryMethod,
         recipient_contact: String,
         idempotency_key: String,
     ) -> Result<LinkDeliveryProofRecord, StorageError> {
         self.ph1link_invite_send_commit(
             now,
-            link_id,
+            token_id,
             delivery_method,
             recipient_contact,
             idempotency_key,
@@ -2841,24 +2841,24 @@ impl Ph1LinkRepo for Ph1fStore {
     fn ph1link_invite_open_activate_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>, Option<PrefilledContextRef>), StorageError> {
-        self.ph1link_invite_open_activate_commit(now, link_id, device_fingerprint)
+        self.ph1link_invite_open_activate_commit(now, token_id, device_fingerprint)
     }
 
     fn ph1link_invite_revoke_revoke_row(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         reason: String,
     ) -> Result<(), StorageError> {
-        self.ph1link_invite_revoke_revoke(link_id, reason)
+        self.ph1link_invite_revoke_revoke(token_id, reason)
     }
 
     fn ph1link_invite_expired_recovery_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        expired_link_id: LinkId,
+        expired_link_id: TokenId,
         delivery_method: Option<DeliveryMethod>,
         recipient_contact: Option<String>,
         idempotency_key: String,
@@ -2874,20 +2874,20 @@ impl Ph1LinkRepo for Ph1fStore {
 
     fn ph1link_invite_forward_block_commit_row(
         &mut self,
-        link_id: LinkId,
+        token_id: TokenId,
         presented_device_fingerprint: String,
     ) -> Result<(LinkStatus, Option<String>), StorageError> {
-        self.ph1link_invite_forward_block_commit(link_id, presented_device_fingerprint)
+        self.ph1link_invite_forward_block_commit(token_id, presented_device_fingerprint)
     }
 
     fn ph1link_delivery_failure_handling_commit_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         attempt: u8,
         idempotency_key: String,
     ) -> Result<LinkDeliveryProofRecord, StorageError> {
-        self.ph1link_delivery_failure_handling_commit(now, link_id, attempt, idempotency_key)
+        self.ph1link_delivery_failure_handling_commit(now, token_id, attempt, idempotency_key)
     }
 
     fn attempt_overwrite_link_delivery_proof_row(
@@ -2902,14 +2902,14 @@ impl Ph1OnbRepo for Ph1fStore {
     fn ph1onb_session_start_draft_row(
         &mut self,
         now: MonotonicTimeNs,
-        link_id: LinkId,
+        token_id: TokenId,
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
     ) -> Result<OnbSessionStartResult, StorageError> {
         self.ph1onb_session_start_draft(
             now,
-            link_id,
+            token_id,
             prefilled_context_ref,
             tenant_id,
             device_fingerprint,
