@@ -12,11 +12,16 @@
 ### `onboarding_sessions` (PH1.F current-state runtime slice for row 21)
 - `truth_type`: `CURRENT`
 - `primary key`: `onboarding_session_id`
+- design-level required/optional fields:
+  - `draft_id` (required)
+  - `device_fingerprint_hash` (required)
+  - `token_id` (optional, trace only)
 - invariants:
   - one deterministic session per activated draft (`draft_id -> onboarding_session_id`) with optional token reference (`token_id`)
   - session transitions are bounded by deterministic status machine (`DRAFT_CREATED` -> ... -> `COMPLETE`)
   - employee flow remains blocked until verification gates pass
   - session scope is tenant-safe when tenant scope is provided
+  - resume session integrity requires `device_fingerprint_hash` match; mismatch fails closed
 
 ### PH1.ONB idempotency indexes (runtime dedupe scope for row 21)
 - `onb_terms_idempotency_index`
@@ -76,12 +81,18 @@ Deterministic rules:
   - primary-device proof uses a valid device reference
   - access-instance creation resolves user-scoped identity/access safely
 
+### Draft load rule (clarify loop source of truth)
+- on session start, PH1.ONB reads `onboarding_drafts(draft_id)` and loads:
+  - `draft_payload_json.prefilled_profile_fields`
+  - `missing_required_fields_json`
+- this deterministic snapshot drives one-question-at-a-time clarify and prevents repeats.
+
 ## 4) Writes (outputs)
 
 ### `ONB_SESSION_START_DRAFT`
-- writes: `onboarding_sessions` (create or deterministic reuse by link)
+- writes: `onboarding_sessions` (create or deterministic reuse by draft)
 - required fields:
-  - `draft_id`, optional `token_id`, optional `prefilled_context_ref`, optional `tenant_id`, `device_fingerprint`
+  - `draft_id`, `device_fingerprint`, optional `token_id`, optional `prefilled_context_ref`, optional `tenant_id`
 - idempotency rule:
   - deterministic reuse by `onboarding_session_by_draft` (one session per draft)
 

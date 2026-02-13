@@ -17,12 +17,19 @@
 - ONB must not re-check link signature/expiry/revocation/device binding.
 
 ## 2) Required Inputs
-- `token_id`
 - `draft_id`
 - `device_fingerprint`
+- `token_id` (optional: traceability only; onboarding must not depend on it)
 - `invitee_user_id` (or pending identity context)
 - `tenant_id` (required for employee path)
 - `idempotency_key`
+
+## 2A) Preconditions / Handoff Contract
+- ONB starts only after `LINK_OPEN_ACTIVATE` succeeds and `draft_id` is present.
+- ONB must not re-check link signature/expiry/revocation and must not perform device binding.
+- ONB resume enforces onboarding session device integrity: if current `device_fingerprint` != `onboarding_session.device_fingerprint_hash`, fail closed.
+- ONB loads `onboarding_drafts` by `draft_id` and treats `draft_payload_json` + `missing_required_fields_json` as canonical.
+- ONB asks only missing fields and never re-asks fields already present.
 
 ## 3) Success Output Schema
 ```text
@@ -36,7 +43,7 @@ access_engine_instance_id: string (optional)
 
 | step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
 |---|---|---|---|---|---|---:|---:|---:|---|
-| ONB_INVITED_S01 | PH1.ONB | PH1ONB_SESSION_START_DRAFT_ROW | token_id, draft_id, device_fingerprint | onboarding_session_id, onboarding_state | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_START_RETRYABLE] |
+| ONB_INVITED_S01 | PH1.ONB | PH1ONB_SESSION_START_DRAFT_ROW | draft_id, device_fingerprint, token_id(optional), idempotency_key | onboarding_session_id, onboarding_state | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_START_RETRYABLE] |
 | ONB_INVITED_S02 | PH1.C | PH1C_TRANSCRIPT_OK_COMMIT_ROW | correlation_id, turn_id, transcript_hash | transcript_ok evidence row | DB_WRITE | 1200 | 1 | 150 | [STT_FAIL_PROVIDER_TIMEOUT, STT_FAIL_NETWORK_UNAVAILABLE] |
 | ONB_INVITED_S03 | PH1.NLP | PH1NLP_INTENT_DRAFT_COMMIT_ROW | transcript_ok, onboarding_context | intent_draft / missing field signal | DB_WRITE | 200 | 1 | 100 | [NLP_INPUT_MISSING] |
 | ONB_INVITED_S04 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | missing field signal | one-question clarify state | DB_WRITE | 300 | 1 | 100 | [OS_CLARIFY_TIMEOUT] |
@@ -92,3 +99,6 @@ Deferral/reminder rule (S01/S04 consent/clarify flow):
 - `AT-PBS-ONB-03`: Voice and wake enrollment are simulation-gated.
 - `AT-PBS-ONB-04`: Completion only after all required gates pass.
 - `AT-PBS-ONB-06`: ONB does not perform link validation; it requires prior successful link activation + `draft_id` context.
+- `AT-PBS-ONB-07`: ONB loads `missing_required_fields` by `draft_id` and asks only those fields (never ask twice).
+- `AT-PBS-ONB-08`: Resume after interruption continues from persisted onboarding session state with no re-asks.
+- `AT-PBS-ONB-09`: Device mismatch on resume fails closed.

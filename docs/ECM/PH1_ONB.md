@@ -10,11 +10,12 @@
 ## Capability List
 
 ### `PH1ONB_SESSION_START_DRAFT_ROW`
-- `name`: Start onboarding session from activated link
-- `input_schema`: `(now, token_id?, draft_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
+- `name`: Start onboarding session from `LINK_OPEN_ACTIVATE` handoff
+- `input_schema`: `(draft_id, device_fingerprint, token_id?, idempotency_key)`
 - `output_schema`: `Result<OnbSessionStartResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `load_rule_note`: ONB session start loads onboarding draft context by `draft_id` (`draft_payload_json` + `missing_required_fields_json`) before clarify flow.
 
 ### `PH1ONB_SESSION_ROW`
 - `name`: Read one onboarding session row

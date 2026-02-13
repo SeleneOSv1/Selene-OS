@@ -48,7 +48,7 @@
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
 - `input_schema`: `(now, token_id, device_fingerprint)`
-- `output_schema`: `Result<(LinkStatus, conflict_reason?, prefilled_context_ref?), StorageError>`
+- `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
