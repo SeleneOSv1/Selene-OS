@@ -12,18 +12,18 @@
 
 ## 1B) Handoff Contract
 - `LINK_OPEN_ACTIVATE` output is authoritative for:
-  - token validity (`expired/revoked/invalid`)
-  - first-open `device_fingerprint` binding
-  - `draft_id` resolution
-- On success, Selene OS starts `ONB_INVITED` with:
-  - `draft_id` (required)
-  - `device_fingerprint` (required)
-  - `token_id` (required at activation; optional for ONB trace/audit only)
+  - token validity (expired/revoked/invalid)
+  - first-open device_fingerprint binding
+  - draft_id resolution
+- On success, Selene OS starts ONB_INVITED with:
+  - draft_id (required)
+  - device_fingerprint (required)
+  - token_id (required at activation; optional for ONB trace/audit only)
 
 ## 2) Required Inputs
-- `token_id`
-- `device_fingerprint`
-- `idempotency_key`
+- token_id
+- device_fingerprint
+- idempotency_key
 
 ## 3) Success Output Schema
 ```text
@@ -44,15 +44,15 @@ bound_device_fingerprint_hash: string
 - none (open/activate is deterministic, policy-gated, and simulation-gated).
 
 ## 6) Simulation Requirements
-- `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
-- `LINK_INVITE_FORWARD_BLOCK_COMMIT` (when device mismatch is detected)
+- LINK_INVITE_OPEN_ACTIVATE_COMMIT
+- LINK_INVITE_FORWARD_BLOCK_COMMIT (when device mismatch is detected)
 
 ## 7) Refusal Conditions
-- token invalid/expired/revoked -> `LINK_TOKEN_INVALID`
-- forwarded-link device mismatch -> `LINK_FORWARD_BLOCKED`
+- token invalid/expired/revoked -> LINK_TOKEN_INVALID
+- forwarded-link device mismatch -> LINK_FORWARD_BLOCKED
 
 ## 8) Acceptance Tests
-- `AT-PBS-LINKOPEN-01`: Open/activate step requires simulation.
-- `AT-PBS-LINKOPEN-02`: Device mismatch must fail closed.
-- `AT-PBS-LINKOPEN-03`: Handoff includes `draft_id` when activated.
-- `AT-PBS-LINKOPEN-04`: Successful activation returns `draft_id` + `missing_required_fields` and binds token to `device_fingerprint`.
+- AT-PBS-LINKOPEN-01: Open/activate step requires simulation.
+- AT-PBS-LINKOPEN-02: Device mismatch must fail closed.
+- AT-PBS-LINKOPEN-03: Handoff includes draft_id when activated.
+- AT-PBS-LINKOPEN-04: Successful activation returns draft_id + missing_required_fields and binds token to device_fingerprint.

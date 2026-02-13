@@ -20,7 +20,7 @@
 ## 2A) Invitee Type + Prefill Clarify Discipline
 - If `invitee_type` is missing or ambiguous, PH1.X asks exactly one clarify question before continuing.
 - After minimum fields are captured, Selene may run an optional prefill loop:
-  - "Anything else you want me to include so the invitee doesn’t type it?"
+  - “Anything else you want me to include so the invitee doesn’t type it?”
   - one question at a time; inviter can stop at any time.
 
 ## 3) Success Output Schema
@@ -41,7 +41,7 @@ missing_required_fields: string[]
 | LINK_INVITE_S05 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_APPLY_OVERRIDE_COMMIT_ROW | access_decision=ESCALATE, approved_by_user_id, simulation_id | override_applied | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [ACCESS_IDEMPOTENCY_REPLAY] |
 | LINK_INVITE_S06 | PH1.LINK | PH1LINK_INVITE_GENERATE_DRAFT_ROW | inviter_user_id, invitee_type, tenant_id, prefilled_profile_fields | draft_id, token_id, link_url, missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_GENERATE_RETRYABLE] |
 | LINK_INVITE_S07 | PH1.LINK | PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW | draft_id, creator_update_fields, idempotency_key | updated draft + recomputed missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_DRAFT_UPDATE_RETRYABLE] |
-| LINK_INVITE_S08 | PH1.X | PH1X_RESPOND_COMMIT_ROW | draft_id, token_id, link_url | response prompt: "Link generated. Do you want me to send it now?" | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
+| LINK_INVITE_S08 | PH1.X | PH1X_RESPOND_COMMIT_ROW | draft_id, token_id, link_url | response prompt: “Link generated. Do you want me to send it now?” | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
 
 S06 persistence note:
 - `PH1LINK_INVITE_GENERATE_DRAFT_ROW` stores `invitee_type` + `prefilled_profile_fields` in the onboarding draft payload and computes schema-driven `missing_required_fields`.
@@ -56,7 +56,7 @@ S06 persistence note:
 - `ACCESS_OVERRIDE_PERM_GRANT_COMMIT` (conditional escalation path)
 
 Delivery note:
-- Delivery is executed by `LINK_DELIVER_INVITE` (`PH1.BCAST` + `PH1.DELIVERY`). `PH1.LINK` does not send.
+- Delivery is executed by `LINK_DELIVER_INVITE` (`PH1.BCAST` + `PH1.DELIVERY`). PH1.LINK does not send.
 
 ## 7) Refusal Conditions
 - Access denied at `LINK_INVITE_S04` -> `ACCESS_SCOPE_VIOLATION`
@@ -68,4 +68,4 @@ Delivery note:
 - `AT-PBS-LINK-02`: Mandatory confirmation before link generation commit path.
 - `AT-PBS-LINK-03`: Every side-effect step references a simulation.
 - `AT-PBS-LINK-04`: Capability IDs resolve to active ECM entries.
-- `AT-PBS-LINK-05`: `LINK_INVITE` generates `link_url` but does not deliver; delivery is a separate blueprint.
+- `AT-PBS-LINK-05`: LINK_INVITE generates `link_url` but does not deliver; delivery is a separate blueprint.
