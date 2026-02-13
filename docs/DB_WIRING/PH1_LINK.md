@@ -3,8 +3,8 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `open/activate`, `revoke`, recovery/forward-block) with strict token->draft mapping and deterministic binding guards.
-- canonical identifier rule: canonical external identifier is `token_id` (`onboarding_link_tokens.token_id`); `link_id` is deprecated alias only.
+- `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `draft_update`, `open/activate`, `forward-block`) with strict token->draft mapping and deterministic binding guards.
+- canonical identifier rule: canonical external identifier is `token_id`; internal draft identifier is `draft_id`; `link_url` is a transport artifact.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -72,7 +72,7 @@
 ### `LINK_INVITE_GENERATE_DRAFT`
 - writes: `onboarding_drafts`, `onboarding_link_tokens` (or equivalent PH1.F current records in MVP runtime lock)
 - required fields:
-  - inviter identity, invitee type, delivery method, payload hash, expiry, tenant scope (when present), optional prefilled profile fields
+  - inviter identity, invitee type, payload hash, expiry, tenant scope (when present), optional prefilled profile fields
 - idempotency key rule:
   - deterministic payload hash + inviter scope dedupe
 
@@ -84,6 +84,7 @@
   - dedupe on `(draft_id, idempotency_key)`
 
 Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT` is legacy and must not be used; link delivery is performed only by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
+Delivery dedupe/idempotency is owned by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
 
 ### `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
 - writes: token status transition to `ACTIVATED`, bound device fingerprint hash
@@ -92,13 +93,9 @@ Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT` is legacy and must not be used; 
 - idempotency key rule:
   - deterministic no-op for repeated open on same bound device
 - forwarded-link block input rule:
-  - `LINK_INVITE_FORWARD_BLOCK_COMMIT` input is `token_id + presented_device_fingerprint` (never `link_id`).
-
-### `LINK_INVITE_REVOKE_REVOKE`
-- writes: token status transition to `REVOKED` with reason
+  - `LINK_INVITE_FORWARD_BLOCK_COMMIT` input is `token_id + presented_device_fingerprint`.
 
 ### additional locked simulations (v1 slice)
-- `LINK_INVITE_EXPIRED_RECOVERY_COMMIT`
 - `LINK_INVITE_FORWARD_BLOCK_COMMIT`
 
 ## 5) Relations & Keys

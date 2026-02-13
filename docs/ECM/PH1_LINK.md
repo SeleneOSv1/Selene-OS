@@ -2,7 +2,7 @@
 
 ## Engine Header
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle with token->draft mapping, activation binding, revoke/recovery, and forward-block guards.
+- `purpose`: Persist deterministic onboarding/referral link lifecycle with token->draft mapping, draft updates, activation binding, and forward-block guards.
 - `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime state
 - `version`: `v1`
 - `status`: `ACTIVE`
@@ -11,14 +11,14 @@
 
 ### `PH1LINK_INVITE_GENERATE_DRAFT_ROW`
 - `name`: Generate link draft + token mapping
-- `input_schema`: `(now, inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id?, schema_version_id?, prefilled_profile_fields?, expiration_policy_id?)`
+- `input_schema`: `(inviter_user_id, invitee_type, prefilled_profile_fields?, tenant_id?, schema_version_id?)`
 - `output_schema`: `Result<(draft_id, token_id, link_url, missing_required_fields[]), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW`
 - `name`: Commit creator draft updates and recompute missing required fields
-- `input_schema`: `(now, draft_id, creator_update_fields, idempotency_key)`
+- `input_schema`: `(draft_id, creator_update_fields, idempotency_key)`
 - `output_schema`: `Result<(LinkRecord, missing_required_fields[]), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -32,22 +32,8 @@
 
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
-- `input_schema`: `(now, token_id, device_fingerprint)`
+- `input_schema`: `(token_id, device_fingerprint, idempotency_key)`
 - `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>`
-- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
-- `side_effects`: `DECLARED (DB_WRITE)`
-
-### `PH1LINK_INVITE_REVOKE_REVOKE_ROW`
-- `name`: Revoke link
-- `input_schema`: `(token_id, reason)`
-- `output_schema`: `Result<(), StorageError>`
-- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
-- `side_effects`: `DECLARED (DB_WRITE)`
-
-### `PH1LINK_INVITE_EXPIRED_RECOVERY_COMMIT_ROW`
-- `name`: Recover expired link with deterministic replacement flow
-- `input_schema`: `(now, expired_token_id, delivery_method?, recipient_contact?, idempotency_key)`
-- `output_schema`: `Result<LinkRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
