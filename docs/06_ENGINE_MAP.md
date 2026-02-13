@@ -31,6 +31,10 @@ This file is non-canonical by design.
 - `PH1.VOICE.ID`: `docs/DB_WIRING/PH1_VOICE_ID.md` + `docs/ECM/PH1_VOICE_ID.md`
 - `PH1.ACCESS.001_PH2.ACCESS.002`: `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` + `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
 
+## Global Policy Navigation
+
+- `PH1.POLICY`: `docs/DB_WIRING/PH1_POLICY.md` + `docs/ECM/PH1_POLICY.md`
+
 ## Phase E Navigation (Onboarding/Delivery Controls)
 
 - `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
@@ -92,12 +96,15 @@ Assists (called by Selene OS, never engine-to-engine):
 - PH1.EXPLAIN runs only when the user asks “why?”
 - PH1.SEARCH/PH1.WEBINT/PH1.PREFETCH assist planning and evidence interpretation; PH1.E executes tools only.
 - PH1.DOC/PH1.VISION are invoked only when user documents/images are provided; outputs are evidence bundles for PH1.CONTEXT/PH1.NLP.
+- Before prompting: `Selene OS -> PH1.POLICY (prompt dedupe) -> PH1.X`
+- Before interruption: `Selene OS -> PH1.POLICY (interrupt policy) -> PH1.BCAST/PH1.REM/PH1.DELIVERY`
 
 Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 - Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.
 - If delivery method is SMS and `sms_app_setup_complete=false`, Selene OS routes to `PH1.ONBOARDING_SMS` before continuing.
 - For approved delivery paths: Selene OS runs simulation commit steps, then calls PH1.BCAST lifecycle capabilities.
 - For per-recipient provider sends: Selene OS calls PH1.DELIVERY inside COMMIT simulation context and feeds resulting proof/status back into PH1.BCAST lifecycle state.
+- PH1.BCAST uses BCAST.MHP phone-first lifecycle for single-recipient messages; follow-ups occur only after WAITING timeout or URGENT classification.
 - AP escalation wiring:
   - Access returns `ESCALATE` (`AP_APPROVAL_REQUIRED`) ->
   - Selene OS opens PH1.BCAST approval flow ->
@@ -110,7 +117,7 @@ Learning wiring (not in-turn execution path):
 - PH1.PATTERN/PH1.RLL produce OFFLINE artifact proposals only.
 
 Wiring class declaration:
-- ALWAYS_ON: `PH1.K`, `PH1.W`, `PH1.VOICE.ID`, `PH1.C`, `PH1.SRL`, `PH1.NLP`, `PH1.X`, `PH1.CONTEXT`
+- ALWAYS_ON: `PH1.K`, `PH1.W`, `PH1.VOICE.ID`, `PH1.C`, `PH1.SRL`, `PH1.NLP`, `PH1.X`, `PH1.CONTEXT`, `PH1.POLICY`
 - TURN_OPTIONAL: `PH1.PUZZLE`, `PH1.ENDPOINT`, `PH1.LANG`, `PH1.ATTN`, `PH1.DOC`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.WEBINT`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.PAE`, `PH1.CACHE`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.ONBOARDING_SMS`, `PH1.LEARNING_ADAPTIVE`
 - OFFLINE_ONLY: `PH1.PATTERN`, `PH1.RLL`
 

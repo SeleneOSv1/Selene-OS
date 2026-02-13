@@ -75,3 +75,5 @@
 - all EXTERNAL_DELIVERY_REQUEST actions are simulation-gated.
 - engines never call engines; Selene OS orchestrates.
 - PH1.BCAST never grants authority and never bypasses Access.
+- for single-recipient message threads, PH1.BCAST applies the BCAST.MHP lifecycle policy (see `docs/DB_WIRING/PH1_BCAST.md` Section BCAST.MHP).
+- PH1.DELIVERY executes notification profiles (`NORMAL` vs `URGENT`) as instructed by broadcast envelope delivery hints.

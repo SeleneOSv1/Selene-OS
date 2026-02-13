@@ -34,6 +34,7 @@ Direction lock:
 | PH1.L | B Identity/Access | Control | Authoritative | Session lifecycle state/timers | `docs/DB_WIRING/PH1_L.md` | `docs/ECM/PH1_L.md` |
 | PH1.VOICE.ID | B Identity/Access | Perception | Authoritative | Speaker identity assertion | `docs/DB_WIRING/PH1_VOICE_ID.md` | `docs/ECM/PH1_VOICE_ID.md` |
 | PH1.ACCESS.001_PH2.ACCESS.002 | B Identity/Access | Governance | Authoritative | Access gate + per-user permission truth | `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` | `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md` |
+| PH1.POLICY | B Identity/Access | Control | Authoritative (policy decision only) | Global deterministic prompt/interrupt policy decisions (placement: ALWAYS_ON) | `docs/DB_WIRING/PH1_POLICY.md` | `docs/ECM/PH1_POLICY.md` |
 | PH1.K | C Perception/NLP/X | Perception | Authoritative (I/O) | Voice runtime audio substrate | `docs/DB_WIRING/PH1_K.md` | `docs/ECM/PH1_K.md` |
 | PH1.W | C Perception/NLP/X | Perception | Authoritative (wake) | Wake detection and capture boundaries | `docs/DB_WIRING/PH1_W.md` | `docs/ECM/PH1_W.md` |
 | PH1.C | C Perception/NLP/X | Perception | Authoritative (transcript gate) | STT routing + transcript quality gate | `docs/DB_WIRING/PH1_C.md` | `docs/ECM/PH1_C.md` |
@@ -43,7 +44,7 @@ Direction lock:
 | PH1.WRITE | D Output | Output | Non-Authoritative | Presentation-only formatting | `docs/DB_WIRING/PH1_WRITE.md` | `docs/ECM/PH1_WRITE.md` |
 | PH1.TTS | D Output | Output | Authoritative (playback) | Speech rendering with cancel safety | `docs/DB_WIRING/PH1_TTS.md` | `docs/ECM/PH1_TTS.md` |
 | PH1.E | E Onboarding/Tools | Control | Authoritative (read-only tools) | Tool routing for read-only queries | `docs/DB_WIRING/PH1_E.md` | `docs/ECM/PH1_E.md` |
-| PH1.BCAST | E Onboarding/Tools | Control | Authoritative (broadcast lifecycle only) | Broadcast lifecycle orchestrator (draft/deliver/ack/defer/retry/expire; simulation-gated for external delivery; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_BCAST.md` | `docs/ECM/PH1_BCAST.md` |
+| PH1.BCAST | E Onboarding/Tools | Control | Authoritative (broadcast lifecycle only) | Broadcast lifecycle orchestrator (draft/deliver/ack/defer/retry/expire; includes canonical BCAST.MHP state machine for phone-first message handling; simulation-gated for external delivery; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_BCAST.md` | `docs/ECM/PH1_BCAST.md` |
 | PH1.DELIVERY | E Onboarding/Tools | Control | Authoritative (delivery attempt truth only) | Provider gateway for SMS/Email/WhatsApp/WeChat delivery attempts (simulation-gated; placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_DELIVERY.md` | `docs/ECM/PH1_DELIVERY.md` |
 | PH1.ONBOARDING_SMS | E Onboarding/Tools | Control | Authoritative (setup lifecycle only) | SMS app setup verification/confirmation before any SMS send path (placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` | `docs/ECM/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | E Onboarding/Tools | Control/Governance | Authoritative | Invite link lifecycle (simulation-gated) | `docs/DB_WIRING/PH1_LINK.md` | `docs/ECM/PH1_LINK.md` |

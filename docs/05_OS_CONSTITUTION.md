@@ -77,6 +77,8 @@ Process and Execution
 - Process records: `docs/BLUEPRINTS/*.md`
 - Simulation catalog: `docs/08_SIMULATION_CATALOG.md`
 - OS core contracts: `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md` + `docs/ECM/SELENE_OS_CORE_TABLES.md`
+- Global interaction policy is enforced by `PH1.POLICY`: `docs/DB_WIRING/PH1_POLICY.md` + `docs/ECM/PH1_POLICY.md`
+- Broadcast message delivery lifecycle is canonical in `docs/DB_WIRING/PH1_BCAST.md` (Section BCAST.MHP).
 
 Section 3: Intent Taxonomy Summary
 
