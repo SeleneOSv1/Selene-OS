@@ -11,7 +11,7 @@
 
 ### `PH1ONB_SESSION_START_DRAFT_ROW`
 - `name`: Start onboarding session from activated link
-- `input_schema`: `(now, link_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
+- `input_schema`: `(now, token_id?, draft_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
 - `output_schema`: `Result<OnbSessionStartResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`

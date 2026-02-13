@@ -13,7 +13,7 @@
 - `truth_type`: `CURRENT`
 - `primary key`: `onboarding_session_id`
 - invariants:
-  - one deterministic session per activated link (`link_id -> onboarding_session_id`)
+  - one deterministic session per activated draft (`draft_id -> onboarding_session_id`) with optional token reference (`token_id`)
   - session transitions are bounded by deterministic status machine (`DRAFT_CREATED` -> ... -> `COMPLETE`)
   - employee flow remains blocked until verification gates pass
   - session scope is tenant-safe when tenant scope is provided
@@ -57,9 +57,10 @@ Deterministic rules:
 ### Link lifecycle prerequisites (from row 20 lock)
 - reads: PH1.LINK current link record (`links`) + prefilled context refs
 - Link validation + device binding are owned by PH1.LINK / LINK_OPEN_ACTIVATE; PH1.ONB consumes `draft_id` context only.
+- Onboarding starts only after `LINK_OPEN_ACTIVATE` succeeds; PH1.ONB does not validate link signatures/expiry/revocation/device binding.
 - required conditions:
-  - `link_id` exists
-  - link status is `ACTIVATED`
+  - `draft_id` exists
+  - optional `token_id` is in `ACTIVATED` state when present
   - if request tenant scope + prefilled tenant scope are both present, they must match
 
 ### Position/company prereq checks (employee path)
@@ -80,9 +81,9 @@ Deterministic rules:
 ### `ONB_SESSION_START_DRAFT`
 - writes: `onboarding_sessions` (create or deterministic reuse by link)
 - required fields:
-  - `link_id`, optional `prefilled_context_ref`, optional `tenant_id`, `device_fingerprint`
+  - `draft_id`, optional `token_id`, optional `prefilled_context_ref`, optional `tenant_id`, `device_fingerprint`
 - idempotency rule:
-  - deterministic reuse by `onboarding_session_by_link` (one session per link)
+  - deterministic reuse by `onboarding_session_by_draft` (one session per draft)
 
 ### `ONB_TERMS_ACCEPT_COMMIT`
 - writes: `onboarding_sessions` (`terms_version_id`, `terms_status`, state transition)
@@ -118,7 +119,8 @@ Deterministic rules:
 
 ## 5) Relations & Keys
 
-- `onboarding_sessions.link_id` references PH1.LINK session anchor (activated link).
+- `onboarding_sessions.draft_id` references `onboarding_drafts.draft_id`.
+- `onboarding_sessions.token_id` references `onboarding_link_tokens.token_id` when present.
 - employee prereq validation joins:
   - `prefilled_context.tenant_id/company_id/position_id` -> `tenant_companies`, `positions`.
 - access creation path uses PH2 access-instance scope keyed by `(tenant_id, user_id)`.

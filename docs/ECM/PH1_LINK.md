@@ -18,64 +18,64 @@
 
 ### `PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW`
 - `name`: Commit creator draft updates and recompute missing required fields
-- `input_schema`: `(now, link_id, creator_update_fields, idempotency_key)`
+- `input_schema`: `(now, draft_id, creator_update_fields, idempotency_key)`
 - `output_schema`: `Result<(LinkRecord, missing_required_fields[]), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_GET_LINK_ROW`
 - `name`: Read link lifecycle row
-- `input_schema`: `link_id`
+- `input_schema`: `token_id`
 - `output_schema`: `Option<LinkRecord>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
 ### `PH1LINK_DELIVERY_PROOFS_FOR_LINK_ROW`
 - `name`: Read delivery proof history for one link
-- `input_schema`: `link_id`
+- `input_schema`: `token_id`
 - `output_schema`: `LinkDeliveryProofRecord[]`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
 ### `PH1LINK_INVITE_SEND_COMMIT_ROW`
 - `name`: Commit link send + append delivery proof
-- `input_schema`: `(now, link_id, delivery_method, recipient_contact, idempotency_key)`
+- `input_schema`: `(now, token_id, delivery_method, recipient_contact, idempotency_key)`
 - `output_schema`: `Result<LinkDeliveryProofRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
-- `legacy_note`: `PH1LINK_INVITE_SEND_COMMIT_ROW` is legacy and is not referenced by `LINK_INVITE`; link delivery is handled by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
+- `legacy_note`: `PH1LINK_INVITE_SEND_COMMIT_ROW` is legacy and is not referenced by `LINK_INVITE`; `token_id` is canonical (`link_id` deprecated alias). Link delivery is handled by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
 
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
-- `input_schema`: `(now, link_id, device_fingerprint)`
+- `input_schema`: `(now, token_id, device_fingerprint)`
 - `output_schema`: `Result<(LinkStatus, conflict_reason?, prefilled_context_ref?), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_INVITE_REVOKE_REVOKE_ROW`
 - `name`: Revoke link
-- `input_schema`: `(link_id, reason)`
+- `input_schema`: `(token_id, reason)`
 - `output_schema`: `Result<(), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_INVITE_EXPIRED_RECOVERY_COMMIT_ROW`
 - `name`: Recover expired link with deterministic replacement flow
-- `input_schema`: `(now, expired_link_id, delivery_method?, recipient_contact?, idempotency_key)`
+- `input_schema`: `(now, expired_token_id, delivery_method?, recipient_contact?, idempotency_key)`
 - `output_schema`: `Result<LinkRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_INVITE_FORWARD_BLOCK_COMMIT_ROW`
 - `name`: Block forwarded-link open attempt
-- `input_schema`: `(link_id, presented_device_fingerprint)`
+- `input_schema`: `(token_id, presented_device_fingerprint)`
 - `output_schema`: `Result<(LinkStatus, reason?), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1LINK_DELIVERY_FAILURE_HANDLING_COMMIT_ROW`
 - `name`: Commit delivery failure handling/retry proof row
-- `input_schema`: `(now, link_id, attempt, idempotency_key)`
+- `input_schema`: `(now, token_id, attempt, idempotency_key)`
 - `output_schema`: `Result<LinkDeliveryProofRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`

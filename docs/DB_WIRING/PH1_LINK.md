@@ -4,6 +4,7 @@
 
 - `engine_id`: `PH1.LINK`
 - `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `send`, `open/activate`, `revoke`, recovery/forward-block/failure handling) with idempotent delivery proof history and strict token->draft mapping.
+- canonical identifier rule: canonical external identifier is `token_id` (`onboarding_link_tokens.token_id`); `link_id` is deprecated alias only.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -76,12 +77,19 @@
 - idempotency key rule:
   - deterministic payload hash + inviter scope dedupe
 
+### `LINK_INVITE_DRAFT_UPDATE_COMMIT`
+- writes: `onboarding_drafts` deterministic update + missing-required recompute
+- required fields:
+  - `draft_id`, `creator_update_fields`, idempotency key
+- idempotency key rule:
+  - dedupe on `(draft_id, idempotency_key)`
+
 ### `LINK_INVITE_SEND_COMMIT`
 - writes: token status transition (`DRAFT_CREATED -> SENT`) + delivery proof append
 - required fields:
-  - `delivery_method`, recipient hash, `delivery_proof_ref`, idempotency key
+  - `token_id`, `delivery_method`, recipient hash, `delivery_proof_ref`, idempotency key
 - idempotency key rule:
-  - dedupe on `(link_id, delivery_method, recipient_contact_hash, idempotency_key)`
+  - dedupe on `(token_id, delivery_method, recipient_contact_hash, idempotency_key)`
 - legacy scope note:
   - `LINK_INVITE_SEND_COMMIT` is legacy; link delivery is performed by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
 
@@ -91,6 +99,8 @@
   - `token_id`, presented device fingerprint hash, deterministic block path
 - idempotency key rule:
   - deterministic no-op for repeated open on same bound device
+- forwarded-link block input rule:
+  - `LINK_INVITE_FORWARD_BLOCK_COMMIT` input is `token_id + presented_device_fingerprint` (never `link_id`).
 
 ### `LINK_INVITE_REVOKE_REVOKE`
 - writes: token status transition to `REVOKED` with reason
