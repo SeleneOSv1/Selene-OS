@@ -82,6 +82,8 @@
   - `delivery_method`, recipient hash, `delivery_proof_ref`, idempotency key
 - idempotency key rule:
   - dedupe on `(link_id, delivery_method, recipient_contact_hash, idempotency_key)`
+- legacy scope note:
+  - `LINK_INVITE_SEND_COMMIT` is legacy; link delivery is performed by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
 
 ### `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
 - writes: token status transition to `ACTIVATED`, bound device fingerprint hash

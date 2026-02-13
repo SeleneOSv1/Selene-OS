@@ -101,6 +101,7 @@ Assists (called by Selene OS, never engine-to-engine):
 - Message interruption lifecycle is PH1.BCAST (BCAST.MHP).
 
 Broadcast/delivery side-effect wiring (Selene OS orchestrated):
+- Link generation: `PH1.LINK`; link delivery: `PH1.BCAST` + `PH1.DELIVERY` (`LINK_DELIVER_INVITE`).
 - Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.
 - If delivery method is SMS and `sms_app_setup_complete=false`, Selene OS routes to `PH1.ONBOARDING_SMS` before continuing.
 - For approved delivery paths: Selene OS runs simulation commit steps, then calls PH1.BCAST lifecycle capabilities.

@@ -43,6 +43,7 @@
 - `output_schema`: `Result<LinkDeliveryProofRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `legacy_note`: `PH1LINK_INVITE_SEND_COMMIT_ROW` is legacy and is not referenced by `LINK_INVITE`; link delivery is handled by `PH1.BCAST` + `PH1.DELIVERY` via `LINK_DELIVER_INVITE`.
 
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding

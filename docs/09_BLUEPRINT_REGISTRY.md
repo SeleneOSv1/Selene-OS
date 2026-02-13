@@ -24,6 +24,7 @@ Locked schema rules:
 | intent_type | process_id | version | status | record_path |
 |---|---|---|---|---|
 | LINK_INVITE | LINK_INVITE | v1 | ACTIVE | `docs/BLUEPRINTS/LINK_INVITE.md` |
+| LINK_DELIVER_INVITE | LINK_DELIVER_INVITE | v1 | DRAFT | `docs/BLUEPRINTS/LINK_DELIVER_INVITE.md` |
 | LINK_OPEN_ACTIVATE | LINK_OPEN_ACTIVATE | v1 | ACTIVE | `docs/BLUEPRINTS/LINK_OPEN_ACTIVATE.md` |
 | ONB_INVITED | ONB_INVITED | v1 | DRAFT | `docs/BLUEPRINTS/ONB_INVITED.md` |
 | ONB_BIZ_SETUP | ONB_BIZ_SETUP | v1 | DRAFT | `docs/BLUEPRINTS/ONB_BIZ_SETUP.md` |
