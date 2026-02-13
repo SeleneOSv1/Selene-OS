@@ -83,6 +83,36 @@ Fallback order (only when Selene App is unavailable):
 Policy integration note:
 - FOLLOWUP/REMINDER voice interruptions must consult `PH1.POLICY` interruption decision before speaking; phone delivery is already done first.
 
+### Section BCAST.MHP.REM: BCAST ↔ REM Handoff (Timing Only)
+
+Purpose
+Clarify the contract split between PH1.BCAST (message lifecycle) and PH1.REM (timing mechanics) for MHP follow-ups.
+
+Hard ownership split
+- PH1.BCAST owns the MHP lifecycle decisions and recipient state transitions:
+  - SENT → WAITING → FOLLOWUP → REMINDER_SET → REMINDER_FIRED → CONCLUDED
+- PH1.REM owns only reminder scheduling and firing mechanics (time capture, timezone/DST, retry timing).
+- PH1.REM must not decide urgency, classification, whether to interrupt, or the message content.
+
+Handoff rules (deterministic)
+- When JD says “yes, remind me”, PH1.BCAST requests PH1.REM to schedule a reminder with:
+  - reminder_type = BCAST_MHP_FOLLOWUP
+  - tenant_id, user_id (recipient), broadcast_id, recipient_id
+  - due_at (explicit agreed time)
+  - priority_level derived from classification (SIMPLE < PRIORITY < EMERGENCY)
+  - idempotency_key tied to (broadcast_id + recipient_id + due_at + prompt_dedupe_key)
+- When PH1.REM fires the reminder, Selene OS resumes PH1.BCAST at:
+  - REMINDER_SET → REMINDER_FIRED
+  - and PH1.BCAST emits the follow-up prompt (device-first delivery still applies).
+
+Device-first rule preserved
+- Reminder delivery follows the same BCAST.MHP rule:
+  - deliver to Selene App thread first
+  - voice interruption occurs only if policy requires and the recipient has not responded.
+
+No-repeat rule preserved
+- Repeat reminder prompts must be suppressed using the same prompt_dedupe_key discipline unless recipient state changed.
+
 Additional acceptance tests for BCAST.MHP:
 - `AT-BCAST-07`: Single-recipient flow enters `SENT` and transitions to `WAITING` with phone-first delivery proof.
 - `AT-BCAST-08`: `NON-URGENT` flow waits exactly 5 minutes before `FOLLOWUP`.
