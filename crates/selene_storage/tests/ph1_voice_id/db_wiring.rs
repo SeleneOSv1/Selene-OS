@@ -2,7 +2,7 @@
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
-use selene_kernel_contracts::ph1link::{DeliveryMethod, InviteeType, LinkStatus};
+use selene_kernel_contracts::ph1link::{InviteeType, LinkStatus};
 use selene_kernel_contracts::ph1onb::OnboardingSessionId;
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{
@@ -48,7 +48,6 @@ fn seed_onboarding_session(
     store: &mut Ph1fStore,
     inviter_user_id: UserId,
     device_fingerprint: &str,
-    contact: &str,
     now_base: u64,
 ) -> OnboardingSessionId {
     let (link, _) = store
@@ -56,15 +55,14 @@ fn seed_onboarding_session(
             MonotonicTimeNs(now_base),
             inviter_user_id,
             InviteeType::Household,
-            contact.to_string(),
-            DeliveryMethod::Email,
+            None,
             None,
             None,
             None,
         )
         .unwrap();
 
-    let (status, _, _) = store
+    let (status, _, _, _, _, _) = store
         .ph1link_invite_open_activate_commit(
             MonotonicTimeNs(now_base + 1),
             link.token_id.clone(),
@@ -97,20 +95,8 @@ fn at_vid_db_01_tenant_isolation_enforced() {
     seed_identity_device(&mut s, user_a.clone(), device_a.clone());
     seed_identity_device(&mut s, user_b.clone(), device_b.clone());
 
-    let onb_a = seed_onboarding_session(
-        &mut s,
-        user_a,
-        "fp_tenant_a",
-        "tenant_a_user_1@example.com",
-        100,
-    );
-    let onb_b = seed_onboarding_session(
-        &mut s,
-        user_b,
-        "fp_tenant_b",
-        "tenant_b_user_1@example.com",
-        200,
-    );
+    let onb_a = seed_onboarding_session(&mut s, user_a, "fp_tenant_a", 100);
+    let onb_b = seed_onboarding_session(&mut s, user_b, "fp_tenant_b", 200);
 
     let a = s
         .ph1vid_enroll_start_draft_row(
@@ -147,7 +133,7 @@ fn at_vid_db_02_append_only_enforced() {
     let u = user("tenant_a:user_1");
     let d = device("tenant_a_device_1");
     seed_identity_device(&mut s, u.clone(), d.clone());
-    let onb = seed_onboarding_session(&mut s, u, "fp_append_only", "append_only@example.com", 400);
+    let onb = seed_onboarding_session(&mut s, u, "fp_append_only", 400);
 
     let started = s
         .ph1vid_enroll_start_draft_row(MonotonicTimeNs(500), onb, d, true, 8, 120_000, 3)
@@ -177,7 +163,7 @@ fn at_vid_db_03_idempotency_dedupe_works() {
     let u = user("tenant_a:user_1");
     let d = device("tenant_a_device_1");
     seed_identity_device(&mut s, u.clone(), d.clone());
-    let onb = seed_onboarding_session(&mut s, u, "fp_idem", "idem@example.com", 600);
+    let onb = seed_onboarding_session(&mut s, u, "fp_idem", 600);
 
     let started = s
         .ph1vid_enroll_start_draft_row(
@@ -264,7 +250,7 @@ fn at_vid_db_04_current_table_consistency_with_sample_ledger() {
     let u = user("tenant_a:user_1");
     let d = device("tenant_a_device_1");
     seed_identity_device(&mut s, u.clone(), d.clone());
-    let onb = seed_onboarding_session(&mut s, u, "fp_current", "current@example.com", 800);
+    let onb = seed_onboarding_session(&mut s, u, "fp_current", 800);
 
     let started = s
         .ph1vid_enroll_start_draft_row(MonotonicTimeNs(900), onb, d, true, 8, 120_000, 3)

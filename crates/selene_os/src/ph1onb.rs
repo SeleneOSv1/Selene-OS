@@ -920,7 +920,7 @@ mod tests {
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1_voice_id::VoiceSampleResult as ContractVoiceSampleResult;
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
-    use selene_kernel_contracts::ph1link::{DeliveryMethod, InviteeType, Ph1LinkRequest};
+    use selene_kernel_contracts::ph1link::{InviteeType, Ph1LinkRequest};
     use selene_kernel_contracts::ph1onb::{
         OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
         OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
@@ -992,9 +992,8 @@ mod tests {
             now(),
             user("inviter"),
             InviteeType::Employee,
-            "jack@example.com".to_string(),
-            DeliveryMethod::Email,
             Some("tenant_1".to_string()),
+            None,
             None,
             None,
         )

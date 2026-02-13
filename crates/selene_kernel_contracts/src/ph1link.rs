@@ -8,16 +8,13 @@ pub const PH1LINK_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 
 // Simulation IDs (authoritative strings; must match docs/08_SIMULATION_CATALOG.md).
 pub const LINK_INVITE_GENERATE_DRAFT: &str = "LINK_INVITE_GENERATE_DRAFT";
-pub const LINK_INVITE_SEND_COMMIT: &str = "LINK_INVITE_SEND_COMMIT";
 pub const LINK_INVITE_OPEN_ACTIVATE_COMMIT: &str = "LINK_INVITE_OPEN_ACTIVATE_COMMIT";
-pub const LINK_INVITE_RESEND_COMMIT: &str = "LINK_INVITE_RESEND_COMMIT";
 pub const LINK_INVITE_REVOKE_REVOKE: &str = "LINK_INVITE_REVOKE_REVOKE";
 pub const LINK_INVITE_EXPIRED_RECOVERY_COMMIT: &str = "LINK_INVITE_EXPIRED_RECOVERY_COMMIT";
 pub const LINK_INVITE_FORWARD_BLOCK_COMMIT: &str = "LINK_INVITE_FORWARD_BLOCK_COMMIT";
 pub const LINK_ROLE_PROPOSE_DRAFT: &str = "LINK_ROLE_PROPOSE_DRAFT";
 pub const LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT: &str =
     "LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT";
-pub const LINK_DELIVERY_FAILURE_HANDLING_COMMIT: &str = "LINK_DELIVERY_FAILURE_HANDLING_COMMIT";
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     // FNV-1a 64-bit (stable across platforms, deterministic).
@@ -56,40 +53,8 @@ pub enum InviteeType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DeliveryMethod {
-    Sms,
-    Email,
-    WhatsApp,
-    WeChat,
-    Qr,
-    CopyLink,
-}
-
-impl DeliveryMethod {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            DeliveryMethod::Sms => "sms",
-            DeliveryMethod::Email => "email",
-            DeliveryMethod::WhatsApp => "whatsapp",
-            DeliveryMethod::WeChat => "wechat",
-            DeliveryMethod::Qr => "qr",
-            DeliveryMethod::CopyLink => "copy_link",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum DeliveryStatus {
-    Queued,
-    Sent,
-    Fail,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LinkStatus {
     DraftCreated,
-    Sent,
-    Opened,
     Activated,
     Expired,
     Revoked,
@@ -137,6 +102,46 @@ impl Validate for TokenId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DraftId(String);
+
+impl DraftId {
+    pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
+        let id = id.into();
+        let v = Self(id);
+        v.validate()?;
+        Ok(v)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Validate for DraftId {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.0.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "draft_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.0.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "draft_id",
+                reason: "must be <= 64 chars",
+            });
+        }
+        if !self.0.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "draft_id",
+                reason: "must be ASCII",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PrefilledContextRef(String);
 
 impl PrefilledContextRef {
@@ -164,46 +169,6 @@ impl Validate for PrefilledContextRef {
             return Err(ContractViolation::InvalidValue {
                 field: "prefilled_context_ref",
                 reason: "must be <= 128 chars",
-            });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DeliveryProofRef(String);
-
-impl DeliveryProofRef {
-    pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
-        let id = id.into();
-        let v = Self(id);
-        v.validate()?;
-        Ok(v)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Validate for DeliveryProofRef {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        if self.0.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_proof_ref",
-                reason: "must not be empty",
-            });
-        }
-        if self.0.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_proof_ref",
-                reason: "must be <= 128 chars",
-            });
-        }
-        if !self.0.is_ascii() {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_proof_ref",
-                reason: "must be ASCII",
             });
         }
         Ok(())
@@ -337,14 +302,15 @@ impl Validate for PrefilledContext {
 pub struct LinkRecord {
     pub schema_version: SchemaVersion,
     pub token_id: TokenId,
+    pub draft_id: DraftId,
     pub payload_hash: String,
+    pub schema_version_id: Option<String>,
+    pub missing_required_fields: Vec<String>,
     pub status: LinkStatus,
     pub created_at: MonotonicTimeNs,
     pub expires_at: MonotonicTimeNs,
     pub inviter_user_id: UserId,
     pub invitee_type: InviteeType,
-    pub delivery_method: DeliveryMethod,
-    pub recipient_contact_hash: String,
     pub expiration_policy_id: Option<String>,
     pub prefilled_context: Option<PrefilledContext>,
     pub bound_device_fingerprint_hash: Option<String>,
@@ -355,14 +321,15 @@ impl LinkRecord {
     #[allow(clippy::too_many_arguments)]
     pub fn v1(
         token_id: TokenId,
+        draft_id: DraftId,
         payload_hash: String,
+        schema_version_id: Option<String>,
+        missing_required_fields: Vec<String>,
         status: LinkStatus,
         created_at: MonotonicTimeNs,
         expires_at: MonotonicTimeNs,
         inviter_user_id: UserId,
         invitee_type: InviteeType,
-        delivery_method: DeliveryMethod,
-        recipient_contact_hash: String,
         expiration_policy_id: Option<String>,
         prefilled_context: Option<PrefilledContext>,
         bound_device_fingerprint_hash: Option<String>,
@@ -371,14 +338,15 @@ impl LinkRecord {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
             token_id,
+            draft_id,
             payload_hash,
+            schema_version_id,
+            missing_required_fields,
             status,
             created_at,
             expires_at,
             inviter_user_id,
             invitee_type,
-            delivery_method,
-            recipient_contact_hash,
             expiration_policy_id,
             prefilled_context,
             bound_device_fingerprint_hash,
@@ -410,6 +378,28 @@ impl Validate for LinkRecord {
                 reason: "must be <= 128 chars",
             });
         }
+        self.draft_id.validate()?;
+        validate_opt_id("link_record.schema_version_id", &self.schema_version_id, 64)?;
+        if self.missing_required_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_record.missing_required_fields",
+                reason: "must be <= 64 entries",
+            });
+        }
+        for f in &self.missing_required_fields {
+            if f.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_record.missing_required_fields[]",
+                    reason: "must not contain empty entries",
+                });
+            }
+            if f.len() > 64 || !f.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_record.missing_required_fields[]",
+                    reason: "must be ASCII and <= 64 chars",
+                });
+            }
+        }
         if self.created_at.0 == 0 {
             return Err(ContractViolation::InvalidValue {
                 field: "link_record.created_at",
@@ -432,18 +422,6 @@ impl Validate for LinkRecord {
             return Err(ContractViolation::InvalidValue {
                 field: "link_record.inviter_user_id",
                 reason: "must not be empty",
-            });
-        }
-        if self.recipient_contact_hash.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "link_record.recipient_contact_hash",
-                reason: "must not be empty",
-            });
-        }
-        if self.recipient_contact_hash.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "link_record.recipient_contact_hash",
-                reason: "must be <= 128 chars",
             });
         }
         validate_opt_id(
@@ -495,8 +473,10 @@ impl Validate for LinkRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkGenerateResult {
     pub schema_version: SchemaVersion,
+    pub draft_id: DraftId,
     pub token_id: TokenId,
     pub link_url: String,
+    pub missing_required_fields: Vec<String>,
     pub payload_hash: String,
     pub expires_at: MonotonicTimeNs,
     pub status: LinkStatus,
@@ -505,8 +485,10 @@ pub struct LinkGenerateResult {
 
 impl LinkGenerateResult {
     pub fn v1(
+        draft_id: DraftId,
         token_id: TokenId,
         link_url: String,
+        missing_required_fields: Vec<String>,
         payload_hash: String,
         expires_at: MonotonicTimeNs,
         status: LinkStatus,
@@ -514,8 +496,10 @@ impl LinkGenerateResult {
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
+            draft_id,
             token_id,
             link_url,
+            missing_required_fields,
             payload_hash,
             expires_at,
             status,
@@ -534,6 +518,7 @@ impl Validate for LinkGenerateResult {
                 reason: "must match PH1LINK_CONTRACT_VERSION",
             });
         }
+        self.draft_id.validate()?;
         self.token_id.validate()?;
         if self.link_url.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
@@ -559,6 +544,20 @@ impl Validate for LinkGenerateResult {
                 reason: "must be <= 128 chars",
             });
         }
+        if self.missing_required_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_generate_result.missing_required_fields",
+                reason: "must be <= 64 entries",
+            });
+        }
+        for f in &self.missing_required_fields {
+            if f.trim().is_empty() || f.len() > 64 || !f.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_generate_result.missing_required_fields[]",
+                    reason: "must be ASCII, non-empty, <= 64 chars",
+                });
+            }
+        }
         if self.expires_at.0 == 0 {
             return Err(ContractViolation::InvalidValue {
                 field: "link_generate_result.expires_at",
@@ -573,77 +572,34 @@ impl Validate for LinkGenerateResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinkDeliveryResult {
-    pub schema_version: SchemaVersion,
-    pub delivery_method: DeliveryMethod,
-    pub delivery_status: DeliveryStatus,
-    pub delivery_proof_ref: Option<DeliveryProofRef>,
-    pub idempotency_key: String,
-}
-
-impl LinkDeliveryResult {
-    pub fn v1(
-        delivery_method: DeliveryMethod,
-        delivery_status: DeliveryStatus,
-        delivery_proof_ref: Option<DeliveryProofRef>,
-        idempotency_key: String,
-    ) -> Result<Self, ContractViolation> {
-        let r = Self {
-            schema_version: PH1LINK_CONTRACT_VERSION,
-            delivery_method,
-            delivery_status,
-            delivery_proof_ref,
-            idempotency_key,
-        };
-        r.validate()?;
-        Ok(r)
-    }
-}
-
-impl Validate for LinkDeliveryResult {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        if self.schema_version != PH1LINK_CONTRACT_VERSION {
-            return Err(ContractViolation::InvalidValue {
-                field: "link_delivery_result.schema_version",
-                reason: "must match PH1LINK_CONTRACT_VERSION",
-            });
-        }
-        if let Some(p) = &self.delivery_proof_ref {
-            p.validate()?;
-        }
-        if self.idempotency_key.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "link_delivery_result.idempotency_key",
-                reason: "must not be empty",
-            });
-        }
-        if self.idempotency_key.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "link_delivery_result.idempotency_key",
-                reason: "must be <= 128 chars",
-            });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkActivationResult {
     pub schema_version: SchemaVersion,
+    pub token_id: TokenId,
+    pub draft_id: DraftId,
     pub activation_status: LinkStatus,
+    pub missing_required_fields: Vec<String>,
+    pub conflict_reason: Option<String>,
     pub bound_device_fingerprint_hash: Option<String>,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
 }
 
 impl LinkActivationResult {
     pub fn v1(
+        token_id: TokenId,
+        draft_id: DraftId,
         activation_status: LinkStatus,
+        missing_required_fields: Vec<String>,
+        conflict_reason: Option<String>,
         bound_device_fingerprint_hash: Option<String>,
         prefilled_context_ref: Option<PrefilledContextRef>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
+            token_id,
+            draft_id,
             activation_status,
+            missing_required_fields,
+            conflict_reason,
             bound_device_fingerprint_hash,
             prefilled_context_ref,
         };
@@ -659,6 +615,30 @@ impl Validate for LinkActivationResult {
                 field: "link_activation_result.schema_version",
                 reason: "must match PH1LINK_CONTRACT_VERSION",
             });
+        }
+        self.token_id.validate()?;
+        self.draft_id.validate()?;
+        if self.missing_required_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_activation_result.missing_required_fields",
+                reason: "must be <= 64 entries",
+            });
+        }
+        for f in &self.missing_required_fields {
+            if f.trim().is_empty() || f.len() > 64 || !f.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_activation_result.missing_required_fields[]",
+                    reason: "must be ASCII, non-empty, <= 64 chars",
+                });
+            }
+        }
+        if let Some(r) = &self.conflict_reason {
+            if r.trim().is_empty() || r.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_activation_result.conflict_reason",
+                    reason: "must be non-empty and <= 128 chars when provided",
+                });
+            }
         }
         if let Some(h) = &self.bound_device_fingerprint_hash {
             if h.trim().is_empty() {
@@ -710,35 +690,28 @@ impl Validate for LinkRevokeResult {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum RecoveryDeliveryStatus {
-    Sent,
-    Fail,
-    NotSent,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkExpiredRecoveryResult {
     pub schema_version: SchemaVersion,
-    pub new_link_id: TokenId,
+    pub new_token_id: TokenId,
+    pub draft_id: DraftId,
     pub new_link_url: String,
-    pub delivery_status: RecoveryDeliveryStatus,
-    pub delivery_proof_ref: Option<DeliveryProofRef>,
+    pub missing_required_fields: Vec<String>,
 }
 
 impl LinkExpiredRecoveryResult {
     pub fn v1(
-        new_link_id: TokenId,
+        new_token_id: TokenId,
+        draft_id: DraftId,
         new_link_url: String,
-        delivery_status: RecoveryDeliveryStatus,
-        delivery_proof_ref: Option<DeliveryProofRef>,
+        missing_required_fields: Vec<String>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
-            new_link_id,
+            new_token_id,
+            draft_id,
             new_link_url,
-            delivery_status,
-            delivery_proof_ref,
+            missing_required_fields,
         };
         r.validate()?;
         Ok(r)
@@ -753,7 +726,8 @@ impl Validate for LinkExpiredRecoveryResult {
                 reason: "must match PH1LINK_CONTRACT_VERSION",
             });
         }
-        self.new_link_id.validate()?;
+        self.new_token_id.validate()?;
+        self.draft_id.validate()?;
         if self.new_link_url.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "link_expired_recovery_result.new_link_url",
@@ -766,8 +740,19 @@ impl Validate for LinkExpiredRecoveryResult {
                 reason: "must be <= 1024 chars",
             });
         }
-        if let Some(p) = &self.delivery_proof_ref {
-            p.validate()?;
+        if self.missing_required_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_expired_recovery_result.missing_required_fields",
+                reason: "must be <= 64 entries",
+            });
+        }
+        for f in &self.missing_required_fields {
+            if f.trim().is_empty() || f.len() > 64 || !f.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_expired_recovery_result.missing_required_fields[]",
+                    reason: "must be ASCII, non-empty, <= 64 chars",
+                });
+            }
         }
         Ok(())
     }
@@ -893,7 +878,6 @@ pub struct Ph1LinkOk {
     pub simulation_id: String,
     pub reason_code: ReasonCodeId,
     pub link_generate_result: Option<LinkGenerateResult>,
-    pub link_delivery_result: Option<LinkDeliveryResult>,
     pub link_activation_result: Option<LinkActivationResult>,
     pub link_revoke_result: Option<LinkRevokeResult>,
     pub link_expired_recovery_result: Option<LinkExpiredRecoveryResult>,
@@ -907,7 +891,6 @@ impl Ph1LinkOk {
         simulation_id: String,
         reason_code: ReasonCodeId,
         link_generate_result: Option<LinkGenerateResult>,
-        link_delivery_result: Option<LinkDeliveryResult>,
         link_activation_result: Option<LinkActivationResult>,
         link_revoke_result: Option<LinkRevokeResult>,
         link_expired_recovery_result: Option<LinkExpiredRecoveryResult>,
@@ -919,7 +902,6 @@ impl Ph1LinkOk {
             simulation_id,
             reason_code,
             link_generate_result,
-            link_delivery_result,
             link_activation_result,
             link_revoke_result,
             link_expired_recovery_result,
@@ -959,10 +941,6 @@ impl Validate for Ph1LinkOk {
         }
         let mut count = 0u8;
         if let Some(r) = &self.link_generate_result {
-            r.validate()?;
-            count += 1;
-        }
-        if let Some(r) = &self.link_delivery_result {
             r.validate()?;
             count += 1;
         }
@@ -1081,24 +1059,19 @@ impl Validate for Ph1LinkResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkRequest {
     InviteGenerateDraft(InviteGenerateDraftRequest),
-    InviteSendCommit(InviteSendCommitRequest),
     InviteOpenActivateCommit(InviteOpenActivateCommitRequest),
-    InviteResendCommit(InviteResendCommitRequest),
     InviteRevokeRevoke(InviteRevokeRevokeRequest),
     InviteExpiredRecoveryCommit(InviteExpiredRecoveryCommitRequest),
     InviteForwardBlockCommit(InviteForwardBlockCommitRequest),
     RoleProposeDraft(RoleProposeDraftRequest),
     DualRoleConflictEscalateDraft(DualRoleConflictEscalateDraftRequest),
-    DeliveryFailureHandlingCommit(DeliveryFailureHandlingCommitRequest),
 }
 
 impl LinkRequest {
     pub fn simulation_id(&self) -> &'static str {
         match self {
             LinkRequest::InviteGenerateDraft(_) => LINK_INVITE_GENERATE_DRAFT,
-            LinkRequest::InviteSendCommit(_) => LINK_INVITE_SEND_COMMIT,
             LinkRequest::InviteOpenActivateCommit(_) => LINK_INVITE_OPEN_ACTIVATE_COMMIT,
-            LinkRequest::InviteResendCommit(_) => LINK_INVITE_RESEND_COMMIT,
             LinkRequest::InviteRevokeRevoke(_) => LINK_INVITE_REVOKE_REVOKE,
             LinkRequest::InviteExpiredRecoveryCommit(_) => LINK_INVITE_EXPIRED_RECOVERY_COMMIT,
             LinkRequest::InviteForwardBlockCommit(_) => LINK_INVITE_FORWARD_BLOCK_COMMIT,
@@ -1106,7 +1079,6 @@ impl LinkRequest {
             LinkRequest::DualRoleConflictEscalateDraft(_) => {
                 LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT
             }
-            LinkRequest::DeliveryFailureHandlingCommit(_) => LINK_DELIVERY_FAILURE_HANDLING_COMMIT,
         }
     }
 
@@ -1115,12 +1087,9 @@ impl LinkRequest {
             LinkRequest::InviteGenerateDraft(_) => SimulationType::Draft,
             LinkRequest::RoleProposeDraft(_) => SimulationType::Draft,
             LinkRequest::DualRoleConflictEscalateDraft(_) => SimulationType::Draft,
-            LinkRequest::InviteSendCommit(_)
-            | LinkRequest::InviteOpenActivateCommit(_)
-            | LinkRequest::InviteResendCommit(_)
+            LinkRequest::InviteOpenActivateCommit(_)
             | LinkRequest::InviteExpiredRecoveryCommit(_)
-            | LinkRequest::InviteForwardBlockCommit(_)
-            | LinkRequest::DeliveryFailureHandlingCommit(_) => SimulationType::Commit,
+            | LinkRequest::InviteForwardBlockCommit(_) => SimulationType::Commit,
             LinkRequest::InviteRevokeRevoke(_) => SimulationType::Revoke,
         }
     }
@@ -1130,9 +1099,8 @@ impl LinkRequest {
 pub struct InviteGenerateDraftRequest {
     pub inviter_user_id: UserId,
     pub invitee_type: InviteeType,
-    pub recipient_contact: String,
-    pub delivery_method: DeliveryMethod,
     pub tenant_id: Option<String>,
+    pub schema_version_id: Option<String>,
     pub prefilled_context: Option<PrefilledContext>,
     pub expiration_policy_id: Option<String>,
 }
@@ -1145,21 +1113,14 @@ impl Validate for InviteGenerateDraftRequest {
                 reason: "must not be empty",
             });
         }
-        if self.recipient_contact.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_generate_draft_request.recipient_contact",
-                reason: "must not be empty",
-            });
-        }
-        if self.recipient_contact.len() > 256 {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_generate_draft_request.recipient_contact",
-                reason: "must be <= 256 chars",
-            });
-        }
         validate_opt_id(
             "invite_generate_draft_request.tenant_id",
             &self.tenant_id,
+            64,
+        )?;
+        validate_opt_id(
+            "invite_generate_draft_request.schema_version_id",
+            &self.schema_version_id,
             64,
         )?;
         validate_opt_id(
@@ -1169,45 +1130,6 @@ impl Validate for InviteGenerateDraftRequest {
         )?;
         if let Some(p) = &self.prefilled_context {
             p.validate()?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InviteSendCommitRequest {
-    pub token_id: TokenId,
-    pub delivery_method: DeliveryMethod,
-    pub recipient_contact: String,
-    pub idempotency_key: String,
-}
-
-impl Validate for InviteSendCommitRequest {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        self.token_id.validate()?;
-        if self.recipient_contact.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_send_commit_request.recipient_contact",
-                reason: "must not be empty",
-            });
-        }
-        if self.recipient_contact.len() > 256 {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_send_commit_request.recipient_contact",
-                reason: "must be <= 256 chars",
-            });
-        }
-        if self.idempotency_key.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_send_commit_request.idempotency_key",
-                reason: "must not be empty",
-            });
-        }
-        if self.idempotency_key.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_send_commit_request.idempotency_key",
-                reason: "must be <= 128 chars",
-            });
         }
         Ok(())
     }
@@ -1232,45 +1154,6 @@ impl Validate for InviteOpenActivateCommitRequest {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_open_activate_commit_request.device_fingerprint",
                 reason: "must be <= 256 chars",
-            });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InviteResendCommitRequest {
-    pub token_id: TokenId,
-    pub delivery_method: DeliveryMethod,
-    pub recipient_contact: String,
-    pub idempotency_key: String,
-}
-
-impl Validate for InviteResendCommitRequest {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        self.token_id.validate()?;
-        if self.recipient_contact.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_resend_commit_request.recipient_contact",
-                reason: "must not be empty",
-            });
-        }
-        if self.recipient_contact.len() > 256 {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_resend_commit_request.recipient_contact",
-                reason: "must be <= 256 chars",
-            });
-        }
-        if self.idempotency_key.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_resend_commit_request.idempotency_key",
-                reason: "must not be empty",
-            });
-        }
-        if self.idempotency_key.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "invite_resend_commit_request.idempotency_key",
-                reason: "must be <= 128 chars",
             });
         }
         Ok(())
@@ -1305,28 +1188,12 @@ impl Validate for InviteRevokeRevokeRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteExpiredRecoveryCommitRequest {
     pub token_id: TokenId,
-    pub delivery_method: Option<DeliveryMethod>,
-    pub recipient_contact: Option<String>,
     pub idempotency_key: Option<String>,
 }
 
 impl Validate for InviteExpiredRecoveryCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.token_id.validate()?;
-        if let Some(c) = &self.recipient_contact {
-            if c.trim().is_empty() {
-                return Err(ContractViolation::InvalidValue {
-                    field: "invite_expired_recovery_commit_request.recipient_contact",
-                    reason: "must not be empty when provided",
-                });
-            }
-            if c.len() > 256 {
-                return Err(ContractViolation::InvalidValue {
-                    field: "invite_expired_recovery_commit_request.recipient_contact",
-                    reason: "must be <= 256 chars",
-                });
-            }
-        }
         if let Some(k) = &self.idempotency_key {
             if k.trim().is_empty() {
                 return Err(ContractViolation::InvalidValue {
@@ -1429,38 +1296,6 @@ impl Validate for DualRoleConflictEscalateDraftRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeliveryFailureHandlingCommitRequest {
-    pub token_id: TokenId,
-    pub attempt: u8,
-    pub idempotency_key: String,
-}
-
-impl Validate for DeliveryFailureHandlingCommitRequest {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        self.token_id.validate()?;
-        if self.attempt == 0 {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_failure_handling_commit_request.attempt",
-                reason: "must be > 0",
-            });
-        }
-        if self.idempotency_key.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_failure_handling_commit_request.idempotency_key",
-                reason: "must not be empty",
-            });
-        }
-        if self.idempotency_key.len() > 128 {
-            return Err(ContractViolation::InvalidValue {
-                field: "delivery_failure_handling_commit_request.idempotency_key",
-                reason: "must be <= 128 chars",
-            });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ph1LinkRequest {
     pub schema_version: SchemaVersion,
     pub correlation_id: CorrelationId,
@@ -1478,18 +1313,16 @@ impl Ph1LinkRequest {
         now: MonotonicTimeNs,
         inviter_user_id: UserId,
         invitee_type: InviteeType,
-        recipient_contact: String,
-        delivery_method: DeliveryMethod,
         tenant_id: Option<String>,
+        schema_version_id: Option<String>,
         prefilled_context: Option<PrefilledContext>,
         expiration_policy_id: Option<String>,
     ) -> Result<Self, ContractViolation> {
         let req = InviteGenerateDraftRequest {
             inviter_user_id,
             invitee_type,
-            recipient_contact,
-            delivery_method,
             tenant_id,
+            schema_version_id,
             prefilled_context,
             expiration_policy_id,
         };
@@ -1501,34 +1334,6 @@ impl Ph1LinkRequest {
             simulation_id: LINK_INVITE_GENERATE_DRAFT.to_string(),
             simulation_type: SimulationType::Draft,
             request: LinkRequest::InviteGenerateDraft(req),
-        };
-        r.validate()?;
-        Ok(r)
-    }
-
-    pub fn invite_send_commit_v1(
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        now: MonotonicTimeNs,
-        token_id: TokenId,
-        delivery_method: DeliveryMethod,
-        recipient_contact: String,
-        idempotency_key: String,
-    ) -> Result<Self, ContractViolation> {
-        let req = InviteSendCommitRequest {
-            token_id,
-            delivery_method,
-            recipient_contact,
-            idempotency_key,
-        };
-        let r = Self {
-            schema_version: PH1LINK_CONTRACT_VERSION,
-            correlation_id,
-            turn_id,
-            now,
-            simulation_id: LINK_INVITE_SEND_COMMIT.to_string(),
-            simulation_type: SimulationType::Commit,
-            request: LinkRequest::InviteSendCommit(req),
         };
         r.validate()?;
         Ok(r)
@@ -1553,34 +1358,6 @@ impl Ph1LinkRequest {
             simulation_id: LINK_INVITE_OPEN_ACTIVATE_COMMIT.to_string(),
             simulation_type: SimulationType::Commit,
             request: LinkRequest::InviteOpenActivateCommit(req),
-        };
-        r.validate()?;
-        Ok(r)
-    }
-
-    pub fn invite_resend_commit_v1(
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        now: MonotonicTimeNs,
-        token_id: TokenId,
-        delivery_method: DeliveryMethod,
-        recipient_contact: String,
-        idempotency_key: String,
-    ) -> Result<Self, ContractViolation> {
-        let req = InviteResendCommitRequest {
-            token_id,
-            delivery_method,
-            recipient_contact,
-            idempotency_key,
-        };
-        let r = Self {
-            schema_version: PH1LINK_CONTRACT_VERSION,
-            correlation_id,
-            turn_id,
-            now,
-            simulation_id: LINK_INVITE_RESEND_COMMIT.to_string(),
-            simulation_type: SimulationType::Commit,
-            request: LinkRequest::InviteResendCommit(req),
         };
         r.validate()?;
         Ok(r)
@@ -1645,15 +1422,12 @@ impl Validate for Ph1LinkRequest {
 
         match &self.request {
             LinkRequest::InviteGenerateDraft(r) => r.validate(),
-            LinkRequest::InviteSendCommit(r) => r.validate(),
             LinkRequest::InviteOpenActivateCommit(r) => r.validate(),
-            LinkRequest::InviteResendCommit(r) => r.validate(),
             LinkRequest::InviteRevokeRevoke(r) => r.validate(),
             LinkRequest::InviteExpiredRecoveryCommit(r) => r.validate(),
             LinkRequest::InviteForwardBlockCommit(r) => r.validate(),
             LinkRequest::RoleProposeDraft(r) => r.validate(),
             LinkRequest::DualRoleConflictEscalateDraft(r) => r.validate(),
-            LinkRequest::DeliveryFailureHandlingCommit(r) => r.validate(),
         }
     }
 }
@@ -1662,9 +1436,8 @@ impl Validate for Ph1LinkRequest {
 pub fn deterministic_payload_hash_hex(
     inviter_user_id: &UserId,
     invitee_type: InviteeType,
-    recipient_contact: &str,
-    delivery_method: DeliveryMethod,
     tenant_id: &Option<String>,
+    schema_version_id: &Option<String>,
     expiration_policy_id: &Option<String>,
     prefilled_context: &Option<PrefilledContext>,
 ) -> String {
@@ -1674,12 +1447,12 @@ pub fn deterministic_payload_hash_hex(
     b.push(0);
     b.extend_from_slice(format!("{invitee_type:?}").as_bytes());
     b.push(0);
-    b.extend_from_slice(recipient_contact.as_bytes());
-    b.push(0);
-    b.extend_from_slice(delivery_method.as_str().as_bytes());
-    b.push(0);
     if let Some(t) = tenant_id {
         b.extend_from_slice(t.as_bytes());
+    }
+    b.push(0);
+    if let Some(s) = schema_version_id {
+        b.extend_from_slice(s.as_bytes());
     }
     b.push(0);
     if let Some(p) = expiration_policy_id {

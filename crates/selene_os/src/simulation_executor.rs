@@ -228,12 +228,6 @@ impl SimulationExecutor {
             IntentType::CreateInviteLink => {
                 let invitee_type =
                     parse_invitee_type(required_field_value(d, FieldKey::InviteeType)?)?;
-                let delivery_method =
-                    parse_delivery_method(required_field_value(d, FieldKey::DeliveryMethod)?)?;
-                let recipient_contact = required_field_value(d, FieldKey::RecipientContact)
-                    .or_else(|_| required_field_value(d, FieldKey::Recipient))
-                    .map(|v| field_str(v).to_string())?;
-
                 let tenant_id =
                     field_value(d, FieldKey::TenantId).map(|v| field_str(v).to_string());
 
@@ -243,9 +237,8 @@ impl SimulationExecutor {
                     now,
                     actor_user_id,
                     invitee_type,
-                    recipient_contact,
-                    delivery_method,
                     tenant_id,
+                    None,
                     None,
                     None,
                 )?;
@@ -464,27 +457,6 @@ fn parse_invitee_type(
     }
 }
 
-fn parse_delivery_method(
-    v: &FieldValue,
-) -> Result<selene_kernel_contracts::ph1link::DeliveryMethod, StorageError> {
-    use selene_kernel_contracts::ph1link::DeliveryMethod::*;
-    let s = field_str(v).to_ascii_lowercase();
-    match s.as_str() {
-        "sms" | "text" => Ok(Sms),
-        "email" => Ok(Email),
-        "whatsapp" => Ok(WhatsApp),
-        "wechat" => Ok(WeChat),
-        "qr" => Ok(Qr),
-        "copy_link" | "copy link" | "copy-link" => Ok(CopyLink),
-        _ => Err(StorageError::ContractViolation(
-            ContractViolation::InvalidValue {
-                field: "simulation_candidate_dispatch.intent_draft.fields.delivery_method",
-                reason: "must be one of: sms, email, whatsapp, wechat, qr, copy_link",
-            },
-        )),
-    }
-}
-
 fn parse_tenant_id(v: &FieldValue) -> Result<TenantId, StorageError> {
     TenantId::new(field_str(v).to_string()).map_err(StorageError::ContractViolation)
 }
@@ -659,7 +631,7 @@ mod tests {
         CapabilityRequestAction, CapabilityRequestStatus, CapreqId,
     };
     use selene_kernel_contracts::ph1j::DeviceId;
-    use selene_kernel_contracts::ph1link::{DeliveryMethod, InviteeType};
+    use selene_kernel_contracts::ph1link::InviteeType;
     use selene_kernel_contracts::ph1n::{IntentField, OverallConfidence, SensitivityLevel};
     use selene_kernel_contracts::ph1position::{
         Ph1PositionRequest, Ph1PositionResponse, PositionCreateDraftRequest, PositionRequest,
@@ -756,24 +728,12 @@ mod tests {
         let draft = IntentDraft::v1(
             IntentType::CreateInviteLink,
             SchemaVersion(1),
-            vec![
-                IntentField {
-                    key: FieldKey::InviteeType,
-                    value: FieldValue::normalized("employee".to_string(), "employee".to_string())
-                        .unwrap(),
-                    confidence: OverallConfidence::High,
-                },
-                IntentField {
-                    key: FieldKey::DeliveryMethod,
-                    value: FieldValue::normalized("sms".to_string(), "sms".to_string()).unwrap(),
-                    confidence: OverallConfidence::High,
-                },
-                IntentField {
-                    key: FieldKey::RecipientContact,
-                    value: FieldValue::verbatim("john@selene.inc".to_string()).unwrap(),
-                    confidence: OverallConfidence::High,
-                },
-            ],
+            vec![IntentField {
+                key: FieldKey::InviteeType,
+                value: FieldValue::normalized("employee".to_string(), "employee".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            }],
             vec![],
             OverallConfidence::High,
             vec![],
@@ -1439,9 +1399,8 @@ mod tests {
                 MonotonicTimeNs(2),
                 actor.clone(),
                 InviteeType::Employee,
-                "jack@selene.inc".to_string(),
-                DeliveryMethod::Sms,
                 Some("tenant_1".to_string()),
+                None,
                 None,
                 None,
             )

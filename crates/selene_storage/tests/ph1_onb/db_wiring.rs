@@ -7,7 +7,7 @@ use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
-use selene_kernel_contracts::ph1link::{DeliveryMethod, InviteeType, PrefilledContext};
+use selene_kernel_contracts::ph1link::{InviteeType, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{OnboardingStatus, ProofType, TermsStatus};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
@@ -52,7 +52,6 @@ fn seed_activated_link(
     now: u64,
     inviter_user_id: UserId,
     invitee_type: InviteeType,
-    recipient_contact: &str,
     tenant_id: Option<String>,
     prefilled_context: Option<PrefilledContext>,
 ) -> selene_kernel_contracts::ph1link::TokenId {
@@ -61,27 +60,16 @@ fn seed_activated_link(
             MonotonicTimeNs(now),
             inviter_user_id,
             invitee_type,
-            recipient_contact.to_string(),
-            DeliveryMethod::Email,
             tenant_id,
+            None,
             prefilled_context,
             None,
         )
         .unwrap();
 
     store
-        .ph1link_invite_send_commit_row(
-            MonotonicTimeNs(now + 1),
-            link.token_id.clone(),
-            DeliveryMethod::Email,
-            recipient_contact.to_string(),
-            format!("onb-link-send-{now}"),
-        )
-        .unwrap();
-
-    store
         .ph1link_invite_open_activate_commit_row(
-            MonotonicTimeNs(now + 2),
+            MonotonicTimeNs(now + 1),
             link.token_id.clone(),
             format!("fp_{now}"),
         )
@@ -129,7 +117,6 @@ fn at_onb_db_01_tenant_isolation_enforced() {
         100,
         user_a,
         InviteeType::Employee,
-        "a@example.com",
         Some("tenant_a".to_string()),
         Some(prefilled_a),
     );
@@ -138,7 +125,6 @@ fn at_onb_db_01_tenant_isolation_enforced() {
         200,
         user_b,
         InviteeType::Employee,
-        "b@example.com",
         Some("tenant_b".to_string()),
         Some(prefilled_b),
     );
@@ -231,7 +217,6 @@ fn at_onb_db_03_idempotency_dedupe_works() {
         500,
         u.clone(),
         InviteeType::Household,
-        "idem@example.com",
         Some("tenant_a".to_string()),
         None,
     );
@@ -310,7 +295,6 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         600,
         u.clone(),
         InviteeType::Household,
-        "flow@example.com",
         Some("tenant_a".to_string()),
         None,
     );
