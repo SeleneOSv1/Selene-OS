@@ -19,7 +19,7 @@
 ## 2) Required Inputs
 - `draft_id`
 - `device_fingerprint`
-- `token_id` (optional: traceability only; onboarding must not depend on it)
+- `token_id` (optional: traceability only; onboarding must not depend on `token_id`)
 - `invitee_user_id` (or pending identity context)
 - `tenant_id` (required for employee path)
 - `idempotency_key`

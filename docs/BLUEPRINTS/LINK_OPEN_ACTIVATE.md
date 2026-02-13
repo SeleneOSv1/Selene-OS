@@ -14,7 +14,7 @@
 - `LINK_OPEN_ACTIVATE` output is authoritative for `token_id` validity, first-open `device_fingerprint` binding, and `draft_id` resolution.
 - On success, Selene OS starts `ONB_INVITED` with:
   - `draft_id` (required)
-  - `token_id` (optional but recommended for trace/audit)
+  - `token_id` (required at activation; optional for ONB trace/audit)
   - `device_fingerprint` (required)
 
 ## 2) Required Inputs
