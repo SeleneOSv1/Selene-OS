@@ -590,6 +590,19 @@ Purpose: Define the memory-specific Q12–Q18 gates that raise Selene’s memory
 
 Note on naming: If global Q numbers already exist, ledger rows must use a memory suffix (e.g., `Q12-MEM`) to avoid collisions while preserving the gate order.
 
+Acceptance ID mapping (non-normative):
+- Note: Canon memory narrative uses Q12–Q18 labels for the memory track.
+- Implementation acceptance IDs are normalized as AT-MEM-01..07 in PH1.M ECM/DB wiring.
+- Mapping:
+  - Q12-MEM ⇄ AT-MEM-01
+  - Q13-MEM ⇄ AT-MEM-02
+  - Q14-MEM ⇄ AT-MEM-03
+  - Q15-MEM ⇄ AT-MEM-04
+  - Q16-MEM ⇄ AT-MEM-05
+  - Q17-MEM ⇄ AT-MEM-06
+  - Q18-MEM ⇄ AT-MEM-07
+- Hard rule: The normalized AT-MEM-* IDs are the execution-grade IDs; Q12–Q18 remain narrative labels only.
+
 ### Q12 — Deterministic Memory Bundle + Retrieval Discipline (Defined)
 
 Goal: Prove the Context Bundle composer, retrieval caps, and deterministic ordering work every turn.
