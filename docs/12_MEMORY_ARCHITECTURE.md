@@ -864,6 +864,7 @@ Behavior:
 - Selene loads a `Resume Bundle` from the most recent active thread set.
 - recency preference: threads updated within the last 72 hours first.
 - unresolved threads get deterministic priority boost.
+- Core rule (non-negotiable): Selene OS MUST always build/load the internal Resume Bundle on every session open when identity is verified. The tier rules below control only user-facing surfacing (auto-speak vs ask vs silent), not whether the bundle is built.
 
 User experience:
 - default resume output is short and non-invasive: “Where we left off…” in 1-3 bullets.
@@ -876,24 +877,37 @@ Hard rule:
 
 ### Section 2.21A: Retention/Resume Tiers (Deterministic)
 
-Resume tiers:
-- `HOT` window: 72h
-  - behavior: auto-load a short resume summary for the top candidate thread
-- `WARM` window: 30d
-  - behavior: do not auto-load; ask one short question:
+Internal load rule (non-negotiable)
+- On every session open with identity verified, Selene OS MUST build/load an internal Resume Bundle candidate set (thread digests + bounded pointers). This happens even when nothing is surfaced to the user.
+- The tier rules below control ONLY user-facing surfacing (auto-speak vs ask vs silent). They do not control internal loading.
+
+Resume tiers (user-facing surfacing)
+
+- HOT window: 72h
+  - Auto-speak is permitted (and only permitted) in HOT.
+  - If voice delivery is allowed by policy and the user has not disabled auto-resume, Selene may auto-speak a short “Where we left off…” summary (1–3 bullets) for the top candidate thread.
+  - If voice delivery is not allowed, the same 1–3 bullet summary is delivered to the Selene App thread as text only.
+
+- WARM window: 30d
+  - Auto-speak is forbidden.
+  - Selene asks exactly one question:
     - “Do you want to resume <thread_title> or start something new?”
-- `COLD` window: forever (policy-defined retention; default long)
-  - behavior: never auto-surface; retrieve only when relevant or when user asks
+  - If the user chooses resume, Selene then delivers the same 1–3 bullet summary (text/voice per policy).
 
-Pinned threads:
-- always eligible for resume selection regardless of age (still bounded per turn)
+- COLD window: forever (policy-defined retention; default long)
+  - Auto-speak and auto-suggest are forbidden.
+  - Selene must not surface the thread unless the user explicitly asks (e.g., “resume the thread about <topic>”) or the current request directly depends on it and PH1.X requests a confirmation/clarification.
 
-Unresolved threads:
-- eligible until resolved OR 90 days (whichever comes first)
-- after 90 days unresolved threads decay to `COLD` behavior
+Pinned threads
+- Pinned threads never expire until explicitly forgotten.
+- Pinned affects candidate ranking (below) but does not override the tier’s surfacing rules.
 
-Top candidate thread ranking (deterministic):
-- Pinned > Unresolved > Most recent `last_used_at` > Highest `use_count` > Lexicographic ID tie-break
+Unresolved threads
+- Unresolved threads are eligible until resolved OR 90 days (whichever comes first).
+- After 90 days, unresolved threads decay to COLD surfacing rules.
+
+Top candidate ranking (deterministic)
+- Pinned > Unresolved > Most recent last_used_at > Highest use_count > Lexicographic ID tie-break
 
 ### Section 2.21B: Pending Work Continuity Policy (WorkOrder-aware)
 
@@ -903,7 +917,7 @@ Source of truth:
 On session open (identity OK):
 - if any WorkOrders with status in `{DRAFT, CLARIFY, CONFIRM}` exist within the `WARM` window (30 days),
   Selene offers resume of the top pending WorkOrder.
-- if a pending WorkOrder is active inside the `HOT` window (72h), Selene may auto-load a 1-3 bullet resume line.
+- if a pending WorkOrder is active inside the `HOT` window (72h), Selene may auto-speak a 1–3 bullet resume line (HOT only); otherwise Selene suggests via the single WARM question.
 - if only `WARM`, Selene asks one resume question (no auto-load).
 
 Suppression command behavior:
