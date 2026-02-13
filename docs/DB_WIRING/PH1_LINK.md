@@ -14,8 +14,10 @@
 - `primary key`: `draft_id`
 - invariants:
   - one authoritative draft per invite flow
-  - `invitee_type` is bounded (`HOUSEHOLD | EMPLOYEE | CONTRACTOR | REFERRAL`)
-  - employee drafts require `schema_version_id`
+  - `invitee_type` is bounded (`COMPANY | CUSTOMER | EMPLOYEE | FAMILY_MEMBER | FRIEND | ASSOCIATE`)
+  - `schema_version_id` is required for `invitee_type in (EMPLOYEE, COMPANY)` and optional for personal/customer invitee types
+  - `draft_payload_json` may include `prefilled_profile_fields` (bounded map)
+  - `missing_required_fields` is computed deterministically from invitee-type schema definitions in `docs/DB_WIRING/PH1_ONB.md` (Invitee Type Schemas section)
   - deterministic idempotency keys for retriable writes
 
 ### `onboarding_link_tokens`
@@ -70,7 +72,7 @@
 ### `LINK_INVITE_GENERATE_DRAFT`
 - writes: `onboarding_drafts`, `onboarding_link_tokens` (or equivalent PH1.F current records in MVP runtime lock)
 - required fields:
-  - inviter identity, invitee type, delivery method, payload hash, expiry, tenant scope (when present)
+  - inviter identity, invitee type, delivery method, payload hash, expiry, tenant scope (when present), optional prefilled profile fields
 - idempotency key rule:
   - deterministic payload hash + inviter scope dedupe
 

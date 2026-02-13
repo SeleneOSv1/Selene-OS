@@ -11,8 +11,8 @@
 
 ### `PH1LINK_INVITE_GENERATE_DRAFT_ROW`
 - `name`: Generate link draft + token mapping
-- `input_schema`: `(now, inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id?, prefilled_context?, expiration_policy_id?)`
-- `output_schema`: `Result<(LinkRecord, LinkGenerateResultParts), StorageError>`
+- `input_schema`: `(now, inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id?, schema_version_id?, prefilled_profile_fields?, expiration_policy_id?)`
+- `output_schema`: `Result<(draft_id, token_id, link_url, missing_required_fields[]), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 

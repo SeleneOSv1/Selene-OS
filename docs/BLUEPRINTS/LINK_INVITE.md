@@ -15,9 +15,15 @@
 - `inviter_user_id`
 - `recipient_contact`
 - `delivery_method`
-- `invitee_type`
-- `prefilled_context` (optional)
+- `invitee_type` (`COMPANY | CUSTOMER | EMPLOYEE | FAMILY_MEMBER | FRIEND | ASSOCIATE`)
+- `prefilled_profile_fields` (optional bounded map)
 - `idempotency_key`
+
+## 2A) Invitee Type + Prefill Clarify Discipline
+- If `invitee_type` is missing or ambiguous, PH1.X asks exactly one clarify question before continuing.
+- After minimum fields are captured, Selene may run an optional prefill loop:
+  - “Anything else you want me to include so the invitee doesn’t type it?”
+  - one question at a time; inviter can stop at any time.
 
 ## 3) Success Output Schema
 ```text
@@ -38,10 +44,13 @@ missing_required_fields: string[]
 | LINK_INVITE_S03 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | intent_draft | confirmation prompt state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
 | LINK_INVITE_S04 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | inviter_user_id, tenant_id, requested_action=LINK_INVITE | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
 | LINK_INVITE_S05 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_APPLY_OVERRIDE_COMMIT_ROW | access_decision=ESCALATE, approved_by_user_id, simulation_id | override_applied | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [ACCESS_IDEMPOTENCY_REPLAY] |
-| LINK_INVITE_S06 | PH1.LINK | PH1LINK_INVITE_GENERATE_DRAFT_ROW | inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id | draft_id, token_id, missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_GENERATE_RETRYABLE] |
+| LINK_INVITE_S06 | PH1.LINK | PH1LINK_INVITE_GENERATE_DRAFT_ROW | inviter_user_id, invitee_type, recipient_contact, delivery_method, tenant_id, prefilled_profile_fields | draft_id, token_id, missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_GENERATE_RETRYABLE] |
 | LINK_INVITE_S07 | PH1.LINK | PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW | draft_id, creator_update_fields, idempotency_key | updated draft + recomputed missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_DRAFT_UPDATE_RETRYABLE] |
 | LINK_INVITE_S08 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | send_snapshot fields | commit_confirmation_state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
 | LINK_INVITE_S09 | PH1.LINK | PH1LINK_INVITE_SEND_COMMIT_ROW | link_id, delivery_method, recipient_contact, idempotency_key | delivery_status, delivery_proof_ref | DB_WRITE (simulation-gated) | 1000 | 2 | 400 | [LINK_SEND_RETRYABLE] |
+
+S06 persistence note:
+- `PH1LINK_INVITE_GENERATE_DRAFT_ROW` stores `invitee_type` and `prefilled_profile_fields` in the `onboarding_draft` payload and computes schema-driven `missing_required_fields`.
 
 ## 5) Confirmation Points
 - `LINK_INVITE_S03` pre-start confirmation of interpreted invite intent.

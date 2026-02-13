@@ -35,6 +35,23 @@
 - invariants:
   - employee onboarding access creation requires ACTIVE company prereq when employee prefilled context points to company/position scope
 
+## 2A) Invitee Type Schemas (Deterministic)
+
+These schemas are used to compute `missing_required_fields` from onboarding draft payloads by `invitee_type`.
+
+| invitee_type | required_fields | optional_fields |
+|---|---|---|
+| `COMPANY` | `legal_company_name`, `company_admin_name`, `company_admin_contact`, `policy_ack_required`, `schema_version_id` | `company_alias`, `billing_contact`, `notes` |
+| `EMPLOYEE` | `employee_legal_name`, `employee_contact`, `company_id`, `position_id`, `schema_version_id` | `manager_contact`, `start_date`, `notes` |
+| `CUSTOMER` | `customer_name`, `customer_contact` | `account_ref`, `preferred_language`, `notes` |
+| `FAMILY_MEMBER` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
+| `FRIEND` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
+| `ASSOCIATE` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
+
+Deterministic rules:
+- `missing_required_fields` is always computed from the selected invitee-type schema and current draft payload.
+- Never ask twice: if a value exists in the onboarding draft payload or `resolved_fields_json`, Selene OS must not ask for that field again.
+
 ## 3) Reads (dependencies)
 
 ### Link lifecycle prerequisites (from row 20 lock)

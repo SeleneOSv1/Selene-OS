@@ -104,6 +104,15 @@
   - if `requested_action` requires SMS delivery and `sms_app_setup_complete=false`, return `ESCALATE` with `SMS_APP_SETUP_REQUIRED`
   - return `DENY` only when policy forbids an approval path
 
+### LINK invite requested_action mapping
+- `invitee_type=FAMILY_MEMBER | FRIEND | ASSOCIATE` -> `requested_action=INVITE_PERSONAL`
+- `invitee_type=CUSTOMER` -> `requested_action=INVITE_CUSTOMER`
+- `invitee_type=EMPLOYEE` -> `requested_action=INVITE_EMPLOYEE`
+- `invitee_type=COMPANY` -> `requested_action=INVITE_COMPANY`
+
+Dual AP trigger note:
+- dual AP applies only to `INVITE_EMPLOYEE` when tenant policy requires it.
+
 ### OS-orchestrated escalation contract (design)
 - Selene OS handles escalation; PH1.ACCESS/PH2.ACCESS never sends notifications.
 - flow:
