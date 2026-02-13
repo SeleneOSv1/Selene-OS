@@ -10,6 +10,12 @@
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
 
+## 1B) Entry Preconditions (Link is out-of-scope)
+- Link validation/expiry/revocation/device binding are handled by the Link process (`LINK_OPEN_ACTIVATE`).
+- Selene App installation is automatic; invitee only approves OS permission prompts if required by platform.
+- Onboarding begins only after link activation succeeded and `draft_id` is available in Selene App context.
+- ONB must not re-check link signature/expiry/revocation/device binding.
+
 ## 2) Required Inputs
 - `token_id`
 - `draft_id`
@@ -47,6 +53,10 @@ access_engine_instance_id: string (optional)
 | ONB_INVITED_S15 | PH1.ONB | PH1ONB_ACCESS_INSTANCE_CREATE_COMMIT_ROW | onboarding_session_id, user_id, tenant_id, role_id, idempotency_key | access_engine_instance_id | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_ACCESS_CREATE_RETRYABLE] |
 | ONB_INVITED_S16 | PH1.ONB | PH1ONB_COMPLETE_COMMIT_ROW | onboarding_session_id, idempotency_key | onboarding_complete | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_COMPLETE_RETRYABLE] |
 
+Deferral/reminder rule (S01/S04 consent/clarify flow):
+- If invitee says `NOT NOW`: schedule reminders via PH1.BCAST procedures (Selene App thread first).
+- If invitee says `NEVER`: stop onboarding and notify sender (JD) for human-to-human resolution.
+
 ## 5) Confirmation Points
 - Terms acceptance before `ONB_INVITED_S05`.
 - Sender verification gate before employee completion path (`ONB_INVITED_S07`).
@@ -81,3 +91,4 @@ access_engine_instance_id: string (optional)
 - `AT-PBS-ONB-02`: Employee flow remains sandboxed until sender verification.
 - `AT-PBS-ONB-03`: Voice and wake enrollment are simulation-gated.
 - `AT-PBS-ONB-04`: Completion only after all required gates pass.
+- `AT-PBS-ONB-06`: ONB does not perform link validation; it requires prior successful link activation + `draft_id` context.

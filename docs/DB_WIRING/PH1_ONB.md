@@ -39,6 +39,7 @@
 
 ### Link lifecycle prerequisites (from row 20 lock)
 - reads: PH1.LINK current link record (`links`) + prefilled context refs
+- Link validation + device binding are owned by PH1.LINK / LINK_OPEN_ACTIVATE; PH1.ONB consumes `draft_id` context only.
 - required conditions:
   - `link_id` exists
   - link status is `ACTIVATED`
