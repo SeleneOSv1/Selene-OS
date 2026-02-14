@@ -184,9 +184,9 @@ rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs
 
 echo
 echo "=================================================="
-echo "6) SIM CATALOG DISCIPLINE"
-echo "   - Any sim referenced by blueprints must exist and be ACTIVE (or explicitly LEGACY_DO_NOT_WIRE when appropriate)"
-echo "   - Look for stale statuses / delivery-semantics in Link domain"
+echo "6) SIM CATALOG LEGACY COMPLIANCE EVIDENCE (LINK DOMAIN)"
+echo "   - The lines below are expected evidence when legacy LINK delivery sims remain marked LEGACY_DO_NOT_WIRE."
+echo "   - Treat as a finding only if status is not LEGACY_DO_NOT_WIRE or wording contradicts LINK_DELIVER_INVITE ownership."
 echo "=================================================="
 rg -n "LINK_INVITE_SEND_COMMIT|LINK_INVITE_RESEND_COMMIT|LINK_DELIVERY_FAILURE_HANDLING_COMMIT|LEGACY_DO_NOT_WIRE" docs/08_SIMULATION_CATALOG.md -n || true
 rg -n "PH1\.LINK" docs/08_SIMULATION_CATALOG.md -n || true
