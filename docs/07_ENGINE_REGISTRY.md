@@ -90,11 +90,10 @@ These engines are planned in current MVP design scope but do not yet have finali
 
 | engine_id | phase | layer | authority | primary_role | db_wiring | ecm |
 |---|---|---|---|---|---|---|
-| PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder state machine) | Deterministic reminder scheduling/delivery orchestration | `docs/DB_WIRING/PH1_REM.md` (stub) | `docs/ECM/PH1_REM.md` (stub) |
-| PH1.EMO | F Memory/Learning | Learning | Non-Authoritative (tone-only) | Emotional continuity and tone guidance profile lifecycle | `docs/DB_WIRING/PH1_EMO.md` (stub) | `docs/ECM/PH1_EMO.md` (stub) |
+| PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder state machine) | Deterministic reminder scheduling/delivery orchestration | `docs/DB_WIRING/PH1_REM.md` | `docs/ECM/PH1_REM.md` |
+| PH1.EMO | F Memory/Learning | Learning | Non-Authoritative (tone-only) | Emotional continuity and tone guidance profile lifecycle | `docs/DB_WIRING/PH1_EMO.md` | `docs/ECM/PH1_EMO.md` |
 
 ## Maintenance
-
 When an engine is added, removed, split, or renamed:
 1. Update this registry.
 2. Update `docs/COVERAGE_MATRIX.md`.

@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle (`generate`, `draft_update`, `open/activate`, `forward-block`) with strict token->draft mapping and deterministic binding guards.
+- `purpose`: Persist deterministic onboarding/invite link lifecycle (`generate`, `draft_update`, `open/activate`, `forward-block`) with strict token->draft mapping and deterministic binding guards.
 - canonical identifier rule: canonical external identifier is `token_id`; internal draft identifier is `draft_id`; `link_url` is a transport artifact.
 - `version`: `v1`
 - `status`: `PASS`
@@ -17,8 +17,9 @@
   - one authoritative draft per invite flow
   - `invitee_type` is bounded (`COMPANY | CUSTOMER | EMPLOYEE | FAMILY_MEMBER | FRIEND | ASSOCIATE`)
   - `schema_version_id` is required for `invitee_type in (EMPLOYEE, COMPANY)` and optional for personal/customer invitee types
+  - `status` is bounded (`DRAFT_CREATED | DRAFT_READY | COMMITTED | REVOKED | EXPIRED`) with deterministic monotonic transitions
   - `draft_payload_json` may include `prefilled_profile_fields` (bounded map)
-  - `missing_required_fields` is computed deterministically from invitee-type schema definitions in `docs/DB_WIRING/PH1_ONB.md` (Invitee Type Schemas section)
+  - `missing_required_fields_json` is computed deterministically from invitee-type schema definitions in `docs/DB_WIRING/PH1_ONB.md` (Invitee Type Schemas section)
   - deterministic idempotency keys for retriable writes
 
 ### `onboarding_link_tokens`
@@ -26,6 +27,7 @@
 - `primary key`: `token_id`
 - invariants:
   - authoritative mapping `token_id -> draft_id`
+  - `token_signature` is required and deterministic for token verification
   - lifecycle state is bounded (`DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED`)
   - device-binding and forwarded-link blocking are explicit and deterministic
 
@@ -83,17 +85,23 @@
 - idempotency key rule:
   - dedupe on `(draft_id, idempotency_key)`
 
-Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT` is legacy and must not be used; link delivery is performed only by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
+Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT`, `LINK_INVITE_RESEND_COMMIT`, and `LINK_DELIVERY_FAILURE_HANDLING_COMMIT` are legacy and must not be used; link delivery is performed only by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
 Delivery dedupe/idempotency is owned by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
+`SENT` lifecycle marking is produced by the `LINK_DELIVER_INVITE` delivery path under Selene OS orchestration.
+- PH1.LINK runtime projection for delivery success is deterministic: `DRAFT_CREATED -> SENT`.
+- `SENT` projection is idempotent (replay-safe no-op when already `SENT`) and fail-closed for non-deliverable states.
 
 ### `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
-- writes: token status transition to `ACTIVATED`, bound device fingerprint hash
+- writes: token status transition (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED`), or deterministic terminal passthrough (`BLOCKED|EXPIRED|REVOKED|CONSUMED`), plus bound device fingerprint hash
 - required fields:
   - `token_id`, presented device fingerprint hash, deterministic block path
 - idempotency key rule:
   - deterministic no-op for repeated open on same bound device
 - forwarded-link block input rule:
   - `LINK_INVITE_FORWARD_BLOCK_COMMIT` input is `token_id + presented_device_fingerprint`.
+
+### cross-engine completion transition (consumption)
+- on successful onboarding completion (`PH1.ONB` complete commit path), token status is set to `CONSUMED` deterministically.
 
 ### additional locked simulations (v1 slice)
 - `LINK_INVITE_FORWARD_BLOCK_COMMIT`

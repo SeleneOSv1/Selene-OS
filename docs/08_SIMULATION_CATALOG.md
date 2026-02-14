@@ -31,15 +31,15 @@ Locked schema rules:
 | PAYROLL_COMMIT_RUN | COMMIT | Payroll | Finalize payroll for a pay run | DRAFT | v1 | Commit payroll run (irreversible) |
 | LINK_INVITE_GENERATE_DRAFT | DRAFT | Link | Create onboarding draft + minimal token preview (no send) | DRAFT | v1 | Write onboarding draft + token map only |
 | LINK_INVITE_DRAFT_UPDATE_COMMIT | COMMIT | Link | Update onboarding draft with creator-provided fields (deterministic) | DRAFT | v1 | Update onboarding draft record only |
-| LINK_INVITE_SEND_COMMIT | COMMIT | Link | Deliver an invite link via a selected channel and record delivery proof | DRAFT | v1 | Send via SMS/Email/WhatsApp/WeChat/QR |
+| LINK_INVITE_SEND_COMMIT | COMMIT | Link | Legacy do-not-wire send placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
 | LINK_INVITE_OPEN_ACTIVATE_COMMIT | COMMIT | Link | Validate invite link on open, bind device fingerprint, resolve token_id->draft_id | DRAFT | v1 | Mark link OPENED/ACTIVATED (state write) |
-| LINK_INVITE_RESEND_COMMIT | COMMIT | Link | Resend an existing invite link idempotently | DRAFT | v1 | Send via approved delivery channel |
+| LINK_INVITE_RESEND_COMMIT | COMMIT | Link | Legacy do-not-wire resend placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
 | LINK_INVITE_REVOKE_REVOKE | REVOKE | Link | Revoke an invite link (fail-closed if already activated without AP) | DRAFT | v1 | Mark link REVOKED (state write) |
-| LINK_INVITE_EXPIRED_RECOVERY_COMMIT | COMMIT | Link | Replace an expired invite link with a deterministic replacement preserving metadata | DRAFT | v1 | Issue new link and (optional) send |
+| LINK_INVITE_EXPIRED_RECOVERY_COMMIT | COMMIT | Link | Replace an expired invite link with a deterministic replacement preserving metadata | ACTIVE | v1 | State write only (replacement token/link_url); delivery via LINK_DELIVER_INVITE |
 | LINK_INVITE_FORWARD_BLOCK_COMMIT | COMMIT | Link | Block forwarded-link activation on binding mismatch and emit escalation signals | DRAFT | v1 | Mark blocked attempt; audit + optional escalation |
 | LINK_ROLE_PROPOSE_DRAFT | DRAFT | Link | Propose a new role/position template for AP approval (sandbox) | DRAFT | v1 | Write role proposal draft only |
 | LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT | DRAFT | Link | Detect dual-role conflict and open an escalation case (no execution) | DRAFT | v1 | Write escalation draft only |
-| LINK_DELIVERY_FAILURE_HANDLING_COMMIT | COMMIT | Link | Deterministic delivery failure recovery (retry/alternate channel) | DRAFT | v1 | Send retry or alternate channel |
+| LINK_DELIVERY_FAILURE_HANDLING_COMMIT | COMMIT | Link | Legacy do-not-wire failure placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; state handling only, delivery via LINK_DELIVER_INVITE |
 | ONB_SESSION_START_DRAFT | DRAFT | Onboarding | Create onboarding session draft after link activation | DRAFT | v1 | Write onboarding session draft only |
 | ONB_BIZ_START_DRAFT | DRAFT | OnboardingBusiness | Start company/tenant prerequisite onboarding draft | DRAFT | v1 | Write business onboarding draft only |
 | ONB_BIZ_VALIDATE_COMPANY_COMMIT | COMMIT | OnboardingBusiness | Validate/create company shell prerequisites deterministically | DRAFT | v1 | Create/update tenant company shell |
@@ -73,23 +73,23 @@ Locked schema rules:
 | CAPREQ_REJECT_COMMIT | COMMIT | CapabilityRequest | Reject a capability request deterministically | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
 | CAPREQ_FULFILL_COMMIT | COMMIT | CapabilityRequest | Mark an approved capability request as fulfilled | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
 | CAPREQ_CANCEL_REVOKE | REVOKE | CapabilityRequest | Cancel an open capability request deterministically | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
-| REMINDER_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a reminder deterministically (timezone/DST/recurrence bounded) | DRAFT | v1 | Write reminder record + occurrences |
-| REMINDER_UPDATE_COMMIT | COMMIT | Reminder | Update reminder fields deterministically | DRAFT | v1 | Update reminder record |
-| REMINDER_CANCEL_COMMIT | COMMIT | Reminder | Cancel a reminder deterministically | DRAFT | v1 | Update reminder state to CANCELED |
-| REMINDER_SNOOZE_COMMIT | COMMIT | Reminder | Snooze a reminder by a bounded duration | DRAFT | v1 | Update reminder state to SNOOZED |
-| REMINDER_DELIVER_PRE_COMMIT | COMMIT | Reminder | Deliver a pre-reminder alert (if configured) | DRAFT | v1 | Deliver via channel adapter; write proof |
-| REMINDER_DELIVER_DUE_COMMIT | COMMIT | Reminder | Deliver the due reminder at scheduled_time (respect quiet hours policy) | DRAFT | v1 | Deliver via channel adapter; write proof |
-| REMINDER_FOLLOWUP_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a follow-up when no acknowledgment is received | DRAFT | v1 | Write follow-up schedule state |
-| REMINDER_ESCALATE_COMMIT | COMMIT | Reminder | Escalate reminder delivery to the next channel deterministically | DRAFT | v1 | Deliver via escalated channel; write proof |
-| REMINDER_DELIVERY_RETRY_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a bounded delivery retry after a delivery failure | DRAFT | v1 | Write retry schedule state |
-| REMINDER_MARK_COMPLETED_COMMIT | COMMIT | Reminder | Mark reminder occurrence as completed on user acknowledgment | DRAFT | v1 | Update reminder occurrence state |
-| REMINDER_MARK_FAILED_COMMIT | COMMIT | Reminder | Mark reminder occurrence as failed after retries/max attempts exhausted | DRAFT | v1 | Update reminder occurrence state |
-| EMO-SIM-001 | COMMIT | Emotional | Classify and lock the user's personality profile (tone-only) | DRAFT | v1 | Update emotional profile record |
-| EMO-SIM-002 | COMMIT | Emotional | Re-evaluate and update the user's personality profile at deterministic gates | DRAFT | v1 | Update emotional profile record |
-| EMO-SIM-003 | COMMIT | Emotional | Apply emotional privacy commands (forget/do-not-remember/recall-only/archive) | DRAFT | v1 | Update emotional privacy policy state |
-| EMO-SIM-004 | DRAFT | Emotional | Emit per-turn tone guidance (no profile mutation) | DRAFT | v1 | No side effects (output only) |
-| EMO-SIM-005 | COMMIT | Emotional | Capture an onboarding snapshot for emotional profile initialization | DRAFT | v1 | Write snapshot record |
-| EMO-SIM-006 | COMMIT | Emotional | Emit an audit-grade emotional event with reason codes | DRAFT | v1 | Append audit event |
+| REMINDER_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a reminder deterministically (timezone/DST/recurrence bounded) | ACTIVE | v1 | Write reminder record + occurrences |
+| REMINDER_UPDATE_COMMIT | COMMIT | Reminder | Update reminder fields deterministically | ACTIVE | v1 | Update reminder record |
+| REMINDER_CANCEL_COMMIT | COMMIT | Reminder | Cancel a reminder deterministically | ACTIVE | v1 | Update reminder state to CANCELED |
+| REMINDER_SNOOZE_COMMIT | COMMIT | Reminder | Snooze a reminder by a bounded duration | ACTIVE | v1 | Update reminder state to SNOOZED |
+| REMINDER_DELIVER_PRE_COMMIT | COMMIT | Reminder | Deliver a pre-reminder alert (if configured) | ACTIVE | v1 | Deliver via channel adapter; write proof |
+| REMINDER_DELIVER_DUE_COMMIT | COMMIT | Reminder | Deliver the due reminder at scheduled_time (respect quiet hours policy) | ACTIVE | v1 | Deliver via channel adapter; write proof |
+| REMINDER_FOLLOWUP_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a follow-up when no acknowledgment is received | ACTIVE | v1 | Write follow-up schedule state |
+| REMINDER_ESCALATE_COMMIT | COMMIT | Reminder | Escalate reminder delivery to the next channel deterministically | ACTIVE | v1 | Deliver via escalated channel; write proof |
+| REMINDER_DELIVERY_RETRY_SCHEDULE_COMMIT | COMMIT | Reminder | Schedule a bounded delivery retry after a delivery failure | ACTIVE | v1 | Write retry schedule state |
+| REMINDER_MARK_COMPLETED_COMMIT | COMMIT | Reminder | Mark reminder occurrence as completed on user acknowledgment | ACTIVE | v1 | Update reminder occurrence state |
+| REMINDER_MARK_FAILED_COMMIT | COMMIT | Reminder | Mark reminder occurrence as failed after retries/max attempts exhausted | ACTIVE | v1 | Update reminder occurrence state |
+| EMO_SIM_001 | COMMIT | Emotional | Classify and lock the user's personality profile (tone-only) | ACTIVE | v1 | Update emotional profile record |
+| EMO_SIM_002 | COMMIT | Emotional | Re-evaluate and update the user's personality profile at deterministic gates | ACTIVE | v1 | Update emotional profile record |
+| EMO_SIM_003 | COMMIT | Emotional | Apply emotional privacy commands (forget/do-not-remember/recall-only/archive) | ACTIVE | v1 | Update emotional privacy policy state |
+| EMO_SIM_004 | DRAFT | Emotional | Emit per-turn tone guidance (no profile mutation) | ACTIVE | v1 | No side effects (output only) |
+| EMO_SIM_005 | COMMIT | Emotional | Capture an onboarding snapshot for emotional profile initialization | ACTIVE | v1 | Write snapshot record |
+| EMO_SIM_006 | COMMIT | Emotional | Emit an audit-grade emotional event with reason codes | ACTIVE | v1 | Append audit event |
 | BCAST-SIM-001 | DRAFT | Broadcast | Create a broadcast draft (immutable envelope after send) | DRAFT | v1 | Write broadcast draft only |
 | BCAST-SIM-002 | DRAFT | Broadcast | Validate sender authority (classification/audience/channel) | DRAFT | v1 | Write validation result only |
 | BCAST-SIM-003 | DRAFT | Broadcast | Resolve privacy handshake decision (OutLoud/DeviceOnly/Mixed) | DRAFT | v1 | Write recipient privacy decision only |
@@ -109,6 +109,11 @@ Locked schema rules:
 | DELIVERY_CANCEL_COMMIT | COMMIT | Delivery | Commit provider cancel request for an in-flight delivery attempt | DRAFT | v1 | Append provider cancel attempt + status update |
 | SMS_SETUP_SIM | COMMIT | OnboardingSms | Commit SMS app setup completion state for a user | DRAFT | v1 | Append SMS setup lifecycle event + current projection update |
 | LEARN_MODEL_UPDATE_SIM | COMMIT | LearningAdaptive | Commit learning feedback updates for draft/language adaptation hints | DRAFT | v1 | Append learning feedback events + current hint projection update |
+| MEMORY_FORGET_COMMIT | COMMIT | Memory | Commit memory forget request with deterministic bounded scope | ACTIVE | v1 | Append forget event + update memory current projection |
+| MEMORY_SUPPRESSION_SET_COMMIT | COMMIT | Memory | Commit memory suppression control update (`DO_NOT_MENTION|DO_NOT_REPEAT|DO_NOT_STORE`) | ACTIVE | v1 | Upsert suppression rule state |
+| MEMORY_ATOM_UPSERT_COMMIT | COMMIT | Memory | Commit one memory atom store/update event deterministically | ACTIVE | v1 | Append atom event + update atom current projection |
+| TOOL_TIME_QUERY_COMMIT | COMMIT | Tool | Commit read-only TIME query outcome as PH1.E audit row | ACTIVE | v1 | Append ToolOk/ToolFail audit row only |
+| TOOL_WEATHER_QUERY_COMMIT | COMMIT | Tool | Commit read-only WEATHER query outcome as PH1.E audit row | ACTIVE | v1 | Append ToolOk/ToolFail audit row only |
 | TENANT_CONTEXT_RESOLVE_DRAFT | DRAFT | Tenant | Resolve tenant and policy context before enterprise execution | DRAFT | v1 | Write context resolution result only |
 | QUOTA_CHECK_DRAFT | DRAFT | Quota | Evaluate deterministic budget/quota gates for a request | DRAFT | v1 | Write quota decision result only |
 | KMS_HANDLE_ISSUE_COMMIT | COMMIT | KMS | Issue short-lived credential handle for approved runtime use | DRAFT | v1 | Write handle issue/audit row |
@@ -148,6 +153,8 @@ Hard rules
 | OnboardingSms | [`comms.sms_app_setup_current`] | [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`] |
 | Language | [`conversation_ledger`] | [`audit_events`] |
 | LearningAdaptive | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`] | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`] |
+| Memory | [`memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] | [`memory.memory_atoms_ledger`, `memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] |
+| Tool | [`identities`, `devices`, `sessions`, `audit_events`] | [`audit_events`] |
 | Tenant | [`tenant_companies`] | [`tenant_companies`] |
 | Quota | [`artifacts_ledger`] | [`artifacts_ledger`] |
 | KMS | [`governance_definitions`] | [`governance_definitions`] |
@@ -239,9 +246,9 @@ status: COMMITTED
 - input_schema (minimum):
 ```text
 inviter_user_id: string
-invitee_type: enum (HOUSEHOLD | EMPLOYEE | CONTRACTOR | REFERRAL)
+invitee_type: enum (COMPANY | CUSTOMER | EMPLOYEE | FAMILY_MEMBER | FRIEND | ASSOCIATE)
 tenant_id: string (optional; required for EMPLOYEE)
-employee_schema_version_id: string (required for EMPLOYEE)
+schema_version_id: string (required for EMPLOYEE and COMPANY)
 creator_prefilled_fields: object (bounded; optional)
 expiration_policy_id: string (optional)
 ```
@@ -255,12 +262,12 @@ expires_at: timestamp_ms
 status: DRAFT_CREATED
 missing_required_fields: string[]
 ```
-- preconditions: Identity OK; required fields present; policy snapshot available; employee schema exists when invitee_type=EMPLOYEE
+- preconditions: Identity OK; required fields present; policy snapshot available; schema exists when invitee_type in (EMPLOYEE, COMPANY)
 - postconditions: onboarding_draft row exists; token row exists; mapping `token_id -> draft_id` exists
 - side_effects: Write onboarding draft + token mapping only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (inviter_user_id + invitee_type + tenant_id + payload_hash + employee_schema_version_id + expiration_policy_id)
+- idempotency_key_rule: idempotent on (inviter_user_id + invitee_type + tenant_id + payload_hash + schema_version_id + expiration_policy_id)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LINK_INVITE_DRAFT_UPDATE_COMMIT (COMMIT)
@@ -283,7 +290,7 @@ idempotency_key: string
 ```text
 draft_id: string
 missing_required_fields: string[]
-draft_status: enum (DRAFT_CREATED | READY_TO_SEND)
+draft_status: enum (DRAFT_CREATED | DRAFT_READY)
 ```
 - preconditions: draft exists; not COMMITTED/REVOKED
 - postconditions: same draft updated; missing_required_fields recomputed from tenant schema version only
@@ -294,6 +301,8 @@ draft_status: enum (DRAFT_CREATED | READY_TO_SEND)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LINK_INVITE_SEND_COMMIT (COMMIT)
+
+LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
 
 - name: Link Invite Send (Commit)
 - owning_domain: Link
@@ -346,19 +355,21 @@ now_ms: timestamp_ms
 ```text
 token_id: string
 draft_id: string (optional)
-activation_status: enum (OPENED | ACTIVATED | BLOCKED | EXPIRED | REVOKED)
+activation_status: enum (ACTIVATED | BLOCKED | EXPIRED | REVOKED | CONSUMED)
 bound_device_fingerprint_hash: string (optional)
 missing_required_fields: string[] (optional)
 ```
-- preconditions (minimum): token_id exists and is not revoked; token maps to draft_id; if expired -> EXPIRED; if binding mismatch -> BLOCKED
+- preconditions (minimum): token_id exists and is not revoked; token maps to draft_id; if expired -> EXPIRED; if already consumed -> CONSUMED; if binding mismatch -> BLOCKED
 - postconditions: first-open binds device fingerprint hash; onboarding handoff carries draft_id and current missing_required_fields
-- side_effects: State write only (OPENED/ACTIVATED + bindings)
+- side_effects: State write only (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED` internal transition + bindings; terminal passthrough for CONSUMED/EXPIRED/REVOKED/BLOCKED)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (token_id + device_fingerprint_hash)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LINK_INVITE_RESEND_COMMIT (COMMIT)
+
+LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
 
 - name: Link Invite Resend (Commit)
 - owning_domain: Link
@@ -422,7 +433,7 @@ status: REVOKED
 - name: Link Invite Expired Recovery (Commit)
 - owning_domain: Link
 - simulation_type: COMMIT
-- purpose: Replace an expired invite link with a deterministic replacement preserving metadata
+- purpose: Replace an expired invite link with a deterministic replacement token/link_url preserving metadata; delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY)
 - triggers: LINK_EXPIRED_RECOVERY (process_id) (example)
 - required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
 - required_approvals: optional AP approval (policy-dependent)
@@ -430,19 +441,16 @@ status: REVOKED
 - input_schema (minimum):
 ```text
 expired_token_id: string
-delivery_method: enum (SMS | Email | WhatsApp | WeChat | QR | CopyLink)
-recipient_contact: string
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
 new_token_id: string
 new_link_url: string
-delivery_status: enum (SENT | FAIL | NOT_SENT)
 ```
 - preconditions: expired_token_id exists and is expired; policy allows recovery
 - postconditions: new token exists; old token remains expired (history preserved)
-- side_effects: State write (new link) and optional delivery
+- side_effects: State write only (replacement token/link_url). Delivery is performed only by LINK_DELIVER_INVITE.
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (expired_token_id + idempotency_key)
@@ -536,6 +544,8 @@ status: ESCALATED
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LINK_DELIVERY_FAILURE_HANDLING_COMMIT (COMMIT)
+
+LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
 
 - name: Link Delivery Failure Handling (Commit)
 - owning_domain: Link
@@ -1383,7 +1393,7 @@ device_id: string
 user_timezone: string
 local_time_mode: enum (FIXED_TIMEZONE | LOCAL_TIME)
 priority_level: enum (LOW | NORMAL | HIGH | CRITICAL)
-reminder_type: enum (TASK | MEETING | TIMER | MEDICAL | CUSTOM)
+reminder_type: enum (TASK | MEETING | TIMER | MEDICAL | CUSTOM | BCAST_MHP_FOLLOWUP)
 desired_time: datetime or duration
 recurrence_rule: string (optional; bounded)
 channel_preferences: list (ordered)
@@ -1742,7 +1752,7 @@ state: FAILED
 - idempotency_key_rule: idempotent on (reminder_id + occurrence_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
-### EMO-SIM-001 (COMMIT)
+### EMO_SIM_001 (COMMIT)
 
 - name: EMO Classify Profile
 - owning_domain: Emotional
@@ -1778,7 +1788,7 @@ reason_code: string
 - idempotency_key_rule: idempotent on (user_id + session_id + idempotency_key)
 - audit_events: EMO_PROFILE_UPDATED (example)
 
-### EMO-SIM-002 (COMMIT)
+### EMO_SIM_002 (COMMIT)
 
 - name: EMO Re-evaluate Profile
 - owning_domain: Emotional
@@ -1813,7 +1823,7 @@ reason_code: string
 - idempotency_key_rule: idempotent on (user_id + idempotency_key)
 - audit_events: EMO_PROFILE_REEVALUATED (example)
 
-### EMO-SIM-003 (COMMIT)
+### EMO_SIM_003 (COMMIT)
 
 - name: EMO Apply Privacy Command
 - owning_domain: Emotional
@@ -1846,7 +1856,7 @@ reason_code: string
 - idempotency_key_rule: idempotent on (user_id + privacy_command + idempotency_key)
 - audit_events: EMO_PRIVACY_APPLIED (example)
 
-### EMO-SIM-004 (DRAFT)
+### EMO_SIM_004 (DRAFT)
 
 - name: EMO Emit Tone Guidance (Draft)
 - owning_domain: Emotional
@@ -1876,7 +1886,7 @@ reason_code: string
 - idempotency_key_rule: N/A
 - audit_events: optional (audit-only)
 
-### EMO-SIM-005 (COMMIT)
+### EMO_SIM_005 (COMMIT)
 
 - name: EMO Snapshot Capture (Onboarding)
 - owning_domain: Emotional
@@ -1911,7 +1921,7 @@ reason_code: string
 - idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
 - audit_events: EMO_SNAPSHOT_CAPTURED (example)
 
-### EMO-SIM-006 (COMMIT)
+### EMO_SIM_006 (COMMIT)
 
 - name: EMO Emit Audit Event
 - owning_domain: Emotional
@@ -2571,6 +2581,178 @@ quality_delta_bucket: string
 - reads_tables[]: [`learning.adaptive_feedback_current`]
 - writes_tables[]: [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`]
 - idempotency_key_rule: idempotent on (tenant_id + user_id + feedback_type + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### MEMORY_FORGET_COMMIT (COMMIT)
+
+- name: Memory Forget Commit
+- owning_domain: Memory
+- simulation_type: COMMIT
+- purpose: Commit a bounded memory forget request for eligible memory artifacts only
+- triggers: MEMORY_FORGET_REQUEST (process_id)
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: required when forget scope is ambiguous
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+forget_scope: string
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+forget_result_id: string
+forget_outcome: enum (FORGOTTEN | NOOP_ALREADY_FORGOTTEN | PARTIAL_POLICY_BLOCK)
+```
+- preconditions: identity verified; forget scope belongs to requester; immutable audit/ledger truth excluded from forget scope
+- postconditions: eligible memory artifacts are forgotten deterministically within policy boundaries
+- side_effects: append forget event + update memory current projection
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + user_id + forget_scope + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### MEMORY_SUPPRESSION_SET_COMMIT (COMMIT)
+
+- name: Memory Suppression Set Commit
+- owning_domain: Memory
+- simulation_type: COMMIT
+- purpose: Commit deterministic suppression control updates (`DO_NOT_MENTION|DO_NOT_REPEAT|DO_NOT_STORE`)
+- triggers: MEMORY_FORGET_REQUEST (suppression path)
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+target_type: enum (THREAD_ID | WORK_ORDER_ID | TOPIC_KEY)
+target_id: string
+rule_kind: enum (DO_NOT_MENTION | DO_NOT_REPEAT | DO_NOT_STORE)
+scope: string
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+suppression_rule_id: string
+rule_state: enum (SET | UPDATED)
+```
+- preconditions: identity verified; target scope resolves to requester; rule_kind is policy-allowed
+- postconditions: suppression rule is upserted deterministically
+- side_effects: upsert suppression rule state
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + user_id + target_type + target_id + rule_kind + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### MEMORY_ATOM_UPSERT_COMMIT (COMMIT)
+
+- name: Memory Atom Upsert Commit
+- owning_domain: Memory
+- simulation_type: COMMIT
+- purpose: Commit one memory atom store/update event for deterministic continuity
+- triggers: MEMORY_REMEMBER_REQUEST (process_id)
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+atom_key: string
+atom_payload: object
+provenance: string
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+atom_event_id: string
+atom_state: enum (STORED | UPDATED)
+```
+- preconditions: identity verified; atom payload is bounded; store policy allows write for the target user scope
+- postconditions: atom ledger append and current projection update are committed deterministically
+- side_effects: append atom event + update atom current projection
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + user_id + atom_key + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### TOOL_TIME_QUERY_COMMIT (COMMIT)
+
+- name: Tool Time Query Commit
+- owning_domain: Tool
+- simulation_type: COMMIT
+- purpose: Commit read-only TIME lookup outcome as PH1.E audit evidence
+- triggers: TOOL_TIME_QUERY (process_id)
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+correlation_id: string
+turn_id: string
+timezone_hint: string (optional)
+query_hash: string
+cache_status: string
+tool_status: enum (OK | FAIL)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+tool_name: TIME
+tool_status: enum (OK | FAIL)
+audit_event_id: string
+```
+- preconditions: identity verified; tool policy allows TIME query execution
+- postconditions: tool outcome is recorded deterministically as ToolOk/ToolFail audit evidence
+- side_effects: append PH1.E ToolOk/ToolFail audit row only
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + correlation_id + turn_id + query_hash + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### TOOL_WEATHER_QUERY_COMMIT (COMMIT)
+
+- name: Tool Weather Query Commit
+- owning_domain: Tool
+- simulation_type: COMMIT
+- purpose: Commit read-only WEATHER lookup outcome as PH1.E audit evidence
+- triggers: TOOL_WEATHER_QUERY (process_id)
+- required_roles: authenticated requester within tenant scope
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+user_id: string
+correlation_id: string
+turn_id: string
+location: string
+start_date: string (optional)
+duration_days: integer (optional)
+query_hash: string
+cache_status: string
+tool_status: enum (OK | FAIL)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+tool_name: WEATHER
+tool_status: enum (OK | FAIL)
+audit_event_id: string
+```
+- preconditions: identity verified; location is provided; tool policy allows WEATHER query execution
+- postconditions: tool outcome is recorded deterministically as ToolOk/ToolFail audit evidence
+- side_effects: append PH1.E ToolOk/ToolFail audit row only
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + correlation_id + turn_id + query_hash + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ONB_BIZ_START_DRAFT (DRAFT)

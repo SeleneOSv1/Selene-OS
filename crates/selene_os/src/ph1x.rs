@@ -1055,8 +1055,8 @@ fn clarify_for_missing(
             "What kind of invite is this?".to_string(),
             vec![
                 "Employee".to_string(),
-                "Contractor".to_string(),
-                "Household".to_string(),
+                "Associate".to_string(),
+                "Family member".to_string(),
             ],
         ),
         (_, FieldKey::DeliveryMethod) => (

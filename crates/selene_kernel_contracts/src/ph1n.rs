@@ -18,7 +18,7 @@ pub enum IntentType {
     SetReminder,
     BookTable,
     SendMoney,
-    /// Governance/control: generate an onboarding/referral link (simulation-gated via PH1.LINK.001).
+    /// Governance/control: generate an onboarding/invite link (simulation-gated via PH1.LINK.001).
     CreateInviteLink,
     /// Governance/control: manage capability-request lifecycle (simulation-gated via PH1.CAPREQ).
     CapreqManage,
@@ -39,7 +39,7 @@ pub enum FieldKey {
     PartySize,
     Amount,
     Recipient,
-    /// Link/onboarding: invitee type (employee/household/contractor/referral).
+    /// Link/onboarding: invitee type (company/customer/employee/family_member/friend/associate).
     InviteeType,
     /// Link/onboarding: delivery method (sms/email/etc).
     DeliveryMethod,

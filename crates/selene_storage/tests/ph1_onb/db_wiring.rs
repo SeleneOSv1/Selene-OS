@@ -7,7 +7,7 @@ use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
-use selene_kernel_contracts::ph1link::{InviteeType, PrefilledContext};
+use selene_kernel_contracts::ph1link::{InviteeType, LinkStatus, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{OnboardingStatus, ProofType, TermsStatus};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
@@ -216,7 +216,7 @@ fn at_onb_db_03_idempotency_dedupe_works() {
         &mut s,
         500,
         u.clone(),
-        InviteeType::Household,
+        InviteeType::FamilyMember,
         Some("tenant_a".to_string()),
         None,
     );
@@ -294,7 +294,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         &mut s,
         600,
         u.clone(),
-        InviteeType::Household,
+        InviteeType::FamilyMember,
         Some("tenant_a".to_string()),
         None,
     );
@@ -302,7 +302,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
     let started = s
         .ph1onb_session_start_draft_row(
             MonotonicTimeNs(603),
-            token_id,
+            token_id.clone(),
             None,
             Some("tenant_a".to_string()),
             "fp_onb_flow".to_string(),
@@ -334,7 +334,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
             started.onboarding_session_id.clone(),
             u,
             Some("tenant_a".to_string()),
-            "household_member".to_string(),
+            "family_member".to_string(),
             "onb-flow-access".to_string(),
         )
         .unwrap();
@@ -347,6 +347,8 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+    let link_after = s.ph1link_get_link_row(&token_id).unwrap();
+    assert_eq!(link_after.status, LinkStatus::Consumed);
 
     let current = s
         .ph1onb_session_row(&started.onboarding_session_id)

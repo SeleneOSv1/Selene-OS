@@ -100,7 +100,7 @@ fn at_link_db_02_append_only_enforced() {
         .ph1link_invite_generate_draft_row(
             MonotonicTimeNs(200),
             u,
-            InviteeType::Household,
+            InviteeType::FamilyMember,
             Some("tenant_a".to_string()),
             None,
             None,
@@ -165,7 +165,7 @@ fn at_link_db_04_current_table_consistency_with_lifecycle_and_proofs() {
         .ph1link_invite_generate_draft_row(
             MonotonicTimeNs(400),
             u,
-            InviteeType::Household,
+            InviteeType::FamilyMember,
             Some("tenant_a".to_string()),
             None,
             None,
@@ -173,6 +173,15 @@ fn at_link_db_04_current_table_consistency_with_lifecycle_and_proofs() {
         )
         .unwrap();
     assert_eq!(link.status, LinkStatus::DraftCreated);
+
+    let sent_status = s
+        .ph1link_mark_sent_commit_row(link.token_id.clone())
+        .unwrap();
+    assert_eq!(sent_status, LinkStatus::Sent);
+    assert_eq!(
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
+        LinkStatus::Sent
+    );
 
     let (activated_status, _, _, _, _, _) = s
         .ph1link_invite_open_activate_commit_row(

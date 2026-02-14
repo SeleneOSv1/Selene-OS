@@ -5,6 +5,7 @@ Conventions (Execution-Grade)
 - Acceptance test IDs use ASCII hyphens only: `AT-<ENGINE>-<NN>`.
 - Field names are ASCII `snake_case` exactly as in contracts.
 - Reason codes are `UPPER_SNAKE_CASE` and never reused.
+- Banned-token readiness sweeps run on product surfaces (`docs` + `crates`) and must exclude tracker/proof-log artifacts (`docs/13_PROBLEMS_TO_FIX.md`).
 
 Section 1: Constitutional Laws (High-Level)
 
@@ -46,6 +47,10 @@ Section 1: Constitutional Laws (High-Level)
 10) Multilingual Normalization Law
 - Broken/fragmented/code-switched input must be normalized before final intent routing.
 - Selene must respond in the detected/selected user language context.
+
+11) Engineering Workflow Discipline Law
+- Selene fix flows are Rust-first and shell-native; Python-based write flows are prohibited for production fix tasks.
+- In restricted environments, partial git recovery operations are prohibited; use direct file edits plus explicit proof checks until full git write access is available.
 
 Section 2: Canonical Pointer Map (Authoritative References)
 

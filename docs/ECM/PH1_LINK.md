@@ -2,7 +2,7 @@
 
 ## Engine Header
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/referral link lifecycle with token->draft mapping, draft updates, activation binding, and forward-block guards.
+- `purpose`: Persist deterministic onboarding/invite link lifecycle with token->draft mapping, draft updates, activation binding, and forward-block guards.
 - `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime state
 - `version`: `v1`
 - `status`: `ACTIVE`
@@ -23,6 +23,13 @@
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `PH1LINK_MARK_SENT_COMMIT_ROW`
+- `name`: Project successful delivery into link token lifecycle (`DRAFT_CREATED -> SENT`)
+- `input_schema`: `(token_id)`
+- `output_schema`: `Result<(token_id, status=SENT), StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (post-delivery projection under `LINK_DELIVER_INVITE`)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
 ### `PH1LINK_GET_LINK_ROW`
 - `name`: Read link lifecycle row
 - `input_schema`: `token_id`
@@ -33,7 +40,21 @@
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
 - `input_schema`: `(token_id, device_fingerprint, idempotency_key)`
-- `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>`
+- `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>` where `activation_status in {ACTIVATED, BLOCKED, EXPIRED, REVOKED, CONSUMED}` (`OPENED` is an internal transient transition state)
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1LINK_INVITE_REVOKE_REVOKE_ROW`
+- `name`: Revoke invite token
+- `input_schema`: `(token_id, reason)`
+- `output_schema`: `Result<(token_id, status=REVOKED), StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1LINK_INVITE_EXPIRED_RECOVERY_COMMIT_ROW`
+- `name`: Create replacement token for expired invite (state-only)
+- `input_schema`: `(expired_token_id, idempotency_key)`
+- `output_schema`: `Result<(token_id, draft_id, status=DRAFT_CREATED), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
@@ -62,4 +83,4 @@
 - `docs/DB_WIRING/PH1_LINK.md`
 
 ## Legacy (Do Not Wire)
-- `LINK_INVITE_SEND_COMMIT` is legacy and must not be wired to PH1.LINK. Use `LINK_DELIVER_INVITE` with `PH1.BCAST` + `PH1.DELIVERY`.
+- `LINK_INVITE_SEND_COMMIT`, `LINK_INVITE_RESEND_COMMIT`, and `LINK_DELIVERY_FAILURE_HANDLING_COMMIT` are legacy and must not be wired to PH1.LINK. Use `LINK_DELIVER_INVITE` with `PH1.BCAST` + `PH1.DELIVERY`.

@@ -4,7 +4,7 @@
 - `process_id`: `POSITION_MANAGE`
 - `intent_type`: `POSITION_MANAGE`
 - `version`: `v1`
-- `status`: `DRAFT`
+- `status`: `ACTIVE`
 
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.

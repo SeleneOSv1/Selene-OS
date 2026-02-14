@@ -46,16 +46,21 @@ pub enum SimulationType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InviteeType {
-    Household,
+    Company,
+    Customer,
     Employee,
-    Contractor,
-    Referral,
+    FamilyMember,
+    Friend,
+    Associate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LinkStatus {
     DraftCreated,
+    Sent,
+    Opened,
     Activated,
+    Consumed,
     Expired,
     Revoked,
     Blocked,

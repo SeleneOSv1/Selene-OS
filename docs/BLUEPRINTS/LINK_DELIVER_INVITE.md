@@ -4,7 +4,7 @@
 - `process_id`: `LINK_DELIVER_INVITE`
 - `intent_type`: `LINK_DELIVER_INVITE`
 - `version`: `v1`
-- `status`: `DRAFT`
+- `status`: `ACTIVE`
 
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.

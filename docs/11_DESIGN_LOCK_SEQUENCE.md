@@ -47,6 +47,19 @@ Hard rule:
 - No deferred doc updates.
 - No duplicate inventories across summary docs.
 
+## Readiness Audit Precondition (Mandatory)
+
+- audit precondition: every design-readiness audit must include repository state proof lines (`git status --short` and `git log -1 --oneline` at minimum).
+- audit precondition: a readiness audit is valid only when one of these is true:
+  - clean working tree, or
+  - pinned commit hash with explicit dirty-file listing in the same audit output.
+- canonical runbook command (required):
+  - `scripts/selene_design_readiness_audit.sh`
+- hard rule:
+  - do not run ad-hoc pasted audit blocks as the primary readiness check.
+  - use the canonical script so awk/tool behavior remains portable and deterministic across machines.
+  - if copy/paste execution is required, copy from `scripts/selene_design_readiness_audit.sh` directly (never from stale chat/task blocks).
+
 ## Next Phase After Items 1-10
 
 - DB wiring phase is tracked in:

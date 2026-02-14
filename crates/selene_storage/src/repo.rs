@@ -983,6 +983,9 @@ pub trait Ph1LinkRepo {
         token_id: &TokenId,
     ) -> Option<&selene_kernel_contracts::ph1link::LinkRecord>;
 
+    fn ph1link_mark_sent_commit_row(&mut self, token_id: TokenId)
+        -> Result<LinkStatus, StorageError>;
+
     fn ph1link_invite_open_activate_commit_row(
         &mut self,
         now: MonotonicTimeNs,
@@ -2799,6 +2802,13 @@ impl Ph1LinkRepo for Ph1fStore {
         token_id: &TokenId,
     ) -> Option<&selene_kernel_contracts::ph1link::LinkRecord> {
         self.ph1link_get_link(token_id)
+    }
+
+    fn ph1link_mark_sent_commit_row(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<LinkStatus, StorageError> {
+        self.ph1link_mark_sent_commit(token_id)
     }
 
     fn ph1link_invite_open_activate_commit_row(

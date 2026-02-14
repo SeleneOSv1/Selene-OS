@@ -54,7 +54,7 @@ fn seed_onboarding_session(
         .ph1link_invite_generate_draft(
             MonotonicTimeNs(now_base),
             inviter_user_id,
-            InviteeType::Household,
+            InviteeType::FamilyMember,
             None,
             None,
             None,

@@ -444,14 +444,16 @@ fn parse_invitee_type(
     use selene_kernel_contracts::ph1link::InviteeType::*;
     let s = field_str(v).to_ascii_lowercase();
     match s.as_str() {
-        "household" => Ok(Household),
+        "company" => Ok(Company),
+        "customer" => Ok(Customer),
         "employee" => Ok(Employee),
-        "contractor" => Ok(Contractor),
-        "referral" => Ok(Referral),
+        "family_member" | "familymember" => Ok(FamilyMember),
+        "friend" => Ok(Friend),
+        "associate" => Ok(Associate),
         _ => Err(StorageError::ContractViolation(
             ContractViolation::InvalidValue {
                 field: "simulation_candidate_dispatch.intent_draft.fields.invitee_type",
-                reason: "must be one of: household, employee, contractor, referral",
+                reason: "must be one of: company, customer, employee, family_member, friend, associate",
             },
         )),
     }

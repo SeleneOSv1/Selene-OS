@@ -247,7 +247,7 @@ simulation_id
 
 version
 
-status (DRAFT | ACTIVE | DEPRECATED | DISABLED)
+status (DRAFT | ACTIVE | LEGACY_DO_NOT_WIRE | DEPRECATED | DISABLED)
 
 simulation_type (DRAFT | COMMIT | REVOKE)
 
@@ -796,9 +796,9 @@ draft_id (PK)
 
 tenant_id
 
-invitee_type (HOUSEHOLD | EMPLOYEE | CONTRACTOR | REFERRAL)
+invitee_type (COMPANY | CUSTOMER | EMPLOYEE | FAMILY_MEMBER | FRIEND | ASSOCIATE)
 
-schema_version_id (required for EMPLOYEE)
+schema_version_id (required for EMPLOYEE and COMPANY)
 
 creator_user_id
 
@@ -806,7 +806,7 @@ draft_payload_json (bounded, structured)
 
 missing_required_fields_json (bounded, deterministic output of schema gate)
 
-status (DRAFT_CREATED | READY_TO_SEND | COMMITTED | REVOKED | EXPIRED)
+status (DRAFT_CREATED | DRAFT_READY | COMMITTED | REVOKED | EXPIRED)
 
 created_at
 
@@ -822,7 +822,7 @@ PRIMARY KEY (draft_id)
 
 UNIQUE (tenant_id, draft_id)
 
-CHECK: status transitions are monotonic and deterministic (no COMMITTED -> DRAFT_CREATED)
+Transition enforcement rule: status transitions are monotonic and deterministic (no COMMITTED -> DRAFT_CREATED), enforced by PH1.F/PH1.LINK runtime state machine; SQL CHECK enforces enum membership only.
 
 KC.16.2 Table: onboarding_link_tokens
 
@@ -906,7 +906,7 @@ tenant_id
 
 user_id
 
-reminder_type (TASK | MEETING | TIMER | MEDICAL | CUSTOM)
+reminder_type (TASK | MEETING | TIMER | MEDICAL | CUSTOM | BCAST_MHP_FOLLOWUP)
 
 priority_level (LOW | NORMAL | HIGH | CRITICAL)
 

@@ -29,7 +29,7 @@
 ```text
 token_id: string
 draft_id: string
-activation_status: enum (OPENED | ACTIVATED)
+activation_status: enum (ACTIVATED | BLOCKED | EXPIRED | REVOKED | CONSUMED)
 missing_required_fields: string[]
 bound_device_fingerprint_hash: string
 ```
@@ -48,7 +48,7 @@ bound_device_fingerprint_hash: string
 - LINK_INVITE_FORWARD_BLOCK_COMMIT (when device mismatch is detected)
 
 ## 7) Refusal Conditions
-- token invalid/expired/revoked -> LINK_TOKEN_INVALID
+- token invalid/expired/revoked/consumed -> LINK_TOKEN_INVALID
 - forwarded-link device mismatch -> LINK_FORWARD_BLOCKED
 
 ## 8) Acceptance Tests

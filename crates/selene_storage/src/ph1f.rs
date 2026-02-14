@@ -2428,10 +2428,14 @@ impl Ph1fStore {
         prefilled_context: &Option<PrefilledContext>,
     ) -> Vec<String> {
         let mut required = match invitee_type {
-            InviteeType::Employee => vec!["company_id", "position_id", "location_id", "start_date"],
-            InviteeType::Contractor => vec!["company_id", "position_id"],
-            InviteeType::Household => vec!["tenant_id"],
-            InviteeType::Referral => vec!["tenant_id"],
+            InviteeType::Company => vec!["tenant_id"],
+            InviteeType::Customer => vec!["tenant_id"],
+            InviteeType::Employee => {
+                vec!["company_id", "position_id", "location_id", "start_date"]
+            }
+            InviteeType::FamilyMember => vec!["tenant_id"],
+            InviteeType::Friend => vec!["tenant_id"],
+            InviteeType::Associate => vec!["company_id", "position_id"],
         };
 
         if let Some(ctx) = prefilled_context {
@@ -2548,6 +2552,30 @@ impl Ph1fStore {
         self.links.get(token_id)
     }
 
+    pub fn ph1link_mark_sent_commit(&mut self, token_id: TokenId) -> Result<LinkStatus, StorageError> {
+        let rec = self
+            .links
+            .get_mut(&token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?;
+
+        match rec.status {
+            LinkStatus::DraftCreated => {
+                rec.status = LinkStatus::Sent;
+                Ok(LinkStatus::Sent)
+            }
+            LinkStatus::Sent => Ok(LinkStatus::Sent),
+            _ => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_mark_sent_commit.link_status",
+                    reason: "link must be DRAFT_CREATED or SENT",
+                },
+            )),
+        }
+    }
+
     pub fn ph1link_invite_open_activate_commit(
         &mut self,
         now: MonotonicTimeNs,
@@ -2572,6 +2600,28 @@ impl Ph1fStore {
                 key: token_id.as_str().to_string(),
             })?;
 
+        if rec.status == LinkStatus::Consumed {
+            return Ok((
+                LinkStatus::Consumed,
+                rec.draft_id.clone(),
+                rec.missing_required_fields.clone(),
+                rec.bound_device_fingerprint_hash.clone(),
+                Some("TOKEN_CONSUMED".to_string()),
+                None,
+            ));
+        }
+
+        if rec.status == LinkStatus::Blocked {
+            return Ok((
+                LinkStatus::Blocked,
+                rec.draft_id.clone(),
+                rec.missing_required_fields.clone(),
+                rec.bound_device_fingerprint_hash.clone(),
+                Some("TOKEN_BLOCKED".to_string()),
+                None,
+            ));
+        }
+
         // Expiry gate.
         if now.0 > rec.expires_at.0 {
             rec.status = LinkStatus::Expired;
@@ -2580,6 +2630,17 @@ impl Ph1fStore {
                 rec.draft_id.clone(),
                 rec.missing_required_fields.clone(),
                 None,
+                Some("TOKEN_EXPIRED".to_string()),
+                None,
+            ));
+        }
+
+        if rec.status == LinkStatus::Expired {
+            return Ok((
+                LinkStatus::Expired,
+                rec.draft_id.clone(),
+                rec.missing_required_fields.clone(),
+                rec.bound_device_fingerprint_hash.clone(),
                 Some("TOKEN_EXPIRED".to_string()),
                 None,
             ));
@@ -2595,6 +2656,28 @@ impl Ph1fStore {
                 Some("TOKEN_REVOKED".to_string()),
                 None,
             ));
+        }
+
+        // Valid activation entry states for MVP runtime:
+        // - DRAFT_CREATED (generated; not yet delivered)
+        // - SENT (delivered by LINK_DELIVER_INVITE path)
+        // - OPENED (transient open state before final activation)
+        // - ACTIVATED (idempotent re-open on bound device)
+        if rec.status != LinkStatus::DraftCreated
+            && rec.status != LinkStatus::Sent
+            && rec.status != LinkStatus::Opened
+            && rec.status != LinkStatus::Activated
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.link_status",
+                    reason: "invalid link status for open/activate",
+                },
+            ));
+        }
+
+        if rec.status == LinkStatus::DraftCreated || rec.status == LinkStatus::Sent {
+            rec.status = LinkStatus::Opened;
         }
 
         let df_hash = deterministic_device_fingerprint_hash_hex(&device_fingerprint);
@@ -3539,6 +3622,26 @@ impl Ph1fStore {
         }
         if invitee_type == InviteeType::Employee {
             self.ph1onb_validate_employee_position_prereq(&token_id, tenant_id.as_deref())?;
+        }
+
+        let link = self
+            .links
+            .get_mut(&token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?;
+        if link.status == LinkStatus::Consumed {
+            // idempotent no-op
+        } else if link.status == LinkStatus::Activated || link.status == LinkStatus::Opened {
+            link.status = LinkStatus::Consumed;
+        } else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.link_status",
+                    reason: "link must be ACTIVATED/OPENED before completion",
+                },
+            ));
         }
 
         let rec = self

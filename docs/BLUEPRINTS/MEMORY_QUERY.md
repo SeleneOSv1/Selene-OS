@@ -4,7 +4,7 @@
 - `process_id`: `MEMORY_QUERY`
 - `intent_type`: `MEMORY_QUERY`
 - `version`: `v1`
-- `status`: `DRAFT`
+- `status`: `ACTIVE`
 
 ## 2) Required Inputs
 - `tenant_id`

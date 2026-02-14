@@ -15,12 +15,13 @@ CREATE TABLE IF NOT EXISTS onboarding_drafts (
     updated_at BIGINT NOT NULL,
     committed_entity_id TEXT,
     idempotency_key TEXT,
-    CHECK (invitee_type IN ('HOUSEHOLD', 'EMPLOYEE', 'CONTRACTOR', 'REFERRAL')),
-    CHECK (status IN ('DRAFT_CREATED', 'READY_TO_SEND', 'COMMITTED', 'REVOKED', 'EXPIRED')),
+    CHECK (invitee_type IN ('COMPANY','CUSTOMER','EMPLOYEE','FAMILY_MEMBER','FRIEND','ASSOCIATE')),
+    -- Kernel rule: SQL CHECK enforces status enum membership only; monotonic transition enforcement is runtime-owned by PH1.F/PH1.LINK.
+    CHECK (status IN ('DRAFT_CREATED', 'DRAFT_READY', 'COMMITTED', 'REVOKED', 'EXPIRED')),
+    -- Kernel rule: schema_version_id is required for EMPLOYEE and COMPANY drafts.
     CHECK (
-        -- Kernel rule: schema_version_id is required for EMPLOYEE drafts.
-        (invitee_type = 'EMPLOYEE' AND schema_version_id IS NOT NULL)
-        OR (invitee_type <> 'EMPLOYEE')
+        (invitee_type IN ('EMPLOYEE','COMPANY') AND schema_version_id IS NOT NULL)
+        OR (invitee_type NOT IN ('EMPLOYEE','COMPANY'))
     )
 );
 

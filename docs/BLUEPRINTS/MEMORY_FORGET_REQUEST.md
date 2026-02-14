@@ -4,7 +4,7 @@
 - `process_id`: `MEMORY_FORGET_REQUEST`
 - `intent_type`: `MEMORY_FORGET_REQUEST`
 - `version`: `v1`
-- `status`: `DRAFT`
+- `status`: `ACTIVE`
 
 ## 2) Required Inputs
 - `tenant_id`
@@ -32,7 +32,8 @@ reason_code: string
 - none
 
 ## 6) Simulation Requirements
-- none
+- `MEMORY_FORGET_COMMIT`
+- `MEMORY_SUPPRESSION_SET_COMMIT`
 
 ## 7) Refusal Conditions
 - identity unknown/unverified -> `MEM_POLICY_BLOCKED` (refuse or request reauth)

@@ -4,7 +4,7 @@
 - `process_id`: `ONB_INVITED`
 - `intent_type`: `ONB_INVITED`
 - `version`: `v1`
-- `status`: `DRAFT`
+- `status`: `ACTIVE`
 
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.

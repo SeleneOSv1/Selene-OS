@@ -1479,21 +1479,30 @@ fn excerpt_from_lower_match(lower: &str, original: &str, needle: &str) -> Option
 }
 
 fn extract_invitee_type(lower: &str, original: &str) -> Option<(String, String)> {
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "company") {
+        return Some((orig, "company".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "customer") {
+        return Some((orig, "customer".to_string()));
+    }
     if let Some(orig) = excerpt_from_lower_match(lower, original, "employee") {
         return Some((orig, "employee".to_string()));
     }
-    if let Some(orig) = excerpt_from_lower_match(lower, original, "contractor") {
-        return Some((orig, "contractor".to_string()));
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "associate") {
+        return Some((orig, "associate".to_string()));
     }
-    if let Some(orig) = excerpt_from_lower_match(lower, original, "referral") {
-        return Some((orig, "referral".to_string()));
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "friend") {
+        return Some((orig, "friend".to_string()));
     }
-    if let Some(orig) = excerpt_from_lower_match(lower, original, "household") {
-        return Some((orig, "household".to_string()));
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "family_member") {
+        return Some((orig, "family_member".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "family member") {
+        return Some((orig, "family_member".to_string()));
     }
     for w in ["husband", "wife", "son", "daughter", "family"] {
         if let Some(orig) = excerpt_from_lower_match(lower, original, w) {
-            return Some((orig, "household".to_string()));
+            return Some((orig, "family_member".to_string()));
         }
     }
     None
