@@ -168,7 +168,13 @@ echo "=================================================="
 echo "--- 4A) PH1.LINK key enums (InviteeType + LinkStatus) ---"
 echo "KERNEL InviteeType:"; rg -n "pub enum InviteeType" -n crates/selene_kernel_contracts/src/ph1link.rs || true
 echo "KERNEL LinkStatus:"; rg -n "pub enum LinkStatus" -n crates/selene_kernel_contracts/src/ph1link.rs || true
-echo "SQL onboarding_link_tokens status constraint:"; rg -n "CREATE TABLE IF NOT EXISTS onboarding_link_tokens|status IN" crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql -n || true
+echo "SQL onboarding_link_tokens status constraint:"; awk '
+  /CREATE TABLE IF NOT EXISTS onboarding_link_tokens / {in_tbl=1}
+  in_tbl && ($0 ~ /CREATE TABLE IF NOT EXISTS onboarding_link_tokens/ || $0 ~ /status IN/ || $0 ~ /DRAFT_CREATED|SENT|OPENED|ACTIVATED|CONSUMED|REVOKED|EXPIRED|BLOCKED/) {
+    printf "%d:%s\n", NR, $0
+  }
+  in_tbl && /^\\);/ {exit}
+' crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql || true
 echo "DB_WIRING PH1_LINK lifecycle line:"; rg -n "lifecycle state is bounded" docs/DB_WIRING/PH1_LINK.md -n || true
 
 echo
