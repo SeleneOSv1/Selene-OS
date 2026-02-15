@@ -981,6 +981,34 @@ fn confirm_text(d: &IntentDraft) -> String {
                 ),
             }
         }
+        IntentType::AccessSchemaManage => {
+            let action = field_original(d, FieldKey::ApAction)
+                .unwrap_or("CREATE_DRAFT")
+                .to_ascii_uppercase();
+            let profile_id = field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
+            let version = field_original(d, FieldKey::SchemaVersionId).unwrap_or("a schema version");
+            let scope = field_original(d, FieldKey::ApScope).unwrap_or("TENANT");
+            let tenant = field_original(d, FieldKey::TenantId).unwrap_or("the tenant");
+            format!(
+                "You want to {action} for access profile {profile_id} ({version}) in {scope} scope for {tenant}. Is that correct?"
+            )
+        }
+        IntentType::AccessEscalationVote => {
+            let vote_action = field_original(d, FieldKey::VoteAction).unwrap_or("CAST_VOTE");
+            let case_id = field_original(d, FieldKey::EscalationCaseId).unwrap_or("an escalation case");
+            let vote_value = field_original(d, FieldKey::VoteValue).unwrap_or("APPROVE");
+            format!(
+                "You want to run {vote_action} on escalation case {case_id} with vote {vote_value}. Is that correct?"
+            )
+        }
+        IntentType::AccessInstanceCompileRefresh => {
+            let target_user = field_original(d, FieldKey::TargetUserId).unwrap_or("the target user");
+            let profile_id = field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
+            let tenant = field_original(d, FieldKey::TenantId).unwrap_or("the tenant");
+            format!(
+                "You want to compile or refresh access for {target_user} using profile {profile_id} in {tenant}. Is that correct?"
+            )
+        }
         IntentType::TimeQuery | IntentType::WeatherQuery => "Is that right?".to_string(),
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
     }
@@ -1103,6 +1131,94 @@ fn clarify_for_missing(
                 "capreq_store_17_mgr".to_string(),
             ],
         ),
+        (_, FieldKey::AccessProfileId) => (
+            "Which access profile is this for?".to_string(),
+            vec![
+                "AP_CLERK".to_string(),
+                "AP_DRIVER".to_string(),
+                "AP_CEO".to_string(),
+            ],
+        ),
+        (_, FieldKey::SchemaVersionId) => (
+            "Which schema version should I use?".to_string(),
+            vec!["v1".to_string(), "v2".to_string(), "v3".to_string()],
+        ),
+        (_, FieldKey::ApScope) => (
+            "Is this global or tenant scope?".to_string(),
+            vec!["GLOBAL".to_string(), "TENANT".to_string()],
+        ),
+        (_, FieldKey::ApAction) => (
+            "What access-profile action should I run?".to_string(),
+            vec![
+                "CREATE_DRAFT".to_string(),
+                "UPDATE".to_string(),
+                "ACTIVATE".to_string(),
+                "RETIRE".to_string(),
+            ],
+        ),
+        (_, FieldKey::ProfilePayloadJson) => (
+            "Please provide the profile rule payload.".to_string(),
+            vec![
+                "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
+                "{\"allow\":[\"CAPREQ_MANAGE\"],\"limits\":{\"amount\":5000}}".to_string(),
+            ],
+        ),
+        (_, FieldKey::EscalationCaseId) => (
+            "Which escalation case is this for?".to_string(),
+            vec!["esc_case_001".to_string(), "esc_case_store_17".to_string()],
+        ),
+        (_, FieldKey::BoardPolicyId) => (
+            "Which board policy should apply?".to_string(),
+            vec!["board_policy_2_of_3".to_string(), "board_policy_70pct".to_string()],
+        ),
+        (_, FieldKey::TargetUserId) => (
+            "Which user is the target?".to_string(),
+            vec!["user_123".to_string(), "employee_warehouse_mgr".to_string()],
+        ),
+        (_, FieldKey::AccessInstanceId) => (
+            "Which access instance should this use?".to_string(),
+            vec!["acc_inst_001".to_string(), "acc_inst_driver_27".to_string()],
+        ),
+        (_, FieldKey::VoteAction) => (
+            "What vote action should I run?".to_string(),
+            vec!["CAST_VOTE".to_string(), "RESOLVE".to_string()],
+        ),
+        (_, FieldKey::VoteValue) => (
+            "What vote value should I record?".to_string(),
+            vec!["APPROVE".to_string(), "REJECT".to_string()],
+        ),
+        (_, FieldKey::OverrideResult) => (
+            "What override result should apply?".to_string(),
+            vec![
+                "ONE_SHOT".to_string(),
+                "TEMPORARY".to_string(),
+                "TIME_WINDOW".to_string(),
+                "PERMANENT".to_string(),
+                "DENY".to_string(),
+            ],
+        ),
+        (_, FieldKey::PositionId) => (
+            "Which position should this use?".to_string(),
+            vec![
+                "position_driver".to_string(),
+                "position_warehouse_manager".to_string(),
+            ],
+        ),
+        (_, FieldKey::OverlayIdList) => (
+            "Which overlay IDs should I apply?".to_string(),
+            vec![
+                "overlay_driver_safety".to_string(),
+                "overlay_retail_limits".to_string(),
+            ],
+        ),
+        (_, FieldKey::CompileReason) => (
+            "Why are we compiling this access instance?".to_string(),
+            vec![
+                "POSITION_CHANGED".to_string(),
+                "AP_VERSION_ACTIVATED".to_string(),
+                "OVERRIDE_UPDATED".to_string(),
+            ],
+        ),
         (_, FieldKey::TargetScopeRef) => (
             "What target scope should this apply to?".to_string(),
             vec![
@@ -1128,6 +1244,21 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
     for k in [
         FieldKey::IntentChoice,
         FieldKey::ReferenceTarget,
+        FieldKey::ApAction,
+        FieldKey::AccessProfileId,
+        FieldKey::SchemaVersionId,
+        FieldKey::ApScope,
+        FieldKey::ProfilePayloadJson,
+        FieldKey::EscalationCaseId,
+        FieldKey::BoardPolicyId,
+        FieldKey::TargetUserId,
+        FieldKey::AccessInstanceId,
+        FieldKey::VoteAction,
+        FieldKey::VoteValue,
+        FieldKey::OverrideResult,
+        FieldKey::PositionId,
+        FieldKey::OverlayIdList,
+        FieldKey::CompileReason,
         FieldKey::CapreqAction,
         FieldKey::CapreqId,
         FieldKey::RequestedCapabilityId,

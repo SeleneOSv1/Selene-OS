@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP4_COMPLETED_PENDING_STEP5
+Status: STEP5_COMPLETED_PENDING_STEP6
 
 ## 1) Purpose
 
@@ -284,7 +284,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
-- Step 5: PENDING
+- Step 5: COMPLETED (2026-02-15)
 - Step 6: PENDING
 - Step 7: PENDING
 - Step 8: PENDING
@@ -348,3 +348,27 @@ Step 4 note:
   - simulation-id presence checks in `docs/08_SIMULATION_CATALOG.md` -> pass
   - registry ACTIVE uniqueness check (no duplicate ACTIVE per intent_type) -> pass
   - readiness audit command -> `EXIT:0`
+
+Step 5 note:
+- Runtime gate parity patch applied across contracts + runtime dispatch surfaces:
+  - `crates/selene_kernel_contracts/src/ph1n.rs`
+  - `crates/selene_os/src/ph1x.rs`
+  - `crates/selene_os/src/ph1explain.rs`
+  - `crates/selene_os/src/simulation_executor.rs`
+- Added Access simulation-candidate intent coverage for:
+  - `ACCESS_SCHEMA_MANAGE`
+  - `ACCESS_ESCALATION_VOTE`
+  - `ACCESS_INSTANCE_COMPILE_REFRESH`
+- Added deterministic field keys for Access schema/vote/compile flows and wired professional confirmation + clarify prompts for those fields.
+- Runtime dispatch now enforces fail-closed Access gating for the three new intents with unchanged gate semantics:
+  - `ALLOW` -> pass (no Step-6 side effects yet)
+  - `DENY` -> `ACCESS_SCOPE_VIOLATION`
+  - unresolved `ESCALATE` -> `ACCESS_AP_REQUIRED`
+- Added new `simulation_executor` tests for allow/deny/escalate behavior on Access intents:
+  - `at_sim_exec_19_access_schema_manage_gate_allow_returns_gate_passed`
+  - `at_sim_exec_20_access_escalation_vote_access_deny_blocks_governed_commit`
+  - `at_sim_exec_21_access_instance_compile_access_escalate_requires_approval_before_commit`
+- Step-5 proof:
+  - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
+  - `cargo test -p selene_os ph1x -- --nocapture` -> pass

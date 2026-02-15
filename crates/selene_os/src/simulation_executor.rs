@@ -49,6 +49,9 @@ pub enum SimulationDispatchOutcome {
     Position(Ph1PositionResponse),
     VoiceId(Ph1VoiceIdSimResponse),
     Wake(Ph1wResponse),
+    AccessGatePassed {
+        requested_action: String,
+    },
     CapreqLifecycle {
         capreq_id: CapreqId,
         capreq_event_id: u64,
@@ -403,6 +406,27 @@ impl SimulationExecutor {
                     )),
                 }
             }
+            IntentType::AccessSchemaManage => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_schema_gate(store, &actor_user_id, &tenant_id, now)?;
+                Ok(SimulationDispatchOutcome::AccessGatePassed {
+                    requested_action: "ACCESS_SCHEMA_MANAGE".to_string(),
+                })
+            }
+            IntentType::AccessEscalationVote => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_escalation_vote_gate(store, &actor_user_id, &tenant_id, now)?;
+                Ok(SimulationDispatchOutcome::AccessGatePassed {
+                    requested_action: "ACCESS_ESCALATION_VOTE".to_string(),
+                })
+            }
+            IntentType::AccessInstanceCompileRefresh => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_instance_compile_gate(store, &actor_user_id, &tenant_id, now)?;
+                Ok(SimulationDispatchOutcome::AccessGatePassed {
+                    requested_action: "ACCESS_INSTANCE_COMPILE_REFRESH".to_string(),
+                })
+            }
             _ => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "simulation_candidate_dispatch.intent_draft.intent_type",
@@ -419,42 +443,15 @@ impl SimulationExecutor {
         tenant_id: &TenantId,
         now: MonotonicTimeNs,
     ) -> Result<(), StorageError> {
-        let Some(access_instance) =
-            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
-        else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.capreq.access_instance_id",
-                    reason: "missing access instance for actor_user_id + tenant_id",
-                },
-            ));
-        };
-
-        let gate = store.ph1access_gate_decide(
-            actor_user_id.clone(),
-            access_instance.access_instance_id.clone(),
-            "CAPREQ_MANAGE".to_string(),
-            AccessMode::A,
-            access_instance.device_trust_level,
-            false,
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "CAPREQ_MANAGE",
+            "simulation_candidate_dispatch.capreq.access_instance_id",
+            "simulation_candidate_dispatch.capreq.access_decision",
             now,
-        )?;
-
-        match gate.access_decision {
-            AccessDecision::Allow => Ok(()),
-            AccessDecision::Deny => Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.capreq.access_decision",
-                    reason: "ACCESS_SCOPE_VIOLATION",
-                },
-            )),
-            AccessDecision::Escalate => Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.capreq.access_decision",
-                    reason: "ACCESS_AP_REQUIRED",
-                },
-            )),
-        }
+        )
     }
 
     fn enforce_link_access_gate(
@@ -464,12 +461,87 @@ impl SimulationExecutor {
         tenant_id: &TenantId,
         now: MonotonicTimeNs,
     ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "LINK_INVITE",
+            "simulation_candidate_dispatch.link.access_instance_id",
+            "simulation_candidate_dispatch.link.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_access_schema_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "ACCESS_SCHEMA_MANAGE",
+            "simulation_candidate_dispatch.access_schema.access_instance_id",
+            "simulation_candidate_dispatch.access_schema.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_access_escalation_vote_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "ACCESS_ESCALATION_VOTE",
+            "simulation_candidate_dispatch.access_escalation_vote.access_instance_id",
+            "simulation_candidate_dispatch.access_escalation_vote.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_access_instance_compile_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "ACCESS_INSTANCE_COMPILE_REFRESH",
+            "simulation_candidate_dispatch.access_instance_compile.access_instance_id",
+            "simulation_candidate_dispatch.access_instance_compile.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_access_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        requested_action: &str,
+        field_access_instance: &'static str,
+        field_access_decision: &'static str,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
         let Some(access_instance) =
             store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
         else {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.link.access_instance_id",
+                    field: field_access_instance,
                     reason: "missing access instance for actor_user_id + tenant_id",
                 },
             ));
@@ -478,7 +550,7 @@ impl SimulationExecutor {
         let gate = store.ph1access_gate_decide(
             actor_user_id.clone(),
             access_instance.access_instance_id.clone(),
-            "LINK_INVITE".to_string(),
+            requested_action.to_string(),
             AccessMode::A,
             access_instance.device_trust_level,
             false,
@@ -489,13 +561,13 @@ impl SimulationExecutor {
             AccessDecision::Allow => Ok(()),
             AccessDecision::Deny => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.link.access_decision",
+                    field: field_access_decision,
                     reason: "ACCESS_SCOPE_VIOLATION",
                 },
             )),
             AccessDecision::Escalate => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.link.access_decision",
+                    field: field_access_decision,
                     reason: "ACCESS_AP_REQUIRED",
                 },
             )),
@@ -835,14 +907,38 @@ mod tests {
         device_trust_level: AccessDeviceTrustLevel,
         lifecycle_state: AccessLifecycleState,
     ) {
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            "role.capreq_manager",
+            "{\"allow\":[\"CAPREQ_MANAGE\"]}",
+            effective_access_mode,
+            identity_verified,
+            device_trust_level,
+            lifecycle_state,
+        );
+    }
+
+    fn seed_access_instance_with_permissions(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+        role_template_id: &str,
+        baseline_permissions_json: &str,
+        effective_access_mode: AccessMode,
+        identity_verified: bool,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+    ) {
         store
             .ph2access_upsert_instance_commit(
                 MonotonicTimeNs(1),
                 tenant.to_string(),
                 actor.clone(),
-                "role.capreq_manager".to_string(),
+                role_template_id.to_string(),
                 effective_access_mode,
-                "{\"allow\":[\"CAPREQ_MANAGE\"]}".to_string(),
+                baseline_permissions_json.to_string(),
                 identity_verified,
                 AccessVerificationLevel::PasscodeTime,
                 device_trust_level,
@@ -874,22 +970,56 @@ mod tests {
         device_trust_level: AccessDeviceTrustLevel,
         lifecycle_state: AccessLifecycleState,
     ) {
-        store
-            .ph2access_upsert_instance_commit(
-                MonotonicTimeNs(1),
-                tenant.to_string(),
-                actor.clone(),
-                "role.link_inviter".to_string(),
-                effective_access_mode,
-                "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
-                identity_verified,
-                AccessVerificationLevel::PasscodeTime,
-                device_trust_level,
-                lifecycle_state,
-                "policy_snapshot_v1".to_string(),
-                None,
-            )
-            .unwrap();
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            "role.link_inviter",
+            "{\"allow\":[\"LINK_INVITE\"]}",
+            effective_access_mode,
+            identity_verified,
+            device_trust_level,
+            lifecycle_state,
+        );
+    }
+
+    fn access_field(key: FieldKey, value: &str) -> IntentField {
+        IntentField {
+            key,
+            value: FieldValue::verbatim(value.to_string()).unwrap(),
+            confidence: OverallConfidence::High,
+        }
+    }
+
+    fn access_draft(intent_type: IntentType, fields: Vec<IntentField>) -> IntentDraft {
+        IntentDraft::v1(
+            intent_type,
+            SchemaVersion(1),
+            fields,
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn access_x(turn_id: u64, draft: IntentDraft, idempotency_key: &str) -> Ph1xResponse {
+        Ph1xResponse::v1(
+            10,
+            turn_id,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some(idempotency_key.to_string()),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1976,6 +2106,158 @@ mod tests {
         ));
         assert_eq!(store.capreq_events().len(), 0);
         assert_eq!(store.capreq_current().len(), 0);
+    }
+
+    #[test]
+    fn at_sim_exec_19_access_schema_manage_gate_allow_returns_gate_passed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-schema-actor-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_schema_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(200),
+                &access_x(
+                    1,
+                    access_draft(
+                        IntentType::AccessSchemaManage,
+                        vec![access_field(FieldKey::TenantId, "tenant_1")],
+                    ),
+                    "idem-access-schema-allow-1",
+                ),
+            )
+            .unwrap();
+        assert!(matches!(
+            out,
+            SimulationDispatchOutcome::AccessGatePassed {
+                requested_action
+            } if requested_action == "ACCESS_SCHEMA_MANAGE"
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_20_access_escalation_vote_access_deny_blocks_governed_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-vote-actor-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_vote_admin",
+            "{\"allow\":[\"ACCESS_ESCALATION_VOTE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Suspended,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(201),
+            &access_x(
+                1,
+                access_draft(
+                    IntentType::AccessEscalationVote,
+                    vec![access_field(FieldKey::TenantId, "tenant_1")],
+                ),
+                "idem-access-vote-deny-1",
+            ),
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.access_escalation_vote.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_21_access_instance_compile_access_escalate_requires_approval_before_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-compile-actor-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_compile_admin",
+            "{\"allow\":[\"ACCESS_INSTANCE_COMPILE_REFRESH\"]}",
+            AccessMode::R,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(202),
+            &access_x(
+                1,
+                access_draft(
+                    IntentType::AccessInstanceCompileRefresh,
+                    vec![access_field(FieldKey::TenantId, "tenant_1")],
+                ),
+                "idem-access-compile-escalate-1",
+            ),
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.access_instance_compile.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
     }
 
     #[test]

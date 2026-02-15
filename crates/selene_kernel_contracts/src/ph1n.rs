@@ -22,6 +22,12 @@ pub enum IntentType {
     CreateInviteLink,
     /// Governance/control: manage capability-request lifecycle (simulation-gated via PH1.CAPREQ).
     CapreqManage,
+    /// Governance/control: manage access profile schema lifecycle (simulation-gated via PH1.ACCESS.001_PH2.ACCESS.002).
+    AccessSchemaManage,
+    /// Governance/control: cast/resolve escalation votes (simulation-gated via PH1.ACCESS.001_PH2.ACCESS.002).
+    AccessEscalationVote,
+    /// Governance/control: compile/refresh per-user access instance lineage (simulation-gated via PH1.ACCESS.001_PH2.ACCESS.002).
+    AccessInstanceCompileRefresh,
     TimeQuery,
     WeatherQuery,
     /// Conversation-control: resume an interrupted answer (Resume Buffer).
@@ -57,6 +63,36 @@ pub enum FieldKey {
     CapreqAction,
     /// CAPREQ: existing request identifier for non-create lifecycle actions.
     CapreqId,
+    /// ACCESS schema: profile identifier (for example: `AP_DRIVER`).
+    AccessProfileId,
+    /// ACCESS schema: lifecycle version reference (for example: `v3`).
+    SchemaVersionId,
+    /// ACCESS schema: scope selector (`GLOBAL|TENANT`).
+    ApScope,
+    /// ACCESS schema: lifecycle action (`CREATE_DRAFT|UPDATE|ACTIVATE|RETIRE`).
+    ApAction,
+    /// ACCESS schema: bounded payload descriptor reference.
+    ProfilePayloadJson,
+    /// ACCESS voting: escalation case identifier.
+    EscalationCaseId,
+    /// ACCESS voting: board policy identifier.
+    BoardPolicyId,
+    /// ACCESS voting/compile: target user identifier.
+    TargetUserId,
+    /// ACCESS voting: target access instance identifier.
+    AccessInstanceId,
+    /// ACCESS voting: vote action (`CAST_VOTE|RESOLVE`).
+    VoteAction,
+    /// ACCESS voting: vote value (`APPROVE|REJECT`).
+    VoteValue,
+    /// ACCESS voting: override result (`ONE_SHOT|TEMPORARY|TIME_WINDOW|PERMANENT|DENY`).
+    OverrideResult,
+    /// ACCESS compile: optional position identifier.
+    PositionId,
+    /// ACCESS compile: optional overlay set reference.
+    OverlayIdList,
+    /// ACCESS compile: deterministic compile reason code.
+    CompileReason,
     /// Used when the user expressed multiple actionable intents in one turn.
     IntentChoice,
     /// Used when the user said "that/it/there/this" without a confirmed referent.
