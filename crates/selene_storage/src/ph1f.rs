@@ -3,7 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
-use selene_kernel_contracts::ph1access::AccessCompiledLineageRef;
+use selene_kernel_contracts::ph1access::{
+    AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewAction,
+    AccessApRuleReviewActionPayload, AccessCompiledLineageRef,
+};
 use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
@@ -451,6 +454,19 @@ pub struct Ph1fStore {
     access_overrides: Vec<AccessOverrideRecord>,
     // Idempotency: (tenant_id, access_instance_id, idempotency_key) -> override_id
     access_override_idempotency_index: BTreeMap<(String, String, String), String>,
+    access_ap_authoring_review_ledger: Vec<AccessApAuthoringReviewLedgerRecord>,
+    access_ap_authoring_review_current:
+        BTreeMap<(String, String, String), AccessApAuthoringReviewCurrentRecord>,
+    // Idempotency: (scope_key, access_profile_id, schema_version_id, review_channel, idempotency_key) -> review_event_id
+    access_ap_authoring_review_channel_idempotency_index:
+        BTreeMap<(String, String, String, String, String), u64>,
+    // Idempotency: (scope_key, access_profile_id, schema_version_id, confirmation_state, idempotency_key) -> review_event_id
+    access_ap_authoring_confirm_idempotency_index:
+        BTreeMap<(String, String, String, String, String), u64>,
+    access_ap_rule_review_action_ledger: Vec<AccessApRuleReviewActionRecord>,
+    // Idempotency: (scope_key, access_profile_id, schema_version_id, action, suggested_rule_ref_or_empty, idempotency_key) -> review_action_row_id
+    access_ap_rule_review_action_idempotency_index:
+        BTreeMap<(String, String, String, String, String, String), u64>,
     access_ap_schema_ledger: Vec<AccessApSchemaLedgerRecord>,
     access_ap_schema_current: BTreeMap<(String, String), AccessApSchemaCurrentRecord>,
     // Idempotency: (scope_key, access_profile_id, schema_version_id, event_action, idempotency_key) -> event_id
@@ -660,6 +676,8 @@ pub struct Ph1fStore {
     next_onb_requirement_backfill_target_row_id: u64,
     next_access_schema_event_id: u64,
     next_access_board_vote_row_id: u64,
+    next_access_ap_authoring_review_event_id: u64,
+    next_access_ap_rule_review_action_row_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -869,6 +887,12 @@ pub enum AccessSchemaLifecycleState {
     Retired,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AccessApAuthoringReviewEventKind {
+    ReviewChannelCommit,
+    ConfirmationCommit,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessApSchemaLedgerRecord {
     pub schema_version: SchemaVersion,
@@ -883,6 +907,9 @@ pub struct AccessApSchemaLedgerRecord {
     pub reason_code: ReasonCodeId,
     pub created_by_user_id: UserId,
     pub created_at: MonotonicTimeNs,
+    pub activation_review_event_id: Option<u64>,
+    pub activation_rule_action_count: Option<u32>,
+    pub activation_rule_action_set_ref: Option<String>,
     pub idempotency_key: String,
 }
 
@@ -895,6 +922,57 @@ pub struct AccessApSchemaCurrentRecord {
     pub active_event_id: u64,
     pub updated_at: MonotonicTimeNs,
     pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApAuthoringReviewLedgerRecord {
+    pub schema_version: SchemaVersion,
+    pub review_event_id: u64,
+    pub tenant_id: Option<String>,
+    pub scope: AccessSchemaScope,
+    pub scope_key: String,
+    pub access_profile_id: String,
+    pub schema_version_id: String,
+    pub event_kind: AccessApAuthoringReviewEventKind,
+    pub review_channel: Option<AccessApReviewChannel>,
+    pub confirmation_state: AccessApAuthoringConfirmationState,
+    pub reason_code: ReasonCodeId,
+    pub created_by_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApAuthoringReviewCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub scope_key: String,
+    pub access_profile_id: String,
+    pub schema_version_id: String,
+    pub review_channel: AccessApReviewChannel,
+    pub confirmation_state: AccessApAuthoringConfirmationState,
+    pub latest_review_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApRuleReviewActionRecord {
+    pub schema_version: SchemaVersion,
+    pub review_action_row_id: u64,
+    pub tenant_id: Option<String>,
+    pub scope: AccessSchemaScope,
+    pub scope_key: String,
+    pub access_profile_id: String,
+    pub schema_version_id: String,
+    pub action: AccessApRuleReviewAction,
+    pub suggested_rule_ref: Option<String>,
+    pub capability_id: Option<String>,
+    pub constraint_ref: Option<String>,
+    pub escalation_policy_ref: Option<String>,
+    pub reason_code: ReasonCodeId,
+    pub created_by_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1362,6 +1440,12 @@ impl Ph1fStore {
             access_instance_idempotency_index: BTreeMap::new(),
             access_overrides: Vec::new(),
             access_override_idempotency_index: BTreeMap::new(),
+            access_ap_authoring_review_ledger: Vec::new(),
+            access_ap_authoring_review_current: BTreeMap::new(),
+            access_ap_authoring_review_channel_idempotency_index: BTreeMap::new(),
+            access_ap_authoring_confirm_idempotency_index: BTreeMap::new(),
+            access_ap_rule_review_action_ledger: Vec::new(),
+            access_ap_rule_review_action_idempotency_index: BTreeMap::new(),
             access_ap_schema_ledger: Vec::new(),
             access_ap_schema_current: BTreeMap::new(),
             access_ap_schema_idempotency_index: BTreeMap::new(),
@@ -1453,6 +1537,8 @@ impl Ph1fStore {
             next_onb_requirement_backfill_target_row_id: 1,
             next_access_schema_event_id: 1,
             next_access_board_vote_row_id: 1,
+            next_access_ap_authoring_review_event_id: 1,
+            next_access_ap_rule_review_action_row_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -6058,6 +6144,38 @@ impl Ph1fStore {
         }
     }
 
+    fn access_ap_review_channel_key(review_channel: AccessApReviewChannel) -> &'static str {
+        match review_channel {
+            AccessApReviewChannel::PhoneDesktop => "PHONE_DESKTOP",
+            AccessApReviewChannel::ReadOutLoud => "READ_OUT_LOUD",
+        }
+    }
+
+    fn access_ap_rule_action_key(action: AccessApRuleReviewAction) -> &'static str {
+        match action {
+            AccessApRuleReviewAction::Agree => "AGREE",
+            AccessApRuleReviewAction::Disagree => "DISAGREE",
+            AccessApRuleReviewAction::Edit => "EDIT",
+            AccessApRuleReviewAction::Delete => "DELETE",
+            AccessApRuleReviewAction::Disable => "DISABLE",
+            AccessApRuleReviewAction::AddCustomRule => "ADD_CUSTOM_RULE",
+        }
+    }
+
+    fn access_ap_confirmation_state_key(state: AccessApAuthoringConfirmationState) -> &'static str {
+        match state {
+            AccessApAuthoringConfirmationState::NeedsChannelChoice => "NEEDS_CHANNEL_CHOICE",
+            AccessApAuthoringConfirmationState::ReviewInProgress => "REVIEW_IN_PROGRESS",
+            AccessApAuthoringConfirmationState::PendingActivationConfirmation => {
+                "PENDING_ACTIVATION_CONFIRMATION"
+            }
+            AccessApAuthoringConfirmationState::ConfirmedForActivation => {
+                "CONFIRMED_FOR_ACTIVATION"
+            }
+            AccessApAuthoringConfirmationState::Declined => "DECLINED",
+        }
+    }
+
     fn ph2access_effective_mode(
         &self,
         access_instance_id: &str,
@@ -6086,6 +6204,418 @@ impl Ph1fStore {
             }
         }
         effective
+    }
+
+    fn access_ap_rule_action_lineage(
+        &self,
+        scope_key: &str,
+        access_profile_id: &str,
+        schema_version_id: &str,
+    ) -> (u32, Option<String>) {
+        let mut row_ids: Vec<u64> = self
+            .access_ap_rule_review_action_ledger
+            .iter()
+            .filter(|row| {
+                row.scope_key == scope_key
+                    && row.access_profile_id == access_profile_id
+                    && row.schema_version_id == schema_version_id
+            })
+            .map(|row| row.review_action_row_id)
+            .collect();
+
+        if row_ids.is_empty() {
+            return (0, None);
+        }
+
+        row_ids.sort_unstable();
+        let mut materialized = String::new();
+        for (idx, row_id) in row_ids.iter().enumerate() {
+            if idx > 0 {
+                materialized.push(',');
+            }
+            materialized.push_str(&row_id.to_string());
+        }
+        let set_ref = format!("ap_rule_set_{}", hash_hex_64(&materialized));
+        (row_ids.len() as u32, Some(set_ref))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_ap_authoring_review_channel_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        review_channel: AccessApReviewChannel,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError> {
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        let scope_key = Self::access_scope_key(scope, &tenant_id)?;
+        Self::validate_access_identifier(
+            "access_ap_authoring_review_ledger.access_profile_id",
+            &access_profile_id,
+            64,
+        )?;
+        Self::validate_access_identifier(
+            "access_ap_authoring_review_ledger.schema_version_id",
+            &schema_version_id,
+            64,
+        )?;
+        Self::validate_access_idempotency(
+            "access_ap_authoring_review_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idempotency_idx = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+            Self::access_ap_review_channel_key(review_channel).to_string(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .access_ap_authoring_review_channel_idempotency_index
+            .get(&idempotency_idx)
+        {
+            let current_key = (
+                scope_key.clone(),
+                access_profile_id.clone(),
+                schema_version_id.clone(),
+            );
+            if let Some(current) = self.access_ap_authoring_review_current.get(&current_key) {
+                return Ok(current.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_current.latest_review_event_id",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        let review_event_id = self.next_access_ap_authoring_review_event_id;
+        self.next_access_ap_authoring_review_event_id = self
+            .next_access_ap_authoring_review_event_id
+            .saturating_add(1);
+        let ledger_row = AccessApAuthoringReviewLedgerRecord {
+            schema_version: SchemaVersion(1),
+            review_event_id,
+            tenant_id: tenant_id.clone(),
+            scope,
+            scope_key: scope_key.clone(),
+            access_profile_id: access_profile_id.clone(),
+            schema_version_id: schema_version_id.clone(),
+            event_kind: AccessApAuthoringReviewEventKind::ReviewChannelCommit,
+            review_channel: Some(review_channel),
+            confirmation_state: AccessApAuthoringConfirmationState::ReviewInProgress,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.access_ap_authoring_review_ledger.push(ledger_row);
+        self.access_ap_authoring_review_channel_idempotency_index
+            .insert(idempotency_idx, review_event_id);
+
+        let current_key = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+        );
+        let current = AccessApAuthoringReviewCurrentRecord {
+            schema_version: SchemaVersion(1),
+            scope_key,
+            access_profile_id,
+            schema_version_id,
+            review_channel,
+            confirmation_state: AccessApAuthoringConfirmationState::ReviewInProgress,
+            latest_review_event_id: review_event_id,
+            updated_at: now,
+            reason_code,
+        };
+        self.access_ap_authoring_review_current
+            .insert(current_key, current.clone());
+        Ok(current)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_ap_authoring_rule_action_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        rule_action_payload: AccessApRuleReviewActionPayload,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApRuleReviewActionRecord, StorageError> {
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_rule_review_actions_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        let scope_key = Self::access_scope_key(scope, &tenant_id)?;
+        Self::validate_access_identifier(
+            "access_ap_rule_review_actions_ledger.access_profile_id",
+            &access_profile_id,
+            64,
+        )?;
+        Self::validate_access_identifier(
+            "access_ap_rule_review_actions_ledger.schema_version_id",
+            &schema_version_id,
+            64,
+        )?;
+        Self::validate_access_idempotency(
+            "access_ap_rule_review_actions_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+        rule_action_payload
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+
+        let current_key = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+        );
+        let Some(current_state) = self.access_ap_authoring_review_current.get(&current_key) else {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_current",
+                key: format!(
+                    "{}:{}:{}",
+                    scope_key.as_str(),
+                    access_profile_id.as_str(),
+                    schema_version_id.as_str()
+                ),
+            });
+        };
+        if current_state.confirmation_state == AccessApAuthoringConfirmationState::Declined {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "access_ap_rule_review_actions_ledger.confirmation_state",
+                    reason: "cannot append rule action when authoring state is DECLINED",
+                },
+            ));
+        }
+
+        let suggested_rule_ref_key = rule_action_payload
+            .suggested_rule_ref
+            .clone()
+            .unwrap_or_default();
+        let idempotency_idx = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+            Self::access_ap_rule_action_key(rule_action_payload.action).to_string(),
+            suggested_rule_ref_key,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_row_id) = self
+            .access_ap_rule_review_action_idempotency_index
+            .get(&idempotency_idx)
+        {
+            if let Some(existing) = self
+                .access_ap_rule_review_action_ledger
+                .iter()
+                .find(|row| row.review_action_row_id == *existing_row_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_rule_review_actions_ledger.review_action_row_id",
+                key: existing_row_id.to_string(),
+            });
+        }
+
+        let review_action_row_id = self.next_access_ap_rule_review_action_row_id;
+        self.next_access_ap_rule_review_action_row_id = self
+            .next_access_ap_rule_review_action_row_id
+            .saturating_add(1);
+
+        let row = AccessApRuleReviewActionRecord {
+            schema_version: SchemaVersion(1),
+            review_action_row_id,
+            tenant_id,
+            scope,
+            scope_key,
+            access_profile_id,
+            schema_version_id,
+            action: rule_action_payload.action,
+            suggested_rule_ref: rule_action_payload.suggested_rule_ref,
+            capability_id: rule_action_payload.capability_id,
+            constraint_ref: rule_action_payload.constraint_ref,
+            escalation_policy_ref: rule_action_payload.escalation_policy_ref,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.access_ap_rule_review_action_ledger.push(row.clone());
+        self.access_ap_rule_review_action_idempotency_index
+            .insert(idempotency_idx, review_action_row_id);
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_ap_authoring_confirm_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        confirmation_state: AccessApAuthoringConfirmationState,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError> {
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        let scope_key = Self::access_scope_key(scope, &tenant_id)?;
+        Self::validate_access_identifier(
+            "access_ap_authoring_review_ledger.access_profile_id",
+            &access_profile_id,
+            64,
+        )?;
+        Self::validate_access_identifier(
+            "access_ap_authoring_review_ledger.schema_version_id",
+            &schema_version_id,
+            64,
+        )?;
+        Self::validate_access_idempotency(
+            "access_ap_authoring_review_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        if !matches!(
+            confirmation_state,
+            AccessApAuthoringConfirmationState::PendingActivationConfirmation
+                | AccessApAuthoringConfirmationState::ConfirmedForActivation
+                | AccessApAuthoringConfirmationState::Declined
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "access_ap_authoring_review_ledger.confirmation_state",
+                    reason:
+                        "must be PENDING_ACTIVATION_CONFIRMATION, CONFIRMED_FOR_ACTIVATION, or DECLINED",
+                },
+            ));
+        }
+
+        let idempotency_idx = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+            Self::access_ap_confirmation_state_key(confirmation_state).to_string(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .access_ap_authoring_confirm_idempotency_index
+            .get(&idempotency_idx)
+        {
+            let current_key = (
+                scope_key.clone(),
+                access_profile_id.clone(),
+                schema_version_id.clone(),
+            );
+            if let Some(current) = self.access_ap_authoring_review_current.get(&current_key) {
+                return Ok(current.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_current.latest_review_event_id",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        let current_key = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+        );
+        let Some(current_state) = self
+            .access_ap_authoring_review_current
+            .get(&current_key)
+            .cloned()
+        else {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_authoring_review_current",
+                key: format!(
+                    "{}:{}:{}",
+                    scope_key.as_str(),
+                    access_profile_id.as_str(),
+                    schema_version_id.as_str()
+                ),
+            });
+        };
+
+        if confirmation_state != AccessApAuthoringConfirmationState::Declined {
+            let (rule_action_count, _) = self.access_ap_rule_action_lineage(
+                &scope_key,
+                &access_profile_id,
+                &schema_version_id,
+            );
+            if rule_action_count == 0 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "access_ap_authoring_review_ledger.confirmation_state",
+                        reason:
+                            "rule review action rows are required before pending/confirmed activation",
+                    },
+                ));
+            }
+        }
+
+        let review_event_id = self.next_access_ap_authoring_review_event_id;
+        self.next_access_ap_authoring_review_event_id = self
+            .next_access_ap_authoring_review_event_id
+            .saturating_add(1);
+        let ledger_row = AccessApAuthoringReviewLedgerRecord {
+            schema_version: SchemaVersion(1),
+            review_event_id,
+            tenant_id,
+            scope,
+            scope_key: scope_key.clone(),
+            access_profile_id: access_profile_id.clone(),
+            schema_version_id: schema_version_id.clone(),
+            event_kind: AccessApAuthoringReviewEventKind::ConfirmationCommit,
+            review_channel: Some(current_state.review_channel),
+            confirmation_state,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.access_ap_authoring_review_ledger.push(ledger_row);
+        self.access_ap_authoring_confirm_idempotency_index
+            .insert(idempotency_idx, review_event_id);
+
+        let updated_current = AccessApAuthoringReviewCurrentRecord {
+            schema_version: SchemaVersion(1),
+            scope_key,
+            access_profile_id,
+            schema_version_id,
+            review_channel: current_state.review_channel,
+            confirmation_state,
+            latest_review_event_id: review_event_id,
+            updated_at: now,
+            reason_code,
+        };
+        self.access_ap_authoring_review_current
+            .insert(current_key, updated_current.clone());
+        Ok(updated_current)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6175,6 +6705,50 @@ impl Ph1fStore {
             }
         }
 
+        let authoring_current_key = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+        );
+        let mut activation_review_event_id: Option<u64> = None;
+        let mut activation_rule_action_count: Option<u32> = None;
+        let mut activation_rule_action_set_ref: Option<String> = None;
+        if event_action == AccessSchemaEventAction::Activate {
+            if let Some(review_current) = self
+                .access_ap_authoring_review_current
+                .get(&authoring_current_key)
+            {
+                if review_current.confirmation_state
+                    != AccessApAuthoringConfirmationState::ConfirmedForActivation
+                {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "access_ap_schemas_ledger.activation_review_event_id",
+                            reason:
+                                "authoring review confirmation state must be CONFIRMED_FOR_ACTIVATION before activation",
+                        },
+                    ));
+                }
+                let (rule_action_count, rule_action_set_ref) = self.access_ap_rule_action_lineage(
+                    &authoring_current_key.0,
+                    &authoring_current_key.1,
+                    &authoring_current_key.2,
+                );
+                if rule_action_count == 0 {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "access_ap_schemas_ledger.activation_rule_action_count",
+                            reason:
+                                "at least one authoring rule action is required when review state exists",
+                        },
+                    ));
+                }
+                activation_review_event_id = Some(review_current.latest_review_event_id);
+                activation_rule_action_count = Some(rule_action_count);
+                activation_rule_action_set_ref = rule_action_set_ref;
+            }
+        }
+
         let event_id = self.next_access_schema_event_id;
         self.next_access_schema_event_id = self.next_access_schema_event_id.saturating_add(1);
 
@@ -6191,6 +6765,9 @@ impl Ph1fStore {
             reason_code,
             created_by_user_id,
             created_at: now,
+            activation_review_event_id,
+            activation_rule_action_count,
+            activation_rule_action_set_ref,
             idempotency_key: idempotency_key.clone(),
         };
 
@@ -7125,6 +7702,22 @@ impl Ph1fStore {
         &self,
     ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord> {
         &self.access_ap_schema_current
+    }
+
+    pub fn ph1access_ap_authoring_review_ledger_rows(
+        &self,
+    ) -> &[AccessApAuthoringReviewLedgerRecord] {
+        &self.access_ap_authoring_review_ledger
+    }
+
+    pub fn ph1access_ap_authoring_review_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String, String), AccessApAuthoringReviewCurrentRecord> {
+        &self.access_ap_authoring_review_current
+    }
+
+    pub fn ph1access_ap_rule_review_action_rows(&self) -> &[AccessApRuleReviewActionRecord] {
+        &self.access_ap_rule_review_action_ledger
     }
 
     pub fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord] {

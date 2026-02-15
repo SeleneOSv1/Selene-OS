@@ -2,7 +2,9 @@
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1access::{
-    AccessCompiledLineageRef, AccessOverlayId, AccessProfileId, AccessProfileVersionRef,
+    AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewAction,
+    AccessApRuleReviewActionPayload, AccessCompiledLineageRef, AccessOverlayId, AccessProfileId,
+    AccessProfileVersionRef,
 };
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::ph1position::{
@@ -1190,5 +1192,396 @@ fn at_access_db_16_tenant_isolation_enforced_for_schema_chain_reads() {
     assert!(matches!(
         chain_err,
         StorageError::ForeignKeyViolation { .. }
+    ));
+}
+
+#[test]
+fn at_access_db_17_ap_authoring_review_channel_persists_and_dedupes() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:ap_authoring_admin_1");
+    seed_identity_device(
+        &mut s,
+        actor.clone(),
+        device("tenant_a_device_ap_authoring_admin_1"),
+    );
+
+    let first = s
+        .ph1access_ap_authoring_review_channel_commit_row(
+            MonotonicTimeNs(1600),
+            Some("tenant_a".to_string()),
+            "ap_clerk".to_string(),
+            "v1".to_string(),
+            AccessSchemaScope::Tenant,
+            AccessApReviewChannel::PhoneDesktop,
+            ReasonCodeId(0x4143_3061),
+            actor.clone(),
+            "idem-review-channel-1".to_string(),
+        )
+        .unwrap();
+    let replay = s
+        .ph1access_ap_authoring_review_channel_commit_row(
+            MonotonicTimeNs(1601),
+            Some("tenant_a".to_string()),
+            "ap_clerk".to_string(),
+            "v1".to_string(),
+            AccessSchemaScope::Tenant,
+            AccessApReviewChannel::PhoneDesktop,
+            ReasonCodeId(0x4143_3062),
+            actor,
+            "idem-review-channel-1".to_string(),
+        )
+        .unwrap();
+
+    assert_eq!(first.latest_review_event_id, replay.latest_review_event_id);
+    assert_eq!(
+        first.confirmation_state,
+        AccessApAuthoringConfirmationState::ReviewInProgress
+    );
+    assert_eq!(s.ph1access_ap_authoring_review_ledger_rows().len(), 1);
+    assert!(s
+        .ph1access_ap_authoring_review_current_rows()
+        .contains_key(&(
+            "tenant_a".to_string(),
+            "ap_clerk".to_string(),
+            "v1".to_string()
+        )));
+}
+
+#[test]
+fn at_access_db_18_ap_authoring_rule_action_requires_review_state_and_dedupes() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:ap_authoring_admin_2");
+    seed_identity_device(
+        &mut s,
+        actor.clone(),
+        device("tenant_a_device_ap_authoring_admin_2"),
+    );
+
+    let missing_state = s.ph1access_ap_authoring_rule_action_commit_row(
+        MonotonicTimeNs(1610),
+        Some("tenant_a".to_string()),
+        "ap_clerk".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::Agree,
+            suggested_rule_ref: Some("rule_001".to_string()),
+            capability_id: None,
+            constraint_ref: None,
+            escalation_policy_ref: None,
+        },
+        ReasonCodeId(0x4143_3063),
+        actor.clone(),
+        "idem-rule-action-missing-state".to_string(),
+    );
+    assert!(matches!(
+        missing_state,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    s.ph1access_ap_authoring_review_channel_commit_row(
+        MonotonicTimeNs(1611),
+        Some("tenant_a".to_string()),
+        "ap_clerk".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApReviewChannel::ReadOutLoud,
+        ReasonCodeId(0x4143_3064),
+        actor.clone(),
+        "idem-review-channel-2".to_string(),
+    )
+    .unwrap();
+
+    let first = s
+        .ph1access_ap_authoring_rule_action_commit_row(
+            MonotonicTimeNs(1612),
+            Some("tenant_a".to_string()),
+            "ap_clerk".to_string(),
+            "v1".to_string(),
+            AccessSchemaScope::Tenant,
+            AccessApRuleReviewActionPayload {
+                action: AccessApRuleReviewAction::Agree,
+                suggested_rule_ref: Some("rule_001".to_string()),
+                capability_id: None,
+                constraint_ref: None,
+                escalation_policy_ref: None,
+            },
+            ReasonCodeId(0x4143_3065),
+            actor.clone(),
+            "idem-rule-action-1".to_string(),
+        )
+        .unwrap();
+    let replay = s
+        .ph1access_ap_authoring_rule_action_commit_row(
+            MonotonicTimeNs(1613),
+            Some("tenant_a".to_string()),
+            "ap_clerk".to_string(),
+            "v1".to_string(),
+            AccessSchemaScope::Tenant,
+            AccessApRuleReviewActionPayload {
+                action: AccessApRuleReviewAction::Agree,
+                suggested_rule_ref: Some("rule_001".to_string()),
+                capability_id: None,
+                constraint_ref: None,
+                escalation_policy_ref: None,
+            },
+            ReasonCodeId(0x4143_3066),
+            actor,
+            "idem-rule-action-1".to_string(),
+        )
+        .unwrap();
+
+    assert_eq!(first.review_action_row_id, replay.review_action_row_id);
+    assert_eq!(s.ph1access_ap_rule_review_action_rows().len(), 1);
+}
+
+#[test]
+fn at_access_db_19_ap_authoring_confirm_requires_rule_actions_and_blocks_after_decline() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:ap_authoring_admin_3");
+    seed_identity_device(
+        &mut s,
+        actor.clone(),
+        device("tenant_a_device_ap_authoring_admin_3"),
+    );
+
+    s.ph1access_ap_authoring_review_channel_commit_row(
+        MonotonicTimeNs(1620),
+        Some("tenant_a".to_string()),
+        "ap_manager".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApReviewChannel::PhoneDesktop,
+        ReasonCodeId(0x4143_3067),
+        actor.clone(),
+        "idem-review-channel-3".to_string(),
+    )
+    .unwrap();
+
+    let no_rule_action = s.ph1access_ap_authoring_confirm_commit_row(
+        MonotonicTimeNs(1621),
+        Some("tenant_a".to_string()),
+        "ap_manager".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApAuthoringConfirmationState::PendingActivationConfirmation,
+        ReasonCodeId(0x4143_3068),
+        actor.clone(),
+        "idem-confirm-no-action".to_string(),
+    );
+    assert!(matches!(
+        no_rule_action,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    s.ph1access_ap_authoring_confirm_commit_row(
+        MonotonicTimeNs(1622),
+        Some("tenant_a".to_string()),
+        "ap_manager".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApAuthoringConfirmationState::Declined,
+        ReasonCodeId(0x4143_3069),
+        actor.clone(),
+        "idem-confirm-declined".to_string(),
+    )
+    .unwrap();
+
+    let action_after_decline = s.ph1access_ap_authoring_rule_action_commit_row(
+        MonotonicTimeNs(1623),
+        Some("tenant_a".to_string()),
+        "ap_manager".to_string(),
+        "v1".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::AddCustomRule,
+            suggested_rule_ref: None,
+            capability_id: Some("CAPREQ_MANAGE".to_string()),
+            constraint_ref: None,
+            escalation_policy_ref: None,
+        },
+        ReasonCodeId(0x4143_3070),
+        actor,
+        "idem-action-after-decline".to_string(),
+    );
+    assert!(matches!(
+        action_after_decline,
+        Err(StorageError::ContractViolation(_))
+    ));
+}
+
+#[test]
+fn at_access_db_20_ap_activation_captures_authoring_lineage_when_confirmed() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:ap_authoring_admin_4");
+    seed_identity_device(
+        &mut s,
+        actor.clone(),
+        device("tenant_a_device_ap_authoring_admin_4"),
+    );
+
+    s.ph1access_ap_schema_lifecycle_commit_row(
+        MonotonicTimeNs(1630),
+        Some("tenant_a".to_string()),
+        "ap_warehouse_operator".to_string(),
+        "v4".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessSchemaEventAction::CreateDraft,
+        "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
+        ReasonCodeId(0x4143_3071),
+        actor.clone(),
+        "idem-ap-draft-warehouse-v4".to_string(),
+    )
+    .unwrap();
+
+    s.ph1access_ap_authoring_review_channel_commit_row(
+        MonotonicTimeNs(1631),
+        Some("tenant_a".to_string()),
+        "ap_warehouse_operator".to_string(),
+        "v4".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApReviewChannel::PhoneDesktop,
+        ReasonCodeId(0x4143_3072),
+        actor.clone(),
+        "idem-review-channel-4".to_string(),
+    )
+    .unwrap();
+    s.ph1access_ap_authoring_rule_action_commit_row(
+        MonotonicTimeNs(1632),
+        Some("tenant_a".to_string()),
+        "ap_warehouse_operator".to_string(),
+        "v4".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::AddCustomRule,
+            suggested_rule_ref: None,
+            capability_id: Some("LINK_INVITE".to_string()),
+            constraint_ref: Some("scope:warehouse".to_string()),
+            escalation_policy_ref: None,
+        },
+        ReasonCodeId(0x4143_3073),
+        actor.clone(),
+        "idem-rule-action-warehouse-v4".to_string(),
+    )
+    .unwrap();
+    s.ph1access_ap_authoring_confirm_commit_row(
+        MonotonicTimeNs(1633),
+        Some("tenant_a".to_string()),
+        "ap_warehouse_operator".to_string(),
+        "v4".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApAuthoringConfirmationState::ConfirmedForActivation,
+        ReasonCodeId(0x4143_3074),
+        actor.clone(),
+        "idem-confirm-warehouse-v4".to_string(),
+    )
+    .unwrap();
+
+    let activated = s
+        .ph1access_ap_schema_lifecycle_commit_row(
+            MonotonicTimeNs(1634),
+            Some("tenant_a".to_string()),
+            "ap_warehouse_operator".to_string(),
+            "v4".to_string(),
+            AccessSchemaScope::Tenant,
+            AccessSchemaEventAction::Activate,
+            "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
+            ReasonCodeId(0x4143_3075),
+            actor,
+            "idem-ap-activate-warehouse-v4".to_string(),
+        )
+        .unwrap();
+
+    assert!(activated.activation_review_event_id.is_some());
+    assert_eq!(activated.activation_rule_action_count, Some(1));
+    assert!(activated
+        .activation_rule_action_set_ref
+        .as_deref()
+        .unwrap_or_default()
+        .starts_with("ap_rule_set_"));
+}
+
+#[test]
+fn at_access_db_21_ap_activation_fails_closed_without_confirmed_review_state() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:ap_authoring_admin_5");
+    seed_identity_device(
+        &mut s,
+        actor.clone(),
+        device("tenant_a_device_ap_authoring_admin_5"),
+    );
+
+    s.ph1access_ap_schema_lifecycle_commit_row(
+        MonotonicTimeNs(1640),
+        Some("tenant_a".to_string()),
+        "ap_ceo".to_string(),
+        "v2".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessSchemaEventAction::CreateDraft,
+        "{\"allow\":[\"CAPREQ_MANAGE\"]}".to_string(),
+        ReasonCodeId(0x4143_3076),
+        actor.clone(),
+        "idem-ap-draft-ceo-v2".to_string(),
+    )
+    .unwrap();
+
+    s.ph1access_ap_authoring_review_channel_commit_row(
+        MonotonicTimeNs(1641),
+        Some("tenant_a".to_string()),
+        "ap_ceo".to_string(),
+        "v2".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApReviewChannel::ReadOutLoud,
+        ReasonCodeId(0x4143_3077),
+        actor.clone(),
+        "idem-review-channel-5".to_string(),
+    )
+    .unwrap();
+    s.ph1access_ap_authoring_rule_action_commit_row(
+        MonotonicTimeNs(1642),
+        Some("tenant_a".to_string()),
+        "ap_ceo".to_string(),
+        "v2".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::Edit,
+            suggested_rule_ref: Some("rule_ceo_01".to_string()),
+            capability_id: Some("CAPREQ_MANAGE".to_string()),
+            constraint_ref: None,
+            escalation_policy_ref: Some("policy_quorum".to_string()),
+        },
+        ReasonCodeId(0x4143_3078),
+        actor.clone(),
+        "idem-rule-action-ceo-v2".to_string(),
+    )
+    .unwrap();
+    s.ph1access_ap_authoring_confirm_commit_row(
+        MonotonicTimeNs(1643),
+        Some("tenant_a".to_string()),
+        "ap_ceo".to_string(),
+        "v2".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessApAuthoringConfirmationState::PendingActivationConfirmation,
+        ReasonCodeId(0x4143_3079),
+        actor.clone(),
+        "idem-confirm-ceo-v2-pending".to_string(),
+    )
+    .unwrap();
+
+    let not_confirmed = s.ph1access_ap_schema_lifecycle_commit_row(
+        MonotonicTimeNs(1644),
+        Some("tenant_a".to_string()),
+        "ap_ceo".to_string(),
+        "v2".to_string(),
+        AccessSchemaScope::Tenant,
+        AccessSchemaEventAction::Activate,
+        "{\"allow\":[\"CAPREQ_MANAGE\"]}".to_string(),
+        ReasonCodeId(0x4143_3080),
+        actor,
+        "idem-ap-activate-ceo-v2".to_string(),
+    );
+    assert!(matches!(
+        not_confirmed,
+        Err(StorageError::ContractViolation(_))
     ));
 }

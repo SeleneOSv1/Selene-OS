@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP4_COMPLETED_PENDING_STEP5
+Status: STEP5_COMPLETED_PENDING_STEP6
 
 ## 1) Purpose
 
@@ -89,7 +89,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
-- Step 5: PENDING
+- Step 5: COMPLETED (2026-02-15)
 - Step 6: PENDING
 - Step 7: PENDING
 - Step 8: PENDING
@@ -160,3 +160,32 @@ Step 4 note:
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (21 tests)
   - `cargo test -p selene_os at_x_ -- --nocapture` -> pass (19 tests)
   - `cargo test -p selene_os -- --nocapture` -> pass (81 tests)
+
+Step 5 note:
+- Locked AP authoring review storage + repository surfaces in:
+  - `crates/selene_storage/src/ph1f.rs`
+  - `crates/selene_storage/src/repo.rs`
+  - `crates/selene_storage/migrations/0016_access_ap_authoring_review_tables.sql`
+  - `crates/selene_storage/tests/ph1_access_ph2_access/db_wiring.rs`
+- Storage lock additions:
+  - persisted authoring review ledger/current rows (review channel + confirmation state)
+  - persisted per-rule review action ledger rows with bounded action payload validation
+  - deterministic idempotency indexes for review-channel, confirmation, and rule-action commits
+  - activation lineage capture on AP schema activation:
+    - `activation_review_event_id`
+    - `activation_rule_action_count`
+    - `activation_rule_action_set_ref`
+  - fail-closed activation when review state exists but is not `CONFIRMED_FOR_ACTIVATION`
+- SQL parity additions:
+  - new AP authoring review and rule-action tables
+  - added activation-lineage columns on `access_ap_schemas_ledger`
+  - added activation review lineage index
+- Test closure for Step-5 surfaces in access DB wiring suite:
+  - `at_access_db_17_ap_authoring_review_channel_persists_and_dedupes`
+  - `at_access_db_18_ap_authoring_rule_action_requires_review_state_and_dedupes`
+  - `at_access_db_19_ap_authoring_confirm_requires_rule_actions_and_blocks_after_decline`
+  - `at_access_db_20_ap_activation_captures_authoring_lineage_when_confirmed`
+  - `at_access_db_21_ap_activation_fails_closed_without_confirmed_review_state`
+- Step-5 proof:
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21 tests)
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (21 tests)

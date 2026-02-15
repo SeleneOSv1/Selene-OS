@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1access::AccessCompiledLineageRef;
+use selene_kernel_contracts::ph1access::{
+    AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewActionPayload,
+    AccessCompiledLineageRef,
+};
 use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
@@ -57,17 +60,19 @@ use selene_kernel_contracts::ph1work::{
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
 use crate::ph1f::{
-    AccessApSchemaCurrentRecord, AccessApSchemaLedgerRecord, AccessBoardPolicyCurrentRecord,
-    AccessBoardPolicyRecord, AccessBoardVoteRecord, AccessBoardVoteValue, AccessDeviceTrustLevel,
-    AccessGateDecisionRecord, AccessInstanceRecord, AccessLifecycleState, AccessMode,
-    AccessOverlayCurrentRecord, AccessOverlayRecord, AccessOverrideRecord, AccessOverrideType,
-    AccessSchemaChainReadResult, AccessSchemaEventAction, AccessSchemaScope,
-    AccessVerificationLevel, DeviceRecord, IdentityRecord, LinkGenerateResultParts,
-    MemoryCurrentRecord, MemoryLedgerRow, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
-    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord,
-    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SessionRecord,
-    StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
-    VoiceProfileRecord, VoiceSampleResult, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
+    AccessApAuthoringReviewCurrentRecord, AccessApAuthoringReviewLedgerRecord,
+    AccessApRuleReviewActionRecord, AccessApSchemaCurrentRecord, AccessApSchemaLedgerRecord,
+    AccessBoardPolicyCurrentRecord, AccessBoardPolicyRecord, AccessBoardVoteRecord,
+    AccessBoardVoteValue, AccessDeviceTrustLevel, AccessGateDecisionRecord, AccessInstanceRecord,
+    AccessLifecycleState, AccessMode, AccessOverlayCurrentRecord, AccessOverlayRecord,
+    AccessOverrideRecord, AccessOverrideType, AccessSchemaChainReadResult, AccessSchemaEventAction,
+    AccessSchemaScope, AccessVerificationLevel, DeviceRecord, IdentityRecord,
+    LinkGenerateResultParts, MemoryCurrentRecord, MemoryLedgerRow, OnboardingSessionRecord,
+    Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth,
+    Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord,
+    PositionLifecycleEventRecord, SessionRecord, StorageError, TenantCompanyRecord,
+    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
+    VoiceSampleResult, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
     WakeRuntimeEventRecord, WakeSampleResult,
 };
 
@@ -326,6 +331,48 @@ pub trait Ph1AccessPh2AccessRepo {
     ) -> Result<AccessOverrideRecord, StorageError>;
 
     #[allow(clippy::too_many_arguments)]
+    fn ph1access_ap_authoring_review_channel_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        review_channel: AccessApReviewChannel,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_ap_authoring_rule_action_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        rule_action_payload: AccessApRuleReviewActionPayload,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApRuleReviewActionRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_ap_authoring_confirm_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        confirmation_state: AccessApAuthoringConfirmationState,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
     fn ph1access_ap_schema_lifecycle_commit_row(
         &mut self,
         now: MonotonicTimeNs,
@@ -429,6 +476,11 @@ pub trait Ph1AccessPh2AccessRepo {
     fn ph1access_ap_schema_current_rows(
         &self,
     ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord>;
+    fn ph1access_ap_authoring_review_ledger_rows(&self) -> &[AccessApAuthoringReviewLedgerRecord];
+    fn ph1access_ap_authoring_review_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String, String), AccessApAuthoringReviewCurrentRecord>;
+    fn ph1access_ap_rule_review_action_rows(&self) -> &[AccessApRuleReviewActionRecord];
     fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord];
     fn ph1access_ap_overlay_current_rows(
         &self,
@@ -1878,6 +1930,81 @@ impl Ph1AccessPh2AccessRepo for Ph1fStore {
         )
     }
 
+    fn ph1access_ap_authoring_review_channel_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        review_channel: AccessApReviewChannel,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError> {
+        self.ph1access_ap_authoring_review_channel_commit(
+            now,
+            tenant_id,
+            access_profile_id,
+            schema_version_id,
+            scope,
+            review_channel,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_ap_authoring_rule_action_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        rule_action_payload: AccessApRuleReviewActionPayload,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApRuleReviewActionRecord, StorageError> {
+        self.ph1access_ap_authoring_rule_action_commit(
+            now,
+            tenant_id,
+            access_profile_id,
+            schema_version_id,
+            scope,
+            rule_action_payload,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_ap_authoring_confirm_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        confirmation_state: AccessApAuthoringConfirmationState,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApAuthoringReviewCurrentRecord, StorageError> {
+        self.ph1access_ap_authoring_confirm_commit(
+            now,
+            tenant_id,
+            access_profile_id,
+            schema_version_id,
+            scope,
+            confirmation_state,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
     fn ph1access_ap_schema_lifecycle_commit_row(
         &mut self,
         now: MonotonicTimeNs,
@@ -2059,6 +2186,20 @@ impl Ph1AccessPh2AccessRepo for Ph1fStore {
         &self,
     ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord> {
         Ph1fStore::ph1access_ap_schema_current_rows(self)
+    }
+
+    fn ph1access_ap_authoring_review_ledger_rows(&self) -> &[AccessApAuthoringReviewLedgerRecord] {
+        Ph1fStore::ph1access_ap_authoring_review_ledger_rows(self)
+    }
+
+    fn ph1access_ap_authoring_review_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String, String), AccessApAuthoringReviewCurrentRecord> {
+        Ph1fStore::ph1access_ap_authoring_review_current_rows(self)
+    }
+
+    fn ph1access_ap_rule_review_action_rows(&self) -> &[AccessApRuleReviewActionRecord] {
+        Ph1fStore::ph1access_ap_rule_review_action_rows(self)
     }
 
     fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord] {
