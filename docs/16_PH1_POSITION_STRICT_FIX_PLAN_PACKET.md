@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP5_COMPLETED_PENDING_STEP6
+Status: STEP6_COMPLETED_PENDING_STEP7
 
 ## 1) Purpose
 
@@ -337,7 +337,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
 - Step 5: COMPLETED (2026-02-15)
-- Step 6: NOT_STARTED
+- Step 6: COMPLETED (2026-02-15, N/A no migration delta required)
 - Step 7: NOT_STARTED
 - Step 8: NOT_STARTED
 
@@ -355,5 +355,8 @@ Step 4 note:
 
 Step 5 note:
 - Runtime wiring parity gate is already satisfied in `ph1position.rs`: requirements-schema activate path returns explicit scope semantics (`NewHiresOnly` vs `CurrentAndNew`) through `requirements_schema_lifecycle_result`, and PH1.POSITION runtime tests pass without adding direct PH1.ONB execution coupling.
+
+Step 6 note:
+- Migration contract parity gate is already satisfied in `0014_position_requirements_schema_and_backfill_tables.sql`: SQL already persists/guards `change_reason` and `apply_scope`, and idempotency uniqueness/index shapes match KC.25 + DB wiring + storage behavior; no SQL patch required in this step.
 
 END OF PACKET
