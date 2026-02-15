@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP1_COMPLETED_PENDING_STEP2
+Status: STEP2_COMPLETED_PENDING_STEP3
 
 ## 1) Purpose
 
@@ -333,7 +333,7 @@ scripts/selene_design_readiness_audit.sh
 ## 9) Execution Record
 
 - Step 1: COMPLETED (2026-02-15)
-- Step 2: NOT_STARTED
+- Step 2: COMPLETED (2026-02-15)
 - Step 3: NOT_STARTED
 - Step 4: NOT_STARTED
 - Step 5: NOT_STARTED
@@ -343,5 +343,8 @@ scripts/selene_design_readiness_audit.sh
 
 Step 1 note:
 - Locked rollout scope naming for ONB backfill handoff to `CurrentAndNew` in blueprint flow docs so PH1.POSITION activation handoff language matches PH1.ONB kernel contract enum semantics (`BackfillRolloutScope::CurrentAndNew`).
+
+Step 2 note:
+- Kernel contract parity gate is already satisfied: `PositionRequirementsSchemaLifecycleResult` returns explicit `apply_scope_result` and validated `backfill_handoff_required` semantics; `ph1position` contract tests passed with no additional code delta required in this step.
 
 END OF PACKET
