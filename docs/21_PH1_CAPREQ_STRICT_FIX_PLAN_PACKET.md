@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP1_COMPLETED_PENDING_STEP2
+Status: STEP2_COMPLETED_PENDING_STEP3
 
 ## 1) Purpose
 
@@ -104,13 +104,17 @@ scripts/selene_design_readiness_audit.sh
 ## 5) Execution Record
 
 - Step 1: COMPLETED (2026-02-15)
-- Step 2: NOT_STARTED
+- Step 2: COMPLETED (2026-02-15)
 - Step 3: NOT_STARTED
 - Step 4: NOT_STARTED
 
 Step 1 note:
 - CAPREQ docs-lock pass started and completed.
 - `docs/DB_WIRING/PH1_CAPREQ.md` naming drift closed (`CAPREQ_SUBMIT_COMMIT` -> `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT`) and lifecycle write coverage expanded to include `CAPREQ_FULFILL_COMMIT` + `CAPREQ_CANCEL_REVOKE`.
+
+Step 2 note:
+- Kernel/runtime recheck passed with no production code delta required.
+- `ph1capreq` contract tests and CAPREQ runtime transition tests pass on current commit.
 
 ## 6) Done Criteria
 
