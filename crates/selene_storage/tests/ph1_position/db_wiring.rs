@@ -83,7 +83,7 @@ fn required_field(field_key: &str) -> PositionRequirementFieldSpec {
         validation_ref: None,
         sensitivity: PositionRequirementSensitivity::Private,
         exposure_rule: PositionRequirementExposureRule::InternalOnly,
-        evidence_mode: PositionRequirementEvidenceMode::Attestation,
+        evidence_mode: PositionRequirementEvidenceMode::DocRequired,
         prompt_short: format!("Provide {field_key}"),
         prompt_long: format!("Please provide required field {field_key}."),
     }
