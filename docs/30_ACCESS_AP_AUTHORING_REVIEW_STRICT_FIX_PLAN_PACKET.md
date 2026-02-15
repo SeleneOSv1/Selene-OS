@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP1_COMPLETED_PENDING_STEP2
+Status: STEP2_COMPLETED_PENDING_STEP3
 
 ## 1) Purpose
 
@@ -86,7 +86,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 ## 6) Execution Record
 
 - Step 1: COMPLETED (2026-02-15)
-- Step 2: PENDING
+- Step 2: COMPLETED (2026-02-15)
 - Step 3: PENDING
 - Step 4: PENDING
 - Step 5: PENDING
@@ -98,3 +98,17 @@ Step 1 note:
 - Added this packet as canonical AP authoring review scope (`docs/30_ACCESS_AP_AUTHORING_REVIEW_STRICT_FIX_PLAN_PACKET.md`).
 - Updated `docs/02_BUILD_PLAN.md` "Next Strict Packet" pointer from Packet 29 to Packet 30.
 - Logged Packet 29 Step 8 closure commit (`e9a0725`) in the strict checkpoint section.
+
+Step 2 note:
+- Locked AP authoring review contract objects in kernel docs + contract module:
+  - `docs/04_KERNEL_CONTRACTS.md` (`KC.26.5` through `KC.26.8`)
+  - `crates/selene_kernel_contracts/src/ph1access.rs`
+- Added typed contract objects for Step-2 scope:
+  - review channel choice (`AccessApReviewChannel`)
+  - suggested-rule action payload (`AccessApRuleReviewActionPayload`)
+  - authoring confirmation state (`AccessApAuthoringConfirmationState`)
+  - authoring review state object (`AccessApAuthoringReviewState`)
+- Added fail-closed validation tests for rule actions + review state.
+- Step-2 proof:
+  - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass (46 tests)
+  - `rg` anchors for KC.26.5..KC.26.8 + new `ph1access` objects -> pass

@@ -2388,7 +2388,53 @@ Per-user access instance compile lineage must reference AP/overlay source versio
 
 Lineage refs must be tenant-safe and replay-safe.
 
-KC.26.5 Runtime Decision Contract Compatibility
+KC.26.5 Object: access_ap_authoring_review_state
+
+Required fields (minimum):
+
+access_profile_id
+
+schema_version_id
+
+review_channel (PHONE_DESKTOP | READ_OUT_LOUD)
+
+confirmation_state (NEEDS_CHANNEL_CHOICE | REVIEW_IN_PROGRESS | PENDING_ACTIVATION_CONFIRMATION | CONFIRMED_FOR_ACTIVATION | DECLINED)
+
+Hard rules:
+
+Review-channel choice must be explicit and deterministic.
+
+Authoring confirmation state is lifecycle-tracked; activation paths must not run from non-confirmed states.
+
+KC.26.6 Object: access_ap_rule_review_action_payload
+
+Required fields (minimum):
+
+action (AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE)
+
+suggested_rule_ref (required for AGREE|DISAGREE|EDIT|DELETE|DISABLE; absent for ADD_CUSTOM_RULE)
+
+capability_id (required for EDIT and ADD_CUSTOM_RULE)
+
+constraint_ref (optional bounded id)
+
+escalation_policy_ref (optional bounded id)
+
+Hard rules:
+
+Rule action payloads are bounded and typed; runtime must refuse free-text permission mutations.
+
+Action payload validation is fail-closed before simulation execution.
+
+KC.26.7 AP authoring assist boundary
+
+Hard rules:
+
+NLP/LLM baseline suggestions are assist-only and non-authoritative until admin confirmation.
+
+Screen-facing authored summaries must be professional-writing quality.
+
+KC.26.8 Runtime Decision Contract Compatibility
 
 Hard rules:
 

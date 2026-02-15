@@ -42,6 +42,31 @@ pub enum AccessApprovalPrimitive {
     Mixed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessApReviewChannel {
+    PhoneDesktop,
+    ReadOutLoud,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessApRuleReviewAction {
+    Agree,
+    Disagree,
+    Edit,
+    Delete,
+    Disable,
+    AddCustomRule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccessApAuthoringConfirmationState {
+    NeedsChannelChoice,
+    ReviewInProgress,
+    PendingActivationConfirmation,
+    ConfirmedForActivation,
+    Declined,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AccessProfileId(String);
 
@@ -381,6 +406,117 @@ impl Validate for AccessCompiledLineageRef {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApRuleReviewActionPayload {
+    pub action: AccessApRuleReviewAction,
+    pub suggested_rule_ref: Option<String>,
+    pub capability_id: Option<String>,
+    pub constraint_ref: Option<String>,
+    pub escalation_policy_ref: Option<String>,
+}
+
+impl Validate for AccessApRuleReviewActionPayload {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        match self.action {
+            AccessApRuleReviewAction::AddCustomRule => {
+                if self.suggested_rule_ref.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "access_ap_rule_review_action_payload.suggested_rule_ref",
+                        reason: "must be absent when action=AddCustomRule",
+                    });
+                }
+                let Some(capability_id) = &self.capability_id else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "access_ap_rule_review_action_payload.capability_id",
+                        reason: "must be present when action=AddCustomRule",
+                    });
+                };
+                validate_id(
+                    "access_ap_rule_review_action_payload.capability_id",
+                    capability_id,
+                    96,
+                )?;
+            }
+            AccessApRuleReviewAction::Edit => {
+                let Some(suggested_rule_ref) = &self.suggested_rule_ref else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "access_ap_rule_review_action_payload.suggested_rule_ref",
+                        reason: "must be present when action=Edit",
+                    });
+                };
+                validate_id(
+                    "access_ap_rule_review_action_payload.suggested_rule_ref",
+                    suggested_rule_ref,
+                    96,
+                )?;
+                let Some(capability_id) = &self.capability_id else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "access_ap_rule_review_action_payload.capability_id",
+                        reason: "must be present when action=Edit",
+                    });
+                };
+                validate_id(
+                    "access_ap_rule_review_action_payload.capability_id",
+                    capability_id,
+                    96,
+                )?;
+            }
+            AccessApRuleReviewAction::Agree
+            | AccessApRuleReviewAction::Disagree
+            | AccessApRuleReviewAction::Delete
+            | AccessApRuleReviewAction::Disable => {
+                let Some(suggested_rule_ref) = &self.suggested_rule_ref else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "access_ap_rule_review_action_payload.suggested_rule_ref",
+                        reason: "must be present for agree/disagree/delete/disable actions",
+                    });
+                };
+                validate_id(
+                    "access_ap_rule_review_action_payload.suggested_rule_ref",
+                    suggested_rule_ref,
+                    96,
+                )?;
+            }
+        }
+
+        if let Some(constraint_ref) = &self.constraint_ref {
+            validate_id(
+                "access_ap_rule_review_action_payload.constraint_ref",
+                constraint_ref,
+                128,
+            )?;
+        }
+        if let Some(escalation_policy_ref) = &self.escalation_policy_ref {
+            validate_id(
+                "access_ap_rule_review_action_payload.escalation_policy_ref",
+                escalation_policy_ref,
+                128,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApAuthoringReviewState {
+    pub access_profile_id: AccessProfileId,
+    pub schema_version_id: String,
+    pub review_channel: AccessApReviewChannel,
+    pub confirmation_state: AccessApAuthoringConfirmationState,
+}
+
+impl Validate for AccessApAuthoringReviewState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.access_profile_id.validate()?;
+        validate_id(
+            "access_ap_authoring_review_state.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        Ok(())
+    }
+}
+
 fn validate_id(field: &'static str, s: &str, max_len: usize) -> Result<(), ContractViolation> {
     if s.trim().is_empty() {
         return Err(ContractViolation::InvalidValue {
@@ -488,5 +624,52 @@ mod tests {
             position_id: Some("position_driver".to_string()),
         };
         assert!(lineage.validate().is_ok());
+    }
+
+    #[test]
+    fn rule_review_action_requires_suggested_rule_for_agree() {
+        let action = AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::Agree,
+            suggested_rule_ref: None,
+            capability_id: None,
+            constraint_ref: None,
+            escalation_policy_ref: None,
+        };
+        assert!(action.validate().is_err());
+    }
+
+    #[test]
+    fn rule_review_action_edit_requires_capability() {
+        let action = AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::Edit,
+            suggested_rule_ref: Some("rule_001".to_string()),
+            capability_id: None,
+            constraint_ref: None,
+            escalation_policy_ref: None,
+        };
+        assert!(action.validate().is_err());
+    }
+
+    #[test]
+    fn rule_review_action_add_custom_requires_capability_and_no_ref() {
+        let action = AccessApRuleReviewActionPayload {
+            action: AccessApRuleReviewAction::AddCustomRule,
+            suggested_rule_ref: Some("rule_001".to_string()),
+            capability_id: Some("CAN_VIEW_DASHBOARD".to_string()),
+            constraint_ref: None,
+            escalation_policy_ref: None,
+        };
+        assert!(action.validate().is_err());
+    }
+
+    #[test]
+    fn authoring_review_state_validates_with_channel_and_confirmation_state() {
+        let state = AccessApAuthoringReviewState {
+            access_profile_id: AccessProfileId::new("ap_clerk").unwrap(),
+            schema_version_id: "v1".to_string(),
+            review_channel: AccessApReviewChannel::PhoneDesktop,
+            confirmation_state: AccessApAuthoringConfirmationState::ReviewInProgress,
+        };
+        assert!(state.validate().is_ok());
     }
 }
