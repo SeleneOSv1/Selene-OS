@@ -53,7 +53,7 @@ use selene_kernel_contracts::ph1simcat::{
 use selene_kernel_contracts::ph1work::{
     WorkOrderCurrentRecord, WorkOrderId, WorkOrderLedgerEvent, WorkOrderLedgerEventInput,
 };
-use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId};
+use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
 use crate::ph1f::{
     AccessDeviceTrustLevel, AccessGateDecisionRecord, AccessInstanceRecord, AccessLifecycleState,
@@ -2930,17 +2930,17 @@ impl Ph1LinkRepo for Ph1fStore {
 
     fn ph1link_invite_draft_update_commit_row(
         &mut self,
-        _now: MonotonicTimeNs,
-        _draft_id: DraftId,
-        _creator_update_fields: BTreeMap<String, String>,
-        _idempotency_key: String,
+        now: MonotonicTimeNs,
+        draft_id: DraftId,
+        creator_update_fields: BTreeMap<String, String>,
+        idempotency_key: String,
     ) -> Result<(DraftId, DraftStatus, Vec<String>), StorageError> {
-        Err(StorageError::ContractViolation(
-            ContractViolation::InvalidValue {
-                field: "ph1link_invite_draft_update_commit_row",
-                reason: "not implemented yet (Step 4)",
-            },
-        ))
+        self.ph1link_invite_draft_update_commit(
+            now,
+            draft_id,
+            creator_update_fields,
+            idempotency_key,
+        )
     }
 
     fn ph1link_invite_open_activate_commit_row(
@@ -2972,7 +2972,7 @@ impl Ph1LinkRepo for Ph1fStore {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
-        _idempotency_key: String,
+        idempotency_key: String,
     ) -> Result<
         (
             LinkStatus,
@@ -2984,7 +2984,12 @@ impl Ph1LinkRepo for Ph1fStore {
         ),
         StorageError,
     > {
-        self.ph1link_invite_open_activate_commit(now, token_id, device_fingerprint)
+        self.ph1link_invite_open_activate_commit_with_idempotency(
+            now,
+            token_id,
+            device_fingerprint,
+            idempotency_key,
+        )
     }
 
     fn ph1link_invite_revoke_revoke_row(

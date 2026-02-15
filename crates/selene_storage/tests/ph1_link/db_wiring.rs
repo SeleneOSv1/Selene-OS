@@ -621,3 +621,106 @@ fn at_link_db_11_missing_required_fields_recompute_is_schema_driven() {
     assert_eq!(draft_status, DraftStatus::DraftReady);
     assert!(missing.is_empty());
 }
+
+#[test]
+fn at_link_db_12_draft_update_row_method_is_idempotent() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    seed_identity_device(&mut s, u.clone(), device("tenant_a_device_1"));
+
+    let prefilled = PrefilledContext::v1(
+        Some("tenant_a".to_string()),
+        Some("company_a".to_string()),
+        Some("position_a".to_string()),
+        None,
+        None,
+        None,
+        Some("band_l2".to_string()),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let (link, _) = s
+        .ph1link_invite_generate_draft_row(
+            MonotonicTimeNs(700),
+            u,
+            InviteeType::Employee,
+            Some("tenant_a".to_string()),
+            None,
+            Some(prefilled),
+            None,
+        )
+        .unwrap();
+
+    let mut updates = BTreeMap::new();
+    updates.insert("location_id".to_string(), "loc_1".to_string());
+    updates.insert("start_date".to_string(), "2026-02-15".to_string());
+
+    let first = s
+        .ph1link_invite_draft_update_commit_row(
+            MonotonicTimeNs(701),
+            link.draft_id.clone(),
+            updates.clone(),
+            "row-draft-update-idem-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(first.1, DraftStatus::DraftReady);
+    assert!(first.2.is_empty());
+
+    let replay = s
+        .ph1link_invite_draft_update_commit_row(
+            MonotonicTimeNs(702),
+            link.draft_id,
+            updates,
+            "row-draft-update-idem-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(replay.1, DraftStatus::DraftReady);
+    assert!(replay.2.is_empty());
+}
+
+#[test]
+fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    seed_identity_device(&mut s, u, device("tenant_a_device_1"));
+
+    let (link, _) = s
+        .ph1link_invite_generate_draft_row(
+            MonotonicTimeNs(720),
+            user("tenant_a:user_1"),
+            InviteeType::FamilyMember,
+            Some("tenant_a".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let first = s
+        .ph1link_invite_open_activate_commit_row_with_idempotency(
+            MonotonicTimeNs(721),
+            link.token_id.clone(),
+            "fp_primary".to_string(),
+            "row-open-idem-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(first.0, LinkStatus::Activated);
+
+    // Same token + same idempotency key must replay exact outcome even if fingerprint differs.
+    let replay = s
+        .ph1link_invite_open_activate_commit_row_with_idempotency(
+            MonotonicTimeNs(722),
+            link.token_id.clone(),
+            "fp_other".to_string(),
+            "row-open-idem-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(replay.0, LinkStatus::Activated);
+    assert_eq!(replay.3, first.3);
+    assert_eq!(replay.4, first.4);
+    assert_eq!(
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
+        LinkStatus::Activated
+    );
+}
