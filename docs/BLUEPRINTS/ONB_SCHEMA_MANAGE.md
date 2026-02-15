@@ -61,6 +61,7 @@ backfill_campaign_id: string | null
 
 ## 7) Refusal Conditions
 - access denied at `ONB_SCHEMA_S05` -> `ACCESS_SCOPE_VIOLATION`
+- access escalated at `ONB_SCHEMA_S05` without resolved approval/override -> `ACCESS_AP_REQUIRED` (no schema lifecycle commit side effects)
 - schema operation invalid for position scope -> `POSITION_SCHEMA_SCOPE_INVALID`
 - schema activation policy blocked -> `POSITION_SCHEMA_POLICY_BLOCKED`
 

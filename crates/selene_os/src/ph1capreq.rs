@@ -515,7 +515,12 @@ mod tests {
         let out = rt.run(&mut store, &approve_without_submit);
         assert!(matches!(
             out,
-            Err(StorageError::ContractViolation(ContractViolation::InvalidValue { .. }))
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "capreq_transition",
+                    reason: "approve requires current status PENDING_APPROVAL",
+                }
+            ))
         ));
     }
 }

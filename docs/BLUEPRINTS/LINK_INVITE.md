@@ -64,6 +64,7 @@ Delivery is executed by `LINK_DELIVER_INVITE` (`PH1.BCAST` + `PH1.DELIVERY`). PH
 
 ## 7) Refusal Conditions
 - Access denied at `LINK_INVITE_S04` -> `ACCESS_SCOPE_VIOLATION`
+- Access escalated at `LINK_INVITE_S04` with unresolved/denied approval path -> `ACCESS_AP_REQUIRED` (no link draft/token commit side effects)
 - Missing required invite fields after clarify budget -> `NLP_CLARIFY_MISSING_FIELD`
 - User declines confirmation at `LINK_INVITE_S03` -> `USER_DECLINED_CONFIRMATION`
 

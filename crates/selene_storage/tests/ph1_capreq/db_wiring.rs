@@ -190,3 +190,66 @@ fn at_capreq_db_04_rebuild_current_from_ledger() {
     assert_eq!(current.last_action, CapabilityRequestAction::Approve);
     assert_eq!(current.source_event_id, second);
 }
+
+#[test]
+fn at_capreq_db_05_approved_path_idempotent_replay_executes_once() {
+    let mut s = Ph1fStore::new_in_memory();
+    let t = tenant("tenant_a");
+    let r = capreq("capreq_upgrade_05");
+    let user = seed_identity(&mut s, "tenant_a:user_alice");
+
+    let created = s
+        .append_capreq_row(ev(
+            50,
+            t.clone(),
+            r.clone(),
+            user.clone(),
+            CapabilityRequestAction::CreateDraft,
+            CapabilityRequestStatus::Draft,
+            Some("idem_5_create"),
+        ))
+        .unwrap();
+    let submitted = s
+        .append_capreq_row(ev(
+            51,
+            t.clone(),
+            r.clone(),
+            user.clone(),
+            CapabilityRequestAction::SubmitForApproval,
+            CapabilityRequestStatus::PendingApproval,
+            Some("idem_5_submit"),
+        ))
+        .unwrap();
+    let approved_1 = s
+        .append_capreq_row(ev(
+            52,
+            t.clone(),
+            r.clone(),
+            user.clone(),
+            CapabilityRequestAction::Approve,
+            CapabilityRequestStatus::Approved,
+            Some("idem_5_approve"),
+        ))
+        .unwrap();
+    let approved_2 = s
+        .append_capreq_row(ev(
+            53,
+            t.clone(),
+            r.clone(),
+            user,
+            CapabilityRequestAction::Approve,
+            CapabilityRequestStatus::Approved,
+            Some("idem_5_approve"),
+        ))
+        .unwrap();
+
+    assert!(created < submitted);
+    assert!(submitted < approved_1);
+    assert_eq!(approved_1, approved_2);
+    assert_eq!(s.capreq_rows().len(), 3);
+
+    let current = s.capreq_current_row(&t, &r).unwrap();
+    assert_eq!(current.status, CapabilityRequestStatus::Approved);
+    assert_eq!(current.last_action, CapabilityRequestAction::Approve);
+    assert_eq!(current.source_event_id, approved_1);
+}

@@ -55,6 +55,7 @@ updated_at: monotonic_time_ns
 
 ## 7) Refusal Conditions
 - Access denied at `CAPREQ_S04` -> `ACCESS_SCOPE_VIOLATION`
+- Access escalated at `CAPREQ_S04` without resolved approval/override -> `ACCESS_AP_REQUIRED` (no CAPREQ lifecycle commit side effects)
 - Invalid lifecycle transition for requested action -> `CAPREQ_TRANSITION_INVALID`
 - Missing `capreq_id` for non-create actions -> `CAPREQ_ID_REQUIRED`
 

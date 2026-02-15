@@ -56,6 +56,7 @@ last_reason_code: string
 
 ## 7) Refusal Conditions
 - Access denied at `POSITION_S04` -> `ACCESS_SCOPE_VIOLATION`
+- Access escalated at `POSITION_S04` without resolved approval/override -> `ACCESS_AP_REQUIRED` (no lifecycle commit side effects)
 - Company or position scope invalid at `POSITION_S06` -> `POSITION_AUTH_COMPANY_INVALID`
 - Policy check fails at `POSITION_S07` -> `POSITION_POLICY_BLOCKED`
 

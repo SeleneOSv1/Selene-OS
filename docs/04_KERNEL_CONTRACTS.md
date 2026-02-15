@@ -534,7 +534,7 @@ KC.12.4 Runtime Evaluation Contract
 
 PolicyDecision:
 
-decision (ALLOW | DENY | REQUIRE_APPROVAL)
+decision (ALLOW | DENY | ESCALATE)
 
 reason_code
 
@@ -550,7 +550,7 @@ If no allow rule matches exactly: DENY.
 
 If identity is unknown: DENY.
 
-If multi-speaker present and action is sensitive: DENY or REQUIRE_APPROVAL per policy.
+If multi-speaker present and action is sensitive: DENY or ESCALATE per policy.
 
 KC.12.6 Acceptance Tests
 
@@ -570,7 +570,7 @@ AT-KC-12-03: Approval routing
 
 Scenario: action requires approval.
 
-Pass: REQUIRE_APPROVAL returned with required_approvals list.
+Pass: ESCALATE returned with required_approvals list.
 
 KC.13 Idempotency + Outbox (Safe Side Effects)
 

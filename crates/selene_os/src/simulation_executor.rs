@@ -13,7 +13,7 @@ use selene_kernel_contracts::ph1position::{Ph1PositionRequest, Ph1PositionRespon
 use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse};
 use selene_kernel_contracts::ph1x::{DispatchRequest, Ph1xDirective, Ph1xResponse};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs};
-use selene_storage::ph1f::{Ph1fStore, StorageError};
+use selene_storage::ph1f::{AccessDecision, AccessMode, Ph1fStore, StorageError};
 
 use crate::ph1_voice_id::Ph1VoiceIdRuntime;
 use crate::ph1capreq::Ph1CapreqRuntime;
@@ -247,6 +247,7 @@ impl SimulationExecutor {
             }
             IntentType::CapreqManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_capreq_access_gate(store, &actor_user_id, &tenant_id, now)?;
                 let requested_capability_id =
                     optional_field_value(d, FieldKey::RequestedCapabilityId)
                         .map(|v| field_str(v).to_string());
@@ -405,6 +406,51 @@ impl SimulationExecutor {
                 ContractViolation::InvalidValue {
                     field: "simulation_candidate_dispatch.intent_draft.intent_type",
                     reason: "unsupported in this slice",
+                },
+            )),
+        }
+    }
+
+    fn enforce_capreq_access_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        let Some(access_instance) =
+            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
+        else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                },
+            ));
+        };
+
+        let gate = store.ph1access_gate_decide(
+            actor_user_id.clone(),
+            access_instance.access_instance_id.clone(),
+            "CAPREQ_MANAGE".to_string(),
+            AccessMode::A,
+            access_instance.device_trust_level,
+            false,
+            now,
+        )?;
+
+        match gate.access_decision {
+            AccessDecision::Allow => Ok(()),
+            AccessDecision::Deny => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                },
+            )),
+            AccessDecision::Escalate => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
                 },
             )),
         }
@@ -649,8 +695,8 @@ mod tests {
     };
     use selene_kernel_contracts::{ReasonCodeId, SchemaVersion};
     use selene_storage::ph1f::{
-        DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState,
-        TenantCompanyRecord,
+        AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
+        DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState, TenantCompanyRecord,
     };
 
     fn capreq_field(key: FieldKey, value: &str) -> IntentField {
@@ -701,6 +747,13 @@ mod tests {
         idempotency_key: &str,
         fields: Vec<IntentField>,
     ) -> SimulationDispatchOutcome {
+        let tenant = fields
+            .iter()
+            .find(|f| f.key == FieldKey::TenantId)
+            .map(|f| field_str(&f.value).to_string())
+            .expect("capreq tests require FieldKey::TenantId");
+        seed_capreq_access_instance(store, actor, &tenant);
+
         let x = capreq_x(turn_id, capreq_draft(fields), idempotency_key);
         exec.execute_ph1x_dispatch_simulation_candidate(
             store,
@@ -709,6 +762,49 @@ mod tests {
             &x,
         )
         .unwrap()
+    }
+
+    fn seed_capreq_access_instance(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+    ) {
+        seed_capreq_access_instance_with(
+            store,
+            actor,
+            tenant,
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+    }
+
+    fn seed_capreq_access_instance_with(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+        effective_access_mode: AccessMode,
+        identity_verified: bool,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+    ) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.capreq_manager".to_string(),
+                effective_access_mode,
+                "{\"allow\":[\"CAPREQ_MANAGE\"]}".to_string(),
+                identity_verified,
+                AccessVerificationLevel::PasscodeTime,
+                device_trust_level,
+                lifecycle_state,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -849,6 +945,7 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_capreq_access_instance(&mut store, &actor, "tenant_1");
 
         let draft = IntentDraft::v1(
             IntentType::CapreqManage,
@@ -1305,6 +1402,160 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn at_sim_exec_11_capreq_access_deny_blocks_governed_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("capreq-actor-7").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_capreq_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Suspended,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(150),
+            &capreq_x(
+                1,
+                capreq_draft(vec![
+                    capreq_field(FieldKey::TenantId, "tenant_1"),
+                    capreq_field(FieldKey::RequestedCapabilityId, "payroll.approve"),
+                    capreq_field(FieldKey::TargetScopeRef, "store_17"),
+                    capreq_field(FieldKey::Justification, "monthly payroll processing"),
+                ]),
+                "idem-capreq-7-create",
+            ),
+        );
+
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+        assert_eq!(store.capreq_events().len(), 0);
+        assert_eq!(store.capreq_current().len(), 0);
+    }
+
+    #[test]
+    fn at_sim_exec_12_capreq_access_escalate_requires_approval_before_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("capreq-actor-8").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_capreq_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            AccessMode::R,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(151),
+            &capreq_x(
+                1,
+                capreq_draft(vec![
+                    capreq_field(FieldKey::TenantId, "tenant_1"),
+                    capreq_field(FieldKey::RequestedCapabilityId, "payroll.approve"),
+                    capreq_field(FieldKey::TargetScopeRef, "store_17"),
+                    capreq_field(FieldKey::Justification, "monthly payroll processing"),
+                ]),
+                "idem-capreq-8-create",
+            ),
+        );
+
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
+        assert_eq!(store.capreq_events().len(), 0);
+        assert_eq!(store.capreq_current().len(), 0);
+    }
+
+    #[test]
+    fn at_sim_exec_13_capreq_tenant_scope_mismatch_fails_closed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("capreq-actor-9").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_capreq_access_instance(&mut store, &actor, "tenant_1");
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(152),
+            &capreq_x(
+                1,
+                capreq_draft(vec![
+                    capreq_field(FieldKey::TenantId, "tenant_2"),
+                    capreq_field(FieldKey::RequestedCapabilityId, "payroll.approve"),
+                    capreq_field(FieldKey::TargetScopeRef, "store_17"),
+                    capreq_field(FieldKey::Justification, "monthly payroll processing"),
+                ]),
+                "idem-capreq-9-create",
+            ),
+        );
+
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.capreq.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                }
+            ))
+        ));
+        assert_eq!(store.capreq_events().len(), 0);
+        assert_eq!(store.capreq_current().len(), 0);
     }
 
     #[test]

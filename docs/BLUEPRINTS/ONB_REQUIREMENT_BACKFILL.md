@@ -66,6 +66,7 @@ Deterministic loop note:
 
 ## 7) Refusal Conditions
 - access denied at `ONB_BACKFILL_S04` -> `ACCESS_SCOPE_VIOLATION`
+- access escalated at `ONB_BACKFILL_S04` without resolved approval/override -> `ACCESS_AP_REQUIRED` (no campaign start/notify side effects)
 - invalid campaign scope for position/schema -> `ONB_BACKFILL_SCOPE_INVALID`
 - delivery policy block -> `ONB_BACKFILL_NOTIFY_BLOCKED`
 
