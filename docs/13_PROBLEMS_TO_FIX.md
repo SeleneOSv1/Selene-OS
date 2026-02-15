@@ -412,3 +412,18 @@ For each item:
   - result: references remain coherent across docs/contracts/storage/runtime.
 - Closure note:
   - PH1.ONB packet remains closed and aligned after PH1.POSITION closure updates.
+
+## PH1.LINK packet supersession normalization (2026-02-15)
+
+- Historical packet:
+  - `docs/17_PH1_LINK_STRICT_FIX_PLAN_PACKET.md`
+- Canonical closure packet:
+  - `docs/20_PH1_LINK_CLOSURE_STRICT_FIX_PLAN_PACKET.md`
+- Normalization action:
+  - packet 17 status normalized to `SUPERSEDED_BY_PACKET_20_EXECUTED_COMMITTED`.
+  - packet 20 remains the authority for PH1.LINK closure state.
+- Proof command:
+  - `rg -n "^Status:|Supersession note|Status: EXECUTED_COMMITTED" docs/17_PH1_LINK_STRICT_FIX_PLAN_PACKET.md docs/20_PH1_LINK_CLOSURE_STRICT_FIX_PLAN_PACKET.md`
+  - expected:
+    - packet 17 shows superseded status + supersession note.
+    - packet 20 shows `Status: EXECUTED_COMMITTED`.

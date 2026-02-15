@@ -2,7 +2,11 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: READY_FOR_EXECUTION
+Status: SUPERSEDED_BY_PACKET_20_EXECUTED_COMMITTED
+
+Supersession note:
+- This packet is retained as historical execution context.
+- Canonical PH1.LINK closure authority is `docs/20_PH1_LINK_CLOSURE_STRICT_FIX_PLAN_PACKET.md`.
 
 ## 1) Purpose
 
