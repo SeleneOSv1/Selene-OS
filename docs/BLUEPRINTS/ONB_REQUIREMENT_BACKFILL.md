@@ -17,7 +17,7 @@
 - `company_id`
 - `position_id`
 - `schema_version_id`
-- `rollout_scope` (`CURRENT_AND_NEW`)
+- `rollout_scope` (`CurrentAndNew` only; `NewHiresOnly` must not enter this blueprint)
 - `idempotency_key`
 - `activation_handoff_ref` (deterministic link to `ONB_SCHEMA_MANAGE` activation output)
 
@@ -43,12 +43,17 @@ total_target_count: integer
 | ONB_BACKFILL_S06 | PH1.BCAST | BCAST_DRAFT_CREATE | tenant_id, sender_user_id=actor_user_id, audience_spec(target_population), classification, content_payload_ref, idempotency_key | broadcast_id, status=draft_created | INTERNAL_DB_WRITE (simulation-gated) | 400 | 1 | 100 | [BCAST_INPUT_SCHEMA_INVALID] |
 | ONB_BACKFILL_S07 | PH1.BCAST | BCAST_DELIVER_COMMIT | broadcast_id, recipient_id, delivery_plan_ref, simulation_context, idempotency_key | delivery_request_ref, recipient_state | EXTERNAL_DELIVERY_REQUEST (simulation-gated) | 700 | 2 | 250 | [BCAST_SIMULATION_CONTEXT_MISSING, BCAST_DELIVERY_PLAN_INVALID] |
 | ONB_BACKFILL_S08 | PH1.REM | PH1REM_SCHEDULE_COMMIT_ROW | tenant_id, user_id, reminder_type=BCAST_MHP_FOLLOWUP, desired_time, idempotency_key | reminder_id, occurrence_id, scheduled_time | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [REM_FAIL_TIMEZONE_INVALID, REM_FAIL_IDEMPOTENCY_REPLAY] |
-| ONB_BACKFILL_S09 | PH1.ONB | PH1ONB_BACKFILL_COMPLETE_COMMIT_ROW | campaign_id, tenant_id, idempotency_key | campaign_id, state, completed_target_count, total_target_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_BACKFILL_COMPLETE_RETRYABLE] |
-| ONB_BACKFILL_S10 | PH1.X | PH1X_RESPOND_COMMIT_ROW | campaign summary | completion response | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
+| ONB_BACKFILL_S09 | PH1.ONB | PH1ONB_BACKFILL_NOTIFY_COMMIT_ROW | campaign_id, tenant_id, recipient_user_id, idempotency_key | campaign_id, recipient_user_id, target_status | DB_WRITE (simulation-gated; per-recipient progress commit after BCAST/REM handoff) | 700 | 2 | 250 | [ONB_BACKFILL_NOTIFY_RETRYABLE] |
+| ONB_BACKFILL_S10 | PH1.ONB | PH1ONB_BACKFILL_COMPLETE_COMMIT_ROW | campaign_id, tenant_id, idempotency_key | campaign_id, state, completed_target_count, total_target_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_BACKFILL_COMPLETE_RETRYABLE] |
+| ONB_BACKFILL_S11 | PH1.X | PH1X_RESPOND_COMMIT_ROW | campaign summary | completion response | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
 
 ## 5) Confirmation Points
 - `ONB_BACKFILL_S03` mandatory before campaign start.
 - Additional confirmation required when unresolved exceptions remain at completion.
+
+Deterministic loop note:
+- `ONB_BACKFILL_S06` to `ONB_BACKFILL_S09` run per recipient in a bounded deterministic loop.
+- `ONB_BACKFILL_S10` may run only after all recipient loop rows are committed or terminally exhausted.
 
 ## 6) Simulation Requirements
 - `ONB_REQUIREMENT_BACKFILL_START_DRAFT`

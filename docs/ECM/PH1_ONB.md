@@ -77,10 +77,11 @@
 
 ### `PH1ONB_BACKFILL_START_DRAFT_ROW`
 - `name`: Start deterministic onboarding requirement backfill campaign
-- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope, idempotency_key)`
+- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope=CurrentAndNew, idempotency_key)`
 - `output_schema`: `Result<(campaign_id, state, pending_target_count), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `process_guard`: `ONB_REQUIREMENT_BACKFILL` must not be entered for `rollout_scope=NewHiresOnly`.
 
 ### `PH1ONB_BACKFILL_NOTIFY_COMMIT_ROW`
 - `name`: Commit deterministic backfill recipient notification/progress
@@ -88,6 +89,7 @@
 - `output_schema`: `Result<(campaign_id, recipient_user_id, target_status), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `orchestrator_order`: called once per recipient after BCAST delivery and REM scheduling handoff steps.
 
 ### `PH1ONB_BACKFILL_COMPLETE_COMMIT_ROW`
 - `name`: Commit deterministic onboarding requirement backfill completion state
@@ -95,6 +97,7 @@
 - `output_schema`: `Result<(campaign_id, state, completed_target_count, total_target_count), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `orchestrator_order`: callable only after recipient notify loop reaches deterministic terminal progress set.
 
 ## Failure Modes + Reason Codes
 - deterministic onboarding failure domains include:

@@ -760,6 +760,12 @@ impl Validate for OnbRequirementBackfillStartDraftRequest {
             &self.idempotency_key,
             128,
         )?;
+        if self.rollout_scope != BackfillRolloutScope::CurrentAndNew {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_requirement_backfill_start_draft_request.rollout_scope",
+                reason: "must be CurrentAndNew for ONB_REQUIREMENT_BACKFILL",
+            });
+        }
         Ok(())
     }
 }

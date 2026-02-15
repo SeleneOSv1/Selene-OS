@@ -30,9 +30,12 @@ use selene_kernel_contracts::ph1link::{
 };
 use selene_kernel_contracts::ph1m::{MemoryKey, MemoryLedgerEvent, MemoryUsePolicy};
 use selene_kernel_contracts::ph1onb::{
-    OnbAccessInstanceCreateResult, OnbCompleteResult, OnbEmployeePhotoCaptureSendResult,
-    OnbEmployeeSenderVerifyResult, OnbPrimaryDeviceConfirmResult, OnbSessionStartResult,
-    OnbTermsAcceptResult, OnboardingSessionId, ProofType, SenderVerifyDecision,
+    BackfillCampaignId, BackfillRolloutScope, OnbAccessInstanceCreateResult, OnbCompleteResult,
+    OnbEmployeePhotoCaptureSendResult, OnbEmployeeSenderVerifyResult,
+    OnbPrimaryDeviceConfirmResult, OnbRequirementBackfillCompleteCommitResult,
+    OnbRequirementBackfillNotifyCommitResult, OnbRequirementBackfillStartDraftResult,
+    OnbSessionStartResult, OnbTermsAcceptResult, OnboardingSessionId, ProofType,
+    SenderVerifyDecision,
 };
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, IntentType, ProcessBlueprintEvent, ProcessBlueprintEventInput,
@@ -1131,6 +1134,44 @@ pub trait Ph1OnbRepo {
         onboarding_session_id: OnboardingSessionId,
         idempotency_key: String,
     ) -> Result<OnbCompleteResult, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1onb_requirement_backfill_start_draft_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: String,
+        company_id: String,
+        position_id: String,
+        schema_version_id: String,
+        rollout_scope: BackfillRolloutScope,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillStartDraftResult, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1onb_requirement_backfill_notify_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        recipient_user_id: UserId,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillNotifyCommitResult, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1onb_requirement_backfill_complete_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillCompleteCommitResult, StorageError>;
 }
 
 /// Typed repository interface for PH1.POSITION persistence.
@@ -3106,6 +3147,73 @@ impl Ph1OnbRepo for Ph1fStore {
         idempotency_key: String,
     ) -> Result<OnbCompleteResult, StorageError> {
         self.ph1onb_complete_commit(now, onboarding_session_id, idempotency_key)
+    }
+
+    fn ph1onb_requirement_backfill_start_draft_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: String,
+        company_id: String,
+        position_id: String,
+        schema_version_id: String,
+        rollout_scope: BackfillRolloutScope,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillStartDraftResult, StorageError> {
+        self.ph1onb_requirement_backfill_start_draft(
+            now,
+            actor_user_id,
+            tenant_id,
+            company_id,
+            position_id,
+            schema_version_id,
+            rollout_scope,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
+    }
+
+    fn ph1onb_requirement_backfill_notify_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        recipient_user_id: UserId,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillNotifyCommitResult, StorageError> {
+        self.ph1onb_requirement_backfill_notify_commit(
+            now,
+            campaign_id,
+            tenant_id,
+            recipient_user_id,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
+    }
+
+    fn ph1onb_requirement_backfill_complete_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillCompleteCommitResult, StorageError> {
+        self.ph1onb_requirement_backfill_complete_commit(
+            now,
+            campaign_id,
+            tenant_id,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
     }
 }
 

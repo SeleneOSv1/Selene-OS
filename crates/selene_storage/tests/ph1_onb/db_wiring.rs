@@ -8,7 +8,10 @@ use selene_kernel_contracts::ph1j::{
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
 use selene_kernel_contracts::ph1link::{InviteeType, LinkStatus, PrefilledContext};
-use selene_kernel_contracts::ph1onb::{OnboardingStatus, ProofType, TermsStatus};
+use selene_kernel_contracts::ph1onb::{
+    BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus, OnboardingStatus, ProofType,
+    TermsStatus,
+};
 use selene_kernel_contracts::ph1position::{
     PositionRequirementEvidenceMode, PositionRequirementExposureRule, PositionRequirementFieldSpec,
     PositionRequirementFieldType, PositionRequirementRuleType, PositionRequirementSensitivity,
@@ -51,6 +54,18 @@ fn seed_identity_device(store: &mut Ph1fStore, user_id: UserId, device_id: Devic
             )
             .unwrap(),
         )
+        .unwrap();
+}
+
+fn seed_identity_only(store: &mut Ph1fStore, user_id: UserId) {
+    store
+        .insert_identity_row(IdentityRecord::v1(
+            user_id,
+            None,
+            None,
+            MonotonicTimeNs(1),
+            IdentityStatus::Active,
+        ))
         .unwrap();
 }
 
@@ -784,4 +799,242 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+}
+
+#[test]
+fn at_onb_db_08_backfill_new_hires_only_is_refused_no_campaign_started() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:user_inviter");
+    seed_identity_device(&mut s, actor.clone(), device("tenant_a_device_inviter"));
+
+    let (tenant_id, company_id, position_id) =
+        seed_employee_position_schema_requiring_verification(&mut s, actor.clone());
+
+    let out = s.ph1onb_requirement_backfill_start_draft_row(
+        MonotonicTimeNs(1100),
+        actor,
+        tenant_id,
+        company_id,
+        position_id,
+        "schema_v2".to_string(),
+        BackfillRolloutScope::NewHiresOnly,
+        "bf-new-hires-only".to_string(),
+        "ONB_REQUIREMENT_BACKFILL_START_DRAFT",
+        ReasonCodeId(0x4F00_0008),
+    );
+
+    assert!(matches!(out, Err(StorageError::ContractViolation(_))));
+}
+
+#[test]
+fn at_onb_db_09_backfill_current_and_new_creates_campaign_with_deterministic_snapshot() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:user_inviter");
+    seed_identity_device(&mut s, actor.clone(), device("tenant_a_device_inviter"));
+    seed_identity_only(&mut s, user("tenant_a:worker_1"));
+    seed_identity_only(&mut s, user("tenant_a:worker_2"));
+
+    let (tenant_id, company_id, position_id) =
+        seed_employee_position_schema_requiring_verification(&mut s, actor.clone());
+
+    let started = s
+        .ph1onb_requirement_backfill_start_draft_row(
+            MonotonicTimeNs(1200),
+            actor.clone(),
+            tenant_id.clone(),
+            company_id.clone(),
+            position_id.clone(),
+            "schema_v2".to_string(),
+            BackfillRolloutScope::CurrentAndNew,
+            "bf-current-and-new".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_START_DRAFT",
+            ReasonCodeId(0x4F00_0008),
+        )
+        .unwrap();
+    assert_eq!(started.state, BackfillCampaignState::Running);
+    assert!(started.pending_target_count >= 3);
+
+    let replay = s
+        .ph1onb_requirement_backfill_start_draft_row(
+            MonotonicTimeNs(1201),
+            actor,
+            tenant_id,
+            company_id,
+            position_id,
+            "schema_v2".to_string(),
+            BackfillRolloutScope::CurrentAndNew,
+            "bf-current-and-new".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_START_DRAFT",
+            ReasonCodeId(0x4F00_0008),
+        )
+        .unwrap();
+
+    assert_eq!(replay.campaign_id, started.campaign_id);
+    assert_eq!(replay.state, started.state);
+    assert_eq!(replay.pending_target_count, started.pending_target_count);
+}
+
+#[test]
+fn at_onb_db_10_backfill_notify_loop_and_complete_are_idempotent() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:user_inviter");
+    let target = user("tenant_a:worker_1");
+    seed_identity_device(&mut s, actor.clone(), device("tenant_a_device_inviter"));
+    seed_identity_only(&mut s, target.clone());
+
+    let (tenant_id, company_id, position_id) =
+        seed_employee_position_schema_requiring_verification(&mut s, actor);
+
+    let started = s
+        .ph1onb_requirement_backfill_start_draft_row(
+            MonotonicTimeNs(1300),
+            user("tenant_a:user_inviter"),
+            tenant_id.clone(),
+            company_id,
+            position_id,
+            "schema_v2".to_string(),
+            BackfillRolloutScope::CurrentAndNew,
+            "bf-loop-start".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_START_DRAFT",
+            ReasonCodeId(0x4F00_0008),
+        )
+        .unwrap();
+
+    let notify_first = s
+        .ph1onb_requirement_backfill_notify_commit_row(
+            MonotonicTimeNs(1301),
+            started.campaign_id.clone(),
+            tenant_id.clone(),
+            target.clone(),
+            "bf-loop-notify-1".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT",
+            ReasonCodeId(0x4F00_0009),
+        )
+        .unwrap();
+    assert_eq!(notify_first.target_status, BackfillTargetStatus::Requested);
+
+    let notify_replay = s
+        .ph1onb_requirement_backfill_notify_commit_row(
+            MonotonicTimeNs(1302),
+            started.campaign_id.clone(),
+            tenant_id.clone(),
+            target.clone(),
+            "bf-loop-notify-1".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT",
+            ReasonCodeId(0x4F00_0009),
+        )
+        .unwrap();
+    assert_eq!(notify_replay.target_status, BackfillTargetStatus::Requested);
+
+    let notify_reminder = s
+        .ph1onb_requirement_backfill_notify_commit_row(
+            MonotonicTimeNs(1303),
+            started.campaign_id.clone(),
+            tenant_id.clone(),
+            target,
+            "bf-loop-notify-2".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT",
+            ReasonCodeId(0x4F00_0009),
+        )
+        .unwrap();
+    assert_eq!(notify_reminder.target_status, BackfillTargetStatus::Requested);
+
+    let complete_first = s
+        .ph1onb_requirement_backfill_complete_commit_row(
+            MonotonicTimeNs(1304),
+            started.campaign_id.clone(),
+            tenant_id.clone(),
+            "bf-loop-complete-1".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT",
+            ReasonCodeId(0x4F00_000A),
+        )
+        .unwrap();
+    assert_eq!(complete_first.state, BackfillCampaignState::Completed);
+    assert_eq!(complete_first.completed_target_count, 0);
+    assert_eq!(complete_first.total_target_count, started.pending_target_count);
+
+    let complete_replay = s
+        .ph1onb_requirement_backfill_complete_commit_row(
+            MonotonicTimeNs(1305),
+            started.campaign_id,
+            tenant_id,
+            "bf-loop-complete-1".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT",
+            ReasonCodeId(0x4F00_000A),
+        )
+        .unwrap();
+    assert_eq!(complete_replay.state, BackfillCampaignState::Completed);
+    assert_eq!(
+        complete_replay.completed_target_count,
+        complete_first.completed_target_count
+    );
+    assert_eq!(complete_replay.total_target_count, complete_first.total_target_count);
+}
+
+#[test]
+fn at_onb_db_11_backfill_fail_closed_on_tenant_scope_and_missing_target() {
+    let mut s = Ph1fStore::new_in_memory();
+    let actor = user("tenant_a:user_inviter");
+    let target = user("tenant_a:worker_1");
+    seed_identity_device(&mut s, actor.clone(), device("tenant_a_device_inviter"));
+    seed_identity_only(&mut s, target.clone());
+
+    let (tenant_id, company_id, position_id) =
+        seed_employee_position_schema_requiring_verification(&mut s, actor);
+
+    let started = s
+        .ph1onb_requirement_backfill_start_draft_row(
+            MonotonicTimeNs(1400),
+            user("tenant_a:user_inviter"),
+            tenant_id.clone(),
+            company_id,
+            position_id,
+            "schema_v2".to_string(),
+            BackfillRolloutScope::CurrentAndNew,
+            "bf-fail-closed-start".to_string(),
+            "ONB_REQUIREMENT_BACKFILL_START_DRAFT",
+            ReasonCodeId(0x4F00_0008),
+        )
+        .unwrap();
+
+    let notify_wrong_tenant = s.ph1onb_requirement_backfill_notify_commit_row(
+        MonotonicTimeNs(1401),
+        started.campaign_id.clone(),
+        "tenant_wrong".to_string(),
+        target,
+        "bf-fail-closed-notify-tenant".to_string(),
+        "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT",
+        ReasonCodeId(0x4F00_0009),
+    );
+    assert!(matches!(
+        notify_wrong_tenant,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let notify_missing_target = s.ph1onb_requirement_backfill_notify_commit_row(
+        MonotonicTimeNs(1402),
+        started.campaign_id.clone(),
+        tenant_id.clone(),
+        user("tenant_a:missing_target"),
+        "bf-fail-closed-notify-missing-target".to_string(),
+        "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT",
+        ReasonCodeId(0x4F00_0009),
+    );
+    assert!(matches!(
+        notify_missing_target,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    let complete_wrong_tenant = s.ph1onb_requirement_backfill_complete_commit_row(
+        MonotonicTimeNs(1403),
+        started.campaign_id,
+        "tenant_wrong".to_string(),
+        "bf-fail-closed-complete-tenant".to_string(),
+        "ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT",
+        ReasonCodeId(0x4F00_000A),
+    );
+    assert!(matches!(
+        complete_wrong_tenant,
+        Err(StorageError::ContractViolation(_))
+    ));
 }

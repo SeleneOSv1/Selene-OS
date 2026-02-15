@@ -4396,6 +4396,14 @@ impl Ph1fStore {
                 },
             ));
         }
+        if rollout_scope != BackfillRolloutScope::CurrentAndNew {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_start_draft.rollout_scope",
+                    reason: "must be CurrentAndNew for ONB_REQUIREMENT_BACKFILL",
+                },
+            ));
+        }
 
         let idx = (
             tenant_id.clone(),

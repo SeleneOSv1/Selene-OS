@@ -105,6 +105,10 @@ Handoff rules (deterministic)
   - REMINDER_SET → REMINDER_FIRED
   - and PH1.BCAST emits the follow-up prompt (device-first delivery still applies).
 
+ONB backfill usage note
+- `ONB_REQUIREMENT_BACKFILL` uses the same BCAST→REM timing handoff discipline for recipient follow-ups.
+- PH1.ONB records campaign/target progress via `ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT` only after BCAST/REM handoff steps complete per recipient.
+
 Device-first rule preserved
 - Reminder delivery follows the same BCAST.MHP rule:
   - deliver to Selene App thread first

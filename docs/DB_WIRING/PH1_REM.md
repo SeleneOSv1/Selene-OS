@@ -44,6 +44,10 @@ priority_level
 prompt_dedupe_key
 idempotency_key tied to (broadcast_id + recipient_id + due_at + prompt_dedupe_key)
 
+ONB backfill linkage rule
+- `ONB_REQUIREMENT_BACKFILL` recipient follow-ups must use the same `BCAST_MHP_FOLLOWUP` timing contract.
+- PH1.REM remains timing-only: it does not change onboarding campaign state; PH1.ONB owns campaign/target progress commits.
+
 3) Reads (dependencies)
 reads: identities, devices, sessions (scope/identity checks)
 reads: policy snapshots for timezone/quiet-hours interpretation (read-only)

@@ -1052,9 +1052,12 @@ mod tests {
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
     use selene_kernel_contracts::ph1link::{InviteeType, Ph1LinkRequest, PrefilledContext};
     use selene_kernel_contracts::ph1onb::{
+        BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus,
         OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
         OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
-        OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbSessionStartDraftRequest,
+        OnbPrimaryDeviceConfirmCommitRequest, OnbRequest,
+        OnbRequirementBackfillCompleteCommitRequest, OnbRequirementBackfillNotifyCommitRequest,
+        OnbRequirementBackfillStartDraftRequest, OnbSessionStartDraftRequest,
         OnbTermsAcceptCommitRequest, OnboardingStatus, Ph1OnbRequest, SenderVerifyDecision,
         TermsStatus, VerificationStatus,
     };
@@ -1175,6 +1178,44 @@ mod tests {
             prompt_short: format!("Provide {field_key}"),
             prompt_long: format!("Please provide required field {field_key}."),
         }
+    }
+
+    fn make_active_position_for_backfill(store: &mut Ph1fStore) -> (String, String, String) {
+        upsert_active_company(store);
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let draft = store
+            .ph1position_create_draft(
+                MonotonicTimeNs(now().0 + 11),
+                user("inviter"),
+                tenant_id.clone(),
+                "company_1".to_string(),
+                "Warehouse Manager".to_string(),
+                "Ops".to_string(),
+                "US".to_string(),
+                PositionScheduleType::FullTime,
+                "profile_ops".to_string(),
+                "band_l3".to_string(),
+                "onb-backfill-pos-create".to_string(),
+                "POSITION_SIM_001_CREATE_DRAFT",
+                ReasonCodeId(0x5900_0001),
+            )
+            .unwrap();
+        store
+            .ph1position_activate_commit(
+                MonotonicTimeNs(now().0 + 12),
+                user("inviter"),
+                tenant_id.clone(),
+                draft.position_id.clone(),
+                "onb-backfill-pos-activate".to_string(),
+                "POSITION_SIM_004_ACTIVATE_COMMIT",
+                ReasonCodeId(0x5900_0004),
+            )
+            .unwrap();
+        (
+            tenant_id.as_str().to_string(),
+            "company_1".to_string(),
+            draft.position_id.as_str().to_string(),
+        )
     }
 
     fn make_activated_link_with_required_verification(
@@ -1579,6 +1620,324 @@ mod tests {
             ),
             _ => panic!("expected ok"),
         }
+    }
+
+    #[test]
+    fn onb_backfill_start_refuses_new_hires_only_scope() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        let (tenant_id, company_id, position_id) = make_active_position_for_backfill(&mut store);
+
+        let req = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 20),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_START_DRAFT
+                .to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::RequirementBackfillStartDraft(
+                OnbRequirementBackfillStartDraftRequest {
+                    actor_user_id: user("inviter"),
+                    tenant_id,
+                    company_id,
+                    position_id,
+                    schema_version_id: "schema_v2".to_string(),
+                    rollout_scope: BackfillRolloutScope::NewHiresOnly,
+                    idempotency_key: "onb-backfill-new-hires-only".to_string(),
+                },
+            ),
+        };
+
+        let out = rt.run(&mut store, &req);
+        assert!(matches!(out, Err(StorageError::ContractViolation(_))));
+    }
+
+    #[test]
+    fn onb_backfill_current_and_new_notify_loop_then_complete() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        store
+            .insert_identity(IdentityRecord::v1(
+                user("target_1"),
+                None,
+                None,
+                now(),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        let (tenant_id, company_id, position_id) = make_active_position_for_backfill(&mut store);
+
+        let start = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 21),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_START_DRAFT
+                .to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::RequirementBackfillStartDraft(
+                OnbRequirementBackfillStartDraftRequest {
+                    actor_user_id: user("inviter"),
+                    tenant_id: tenant_id.clone(),
+                    company_id,
+                    position_id,
+                    schema_version_id: "schema_v2".to_string(),
+                    rollout_scope: BackfillRolloutScope::CurrentAndNew,
+                    idempotency_key: "onb-backfill-start".to_string(),
+                },
+            ),
+        };
+        let started = match rt.run(&mut store, &start).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.requirement_backfill_start_result.unwrap(),
+            _ => panic!("expected ok"),
+        };
+        assert_eq!(started.state, BackfillCampaignState::Running);
+        assert!(started.pending_target_count >= 2);
+
+        let notify = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 22),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::RequirementBackfillNotifyCommit(
+                OnbRequirementBackfillNotifyCommitRequest {
+                    campaign_id: started.campaign_id.clone(),
+                    tenant_id: tenant_id.clone(),
+                    recipient_user_id: user("target_1"),
+                    idempotency_key: "onb-backfill-notify-1".to_string(),
+                },
+            ),
+        };
+        let notify_out = match rt.run(&mut store, &notify).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.requirement_backfill_notify_result.unwrap(),
+            _ => panic!("expected ok"),
+        };
+        assert_eq!(notify_out.target_status, BackfillTargetStatus::Requested);
+
+        let remind_notify = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 23),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::RequirementBackfillNotifyCommit(
+                OnbRequirementBackfillNotifyCommitRequest {
+                    campaign_id: started.campaign_id.clone(),
+                    tenant_id: tenant_id.clone(),
+                    recipient_user_id: user("target_1"),
+                    idempotency_key: "onb-backfill-notify-2".to_string(),
+                },
+            ),
+        };
+        let remind_out = match rt.run(&mut store, &remind_notify).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.requirement_backfill_notify_result.unwrap(),
+            _ => panic!("expected ok"),
+        };
+        assert_eq!(remind_out.target_status, BackfillTargetStatus::Requested);
+
+        let complete = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 24),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::RequirementBackfillCompleteCommit(
+                OnbRequirementBackfillCompleteCommitRequest {
+                    campaign_id: started.campaign_id,
+                    tenant_id,
+                    idempotency_key: "onb-backfill-complete".to_string(),
+                },
+            ),
+        };
+        let complete_out = match rt.run(&mut store, &complete).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.requirement_backfill_complete_result.unwrap(),
+            _ => panic!("expected ok"),
+        };
+        assert_eq!(complete_out.state, BackfillCampaignState::Completed);
+        assert_eq!(complete_out.completed_target_count, 0);
+        assert!(complete_out.total_target_count >= 2);
+    }
+
+    #[test]
+    fn onb_backfill_fail_closed_on_tenant_scope_mismatch() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        store
+            .insert_identity(IdentityRecord::v1(
+                user("target_1"),
+                None,
+                None,
+                now(),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        let (tenant_id, company_id, position_id) = make_active_position_for_backfill(&mut store);
+
+        let start = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 25),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_START_DRAFT
+                .to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::RequirementBackfillStartDraft(
+                OnbRequirementBackfillStartDraftRequest {
+                    actor_user_id: user("inviter"),
+                    tenant_id: tenant_id.clone(),
+                    company_id,
+                    position_id,
+                    schema_version_id: "schema_v2".to_string(),
+                    rollout_scope: BackfillRolloutScope::CurrentAndNew,
+                    idempotency_key: "onb-backfill-start-tenant-check".to_string(),
+                },
+            ),
+        };
+        let campaign_id = match rt.run(&mut store, &start).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.requirement_backfill_start_result.unwrap().campaign_id,
+            _ => panic!("expected ok"),
+        };
+
+        let notify_wrong_tenant = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 26),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::RequirementBackfillNotifyCommit(
+                OnbRequirementBackfillNotifyCommitRequest {
+                    campaign_id: campaign_id.clone(),
+                    tenant_id: "tenant_wrong".to_string(),
+                    recipient_user_id: user("target_1"),
+                    idempotency_key: "onb-backfill-notify-tenant-wrong".to_string(),
+                },
+            ),
+        };
+        let notify_out = rt.run(&mut store, &notify_wrong_tenant);
+        assert!(matches!(notify_out, Err(StorageError::ContractViolation(_))));
+
+        let complete_wrong_tenant = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 27),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::RequirementBackfillCompleteCommit(
+                OnbRequirementBackfillCompleteCommitRequest {
+                    campaign_id,
+                    tenant_id: "tenant_wrong".to_string(),
+                    idempotency_key: "onb-backfill-complete-tenant-wrong".to_string(),
+                },
+            ),
+        };
+        let complete_out = rt.run(&mut store, &complete_wrong_tenant);
+        assert!(matches!(complete_out, Err(StorageError::ContractViolation(_))));
+    }
+
+    #[test]
+    fn onb_fail_closed_when_required_verification_gates_missing() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        let token_id = make_activated_link_with_required_verification(&mut store);
+
+        let start = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 30),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
+                token_id,
+                prefilled_context_ref: None,
+                tenant_id: Some("tenant_1".to_string()),
+                device_fingerprint: "device_fp_gate_fail_closed".to_string(),
+            }),
+        };
+        let session_id = match rt.run(&mut store, &start).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap().onboarding_session_id,
+            _ => panic!("expected ok"),
+        };
+
+        let terms = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 31),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_TERMS_ACCEPT_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::TermsAcceptCommit(OnbTermsAcceptCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                terms_version_id: "terms_v1".to_string(),
+                accepted: true,
+                idempotency_key: "gate-fail-terms".to_string(),
+            }),
+        };
+        rt.run(&mut store, &terms).unwrap();
+
+        let device_commit = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 32),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_PRIMARY_DEVICE_CONFIRM_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::PrimaryDeviceConfirmCommit(OnbPrimaryDeviceConfirmCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                device_id: device("device_gate_fail_closed"),
+                proof_type: selene_kernel_contracts::ph1onb::ProofType::Passcode,
+                proof_ok: true,
+                idempotency_key: "gate-fail-device".to_string(),
+            }),
+        };
+        rt.run(&mut store, &device_commit).unwrap();
+
+        let access = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 33),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_ACCESS_INSTANCE_CREATE_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::AccessInstanceCreateCommit(OnbAccessInstanceCreateCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                user_id: user("invitee_gate_fail_closed"),
+                tenant_id: Some("tenant_1".to_string()),
+                role_id: "role_store_manager".to_string(),
+                idempotency_key: "gate-fail-access".to_string(),
+            }),
+        };
+        let access_out = rt.run(&mut store, &access);
+        assert!(matches!(access_out, Err(StorageError::ContractViolation(_))));
+
+        let complete = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 34),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_COMPLETE_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
+                onboarding_session_id: session_id,
+                idempotency_key: "gate-fail-complete".to_string(),
+            }),
+        };
+        let complete_out = rt.run(&mut store, &complete);
+        assert!(matches!(complete_out, Err(StorageError::ContractViolation(_))));
     }
 
     #[test]

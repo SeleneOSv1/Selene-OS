@@ -845,24 +845,24 @@ token_status: CONSUMED
 ```text
 tenant_id: string
 actor_user_id: string
+company_id: string
 position_id: string
-schema_id: string
-schema_version: string
-rollout_scope: enum (INCLUDE_CURRENT_STAFF)
+schema_version_id: string
+rollout_scope: enum (CurrentAndNew)
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-backfill_campaign_id: string
-target_population_count: integer
-status: enum (IN_PROGRESS)
+campaign_id: string
+state: enum (DRAFT_CREATED | RUNNING | COMPLETED)
+pending_target_count: integer
 ```
 - preconditions: active requirements schema exists for position; rollout scope confirmed; access decision is ALLOW/ESCALATE-resolved
 - postconditions: campaign draft and deterministic target snapshot are persisted
 - side_effects: Write backfill campaign draft + target snapshot only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_version + idempotency_key)
+- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_version_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT (COMMIT)
@@ -877,24 +877,23 @@ status: enum (IN_PROGRESS)
 - required_confirmations: required (COMMIT)
 - input_schema (minimum):
 ```text
-backfill_campaign_id: string
-recipient_id: string
-notification_ref: string
-reminder_policy_ref: string
+campaign_id: string
+tenant_id: string
+recipient_user_id: string
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-backfill_campaign_id: string
-recipient_id: string
-notification_status: enum (QUEUED | SENT | DEFERRED)
+campaign_id: string
+recipient_user_id: string
+target_status: enum (PENDING | REQUESTED | REMINDED | COMPLETED | EXEMPTED | FAILED)
 ```
 - preconditions: campaign exists and is IN_PROGRESS; recipient belongs to campaign target set
 - postconditions: notification/progress state persists deterministically; no duplicate notify rows on retries
-- side_effects: Write campaign progress + broadcast/reminder handoff refs
+- side_effects: Write campaign/target progress state for this recipient after BCAST/REM handoff steps
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (backfill_campaign_id + recipient_id + idempotency_key)
+- idempotency_key_rule: idempotent on (campaign_id + recipient_user_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT (COMMIT)
@@ -909,22 +908,23 @@ notification_status: enum (QUEUED | SENT | DEFERRED)
 - required_confirmations: required (COMMIT)
 - input_schema (minimum):
 ```text
-backfill_campaign_id: string
-completion_state: enum (COMPLETE | COMPLETE_WITH_EXCEPTIONS)
-unresolved_count: integer
+campaign_id: string
+tenant_id: string
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-backfill_campaign_id: string
-status: enum (COMPLETE | COMPLETE_WITH_EXCEPTIONS)
+campaign_id: string
+state: enum (COMPLETED)
+completed_target_count: integer
+total_target_count: integer
 ```
 - preconditions: campaign exists; completion criteria evaluated deterministically
 - postconditions: campaign terminal state is persisted and replay-stable
 - side_effects: Write campaign terminal state
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (backfill_campaign_id + idempotency_key)
+- idempotency_key_rule: idempotent on (campaign_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### VOICE_ID_ENROLL_START_DRAFT (DRAFT)

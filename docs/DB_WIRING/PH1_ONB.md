@@ -143,18 +143,32 @@ Deterministic boundary rules:
 
 ### `ONB_REQUIREMENT_BACKFILL_START_DRAFT`
 - writes: backfill campaign draft state + deterministic target set snapshot
+- process guard:
+  - this backfill process is for `rollout_scope=CurrentAndNew` only
+  - `NewHiresOnly` must not enter `ONB_REQUIREMENT_BACKFILL`
 - idempotency rule:
   - dedupe by `(tenant_id, position_id, schema_version, idempotency_key)`
 
 ### `ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT`
-- writes: campaign progress state; delivery handoff references for BCAST/REM execution
+- writes: campaign/target progress state after per-recipient BCAST/REM handoff execution
+- ownership rule:
+  - PH1.ONB does not deliver and does not schedule reminders directly
+  - PH1.BCAST owns delivery lifecycle; PH1.REM owns reminder timing mechanics
 - idempotency rule:
-  - dedupe by `(backfill_campaign_id, recipient_id, idempotency_key)`
+  - dedupe by `(backfill_campaign_id, recipient_user_id, idempotency_key)`
 
 ### `ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT`
 - writes: campaign terminal status and unresolved exception summary
 - idempotency rule:
   - dedupe by `(backfill_campaign_id, idempotency_key)`
+
+Backfill orchestration order (deterministic):
+1. `ONB_REQUIREMENT_BACKFILL_START_DRAFT`
+2. per-recipient loop:
+   - BCAST draft/deliver
+   - REM schedule (if policy requires follow-up timing)
+   - `ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT`
+3. `ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT`
 
 ## 5) Relations & Keys
 
