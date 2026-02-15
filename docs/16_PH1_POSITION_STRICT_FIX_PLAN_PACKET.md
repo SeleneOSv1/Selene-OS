@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP2_COMPLETED_PENDING_STEP3
+Status: STEP3_COMPLETED_PENDING_STEP4
 
 ## 1) Purpose
 
@@ -334,7 +334,7 @@ scripts/selene_design_readiness_audit.sh
 
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
-- Step 3: NOT_STARTED
+- Step 3: COMPLETED (2026-02-15)
 - Step 4: NOT_STARTED
 - Step 5: NOT_STARTED
 - Step 6: NOT_STARTED
@@ -346,5 +346,8 @@ Step 1 note:
 
 Step 2 note:
 - Kernel contract parity gate is already satisfied: `PositionRequirementsSchemaLifecycleResult` returns explicit `apply_scope_result` and validated `backfill_handoff_required` semantics; `ph1position` contract tests passed with no additional code delta required in this step.
+
+Step 3 note:
+- Typed repo parity gate is already satisfied: `Ph1PositionRepo` already includes requirements-schema row methods (`create_draft_row`, `update_commit_row`, `activate_commit_row`) and concrete wiring in `repo.rs`; no additional code delta required in this step.
 
 END OF PACKET
