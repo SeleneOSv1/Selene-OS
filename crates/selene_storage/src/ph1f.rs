@@ -5673,12 +5673,36 @@ impl Ph1fStore {
     // PH1.ACCESS.001 + PH2.ACCESS.002 (Access/Authority)
     // ------------------------
 
-    fn has_financial_authorization(baseline_permissions_json: &str) -> bool {
-        let compact: String = baseline_permissions_json
+    fn compact_permissions_json(baseline_permissions_json: &str) -> String {
+        baseline_permissions_json
             .chars()
             .filter(|ch| !ch.is_whitespace())
-            .collect();
+            .collect()
+    }
+
+    fn has_financial_authorization(baseline_permissions_json: &str) -> bool {
+        let compact = Self::compact_permissions_json(baseline_permissions_json);
         compact.contains("\"financial_auth\":true")
+    }
+
+    fn allows_requested_action(
+        baseline_permissions_json: &str,
+        requested_action: &str,
+    ) -> bool {
+        let compact = Self::compact_permissions_json(baseline_permissions_json).to_ascii_lowercase();
+        if !compact.contains("\"allow\":[") {
+            // Legacy rows may not carry explicit allow-lists; preserve backward-compatibility.
+            return true;
+        }
+        if compact.contains("\"allow\":[\"*\"]") {
+            return true;
+        }
+        let Some(idx) = compact.find("\"allow\":[") else {
+            return true;
+        };
+        let allow_tail = &compact[idx..];
+        let token = format!("\"{}\"", requested_action.to_ascii_lowercase());
+        allow_tail.contains(&token)
     }
 
     fn parse_grant_mode(scope_json: &str) -> Option<AccessMode> {
@@ -6124,6 +6148,17 @@ impl Ph1fStore {
             });
         }
 
+        if !Self::allows_requested_action(&instance.baseline_permissions_json, &requested_action) {
+            return Ok(AccessGateDecisionRecord {
+                schema_version: SchemaVersion(1),
+                access_decision: AccessDecision::Deny,
+                effective_access_mode: effective_mode,
+                restriction_flags: vec!["ACTION_NOT_ALLOWED".to_string()],
+                escalation_trigger: None,
+                reason_code: ACCESS_REASON_DENIED,
+            });
+        }
+
         if sensitive_data_request
             && !Self::has_financial_authorization(&instance.baseline_permissions_json)
         {
@@ -6137,7 +6172,8 @@ impl Ph1fStore {
             });
         }
 
-        if device_trust_level <= AccessDeviceTrustLevel::Dtl2
+        let effective_device_trust_level = std::cmp::min(device_trust_level, instance.device_trust_level);
+        if effective_device_trust_level <= AccessDeviceTrustLevel::Dtl2
             && access_mode_rank(access_request_context) >= access_mode_rank(AccessMode::A)
         {
             return Ok(AccessGateDecisionRecord {

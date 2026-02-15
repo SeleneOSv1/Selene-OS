@@ -61,6 +61,10 @@
 - schema read/write prerequisite:
   - schema draft/update/activate operations require tenant-matched position scope and actor authorization
   - schema update/activate operations require `positions.lifecycle_state=ACTIVE` for the target position
+- access/approval prerequisite for governed writes:
+  - Selene OS must resolve Access gate decision before governed POSITION commits (including requirements-schema lifecycle commits)
+  - `ALLOW` permits commit execution
+  - `DENY` and `ESCALATE` are fail-closed (no POSITION commit write until approval/override path resolves)
 
 ## 4) Writes (outputs)
 

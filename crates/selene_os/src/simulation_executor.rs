@@ -228,8 +228,9 @@ impl SimulationExecutor {
             IntentType::CreateInviteLink => {
                 let invitee_type =
                     parse_invitee_type(required_field_value(d, FieldKey::InviteeType)?)?;
-                let tenant_id =
-                    field_value(d, FieldKey::TenantId).map(|v| field_str(v).to_string());
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_link_access_gate(store, &actor_user_id, &tenant_id, now)?;
+                let tenant_id = Some(tenant_id.as_str().to_string());
 
                 let req = Ph1LinkRequest::invite_generate_draft_v1(
                     correlation_id,
@@ -450,6 +451,51 @@ impl SimulationExecutor {
             AccessDecision::Escalate => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "simulation_candidate_dispatch.capreq.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                },
+            )),
+        }
+    }
+
+    fn enforce_link_access_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        let Some(access_instance) =
+            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
+        else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                },
+            ));
+        };
+
+        let gate = store.ph1access_gate_decide(
+            actor_user_id.clone(),
+            access_instance.access_instance_id.clone(),
+            "LINK_INVITE".to_string(),
+            AccessMode::A,
+            access_instance.device_trust_level,
+            false,
+            now,
+        )?;
+
+        match gate.access_decision {
+            AccessDecision::Allow => Ok(()),
+            AccessDecision::Deny => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                },
+            )),
+            AccessDecision::Escalate => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_decision",
                     reason: "ACCESS_AP_REQUIRED",
                 },
             )),
@@ -807,6 +853,45 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_link_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        seed_link_access_instance_with(
+            store,
+            actor,
+            tenant,
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+    }
+
+    fn seed_link_access_instance_with(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+        effective_access_mode: AccessMode,
+        identity_verified: bool,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+    ) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.link_inviter".to_string(),
+                effective_access_mode,
+                "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
+                identity_verified,
+                AccessVerificationLevel::PasscodeTime,
+                device_trust_level,
+                lifecycle_state,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
+    }
+
     #[test]
     fn at_sim_exec_01_ph1x_sim_candidate_create_invite_link_runs_ph1link_generate_draft() {
         let mut store = Ph1fStore::new_in_memory();
@@ -822,16 +907,24 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
 
         let draft = IntentDraft::v1(
             IntentType::CreateInviteLink,
             SchemaVersion(1),
-            vec![IntentField {
-                key: FieldKey::InviteeType,
-                value: FieldValue::normalized("employee".to_string(), "employee".to_string())
-                    .unwrap(),
-                confidence: OverallConfidence::High,
-            }],
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("employee".to_string(), "employee".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
             vec![],
             OverallConfidence::High,
             vec![],
@@ -869,6 +962,333 @@ mod tests {
             },
             _ => panic!("expected link outcome"),
         }
+    }
+
+    #[test]
+    fn at_sim_exec_14_link_access_deny_blocks_governed_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("inviter-link-deny-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Suspended,
+        );
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::verbatim("employee".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        let x = Ph1xResponse::v1(
+            10,
+            31,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-link-deny-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(190),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_15_link_access_escalate_requires_approval_before_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("inviter-link-escalate-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            AccessMode::R,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::verbatim("employee".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        let x = Ph1xResponse::v1(
+            10,
+            32,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-link-escalate-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(191),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_16_link_tenant_scope_mismatch_fails_closed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("inviter-link-scope-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::verbatim("employee".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_2".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        let x = Ph1xResponse::v1(
+            10,
+            33,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-link-scope-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(192),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_17_link_allow_path_idempotent_across_retries() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("inviter-link-allow-retry-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+
+        let mk_x = |turn_id: u64| {
+            let draft = IntentDraft::v1(
+                IntentType::CreateInviteLink,
+                SchemaVersion(1),
+                vec![
+                    IntentField {
+                        key: FieldKey::InviteeType,
+                        value: FieldValue::verbatim("employee".to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::TenantId,
+                        value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                ],
+                vec![],
+                OverallConfidence::High,
+                vec![],
+                ReasonCodeId(1),
+                SensitivityLevel::Private,
+                true,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            Ph1xResponse::v1(
+                10,
+                turn_id,
+                Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+                ThreadState::empty_v1(),
+                None,
+                DeliveryHint::AudibleAndText,
+                ReasonCodeId(1),
+                Some("idem-link-allow-retry-1".to_string()),
+            )
+            .unwrap()
+        };
+
+        let out1 = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(193),
+                &mk_x(34),
+            )
+            .unwrap();
+        let token_1 = match out1 {
+            SimulationDispatchOutcome::Link(Ph1LinkResponse::Ok(ok)) => ok
+                .link_generate_result
+                .expect("link_generate_result")
+                .token_id
+                .as_str()
+                .to_string(),
+            _ => panic!("expected link ok"),
+        };
+
+        let out2 = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(194),
+                &mk_x(35),
+            )
+            .unwrap();
+        let token_2 = match out2 {
+            SimulationDispatchOutcome::Link(Ph1LinkResponse::Ok(ok)) => ok
+                .link_generate_result
+                .expect("link_generate_result")
+                .token_id
+                .as_str()
+                .to_string(),
+            _ => panic!("expected link ok"),
+        };
+
+        assert_eq!(token_1, token_2);
     }
 
     #[test]

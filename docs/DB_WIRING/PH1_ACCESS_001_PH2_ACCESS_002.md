@@ -103,6 +103,9 @@
   - if requester is an in-tenant employee and action is approvable by AP policy, return `ESCALATE` (never silent `DENY`)
   - if `requested_action` requires SMS delivery and `sms_app_setup_complete=false`, return `ESCALATE` with `SMS_APP_SETUP_REQUIRED`
   - return `DENY` only when policy forbids an approval path
+- consumer enforcement rule:
+  - any governed commit path in other engines must execute only when `access_decision=ALLOW`
+  - `DENY` or `ESCALATE` must fail closed (no governed write/side effect until approval/override path resolves)
 
 ### LINK invite requested_action mapping
 - `invitee_type=FAMILY_MEMBER | FRIEND | ASSOCIATE` -> `requested_action=INVITE_PERSONAL`

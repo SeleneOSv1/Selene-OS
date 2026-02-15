@@ -62,6 +62,9 @@
 - `ACCESS_GATE_DECIDE_ROW` must return `ESCALATE` when SMS delivery is requested and `sms_app_setup_complete=false` (`ACCESS_SMS_SETUP_REQUIRED`).
 - `DENY` is valid only when no approval path exists (`ACCESS_DENY_NO_APPROVAL_PATH`).
 - Selene OS orchestrates all escalation delivery and override application; this engine never triggers PH1.BCAST/PH1.DELIVERY directly.
+- callers must treat non-allow decisions as non-executable for governed commits:
+  - `DENY` -> fail closed, no governed commit
+  - `ESCALATE` -> fail closed pending approval/override resolution
 
 ## Audit Emission Requirements Per Capability
 - Write capabilities must emit PH1.J events with:

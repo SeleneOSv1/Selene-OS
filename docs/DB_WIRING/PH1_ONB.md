@@ -93,6 +93,13 @@ Deterministic boundary rules:
   - primary-device proof uses a valid device reference
   - access-instance creation resolves user-scoped identity/access safely
 
+### Access/approval gate prerequisites (governed ONB commits)
+- reads: Access gate decision output (`ALLOW | DENY | ESCALATE`) via Selene OS orchestration for governed ONB commit paths
+- required conditions:
+  - governed ONB commits execute only on `ALLOW`
+  - `DENY` and `ESCALATE` are fail-closed (no commit write or side effect until approval/override path resolves)
+  - policy-routed approval flows remain OS-orchestrated (`PH1.ACCESS` + CAPREQ/AP policy path where required)
+
 ### Pinned context load rule (clarify loop source of truth)
 - on session start, PH1.ONB resolves activated link context by `token_id` and pins schema context (`pinned_schema_id`, `pinned_schema_version`, `pinned_overlay_set_id`, `pinned_selector_snapshot`).
 - this deterministic pinned context drives one-question-at-a-time clarify and prevents repeats.

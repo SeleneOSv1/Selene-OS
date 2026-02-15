@@ -58,6 +58,13 @@
   - when tenant scope is provided, inviter `user_id` must match that tenant scope
 - why this read is required: fail closed before draft/token creation
 
+### Access/approval prerequisites (inviter-governed operations)
+- reads: Access gate decision output (`ALLOW | DENY | ESCALATE`) via Selene OS for inviter-initiated governed operations (`generate draft`, `draft update`, `revoke`, delivery-governed send orchestration)
+- required conditions:
+  - governed inviter-side LINK commits execute only on `ALLOW`
+  - `DENY` and `ESCALATE` are fail-closed (no governed LINK write/side effect until approval/override path resolves)
+  - invitee token-holder open/activate path remains enforced by token lifecycle + device-binding guards and does not bypass Access policy for inviter-governed writes
+
 ### Draft/token lookup
 - reads: `onboarding_drafts`, `onboarding_link_tokens`
 - keys/joins used: `token_id -> draft_id`
