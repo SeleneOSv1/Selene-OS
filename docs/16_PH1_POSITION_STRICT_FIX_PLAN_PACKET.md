@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP3_COMPLETED_PENDING_STEP4
+Status: STEP4_COMPLETED_PENDING_STEP5
 
 ## 1) Purpose
 
@@ -335,7 +335,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
-- Step 4: NOT_STARTED
+- Step 4: COMPLETED (2026-02-15)
 - Step 5: NOT_STARTED
 - Step 6: NOT_STARTED
 - Step 7: NOT_STARTED
@@ -349,5 +349,8 @@ Step 2 note:
 
 Step 3 note:
 - Typed repo parity gate is already satisfied: `Ph1PositionRepo` already includes requirements-schema row methods (`create_draft_row`, `update_commit_row`, `activate_commit_row`) and concrete wiring in `repo.rs`; no additional code delta required in this step.
+
+Step 4 note:
+- Storage behavior parity gate is already satisfied in `ph1f.rs`: no ignored placeholder fields remain (`_change_reason`/`_apply_scope` absent), conditional required rules are predicate-evaluated, schema update persists `change_reason`, schema activation persists `apply_scope`, and PH1.POSITION DB wiring tests pass.
 
 END OF PACKET
