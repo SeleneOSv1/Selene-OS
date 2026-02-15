@@ -86,8 +86,9 @@ Related docs:
 - Cross-engine integration closure checkpoint: commit `a22c5fe` (`docs/22_CROSS_ENGINE_INTEGRATION_PACKET.md`, Step 8 complete, clean tree).
 - PH1.POSITION schema ownership closure checkpoint: commit `35a25bc` (`docs/23_PH1_POSITION_SCHEMA_OWNERSHIP_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 - PH1.LINK closure refresh checkpoint: commit `0c6d9ec` (`docs/24_PH1_LINK_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
+- PH1.ONB schema-driven closure checkpoint: commit `a2f7aa8` (`docs/25_PH1_ONB_SCHEMA_DRIVEN_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 
 ## Next Strict Packet
-- Next focus: PH1.ONB schema-driven requirement closure (ONB must execute pinned schema requirements only; no hardcoded requirement gates).
-- Canonical packet: `docs/25_PH1_ONB_SCHEMA_DRIVEN_STRICT_FIX_PLAN_PACKET.md`.
+- Next focus: PH1.POSITION requirements-schema ownership closure refresh (POSITION remains sole schema-truth owner; ONB remains executor-only).
+- Canonical packet: `docs/26_PH1_POSITION_SCHEMA_OWNERSHIP_STRICT_FIX_PLAN_PACKET.md`.
 - Execution mode: strict 8-step order with step-level acceptance checks; do not skip steps.
