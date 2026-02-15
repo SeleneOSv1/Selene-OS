@@ -39,7 +39,7 @@
 - idempotency key rule:
   - dedupe by `(tenant_id, capreq_id, idempotency_key)`
 
-### `CAPREQ_SUBMIT_COMMIT` (commit)
+### `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT` (commit)
 - writes: append `capreq_ledger`, update `capreq_current`
 - idempotency key rule:
   - dedupe by `(tenant_id, capreq_id, idempotency_key)`
@@ -50,6 +50,16 @@
   - dedupe by `(tenant_id, capreq_id, idempotency_key)`
 
 ### `CAPREQ_REJECT_COMMIT` (commit)
+- writes: append `capreq_ledger`, update `capreq_current`
+- idempotency key rule:
+  - dedupe by `(tenant_id, capreq_id, idempotency_key)`
+
+### `CAPREQ_FULFILL_COMMIT` (commit)
+- writes: append `capreq_ledger`, update `capreq_current`
+- idempotency key rule:
+  - dedupe by `(tenant_id, capreq_id, idempotency_key)`
+
+### `CAPREQ_CANCEL_REVOKE` (revoke)
 - writes: append `capreq_ledger`, update `capreq_current`
 - idempotency key rule:
   - dedupe by `(tenant_id, capreq_id, idempotency_key)`

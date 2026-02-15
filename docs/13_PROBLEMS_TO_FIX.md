@@ -427,3 +427,19 @@ For each item:
   - expected:
     - packet 17 shows superseded status + supersession note.
     - packet 20 shows `Status: EXECUTED_COMMITTED`.
+
+## PH1.CAPREQ strict packet execution status (2026-02-15, Step 1 docs lock started)
+
+- Packet reference:
+  - `docs/21_PH1_CAPREQ_STRICT_FIX_PLAN_PACKET.md`
+- Execution status:
+  - Step 1 complete (docs lock)
+  - Step 2 not started
+  - Step 3 not started
+  - Step 4 not started
+- Step 1 lock actions:
+  - normalized DB wiring simulation name from `CAPREQ_SUBMIT_COMMIT` to canonical `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT`.
+  - expanded DB wiring lifecycle write coverage to include `CAPREQ_FULFILL_COMMIT` and `CAPREQ_CANCEL_REVOKE`.
+- Step 1 proof command:
+  - `rg -n "CAPREQ_CREATE_DRAFT|CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT|CAPREQ_APPROVE_COMMIT|CAPREQ_REJECT_COMMIT|CAPREQ_FULFILL_COMMIT|CAPREQ_CANCEL_REVOKE" docs/DB_WIRING/PH1_CAPREQ.md docs/ECM/PH1_CAPREQ.md docs/BLUEPRINTS/CAPREQ_MANAGE.md docs/08_SIMULATION_CATALOG.md crates/selene_kernel_contracts/src/ph1capreq.rs`
+  - `rg -n "CAPREQ_SUBMIT_COMMIT" docs/DB_WIRING/PH1_CAPREQ.md docs/ECM/PH1_CAPREQ.md docs/BLUEPRINTS/CAPREQ_MANAGE.md docs/08_SIMULATION_CATALOG.md -S` (expected no matches)
