@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP7_COMPLETED_PENDING_STEP8
+Status: STEP8_COMPLETED
 
 ## 1) Purpose
 
@@ -183,7 +183,7 @@ Checkpoint expectations:
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15)
 - Step 7: COMPLETED (2026-02-15)
-- Step 8: PENDING
+- Step 8: COMPLETED (2026-02-15)
 
 Step 1 note:
 - Updated `docs/02_BUILD_PLAN.md` checkpoint/pointer to close packet 22 and set this packet as next canonical scope.
@@ -247,6 +247,20 @@ Step 7 note:
   - `cargo test -p selene_os onb_backfill_start_refuses_new_hires_only_scope`
   - `cargo test -p selene_os onb_backfill_current_and_new_notify_loop_then_complete`
   - `cargo test -p selene_os onb_fail_closed_when_required_verification_gates_missing`
+
+Step 8 note:
+- Final proof + freeze checkpoint completed from clean tree.
+- Proof run:
+  - `scripts/selene_design_readiness_audit.sh`
+  - `cargo test --workspace`
+  - `git status --short`
+  - `git rev-parse HEAD`
+  - `git log -1 --oneline`
+- Clean proof values:
+  - `AUDIT_TREE_STATE: CLEAN`
+  - `AUDIT_VALIDITY_NOTE: closure decisions may use this run directly.`
+  - `HEAD: af975595b1c085813a36e1ea7c4732aae4e61bc2`
+  - `LAST COMMIT: af97559 Complete PH1.POSITION schema ownership packet through Step 7`
 
 ## 6) Done Criteria
 
