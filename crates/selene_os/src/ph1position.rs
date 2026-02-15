@@ -9,6 +9,7 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1position::{
     Ph1PositionOk, Ph1PositionRequest, Ph1PositionResponse, PositionBandPolicyCheckResult,
     PositionCreateDraftResult, PositionLifecycleResult, PositionLifecycleState, PositionRequest,
+    PositionSchemaApplyScope,
     PositionValidateAuthCompanyResult, PositionValidationStatus, POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
     POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT, POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
     POSITION_SIM_001_CREATE_DRAFT, POSITION_SIM_004_ACTIVATE_COMMIT,
@@ -344,13 +345,19 @@ impl Ph1PositionRuntime {
                     reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
                 )?;
 
+                let state_to = match out.apply_scope_result {
+                    PositionSchemaApplyScope::NewHiresOnly => "REQUIREMENTS_SCHEMA_ACTIVE_NEW_HIRES_ONLY",
+                    PositionSchemaApplyScope::CurrentAndNew => {
+                        "REQUIREMENTS_SCHEMA_ACTIVE_CURRENT_AND_NEW"
+                    }
+                };
                 self.audit_transition(
                     store,
                     req.now,
                     req.correlation_id,
                     req.turn_id,
                     "REQUIREMENTS_SCHEMA_DRAFT",
-                    "REQUIREMENTS_SCHEMA_ACTIVE",
+                    state_to,
                     reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
                     Some(r.idempotency_key.clone()),
                 )?;
@@ -383,6 +390,31 @@ impl Ph1PositionRuntime {
         reason_code: ReasonCodeId,
         idempotency_key: Option<String>,
     ) -> Result<(), StorageError> {
+        self.audit_transition_with_details(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            state_from,
+            state_to,
+            &[],
+            reason_code,
+            idempotency_key,
+        )
+    }
+
+    fn audit_transition_with_details(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        state_from: &'static str,
+        state_to: &'static str,
+        detail_entries: &[(&'static str, String)],
+        reason_code: ReasonCodeId,
+        idempotency_key: Option<String>,
+    ) -> Result<(), StorageError> {
         let mut entries: BTreeMap<PayloadKey, PayloadValue> = BTreeMap::new();
         entries.insert(
             PayloadKey::new("state_from").map_err(StorageError::ContractViolation)?,
@@ -392,6 +424,12 @@ impl Ph1PositionRuntime {
             PayloadKey::new("state_to").map_err(StorageError::ContractViolation)?,
             PayloadValue::new(state_to).map_err(StorageError::ContractViolation)?,
         );
+        for (k, v) in detail_entries {
+            entries.insert(
+                PayloadKey::new(*k).map_err(StorageError::ContractViolation)?,
+                PayloadValue::new(v.as_str()).map_err(StorageError::ContractViolation)?,
+            );
+        }
         let payload_min = AuditPayloadMin::v1(entries).map_err(StorageError::ContractViolation)?;
 
         let engine = AuditEngine::Other("ph1_position".to_string());
@@ -427,8 +465,14 @@ mod tests {
         Ph1PositionRequest, Ph1PositionResponse, PositionActivateCommitRequest,
         PositionBandPolicyCheckRequest, PositionCreateDraftRequest,
         PositionLifecycleState as ContractPositionLifecycleState, PositionRequest,
-        PositionRequestedAction, PositionRetireOrSuspendCommitRequest, PositionScheduleType,
-        PositionSimulationType, PositionValidateAuthCompanyRequest, PH1POSITION_CONTRACT_VERSION,
+        PositionRequestedAction, PositionRequirementEvidenceMode, PositionRequirementExposureRule,
+        PositionRequirementFieldSpec, PositionRequirementFieldType, PositionRequirementRuleType,
+        PositionRequirementSensitivity, PositionRequirementsSchemaActivateCommitRequest,
+        PositionRequirementsSchemaCreateDraftRequest, PositionRequirementsSchemaUpdateCommitRequest,
+        PositionRetireOrSuspendCommitRequest, PositionScheduleType, PositionSchemaApplyScope,
+        PositionSchemaSelectorSnapshot, PositionSimulationType, PositionValidateAuthCompanyRequest,
+        PH1POSITION_CONTRACT_VERSION, POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+        POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT, POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
         POSITION_SIM_002_VALIDATE_AUTH_COMPANY, POSITION_SIM_003_BAND_POLICY_CHECK,
     };
     use selene_storage::ph1f::{
@@ -468,6 +512,30 @@ mod tests {
             })
             .unwrap();
         (store, actor)
+    }
+
+    fn selectors() -> PositionSchemaSelectorSnapshot {
+        PositionSchemaSelectorSnapshot {
+            company_size: Some("SMALL".to_string()),
+            industry_code: Some("RETAIL".to_string()),
+            jurisdiction: Some("CN".to_string()),
+            position_family: Some("STORE".to_string()),
+        }
+    }
+
+    fn required_field(field_key: &str) -> PositionRequirementFieldSpec {
+        PositionRequirementFieldSpec {
+            field_key: field_key.to_string(),
+            field_type: PositionRequirementFieldType::String,
+            required_rule: PositionRequirementRuleType::Always,
+            required_predicate_ref: None,
+            validation_ref: None,
+            sensitivity: PositionRequirementSensitivity::Private,
+            exposure_rule: PositionRequirementExposureRule::InternalOnly,
+            evidence_mode: PositionRequirementEvidenceMode::Attestation,
+            prompt_short: format!("Provide {field_key}"),
+            prompt_long: format!("Please provide {field_key}"),
+        }
     }
 
     #[test]
@@ -594,6 +662,188 @@ mod tests {
                 ok.lifecycle_result.unwrap().lifecycle_state,
                 ContractPositionLifecycleState::Suspended
             ),
+            Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
+        }
+    }
+
+    #[test]
+    fn ph1position_requirements_schema_create_update_activate_scope_outputs() {
+        let rt = Ph1PositionRuntime;
+        let (mut store, actor) = setup_store();
+
+        let create_position_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(1),
+            now: MonotonicTimeNs(now().0 + 11),
+            simulation_id: POSITION_SIM_001_CREATE_DRAFT.to_string(),
+            simulation_type: PositionSimulationType::Draft,
+            request: PositionRequest::CreateDraft(PositionCreateDraftRequest {
+                actor_user_id: actor.clone(),
+                tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1").unwrap(),
+                company_id: "company_1".to_string(),
+                position_title: "Warehouse Manager".to_string(),
+                department: "Operations".to_string(),
+                jurisdiction: "CN".to_string(),
+                schedule_type: PositionScheduleType::FullTime,
+                permission_profile_ref: "profile_wh_mgr".to_string(),
+                compensation_band_ref: "band_l4".to_string(),
+                idempotency_key: "rs-create-position".to_string(),
+            }),
+        };
+        let position_id = match rt.run(&mut store, &create_position_req).unwrap() {
+            Ph1PositionResponse::Ok(ok) => ok.create_draft_result.unwrap().position_id,
+            Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
+        };
+
+        let activate_position_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(now().0 + 12),
+            simulation_id: POSITION_SIM_004_ACTIVATE_COMMIT.to_string(),
+            simulation_type: PositionSimulationType::Commit,
+            request: PositionRequest::ActivateCommit(PositionActivateCommitRequest {
+                actor_user_id: actor.clone(),
+                tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1").unwrap(),
+                position_id: position_id.clone(),
+                idempotency_key: "rs-activate-position".to_string(),
+            }),
+        };
+        assert!(matches!(
+            rt.run(&mut store, &activate_position_req).unwrap(),
+            Ph1PositionResponse::Ok(_)
+        ));
+
+        let create_schema_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(3),
+            now: MonotonicTimeNs(now().0 + 13),
+            simulation_id: POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT.to_string(),
+            simulation_type: PositionSimulationType::Draft,
+            request: PositionRequest::RequirementsSchemaCreateDraft(
+                PositionRequirementsSchemaCreateDraftRequest {
+                    actor_user_id: actor.clone(),
+                    tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1")
+                        .unwrap(),
+                    company_id: "company_1".to_string(),
+                    position_id: position_id.clone(),
+                    schema_version_id: "schema_v1".to_string(),
+                    selectors: selectors(),
+                    field_specs: vec![required_field("sender_verification")],
+                    idempotency_key: "rs-schema-create".to_string(),
+                },
+            ),
+        };
+        let create_schema_out = rt.run(&mut store, &create_schema_req).unwrap();
+        match create_schema_out {
+            Ph1PositionResponse::Ok(ok) => {
+                let result = ok.requirements_schema_draft_result.unwrap();
+                assert_eq!(result.schema_version_id, "schema_v1");
+                assert_eq!(result.field_count, 1);
+            }
+            Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
+        }
+
+        let update_schema_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(4),
+            now: MonotonicTimeNs(now().0 + 14),
+            simulation_id: POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT.to_string(),
+            simulation_type: PositionSimulationType::Commit,
+            request: PositionRequest::RequirementsSchemaUpdateCommit(
+                PositionRequirementsSchemaUpdateCommitRequest {
+                    actor_user_id: actor.clone(),
+                    tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1")
+                        .unwrap(),
+                    company_id: "company_1".to_string(),
+                    position_id: position_id.clone(),
+                    schema_version_id: "schema_v1".to_string(),
+                    selectors: selectors(),
+                    field_specs: vec![
+                        required_field("sender_verification"),
+                        required_field("employee_photo"),
+                    ],
+                    change_reason: "Expand evidence requirements".to_string(),
+                    idempotency_key: "rs-schema-update".to_string(),
+                },
+            ),
+        };
+        let update_schema_out = rt.run(&mut store, &update_schema_req).unwrap();
+        match update_schema_out {
+            Ph1PositionResponse::Ok(ok) => {
+                let result = ok.requirements_schema_draft_result.unwrap();
+                assert_eq!(result.schema_version_id, "schema_v1");
+                assert_eq!(result.field_count, 2);
+            }
+            Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
+        }
+
+        let activate_schema_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(5),
+            now: MonotonicTimeNs(now().0 + 15),
+            simulation_id: POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT.to_string(),
+            simulation_type: PositionSimulationType::Commit,
+            request: PositionRequest::RequirementsSchemaActivateCommit(
+                PositionRequirementsSchemaActivateCommitRequest {
+                    actor_user_id: actor.clone(),
+                    tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1")
+                        .unwrap(),
+                    company_id: "company_1".to_string(),
+                    position_id: position_id.clone(),
+                    schema_version_id: "schema_v1".to_string(),
+                    apply_scope: PositionSchemaApplyScope::CurrentAndNew,
+                    idempotency_key: "rs-schema-activate".to_string(),
+                },
+            ),
+        };
+        let activate_schema_out = rt.run(&mut store, &activate_schema_req).unwrap();
+        match activate_schema_out {
+            Ph1PositionResponse::Ok(ok) => {
+                let result = ok.requirements_schema_lifecycle_result.unwrap();
+                assert_eq!(
+                    result.apply_scope_result,
+                    PositionSchemaApplyScope::CurrentAndNew
+                );
+                assert!(result.backfill_handoff_required);
+            }
+            Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
+        }
+
+        let replay_activate_req = Ph1PositionRequest {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            correlation_id: CorrelationId(11),
+            turn_id: TurnId(6),
+            now: MonotonicTimeNs(now().0 + 16),
+            simulation_id: POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT.to_string(),
+            simulation_type: PositionSimulationType::Commit,
+            request: PositionRequest::RequirementsSchemaActivateCommit(
+                PositionRequirementsSchemaActivateCommitRequest {
+                    actor_user_id: actor,
+                    tenant_id: selene_kernel_contracts::ph1position::TenantId::new("tenant_1")
+                        .unwrap(),
+                    company_id: "company_1".to_string(),
+                    position_id,
+                    schema_version_id: "schema_v1".to_string(),
+                    apply_scope: PositionSchemaApplyScope::NewHiresOnly,
+                    idempotency_key: "rs-schema-activate".to_string(),
+                },
+            ),
+        };
+        let replay_activate_out = rt.run(&mut store, &replay_activate_req).unwrap();
+        match replay_activate_out {
+            Ph1PositionResponse::Ok(ok) => {
+                let result = ok.requirements_schema_lifecycle_result.unwrap();
+                assert_eq!(
+                    result.apply_scope_result,
+                    PositionSchemaApplyScope::CurrentAndNew
+                );
+                assert!(result.backfill_handoff_required);
+            }
             Ph1PositionResponse::Refuse(_) => panic!("expected ok"),
         }
     }

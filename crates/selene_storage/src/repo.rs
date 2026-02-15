@@ -39,7 +39,9 @@ use selene_kernel_contracts::ph1pbs::{
 };
 use selene_kernel_contracts::ph1position::{
     PositionId, PositionLifecycleState, PositionPolicyResult, PositionRecord,
-    PositionRequestedAction, PositionScheduleType, PositionValidationStatus, TenantId,
+    PositionRequestedAction, PositionRequirementFieldSpec, PositionRequirementsSchemaDraftResult,
+    PositionRequirementsSchemaLifecycleResult, PositionSchemaApplyScope,
+    PositionSchemaSelectorSnapshot, PositionScheduleType, PositionValidationStatus, TenantId,
 };
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
@@ -1173,6 +1175,54 @@ pub trait Ph1PositionRepo {
         simulation_id: &str,
         reason_code: ReasonCodeId,
     ) -> Result<PositionRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_create_draft_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        change_reason: String,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_activate_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        apply_scope: PositionSchemaApplyScope,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaLifecycleResult, StorageError>;
 
     fn ph1position_row(
         &self,
@@ -3105,6 +3155,96 @@ impl Ph1PositionRepo for Ph1fStore {
             tenant_id,
             position_id,
             requested_state,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_create_draft_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError> {
+        self.ph1position_requirements_schema_create_draft(
+            now,
+            actor_user_id,
+            tenant_id,
+            company_id,
+            position_id,
+            schema_version_id,
+            selectors,
+            field_specs,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        change_reason: String,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError> {
+        self.ph1position_requirements_schema_update_commit(
+            now,
+            actor_user_id,
+            tenant_id,
+            company_id,
+            position_id,
+            schema_version_id,
+            selectors,
+            field_specs,
+            change_reason,
+            idempotency_key,
+            simulation_id,
+            reason_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1position_requirements_schema_activate_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        apply_scope: PositionSchemaApplyScope,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaLifecycleResult, StorageError> {
+        self.ph1position_requirements_schema_activate_commit(
+            now,
+            actor_user_id,
+            tenant_id,
+            company_id,
+            position_id,
+            schema_version_id,
+            apply_scope,
             idempotency_key,
             simulation_id,
             reason_code,

@@ -9,6 +9,7 @@
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+- Launch policy: this process is entered only from explicit `CURRENT_AND_NEW` schema activation scope in `ONB_SCHEMA_MANAGE`.
 
 ## 2) Required Inputs
 - `tenant_id`
@@ -18,6 +19,7 @@
 - `schema_version_id`
 - `rollout_scope` (`CURRENT_AND_NEW`)
 - `idempotency_key`
+- `activation_handoff_ref` (deterministic link to `ONB_SCHEMA_MANAGE` activation output)
 
 ## 3) Success Output Schema
 ```text

@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS position_requirements_schema_ledger (
     selector_snapshot_json JSONB NOT NULL,
     field_specs_json JSONB NOT NULL,
     overlay_ops_json JSONB,
+    change_reason TEXT,
+    apply_scope TEXT,
     reason_code BIGINT NOT NULL,
     actor_user_id TEXT NOT NULL REFERENCES identities(user_id),
     created_at BIGINT NOT NULL,
@@ -22,6 +24,18 @@ CREATE TABLE IF NOT EXISTS position_requirements_schema_ledger (
             'ACTIVATE_COMMIT',
             'RETIRE_COMMIT'
         )
+    ),
+    CHECK (
+        change_reason IS NULL
+        OR (length(trim(change_reason)) > 0 AND length(change_reason) <= 256)
+    ),
+    CHECK (
+        (action = 'UPDATE_COMMIT' AND change_reason IS NOT NULL)
+        OR (action <> 'UPDATE_COMMIT' AND change_reason IS NULL)
+    ),
+    CHECK (
+        (action = 'ACTIVATE_COMMIT' AND apply_scope IN ('NEW_HIRES_ONLY', 'CURRENT_AND_NEW'))
+        OR (action <> 'ACTIVATE_COMMIT' AND apply_scope IS NULL)
     )
 );
 

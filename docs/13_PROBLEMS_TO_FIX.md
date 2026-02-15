@@ -1,6 +1,6 @@
 # Problems to fix
 
-Last updated: 2026-02-14
+Last updated: 2026-02-15
 
 ## Master list (from your audit request)
 
@@ -45,6 +45,15 @@ For each item:
 - retired path:
   - legacy pasted audit command blocks are not the primary path and should not be used for closure proofs.
   - if a paste-run is unavoidable, paste the current contents of `scripts/selene_design_readiness_audit.sh` only.
+
+## PH1.POSITION Strict Fix Packet (Canonical)
+
+- packet file:
+  - `docs/16_PH1_POSITION_STRICT_FIX_PLAN_PACKET.md`
+- execution rule:
+  - follow steps in exact order.
+  - do not start next step until current step acceptance checks pass.
+  - if scope changes, amend the packet first, then continue.
 
 ## Proof log
 
@@ -350,3 +359,30 @@ For each item:
   - `rg -n 'TODO|BLOCKER|WIP' docs/COVERAGE_MATRIX.md` -> `EXIT:1`
 - Proof command 3 (item index continuity includes 19):
   - `rg -n '^\\| 19 \\|' docs/13_PROBLEMS_TO_FIX.md` -> `EXIT:0`
+
+## PH1.POSITION strict packet execution status (2026-02-15)
+
+- Packet reference:
+  - `docs/16_PH1_POSITION_STRICT_FIX_PLAN_PACKET.md`
+- Execution status:
+  - Step 1 complete (docs lock)
+  - Step 2 complete (kernel contract delta)
+  - Step 3 complete (typed repo parity)
+  - Step 4 complete (storage behavior fixes)
+  - Step 5 complete (runtime wiring)
+  - Step 6 complete (migration parity)
+  - Step 7 complete (AT-05/AT-06 + runtime requirements-schema lifecycle tests)
+  - Step 8 complete (final closure gates + tracker update)
+- Step 8 proof command 1 (design readiness audit):
+  - `scripts/selene_design_readiness_audit.sh` -> `AUDIT_EXIT:0`
+  - key lines:
+    - `AUDIT_TREE_STATE: DIRTY`
+    - `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`
+    - `END OF AUDIT`
+  - note: Section 6 legacy Link lines are expected `LEGACY_DO_NOT_WIRE` compliance evidence.
+- Step 8 proof command 2 (workspace verification):
+  - `cargo test --workspace` -> `WORKSPACE_TEST_EXIT:0`
+  - no `FAILED` test result lines.
+- Closure note:
+  - PH1.POSITION packet acceptance checks pass end-to-end.
+  - repo remains dirty until this patch set is committed; closure should be tied to pinned commit hash + dirty listing or rerun on clean tree.

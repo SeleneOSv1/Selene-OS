@@ -114,6 +114,12 @@ pub enum PositionSchemaApplyScope {
     CurrentAndNew,
 }
 
+impl PositionSchemaApplyScope {
+    pub fn requires_backfill_handoff(self) -> bool {
+        matches!(self, Self::CurrentAndNew)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PositionRequirementFieldSpec {
     pub field_key: String,
@@ -982,20 +988,22 @@ pub struct PositionRequirementsSchemaLifecycleResult {
     pub schema_version: SchemaVersion,
     pub position_id: PositionId,
     pub schema_version_id: String,
-    pub active_for_new_hires: bool,
+    pub apply_scope_result: PositionSchemaApplyScope,
+    pub backfill_handoff_required: bool,
 }
 
 impl PositionRequirementsSchemaLifecycleResult {
     pub fn v1(
         position_id: PositionId,
         schema_version_id: String,
-        active_for_new_hires: bool,
+        apply_scope_result: PositionSchemaApplyScope,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1POSITION_CONTRACT_VERSION,
             position_id,
             schema_version_id,
-            active_for_new_hires,
+            backfill_handoff_required: apply_scope_result.requires_backfill_handoff(),
+            apply_scope_result,
         };
         r.validate()?;
         Ok(r)
@@ -1016,6 +1024,12 @@ impl Validate for PositionRequirementsSchemaLifecycleResult {
             &self.schema_version_id,
             64,
         )?;
+        if self.backfill_handoff_required != self.apply_scope_result.requires_backfill_handoff() {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_lifecycle_result.backfill_handoff_required",
+                reason: "must match apply_scope_result",
+            });
+        }
         Ok(())
     }
 }

@@ -494,12 +494,15 @@ pub struct Ph1fStore {
     position_requirements_schema_ledger: Vec<PositionRequirementsSchemaLedgerRecord>,
     position_requirements_schema_current:
         BTreeMap<(TenantId, PositionId), PositionRequirementsSchemaCurrentRecord>,
+    // (tenant_id, position_id, schema_version_id, idempotency_key) -> schema_event_id
     position_requirements_schema_create_idempotency_index:
-        BTreeMap<(TenantId, PositionId, String), u64>,
+        BTreeMap<(TenantId, PositionId, String, String), u64>,
+    // (tenant_id, position_id, schema_version_id, idempotency_key) -> schema_event_id
     position_requirements_schema_update_idempotency_index:
-        BTreeMap<(TenantId, PositionId, String), u64>,
+        BTreeMap<(TenantId, PositionId, String, String), u64>,
+    // (tenant_id, position_id, schema_version_id, idempotency_key) -> apply_scope
     position_requirements_schema_activate_idempotency_index:
-        BTreeMap<(TenantId, PositionId, String), String>,
+        BTreeMap<(TenantId, PositionId, String, String), PositionSchemaApplyScope>,
 
     // ------------------------
     // PH1.W (Wake) - enrollment/session persistence + runtime event ledger.
@@ -952,6 +955,8 @@ pub struct PositionRequirementsSchemaLedgerRecord {
     pub action: PositionRequirementsSchemaLedgerAction,
     pub selector_snapshot: PositionSchemaSelectorSnapshot,
     pub field_specs: Vec<PositionRequirementFieldSpec>,
+    pub change_reason: Option<String>,
+    pub apply_scope: Option<PositionSchemaApplyScope>,
     pub reason_code: ReasonCodeId,
     pub actor_user_id: UserId,
     pub created_at: MonotonicTimeNs,
@@ -3305,6 +3310,58 @@ impl Ph1fStore {
         tenant_hint: Option<&str>,
         field_key: &str,
     ) -> Result<bool, StorageError> {
+        fn selector_value<'a>(
+            selectors: &'a PositionSchemaSelectorSnapshot,
+            selector_key: &str,
+        ) -> Result<Option<&'a str>, StorageError> {
+            match selector_key {
+                "company_size" => Ok(selectors.company_size.as_deref()),
+                "industry_code" => Ok(selectors.industry_code.as_deref()),
+                "jurisdiction" => Ok(selectors.jurisdiction.as_deref()),
+                "position_family" => Ok(selectors.position_family.as_deref()),
+                _ => Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "position_requirement_field_spec.required_predicate_ref",
+                    reason: "selector key must be one of company_size|industry_code|jurisdiction|position_family",
+                })),
+            }
+        }
+
+        fn required_by_rule(
+            spec: &PositionRequirementFieldSpec,
+            selectors: &PositionSchemaSelectorSnapshot,
+        ) -> Result<bool, StorageError> {
+            match spec.required_rule {
+                PositionRequirementRuleType::Always => Ok(true),
+                PositionRequirementRuleType::Conditional => {
+                    let pred = spec.required_predicate_ref.as_deref().ok_or(
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "position_requirement_field_spec.required_predicate_ref",
+                            reason: "must be present when required_rule=Conditional",
+                        }),
+                    )?;
+                    let (lhs_raw, rhs_raw) = pred.split_once('=').or_else(|| pred.split_once(':')).ok_or(
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "position_requirement_field_spec.required_predicate_ref",
+                            reason: "must use [selector.]<key>=<value> or [selector.]<key>:<value>",
+                        }),
+                    )?;
+                    let lhs = lhs_raw.trim();
+                    let rhs = rhs_raw.trim();
+                    if lhs.is_empty() || rhs.is_empty() {
+                        return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "position_requirement_field_spec.required_predicate_ref",
+                            reason: "selector key and selector value must be non-empty",
+                        }));
+                    }
+                    let selector_key = lhs.strip_prefix("selector.").unwrap_or(lhs);
+                    let Some(actual) = selector_value(selectors, selector_key)? else {
+                        return Ok(false);
+                    };
+                    Ok(actual == rhs)
+                }
+            }
+        }
+
         let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
             table: "links.token_id",
             key: token_id.as_str().to_string(),
@@ -3335,13 +3392,17 @@ impl Ph1fStore {
             return Ok(false);
         };
 
-        Ok(current.active_field_specs.iter().any(|spec| {
-            spec.field_key == field_key
-                && matches!(
-                    spec.required_rule,
-                    PositionRequirementRuleType::Always | PositionRequirementRuleType::Conditional
-                )
-        }))
+        for spec in current
+            .active_field_specs
+            .iter()
+            .filter(|spec| spec.field_key == field_key)
+        {
+            if required_by_rule(spec, &current.active_selector_snapshot)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn ph1onb_field_required_for_session(
@@ -9117,7 +9178,12 @@ impl Ph1fStore {
             ));
         }
 
-        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
+        let idx = (
+            tenant_id.clone(),
+            position_id.clone(),
+            schema_version_id.clone(),
+            idempotency_key.clone(),
+        );
         if self
             .position_requirements_schema_create_idempotency_index
             .contains_key(&idx)
@@ -9176,6 +9242,8 @@ impl Ph1fStore {
                 action: PositionRequirementsSchemaLedgerAction::CreateDraft,
                 selector_snapshot: selectors,
                 field_specs: field_specs.clone(),
+                change_reason: None,
+                apply_scope: None,
                 reason_code,
                 actor_user_id,
                 created_at: now,
@@ -9203,7 +9271,7 @@ impl Ph1fStore {
         schema_version_id: String,
         selectors: PositionSchemaSelectorSnapshot,
         field_specs: Vec<PositionRequirementFieldSpec>,
-        _change_reason: String,
+        change_reason: String,
         idempotency_key: String,
         simulation_id: &str,
         reason_code: ReasonCodeId,
@@ -9238,8 +9306,21 @@ impl Ph1fStore {
                 },
             ));
         }
+        if change_reason.trim().is_empty() || change_reason.len() > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.change_reason",
+                    reason: "must be non-empty and <= 256 chars",
+                },
+            ));
+        }
 
-        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
+        let idx = (
+            tenant_id.clone(),
+            position_id.clone(),
+            schema_version_id.clone(),
+            idempotency_key.clone(),
+        );
         if self
             .position_requirements_schema_update_idempotency_index
             .contains_key(&idx)
@@ -9267,6 +9348,14 @@ impl Ph1fStore {
                 },
             ));
         }
+        if position.lifecycle_state != PositionLifecycleState::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.position_lifecycle_state",
+                    reason: "position must be ACTIVE",
+                },
+            ));
+        }
 
         let schema_event_id = self.next_position_requirements_schema_event_id;
         self.next_position_requirements_schema_event_id = self
@@ -9283,6 +9372,8 @@ impl Ph1fStore {
                 action: PositionRequirementsSchemaLedgerAction::UpdateCommit,
                 selector_snapshot: selectors,
                 field_specs: field_specs.clone(),
+                change_reason: Some(change_reason),
+                apply_scope: None,
                 reason_code,
                 actor_user_id,
                 created_at: now,
@@ -9308,7 +9399,7 @@ impl Ph1fStore {
         company_id: String,
         position_id: PositionId,
         schema_version_id: String,
-        _apply_scope: PositionSchemaApplyScope,
+        apply_scope: PositionSchemaApplyScope,
         idempotency_key: String,
         simulation_id: &str,
         reason_code: ReasonCodeId,
@@ -9336,15 +9427,20 @@ impl Ph1fStore {
             ));
         }
 
-        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
-        if let Some(existing_schema_id) = self
+        let idx = (
+            tenant_id.clone(),
+            position_id.clone(),
+            schema_version_id.clone(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_scope) = self
             .position_requirements_schema_activate_idempotency_index
             .get(&idx)
         {
             return PositionRequirementsSchemaLifecycleResult::v1(
                 position_id,
-                existing_schema_id.clone(),
-                true,
+                schema_version_id,
+                *existing_scope,
             )
             .map_err(StorageError::ContractViolation);
         }
@@ -9361,6 +9457,14 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1position_requirements_schema_activate_commit.company_id",
                     reason: "must match position.company_id",
+                },
+            ));
+        }
+        if position.lifecycle_state != PositionLifecycleState::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_activate_commit.position_lifecycle_state",
+                    reason: "position must be ACTIVE",
                 },
             ));
         }
@@ -9416,15 +9520,17 @@ impl Ph1fStore {
                 action: PositionRequirementsSchemaLedgerAction::ActivateCommit,
                 selector_snapshot: latest.selector_snapshot,
                 field_specs: latest.field_specs,
+                change_reason: None,
+                apply_scope: Some(apply_scope),
                 reason_code,
                 actor_user_id,
                 created_at: now,
                 idempotency_key: Some(idempotency_key.clone()),
             });
         self.position_requirements_schema_activate_idempotency_index
-            .insert(idx, schema_version_id.clone());
+            .insert(idx, apply_scope);
 
-        PositionRequirementsSchemaLifecycleResult::v1(position_id, schema_version_id, true)
+        PositionRequirementsSchemaLifecycleResult::v1(position_id, schema_version_id, apply_scope)
             .map_err(StorageError::ContractViolation)
     }
 

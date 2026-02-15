@@ -33,6 +33,13 @@
 - invariants:
   - active schema version is unique per `(tenant_id, position_id)`
   - activation is monotonic and auditable (no silent in-place mutation)
+  - schema update commits persist `change_reason` as auditable mutation intent
+  - `apply_scope` semantics are deterministic and auditable:
+    - `NEW_HIRES_ONLY`: activation applies to future onboarding sessions only
+    - `CURRENT_AND_NEW`: activation applies to new sessions and requires explicit backfill orchestration
+  - required-rule evaluation is deterministic and fail-closed:
+    - `ALWAYS`: field is required
+    - `CONDITIONAL`: predicate reference must be evaluated against bounded selector snapshot
   - selector evaluation and overlay merge order are deterministic and bounded
   - every schema activation is simulation-gated and reason-coded
   - PH1.ONB consumes these records read-only; PH1.ONB never mutates schema truth
@@ -52,7 +59,8 @@
 - scoped position read:
   - all reads/writes are keyed by `(tenant_id, position_id)`; cross-tenant access returns not found
 - schema read/write prerequisite:
-  - schema draft/update/activate operations require existing active position scope and tenant-matched actor authorization
+  - schema draft/update/activate operations require tenant-matched position scope and actor authorization
+  - schema update/activate operations require `positions.lifecycle_state=ACTIVE` for the target position
 
 ## 4) Writes (outputs)
 
@@ -80,15 +88,15 @@
 ### Position requirements schema lifecycle writes
 - writes:
   - create requirements schema draft for position
-  - update requirements schema draft (add/remove/override fields and conditional rules)
-  - activate new schema version for position (new hires by default)
-  - optional backfill campaign trigger marker for "apply to current staff"
+  - update requirements schema draft (add/remove/override fields and conditional rules) and persist `change_reason`
+  - activate new schema version for position with explicit `apply_scope` (`NEW_HIRES_ONLY | CURRENT_AND_NEW`)
+  - when `apply_scope=CURRENT_AND_NEW`, emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`
 - simulation bindings:
   - `POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT`
   - `POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT`
   - `POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT`
 - idempotency key rule:
-  - dedupe by `(tenant_id, position_id, schema_change_set_hash, idempotency_key)`
+  - dedupe by `(tenant_id, position_id, schema_version_id, action, idempotency_key)`
 
 ## 5) Relations & Keys
 
@@ -96,6 +104,7 @@
 - lifecycle rows are tenant-position scoped and never mutated in place.
 - position requirements schema records are keyed by `(tenant_id, position_id, schema_version)` and linked to position lifecycle scope.
 - PH1.ONB session pinning references active position schema version and effective overlays at session start.
+- when `apply_scope=CURRENT_AND_NEW`, PH1.ONB backfill campaign flow is launched as an explicit, simulation-gated process (`ONB_REQUIREMENT_BACKFILL`).
 
 ## 6) Audit/Proof Emissions
 

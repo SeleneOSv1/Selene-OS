@@ -2,8 +2,8 @@
 
 ## Engine Header
 - `engine_id`: `PH1.POSITION`
-- `purpose`: Persist deterministic tenant-scoped position truth and append-only lifecycle transitions for create/validate/policy-check/activate/retire-suspend.
-- `data_owned`: `positions`, `position_lifecycle_events`, `tenant_companies` writes in PH1.POSITION scope
+- `purpose`: Persist deterministic tenant-scoped position truth and append-only lifecycle transitions for create/validate/policy-check/activate/retire-suspend, plus versioned position requirements schema lifecycle.
+- `data_owned`: `positions`, `position_lifecycle_events`, `position_requirements_schema_ledger`, `position_requirements_schema_current`, and PH1.POSITION-scoped `tenant_companies` writes
 - `version`: `v1`
 - `status`: `ACTIVE`
 
@@ -71,6 +71,7 @@
 - `output_schema`: `Result<PositionRequirementsSchemaDraftResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `determinism_rule`: `change_reason` is persisted and auditable; selector/predicate evaluation remains deterministic and fail-closed.
 
 ### `PH1POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT_ROW`
 - `name`: Activate position requirements schema version
@@ -78,6 +79,9 @@
 - `output_schema`: `Result<PositionRequirementsSchemaLifecycleResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `apply_scope_rule`:
+  - `apply_scope=NEW_HIRES_ONLY`: activate schema for future onboarding sessions only.
+  - `apply_scope=CURRENT_AND_NEW`: activate schema and emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`.
 
 ### `PH1POSITION_ROW`
 - `name`: Read one position row
@@ -105,6 +109,7 @@
   - tenant/company scope mismatch
   - invalid lifecycle transition
   - policy/authorization validation failure
+  - predicate evaluation failure for `required_rule=CONDITIONAL`
   - idempotency replay/no-op
 - all failures are fail-closed and reason-coded.
 

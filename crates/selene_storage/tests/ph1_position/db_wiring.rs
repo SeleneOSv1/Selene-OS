@@ -2,15 +2,20 @@
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
+use selene_kernel_contracts::ph1link::{InviteeType, PrefilledContext};
+use selene_kernel_contracts::ph1onb::{ProofType, SenderVerifyDecision};
 use selene_kernel_contracts::ph1position::{
-    PositionLifecycleState, PositionScheduleType, TenantId,
+    PositionLifecycleState, PositionRequirementEvidenceMode, PositionRequirementExposureRule,
+    PositionRequirementFieldSpec, PositionRequirementFieldType, PositionRequirementRuleType,
+    PositionRequirementSensitivity, PositionScheduleType, PositionSchemaApplyScope,
+    PositionSchemaSelectorSnapshot, TenantId,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord,
 };
-use selene_storage::repo::{Ph1PositionRepo, Ph1fFoundationRepo};
+use selene_storage::repo::{Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1fFoundationRepo};
 
 fn user(id: &str) -> UserId {
     UserId::new(id).unwrap()
@@ -58,6 +63,30 @@ fn seed_company(store: &mut Ph1fStore, tenant_id: &TenantId, company_id: &str) {
             updated_at: MonotonicTimeNs(1),
         })
         .unwrap();
+}
+
+fn selector_snapshot() -> PositionSchemaSelectorSnapshot {
+    PositionSchemaSelectorSnapshot {
+        company_size: Some("SMALL".to_string()),
+        industry_code: Some("RETAIL".to_string()),
+        jurisdiction: Some("US".to_string()),
+        position_family: Some("WAREHOUSE".to_string()),
+    }
+}
+
+fn required_field(field_key: &str) -> PositionRequirementFieldSpec {
+    PositionRequirementFieldSpec {
+        field_key: field_key.to_string(),
+        field_type: PositionRequirementFieldType::String,
+        required_rule: PositionRequirementRuleType::Always,
+        required_predicate_ref: None,
+        validation_ref: None,
+        sensitivity: PositionRequirementSensitivity::Private,
+        exposure_rule: PositionRequirementExposureRule::InternalOnly,
+        evidence_mode: PositionRequirementEvidenceMode::Attestation,
+        prompt_short: format!("Provide {field_key}"),
+        prompt_long: format!("Please provide required field {field_key}."),
+    }
 }
 
 #[test]
@@ -301,4 +330,392 @@ fn at_position_db_04_current_table_consistency_with_lifecycle_ledger() {
         events.last().map(|e| e.to_state),
         Some(PositionLifecycleState::Suspended)
     );
+}
+
+#[test]
+fn at_position_db_05_requirements_schema_activation_monotonic() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let actor = user("tenant_a:user_1");
+    seed_identity_device(&mut s, actor.clone(), device("tenant_a_device_1"));
+    let tenant = TenantId::new("tenant_a").unwrap();
+    seed_company(&mut s, &tenant, "company_a");
+
+    let draft = s
+        .ph1position_create_draft_row(
+            MonotonicTimeNs(500),
+            actor.clone(),
+            tenant.clone(),
+            "company_a".to_string(),
+            "Driver".to_string(),
+            "Logistics".to_string(),
+            "US".to_string(),
+            PositionScheduleType::FullTime,
+            "profile_driver".to_string(),
+            "band_l2".to_string(),
+            "position-schema-create".to_string(),
+            "POSITION_SIM_001_CREATE_DRAFT",
+            ReasonCodeId(0x5900_0001),
+        )
+        .unwrap();
+
+    s.ph1position_activate_commit_row(
+        MonotonicTimeNs(501),
+        actor.clone(),
+        tenant.clone(),
+        draft.position_id.clone(),
+        "position-schema-activate".to_string(),
+        "POSITION_SIM_004_ACTIVATE_COMMIT",
+        ReasonCodeId(0x5900_0004),
+    )
+    .unwrap();
+
+    let missing_schema = s.ph1position_requirements_schema_activate_commit_row(
+        MonotonicTimeNs(502),
+        actor.clone(),
+        tenant.clone(),
+        "company_a".to_string(),
+        draft.position_id.clone(),
+        "schema_v_missing".to_string(),
+        PositionSchemaApplyScope::NewHiresOnly,
+        "schema-activate-missing".to_string(),
+        "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+        ReasonCodeId(0x5900_0008),
+    );
+    assert!(matches!(
+        missing_schema,
+        Err(StorageError::ForeignKeyViolation {
+            table: "position_requirements_schema_ledger.schema_version_id",
+            ..
+        })
+    ));
+
+    let draft_v1 = s
+        .ph1position_requirements_schema_create_draft_row(
+            MonotonicTimeNs(503),
+            actor.clone(),
+            tenant.clone(),
+            "company_a".to_string(),
+            draft.position_id.clone(),
+            "schema_v1".to_string(),
+            selector_snapshot(),
+            vec![required_field("sender_verification")],
+            "schema-v1-create".to_string(),
+            "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+            ReasonCodeId(0x5900_0006),
+        )
+        .unwrap();
+    assert_eq!(draft_v1.field_count, 1);
+
+    let activated_v1 = s
+        .ph1position_requirements_schema_activate_commit_row(
+            MonotonicTimeNs(504),
+            actor.clone(),
+            tenant.clone(),
+            "company_a".to_string(),
+            draft.position_id.clone(),
+            "schema_v1".to_string(),
+            PositionSchemaApplyScope::NewHiresOnly,
+            "schema-v1-activate".to_string(),
+            "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+            ReasonCodeId(0x5900_0008),
+        )
+        .unwrap();
+    assert_eq!(
+        activated_v1.apply_scope_result,
+        PositionSchemaApplyScope::NewHiresOnly
+    );
+    assert!(!activated_v1.backfill_handoff_required);
+
+    let replay_same_idempotency = s
+        .ph1position_requirements_schema_activate_commit_row(
+            MonotonicTimeNs(505),
+            actor.clone(),
+            tenant.clone(),
+            "company_a".to_string(),
+            draft.position_id.clone(),
+            "schema_v1".to_string(),
+            PositionSchemaApplyScope::CurrentAndNew,
+            "schema-v1-activate".to_string(),
+            "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+            ReasonCodeId(0x5900_0008),
+        )
+        .unwrap();
+    assert_eq!(
+        replay_same_idempotency.apply_scope_result,
+        PositionSchemaApplyScope::NewHiresOnly
+    );
+    assert!(!replay_same_idempotency.backfill_handoff_required);
+
+    s.ph1position_requirements_schema_create_draft_row(
+        MonotonicTimeNs(506),
+        actor.clone(),
+        tenant.clone(),
+        "company_a".to_string(),
+        draft.position_id.clone(),
+        "schema_v2".to_string(),
+        selector_snapshot(),
+        vec![required_field("sender_verification"), required_field("employee_photo")],
+        "schema-v2-create".to_string(),
+        "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+        ReasonCodeId(0x5900_0006),
+    )
+    .unwrap();
+
+    let activated_v2 = s
+        .ph1position_requirements_schema_activate_commit_row(
+            MonotonicTimeNs(507),
+            actor,
+            tenant,
+            "company_a".to_string(),
+            draft.position_id,
+            "schema_v2".to_string(),
+            PositionSchemaApplyScope::CurrentAndNew,
+            "schema-v2-activate".to_string(),
+            "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+            ReasonCodeId(0x5900_0008),
+        )
+        .unwrap();
+    assert_eq!(
+        activated_v2.apply_scope_result,
+        PositionSchemaApplyScope::CurrentAndNew
+    );
+    assert!(activated_v2.backfill_handoff_required);
+}
+
+#[test]
+fn at_position_db_06_onb_read_only_schema_boundary() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let actor = user("tenant_a:user_1");
+    let device_a = device("tenant_a_device_1");
+    seed_identity_device(&mut s, actor.clone(), device_a.clone());
+    let tenant = TenantId::new("tenant_a").unwrap();
+    seed_company(&mut s, &tenant, "company_a");
+
+    let draft = s
+        .ph1position_create_draft_row(
+            MonotonicTimeNs(600),
+            actor.clone(),
+            tenant.clone(),
+            "company_a".to_string(),
+            "Driver".to_string(),
+            "Logistics".to_string(),
+            "US".to_string(),
+            PositionScheduleType::FullTime,
+            "profile_driver".to_string(),
+            "band_l2".to_string(),
+            "position-onb-create".to_string(),
+            "POSITION_SIM_001_CREATE_DRAFT",
+            ReasonCodeId(0x5900_0001),
+        )
+        .unwrap();
+
+    s.ph1position_activate_commit_row(
+        MonotonicTimeNs(601),
+        actor.clone(),
+        tenant.clone(),
+        draft.position_id.clone(),
+        "position-onb-activate".to_string(),
+        "POSITION_SIM_004_ACTIVATE_COMMIT",
+        ReasonCodeId(0x5900_0004),
+    )
+    .unwrap();
+
+    s.ph1position_requirements_schema_create_draft_row(
+        MonotonicTimeNs(602),
+        actor.clone(),
+        tenant.clone(),
+        "company_a".to_string(),
+        draft.position_id.clone(),
+        "schema_v1".to_string(),
+        selector_snapshot(),
+        vec![required_field("sender_verification")],
+        "schema-onb-create".to_string(),
+        "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+        ReasonCodeId(0x5900_0006),
+    )
+    .unwrap();
+    s.ph1position_requirements_schema_activate_commit_row(
+        MonotonicTimeNs(603),
+        actor.clone(),
+        tenant.clone(),
+        "company_a".to_string(),
+        draft.position_id.clone(),
+        "schema_v1".to_string(),
+        PositionSchemaApplyScope::NewHiresOnly,
+        "schema-onb-activate".to_string(),
+        "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+        ReasonCodeId(0x5900_0008),
+    )
+    .unwrap();
+
+    let prefilled = PrefilledContext::v1(
+        Some("tenant_a".to_string()),
+        Some("company_a".to_string()),
+        Some(draft.position_id.as_str().to_string()),
+        Some("loc_1".to_string()),
+        Some("2026-02-15".to_string()),
+        None,
+        Some("band_l2".to_string()),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let (link_1, _) = s
+        .ph1link_invite_generate_draft_row(
+            MonotonicTimeNs(604),
+            actor.clone(),
+            InviteeType::Employee,
+            Some("tenant_a".to_string()),
+            None,
+            Some(prefilled.clone()),
+            None,
+        )
+        .unwrap();
+    s.ph1link_invite_open_activate_commit_row(
+        MonotonicTimeNs(605),
+        link_1.token_id.clone(),
+        "fp_employee_1".to_string(),
+    )
+    .unwrap();
+
+    let session_1 = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(606),
+            link_1.token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_1".to_string(),
+        )
+        .unwrap();
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(607),
+        session_1.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-terms-1".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_primary_device_confirm_commit_row(
+        MonotonicTimeNs(608),
+        session_1.onboarding_session_id.clone(),
+        device_a.clone(),
+        ProofType::Passcode,
+        true,
+        "onb-device-1".to_string(),
+    )
+    .unwrap();
+
+    let access_without_verification = s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(609),
+        session_1.onboarding_session_id.clone(),
+        user("tenant_a:hire_1"),
+        Some("tenant_a".to_string()),
+        "employee".to_string(),
+        "onb-access-1-fail".to_string(),
+    );
+    assert!(matches!(
+        access_without_verification,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    s.ph1onb_employee_photo_capture_send_commit_row(
+        MonotonicTimeNs(610),
+        session_1.onboarding_session_id.clone(),
+        "blob://photo_1".to_string(),
+        actor.clone(),
+        "onb-photo-1".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_employee_sender_verify_commit_row(
+        MonotonicTimeNs(611),
+        session_1.onboarding_session_id.clone(),
+        actor.clone(),
+        SenderVerifyDecision::Confirm,
+        "onb-verify-1".to_string(),
+    )
+    .unwrap();
+
+    let access_after_verification = s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(612),
+        session_1.onboarding_session_id,
+        user("tenant_a:hire_1"),
+        Some("tenant_a".to_string()),
+        "employee".to_string(),
+        "onb-access-1-ok".to_string(),
+    );
+    assert!(access_after_verification.is_ok());
+
+    // Start a fresh onboarding session for the same position to prove ONB did not mutate
+    // requirements schema truth.
+    let prefilled_second = PrefilledContext::v1(
+        Some("tenant_a".to_string()),
+        Some("company_a".to_string()),
+        Some(draft.position_id.as_str().to_string()),
+        Some("loc_1".to_string()),
+        Some("2026-03-01".to_string()),
+        None,
+        Some("band_l2".to_string()),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let (link_2, _) = s
+        .ph1link_invite_generate_draft_row(
+            MonotonicTimeNs(613),
+            actor.clone(),
+            InviteeType::Employee,
+            Some("tenant_a".to_string()),
+            None,
+            Some(prefilled_second),
+            None,
+        )
+        .unwrap();
+    s.ph1link_invite_open_activate_commit_row(
+        MonotonicTimeNs(614),
+        link_2.token_id.clone(),
+        "fp_employee_2".to_string(),
+    )
+    .unwrap();
+
+    let session_2 = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(615),
+            link_2.token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_2".to_string(),
+        )
+        .unwrap();
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(616),
+        session_2.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-terms-2".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_primary_device_confirm_commit_row(
+        MonotonicTimeNs(617),
+        session_2.onboarding_session_id.clone(),
+        device_a,
+        ProofType::Passcode,
+        true,
+        "onb-device-2".to_string(),
+    )
+    .unwrap();
+
+    let access_session_2_without_verification = s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(618),
+        session_2.onboarding_session_id,
+        user("tenant_a:hire_2"),
+        Some("tenant_a".to_string()),
+        "employee".to_string(),
+        "onb-access-2-fail".to_string(),
+    );
+    assert!(matches!(
+        access_session_2_without_verification,
+        Err(StorageError::ContractViolation(_))
+    ));
 }
