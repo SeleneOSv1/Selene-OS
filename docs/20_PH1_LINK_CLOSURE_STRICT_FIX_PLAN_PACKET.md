@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: EXECUTED_PENDING_COMMIT
+Status: EXECUTED_COMMITTED
 
 ## 1) Purpose
 
@@ -230,6 +230,9 @@ Step 8 note:
   - `cargo test -p selene_storage --test db_wiring_ph1link_tables -- --nocapture`
   - `cargo test -p selene_os ph1link -- --nocapture`
 - Audit run was pinned and valid; dirty tree during proof was only this packet file plus ledger freeze entry.
+- Revalidated at clean tree checkpoint on commit `a7295208939e6dd09ae8f1201ff15dec920e4c3c`:
+  - readiness audit `PASS` (`AUDIT_TREE_STATE: CLEAN`)
+  - PH1.LINK storage/runtime slices `PASS`
 
 ## 6) Done Criteria
 

@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: EXECUTED_PENDING_COMMIT
+Status: EXECUTED_COMMITTED
 
 ## 1) Purpose
 
