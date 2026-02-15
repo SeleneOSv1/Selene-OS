@@ -85,8 +85,9 @@ Related docs:
 - Baseline freeze checkpoint: commit `c384094` (clean readiness audit + full workspace tests).
 - Cross-engine integration closure checkpoint: commit `a22c5fe` (`docs/22_CROSS_ENGINE_INTEGRATION_PACKET.md`, Step 8 complete, clean tree).
 - PH1.POSITION schema ownership closure checkpoint: commit `35a25bc` (`docs/23_PH1_POSITION_SCHEMA_OWNERSHIP_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
+- PH1.LINK closure refresh checkpoint: commit `0c6d9ec` (`docs/24_PH1_LINK_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 
 ## Next Strict Packet
-- Next focus: PH1.LINK deterministic closure refresh after POSITION schema ownership lock (LINK owns invite lifecycle + selector hints only; ONB executes; POSITION owns schema truth).
-- Canonical packet: `docs/24_PH1_LINK_STRICT_FIX_PLAN_PACKET.md`.
+- Next focus: PH1.ONB schema-driven requirement closure (ONB must execute pinned schema requirements only; no hardcoded requirement gates).
+- Canonical packet: `docs/25_PH1_ONB_SCHEMA_DRIVEN_STRICT_FIX_PLAN_PACKET.md`.
 - Execution mode: strict 8-step order with step-level acceptance checks; do not skip steps.

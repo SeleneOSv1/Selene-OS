@@ -3818,8 +3818,19 @@ impl Ph1fStore {
             return Ok(true);
         }
 
-        let derived =
-            self.ph1onb_required_verification_gates_for_token(&rec.token_id, rec.tenant_id.as_deref())?;
+        // Pinned session gates are authoritative for replay stability.
+        // Do not reinterpret required gates from current schema state once a session
+        // carries pinned schema context; only legacy pre-pin sessions may derive.
+        let has_pinned_schema_context = rec.pinned_schema_id.is_some()
+            || rec.pinned_schema_version.is_some()
+            || rec.pinned_overlay_set_id.is_some()
+            || rec.pinned_selector_snapshot_ref.is_some();
+        if has_pinned_schema_context {
+            return Ok(false);
+        }
+
+        let derived = self
+            .ph1onb_required_verification_gates_for_token(&rec.token_id, rec.tenant_id.as_deref())?;
         Ok(derived.iter().any(|g| g == gate))
     }
 

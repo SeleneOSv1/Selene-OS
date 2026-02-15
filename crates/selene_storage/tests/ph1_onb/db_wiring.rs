@@ -10,7 +10,7 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1link::{InviteeType, LinkStatus, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{
     BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus, OnboardingStatus, ProofType,
-    TermsStatus,
+    TermsStatus, VerificationStatus,
 };
 use selene_kernel_contracts::ph1position::{
     PositionRequirementEvidenceMode, PositionRequirementExposureRule, PositionRequirementFieldSpec,
@@ -712,6 +712,120 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+}
+
+#[test]
+fn at_onb_db_12_required_verification_commit_idempotency_replays_deterministically() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter");
+    let inviter_device = device("tenant_a_device_inviter");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let (tenant_id, company_id, position_id) =
+        seed_employee_position_schema_requiring_verification(&mut s, inviter.clone());
+    let prefilled = PrefilledContext::v1(
+        Some(tenant_id.clone()),
+        Some(company_id),
+        Some(position_id),
+        Some("loc_1".to_string()),
+        Some("2026-02-15".to_string()),
+        None,
+        Some("band_l2".to_string()),
+        Vec::new(),
+    )
+    .unwrap();
+
+    let token_id = seed_activated_link(
+        &mut s,
+        950,
+        inviter.clone(),
+        InviteeType::Employee,
+        Some(tenant_id.clone()),
+        Some(prefilled),
+    );
+
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(951),
+            token_id,
+            None,
+            Some(tenant_id.clone()),
+            "fp_onb_required_verify_idem".to_string(),
+        )
+        .unwrap();
+
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(952),
+        started.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-required-idem-terms".to_string(),
+    )
+    .unwrap();
+
+    let first_photo = s
+        .ph1onb_employee_photo_capture_send_commit_row(
+            MonotonicTimeNs(953),
+            started.onboarding_session_id.clone(),
+            "blob://required-photo-first".to_string(),
+            inviter.clone(),
+            "onb-required-photo-idem".to_string(),
+        )
+        .unwrap();
+    let replay_photo = s
+        .ph1onb_employee_photo_capture_send_commit_row(
+            MonotonicTimeNs(954),
+            started.onboarding_session_id.clone(),
+            "blob://required-photo-should-be-ignored".to_string(),
+            inviter.clone(),
+            "onb-required-photo-idem".to_string(),
+        )
+        .unwrap();
+    assert_eq!(replay_photo.photo_proof_ref, first_photo.photo_proof_ref);
+    assert_eq!(replay_photo.verification_status, VerificationStatus::Pending);
+
+    let after_photo = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .unwrap();
+    assert_eq!(
+        after_photo.photo_blob_ref.as_deref(),
+        Some("blob://required-photo-first")
+    );
+
+    let first_verify = s
+        .ph1onb_employee_sender_verify_commit_row(
+            MonotonicTimeNs(955),
+            started.onboarding_session_id.clone(),
+            inviter.clone(),
+            selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
+            "onb-required-verify-idem".to_string(),
+        )
+        .unwrap();
+    let replay_verify = s
+        .ph1onb_employee_sender_verify_commit_row(
+            MonotonicTimeNs(956),
+            started.onboarding_session_id.clone(),
+            inviter,
+            selene_kernel_contracts::ph1onb::SenderVerifyDecision::Reject,
+            "onb-required-verify-idem".to_string(),
+        )
+        .unwrap();
+    assert_eq!(
+        first_verify.verification_status,
+        VerificationStatus::Confirmed
+    );
+    assert_eq!(
+        replay_verify.verification_status,
+        VerificationStatus::Confirmed
+    );
+
+    let after_verify = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .unwrap();
+    assert_eq!(
+        after_verify.verification_status,
+        Some(VerificationStatus::Confirmed)
+    );
 }
 
 #[test]
