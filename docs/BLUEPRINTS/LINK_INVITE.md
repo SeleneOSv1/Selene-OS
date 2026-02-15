@@ -41,11 +41,14 @@ missing_required_fields: string[]
 | LINK_INVITE_S04 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | inviter_user_id, tenant_id, requested_action=LINK_INVITE | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
 | LINK_INVITE_S05 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_APPLY_OVERRIDE_COMMIT_ROW | access_decision=ESCALATE, approved_by_user_id, simulation_id | override_applied | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [ACCESS_IDEMPOTENCY_REPLAY] |
 | LINK_INVITE_S06 | PH1.LINK | PH1LINK_INVITE_GENERATE_DRAFT_ROW | inviter_user_id, invitee_type, tenant_id, schema_version_id, prefilled_profile_fields | draft_id, token_id, link_url, missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_GENERATE_RETRYABLE] |
-| LINK_INVITE_S07 | PH1.LINK | PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW | draft_id, creator_update_fields, idempotency_key | updated draft + recomputed missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_DRAFT_UPDATE_RETRYABLE] |
+| LINK_INVITE_S07 | PH1.LINK | PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW | draft_id, creator_update_fields, idempotency_key (only when creator updates are provided) | updated draft + recomputed missing_required_fields | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [LINK_DRAFT_UPDATE_RETRYABLE] |
 | LINK_INVITE_S08 | PH1.X | PH1X_RESPOND_COMMIT_ROW | draft_id, token_id, link_url | response prompt: “Link generated. Do you want me to send it now?” | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
 
 S06 persistence note:
 - `PH1LINK_INVITE_GENERATE_DRAFT_ROW` stores `invitee_type` + `prefilled_profile_fields` in the onboarding draft payload and computes schema-driven `missing_required_fields`.
+
+S07 lifecycle note:
+- `PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW` must refuse terminal draft states (`COMMITTED | REVOKED | EXPIRED`) and recompute `missing_required_fields` from tenant schema version + selector snapshot only.
 
 ## 5) Confirmation Points
 - `LINK_INVITE_S03` pre-start confirmation of interpreted invite intent.

@@ -26,7 +26,7 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
-    DraftId, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
+    DraftId, DraftStatus, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{MemoryKey, MemoryLedgerEvent, MemoryUsePolicy};
 use selene_kernel_contracts::ph1onb::{
@@ -50,7 +50,7 @@ use selene_kernel_contracts::ph1simcat::{
 use selene_kernel_contracts::ph1work::{
     WorkOrderCurrentRecord, WorkOrderId, WorkOrderLedgerEvent, WorkOrderLedgerEventInput,
 };
-use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId};
 
 use crate::ph1f::{
     AccessDeviceTrustLevel, AccessGateDecisionRecord, AccessInstanceRecord, AccessLifecycleState,
@@ -988,11 +988,37 @@ pub trait Ph1LinkRepo {
     fn ph1link_mark_sent_commit_row(&mut self, token_id: TokenId)
         -> Result<LinkStatus, StorageError>;
 
+    fn ph1link_invite_draft_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        draft_id: DraftId,
+        creator_update_fields: BTreeMap<String, String>,
+        idempotency_key: String,
+    ) -> Result<(DraftId, DraftStatus, Vec<String>), StorageError>;
+
     fn ph1link_invite_open_activate_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+    ) -> Result<
+        (
+            LinkStatus,
+            DraftId,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+            Option<PrefilledContextRef>,
+        ),
+        StorageError,
+    >;
+
+    fn ph1link_invite_open_activate_commit_row_with_idempotency(
+        &mut self,
+        now: MonotonicTimeNs,
+        token_id: TokenId,
+        device_fingerprint: String,
+        idempotency_key: String,
     ) -> Result<
         (
             LinkStatus,
@@ -2861,11 +2887,51 @@ impl Ph1LinkRepo for Ph1fStore {
         self.ph1link_mark_sent_commit(token_id)
     }
 
+    fn ph1link_invite_draft_update_commit_row(
+        &mut self,
+        _now: MonotonicTimeNs,
+        _draft_id: DraftId,
+        _creator_update_fields: BTreeMap<String, String>,
+        _idempotency_key: String,
+    ) -> Result<(DraftId, DraftStatus, Vec<String>), StorageError> {
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_draft_update_commit_row",
+                reason: "not implemented yet (Step 4)",
+            },
+        ))
+    }
+
     fn ph1link_invite_open_activate_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+    ) -> Result<
+        (
+            LinkStatus,
+            DraftId,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+            Option<PrefilledContextRef>,
+        ),
+        StorageError,
+    > {
+        self.ph1link_invite_open_activate_commit_row_with_idempotency(
+            now,
+            token_id,
+            device_fingerprint,
+            "default".to_string(),
+        )
+    }
+
+    fn ph1link_invite_open_activate_commit_row_with_idempotency(
+        &mut self,
+        now: MonotonicTimeNs,
+        token_id: TokenId,
+        device_fingerprint: String,
+        _idempotency_key: String,
     ) -> Result<
         (
             LinkStatus,

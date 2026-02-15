@@ -8,10 +8,11 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1link::{
     DualRoleConflictEscalationResult, EscalationStatus, LinkActivationResult,
-    LinkExpiredRecoveryResult, LinkGenerateResult, LinkRevokeResult, LinkStatus, Ph1LinkOk,
-    Ph1LinkRequest, Ph1LinkResponse, PrefilledContextRef, RoleProposalResult, RoleProposalStatus,
+    LinkDraftUpdateResult, LinkExpiredRecoveryResult, LinkGenerateResult, LinkRevokeResult,
+    LinkStatus, Ph1LinkOk, Ph1LinkRefuse, Ph1LinkRequest, Ph1LinkResponse, PrefilledContextRef,
+    RoleProposalResult, RoleProposalStatus, PH1LINK_CONTRACT_VERSION,
 };
-use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 use selene_storage::ph1j::Ph1jRuntime;
 
@@ -20,6 +21,7 @@ pub mod reason_codes {
 
     // PH1.LINK reason-code namespace. Values are placeholders until the global registry is formalized.
     pub const LINK_OK_GENERATE_DRAFT: ReasonCodeId = ReasonCodeId(0x4E00_0001);
+    pub const LINK_OK_DRAFT_UPDATE_COMMIT: ReasonCodeId = ReasonCodeId(0x4E00_0002);
     pub const LINK_OK_OPEN_ACTIVATE: ReasonCodeId = ReasonCodeId(0x4E00_0003);
     pub const LINK_OK_REVOKE: ReasonCodeId = ReasonCodeId(0x4E00_0005);
     pub const LINK_OK_EXPIRED_RECOVERY_COMMIT: ReasonCodeId = ReasonCodeId(0x4E00_0006);
@@ -130,6 +132,51 @@ impl Ph1LinkRuntime {
                 ))
             }
 
+            selene_kernel_contracts::ph1link::LinkRequest::InviteDraftUpdateCommit(r) => {
+                let (draft_id, draft_status, missing_required_fields) =
+                    store.ph1link_invite_draft_update_commit(
+                        req.now,
+                        r.draft_id.clone(),
+                        r.creator_update_fields.clone(),
+                        r.idempotency_key.clone(),
+                    )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    None,
+                    "DRAFT_CREATED_OR_DRAFT_READY",
+                    match draft_status {
+                        selene_kernel_contracts::ph1link::DraftStatus::DraftCreated => {
+                            "DRAFT_CREATED"
+                        }
+                        selene_kernel_contracts::ph1link::DraftStatus::DraftReady => "DRAFT_READY",
+                    },
+                    reason_codes::LINK_OK_DRAFT_UPDATE_COMMIT,
+                    Some(format!("link_draft_update:{}", draft_id.as_str())),
+                )?;
+
+                let out = LinkDraftUpdateResult::v1(draft_id, draft_status, missing_required_fields)
+                    .map_err(StorageError::ContractViolation)?;
+
+                let ok = Ph1LinkOk {
+                    schema_version: PH1LINK_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::LINK_OK_DRAFT_UPDATE_COMMIT,
+                    link_generate_result: None,
+                    link_draft_update_result: Some(out),
+                    link_activation_result: None,
+                    link_revoke_result: None,
+                    link_expired_recovery_result: None,
+                    role_proposal_result: None,
+                    dual_role_conflict_escalation_result: None,
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1LinkResponse::Ok(ok))
+            }
+
             selene_kernel_contracts::ph1link::LinkRequest::InviteOpenActivateCommit(r) => {
                 let (
                     status,
@@ -138,10 +185,11 @@ impl Ph1LinkRuntime {
                     bound_hash,
                     conflict_reason,
                     ctx_ref,
-                ) = store.ph1link_invite_open_activate_commit(
+                ) = store.ph1link_invite_open_activate_commit_with_idempotency(
                     req.now,
                     r.token_id.clone(),
                     r.device_fingerprint.clone(),
+                    r.idempotency_key.clone(),
                 )?;
 
                 self.audit_transition(
@@ -192,7 +240,22 @@ impl Ph1LinkRuntime {
             }
 
             selene_kernel_contracts::ph1link::LinkRequest::InviteRevokeRevoke(r) => {
-                store.ph1link_invite_revoke_revoke(r.token_id.clone(), r.reason.clone())?;
+                if let Err(err) = store.ph1link_invite_revoke_revoke(r.token_id.clone(), r.reason.clone()) {
+                    if let StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason })
+                        = &err
+                    {
+                        if *field == "ph1link_invite_revoke_revoke.ap_override_ref" {
+                            let refuse = Ph1LinkRefuse::v1(
+                                req.simulation_id.clone(),
+                                reason_codes::LINK_REFUSE_INVALID,
+                                format!("refuse: {reason}"),
+                            )
+                            .map_err(StorageError::ContractViolation)?;
+                            return Ok(Ph1LinkResponse::Refuse(refuse));
+                        }
+                    }
+                    return Err(err);
+                }
 
                 self.audit_transition(
                     store,
@@ -453,12 +516,14 @@ impl Ph1LinkRuntime {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
     use selene_kernel_contracts::ph1c::LanguageTag;
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::ph1link::{
-        DualRoleConflictEscalateDraftRequest, InviteExpiredRecoveryCommitRequest,
+        DraftStatus, DualRoleConflictEscalateDraftRequest, InviteExpiredRecoveryCommitRequest,
         InviteForwardBlockCommitRequest, InviteeType, LinkRequest, Ph1LinkRequest,
         RoleProposeDraftRequest, SimulationType, LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT,
         LINK_INVITE_EXPIRED_RECOVERY_COMMIT, LINK_INVITE_FORWARD_BLOCK_COMMIT,
@@ -571,6 +636,7 @@ mod tests {
             now(20),
             token_id.clone(),
             "device_fp_a".to_string(),
+            "idem_link_open_1".to_string(),
         )
         .unwrap();
 
@@ -590,6 +656,7 @@ mod tests {
             now(21),
             token_id,
             "device_fp_b".to_string(),
+            "idem_link_open_2".to_string(),
         )
         .unwrap();
 
@@ -601,6 +668,139 @@ mod tests {
             }
             _ => panic!("expected OK"),
         }
+    }
+
+    #[test]
+    fn at_link_04_draft_update_commit_runtime_is_idempotent_and_advances_status() {
+        let mut store = store_with_inviter();
+        let rt = Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1());
+
+        let gen = Ph1LinkRequest::invite_generate_draft_v1(
+            CorrelationId(4),
+            TurnId(1),
+            now(10),
+            user(),
+            InviteeType::FamilyMember,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.run(&mut store, &gen).unwrap();
+        let draft_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().draft_id,
+            _ => panic!("expected OK"),
+        };
+
+        let mut updates = BTreeMap::new();
+        updates.insert("tenant_id".to_string(), "tenant_1".to_string());
+
+        let update_1 = Ph1LinkRequest::invite_draft_update_commit_v1(
+            CorrelationId(4),
+            TurnId(2),
+            now(11),
+            draft_id.clone(),
+            updates.clone(),
+            "idem_link_draft_update_1".to_string(),
+        )
+        .unwrap();
+
+        let out_1 = rt.run(&mut store, &update_1).unwrap();
+        match out_1 {
+            Ph1LinkResponse::Ok(o) => {
+                let r = o.link_draft_update_result.unwrap();
+                assert_eq!(r.draft_status, DraftStatus::DraftReady);
+                assert!(r.missing_required_fields.is_empty());
+            }
+            _ => panic!("expected OK"),
+        }
+
+        // Same draft + same idempotency key must replay the exact update result.
+        let update_2 = Ph1LinkRequest::invite_draft_update_commit_v1(
+            CorrelationId(4),
+            TurnId(3),
+            now(12),
+            draft_id,
+            updates,
+            "idem_link_draft_update_1".to_string(),
+        )
+        .unwrap();
+
+        let out_2 = rt.run(&mut store, &update_2).unwrap();
+        match out_2 {
+            Ph1LinkResponse::Ok(o) => {
+                let r = o.link_draft_update_result.unwrap();
+                assert_eq!(r.draft_status, DraftStatus::DraftReady);
+                assert!(r.missing_required_fields.is_empty());
+            }
+            _ => panic!("expected OK"),
+        }
+    }
+
+    #[test]
+    fn at_link_05_revoke_returns_refuse_for_activated_without_ap_override() {
+        let mut store = store_with_inviter();
+        let rt = Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1());
+
+        let gen = Ph1LinkRequest::invite_generate_draft_v1(
+            CorrelationId(5),
+            TurnId(1),
+            now(10),
+            user(),
+            InviteeType::FamilyMember,
+            Some("tenant_1".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.run(&mut store, &gen).unwrap();
+        let token_id = match out {
+            Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
+            _ => panic!("expected OK"),
+        };
+
+        let open = Ph1LinkRequest::invite_open_activate_commit_v1(
+            CorrelationId(5),
+            TurnId(2),
+            now(11),
+            token_id.clone(),
+            "device_fp_a".to_string(),
+            "idem_link_open_bind_5".to_string(),
+        )
+        .unwrap();
+        let out_open = rt.run(&mut store, &open).unwrap();
+        match out_open {
+            Ph1LinkResponse::Ok(o) => {
+                let a = o.link_activation_result.unwrap();
+                assert_eq!(a.activation_status, LinkStatus::Activated);
+            }
+            _ => panic!("expected OK"),
+        }
+
+        let revoke = Ph1LinkRequest::invite_revoke_revoke_v1(
+            CorrelationId(5),
+            TurnId(3),
+            now(12),
+            token_id.clone(),
+            "admin_revoke".to_string(),
+        )
+        .unwrap();
+        let out_revoke = rt.run(&mut store, &revoke).unwrap();
+        match out_revoke {
+            Ph1LinkResponse::Refuse(r) => {
+                assert_eq!(r.reason_code, reason_codes::LINK_REFUSE_INVALID);
+            }
+            _ => panic!("expected REFUSE"),
+        }
+
+        assert_eq!(
+            store.ph1link_get_link(&token_id).unwrap().status,
+            LinkStatus::Activated
+        );
     }
 
     #[test]
@@ -694,6 +894,7 @@ mod tests {
             now(20),
             token_id.clone(),
             "device_fp_a".to_string(),
+            "idem_link_open_bind".to_string(),
         )
         .unwrap();
         let _ = rt.run(&mut store, &open).unwrap();

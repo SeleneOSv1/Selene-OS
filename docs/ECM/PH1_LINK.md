@@ -2,7 +2,7 @@
 
 ## Engine Header
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/invite link lifecycle with token->draft mapping, draft updates, activation binding, and forward-block guards.
+- `purpose`: Persist deterministic onboarding/invite link lifecycle with token->draft mapping, draft updates, schema-driven missing-field recompute, activation binding, revoke guards, and forward-block controls.
 - `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime state
 - `version`: `v1`
 - `status`: `ACTIVE`
@@ -19,7 +19,7 @@
 ### `PH1LINK_INVITE_DRAFT_UPDATE_COMMIT_ROW`
 - `name`: Commit creator draft updates and recompute missing required fields
 - `input_schema`: `(draft_id, creator_update_fields, idempotency_key)`
-- `output_schema`: `Result<(LinkRecord, missing_required_fields[]), StorageError>`
+- `output_schema`: `Result<(draft_id, draft_status, missing_required_fields[]), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
@@ -43,10 +43,11 @@
 - `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>` where `activation_status in {ACTIVATED, BLOCKED, EXPIRED, REVOKED, CONSUMED}` (`OPENED` is an internal transient transition state)
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `notes`: device mismatch path must execute one deterministic forward-block branch; no duplicate block write path outside this simulation branch.
 
 ### `PH1LINK_INVITE_REVOKE_REVOKE_ROW`
 - `name`: Revoke invite token
-- `input_schema`: `(token_id, reason)`
+- `input_schema`: `(token_id, reason, ap_override_ref?)` where `ap_override_ref` is required if current link status is `ACTIVATED` (or `OPENED`)
 - `output_schema`: `Result<(token_id, status=REVOKED), StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -70,6 +71,7 @@
   - tenant scope mismatch
   - invalid token state transition
   - forwarded-device block
+  - activated-link revoke without AP override (fail-closed)
   - idempotency replay
 - all failure paths are fail-closed and auditable.
 

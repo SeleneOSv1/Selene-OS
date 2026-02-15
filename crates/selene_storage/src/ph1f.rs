@@ -28,7 +28,7 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
-    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, DraftId,
+    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, DraftId, DraftStatus,
     InviteeType, LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{
@@ -387,6 +387,10 @@ pub struct Ph1fStore {
     // Idempotency detection for link draft generation:
     // (inviter_user_id, payload_hash, expiration_policy_id) -> token_id
     link_draft_idempotency_index: BTreeMap<(UserId, String, Option<String>), TokenId>,
+    // Idempotency: (draft_id, idempotency_key) -> (draft_status, missing_required_fields)
+    link_draft_update_idempotency_index: BTreeMap<(DraftId, String), (DraftStatus, Vec<String>)>,
+    // Idempotency: (token_id, idempotency_key) -> open/activate result tuple
+    link_open_activate_idempotency_index: BTreeMap<(TokenId, String), LinkOpenActivateResultParts>,
 
     // Additional PH1.LINK simulations (v1): recovery, forward-block attempts, role proposals,
     // dual-role conflict escalation.
@@ -668,6 +672,15 @@ pub struct LinkDualRoleConflictCaseRecord {
     pub token_id: Option<TokenId>,
     pub note: String,
 }
+
+type LinkOpenActivateResultParts = (
+    LinkStatus,
+    DraftId,
+    Vec<String>,
+    Option<String>,
+    Option<String>,
+    Option<PrefilledContextRef>,
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnboardingSessionRecord {
@@ -1156,6 +1169,8 @@ impl Ph1fStore {
             links: BTreeMap::new(),
             next_link_seq: 1,
             link_draft_idempotency_index: BTreeMap::new(),
+            link_draft_update_idempotency_index: BTreeMap::new(),
+            link_open_activate_idempotency_index: BTreeMap::new(),
             link_recovery_idempotency_index: BTreeMap::new(),
             link_forward_block_attempts: BTreeSet::new(),
             link_role_proposals: BTreeMap::new(),
@@ -2537,33 +2552,225 @@ impl Ph1fStore {
         Ok(())
     }
 
-    fn ph1link_compute_missing_required_fields(
+    fn validate_ph1link_idempotency_key(
+        field: &'static str,
+        idempotency_key: &str,
+    ) -> Result<(), StorageError> {
+        if idempotency_key.trim().is_empty() {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field,
+                reason: "must not be empty",
+            }));
+        }
+        if idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field,
+                reason: "must be <= 128 chars",
+            }));
+        }
+        if !idempotency_key.is_ascii() {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field,
+                reason: "must be ASCII",
+            }));
+        }
+        Ok(())
+    }
+
+    fn ph1link_prefilled_has_field(prefilled_context: &Option<PrefilledContext>, field_key: &str) -> bool {
+        let Some(ctx) = prefilled_context.as_ref() else {
+            return false;
+        };
+        match field_key {
+            "tenant_id" => ctx.tenant_id.as_ref().is_some(),
+            "company_id" => ctx.company_id.as_ref().is_some(),
+            "position_id" => ctx.position_id.as_ref().is_some(),
+            "location_id" => ctx.location_id.as_ref().is_some(),
+            "start_date" => ctx.start_date.as_ref().is_some(),
+            "working_hours" => ctx.working_hours.as_ref().is_some(),
+            "compensation_tier_ref" => ctx.compensation_tier_ref.as_ref().is_some(),
+            "jurisdiction_tags" => !ctx.jurisdiction_tags.is_empty(),
+            _ => false,
+        }
+    }
+
+    fn ph1position_selector_value<'a>(
+        selectors: &'a PositionSchemaSelectorSnapshot,
+        selector_key: &str,
+    ) -> Result<Option<&'a str>, StorageError> {
+        match selector_key {
+            "company_size" => Ok(selectors.company_size.as_deref()),
+            "industry_code" => Ok(selectors.industry_code.as_deref()),
+            "jurisdiction" => Ok(selectors.jurisdiction.as_deref()),
+            "position_family" => Ok(selectors.position_family.as_deref()),
+            _ => Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "position_requirement_field_spec.required_predicate_ref",
+                reason:
+                    "selector key must be one of company_size|industry_code|jurisdiction|position_family",
+            })),
+        }
+    }
+
+    fn ph1position_required_by_rule(
+        spec: &PositionRequirementFieldSpec,
+        selectors: &PositionSchemaSelectorSnapshot,
+    ) -> Result<bool, StorageError> {
+        match spec.required_rule {
+            PositionRequirementRuleType::Always => Ok(true),
+            PositionRequirementRuleType::Conditional => {
+                let pred =
+                    spec.required_predicate_ref
+                        .as_deref()
+                        .ok_or(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "position_requirement_field_spec.required_predicate_ref",
+                                reason: "must be present when required_rule=Conditional",
+                            },
+                        ))?;
+                let (lhs_raw, rhs_raw) = pred.split_once('=').or_else(|| pred.split_once(':')).ok_or(
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "position_requirement_field_spec.required_predicate_ref",
+                        reason: "must use [selector.]<key>=<value> or [selector.]<key>:<value>",
+                    }),
+                )?;
+                let lhs = lhs_raw.trim();
+                let rhs = rhs_raw.trim();
+                if lhs.is_empty() || rhs.is_empty() {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "position_requirement_field_spec.required_predicate_ref",
+                            reason: "selector key and selector value must be non-empty",
+                        },
+                    ));
+                }
+                let selector_key = lhs.strip_prefix("selector.").unwrap_or(lhs);
+                let Some(actual) = Self::ph1position_selector_value(selectors, selector_key)? else {
+                    return Ok(false);
+                };
+                Ok(actual == rhs)
+            }
+        }
+    }
+
+    fn ph1link_schema_required_fields(
+        &self,
         invitee_type: InviteeType,
+        _schema_version_id: &Option<String>,
         prefilled_context: &Option<PrefilledContext>,
-    ) -> Vec<String> {
-        let mut required = match invitee_type {
+    ) -> Result<Vec<String>, StorageError> {
+        // Preferred source: active tenant position schema for employee flows.
+        if invitee_type == InviteeType::Employee {
+            if let Some(ctx) = prefilled_context {
+                if let (Some(tenant_raw), Some(position_raw)) =
+                    (ctx.tenant_id.as_ref(), ctx.position_id.as_ref())
+                {
+                    let tenant_id = TenantId::new(tenant_raw.clone())
+                        .map_err(StorageError::ContractViolation)?;
+                    let position_id = PositionId::new(position_raw.clone())
+                        .map_err(StorageError::ContractViolation)?;
+                    if let Some(current) = self
+                        .position_requirements_schema_current
+                        .get(&(tenant_id, position_id))
+                    {
+                        let mut required: BTreeSet<String> = BTreeSet::new();
+                        for spec in &current.active_field_specs {
+                            if Self::ph1position_required_by_rule(
+                                spec,
+                                &current.active_selector_snapshot,
+                            )? {
+                                required.insert(spec.field_key.clone());
+                            }
+                        }
+                        if !required.is_empty() {
+                            return Ok(required.into_iter().collect());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Deterministic fallback template when tenant schema cannot be resolved in the MVP store.
+        let required = match invitee_type {
             InviteeType::Company => vec!["tenant_id"],
             InviteeType::Customer => vec!["tenant_id"],
-            InviteeType::Employee => {
-                vec!["company_id", "position_id", "location_id", "start_date"]
-            }
+            InviteeType::Employee => vec!["company_id", "position_id", "location_id", "start_date"],
             InviteeType::FamilyMember => vec!["tenant_id"],
             InviteeType::Friend => vec!["tenant_id"],
             InviteeType::Associate => vec!["company_id", "position_id"],
         };
+        Ok(required.into_iter().map(ToString::to_string).collect())
+    }
 
-        if let Some(ctx) = prefilled_context {
-            required.retain(|f| match *f {
-                "tenant_id" => ctx.tenant_id.as_ref().is_none(),
-                "company_id" => ctx.company_id.as_ref().is_none(),
-                "position_id" => ctx.position_id.as_ref().is_none(),
-                "location_id" => ctx.location_id.as_ref().is_none(),
-                "start_date" => ctx.start_date.as_ref().is_none(),
-                _ => true,
-            });
+    fn ph1link_compute_missing_required_fields(
+        &self,
+        invitee_type: InviteeType,
+        schema_version_id: &Option<String>,
+        prefilled_context: &Option<PrefilledContext>,
+    ) -> Result<Vec<String>, StorageError> {
+        let required =
+            self.ph1link_schema_required_fields(invitee_type, schema_version_id, prefilled_context)?;
+        let mut missing: BTreeSet<String> = BTreeSet::new();
+        for field_key in required {
+            if !Self::ph1link_prefilled_has_field(prefilled_context, &field_key) {
+                missing.insert(field_key);
+            }
+        }
+        Ok(missing.into_iter().collect())
+    }
+
+    fn ph1link_apply_creator_update_fields(
+        prefilled_context: &mut PrefilledContext,
+        creator_update_fields: &BTreeMap<String, String>,
+    ) -> Result<(), StorageError> {
+        for (key, value_raw) in creator_update_fields {
+            let value = value_raw.trim();
+            if value.is_empty() {
+                return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1link_invite_draft_update_commit.creator_update_fields.value",
+                    reason: "must not be empty",
+                }));
+            }
+            match key.as_str() {
+                "tenant_id" => prefilled_context.tenant_id = Some(value.to_string()),
+                "company_id" => prefilled_context.company_id = Some(value.to_string()),
+                "position_id" => prefilled_context.position_id = Some(value.to_string()),
+                "location_id" => prefilled_context.location_id = Some(value.to_string()),
+                "start_date" => prefilled_context.start_date = Some(value.to_string()),
+                "working_hours" => prefilled_context.working_hours = Some(value.to_string()),
+                "compensation_tier_ref" => {
+                    prefilled_context.compensation_tier_ref = Some(value.to_string())
+                }
+                "jurisdiction_tags" => {
+                    let tags: Vec<String> = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|t| !t.is_empty())
+                        .map(ToString::to_string)
+                        .collect();
+                    if tags.is_empty() {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1link_invite_draft_update_commit.creator_update_fields.jurisdiction_tags",
+                                reason: "must contain at least one non-empty tag",
+                            },
+                        ));
+                    }
+                    prefilled_context.jurisdiction_tags = tags;
+                }
+                _ => {
+                    return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1link_invite_draft_update_commit.creator_update_fields.key",
+                        reason:
+                            "key must be one of tenant_id|company_id|position_id|location_id|start_date|working_hours|compensation_tier_ref|jurisdiction_tags",
+                    }))
+                }
+            }
         }
 
-        required.into_iter().map(ToString::to_string).collect()
+        prefilled_context
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2630,8 +2837,11 @@ impl Ph1fStore {
         self.next_link_seq = self.next_link_seq.saturating_add(1);
         let token_id = TokenId::new(format!("link_{link_seq}_{payload_hash}"))?;
         let draft_id = DraftId::new(format!("draft_{link_seq}_{payload_hash}"))?;
-        let missing_required_fields =
-            Self::ph1link_compute_missing_required_fields(invitee_type, &prefilled_context);
+        let missing_required_fields = self.ph1link_compute_missing_required_fields(
+            invitee_type,
+            &schema_version_id,
+            &prefilled_context,
+        )?;
 
         let rec = LinkRecord::v1(
             token_id.clone(),
@@ -2690,146 +2900,299 @@ impl Ph1fStore {
         }
     }
 
+    pub fn ph1link_invite_draft_update_commit(
+        &mut self,
+        _now: MonotonicTimeNs,
+        draft_id: DraftId,
+        creator_update_fields: BTreeMap<String, String>,
+        idempotency_key: String,
+    ) -> Result<(DraftId, DraftStatus, Vec<String>), StorageError> {
+        Self::validate_ph1link_idempotency_key(
+            "ph1link_invite_draft_update_commit.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idx_key = (draft_id.clone(), idempotency_key.clone());
+        if let Some((draft_status, missing_required_fields)) =
+            self.link_draft_update_idempotency_index.get(&idx_key)
+        {
+            return Ok((draft_id, *draft_status, missing_required_fields.clone()));
+        }
+
+        let token_ids: Vec<TokenId> = self
+            .links
+            .iter()
+            .filter_map(|(token_id, rec)| {
+                if rec.draft_id == draft_id {
+                    Some(token_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if token_ids.is_empty() {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "onboarding_drafts.draft_id",
+                key: draft_id.as_str().to_string(),
+            });
+        }
+
+        let has_non_terminal_link = token_ids.iter().any(|token_id| {
+            self.links
+                .get(token_id)
+                .map(|rec| {
+                    rec.status != LinkStatus::Consumed
+                        && rec.status != LinkStatus::Revoked
+                        && rec.status != LinkStatus::Expired
+                })
+                .unwrap_or(false)
+        });
+        if !has_non_terminal_link {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1link_invite_draft_update_commit.link_status",
+                reason: "linked token state is terminal (CONSUMED|REVOKED|EXPIRED)",
+            }));
+        }
+
+        let mut planned_updates: Vec<(TokenId, Option<PrefilledContext>, Vec<String>)> = Vec::new();
+        for token_id in &token_ids {
+            let rec = self
+                .links
+                .get(token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?;
+
+            let mut updated_prefilled = rec.prefilled_context.clone().unwrap_or(
+                PrefilledContext::v1(None, None, None, None, None, None, None, Vec::new())?,
+            );
+            Self::ph1link_apply_creator_update_fields(&mut updated_prefilled, &creator_update_fields)?;
+            let updated_prefilled_opt = Some(updated_prefilled);
+
+            Self::validate_ph1link_inviter_tenant_scope(
+                &rec.inviter_user_id,
+                &updated_prefilled_opt.as_ref().and_then(|ctx| ctx.tenant_id.clone()),
+                &updated_prefilled_opt,
+            )?;
+
+            let missing_required_fields = self.ph1link_compute_missing_required_fields(
+                rec.invitee_type,
+                &rec.schema_version_id,
+                &updated_prefilled_opt,
+            )?;
+            planned_updates.push((
+                token_id.clone(),
+                updated_prefilled_opt,
+                missing_required_fields,
+            ));
+        }
+
+        for (token_id, updated_prefilled_opt, missing_required_fields) in &planned_updates {
+            let rec = self
+                .links
+                .get_mut(token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?;
+            rec.prefilled_context = updated_prefilled_opt.clone();
+            rec.missing_required_fields = missing_required_fields.clone();
+            rec.payload_hash = deterministic_payload_hash_hex(
+                &rec.inviter_user_id,
+                rec.invitee_type,
+                &updated_prefilled_opt.as_ref().and_then(|ctx| ctx.tenant_id.clone()),
+                &rec.schema_version_id,
+                &rec.expiration_policy_id,
+                &updated_prefilled_opt,
+            );
+        }
+
+        let (_, _, missing_required_fields) =
+            planned_updates
+                .into_iter()
+                .next()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_drafts.draft_id",
+                    key: draft_id.as_str().to_string(),
+                })?;
+        let draft_status = if missing_required_fields.is_empty() {
+            DraftStatus::DraftReady
+        } else {
+            DraftStatus::DraftCreated
+        };
+
+        self.link_draft_update_idempotency_index
+            .insert(idx_key, (draft_status, missing_required_fields.clone()));
+
+        Ok((draft_id, draft_status, missing_required_fields))
+    }
+
     pub fn ph1link_invite_open_activate_commit(
         &mut self,
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
-    ) -> Result<
-        (
-            LinkStatus,
-            DraftId,
-            Vec<String>,
-            Option<String>,
-            Option<String>,
-            Option<PrefilledContextRef>,
-        ),
-        StorageError,
-    > {
-        let rec = self
-            .links
-            .get_mut(&token_id)
-            .ok_or(StorageError::ForeignKeyViolation {
-                table: "links.token_id",
-                key: token_id.as_str().to_string(),
-            })?;
+    ) -> Result<LinkOpenActivateResultParts, StorageError> {
+        let legacy_idempotency_key = format!(
+            "legacy:{}",
+            deterministic_device_fingerprint_hash_hex(&device_fingerprint)
+        );
+        self.ph1link_invite_open_activate_commit_with_idempotency(
+            now,
+            token_id,
+            device_fingerprint,
+            legacy_idempotency_key,
+        )
+    }
 
-        if rec.status == LinkStatus::Consumed {
-            return Ok((
-                LinkStatus::Consumed,
-                rec.draft_id.clone(),
-                rec.missing_required_fields.clone(),
-                rec.bound_device_fingerprint_hash.clone(),
-                Some("TOKEN_CONSUMED".to_string()),
-                None,
-            ));
+    pub fn ph1link_invite_open_activate_commit_with_idempotency(
+        &mut self,
+        now: MonotonicTimeNs,
+        token_id: TokenId,
+        device_fingerprint: String,
+        idempotency_key: String,
+    ) -> Result<LinkOpenActivateResultParts, StorageError> {
+        Self::validate_ph1link_idempotency_key(
+            "ph1link_invite_open_activate_commit.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idx_key = (token_id.clone(), idempotency_key);
+        if let Some(existing) = self.link_open_activate_idempotency_index.get(&idx_key) {
+            return Ok(existing.clone());
         }
 
-        if rec.status == LinkStatus::Blocked {
-            return Ok((
-                LinkStatus::Blocked,
-                rec.draft_id.clone(),
-                rec.missing_required_fields.clone(),
-                rec.bound_device_fingerprint_hash.clone(),
-                Some("TOKEN_BLOCKED".to_string()),
-                None,
-            ));
-        }
-
-        // Expiry gate.
-        if now.0 > rec.expires_at.0 {
-            rec.status = LinkStatus::Expired;
-            return Ok((
-                LinkStatus::Expired,
-                rec.draft_id.clone(),
-                rec.missing_required_fields.clone(),
-                None,
-                Some("TOKEN_EXPIRED".to_string()),
-                None,
-            ));
-        }
-
-        if rec.status == LinkStatus::Expired {
-            return Ok((
-                LinkStatus::Expired,
-                rec.draft_id.clone(),
-                rec.missing_required_fields.clone(),
-                rec.bound_device_fingerprint_hash.clone(),
-                Some("TOKEN_EXPIRED".to_string()),
-                None,
-            ));
-        }
-
-        // Revocation gate.
-        if rec.status == LinkStatus::Revoked {
-            return Ok((
-                LinkStatus::Revoked,
-                rec.draft_id.clone(),
-                rec.missing_required_fields.clone(),
-                None,
-                Some("TOKEN_REVOKED".to_string()),
-                None,
-            ));
-        }
-
-        // Valid activation entry states for MVP runtime:
-        // - DRAFT_CREATED (generated; not yet delivered)
-        // - SENT (delivered by LINK_DELIVER_INVITE path)
-        // - OPENED (transient open state before final activation)
-        // - ACTIVATED (idempotent re-open on bound device)
-        if rec.status != LinkStatus::DraftCreated
-            && rec.status != LinkStatus::Sent
-            && rec.status != LinkStatus::Opened
-            && rec.status != LinkStatus::Activated
+        let mut mismatch_branch = false;
+        let mut outcome: Option<LinkOpenActivateResultParts> = None;
         {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "ph1link_invite_open_activate_commit.link_status",
-                    reason: "invalid link status for open/activate",
-                },
-            ));
-        }
+            let rec = self
+                .links
+                .get_mut(&token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?;
 
-        if rec.status == LinkStatus::DraftCreated || rec.status == LinkStatus::Sent {
-            rec.status = LinkStatus::Opened;
-        }
-
-        let df_hash = deterministic_device_fingerprint_hash_hex(&device_fingerprint);
-        match &rec.bound_device_fingerprint_hash {
-            None => {
-                rec.bound_device_fingerprint_hash = Some(df_hash.clone());
-            }
-            Some(existing) if existing != &df_hash => {
-                // Forwarded-link protection: fail closed.
-                rec.status = LinkStatus::Blocked;
-                return Ok((
+            if rec.status == LinkStatus::Consumed {
+                outcome = Some((
+                    LinkStatus::Consumed,
+                    rec.draft_id.clone(),
+                    rec.missing_required_fields.clone(),
+                    rec.bound_device_fingerprint_hash.clone(),
+                    Some("TOKEN_CONSUMED".to_string()),
+                    None,
+                ));
+            } else if rec.status == LinkStatus::Blocked {
+                outcome = Some((
                     LinkStatus::Blocked,
                     rec.draft_id.clone(),
                     rec.missing_required_fields.clone(),
-                    Some(existing.clone()),
-                    Some("DEVICE_FINGERPRINT_MISMATCH".to_string()),
+                    rec.bound_device_fingerprint_hash.clone(),
+                    Some("TOKEN_BLOCKED".to_string()),
                     None,
                 ));
+            } else {
+                if now.0 > rec.expires_at.0 {
+                    rec.status = LinkStatus::Expired;
+                }
+
+                if rec.status == LinkStatus::Expired {
+                    outcome = Some((
+                        LinkStatus::Expired,
+                        rec.draft_id.clone(),
+                        rec.missing_required_fields.clone(),
+                        rec.bound_device_fingerprint_hash.clone(),
+                        Some("TOKEN_EXPIRED".to_string()),
+                        None,
+                    ));
+                } else if rec.status == LinkStatus::Revoked {
+                    outcome = Some((
+                        LinkStatus::Revoked,
+                        rec.draft_id.clone(),
+                        rec.missing_required_fields.clone(),
+                        rec.bound_device_fingerprint_hash.clone(),
+                        Some("TOKEN_REVOKED".to_string()),
+                        None,
+                    ));
+                } else {
+                    // Valid activation entry states for MVP runtime:
+                    // - DRAFT_CREATED (generated; not yet delivered)
+                    // - SENT (delivered by LINK_DELIVER_INVITE path)
+                    // - OPENED (transient open state before final activation)
+                    // - ACTIVATED (idempotent re-open on bound device)
+                    if rec.status != LinkStatus::DraftCreated
+                        && rec.status != LinkStatus::Sent
+                        && rec.status != LinkStatus::Opened
+                        && rec.status != LinkStatus::Activated
+                    {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1link_invite_open_activate_commit.link_status",
+                                reason: "invalid link status for open/activate",
+                            },
+                        ));
+                    }
+
+                    if rec.status == LinkStatus::DraftCreated || rec.status == LinkStatus::Sent {
+                        rec.status = LinkStatus::Opened;
+                    }
+
+                    let df_hash = deterministic_device_fingerprint_hash_hex(&device_fingerprint);
+                    match &rec.bound_device_fingerprint_hash {
+                        None => {
+                            rec.bound_device_fingerprint_hash = Some(df_hash.clone());
+                        }
+                        Some(existing) if existing != &df_hash => {
+                            mismatch_branch = true;
+                        }
+                        _ => {}
+                    }
+
+                    if !mismatch_branch {
+                        rec.status = LinkStatus::Activated;
+                        let ctx_ref = rec
+                            .prefilled_context
+                            .as_ref()
+                            .map(|_| {
+                                PrefilledContextRef::new(format!("prefilled:{}", rec.token_id.as_str()))
+                            })
+                            .transpose()?;
+                        outcome = Some((
+                            LinkStatus::Activated,
+                            rec.draft_id.clone(),
+                            rec.missing_required_fields.clone(),
+                            rec.bound_device_fingerprint_hash.clone(),
+                            None,
+                            ctx_ref,
+                        ));
+                    }
+                }
             }
-            _ => {}
         }
 
-        // Mark ACTIVATED in current record.
-        rec.status = LinkStatus::Activated;
-        let ctx_ref = rec
-            .prefilled_context
-            .as_ref()
-            .map(|_| PrefilledContextRef::new(format!("prefilled:{}", rec.token_id.as_str())))
-            .transpose()?;
+        let resolved = if mismatch_branch {
+            let (status, bound, draft_id, missing_required_fields, conflict_reason) =
+                self.ph1link_invite_forward_block_commit(token_id.clone(), device_fingerprint)?;
+            (
+                status,
+                draft_id,
+                missing_required_fields,
+                bound,
+                conflict_reason,
+                None,
+            )
+        } else {
+            outcome.ok_or(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.result",
+                reason: "no deterministic activation outcome produced",
+            }))?
+        };
 
-        Ok((
-            LinkStatus::Activated,
-            rec.draft_id.clone(),
-            rec.missing_required_fields.clone(),
-            rec.bound_device_fingerprint_hash.clone(),
-            None,
-            ctx_ref,
-        ))
+        self.link_open_activate_idempotency_index
+            .insert(idx_key, resolved.clone());
+        Ok(resolved)
     }
 
     pub fn ph1link_invite_revoke_revoke(
@@ -2837,6 +3200,20 @@ impl Ph1fStore {
         token_id: TokenId,
         reason: String,
     ) -> Result<(), StorageError> {
+        let reason_trimmed = reason.trim();
+        if reason_trimmed.is_empty() {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1link_invite_revoke_revoke.reason",
+                reason: "must not be empty",
+            }));
+        }
+        if reason_trimmed.len() > 256 {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1link_invite_revoke_revoke.reason",
+                reason: "must be <= 256 chars",
+            }));
+        }
+
         let rec = self
             .links
             .get_mut(&token_id)
@@ -2844,9 +3221,27 @@ impl Ph1fStore {
                 table: "links.token_id",
                 key: token_id.as_str().to_string(),
             })?;
-        rec.status = LinkStatus::Revoked;
-        rec.revoked_reason = Some(reason);
-        Ok(())
+
+        match rec.status {
+            LinkStatus::Revoked => Ok(()),
+            LinkStatus::Opened | LinkStatus::Activated => {
+                Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1link_invite_revoke_revoke.ap_override_ref",
+                    reason: "required when link status is OPENED or ACTIVATED",
+                }))
+            }
+            LinkStatus::Consumed => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_revoke_revoke.link_status",
+                    reason: "cannot revoke consumed link",
+                },
+            )),
+            _ => {
+                rec.status = LinkStatus::Revoked;
+                rec.revoked_reason = Some(reason_trimmed.to_string());
+                Ok(())
+            }
+        }
     }
 
     pub fn ph1link_invite_expired_recovery_commit(

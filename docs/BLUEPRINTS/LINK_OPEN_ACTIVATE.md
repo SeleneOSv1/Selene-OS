@@ -45,7 +45,11 @@ bound_device_fingerprint_hash: string
 
 ## 6) Simulation Requirements
 - LINK_INVITE_OPEN_ACTIVATE_COMMIT
-- LINK_INVITE_FORWARD_BLOCK_COMMIT (when device mismatch is detected)
+- LINK_INVITE_FORWARD_BLOCK_COMMIT (mismatch branch executed exactly once from LINK_INVITE_OPEN_ACTIVATE_COMMIT)
+
+Single-path mismatch rule:
+- Device mismatch handling is a single deterministic branch under `LINK_INVITE_OPEN_ACTIVATE_COMMIT`.
+- The branch records `BLOCKED` through `LINK_INVITE_FORWARD_BLOCK_COMMIT` semantics once; no second independent block path is allowed.
 
 ## 7) Refusal Conditions
 - token invalid/expired/revoked/consumed -> LINK_TOKEN_INVALID

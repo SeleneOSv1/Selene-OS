@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.LINK`
-- `purpose`: Persist deterministic onboarding/invite link lifecycle (`generate`, `draft_update`, `open/activate`, `forward-block`) with strict token->draft mapping and deterministic binding guards.
+- `purpose`: Persist deterministic onboarding/invite link lifecycle (`generate`, `draft_update`, `open/activate`, `revoke`, `forward-block`) with strict token->draft mapping, schema-driven missing-field computation, and deterministic binding guards.
 - canonical identifier rule: canonical external identifier is `token_id`; internal draft identifier is `draft_id`; `link_url` is a transport artifact.
 - `version`: `v1`
 - `status`: `PASS`
@@ -19,7 +19,7 @@
   - `schema_version_id` is required for `invitee_type in (EMPLOYEE, COMPANY)` and optional for personal/customer invitee types
   - `status` is bounded (`DRAFT_CREATED | DRAFT_READY | COMMITTED | REVOKED | EXPIRED`) with deterministic monotonic transitions
   - `draft_payload_json` may include `prefilled_profile_fields` (bounded map)
-  - `missing_required_fields_json` is computed deterministically from invitee-type schema definitions in `docs/DB_WIRING/PH1_ONB.md` (Invitee Type Schemas section)
+  - `missing_required_fields_json` is computed deterministically from the active tenant schema version + selector snapshot (schema evaluator authority in `docs/DB_WIRING/PH1_ONB.md`)
   - deterministic idempotency keys for retriable writes
 
 ### `onboarding_link_tokens`
@@ -84,6 +84,12 @@
   - `draft_id`, `creator_update_fields`, idempotency key
 - idempotency key rule:
   - dedupe on `(draft_id, idempotency_key)`
+- preconditions:
+  - draft exists and is not terminal (`COMMITTED | REVOKED | EXPIRED`)
+  - linked token lifecycle is not terminal (`CONSUMED | REVOKED | EXPIRED`)
+- postconditions:
+  - same draft is updated only
+  - `missing_required_fields_json` is recomputed from active tenant schema version + selector snapshot only
 
 Legacy (Do Not Wire): `LINK_INVITE_SEND_COMMIT`, `LINK_INVITE_RESEND_COMMIT`, and `LINK_DELIVERY_FAILURE_HANDLING_COMMIT` are legacy and must not be used; link delivery is performed only by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
 Delivery dedupe/idempotency is owned by `LINK_DELIVER_INVITE` via `PH1.BCAST` + `PH1.DELIVERY`.
@@ -94,11 +100,24 @@ Delivery dedupe/idempotency is owned by `LINK_DELIVER_INVITE` via `PH1.BCAST` + 
 ### `LINK_INVITE_OPEN_ACTIVATE_COMMIT`
 - writes: token status transition (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED`), or deterministic terminal passthrough (`BLOCKED|EXPIRED|REVOKED|CONSUMED`), plus bound device fingerprint hash
 - required fields:
-  - `token_id`, presented device fingerprint hash, deterministic block path
+  - `token_id`, `device_fingerprint`, `idempotency_key`
 - idempotency key rule:
-  - deterministic no-op for repeated open on same bound device
+  - idempotent on `(token_id, idempotency_key)` with deterministic replay result
 - forwarded-link block input rule:
-  - `LINK_INVITE_FORWARD_BLOCK_COMMIT` input is `token_id + presented_device_fingerprint`.
+  - device mismatch during `LINK_INVITE_OPEN_ACTIVATE_COMMIT` executes `LINK_INVITE_FORWARD_BLOCK_COMMIT` exactly once as the mismatch branch.
+
+### `LINK_INVITE_REVOKE_REVOKE`
+- writes: token lifecycle transition to `REVOKED`
+- required fields:
+  - `token_id`, `reason`
+  - `ap_override_ref` is required when token lifecycle is already `ACTIVATED` (or `OPENED`)
+- idempotency key rule:
+  - idempotent on `(token_id)`
+- preconditions:
+  - token exists
+  - if token is `ACTIVATED` (or `OPENED`) and no approved AP override is present -> refuse (fail-closed)
+- postconditions:
+  - token is `REVOKED` and cannot be activated/consumed afterwards
 
 ### cross-engine completion transition (consumption)
 - on successful onboarding completion (`PH1.ONB` complete commit path), token status is set to `CONSUMED` deterministically.

@@ -71,7 +71,19 @@ CREATE TABLE IF NOT EXISTS onboarding_draft_write_dedupe (
     idempotency_key TEXT NOT NULL,
     write_hash TEXT NOT NULL,
     created_at BIGINT NOT NULL,
-    CHECK (scope_type IN ('LINK', 'ONB'))
+    -- Deterministic dedupe domain separation:
+    -- keep legacy generic LINK/ONB plus operation-scoped LINK keys used by runtime parity.
+    CHECK (
+        scope_type IN (
+            'LINK',
+            'ONB',
+            'LINK_DRAFT_UPDATE',
+            'LINK_OPEN_ACTIVATE',
+            'LINK_EXPIRED_RECOVERY'
+        )
+    ),
+    CHECK (char_length(idempotency_key) BETWEEN 1 AND 128),
+    CHECK (char_length(write_hash) >= 1)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_onboarding_draft_write_dedupe_scope_key

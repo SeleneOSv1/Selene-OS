@@ -32,9 +32,9 @@ Locked schema rules:
 | LINK_INVITE_GENERATE_DRAFT | DRAFT | Link | Create onboarding draft + minimal token preview (no send) | DRAFT | v1 | Write onboarding draft + token map only |
 | LINK_INVITE_DRAFT_UPDATE_COMMIT | COMMIT | Link | Update onboarding draft with creator-provided fields (deterministic) | DRAFT | v1 | Update onboarding draft record only |
 | LINK_INVITE_SEND_COMMIT | COMMIT | Link | Legacy do-not-wire send placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
-| LINK_INVITE_OPEN_ACTIVATE_COMMIT | COMMIT | Link | Validate invite link on open, bind device fingerprint, resolve token_id->draft_id | DRAFT | v1 | Mark link OPENED/ACTIVATED (state write) |
+| LINK_INVITE_OPEN_ACTIVATE_COMMIT | COMMIT | Link | Validate invite link on open, bind device fingerprint, enforce idempotency key, resolve token_id->draft_id | DRAFT | v1 | Mark link OPENED/ACTIVATED; mismatch executes single forward-block branch |
 | LINK_INVITE_RESEND_COMMIT | COMMIT | Link | Legacy do-not-wire resend placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
-| LINK_INVITE_REVOKE_REVOKE | REVOKE | Link | Revoke an invite link (fail-closed if already activated without AP) | DRAFT | v1 | Mark link REVOKED (state write) |
+| LINK_INVITE_REVOKE_REVOKE | REVOKE | Link | Revoke an invite link (activated/opened links require AP override; otherwise fail-closed) | DRAFT | v1 | Mark link REVOKED (state write) |
 | LINK_INVITE_EXPIRED_RECOVERY_COMMIT | COMMIT | Link | Replace an expired invite link with a deterministic replacement preserving metadata | ACTIVE | v1 | State write only (replacement token/link_url); delivery via LINK_DELIVER_INVITE |
 | LINK_INVITE_FORWARD_BLOCK_COMMIT | COMMIT | Link | Block forwarded-link activation on binding mismatch and emit escalation signals | DRAFT | v1 | Mark blocked attempt; audit + optional escalation |
 | LINK_ROLE_PROPOSE_DRAFT | DRAFT | Link | Propose a new role/position template for AP approval (sandbox) | DRAFT | v1 | Write role proposal draft only |
@@ -298,8 +298,8 @@ draft_id: string
 missing_required_fields: string[]
 draft_status: enum (DRAFT_CREATED | DRAFT_READY)
 ```
-- preconditions: draft exists; not COMMITTED/REVOKED
-- postconditions: same draft updated; missing_required_fields recomputed from tenant schema version only
+- preconditions: draft exists; draft is not terminal (`COMMITTED|REVOKED|EXPIRED`); linked token state is not terminal (`CONSUMED|REVOKED|EXPIRED`)
+- postconditions: same draft updated; missing_required_fields recomputed from active tenant schema version + selector snapshot only
 - side_effects: Update onboarding draft record only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -355,6 +355,7 @@ status: SENT
 ```text
 token_id: string
 device_fingerprint: string
+idempotency_key: string
 now_ms: timestamp_ms
 ```
 - output_schema (minimum):
@@ -365,12 +366,12 @@ activation_status: enum (ACTIVATED | BLOCKED | EXPIRED | REVOKED | CONSUMED)
 bound_device_fingerprint_hash: string (optional)
 missing_required_fields: string[] (optional)
 ```
-- preconditions (minimum): token_id exists and is not revoked; token maps to draft_id; if expired -> EXPIRED; if already consumed -> CONSUMED; if binding mismatch -> BLOCKED
-- postconditions: first-open binds device fingerprint hash; onboarding handoff carries draft_id and current missing_required_fields
+- preconditions (minimum): token_id exists; token maps to draft_id; if expired -> EXPIRED; if revoked -> REVOKED; if already consumed -> CONSUMED; if binding mismatch -> execute LINK_INVITE_FORWARD_BLOCK_COMMIT branch and return BLOCKED
+- postconditions: first-open binds device fingerprint hash; onboarding handoff carries draft_id and current missing_required_fields; mismatch branch records one deterministic BLOCKED write
 - side_effects: State write only (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED` internal transition + bindings; terminal passthrough for CONSUMED/EXPIRED/REVOKED/BLOCKED)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (token_id + device_fingerprint_hash)
+- idempotency_key_rule: idempotent on (token_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LINK_INVITE_RESEND_COMMIT (COMMIT)
@@ -411,10 +412,10 @@ delivery_proof_ref: string (optional)
 - name: Link Invite Revoke (Revoke)
 - owning_domain: Link
 - simulation_type: REVOKE
-- purpose: Revoke an invite link (fail closed if already activated without AP override)
+- purpose: Revoke an invite link (fail closed if already activated/opened without AP override)
 - triggers: LINK_REVOKE (process_id) (example)
 - required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
-- required_approvals: optional AP override (policy-dependent)
+- required_approvals: AP override required when token is already `ACTIVATED` (or `OPENED`)
 - required_confirmations: required (REVOKE)
 - input_schema (minimum):
 ```text
@@ -426,7 +427,7 @@ reason: string (bounded)
 token_id: string
 status: REVOKED
 ```
-- preconditions: token exists; if already activated -> require AP override or refuse
+- preconditions: token exists; if already activated/opened -> require AP override or refuse
 - postconditions: token is revoked and cannot be used again
 - side_effects: State write only (REVOKED)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -468,7 +469,7 @@ new_link_url: string
 - owning_domain: Link
 - simulation_type: COMMIT
 - purpose: Block forwarded-link activation on binding mismatch and emit escalation signals
-- triggers: LINK_OPEN (process_id) (example)
+- triggers: LINK_OPEN_ACTIVATE mismatch branch (process_id)
 - required_roles: none (invitee-side)
 - required_approvals: none
 - required_confirmations: none
@@ -483,7 +484,7 @@ token_id: string
 activation_status: BLOCKED
 reason_code: FORWARDED_LINK_BLOCKED
 ```
-- preconditions: token exists and is already bound to a different device fingerprint
+- preconditions: token exists and is already bound to a different device fingerprint; this is the single mismatch branch under LINK_INVITE_OPEN_ACTIVATE_COMMIT
 - postconditions: blocked attempt is recorded; optional escalation case opened (policy-dependent)
 - side_effects: State write only (blocked attempt record)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)

@@ -1143,6 +1143,7 @@ mod tests {
             MonotonicTimeNs(now().0 + 1),
             token_id.clone(),
             "device_fp_1".to_string(),
+            "idem_onb_open_1".to_string(),
         )
         .unwrap();
         let _ = link_rt.run(store, &open).unwrap();

@@ -3,11 +3,13 @@
 use crate::ph1_voice_id::UserId;
 use crate::ph1j::{CorrelationId, TurnId};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
+use std::collections::BTreeMap;
 
 pub const PH1LINK_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 
 // Simulation IDs (authoritative strings; must match docs/08_SIMULATION_CATALOG.md).
 pub const LINK_INVITE_GENERATE_DRAFT: &str = "LINK_INVITE_GENERATE_DRAFT";
+pub const LINK_INVITE_DRAFT_UPDATE_COMMIT: &str = "LINK_INVITE_DRAFT_UPDATE_COMMIT";
 pub const LINK_INVITE_OPEN_ACTIVATE_COMMIT: &str = "LINK_INVITE_OPEN_ACTIVATE_COMMIT";
 pub const LINK_INVITE_REVOKE_REVOKE: &str = "LINK_INVITE_REVOKE_REVOKE";
 pub const LINK_INVITE_EXPIRED_RECOVERY_COMMIT: &str = "LINK_INVITE_EXPIRED_RECOVERY_COMMIT";
@@ -64,6 +66,12 @@ pub enum LinkStatus {
     Expired,
     Revoked,
     Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DraftStatus {
+    DraftCreated,
+    DraftReady,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -577,6 +585,58 @@ impl Validate for LinkGenerateResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkDraftUpdateResult {
+    pub schema_version: SchemaVersion,
+    pub draft_id: DraftId,
+    pub draft_status: DraftStatus,
+    pub missing_required_fields: Vec<String>,
+}
+
+impl LinkDraftUpdateResult {
+    pub fn v1(
+        draft_id: DraftId,
+        draft_status: DraftStatus,
+        missing_required_fields: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1LINK_CONTRACT_VERSION,
+            draft_id,
+            draft_status,
+            missing_required_fields,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for LinkDraftUpdateResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LINK_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_draft_update_result.schema_version",
+                reason: "must match PH1LINK_CONTRACT_VERSION",
+            });
+        }
+        self.draft_id.validate()?;
+        if self.missing_required_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_draft_update_result.missing_required_fields",
+                reason: "must be <= 64 entries",
+            });
+        }
+        for f in &self.missing_required_fields {
+            if f.trim().is_empty() || f.len() > 64 || !f.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_draft_update_result.missing_required_fields[]",
+                    reason: "must be ASCII, non-empty, <= 64 chars",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkActivationResult {
     pub schema_version: SchemaVersion,
     pub token_id: TokenId,
@@ -883,6 +943,7 @@ pub struct Ph1LinkOk {
     pub simulation_id: String,
     pub reason_code: ReasonCodeId,
     pub link_generate_result: Option<LinkGenerateResult>,
+    pub link_draft_update_result: Option<LinkDraftUpdateResult>,
     pub link_activation_result: Option<LinkActivationResult>,
     pub link_revoke_result: Option<LinkRevokeResult>,
     pub link_expired_recovery_result: Option<LinkExpiredRecoveryResult>,
@@ -907,6 +968,7 @@ impl Ph1LinkOk {
             simulation_id,
             reason_code,
             link_generate_result,
+            link_draft_update_result: None,
             link_activation_result,
             link_revoke_result,
             link_expired_recovery_result,
@@ -946,6 +1008,10 @@ impl Validate for Ph1LinkOk {
         }
         let mut count = 0u8;
         if let Some(r) = &self.link_generate_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.link_draft_update_result {
             r.validate()?;
             count += 1;
         }
@@ -1064,6 +1130,7 @@ impl Validate for Ph1LinkResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkRequest {
     InviteGenerateDraft(InviteGenerateDraftRequest),
+    InviteDraftUpdateCommit(InviteDraftUpdateCommitRequest),
     InviteOpenActivateCommit(InviteOpenActivateCommitRequest),
     InviteRevokeRevoke(InviteRevokeRevokeRequest),
     InviteExpiredRecoveryCommit(InviteExpiredRecoveryCommitRequest),
@@ -1076,6 +1143,7 @@ impl LinkRequest {
     pub fn simulation_id(&self) -> &'static str {
         match self {
             LinkRequest::InviteGenerateDraft(_) => LINK_INVITE_GENERATE_DRAFT,
+            LinkRequest::InviteDraftUpdateCommit(_) => LINK_INVITE_DRAFT_UPDATE_COMMIT,
             LinkRequest::InviteOpenActivateCommit(_) => LINK_INVITE_OPEN_ACTIVATE_COMMIT,
             LinkRequest::InviteRevokeRevoke(_) => LINK_INVITE_REVOKE_REVOKE,
             LinkRequest::InviteExpiredRecoveryCommit(_) => LINK_INVITE_EXPIRED_RECOVERY_COMMIT,
@@ -1092,7 +1160,8 @@ impl LinkRequest {
             LinkRequest::InviteGenerateDraft(_) => SimulationType::Draft,
             LinkRequest::RoleProposeDraft(_) => SimulationType::Draft,
             LinkRequest::DualRoleConflictEscalateDraft(_) => SimulationType::Draft,
-            LinkRequest::InviteOpenActivateCommit(_)
+            LinkRequest::InviteDraftUpdateCommit(_)
+            | LinkRequest::InviteOpenActivateCommit(_)
             | LinkRequest::InviteExpiredRecoveryCommit(_)
             | LinkRequest::InviteForwardBlockCommit(_) => SimulationType::Commit,
             LinkRequest::InviteRevokeRevoke(_) => SimulationType::Revoke,
@@ -1141,9 +1210,68 @@ impl Validate for InviteGenerateDraftRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteDraftUpdateCommitRequest {
+    pub draft_id: DraftId,
+    pub creator_update_fields: BTreeMap<String, String>,
+    pub idempotency_key: String,
+}
+
+impl Validate for InviteDraftUpdateCommitRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.draft_id.validate()?;
+        if self.creator_update_fields.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_draft_update_commit_request.creator_update_fields",
+                reason: "must include at least one update field",
+            });
+        }
+        if self.creator_update_fields.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_draft_update_commit_request.creator_update_fields",
+                reason: "must include <= 64 entries",
+            });
+        }
+        for (k, v) in &self.creator_update_fields {
+            if k.trim().is_empty() || k.len() > 64 || !k.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "invite_draft_update_commit_request.creator_update_fields.key",
+                    reason: "must be ASCII, non-empty, <= 64 chars",
+                });
+            }
+            if v.trim().is_empty() || v.len() > 1024 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "invite_draft_update_commit_request.creator_update_fields.value",
+                    reason: "must be non-empty and <= 1024 chars",
+                });
+            }
+        }
+        if self.idempotency_key.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_draft_update_commit_request.idempotency_key",
+                reason: "must not be empty",
+            });
+        }
+        if self.idempotency_key.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_draft_update_commit_request.idempotency_key",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if !self.idempotency_key.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_draft_update_commit_request.idempotency_key",
+                reason: "must be ASCII",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteOpenActivateCommitRequest {
     pub token_id: TokenId,
     pub device_fingerprint: String,
+    pub idempotency_key: String,
 }
 
 impl Validate for InviteOpenActivateCommitRequest {
@@ -1159,6 +1287,24 @@ impl Validate for InviteOpenActivateCommitRequest {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_open_activate_commit_request.device_fingerprint",
                 reason: "must be <= 256 chars",
+            });
+        }
+        if self.idempotency_key.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.idempotency_key",
+                reason: "must not be empty",
+            });
+        }
+        if self.idempotency_key.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.idempotency_key",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if !self.idempotency_key.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.idempotency_key",
+                reason: "must be ASCII",
             });
         }
         Ok(())
@@ -1350,10 +1496,12 @@ impl Ph1LinkRequest {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        idempotency_key: String,
     ) -> Result<Self, ContractViolation> {
         let req = InviteOpenActivateCommitRequest {
             token_id,
             device_fingerprint,
+            idempotency_key,
         };
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
@@ -1363,6 +1511,32 @@ impl Ph1LinkRequest {
             simulation_id: LINK_INVITE_OPEN_ACTIVATE_COMMIT.to_string(),
             simulation_type: SimulationType::Commit,
             request: LinkRequest::InviteOpenActivateCommit(req),
+        };
+        r.validate()?;
+        Ok(r)
+    }
+
+    pub fn invite_draft_update_commit_v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        now: MonotonicTimeNs,
+        draft_id: DraftId,
+        creator_update_fields: BTreeMap<String, String>,
+        idempotency_key: String,
+    ) -> Result<Self, ContractViolation> {
+        let req = InviteDraftUpdateCommitRequest {
+            draft_id,
+            creator_update_fields,
+            idempotency_key,
+        };
+        let r = Self {
+            schema_version: PH1LINK_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: LINK_INVITE_DRAFT_UPDATE_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: LinkRequest::InviteDraftUpdateCommit(req),
         };
         r.validate()?;
         Ok(r)
@@ -1427,6 +1601,7 @@ impl Validate for Ph1LinkRequest {
 
         match &self.request {
             LinkRequest::InviteGenerateDraft(r) => r.validate(),
+            LinkRequest::InviteDraftUpdateCommit(r) => r.validate(),
             LinkRequest::InviteOpenActivateCommit(r) => r.validate(),
             LinkRequest::InviteRevokeRevoke(r) => r.validate(),
             LinkRequest::InviteExpiredRecoveryCommit(r) => r.validate(),
