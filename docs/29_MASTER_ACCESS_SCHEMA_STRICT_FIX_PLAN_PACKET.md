@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP3_COMPLETED_PENDING_STEP4
+Status: STEP4_COMPLETED_PENDING_STEP5
 
 ## 1) Purpose
 
@@ -283,7 +283,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
-- Step 4: PENDING
+- Step 4: COMPLETED (2026-02-15)
 - Step 5: PENDING
 - Step 6: PENDING
 - Step 7: PENDING
@@ -325,3 +325,26 @@ Step 3 note:
 - Verified gate compatibility remains explicit (`ALLOW | DENY | ESCALATE` unchanged externally).
 - Step-3 proof:
   - `rg` checks for Step-3 anchors in DB wiring + ECM docs -> pass
+
+Step 4 note:
+- Added and locked master-access blueprint records:
+  - `docs/BLUEPRINTS/ACCESS_SCHEMA_MANAGE.md`
+  - `docs/BLUEPRINTS/ACCESS_ESCALATION_VOTE.md`
+  - `docs/BLUEPRINTS/ACCESS_INSTANCE_COMPILE_REFRESH.md`
+- Updated authoritative registry index in `docs/09_BLUEPRINT_REGISTRY.md` with three new ACTIVE intents/processes.
+- Added and locked simulation catalog rows + detailed blocks for:
+  - `ACCESS_AP_SCHEMA_CREATE_DRAFT`
+  - `ACCESS_AP_SCHEMA_UPDATE_COMMIT`
+  - `ACCESS_AP_SCHEMA_ACTIVATE_COMMIT`
+  - `ACCESS_AP_SCHEMA_RETIRE_COMMIT`
+  - `ACCESS_AP_OVERLAY_UPDATE_COMMIT`
+  - `ACCESS_BOARD_POLICY_UPDATE_COMMIT`
+  - `ACCESS_BOARD_VOTE_COMMIT`
+  - `ACCESS_INSTANCE_COMPILE_COMMIT`
+- Updated access domain profile bindings in `docs/08_SIMULATION_CATALOG.md` to include AP/overlay/board tables.
+- Updated coverage references in `docs/COVERAGE_MATRIX.md` for new Access blueprints/simulations.
+- Step-4 proof:
+  - capability-id resolution checks against `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md` -> pass
+  - simulation-id presence checks in `docs/08_SIMULATION_CATALOG.md` -> pass
+  - registry ACTIVE uniqueness check (no duplicate ACTIVE per intent_type) -> pass
+  - readiness audit command -> `EXIT:0`

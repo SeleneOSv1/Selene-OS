@@ -73,6 +73,14 @@ Locked schema rules:
 | ACCESS_OVERRIDE_TEMP_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved temporary/one-shot override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
 | ACCESS_OVERRIDE_PERM_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved permanent override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 baseline/override state |
 | ACCESS_OVERRIDE_REVOKE_COMMIT | COMMIT | Access | Revoke a prior override from a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
+| ACCESS_AP_SCHEMA_CREATE_DRAFT | DRAFT | Access | Create AP schema draft row for global/tenant scope | DRAFT | v1 | Append AP schema ledger row only |
+| ACCESS_AP_SCHEMA_UPDATE_COMMIT | COMMIT | Access | Update AP schema draft version deterministically | DRAFT | v1 | Append AP schema ledger row only |
+| ACCESS_AP_SCHEMA_ACTIVATE_COMMIT | COMMIT | Access | Activate AP schema version into current projection | DRAFT | v1 | Update AP current projection |
+| ACCESS_AP_SCHEMA_RETIRE_COMMIT | COMMIT | Access | Retire AP schema version (history retained) | DRAFT | v1 | Update AP current projection + ledger append |
+| ACCESS_AP_OVERLAY_UPDATE_COMMIT | COMMIT | Access | Update tenant AP overlay operations and active projection | DRAFT | v1 | Append overlay ledger row + update current projection |
+| ACCESS_BOARD_POLICY_UPDATE_COMMIT | COMMIT | Access | Update tenant board/approval policy definition and active projection | DRAFT | v1 | Append board policy ledger row + update current projection |
+| ACCESS_BOARD_VOTE_COMMIT | COMMIT | Access | Record one board vote for an escalation case | DRAFT | v1 | Append board vote ledger row |
+| ACCESS_INSTANCE_COMPILE_COMMIT | COMMIT | Access | Compile and persist per-user effective access lineage from schema chain | DRAFT | v1 | Upsert access instance lineage refs |
 | CAPREQ_CREATE_DRAFT | DRAFT | CapabilityRequest | Create a deterministic capability request draft lifecycle row | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
 | CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT | COMMIT | CapabilityRequest | Submit a capability request for approval | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
 | CAPREQ_APPROVE_COMMIT | COMMIT | CapabilityRequest | Approve a capability request deterministically | ACTIVE | v1 | Append `capreq_ledger`; update `capreq_current` |
@@ -150,7 +158,7 @@ Hard rules
 | Position | [`tenant_companies`, `positions`, `position_requirements_schemas_current`] | [`positions`, `position_lifecycle_events`, `position_requirements_schemas_ledger`, `position_requirements_schemas_current`] |
 | VoiceIdentity | [`identities`, `devices`, `sessions`] | [`artifacts_ledger`] |
 | Wake | [`devices`, `sessions`, `wake_enrollment_sessions`, `wake_profile_bindings`] | [`wake_enrollment_sessions`, `wake_enrollment_samples`, `wake_runtime_events`, `wake_profile_bindings`, `artifacts_ledger`] |
-| Access | [`access_instances`, `access_overrides`] | [`access_instances`, `access_overrides`] |
+| Access | [`access_instances`, `access_overrides`, `access_ap_schemas_ledger`, `access_ap_schemas_current`, `access_ap_overlay_ledger`, `access_ap_overlay_current`, `access_board_policy_ledger`, `access_board_policy_current`, `access_board_votes_ledger`] | [`access_instances`, `access_overrides`, `access_ap_schemas_ledger`, `access_ap_schemas_current`, `access_ap_overlay_ledger`, `access_ap_overlay_current`, `access_board_policy_ledger`, `access_board_policy_current`, `access_board_votes_ledger`] |
 | CapabilityRequest | [`access_instances`, `access_overrides`, `capreq_current`] | [`capreq_ledger`, `capreq_current`] |
 | Reminder | [`reminders`, `reminder_occurrences`] | [`reminders`, `reminder_occurrences`, `reminder_delivery_attempts`] |
 | Emotional | [`preferences_current`, `memory_current`] | [`preferences_ledger`, `artifacts_ledger`, `audit_events`] |
@@ -1288,6 +1296,280 @@ status: REVOKED
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (target_user_id + override_id + idempotency_key)
 - audit_events: ACCESS_OVERRIDE_REVOKED (example)
+
+### ACCESS_AP_SCHEMA_CREATE_DRAFT (DRAFT)
+
+- name: Access AP Schema Create Draft
+- owning_domain: Access
+- simulation_type: DRAFT
+- purpose: Create a schema draft row for a global or tenant access profile without activation side effects
+- triggers: ACCESS_SCHEMA_MANAGE (create_draft path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (DRAFT lifecycle authoring confirmation)
+- input_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+scope: enum (GLOBAL | TENANT)
+tenant_id: string (required when scope=TENANT)
+profile_payload_json: object (bounded)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+lifecycle_state: DRAFT
+```
+- preconditions: caller scope is valid for requested AP scope; schema payload passes bounded validation
+- postconditions: AP schema draft row appended; no active projection change
+- side_effects: Append AP schema ledger row only
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_SCHEMA_UPDATE_COMMIT (COMMIT)
+
+- name: Access AP Schema Update Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Append a deterministic update row for an AP schema draft version
+- triggers: ACCESS_SCHEMA_MANAGE (update path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+scope: enum (GLOBAL | TENANT)
+tenant_id: string (required when scope=TENANT)
+profile_payload_json: object (bounded)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+lifecycle_state: DRAFT
+```
+- preconditions: target schema version exists in DRAFT
+- postconditions: AP schema ledger append succeeds for update action
+- side_effects: Append AP schema ledger row only
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_SCHEMA_ACTIVATE_COMMIT (COMMIT)
+
+- name: Access AP Schema Activate Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Activate an AP schema version into current projection (single active version per scope/profile)
+- triggers: ACCESS_SCHEMA_MANAGE (activate path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP/board path (policy-bound)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+scope: enum (GLOBAL | TENANT)
+tenant_id: string (required when scope=TENANT)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+active_schema_version_id: string
+lifecycle_state: ACTIVE
+```
+- preconditions: target schema version exists; activation policy gates are satisfied
+- postconditions: current projection points to one active version for scope/profile
+- side_effects: Update AP current projection
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_SCHEMA_RETIRE_COMMIT (COMMIT)
+
+- name: Access AP Schema Retire Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Retire an AP schema version while preserving full history for replay
+- triggers: ACCESS_SCHEMA_MANAGE (retire path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP/board path (policy-bound)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+scope: enum (GLOBAL | TENANT)
+tenant_id: string (required when scope=TENANT)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+lifecycle_state: RETIRED
+```
+- preconditions: target schema version exists and retirement policy allows transition
+- postconditions: AP schema version marked retired; projection updated if needed
+- side_effects: Update AP current projection + ledger append
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_OVERLAY_UPDATE_COMMIT (COMMIT)
+
+- name: Access AP Overlay Update Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Update tenant overlay ops and active projection for one overlay version
+- triggers: ACCESS_POLICY_MANAGE (overlay path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP/board path (policy-bound)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+overlay_id: string
+overlay_version_id: string
+event_action: enum (CREATE_DRAFT | UPDATE_DRAFT | ACTIVATE | RETIRE)
+overlay_ops_json: object (bounded)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+overlay_id: string
+overlay_version_id: string
+overlay_state: enum (DRAFT | ACTIVE | RETIRED)
+```
+- preconditions: overlay ops are bounded and tenant-scoped
+- postconditions: overlay ledger append and current projection update are deterministic
+- side_effects: Append overlay ledger row + update current projection
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + overlay_id + overlay_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_BOARD_POLICY_UPDATE_COMMIT (COMMIT)
+
+- name: Access Board Policy Update Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Update board/approval policy definition and active projection deterministically
+- triggers: ACCESS_POLICY_MANAGE (board policy path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional board policy approval path (policy-bound)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+board_policy_id: string
+policy_version_id: string
+event_action: enum (CREATE_DRAFT | UPDATE_DRAFT | ACTIVATE | RETIRE)
+policy_payload_json: object (bounded)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+board_policy_id: string
+policy_version_id: string
+policy_state: enum (DRAFT | ACTIVE | RETIRED)
+```
+- preconditions: policy primitive and thresholds are valid (`N_OF_M`, quorum, unanimous, mixed)
+- postconditions: board policy ledger append and projection update are deterministic
+- side_effects: Append board policy ledger row + update current projection
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + board_policy_id + policy_version_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_BOARD_VOTE_COMMIT (COMMIT)
+
+- name: Access Board Vote Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Record one deterministic board vote row for an escalation case
+- triggers: ACCESS_ESCALATION_VOTE (cast_vote path)
+- required_roles: BOARD_MEMBER_ROLE_BOUND (resolved by Access policy)
+- required_approvals: none
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+escalation_case_id: string
+board_policy_id: string
+voter_user_id: string
+vote_value: enum (APPROVE | REJECT)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+escalation_case_id: string
+vote_row_id: string
+threshold_status: enum (PENDING | SATISFIED | REJECTED)
+```
+- preconditions: voter is an authorized board member for tenant policy scope
+- postconditions: vote row append succeeds; threshold status can be deterministically recomputed
+- side_effects: Append board vote ledger row
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + escalation_case_id + voter_user_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_INSTANCE_COMPILE_COMMIT (COMMIT)
+
+- name: Access Instance Compile Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Compile effective per-user access from schema chain and persist lineage refs
+- triggers: ACCESS_INSTANCE_COMPILE_REFRESH (compile/refresh path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none (unless compile action itself is policy-gated)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+target_user_id: string
+access_profile_id: string
+global_profile_version_ref: string
+tenant_profile_version_ref: string (optional)
+overlay_version_refs: list (optional, bounded)
+position_id: string (optional)
+compile_reason: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_instance_id: string
+compiled_global_profile_ref: string
+compiled_tenant_profile_ref: string (optional)
+compiled_overlay_set_ref: string (optional)
+compiled_position_ref: string (optional)
+```
+- preconditions: all schema refs resolve and required versions are ACTIVE
+- postconditions: access instance upsert succeeds with deterministic lineage refs
+- side_effects: Upsert access instance lineage refs
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + target_user_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### CAPREQ_CREATE_DRAFT (DRAFT)
 
