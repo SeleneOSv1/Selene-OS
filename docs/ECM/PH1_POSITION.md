@@ -58,6 +58,27 @@
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `PH1POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT_ROW`
+- `name`: Create position requirements schema draft
+- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, selectors, field_specs, idempotency_key, simulation_id, reason_code)`
+- `output_schema`: `Result<PositionRequirementsSchemaDraftResult, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT_ROW`
+- `name`: Update position requirements schema draft
+- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, selectors, field_specs, change_reason, idempotency_key, simulation_id, reason_code)`
+- `output_schema`: `Result<PositionRequirementsSchemaDraftResult, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT_ROW`
+- `name`: Activate position requirements schema version
+- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, apply_scope, idempotency_key, simulation_id, reason_code)`
+- `output_schema`: `Result<PositionRequirementsSchemaLifecycleResult, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
 ### `PH1POSITION_ROW`
 - `name`: Read one position row
 - `input_schema`: `(tenant_id, position_id)`

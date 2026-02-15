@@ -46,16 +46,22 @@ Locked schema rules:
 | ONB_BIZ_COMPLETE_COMMIT | COMMIT | OnboardingBusiness | Finalize business onboarding prerequisite state | DRAFT | v1 | Mark business onboarding complete |
 | ONB_DRAFT_UPDATE_COMMIT | COMMIT | Onboarding | Update onboarding draft with invitee answers and recompute missing_required_fields | DRAFT | v1 | Update onboarding draft record only |
 | ONB_TERMS_ACCEPT_COMMIT | COMMIT | Onboarding | Record invitee Terms acceptance | DRAFT | v1 | Write terms acceptance record |
-| ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT | COMMIT | Onboarding | Capture employee photo and send to sender for verification | DRAFT | v1 | Deliver photo via PH1.BCAST.001; write proof |
-| ONB_EMPLOYEE_SENDER_VERIFY_COMMIT | COMMIT | Onboarding | Sender confirms/rejects employee photo | DRAFT | v1 | Update verification state |
+| ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT | COMMIT | Onboarding | Commit schema-required photo/evidence capture + sender handoff (legacy id retained) | DRAFT | v1 | Deliver evidence handoff via PH1.BCAST.001; write proof |
+| ONB_EMPLOYEE_SENDER_VERIFY_COMMIT | COMMIT | Onboarding | Commit schema-required sender confirmation decision (legacy id retained) | DRAFT | v1 | Update verification state |
 | ONB_PRIMARY_DEVICE_CONFIRM_COMMIT | COMMIT | Onboarding | Record primary device proof (biometric/passcode) | DRAFT | v1 | Write device proof record |
 | ONB_ACCESS_INSTANCE_CREATE_COMMIT | COMMIT | Onboarding | Create per-user access instance (PH2.ACCESS.002 clone) | DRAFT | v1 | Create access instance record |
 | ONB_COMPLETE_COMMIT | COMMIT | Onboarding | Atomically commit onboarding draft into real employee/user record and complete onboarding | DRAFT | v1 | Atomic commit + draft finalization + token consume + audit |
+| ONB_REQUIREMENT_BACKFILL_START_DRAFT | DRAFT | Onboarding | Create deterministic campaign draft for applying new requirements to current staff | ACTIVE | v1 | Write backfill campaign draft + target snapshot |
+| ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT | COMMIT | Onboarding | Notify affected current staff to provide newly required fields/proofs | ACTIVE | v1 | Write campaign progress + broadcast/reminder handoff refs |
+| ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT | COMMIT | Onboarding | Finalize backfill campaign with deterministic completion/exception counts | ACTIVE | v1 | Write campaign terminal state |
 | POSITION_SIM_001_CREATE_DRAFT | DRAFT | Position | Create deterministic position draft | DRAFT | v1 | Write position draft row |
 | POSITION_SIM_002_VALIDATE_AUTH_COMPANY | DRAFT | Position | Validate authority scope and company existence before activation | DRAFT | v1 | Write validation result only |
 | POSITION_SIM_003_BAND_POLICY_CHECK | DRAFT | Position | Apply compensation-band policy checks and escalation triggers | DRAFT | v1 | Write policy check result only |
 | POSITION_SIM_004_ACTIVATE_COMMIT | COMMIT | Position | Activate a position draft | DRAFT | v1 | Update position lifecycle to Active |
 | POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT | COMMIT | Position | Retire or suspend an active position deterministically | DRAFT | v1 | Update position lifecycle state |
+| POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT | DRAFT | Position | Create requirements schema draft for a position | ACTIVE | v1 | Write position requirements schema draft |
+| POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT | COMMIT | Position | Update requirements schema draft/overlays for a position | ACTIVE | v1 | Write requirements schema update |
+| POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT | COMMIT | Position | Activate a position requirements schema version | ACTIVE | v1 | Update active schema version for position |
 | VOICE_ID_ENROLL_START_DRAFT | DRAFT | VoiceIdentity | Start voice recognition enrollment loop (tight record->grade) | DRAFT | v1 | Write enrollment session state only |
 | VOICE_ID_ENROLL_SAMPLE_COMMIT | COMMIT | VoiceIdentity | Capture + grade one voice enrollment sample and update progress | DRAFT | v1 | Store derived features + update enrollment progress |
 | VOICE_ID_ENROLL_COMPLETE_COMMIT | COMMIT | VoiceIdentity | Finalize voice profile artifact after PASS target reached | DRAFT | v1 | Write voice profile artifact (derived; no raw audio) |
@@ -139,9 +145,9 @@ Hard rules
 |---|---|---|
 | Payroll | [`identities`, `tenant_companies`, `positions`] | [`artifacts_ledger`] |
 | Link | [`onboarding_drafts`, `onboarding_link_tokens`, `positions`, `tenant_companies`] | [`onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`] |
-| Onboarding | [`onboarding_drafts`, `onboarding_link_tokens`, `tenant_companies`, `positions`, `access_instances`, `access_overrides`] | [`onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, `access_instances`] |
+| Onboarding | [`onboarding_drafts`, `onboarding_link_tokens`, `tenant_companies`, `positions`, `access_instances`, `access_overrides`, `onboarding_backfill_campaigns`] | [`onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, `access_instances`, `onboarding_backfill_campaigns`] |
 | OnboardingBusiness | [`tenant_companies`] | [`tenant_companies`] |
-| Position | [`tenant_companies`, `positions`] | [`positions`, `position_lifecycle_events`] |
+| Position | [`tenant_companies`, `positions`, `position_requirements_schemas_current`] | [`positions`, `position_lifecycle_events`, `position_requirements_schemas_ledger`, `position_requirements_schemas_current`] |
 | VoiceIdentity | [`identities`, `devices`, `sessions`] | [`artifacts_ledger`] |
 | Wake | [`devices`, `sessions`, `wake_enrollment_sessions`, `wake_profile_bindings`] | [`wake_enrollment_sessions`, `wake_enrollment_samples`, `wake_runtime_events`, `wake_profile_bindings`, `artifacts_ledger`] |
 | Access | [`access_instances`, `access_overrides`] | [`access_instances`, `access_overrides`] |
@@ -590,20 +596,17 @@ delivery_proof_ref: string (optional)
 - input_schema (minimum):
 ```text
 token_id: string
-draft_id: string
 tenant_id: string (optional; required for employee)
 device_fingerprint: string
 ```
 - output_schema (minimum):
 ```text
 onboarding_session_id: string
-draft_id: string
-missing_required_fields: string[]
 status: DRAFT_CREATED
-next_step: enum (INSTALL | TERMS | LOAD_DRAFT | ASK_MISSING)
+next_step: enum (INSTALL | TERMS | LOAD_PREFILLED | ASK_MISSING)
 ```
-- preconditions: token is ACTIVATED and not revoked; token maps to draft_id
-- postconditions: onboarding session draft exists with deterministic missing_required_fields snapshot
+- preconditions: token is ACTIVATED and not revoked
+- postconditions: onboarding session draft exists with deterministic pinned schema context snapshot
 - side_effects: Write onboarding session draft only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -673,11 +676,11 @@ terms_status: enum (ACCEPTED | DECLINED)
 
 ### ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT (COMMIT)
 
-- name: Employee Photo Capture + Send (Commit)
+- name: Schema-Required Evidence Capture + Sender Handoff (Commit; legacy id retained)
 - owning_domain: Onboarding
 - simulation_type: COMMIT
-- purpose: Capture a photo and send it to the sender for employee verification (sandbox until confirmed; persist until sender decides)
-- triggers: EMPLOYEE_PHOTO_CAPTURED (example)
+- purpose: Capture schema-required photo/evidence and send to designated confirmer when pinned schema requires sender confirmation
+- triggers: SCHEMA_REQUIRED_EVIDENCE_CAPTURED (example)
 - required_roles: none (invitee-side)
 - required_approvals: none
 - required_confirmations: required (COMMIT)
@@ -694,9 +697,9 @@ onboarding_session_id: string
 photo_proof_ref: string
 verification_status: enum (PENDING)
 ```
-- preconditions: employee track selected; terms accepted
-- postconditions: photo is delivered to sender; verification state becomes PENDING; follow-up is required until sender CONFIRMS or REJECTS
-- side_effects: Deliver photo via PH1.BCAST.001 (Selene app) as Private/Confidential with required_ack=Action-Confirm; write proof record; schedule retries via PH1.REM.001 if not acknowledged
+- preconditions: pinned schema requires this evidence + sender confirmation; terms accepted
+- postconditions: evidence is delivered to designated confirmer; verification state becomes PENDING; follow-up is required until confirmer CONFIRMS or REJECTS
+- side_effects: Deliver evidence via PH1.BCAST.001 (Selene app) as Private/Confidential with required_ack=Action-Confirm; write proof record; schedule retries via PH1.REM.001 if not acknowledged
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
@@ -704,11 +707,11 @@ verification_status: enum (PENDING)
 
 ### ONB_EMPLOYEE_SENDER_VERIFY_COMMIT (COMMIT)
 
-- name: Employee Sender Verify (Commit)
+- name: Schema-Required Sender Verify (Commit; legacy id retained)
 - owning_domain: Onboarding
 - simulation_type: COMMIT
-- purpose: Sender confirms or rejects the employee photo deterministically
-- triggers: SENDER_VERIFY_DECISION (example)
+- purpose: Designated confirmer confirms or rejects schema-required evidence deterministically
+- triggers: SCHEMA_REQUIRED_VERIFY_DECISION (example)
 - required_roles: sender must have authority (policy)
 - required_approvals: optional AP approval (policy-dependent)
 - required_confirmations: required (COMMIT)
@@ -724,8 +727,8 @@ idempotency_key: string
 onboarding_session_id: string
 verification_status: enum (CONFIRMED | REJECTED)
 ```
-- preconditions: photo verification is PENDING
-- postconditions: serious access may unlock only after CONFIRMED (per blueprint)
+- preconditions: schema-required verification is PENDING
+- postconditions: gated completion/access may unlock only after CONFIRMED (when schema requires sender confirmation)
 - side_effects: Update onboarding verification state only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -825,6 +828,102 @@ token_status: CONSUMED
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ONB_REQUIREMENT_BACKFILL_START_DRAFT (DRAFT)
+
+- name: Onboarding Requirement Backfill Start Draft
+- owning_domain: Onboarding
+- simulation_type: DRAFT
+- purpose: Start deterministic backfill campaign when a new active requirement schema must be applied to current staff
+- triggers: ONB_REQUIREMENT_BACKFILL (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP approval (policy-dependent)
+- required_confirmations: required (rollout scope confirmation)
+- input_schema (minimum):
+```text
+tenant_id: string
+actor_user_id: string
+position_id: string
+schema_id: string
+schema_version: string
+rollout_scope: enum (INCLUDE_CURRENT_STAFF)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+backfill_campaign_id: string
+target_population_count: integer
+status: enum (IN_PROGRESS)
+```
+- preconditions: active requirements schema exists for position; rollout scope confirmed; access decision is ALLOW/ESCALATE-resolved
+- postconditions: campaign draft and deterministic target snapshot are persisted
+- side_effects: Write backfill campaign draft + target snapshot only
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_version + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT (COMMIT)
+
+- name: Onboarding Requirement Backfill Notify Commit
+- owning_domain: Onboarding
+- simulation_type: COMMIT
+- purpose: Commit campaign notification/progress state while issuing deterministic handoff refs for BCAST and REM follow-up
+- triggers: ONB_REQUIREMENT_BACKFILL (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+backfill_campaign_id: string
+recipient_id: string
+notification_ref: string
+reminder_policy_ref: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+backfill_campaign_id: string
+recipient_id: string
+notification_status: enum (QUEUED | SENT | DEFERRED)
+```
+- preconditions: campaign exists and is IN_PROGRESS; recipient belongs to campaign target set
+- postconditions: notification/progress state persists deterministically; no duplicate notify rows on retries
+- side_effects: Write campaign progress + broadcast/reminder handoff refs
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (backfill_campaign_id + recipient_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT (COMMIT)
+
+- name: Onboarding Requirement Backfill Complete Commit
+- owning_domain: Onboarding
+- simulation_type: COMMIT
+- purpose: Finalize backfill campaign with deterministic completion and unresolved exception counts
+- triggers: ONB_REQUIREMENT_BACKFILL (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+backfill_campaign_id: string
+completion_state: enum (COMPLETE | COMPLETE_WITH_EXCEPTIONS)
+unresolved_count: integer
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+backfill_campaign_id: string
+status: enum (COMPLETE | COMPLETE_WITH_EXCEPTIONS)
+```
+- preconditions: campaign exists; completion criteria evaluated deterministically
+- postconditions: campaign terminal state is persisted and replay-stable
+- side_effects: Write campaign terminal state
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (backfill_campaign_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### VOICE_ID_ENROLL_START_DRAFT (DRAFT)
@@ -2996,6 +3095,104 @@ lifecycle_state: enum (Suspended | Retired)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: required for retriable writes; dedupe on (simulation_id + business_key + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT (DRAFT)
+
+- name: Position Requirements Schema Create Draft
+- owning_domain: Position
+- simulation_type: DRAFT
+- purpose: Create a deterministic requirements schema draft bound to a position
+- triggers: ONB_SCHEMA_MANAGE (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: none (DRAFT)
+- input_schema (minimum):
+```text
+tenant_id: string
+position_id: string
+schema_change_set: object (bounded)
+selector_scope: object (bounded)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+schema_id: string
+schema_version: string
+schema_status: enum (DRAFT)
+```
+- preconditions: position exists and is tenant-scoped; caller is authorized
+- postconditions: requirements schema draft exists for position
+- side_effects: Write position requirements schema draft
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_change_set_hash + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT (COMMIT)
+
+- name: Position Requirements Schema Update Commit
+- owning_domain: Position
+- simulation_type: COMMIT
+- purpose: Apply deterministic field/overlay operations to an existing position requirements schema draft
+- triggers: ONB_SCHEMA_MANAGE (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP approval (policy-dependent)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+position_id: string
+schema_id: string
+schema_version: string
+overlay_ops: object (bounded)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+schema_id: string
+schema_version: string
+schema_status: enum (DRAFT)
+```
+- preconditions: schema draft exists; overlay operations validate deterministically
+- postconditions: schema draft is updated deterministically with replay-safe diff
+- side_effects: Write requirements schema update
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_id + schema_version + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT (COMMIT)
+
+- name: Position Requirements Schema Activate Commit
+- owning_domain: Position
+- simulation_type: COMMIT
+- purpose: Activate a position requirements schema version for deterministic onboarding use
+- triggers: ONB_SCHEMA_MANAGE (process_id)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: optional AP approval (policy-dependent)
+- required_confirmations: required (COMMIT)
+- input_schema (minimum):
+```text
+tenant_id: string
+position_id: string
+schema_id: string
+schema_version: string
+rollout_scope: enum (NEW_HIRES_ONLY | INCLUDE_CURRENT_STAFF)
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+schema_id: string
+schema_version: string
+schema_status: enum (ACTIVE)
+```
+- preconditions: schema draft validates; rollout scope explicitly confirmed
+- postconditions: active requirements schema for position is updated deterministically (new hires by default)
+- side_effects: Update active schema version for position
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (tenant_id + position_id + schema_id + schema_version + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### TENANT_CONTEXT_RESOLVE_DRAFT (DRAFT)

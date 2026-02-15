@@ -12,6 +12,12 @@ pub const POSITION_SIM_003_BAND_POLICY_CHECK: &str = "POSITION_SIM_003_BAND_POLI
 pub const POSITION_SIM_004_ACTIVATE_COMMIT: &str = "POSITION_SIM_004_ACTIVATE_COMMIT";
 pub const POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT: &str =
     "POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT";
+pub const POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT: &str =
+    "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT";
+pub const POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT: &str =
+    "POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT";
+pub const POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT: &str =
+    "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PositionSimulationType {
@@ -62,6 +68,138 @@ pub enum PositionPolicyResult {
     Allow,
     Escalate,
     Deny,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionRequirementFieldType {
+    String,
+    Integer,
+    Decimal,
+    Date,
+    Enum,
+    Object,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionRequirementRuleType {
+    Always,
+    Conditional,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionRequirementSensitivity {
+    Safe,
+    Private,
+    Confidential,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionRequirementExposureRule {
+    Speak,
+    TextOnly,
+    InternalOnly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionRequirementEvidenceMode {
+    UserAnswer,
+    DocRequired,
+    ToolDerived,
+    Attestation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PositionSchemaApplyScope {
+    NewHiresOnly,
+    CurrentAndNew,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementFieldSpec {
+    pub field_key: String,
+    pub field_type: PositionRequirementFieldType,
+    pub required_rule: PositionRequirementRuleType,
+    pub required_predicate_ref: Option<String>,
+    pub validation_ref: Option<String>,
+    pub sensitivity: PositionRequirementSensitivity,
+    pub exposure_rule: PositionRequirementExposureRule,
+    pub evidence_mode: PositionRequirementEvidenceMode,
+    pub prompt_short: String,
+    pub prompt_long: String,
+}
+
+impl Validate for PositionRequirementFieldSpec {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id(
+            "position_requirement_field_spec.field_key",
+            &self.field_key,
+            64,
+        )?;
+        match self.required_rule {
+            PositionRequirementRuleType::Always => {
+                if let Some(pred) = &self.required_predicate_ref {
+                    validate_id(
+                        "position_requirement_field_spec.required_predicate_ref",
+                        pred,
+                        128,
+                    )?;
+                }
+            }
+            PositionRequirementRuleType::Conditional => {
+                let Some(pred) = &self.required_predicate_ref else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "position_requirement_field_spec.required_predicate_ref",
+                        reason: "must be present when required_rule=Conditional",
+                    });
+                };
+                validate_id(
+                    "position_requirement_field_spec.required_predicate_ref",
+                    pred,
+                    128,
+                )?;
+            }
+        }
+        if let Some(v) = &self.validation_ref {
+            validate_id("position_requirement_field_spec.validation_ref", v, 128)?;
+        }
+        validate_text(
+            "position_requirement_field_spec.prompt_short",
+            &self.prompt_short,
+            256,
+        )?;
+        validate_text(
+            "position_requirement_field_spec.prompt_long",
+            &self.prompt_long,
+            1024,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionSchemaSelectorSnapshot {
+    pub company_size: Option<String>,
+    pub industry_code: Option<String>,
+    pub jurisdiction: Option<String>,
+    pub position_family: Option<String>,
+}
+
+impl Validate for PositionSchemaSelectorSnapshot {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if let Some(v) = &self.company_size {
+            validate_id("position_schema_selector_snapshot.company_size", v, 64)?;
+        }
+        if let Some(v) = &self.industry_code {
+            validate_id("position_schema_selector_snapshot.industry_code", v, 64)?;
+        }
+        if let Some(v) = &self.jurisdiction {
+            validate_id("position_schema_selector_snapshot.jurisdiction", v, 64)?;
+        }
+        if let Some(v) = &self.position_family {
+            validate_id("position_schema_selector_snapshot.position_family", v, 64)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -384,12 +522,172 @@ impl Validate for PositionRetireOrSuspendCommitRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaCreateDraftRequest {
+    pub actor_user_id: UserId,
+    pub tenant_id: TenantId,
+    pub company_id: String,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub selectors: PositionSchemaSelectorSnapshot,
+    pub field_specs: Vec<PositionRequirementFieldSpec>,
+    pub idempotency_key: String,
+}
+
+impl Validate for PositionRequirementsSchemaCreateDraftRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id(
+            "position_requirements_schema_create_draft_request.actor_user_id",
+            self.actor_user_id.as_str(),
+            128,
+        )?;
+        self.tenant_id.validate()?;
+        validate_id(
+            "position_requirements_schema_create_draft_request.company_id",
+            &self.company_id,
+            64,
+        )?;
+        self.position_id.validate()?;
+        validate_id(
+            "position_requirements_schema_create_draft_request.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        self.selectors.validate()?;
+        if self.field_specs.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_create_draft_request.field_specs",
+                reason: "must contain at least one field",
+            });
+        }
+        if self.field_specs.len() > 256 {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_create_draft_request.field_specs",
+                reason: "must contain <= 256 fields",
+            });
+        }
+        for field in &self.field_specs {
+            field.validate()?;
+        }
+        validate_id(
+            "position_requirements_schema_create_draft_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaUpdateCommitRequest {
+    pub actor_user_id: UserId,
+    pub tenant_id: TenantId,
+    pub company_id: String,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub selectors: PositionSchemaSelectorSnapshot,
+    pub field_specs: Vec<PositionRequirementFieldSpec>,
+    pub change_reason: String,
+    pub idempotency_key: String,
+}
+
+impl Validate for PositionRequirementsSchemaUpdateCommitRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id(
+            "position_requirements_schema_update_commit_request.actor_user_id",
+            self.actor_user_id.as_str(),
+            128,
+        )?;
+        self.tenant_id.validate()?;
+        validate_id(
+            "position_requirements_schema_update_commit_request.company_id",
+            &self.company_id,
+            64,
+        )?;
+        self.position_id.validate()?;
+        validate_id(
+            "position_requirements_schema_update_commit_request.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        self.selectors.validate()?;
+        if self.field_specs.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_update_commit_request.field_specs",
+                reason: "must contain at least one field",
+            });
+        }
+        if self.field_specs.len() > 256 {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_update_commit_request.field_specs",
+                reason: "must contain <= 256 fields",
+            });
+        }
+        for field in &self.field_specs {
+            field.validate()?;
+        }
+        validate_text(
+            "position_requirements_schema_update_commit_request.change_reason",
+            &self.change_reason,
+            256,
+        )?;
+        validate_id(
+            "position_requirements_schema_update_commit_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaActivateCommitRequest {
+    pub actor_user_id: UserId,
+    pub tenant_id: TenantId,
+    pub company_id: String,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub apply_scope: PositionSchemaApplyScope,
+    pub idempotency_key: String,
+}
+
+impl Validate for PositionRequirementsSchemaActivateCommitRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id(
+            "position_requirements_schema_activate_commit_request.actor_user_id",
+            self.actor_user_id.as_str(),
+            128,
+        )?;
+        self.tenant_id.validate()?;
+        validate_id(
+            "position_requirements_schema_activate_commit_request.company_id",
+            &self.company_id,
+            64,
+        )?;
+        self.position_id.validate()?;
+        validate_id(
+            "position_requirements_schema_activate_commit_request.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        validate_id(
+            "position_requirements_schema_activate_commit_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PositionRequest {
     CreateDraft(PositionCreateDraftRequest),
     ValidateAuthCompany(PositionValidateAuthCompanyRequest),
     BandPolicyCheck(PositionBandPolicyCheckRequest),
     ActivateCommit(PositionActivateCommitRequest),
     RetireOrSuspendCommit(PositionRetireOrSuspendCommitRequest),
+    RequirementsSchemaCreateDraft(PositionRequirementsSchemaCreateDraftRequest),
+    RequirementsSchemaUpdateCommit(PositionRequirementsSchemaUpdateCommitRequest),
+    RequirementsSchemaActivateCommit(PositionRequirementsSchemaActivateCommitRequest),
 }
 
 impl PositionRequest {
@@ -400,6 +698,15 @@ impl PositionRequest {
             PositionRequest::BandPolicyCheck(_) => POSITION_SIM_003_BAND_POLICY_CHECK,
             PositionRequest::ActivateCommit(_) => POSITION_SIM_004_ACTIVATE_COMMIT,
             PositionRequest::RetireOrSuspendCommit(_) => POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT,
+            PositionRequest::RequirementsSchemaCreateDraft(_) => {
+                POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT
+            }
+            PositionRequest::RequirementsSchemaUpdateCommit(_) => {
+                POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT
+            }
+            PositionRequest::RequirementsSchemaActivateCommit(_) => {
+                POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT
+            }
         }
     }
 
@@ -407,8 +714,12 @@ impl PositionRequest {
         match self {
             PositionRequest::CreateDraft(_)
             | PositionRequest::ValidateAuthCompany(_)
-            | PositionRequest::BandPolicyCheck(_) => PositionSimulationType::Draft,
-            PositionRequest::ActivateCommit(_) | PositionRequest::RetireOrSuspendCommit(_) => {
+            | PositionRequest::BandPolicyCheck(_)
+            | PositionRequest::RequirementsSchemaCreateDraft(_) => PositionSimulationType::Draft,
+            PositionRequest::ActivateCommit(_)
+            | PositionRequest::RetireOrSuspendCommit(_)
+            | PositionRequest::RequirementsSchemaUpdateCommit(_)
+            | PositionRequest::RequirementsSchemaActivateCommit(_) => {
                 PositionSimulationType::Commit
             }
         }
@@ -460,6 +771,9 @@ impl Validate for Ph1PositionRequest {
             PositionRequest::BandPolicyCheck(r) => r.validate(),
             PositionRequest::ActivateCommit(r) => r.validate(),
             PositionRequest::RetireOrSuspendCommit(r) => r.validate(),
+            PositionRequest::RequirementsSchemaCreateDraft(r) => r.validate(),
+            PositionRequest::RequirementsSchemaUpdateCommit(r) => r.validate(),
+            PositionRequest::RequirementsSchemaActivateCommit(r) => r.validate(),
         }
     }
 }
@@ -615,6 +929,98 @@ impl Validate for PositionLifecycleResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaDraftResult {
+    pub schema_version: SchemaVersion,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub field_count: u32,
+}
+
+impl PositionRequirementsSchemaDraftResult {
+    pub fn v1(
+        position_id: PositionId,
+        schema_version_id: String,
+        field_count: u32,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            position_id,
+            schema_version_id,
+            field_count,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for PositionRequirementsSchemaDraftResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1POSITION_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_draft_result.schema_version",
+                reason: "must match PH1POSITION_CONTRACT_VERSION",
+            });
+        }
+        self.position_id.validate()?;
+        validate_id(
+            "position_requirements_schema_draft_result.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        if self.field_count == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_draft_result.field_count",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaLifecycleResult {
+    pub schema_version: SchemaVersion,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub active_for_new_hires: bool,
+}
+
+impl PositionRequirementsSchemaLifecycleResult {
+    pub fn v1(
+        position_id: PositionId,
+        schema_version_id: String,
+        active_for_new_hires: bool,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1POSITION_CONTRACT_VERSION,
+            position_id,
+            schema_version_id,
+            active_for_new_hires,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for PositionRequirementsSchemaLifecycleResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1POSITION_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "position_requirements_schema_lifecycle_result.schema_version",
+                reason: "must match PH1POSITION_CONTRACT_VERSION",
+            });
+        }
+        self.position_id.validate()?;
+        validate_id(
+            "position_requirements_schema_lifecycle_result.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ph1PositionOk {
     pub schema_version: SchemaVersion,
     pub simulation_id: String,
@@ -623,6 +1029,8 @@ pub struct Ph1PositionOk {
     pub validate_auth_company_result: Option<PositionValidateAuthCompanyResult>,
     pub band_policy_check_result: Option<PositionBandPolicyCheckResult>,
     pub lifecycle_result: Option<PositionLifecycleResult>,
+    pub requirements_schema_draft_result: Option<PositionRequirementsSchemaDraftResult>,
+    pub requirements_schema_lifecycle_result: Option<PositionRequirementsSchemaLifecycleResult>,
 }
 
 impl Ph1PositionOk {
@@ -642,6 +1050,8 @@ impl Ph1PositionOk {
             validate_auth_company_result,
             band_policy_check_result,
             lifecycle_result,
+            requirements_schema_draft_result: None,
+            requirements_schema_lifecycle_result: None,
         };
         o.validate()?;
         Ok(o)
@@ -678,6 +1088,14 @@ impl Validate for Ph1PositionOk {
             count += 1;
         }
         if let Some(r) = &self.lifecycle_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.requirements_schema_draft_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.requirements_schema_lifecycle_result {
             r.validate()?;
             count += 1;
         }

@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.ONB`
-- `purpose`: Persist deterministic invitee onboarding state transitions for `PH1.ONB.CORE / PH1.ONB.ORCH / PH1.ONB.BIZ` (`session_start`, `terms`, `employee verify gates`, `primary device proof`, `access instance create`, `complete`) under simulation-gated idempotent writes.
+- `purpose`: Persist deterministic invitee onboarding execution state transitions for `PH1.ONB.CORE / PH1.ONB.ORCH / PH1.ONB.BIZ` (`session_start`, `terms`, `schema-required evidence/approval gates`, `primary device proof`, `access instance create`, `complete`) under simulation-gated idempotent writes. PH1.ONB executes pinned requirements schemas and does not own schema definitions.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -13,13 +13,13 @@
 - `truth_type`: `CURRENT`
 - `primary key`: `onboarding_session_id`
 - design-level required/optional fields:
-  - `draft_id` (required)
+  - `token_id` (required)
   - `device_fingerprint_hash` (required)
-  - `token_id` (optional, trace only)
+  - `prefilled_context_ref` (optional)
 - invariants:
-  - one deterministic session per activated draft (`draft_id -> onboarding_session_id`) with optional token reference (`token_id`)
+  - one deterministic session per activated link token (`token_id -> onboarding_session_id`)
   - session transitions are bounded by deterministic status machine (`DRAFT_CREATED` -> ... -> `COMPLETE`)
-  - employee flow remains blocked until verification gates pass
+  - any schema-required verification gate remains blocked until required confirmation passes
   - session scope is tenant-safe when tenant scope is provided
   - resume session integrity requires `device_fingerprint_hash` match; mismatch fails closed
 
@@ -40,40 +40,50 @@
 - invariants:
   - employee onboarding access creation requires ACTIVE company prereq when employee prefilled context points to company/position scope
 
-## 2A) Invitee Type Schemas (Deterministic)
+## 2A) Schema Ownership Boundary (Locked)
 
-These schemas are used to compute `missing_required_fields` from onboarding draft payloads by `invitee_type`.
+PH1.ONB is execution-only for requirements evaluation.
 
-| invitee_type | required_fields | optional_fields |
-|---|---|---|
-| `COMPANY` | `legal_company_name`, `company_admin_name`, `company_admin_contact`, `policy_ack_required`, `schema_version_id` | `company_alias`, `billing_contact`, `notes` |
-| `EMPLOYEE` | `employee_legal_name`, `employee_contact`, `company_id`, `position_id`, `schema_version_id` | `manager_contact`, `start_date`, `notes` |
-| `CUSTOMER` | `customer_name`, `customer_contact` | `account_ref`, `preferred_language`, `notes` |
-| `FAMILY_MEMBER` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
-| `FRIEND` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
-| `ASSOCIATE` | `person_name`, `person_contact` | `relationship_label`, `preferred_language`, `notes` |
-
-Deterministic rules:
-- `missing_required_fields` is always computed from the selected invitee-type schema and current draft payload.
-- Never ask twice: if a value exists in the onboarding draft payload or `resolved_fields_json`, Selene OS must not ask for that field again.
+Deterministic boundary rules:
+- PH1.ONB does not define, mutate, or activate requirements schemas.
+- Requirements schema ownership is outside PH1.ONB:
+  - position-linked onboarding (`invitee_type=EMPLOYEE`) reads active requirements from PH1.POSITION for the pinned `position_id`.
+  - non-position onboarding types read active requirements from the schema registry selected by onboarding type.
+- On session start, PH1.ONB pins the effective schema context for replay stability:
+  - `schema_id`
+  - `schema_version`
+  - `effective_overlay_set_id`
+  - bounded selector snapshot used for deterministic evaluation
+- `missing_required_fields` is computed from pinned schema context plus current payload/resolved answers.
+- never ask twice: if a value exists in pinned payload context or resolved fields, PH1.ONB must not ask that field again.
 
 ## 3) Reads (dependencies)
 
 ### Link lifecycle prerequisites (from row 20 lock)
 - reads: PH1.LINK current link record (`links`) + prefilled context refs
-- Link validation + device binding are owned by PH1.LINK / LINK_OPEN_ACTIVATE; PH1.ONB consumes `draft_id` context only.
+- Link validation + device binding are owned by PH1.LINK / LINK_OPEN_ACTIVATE; PH1.ONB consumes activated `token_id` context only.
 - Onboarding starts only after `LINK_OPEN_ACTIVATE` succeeds; PH1.ONB does not validate link signatures/expiry/revocation/device binding.
 - required conditions:
-  - `draft_id` exists
-  - optional `token_id` is in `ACTIVATED` state when present
+  - `token_id` exists
+  - `token_id` is in `ACTIVATED` state
   - if request tenant scope + prefilled tenant scope are both present, they must match
 
 ### Position/company prereq checks (employee path)
-- reads: `tenant_companies`, `positions`, link prefilled context
+- reads: `tenant_companies`, `positions`, position requirements schema view, link prefilled context
 - required conditions:
   - company exists and is `ACTIVE`
   - position exists, belongs to same company, and is `ACTIVE`
   - compensation tier ref (when provided) matches position band ref
+  - active position requirements schema version exists and can be pinned for the session
+
+### Schema selection and pinning reads
+- reads:
+  - onboarding type schema registry view (for non-position types)
+  - position requirements schema view (for position-linked onboarding)
+  - selector hints from link payload
+- required conditions:
+  - exactly one deterministic active schema candidate resolves for the session
+  - effective overlay merge order is deterministic and bounded
 
 ### Identity/device prerequisites
 - reads: `identities`, `devices`
@@ -81,20 +91,19 @@ Deterministic rules:
   - primary-device proof uses a valid device reference
   - access-instance creation resolves user-scoped identity/access safely
 
-### Draft load rule (clarify loop source of truth)
-- on session start, PH1.ONB reads `onboarding_drafts(draft_id)` and loads:
-  - `draft_payload_json.prefilled_profile_fields`
-  - `missing_required_fields_json`
-- this deterministic snapshot drives one-question-at-a-time clarify and prevents repeats.
+### Pinned context load rule (clarify loop source of truth)
+- on session start, PH1.ONB resolves activated link context by `token_id` and pins schema context (`schema_id`, `schema_version`, overlay set, selectors).
+- this deterministic pinned context drives one-question-at-a-time clarify and prevents repeats.
 
 ## 4) Writes (outputs)
 
 ### `ONB_SESSION_START_DRAFT`
-- writes: `onboarding_sessions` (create or deterministic reuse by draft)
+- writes: `onboarding_sessions` (create or deterministic reuse by activated token)
 - required fields:
-  - `draft_id`, `device_fingerprint`, optional `token_id`, optional `prefilled_context_ref`, optional `tenant_id`
+  - `token_id`, `device_fingerprint`, optional `prefilled_context_ref`, optional `tenant_id`
+  - pinned schema context: `schema_id`, `schema_version`, `effective_overlay_set_id`, bounded selector snapshot
 - idempotency rule:
-  - deterministic reuse by `onboarding_session_by_draft` (one session per draft)
+  - deterministic reuse by `onboarding_session_by_link` (one session per activated token)
 
 ### `ONB_TERMS_ACCEPT_COMMIT`
 - writes: `onboarding_sessions` (`terms_version_id`, `terms_status`, state transition)
@@ -102,12 +111,12 @@ Deterministic rules:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
 ### `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT`
-- writes: employee verification refs in `onboarding_sessions`
+- writes: schema-required evidence capture refs in `onboarding_sessions` (legacy capability id retained)
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
 ### `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT`
-- writes: sender decision (`CONFIRMED` / `REJECTED`) in `onboarding_sessions`
+- writes: schema-required sender confirmation decision (`CONFIRMED` / `REJECTED`) in `onboarding_sessions` (legacy capability id retained)
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
@@ -128,10 +137,24 @@ Deterministic rules:
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
+### `ONB_REQUIREMENT_BACKFILL_START_DRAFT`
+- writes: backfill campaign draft state + deterministic target set snapshot
+- idempotency rule:
+  - dedupe by `(tenant_id, position_id, schema_version, idempotency_key)`
+
+### `ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT`
+- writes: campaign progress state; delivery handoff references for BCAST/REM execution
+- idempotency rule:
+  - dedupe by `(backfill_campaign_id, recipient_id, idempotency_key)`
+
+### `ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT`
+- writes: campaign terminal status and unresolved exception summary
+- idempotency rule:
+  - dedupe by `(backfill_campaign_id, idempotency_key)`
+
 ## 5) Relations & Keys
 
-- `onboarding_sessions.draft_id` references `onboarding_drafts.draft_id`.
-- `onboarding_sessions.token_id` references `onboarding_link_tokens.token_id` when present.
+- `onboarding_sessions.token_id` references `onboarding_link_tokens.token_id`.
 - employee prereq validation joins:
   - `prefilled_context.tenant_id/company_id/position_id` -> `tenant_companies`, `positions`.
 - access creation path uses PH2 access-instance scope keyed by `(tenant_id, user_id)`.

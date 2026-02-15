@@ -36,19 +36,24 @@ use selene_kernel_contracts::ph1m::{
     MemoryProvenance, MemorySensitivityFlag, MemoryUsePolicy, MemoryValue,
 };
 use selene_kernel_contracts::ph1onb::{
+    BackfillCampaignId, BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus,
     OnbAccessInstanceCreateResult, OnbCompleteResult, OnbEmployeePhotoCaptureSendResult,
-    OnbEmployeeSenderVerifyResult, OnbPrimaryDeviceConfirmResult, OnbSessionStartResult,
-    OnbTermsAcceptResult, OnboardingNextStep, OnboardingSessionId, OnboardingStatus, ProofType,
-    SenderVerifyDecision, TermsStatus, VerificationStatus,
+    OnbEmployeeSenderVerifyResult, OnbPrimaryDeviceConfirmResult,
+    OnbRequirementBackfillCompleteCommitResult, OnbRequirementBackfillNotifyCommitResult,
+    OnbRequirementBackfillStartDraftResult, OnbSessionStartResult, OnbTermsAcceptResult,
+    OnboardingNextStep, OnboardingSessionId, OnboardingStatus, ProofType, SenderVerifyDecision,
+    TermsStatus, VerificationStatus,
 };
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, BlueprintStatus, BlueprintVersion, IntentType, ProcessBlueprintEvent,
     ProcessBlueprintEventInput, ProcessId,
 };
 use selene_kernel_contracts::ph1position::{
-    PositionId, PositionLifecycleAction, PositionLifecycleState, PositionPolicyResult,
-    PositionRecord, PositionRequestedAction, PositionScheduleType, PositionValidationStatus,
-    TenantId,
+    PositionId, PositionLifecycleAction, PositionLifecycleState, PositionPolicyResult, PositionRecord,
+    PositionRequestedAction, PositionRequirementFieldSpec, PositionRequirementRuleType,
+    PositionRequirementsSchemaDraftResult, PositionRequirementsSchemaLifecycleResult,
+    PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, PositionScheduleType,
+    PositionValidationStatus, TenantId,
 };
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
@@ -416,6 +421,16 @@ pub struct Ph1fStore {
     // Idempotency: (user_id + role_id + idempotency_key) for access instance create.
     onb_access_instance_idempotency_index: BTreeMap<(UserId, String, String), String>,
     onb_complete_idempotency_index: BTreeMap<(OnboardingSessionId, String), OnboardingStatus>,
+    // Backfill campaign state and idempotency indexes.
+    onb_requirement_backfill_campaigns: BTreeMap<BackfillCampaignId, OnbRequirementBackfillCampaignRecord>,
+    onb_requirement_backfill_targets:
+        BTreeMap<(BackfillCampaignId, UserId), OnbRequirementBackfillTargetRecord>,
+    onb_requirement_backfill_start_idempotency_index:
+        BTreeMap<(String, String, String, String), BackfillCampaignId>,
+    onb_requirement_backfill_notify_idempotency_index:
+        BTreeMap<(BackfillCampaignId, UserId, String), BackfillTargetStatus>,
+    onb_requirement_backfill_complete_idempotency_index:
+        BTreeMap<(BackfillCampaignId, String), (u32, u32)>,
 
     // ------------------------
     // PH1.ACCESS.001 + PH2.ACCESS.002 (Access/Authority).
@@ -476,6 +491,15 @@ pub struct Ph1fStore {
     // (tenant_id, position_id, requested_state, idempotency_key) -> lifecycle_state
     position_retire_suspend_idempotency_index:
         BTreeMap<(TenantId, PositionId, PositionLifecycleState, String), PositionLifecycleState>,
+    position_requirements_schema_ledger: Vec<PositionRequirementsSchemaLedgerRecord>,
+    position_requirements_schema_current:
+        BTreeMap<(TenantId, PositionId), PositionRequirementsSchemaCurrentRecord>,
+    position_requirements_schema_create_idempotency_index:
+        BTreeMap<(TenantId, PositionId, String), u64>,
+    position_requirements_schema_update_idempotency_index:
+        BTreeMap<(TenantId, PositionId, String), u64>,
+    position_requirements_schema_activate_idempotency_index:
+        BTreeMap<(TenantId, PositionId, String), String>,
 
     // ------------------------
     // PH1.W (Wake) - enrollment/session persistence + runtime event ledger.
@@ -603,6 +627,8 @@ pub struct Ph1fStore {
     next_work_order_event_id: u64,
     next_capreq_event_id: u64,
     next_ph1k_runtime_event_id: u64,
+    next_position_requirements_schema_event_id: u64,
+    next_onb_requirement_backfill_target_row_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -907,6 +933,77 @@ pub struct PositionLifecycleEventRecord {
     pub idempotency_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionRequirementsSchemaLedgerAction {
+    CreateDraft,
+    UpdateCommit,
+    ActivateCommit,
+    RetireCommit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaLedgerRecord {
+    pub schema_version: SchemaVersion,
+    pub schema_event_id: u64,
+    pub tenant_id: TenantId,
+    pub company_id: String,
+    pub position_id: PositionId,
+    pub schema_version_id: String,
+    pub action: PositionRequirementsSchemaLedgerAction,
+    pub selector_snapshot: PositionSchemaSelectorSnapshot,
+    pub field_specs: Vec<PositionRequirementFieldSpec>,
+    pub reason_code: ReasonCodeId,
+    pub actor_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionRequirementsSchemaCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: TenantId,
+    pub company_id: String,
+    pub position_id: PositionId,
+    pub active_schema_version_id: String,
+    pub active_selector_snapshot: PositionSchemaSelectorSnapshot,
+    pub active_field_specs: Vec<PositionRequirementFieldSpec>,
+    pub source_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub last_reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillCampaignRecord {
+    pub schema_version: SchemaVersion,
+    pub campaign_id: BackfillCampaignId,
+    pub tenant_id: String,
+    pub company_id: String,
+    pub position_id: String,
+    pub schema_version_id: String,
+    pub rollout_scope: BackfillRolloutScope,
+    pub state: BackfillCampaignState,
+    pub created_by_user_id: UserId,
+    pub reason_code: ReasonCodeId,
+    pub created_at: MonotonicTimeNs,
+    pub updated_at: MonotonicTimeNs,
+    pub completed_at: Option<MonotonicTimeNs>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillTargetRecord {
+    pub schema_version: SchemaVersion,
+    pub target_row_id: u64,
+    pub campaign_id: BackfillCampaignId,
+    pub tenant_id: String,
+    pub user_id: UserId,
+    pub status: BackfillTargetStatus,
+    pub missing_fields: Vec<String>,
+    pub last_reason_code: ReasonCodeId,
+    pub created_at: MonotonicTimeNs,
+    pub updated_at: MonotonicTimeNs,
+    pub completed_at: Option<MonotonicTimeNs>,
+}
+
 // PH1.W (Wake) deterministic persistence records.
 const W_ENROLL_REASON_MAX_ATTEMPTS: ReasonCodeId = ReasonCodeId(0x5700_0201);
 const W_ENROLL_REASON_TIMEOUT: ReasonCodeId = ReasonCodeId(0x5700_0202);
@@ -1068,6 +1165,11 @@ impl Ph1fStore {
             onb_primary_device_idempotency_index: BTreeMap::new(),
             onb_access_instance_idempotency_index: BTreeMap::new(),
             onb_complete_idempotency_index: BTreeMap::new(),
+            onb_requirement_backfill_campaigns: BTreeMap::new(),
+            onb_requirement_backfill_targets: BTreeMap::new(),
+            onb_requirement_backfill_start_idempotency_index: BTreeMap::new(),
+            onb_requirement_backfill_notify_idempotency_index: BTreeMap::new(),
+            onb_requirement_backfill_complete_idempotency_index: BTreeMap::new(),
             access_instances: BTreeMap::new(),
             access_instances_by_id: BTreeMap::new(),
             access_instance_idempotency_index: BTreeMap::new(),
@@ -1093,6 +1195,11 @@ impl Ph1fStore {
             position_create_idempotency_index: BTreeMap::new(),
             position_activate_idempotency_index: BTreeMap::new(),
             position_retire_suspend_idempotency_index: BTreeMap::new(),
+            position_requirements_schema_ledger: Vec::new(),
+            position_requirements_schema_current: BTreeMap::new(),
+            position_requirements_schema_create_idempotency_index: BTreeMap::new(),
+            position_requirements_schema_update_idempotency_index: BTreeMap::new(),
+            position_requirements_schema_activate_idempotency_index: BTreeMap::new(),
             wake_enrollment_sessions: BTreeMap::new(),
             wake_enrollment_samples: Vec::new(),
             wake_runtime_events: Vec::new(),
@@ -1144,6 +1251,8 @@ impl Ph1fStore {
             next_work_order_event_id: 1,
             next_capreq_event_id: 1,
             next_ph1k_runtime_event_id: 1,
+            next_position_requirements_schema_event_id: 1,
+            next_onb_requirement_backfill_target_row_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -3190,6 +3299,97 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn ph1onb_field_required_for_token(
+        &self,
+        token_id: &TokenId,
+        tenant_hint: Option<&str>,
+        field_key: &str,
+    ) -> Result<bool, StorageError> {
+        let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
+            table: "links.token_id",
+            key: token_id.as_str().to_string(),
+        })?;
+
+        if link.missing_required_fields.iter().any(|f| f == field_key) {
+            return Ok(true);
+        }
+
+        let Some(prefilled) = link.prefilled_context.as_ref() else {
+            return Ok(false);
+        };
+        let Some(position_id_raw) = prefilled.position_id.as_ref() else {
+            return Ok(false);
+        };
+        let Some(tenant_raw) = tenant_hint.or(prefilled.tenant_id.as_deref()) else {
+            return Ok(false);
+        };
+
+        let tenant_id = TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
+        let position_id =
+            PositionId::new(position_id_raw.clone()).map_err(StorageError::ContractViolation)?;
+
+        let Some(current) = self
+            .position_requirements_schema_current
+            .get(&(tenant_id, position_id))
+        else {
+            return Ok(false);
+        };
+
+        Ok(current.active_field_specs.iter().any(|spec| {
+            spec.field_key == field_key
+                && matches!(
+                    spec.required_rule,
+                    PositionRequirementRuleType::Always | PositionRequirementRuleType::Conditional
+                )
+        }))
+    }
+
+    fn ph1onb_field_required_for_session(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+        field_key: &str,
+    ) -> Result<bool, StorageError> {
+        let rec = self.onboarding_sessions.get(onboarding_session_id).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            },
+        )?;
+
+        self.ph1onb_field_required_for_token(&rec.token_id, rec.tenant_id.as_deref(), field_key)
+    }
+
+    fn ph1onb_sender_verification_required(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Result<bool, StorageError> {
+        const PHOTO_FIELD_KEYS: [&str; 3] = ["photo_blob_ref", "photo_proof_ref", "employee_photo"];
+        const VERIFY_FIELD_KEYS: [&str; 3] = [
+            "sender_verification",
+            "photo_sender_verification",
+            "employee_sender_verify",
+        ];
+
+        let photo_required = PHOTO_FIELD_KEYS
+            .iter()
+            .try_fold(false, |acc, k| {
+                if acc {
+                    return Ok(true);
+                }
+                self.ph1onb_field_required_for_session(onboarding_session_id, k)
+            })?;
+        if photo_required {
+            return Ok(true);
+        }
+
+        VERIFY_FIELD_KEYS.iter().try_fold(false, |acc, k| {
+            if acc {
+                return Ok(true);
+            }
+            self.ph1onb_field_required_for_session(onboarding_session_id, k)
+        })
+    }
+
     pub fn ph1onb_terms_accept_commit(
         &mut self,
         now: MonotonicTimeNs,
@@ -3264,15 +3464,6 @@ impl Ph1fStore {
                 table: "onboarding_sessions.onboarding_session_id",
                 key: onboarding_session_id.as_str().to_string(),
             })?;
-
-        if rec.invitee_type != InviteeType::Employee {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "ph1onb_employee_photo_capture_send_commit.invitee_type",
-                    reason: "must be Employee",
-                },
-            ));
-        }
         if rec.terms_status != Some(TermsStatus::Accepted) {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -3327,15 +3518,6 @@ impl Ph1fStore {
                 table: "onboarding_sessions.onboarding_session_id",
                 key: onboarding_session_id.as_str().to_string(),
             })?;
-
-        if rec.invitee_type != InviteeType::Employee {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "ph1onb_employee_sender_verify_commit.invitee_type",
-                    reason: "must be Employee",
-                },
-            ));
-        }
         if rec.verification_status != Some(VerificationStatus::Pending) {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -3483,13 +3665,13 @@ impl Ph1fStore {
                 },
             ));
         }
-        if invitee_type == InviteeType::Employee
-            && verification_status != Some(VerificationStatus::Confirmed)
-        {
+        let sender_verification_required =
+            self.ph1onb_sender_verification_required(&onboarding_session_id)?;
+        if sender_verification_required && verification_status != Some(VerificationStatus::Confirmed) {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_access_instance_create_commit.verification_status",
-                    reason: "employee must be VERIFIED before creating access instance",
+                    reason: "schema-required sender verification must be CONFIRMED before creating access instance",
                 },
             ));
         }
@@ -3602,13 +3784,13 @@ impl Ph1fStore {
                 },
             ));
         }
-        if invitee_type == InviteeType::Employee
-            && verification_status != Some(VerificationStatus::Confirmed)
-        {
+        let sender_verification_required =
+            self.ph1onb_sender_verification_required(&onboarding_session_id)?;
+        if sender_verification_required && verification_status != Some(VerificationStatus::Confirmed) {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_complete_commit.verification_status",
-                    reason: "employee must be VERIFIED before completing onboarding",
+                    reason: "schema-required sender verification must be CONFIRMED before completing onboarding",
                 },
             ));
         }
@@ -3662,6 +3844,344 @@ impl Ph1fStore {
             onboarding_session_id,
             OnboardingStatus::Complete,
         )?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1onb_requirement_backfill_start_draft(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: String,
+        company_id: String,
+        position_id: String,
+        schema_version_id: String,
+        rollout_scope: BackfillRolloutScope,
+        idempotency_key: String,
+        _simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillStartDraftResult, StorageError> {
+        if !self.identities.contains_key(&actor_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "onboarding_requirement_backfill_campaigns.created_by_user_id",
+                key: actor_user_id.as_str().to_string(),
+            });
+        }
+        if tenant_id.trim().is_empty() || tenant_id.len() > 64 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_start_draft.tenant_id",
+                    reason: "must be non-empty and <= 64 chars",
+                },
+            ));
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_start_draft.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+
+        let idx = (
+            tenant_id.clone(),
+            position_id.clone(),
+            schema_version_id.clone(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_campaign_id) = self
+            .onb_requirement_backfill_start_idempotency_index
+            .get(&idx)
+        {
+            let pending = self
+                .onb_requirement_backfill_targets
+                .values()
+                .filter(|t| {
+                    t.campaign_id == *existing_campaign_id
+                        && matches!(
+                            t.status,
+                            BackfillTargetStatus::Pending
+                                | BackfillTargetStatus::Requested
+                                | BackfillTargetStatus::Reminded
+                        )
+                })
+                .count() as u32;
+            let camp = self
+                .onb_requirement_backfill_campaigns
+                .get(existing_campaign_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_requirement_backfill_campaigns.campaign_id",
+                    key: existing_campaign_id.as_str().to_string(),
+                })?;
+            return OnbRequirementBackfillStartDraftResult::v1(
+                camp.campaign_id.clone(),
+                camp.state,
+                pending,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let tenant_contract_id =
+            TenantId::new(tenant_id.clone()).map_err(StorageError::ContractViolation)?;
+        let position_contract_id =
+            PositionId::new(position_id.clone()).map_err(StorageError::ContractViolation)?;
+
+        let position = self
+            .positions
+            .get(&(tenant_contract_id.clone(), position_contract_id))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "positions.position_id",
+                key: position_id.clone(),
+            })?;
+        if position.company_id != company_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_start_draft.company_id",
+                    reason: "must match position.company_id",
+                },
+            ));
+        }
+
+        let campaign_id = BackfillCampaignId::new(format!(
+            "bfc_{}",
+            hash_hex_64(&format!(
+                "{}:{}:{}:{}",
+                tenant_id, position_id, schema_version_id, idempotency_key
+            ))
+        ))
+        .map_err(StorageError::ContractViolation)?;
+
+        let mut pending_target_count = 0u32;
+        if rollout_scope == BackfillRolloutScope::CurrentAndNew {
+            let user_ids: Vec<UserId> = self.identities.keys().cloned().collect();
+            for user_id in user_ids {
+                let target_row_id = self.next_onb_requirement_backfill_target_row_id;
+                self.next_onb_requirement_backfill_target_row_id = self
+                    .next_onb_requirement_backfill_target_row_id
+                    .saturating_add(1);
+                self.onb_requirement_backfill_targets.insert(
+                    (campaign_id.clone(), user_id.clone()),
+                    OnbRequirementBackfillTargetRecord {
+                        schema_version: SchemaVersion(1),
+                        target_row_id,
+                        campaign_id: campaign_id.clone(),
+                        tenant_id: tenant_id.clone(),
+                        user_id,
+                        status: BackfillTargetStatus::Pending,
+                        missing_fields: vec![format!("schema_version:{schema_version_id}")],
+                        last_reason_code: reason_code,
+                        created_at: now,
+                        updated_at: now,
+                        completed_at: None,
+                    },
+                );
+                pending_target_count = pending_target_count.saturating_add(1);
+            }
+        }
+
+        let state = if pending_target_count > 0 {
+            BackfillCampaignState::Running
+        } else {
+            BackfillCampaignState::Completed
+        };
+
+        self.onb_requirement_backfill_campaigns.insert(
+            campaign_id.clone(),
+            OnbRequirementBackfillCampaignRecord {
+                schema_version: SchemaVersion(1),
+                campaign_id: campaign_id.clone(),
+                tenant_id: tenant_id.clone(),
+                company_id,
+                position_id,
+                schema_version_id,
+                rollout_scope,
+                state,
+                created_by_user_id: actor_user_id,
+                reason_code,
+                created_at: now,
+                updated_at: now,
+                completed_at: if state == BackfillCampaignState::Completed {
+                    Some(now)
+                } else {
+                    None
+                },
+            },
+        );
+        self.onb_requirement_backfill_start_idempotency_index
+            .insert(idx, campaign_id.clone());
+
+        OnbRequirementBackfillStartDraftResult::v1(campaign_id, state, pending_target_count)
+            .map_err(StorageError::ContractViolation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1onb_requirement_backfill_notify_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        recipient_user_id: UserId,
+        idempotency_key: String,
+        _simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillNotifyCommitResult, StorageError> {
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_notify_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        let idx = (
+            campaign_id.clone(),
+            recipient_user_id.clone(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_status) = self
+            .onb_requirement_backfill_notify_idempotency_index
+            .get(&idx)
+        {
+            return OnbRequirementBackfillNotifyCommitResult::v1(
+                campaign_id,
+                recipient_user_id,
+                *existing_status,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let campaign = self
+            .onb_requirement_backfill_campaigns
+            .get_mut(&campaign_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_requirement_backfill_campaigns.campaign_id",
+                key: campaign_id.as_str().to_string(),
+            })?;
+        if campaign.tenant_id != tenant_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_notify_commit.tenant_id",
+                    reason: "must match campaign tenant scope",
+                },
+            ));
+        }
+
+        let target = self
+            .onb_requirement_backfill_targets
+            .get_mut(&(campaign_id.clone(), recipient_user_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_requirement_backfill_targets.user_id",
+                key: recipient_user_id.as_str().to_string(),
+            })?;
+
+        let next_status = match target.status {
+            BackfillTargetStatus::Completed
+            | BackfillTargetStatus::Exempted
+            | BackfillTargetStatus::Failed => target.status,
+            BackfillTargetStatus::Pending
+            | BackfillTargetStatus::Requested
+            | BackfillTargetStatus::Reminded => BackfillTargetStatus::Requested,
+        };
+        target.status = next_status;
+        target.updated_at = now;
+        target.last_reason_code = reason_code;
+
+        if campaign.state == BackfillCampaignState::DraftCreated {
+            campaign.state = BackfillCampaignState::Running;
+        }
+        campaign.updated_at = now;
+
+        self.onb_requirement_backfill_notify_idempotency_index
+            .insert(idx, next_status);
+
+        OnbRequirementBackfillNotifyCommitResult::v1(campaign_id, recipient_user_id, next_status)
+            .map_err(StorageError::ContractViolation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1onb_requirement_backfill_complete_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        campaign_id: BackfillCampaignId,
+        tenant_id: String,
+        idempotency_key: String,
+        _simulation_id: &str,
+        _reason_code: ReasonCodeId,
+    ) -> Result<OnbRequirementBackfillCompleteCommitResult, StorageError> {
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_complete_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        let idx = (campaign_id.clone(), idempotency_key.clone());
+        if let Some((completed, total)) = self
+            .onb_requirement_backfill_complete_idempotency_index
+            .get(&idx)
+        {
+            return OnbRequirementBackfillCompleteCommitResult::v1(
+                campaign_id,
+                BackfillCampaignState::Completed,
+                *completed,
+                *total,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let campaign_ref = self
+            .onb_requirement_backfill_campaigns
+            .get(&campaign_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_requirement_backfill_campaigns.campaign_id",
+                key: campaign_id.as_str().to_string(),
+            })?;
+        if campaign_ref.tenant_id != tenant_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_requirement_backfill_complete_commit.tenant_id",
+                    reason: "must match campaign tenant scope",
+                },
+            ));
+        }
+
+        let mut total = 0u32;
+        let mut completed = 0u32;
+        for target in self
+            .onb_requirement_backfill_targets
+            .values()
+            .filter(|t| t.campaign_id == campaign_id)
+        {
+            total = total.saturating_add(1);
+            if matches!(
+                target.status,
+                BackfillTargetStatus::Completed | BackfillTargetStatus::Exempted
+            ) {
+                completed = completed.saturating_add(1);
+            }
+        }
+        let campaign = self
+            .onb_requirement_backfill_campaigns
+            .get_mut(&campaign_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_requirement_backfill_campaigns.campaign_id",
+                key: campaign_id.as_str().to_string(),
+            })?;
+        campaign.state = BackfillCampaignState::Completed;
+        campaign.updated_at = now;
+        campaign.completed_at = Some(now);
+
+        self.onb_requirement_backfill_complete_idempotency_index
+            .insert(idx, (completed, total));
+
+        OnbRequirementBackfillCompleteCommitResult::v1(
+            campaign_id,
+            BackfillCampaignState::Completed,
+            completed,
+            total,
+        )
+        .map_err(StorageError::ContractViolation)
     }
 
     pub fn ph1onb_session_row(
@@ -8549,6 +9069,363 @@ impl Ph1fStore {
         );
 
         Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1position_requirements_schema_create_draft(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError> {
+        if !self.identities.contains_key(&actor_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "position_requirements_schema_ledger.actor_user_id",
+                key: actor_user_id.as_str().to_string(),
+            });
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_create_draft.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if simulation_id.trim().is_empty() || simulation_id.len() > 96 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_create_draft.simulation_id",
+                    reason: "must be non-empty and <= 96 chars",
+                },
+            ));
+        }
+        if field_specs.is_empty() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_create_draft.field_specs",
+                    reason: "must contain at least one field",
+                },
+            ));
+        }
+
+        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
+        if self
+            .position_requirements_schema_create_idempotency_index
+            .contains_key(&idx)
+        {
+            return PositionRequirementsSchemaDraftResult::v1(
+                position_id,
+                schema_version_id,
+                field_specs.len() as u32,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let company = self
+            .tenant_companies
+            .get(&(tenant_id.clone(), company_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "tenant_companies.company_id",
+                key: company_id.clone(),
+            })?;
+        if company.lifecycle_state != TenantCompanyLifecycleState::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_create_draft.company_state",
+                    reason: "company must be ACTIVE",
+                },
+            ));
+        }
+        let position = self
+            .positions
+            .get(&(tenant_id.clone(), position_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "positions.position_id",
+                key: position_id.as_str().to_string(),
+            })?;
+        if position.company_id != company_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_create_draft.company_id",
+                    reason: "must match position.company_id",
+                },
+            ));
+        }
+
+        let schema_event_id = self.next_position_requirements_schema_event_id;
+        self.next_position_requirements_schema_event_id = self
+            .next_position_requirements_schema_event_id
+            .saturating_add(1);
+        self.position_requirements_schema_ledger
+            .push(PositionRequirementsSchemaLedgerRecord {
+                schema_version: SchemaVersion(1),
+                schema_event_id,
+                tenant_id: tenant_id.clone(),
+                company_id,
+                position_id: position_id.clone(),
+                schema_version_id: schema_version_id.clone(),
+                action: PositionRequirementsSchemaLedgerAction::CreateDraft,
+                selector_snapshot: selectors,
+                field_specs: field_specs.clone(),
+                reason_code,
+                actor_user_id,
+                created_at: now,
+                idempotency_key: Some(idempotency_key.clone()),
+            });
+        self.position_requirements_schema_create_idempotency_index
+            .insert(idx, schema_event_id);
+
+        PositionRequirementsSchemaDraftResult::v1(
+            position_id,
+            schema_version_id,
+            field_specs.len() as u32,
+        )
+        .map_err(StorageError::ContractViolation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1position_requirements_schema_update_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        selectors: PositionSchemaSelectorSnapshot,
+        field_specs: Vec<PositionRequirementFieldSpec>,
+        _change_reason: String,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaDraftResult, StorageError> {
+        if !self.identities.contains_key(&actor_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "position_requirements_schema_ledger.actor_user_id",
+                key: actor_user_id.as_str().to_string(),
+            });
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if simulation_id.trim().is_empty() || simulation_id.len() > 96 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.simulation_id",
+                    reason: "must be non-empty and <= 96 chars",
+                },
+            ));
+        }
+        if field_specs.is_empty() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.field_specs",
+                    reason: "must contain at least one field",
+                },
+            ));
+        }
+
+        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
+        if self
+            .position_requirements_schema_update_idempotency_index
+            .contains_key(&idx)
+        {
+            return PositionRequirementsSchemaDraftResult::v1(
+                position_id,
+                schema_version_id,
+                field_specs.len() as u32,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let position = self
+            .positions
+            .get(&(tenant_id.clone(), position_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "positions.position_id",
+                key: position_id.as_str().to_string(),
+            })?;
+        if position.company_id != company_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_update_commit.company_id",
+                    reason: "must match position.company_id",
+                },
+            ));
+        }
+
+        let schema_event_id = self.next_position_requirements_schema_event_id;
+        self.next_position_requirements_schema_event_id = self
+            .next_position_requirements_schema_event_id
+            .saturating_add(1);
+        self.position_requirements_schema_ledger
+            .push(PositionRequirementsSchemaLedgerRecord {
+                schema_version: SchemaVersion(1),
+                schema_event_id,
+                tenant_id: tenant_id.clone(),
+                company_id,
+                position_id: position_id.clone(),
+                schema_version_id: schema_version_id.clone(),
+                action: PositionRequirementsSchemaLedgerAction::UpdateCommit,
+                selector_snapshot: selectors,
+                field_specs: field_specs.clone(),
+                reason_code,
+                actor_user_id,
+                created_at: now,
+                idempotency_key: Some(idempotency_key.clone()),
+            });
+        self.position_requirements_schema_update_idempotency_index
+            .insert(idx, schema_event_id);
+
+        PositionRequirementsSchemaDraftResult::v1(
+            position_id,
+            schema_version_id,
+            field_specs.len() as u32,
+        )
+        .map_err(StorageError::ContractViolation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1position_requirements_schema_activate_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        company_id: String,
+        position_id: PositionId,
+        schema_version_id: String,
+        _apply_scope: PositionSchemaApplyScope,
+        idempotency_key: String,
+        simulation_id: &str,
+        reason_code: ReasonCodeId,
+    ) -> Result<PositionRequirementsSchemaLifecycleResult, StorageError> {
+        if !self.identities.contains_key(&actor_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "position_requirements_schema_ledger.actor_user_id",
+                key: actor_user_id.as_str().to_string(),
+            });
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_activate_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if simulation_id.trim().is_empty() || simulation_id.len() > 96 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_activate_commit.simulation_id",
+                    reason: "must be non-empty and <= 96 chars",
+                },
+            ));
+        }
+
+        let idx = (tenant_id.clone(), position_id.clone(), idempotency_key.clone());
+        if let Some(existing_schema_id) = self
+            .position_requirements_schema_activate_idempotency_index
+            .get(&idx)
+        {
+            return PositionRequirementsSchemaLifecycleResult::v1(
+                position_id,
+                existing_schema_id.clone(),
+                true,
+            )
+            .map_err(StorageError::ContractViolation);
+        }
+
+        let position = self
+            .positions
+            .get(&(tenant_id.clone(), position_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "positions.position_id",
+                key: position_id.as_str().to_string(),
+            })?;
+        if position.company_id != company_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1position_requirements_schema_activate_commit.company_id",
+                    reason: "must match position.company_id",
+                },
+            ));
+        }
+
+        let latest = self
+            .position_requirements_schema_ledger
+            .iter()
+            .rev()
+            .find(|e| {
+                e.tenant_id == tenant_id
+                    && e.position_id == position_id
+                    && e.schema_version_id == schema_version_id
+                    && matches!(
+                        e.action,
+                        PositionRequirementsSchemaLedgerAction::CreateDraft
+                            | PositionRequirementsSchemaLedgerAction::UpdateCommit
+                    )
+            })
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "position_requirements_schema_ledger.schema_version_id",
+                key: schema_version_id.clone(),
+            })?
+            .clone();
+
+        self.position_requirements_schema_current.insert(
+            (tenant_id.clone(), position_id.clone()),
+            PositionRequirementsSchemaCurrentRecord {
+                schema_version: SchemaVersion(1),
+                tenant_id: tenant_id.clone(),
+                company_id: company_id.clone(),
+                position_id: position_id.clone(),
+                active_schema_version_id: schema_version_id.clone(),
+                active_selector_snapshot: latest.selector_snapshot.clone(),
+                active_field_specs: latest.field_specs.clone(),
+                source_event_id: latest.schema_event_id,
+                updated_at: now,
+                last_reason_code: reason_code,
+            },
+        );
+
+        let schema_event_id = self.next_position_requirements_schema_event_id;
+        self.next_position_requirements_schema_event_id = self
+            .next_position_requirements_schema_event_id
+            .saturating_add(1);
+        self.position_requirements_schema_ledger
+            .push(PositionRequirementsSchemaLedgerRecord {
+                schema_version: SchemaVersion(1),
+                schema_event_id,
+                tenant_id: tenant_id.clone(),
+                company_id,
+                position_id: position_id.clone(),
+                schema_version_id: schema_version_id.clone(),
+                action: PositionRequirementsSchemaLedgerAction::ActivateCommit,
+                selector_snapshot: latest.selector_snapshot,
+                field_specs: latest.field_specs,
+                reason_code,
+                actor_user_id,
+                created_at: now,
+                idempotency_key: Some(idempotency_key.clone()),
+            });
+        self.position_requirements_schema_activate_idempotency_index
+            .insert(idx, schema_version_id.clone());
+
+        PositionRequirementsSchemaLifecycleResult::v1(position_id, schema_version_id, true)
+            .map_err(StorageError::ContractViolation)
     }
 
     fn append_position_lifecycle_event(

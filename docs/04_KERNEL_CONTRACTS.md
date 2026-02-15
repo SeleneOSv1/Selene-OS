@@ -2133,3 +2133,165 @@ KC.24.3 Hard Rules
 All CAPREQ retriable writes require deterministic idempotency keys and tenant-scoped dedupe.
 
 `PH1.CAPREQ` owns writes to `capreq_ledger` and `capreq_current`; other engines read-only unless explicit simulation contract allows otherwise.
+
+KC.25 PH1.F Position Requirements Schema + Onboarding Backfill Table Contract (Minimum)
+
+Purpose: lock position-owned requirements schema truth and deterministic onboarding backfill campaign persistence.
+
+KC.25.1 Table: position_requirements_schema_ledger
+
+Required columns (minimum):
+
+schema_event_id (PK)
+
+tenant_id
+
+company_id
+
+position_id
+
+schema_version_id
+
+action (CREATE_DRAFT | UPDATE_COMMIT | ACTIVATE_COMMIT | RETIRE_COMMIT)
+
+selector_snapshot_json (bounded)
+
+field_specs_json (bounded, typed field specs)
+
+overlay_ops_json (bounded, optional)
+
+reason_code
+
+actor_user_id (FK -> identities.user_id)
+
+created_at
+
+idempotency_key (optional for retriable writes)
+
+Unique keys / constraints:
+
+PRIMARY KEY (schema_event_id)
+
+UNIQUE (tenant_id, position_id, schema_version_id, action, idempotency_key)
+
+FOREIGN KEY (actor_user_id) REFERENCES identities(user_id)
+
+KC.25.2 Table: position_requirements_schema_current
+
+Required columns (minimum):
+
+tenant_id
+
+company_id
+
+position_id
+
+active_schema_version_id
+
+active_selector_snapshot_json (bounded)
+
+active_field_specs_json (bounded, typed field specs)
+
+source_event_id (FK -> position_requirements_schema_ledger.schema_event_id)
+
+updated_at
+
+last_reason_code
+
+Unique keys / constraints:
+
+PRIMARY KEY (tenant_id, position_id)
+
+UNIQUE (tenant_id, position_id, source_event_id)
+
+FOREIGN KEY (source_event_id) REFERENCES position_requirements_schema_ledger(schema_event_id)
+
+KC.25.3 Table: onboarding_requirement_backfill_campaigns
+
+Required columns (minimum):
+
+campaign_id (PK)
+
+tenant_id
+
+company_id
+
+position_id
+
+schema_version_id
+
+rollout_scope (NEW_HIRES_ONLY | CURRENT_AND_NEW)
+
+state (DRAFT_CREATED | RUNNING | COMPLETED | CANCELED)
+
+created_by_user_id (FK -> identities.user_id)
+
+reason_code
+
+created_at
+
+updated_at
+
+completed_at (nullable)
+
+idempotency_key (optional for retriable writes)
+
+Unique keys / constraints:
+
+PRIMARY KEY (campaign_id)
+
+UNIQUE (tenant_id, campaign_id)
+
+UNIQUE (tenant_id, position_id, schema_version_id, idempotency_key)
+
+FOREIGN KEY (created_by_user_id) REFERENCES identities(user_id)
+
+KC.25.4 Table: onboarding_requirement_backfill_targets
+
+Required columns (minimum):
+
+target_row_id (PK)
+
+campaign_id (FK -> onboarding_requirement_backfill_campaigns.campaign_id)
+
+tenant_id
+
+user_id (FK -> identities.user_id)
+
+status (PENDING | REQUESTED | REMINDED | COMPLETED | EXEMPTED | FAILED)
+
+missing_fields_json (bounded)
+
+last_reason_code
+
+created_at
+
+updated_at
+
+completed_at (nullable)
+
+idempotency_key (optional for retriable updates)
+
+Unique keys / constraints:
+
+PRIMARY KEY (target_row_id)
+
+UNIQUE (campaign_id, user_id)
+
+UNIQUE (tenant_id, target_row_id)
+
+FOREIGN KEY (campaign_id) REFERENCES onboarding_requirement_backfill_campaigns(campaign_id)
+
+FOREIGN KEY (user_id) REFERENCES identities(user_id)
+
+KC.25.5 Hard Rules
+
+`position_requirements_schema_ledger` is append-only; active schema state is rebuilt from ledger events.
+
+`PH1.POSITION` owns schema truth and writes for requirements schema lifecycle events.
+
+`PH1.ONB` executes pinned active schema only and must not mutate schema definitions.
+
+Backfill campaigns are explicit, simulation-gated workflows; no implicit retroactive schema enforcement is allowed.
+
+For `CURRENT_AND_NEW` rollout scope, target population selection and progress state must be deterministic and auditable via campaign + target rows.

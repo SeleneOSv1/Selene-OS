@@ -44,8 +44,8 @@ Detailed contracts source:
 | PH1.E | Tool router audit/cache rows as scoped | `docs/DB_WIRING/PH1_E.md` |
 | PH1.ONBOARDING_SMS | `comms.sms_app_setup_ledger/current` (SMS app setup lifecycle truth before SMS send) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | Onboarding draft/token lifecycle tables | `docs/DB_WIRING/PH1_LINK.md` |
-| PH1.ONB | Onboarding orchestration tables | `docs/DB_WIRING/PH1_ONB.md` |
-| PH1.POSITION | Position + lifecycle tables | `docs/DB_WIRING/PH1_POSITION.md` |
+| PH1.ONB | Onboarding session execution tables only (ask/commit/complete); reads pinned requirements schema, does not own schema definitions | `docs/DB_WIRING/PH1_ONB.md` |
+| PH1.POSITION | Position lifecycle + position requirements schema (versioned current + ledger ownership) | `docs/DB_WIRING/PH1_POSITION.md` |
 | PH1.M | `memory_atoms_ledger` + `memory_atoms_current` (memory fact persistence and rebuildable current projection; see `docs/12_MEMORY_ARCHITECTURE.md`) | `docs/DB_WIRING/PH1_M.md` |
 | PH1.M | `memory_suppression_rules` (`DO_NOT_MENTION | DO_NOT_REPEAT | DO_NOT_STORE`, targetable by `thread_id`/`work_order_id`/`topic_key`) | `docs/DB_WIRING/PH1_M.md` |
 | PH1.M | `emotional_threads_ledger` + `emotional_threads_current` (tone-only continuity, non-authoritative) | `docs/DB_WIRING/PH1_M.md` |

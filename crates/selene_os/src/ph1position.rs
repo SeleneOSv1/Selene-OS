@@ -9,8 +9,10 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1position::{
     Ph1PositionOk, Ph1PositionRequest, Ph1PositionResponse, PositionBandPolicyCheckResult,
     PositionCreateDraftResult, PositionLifecycleResult, PositionLifecycleState, PositionRequest,
-    PositionValidateAuthCompanyResult, PositionValidationStatus, POSITION_SIM_001_CREATE_DRAFT,
-    POSITION_SIM_004_ACTIVATE_COMMIT, POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT,
+    PositionValidateAuthCompanyResult, PositionValidationStatus, POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+    POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT, POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
+    POSITION_SIM_001_CREATE_DRAFT, POSITION_SIM_004_ACTIVATE_COMMIT,
+    POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
@@ -25,6 +27,10 @@ pub mod reason_codes {
     pub const POSITION_OK_BAND_POLICY_CHECK: ReasonCodeId = ReasonCodeId(0x5900_0003);
     pub const POSITION_OK_ACTIVATE_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0004);
     pub const POSITION_OK_RETIRE_OR_SUSPEND_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0005);
+    pub const POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT: ReasonCodeId = ReasonCodeId(0x5900_0006);
+    pub const POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0007);
+    pub const POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT: ReasonCodeId =
+        ReasonCodeId(0x5900_0008);
 }
 
 #[derive(Debug, Default, Clone)]
@@ -242,6 +248,126 @@ impl Ph1PositionRuntime {
                     )
                     .map_err(StorageError::ContractViolation)?,
                 ))
+            }
+            PositionRequest::RequirementsSchemaCreateDraft(r) => {
+                let out = store.ph1position_requirements_schema_create_draft(
+                    req.now,
+                    r.actor_user_id.clone(),
+                    r.tenant_id.clone(),
+                    r.company_id.clone(),
+                    r.position_id.clone(),
+                    r.schema_version_id.clone(),
+                    r.selectors.clone(),
+                    r.field_specs.clone(),
+                    r.idempotency_key.clone(),
+                    POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "REQUIREMENTS_SCHEMA_NONE",
+                    "REQUIREMENTS_SCHEMA_DRAFT_CREATED",
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+                    Some(r.idempotency_key.clone()),
+                )?;
+
+                let ok = Ph1PositionOk {
+                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+                    create_draft_result: None,
+                    validate_auth_company_result: None,
+                    band_policy_check_result: None,
+                    lifecycle_result: None,
+                    requirements_schema_draft_result: Some(out),
+                    requirements_schema_lifecycle_result: None,
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1PositionResponse::Ok(ok))
+            }
+            PositionRequest::RequirementsSchemaUpdateCommit(r) => {
+                let out = store.ph1position_requirements_schema_update_commit(
+                    req.now,
+                    r.actor_user_id.clone(),
+                    r.tenant_id.clone(),
+                    r.company_id.clone(),
+                    r.position_id.clone(),
+                    r.schema_version_id.clone(),
+                    r.selectors.clone(),
+                    r.field_specs.clone(),
+                    r.change_reason.clone(),
+                    r.idempotency_key.clone(),
+                    POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "REQUIREMENTS_SCHEMA_DRAFT_OR_ACTIVE",
+                    "REQUIREMENTS_SCHEMA_UPDATED",
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
+                    Some(r.idempotency_key.clone()),
+                )?;
+
+                let ok = Ph1PositionOk {
+                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
+                    create_draft_result: None,
+                    validate_auth_company_result: None,
+                    band_policy_check_result: None,
+                    lifecycle_result: None,
+                    requirements_schema_draft_result: Some(out),
+                    requirements_schema_lifecycle_result: None,
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1PositionResponse::Ok(ok))
+            }
+            PositionRequest::RequirementsSchemaActivateCommit(r) => {
+                let out = store.ph1position_requirements_schema_activate_commit(
+                    req.now,
+                    r.actor_user_id.clone(),
+                    r.tenant_id.clone(),
+                    r.company_id.clone(),
+                    r.position_id.clone(),
+                    r.schema_version_id.clone(),
+                    r.apply_scope,
+                    r.idempotency_key.clone(),
+                    POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "REQUIREMENTS_SCHEMA_DRAFT",
+                    "REQUIREMENTS_SCHEMA_ACTIVE",
+                    reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+                    Some(r.idempotency_key.clone()),
+                )?;
+
+                let ok = Ph1PositionOk {
+                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
+                    create_draft_result: None,
+                    validate_auth_company_result: None,
+                    band_policy_check_result: None,
+                    lifecycle_result: None,
+                    requirements_schema_draft_result: None,
+                    requirements_schema_lifecycle_result: Some(out),
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1PositionResponse::Ok(ok))
             }
         }
     }

@@ -10,11 +10,16 @@ pub const PH1ONB_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 // Simulation IDs (authoritative strings; must match docs/08_SIMULATION_CATALOG.md).
 pub const ONB_SESSION_START_DRAFT: &str = "ONB_SESSION_START_DRAFT";
 pub const ONB_TERMS_ACCEPT_COMMIT: &str = "ONB_TERMS_ACCEPT_COMMIT";
+// Legacy simulation ids retained for compatibility; runtime gating is schema-driven.
 pub const ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT: &str = "ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT";
 pub const ONB_EMPLOYEE_SENDER_VERIFY_COMMIT: &str = "ONB_EMPLOYEE_SENDER_VERIFY_COMMIT";
 pub const ONB_PRIMARY_DEVICE_CONFIRM_COMMIT: &str = "ONB_PRIMARY_DEVICE_CONFIRM_COMMIT";
 pub const ONB_ACCESS_INSTANCE_CREATE_COMMIT: &str = "ONB_ACCESS_INSTANCE_CREATE_COMMIT";
 pub const ONB_COMPLETE_COMMIT: &str = "ONB_COMPLETE_COMMIT";
+pub const ONB_REQUIREMENT_BACKFILL_START_DRAFT: &str = "ONB_REQUIREMENT_BACKFILL_START_DRAFT";
+pub const ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT: &str = "ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT";
+pub const ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT: &str =
+    "ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SimulationType {
@@ -106,6 +111,52 @@ pub enum OnboardingStatus {
     PrimaryDeviceConfirmed,
     AccessInstanceCreated,
     Complete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackfillRolloutScope {
+    NewHiresOnly,
+    CurrentAndNew,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackfillCampaignState {
+    DraftCreated,
+    Running,
+    Completed,
+    Canceled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BackfillTargetStatus {
+    Pending,
+    Requested,
+    Reminded,
+    Completed,
+    Exempted,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BackfillCampaignId(String);
+
+impl BackfillCampaignId {
+    pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
+        let id = id.into();
+        let v = Self(id);
+        v.validate()?;
+        Ok(v)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Validate for BackfillCampaignId {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id("backfill_campaign_id", &self.0, 64)
+    }
 }
 
 fn validate_id(field: &'static str, s: &str, max_len: usize) -> Result<(), ContractViolation> {
@@ -608,6 +659,232 @@ impl Validate for OnbCompleteResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillStartDraftRequest {
+    pub actor_user_id: UserId,
+    pub tenant_id: String,
+    pub company_id: String,
+    pub position_id: String,
+    pub schema_version_id: String,
+    pub rollout_scope: BackfillRolloutScope,
+    pub idempotency_key: String,
+}
+
+impl Validate for OnbRequirementBackfillStartDraftRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_user_id(
+            "onb_requirement_backfill_start_draft_request.actor_user_id",
+            &self.actor_user_id,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_start_draft_request.tenant_id",
+            &self.tenant_id,
+            64,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_start_draft_request.company_id",
+            &self.company_id,
+            64,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_start_draft_request.position_id",
+            &self.position_id,
+            64,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_start_draft_request.schema_version_id",
+            &self.schema_version_id,
+            64,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_start_draft_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillStartDraftResult {
+    pub schema_version: SchemaVersion,
+    pub campaign_id: BackfillCampaignId,
+    pub state: BackfillCampaignState,
+    pub pending_target_count: u32,
+}
+
+impl OnbRequirementBackfillStartDraftResult {
+    pub fn v1(
+        campaign_id: BackfillCampaignId,
+        state: BackfillCampaignState,
+        pending_target_count: u32,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1ONB_CONTRACT_VERSION,
+            campaign_id,
+            state,
+            pending_target_count,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for OnbRequirementBackfillStartDraftResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1ONB_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_requirement_backfill_start_draft_result.schema_version",
+                reason: "must match PH1ONB_CONTRACT_VERSION",
+            });
+        }
+        self.campaign_id.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillNotifyCommitRequest {
+    pub campaign_id: BackfillCampaignId,
+    pub tenant_id: String,
+    pub recipient_user_id: UserId,
+    pub idempotency_key: String,
+}
+
+impl Validate for OnbRequirementBackfillNotifyCommitRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.campaign_id.validate()?;
+        validate_id(
+            "onb_requirement_backfill_notify_commit_request.tenant_id",
+            &self.tenant_id,
+            64,
+        )?;
+        validate_user_id(
+            "onb_requirement_backfill_notify_commit_request.recipient_user_id",
+            &self.recipient_user_id,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_notify_commit_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillNotifyCommitResult {
+    pub schema_version: SchemaVersion,
+    pub campaign_id: BackfillCampaignId,
+    pub recipient_user_id: UserId,
+    pub target_status: BackfillTargetStatus,
+}
+
+impl OnbRequirementBackfillNotifyCommitResult {
+    pub fn v1(
+        campaign_id: BackfillCampaignId,
+        recipient_user_id: UserId,
+        target_status: BackfillTargetStatus,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1ONB_CONTRACT_VERSION,
+            campaign_id,
+            recipient_user_id,
+            target_status,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for OnbRequirementBackfillNotifyCommitResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1ONB_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_requirement_backfill_notify_commit_result.schema_version",
+                reason: "must match PH1ONB_CONTRACT_VERSION",
+            });
+        }
+        self.campaign_id.validate()?;
+        validate_user_id(
+            "onb_requirement_backfill_notify_commit_result.recipient_user_id",
+            &self.recipient_user_id,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillCompleteCommitRequest {
+    pub campaign_id: BackfillCampaignId,
+    pub tenant_id: String,
+    pub idempotency_key: String,
+}
+
+impl Validate for OnbRequirementBackfillCompleteCommitRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.campaign_id.validate()?;
+        validate_id(
+            "onb_requirement_backfill_complete_commit_request.tenant_id",
+            &self.tenant_id,
+            64,
+        )?;
+        validate_id(
+            "onb_requirement_backfill_complete_commit_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbRequirementBackfillCompleteCommitResult {
+    pub schema_version: SchemaVersion,
+    pub campaign_id: BackfillCampaignId,
+    pub state: BackfillCampaignState,
+    pub completed_target_count: u32,
+    pub total_target_count: u32,
+}
+
+impl OnbRequirementBackfillCompleteCommitResult {
+    pub fn v1(
+        campaign_id: BackfillCampaignId,
+        state: BackfillCampaignState,
+        completed_target_count: u32,
+        total_target_count: u32,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1ONB_CONTRACT_VERSION,
+            campaign_id,
+            state,
+            completed_target_count,
+            total_target_count,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for OnbRequirementBackfillCompleteCommitResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1ONB_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_requirement_backfill_complete_commit_result.schema_version",
+                reason: "must match PH1ONB_CONTRACT_VERSION",
+            });
+        }
+        self.campaign_id.validate()?;
+        if self.completed_target_count > self.total_target_count {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_requirement_backfill_complete_commit_result.completed_target_count",
+                reason: "must be <= total_target_count",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OnbRequest {
     SessionStartDraft(OnbSessionStartDraftRequest),
     TermsAcceptCommit(OnbTermsAcceptCommitRequest),
@@ -616,6 +893,9 @@ pub enum OnbRequest {
     PrimaryDeviceConfirmCommit(OnbPrimaryDeviceConfirmCommitRequest),
     AccessInstanceCreateCommit(OnbAccessInstanceCreateCommitRequest),
     CompleteCommit(OnbCompleteCommitRequest),
+    RequirementBackfillStartDraft(OnbRequirementBackfillStartDraftRequest),
+    RequirementBackfillNotifyCommit(OnbRequirementBackfillNotifyCommitRequest),
+    RequirementBackfillCompleteCommit(OnbRequirementBackfillCompleteCommitRequest),
 }
 
 impl OnbRequest {
@@ -628,18 +908,27 @@ impl OnbRequest {
             OnbRequest::PrimaryDeviceConfirmCommit(_) => ONB_PRIMARY_DEVICE_CONFIRM_COMMIT,
             OnbRequest::AccessInstanceCreateCommit(_) => ONB_ACCESS_INSTANCE_CREATE_COMMIT,
             OnbRequest::CompleteCommit(_) => ONB_COMPLETE_COMMIT,
+            OnbRequest::RequirementBackfillStartDraft(_) => ONB_REQUIREMENT_BACKFILL_START_DRAFT,
+            OnbRequest::RequirementBackfillNotifyCommit(_) => ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+            OnbRequest::RequirementBackfillCompleteCommit(_) => {
+                ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
+            }
         }
     }
 
     pub fn simulation_type(&self) -> SimulationType {
         match self {
-            OnbRequest::SessionStartDraft(_) => SimulationType::Draft,
+            OnbRequest::SessionStartDraft(_) | OnbRequest::RequirementBackfillStartDraft(_) => {
+                SimulationType::Draft
+            }
             OnbRequest::TermsAcceptCommit(_)
             | OnbRequest::EmployeePhotoCaptureSendCommit(_)
             | OnbRequest::EmployeeSenderVerifyCommit(_)
             | OnbRequest::PrimaryDeviceConfirmCommit(_)
             | OnbRequest::AccessInstanceCreateCommit(_)
-            | OnbRequest::CompleteCommit(_) => SimulationType::Commit,
+            | OnbRequest::CompleteCommit(_)
+            | OnbRequest::RequirementBackfillNotifyCommit(_)
+            | OnbRequest::RequirementBackfillCompleteCommit(_) => SimulationType::Commit,
         }
     }
 }
@@ -727,6 +1016,9 @@ impl Validate for Ph1OnbRequest {
             OnbRequest::PrimaryDeviceConfirmCommit(r) => r.validate(),
             OnbRequest::AccessInstanceCreateCommit(r) => r.validate(),
             OnbRequest::CompleteCommit(r) => r.validate(),
+            OnbRequest::RequirementBackfillStartDraft(r) => r.validate(),
+            OnbRequest::RequirementBackfillNotifyCommit(r) => r.validate(),
+            OnbRequest::RequirementBackfillCompleteCommit(r) => r.validate(),
         }
     }
 }
@@ -743,6 +1035,9 @@ pub struct Ph1OnbOk {
     pub primary_device_confirm_result: Option<OnbPrimaryDeviceConfirmResult>,
     pub access_instance_create_result: Option<OnbAccessInstanceCreateResult>,
     pub complete_result: Option<OnbCompleteResult>,
+    pub requirement_backfill_start_result: Option<OnbRequirementBackfillStartDraftResult>,
+    pub requirement_backfill_notify_result: Option<OnbRequirementBackfillNotifyCommitResult>,
+    pub requirement_backfill_complete_result: Option<OnbRequirementBackfillCompleteCommitResult>,
 }
 
 impl Ph1OnbOk {
@@ -769,6 +1064,9 @@ impl Ph1OnbOk {
             primary_device_confirm_result,
             access_instance_create_result,
             complete_result,
+            requirement_backfill_start_result: None,
+            requirement_backfill_notify_result: None,
+            requirement_backfill_complete_result: None,
         };
         o.validate()?;
         Ok(o)
@@ -828,6 +1126,18 @@ impl Validate for Ph1OnbOk {
             count += 1;
         }
         if let Some(r) = &self.complete_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.requirement_backfill_start_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.requirement_backfill_notify_result {
+            r.validate()?;
+            count += 1;
+        }
+        if let Some(r) = &self.requirement_backfill_complete_result {
             r.validate()?;
             count += 1;
         }

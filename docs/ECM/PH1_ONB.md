@@ -2,7 +2,7 @@
 
 ## Engine Header
 - `engine_id`: `PH1.ONB`
-- `purpose`: Persist deterministic onboarding session lifecycle for invited onboarding (start, terms, employee verification gates, primary-device proof, access create, complete).
+- `purpose`: Persist deterministic onboarding session lifecycle for invited onboarding (start, terms, schema-required verification gates, primary-device proof, access create, complete).
 - `data_owned`: `onboarding_sessions` runtime state (plus deterministic idempotency indexes in PH1.F for onboarding steps)
 - `version`: `v1`
 - `status`: `ACTIVE`
@@ -11,11 +11,11 @@
 
 ### `PH1ONB_SESSION_START_DRAFT_ROW`
 - `name`: Start onboarding session from `LINK_OPEN_ACTIVATE` handoff
-- `input_schema`: `(draft_id, device_fingerprint, token_id?, idempotency_key)`
+- `input_schema`: `(token_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
 - `output_schema`: `Result<OnbSessionStartResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
-- `load_rule_note`: ONB session start loads onboarding draft context by `draft_id` (`draft_payload_json` + `missing_required_fields_json`) before clarify flow.
+- `load_rule_note`: ONB session start resolves activated link context by `token_id`, pins schema context, then drives one-question clarify from pinned requirements.
 
 ### `PH1ONB_SESSION_ROW`
 - `name`: Read one onboarding session row
@@ -39,14 +39,14 @@
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT_ROW`
-- `name`: Commit employee photo capture and sender-notification handoff
+- `name`: Commit schema-required evidence capture and sender-notification handoff (legacy capability id retained)
 - `input_schema`: `(now, onboarding_session_id, photo_blob_ref, sender_user_id, idempotency_key)`
 - `output_schema`: `Result<OnbEmployeePhotoCaptureSendResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `PH1ONB_EMPLOYEE_SENDER_VERIFY_COMMIT_ROW`
-- `name`: Commit sender verification decision
+- `name`: Commit schema-required sender verification decision (legacy capability id retained)
 - `input_schema`: `(now, onboarding_session_id, sender_user_id, decision, idempotency_key)`
 - `output_schema`: `Result<OnbEmployeeSenderVerifyResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
@@ -73,11 +73,32 @@
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `PH1ONB_BACKFILL_START_DRAFT_ROW`
+- `name`: Start deterministic onboarding requirement backfill campaign
+- `input_schema`: `(now, actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope, idempotency_key)`
+- `output_schema`: `Result<(campaign_id, state, pending_target_count), StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1ONB_BACKFILL_NOTIFY_COMMIT_ROW`
+- `name`: Commit deterministic backfill recipient notification/progress
+- `input_schema`: `(now, campaign_id, tenant_id, recipient_user_id, idempotency_key)`
+- `output_schema`: `Result<(campaign_id, recipient_user_id, target_status), StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `PH1ONB_BACKFILL_COMPLETE_COMMIT_ROW`
+- `name`: Commit deterministic onboarding requirement backfill completion state
+- `input_schema`: `(now, campaign_id, tenant_id, idempotency_key)`
+- `output_schema`: `Result<(campaign_id, state, completed_target_count, total_target_count), StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
+- `side_effects`: `DECLARED (DB_WRITE)`
+
 ## Failure Modes + Reason Codes
 - deterministic onboarding failure domains include:
   - link/session scope mismatch
   - required gate not satisfied (terms/verify/device/access)
-  - blocked employee completion without sender confirmation
+- blocked completion when schema-required sender confirmation is not satisfied
   - idempotency replay/no-op
 - all failures are fail-closed and reason-coded.
 

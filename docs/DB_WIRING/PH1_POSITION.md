@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.POSITION`
-- `purpose`: Persist deterministic tenant-scoped position truth (`Draft | Active | Suspended | Retired`) and append-only lifecycle transitions for onboarding/invite flows.
+- `purpose`: Persist deterministic tenant-scoped position truth (`Draft | Active | Suspended | Retired`) and append-only lifecycle transitions for onboarding/invite flows, plus versioned position requirements schemas used by PH1.ONB execution.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -25,6 +25,18 @@
   - each transition carries simulation + reason code + actor
   - idempotent retries must not duplicate effective transitions
 
+### Position requirements schema records
+- `truth_type`: `LEDGER + CURRENT`
+- ownership:
+  - PH1.POSITION owns versioned requirements schema definitions attached to a `position_id`
+  - PH1.POSITION owns schema overlays/selectors attached to a `position_id`
+- invariants:
+  - active schema version is unique per `(tenant_id, position_id)`
+  - activation is monotonic and auditable (no silent in-place mutation)
+  - selector evaluation and overlay merge order are deterministic and bounded
+  - every schema activation is simulation-gated and reason-coded
+  - PH1.ONB consumes these records read-only; PH1.ONB never mutates schema truth
+
 ### `tenant_companies` (dependency for position authorization/validity)
 - `truth_type`: `CURRENT`
 - `primary key`: `(tenant_id, company_id)`
@@ -39,6 +51,8 @@
   - `tenant_companies(tenant_id, company_id)` must exist and be `ACTIVE` for create/validation
 - scoped position read:
   - all reads/writes are keyed by `(tenant_id, position_id)`; cross-tenant access returns not found
+- schema read/write prerequisite:
+  - schema draft/update/activate operations require existing active position scope and tenant-matched actor authorization
 
 ## 4) Writes (outputs)
 
@@ -63,15 +77,30 @@
 - idempotency key rule:
   - dedupe by `(tenant_id, position_id, requested_state, idempotency_key)`
 
+### Position requirements schema lifecycle writes
+- writes:
+  - create requirements schema draft for position
+  - update requirements schema draft (add/remove/override fields and conditional rules)
+  - activate new schema version for position (new hires by default)
+  - optional backfill campaign trigger marker for "apply to current staff"
+- simulation bindings:
+  - `POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT`
+  - `POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT`
+  - `POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT`
+- idempotency key rule:
+  - dedupe by `(tenant_id, position_id, schema_change_set_hash, idempotency_key)`
+
 ## 5) Relations & Keys
 
 - `positions(tenant_id, company_id)` references `tenant_companies(tenant_id, company_id)` contract scope.
 - lifecycle rows are tenant-position scoped and never mutated in place.
+- position requirements schema records are keyed by `(tenant_id, position_id, schema_version)` and linked to position lifecycle scope.
+- PH1.ONB session pinning references active position schema version and effective overlays at session start.
 
 ## 6) Audit/Proof Emissions
 
-Row 22 lock centers on PH1.POSITION current + lifecycle persistence.
-Append-only evidence is provided by `position_lifecycle_events`; overwrite attempts must fail deterministically.
+Row 22 lock centers on PH1.POSITION current + lifecycle + requirements-schema persistence.
+Append-only evidence is provided by `position_lifecycle_events` and schema activation audit emissions; overwrite attempts must fail deterministically.
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
@@ -83,6 +112,10 @@ Append-only evidence is provided by `position_lifecycle_events`; overwrite attem
   - `at_position_db_03_idempotency_dedupe_works`
 - `AT-POSITION-DB-04` current table consistent with lifecycle ledger
   - `at_position_db_04_current_table_consistency_with_lifecycle_ledger`
+- `AT-POSITION-DB-05` schema activation monotonicity and replay safety
+  - `at_position_db_05_requirements_schema_activation_monotonic`
+- `AT-POSITION-DB-06` PH1.ONB reads active position schema but cannot mutate it
+  - `at_position_db_06_onb_read_only_schema_boundary`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

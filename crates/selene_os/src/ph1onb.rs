@@ -18,6 +18,8 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1onb::{
     OnbRequest, OnboardingSessionId, Ph1OnbOk, Ph1OnbRequest, Ph1OnbResponse, SimulationType,
+    ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT, ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+    ONB_REQUIREMENT_BACKFILL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1position::{
     Ph1PositionRequest, PositionBandPolicyCheckRequest, PositionBandPolicyCheckResult,
@@ -46,6 +48,9 @@ pub mod reason_codes {
     pub const ONB_OK_PRIMARY_DEVICE_CONFIRM_COMMIT: ReasonCodeId = ReasonCodeId(0x4F00_0005);
     pub const ONB_OK_ACCESS_INSTANCE_CREATE_COMMIT: ReasonCodeId = ReasonCodeId(0x4F00_0006);
     pub const ONB_OK_COMPLETE_COMMIT: ReasonCodeId = ReasonCodeId(0x4F00_0007);
+    pub const ONB_OK_REQUIREMENT_BACKFILL_START_DRAFT: ReasonCodeId = ReasonCodeId(0x4F00_0008);
+    pub const ONB_OK_REQUIREMENT_BACKFILL_NOTIFY_COMMIT: ReasonCodeId = ReasonCodeId(0x4F00_0009);
+    pub const ONB_OK_REQUIREMENT_BACKFILL_COMPLETE_COMMIT: ReasonCodeId = ReasonCodeId(0x4F00_000A);
     pub const ONB_REFUSE_INVALID: ReasonCodeId = ReasonCodeId(0x4F00_00F1);
     pub const ONB_REFUSE_NOT_FOUND: ReasonCodeId = ReasonCodeId(0x4F00_00F2);
 }
@@ -445,6 +450,128 @@ impl Ph1OnbOrchRuntime {
                     )
                     .map_err(StorageError::ContractViolation)?,
                 ))
+            }
+            OnbRequest::RequirementBackfillStartDraft(r) => {
+                let out = store.ph1onb_requirement_backfill_start_draft(
+                    req.now,
+                    r.actor_user_id.clone(),
+                    r.tenant_id.clone(),
+                    r.company_id.clone(),
+                    r.position_id.clone(),
+                    r.schema_version_id.clone(),
+                    r.rollout_scope,
+                    r.idempotency_key.clone(),
+                    ONB_REQUIREMENT_BACKFILL_START_DRAFT,
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_START_DRAFT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "BACKFILL_NONE",
+                    "BACKFILL_DRAFT_CREATED",
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_START_DRAFT,
+                    Some(format!("onb_backfill_start:{}", r.idempotency_key)),
+                )?;
+
+                let ok = Ph1OnbOk {
+                    schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::ONB_OK_REQUIREMENT_BACKFILL_START_DRAFT,
+                    session_start_result: None,
+                    terms_accept_result: None,
+                    employee_photo_result: None,
+                    employee_sender_verify_result: None,
+                    primary_device_confirm_result: None,
+                    access_instance_create_result: None,
+                    complete_result: None,
+                    requirement_backfill_start_result: Some(out),
+                    requirement_backfill_notify_result: None,
+                    requirement_backfill_complete_result: None,
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1OnbResponse::Ok(ok))
+            }
+            OnbRequest::RequirementBackfillNotifyCommit(r) => {
+                let out = store.ph1onb_requirement_backfill_notify_commit(
+                    req.now,
+                    r.campaign_id.clone(),
+                    r.tenant_id.clone(),
+                    r.recipient_user_id.clone(),
+                    r.idempotency_key.clone(),
+                    ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "BACKFILL_RUNNING",
+                    "BACKFILL_TARGET_REQUESTED",
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+                    Some(format!("onb_backfill_notify:{}", r.idempotency_key)),
+                )?;
+
+                let ok = Ph1OnbOk {
+                    schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::ONB_OK_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+                    session_start_result: None,
+                    terms_accept_result: None,
+                    employee_photo_result: None,
+                    employee_sender_verify_result: None,
+                    primary_device_confirm_result: None,
+                    access_instance_create_result: None,
+                    complete_result: None,
+                    requirement_backfill_start_result: None,
+                    requirement_backfill_notify_result: Some(out),
+                    requirement_backfill_complete_result: None,
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1OnbResponse::Ok(ok))
+            }
+            OnbRequest::RequirementBackfillCompleteCommit(r) => {
+                let out = store.ph1onb_requirement_backfill_complete_commit(
+                    req.now,
+                    r.campaign_id.clone(),
+                    r.tenant_id.clone(),
+                    r.idempotency_key.clone(),
+                    ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT,
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_COMPLETE_COMMIT,
+                )?;
+
+                self.audit_transition(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
+                    "BACKFILL_RUNNING",
+                    "BACKFILL_COMPLETED",
+                    reason_codes::ONB_OK_REQUIREMENT_BACKFILL_COMPLETE_COMMIT,
+                    Some(format!("onb_backfill_complete:{}", r.idempotency_key)),
+                )?;
+
+                let ok = Ph1OnbOk {
+                    schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+                    simulation_id: req.simulation_id.clone(),
+                    reason_code: reason_codes::ONB_OK_REQUIREMENT_BACKFILL_COMPLETE_COMMIT,
+                    session_start_result: None,
+                    terms_accept_result: None,
+                    employee_photo_result: None,
+                    employee_sender_verify_result: None,
+                    primary_device_confirm_result: None,
+                    access_instance_create_result: None,
+                    complete_result: None,
+                    requirement_backfill_start_result: None,
+                    requirement_backfill_notify_result: None,
+                    requirement_backfill_complete_result: Some(out),
+                };
+                ok.validate().map_err(StorageError::ContractViolation)?;
+                Ok(Ph1OnbResponse::Ok(ok))
             }
         }
     }
@@ -910,6 +1037,9 @@ impl OnbIdempotencyKey for Ph1OnbRequest {
             OnbRequest::PrimaryDeviceConfirmCommit(r) => Some(&r.idempotency_key),
             OnbRequest::AccessInstanceCreateCommit(r) => Some(&r.idempotency_key),
             OnbRequest::CompleteCommit(r) => Some(&r.idempotency_key),
+            OnbRequest::RequirementBackfillStartDraft(r) => Some(&r.idempotency_key),
+            OnbRequest::RequirementBackfillNotifyCommit(r) => Some(&r.idempotency_key),
+            OnbRequest::RequirementBackfillCompleteCommit(r) => Some(&r.idempotency_key),
         }
     }
 }
@@ -1189,6 +1319,105 @@ mod tests {
             request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
                 onboarding_session_id: session_id,
                 idempotency_key: "k6".to_string(),
+            }),
+        };
+        let out = rt.run(&mut store, &complete).unwrap();
+        match out {
+            Ph1OnbResponse::Ok(ok) => assert_eq!(
+                ok.complete_result.unwrap().onboarding_status,
+                OnboardingStatus::Complete
+            ),
+            _ => panic!("expected ok"),
+        }
+    }
+
+    #[test]
+    fn onb_employee_can_complete_without_sender_verify_when_not_schema_required() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        let token_id = make_activated_link(&mut store);
+
+        let start = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 2),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
+                token_id,
+                prefilled_context_ref: None,
+                tenant_id: Some("tenant_1".to_string()),
+                device_fingerprint: "device_fp_1".to_string(),
+            }),
+        };
+        let session_id = match rt.run(&mut store, &start).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap().onboarding_session_id,
+            _ => panic!("expected ok"),
+        };
+
+        let terms = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 3),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_TERMS_ACCEPT_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::TermsAcceptCommit(OnbTermsAcceptCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                terms_version_id: "terms_v1".to_string(),
+                accepted: true,
+                idempotency_key: "schema-gate-terms".to_string(),
+            }),
+        };
+        let _ = rt.run(&mut store, &terms).unwrap();
+
+        let dev = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 4),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_PRIMARY_DEVICE_CONFIRM_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::PrimaryDeviceConfirmCommit(OnbPrimaryDeviceConfirmCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                device_id: device("device_no_sender_verify"),
+                proof_type: selene_kernel_contracts::ph1onb::ProofType::Biometric,
+                proof_ok: true,
+                idempotency_key: "schema-gate-device".to_string(),
+            }),
+        };
+        let _ = rt.run(&mut store, &dev).unwrap();
+
+        let access = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 5),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_ACCESS_INSTANCE_CREATE_COMMIT
+                .to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::AccessInstanceCreateCommit(OnbAccessInstanceCreateCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                user_id: user("invitee_schema_optional"),
+                tenant_id: Some("tenant_1".to_string()),
+                role_id: "role_store_manager".to_string(),
+                idempotency_key: "schema-gate-access".to_string(),
+            }),
+        };
+        let _ = rt.run(&mut store, &access).unwrap();
+
+        let complete = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 6),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_COMPLETE_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
+                onboarding_session_id: session_id,
+                idempotency_key: "schema-gate-complete".to_string(),
             }),
         };
         let out = rt.run(&mut store, &complete).unwrap();
