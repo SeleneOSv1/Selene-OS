@@ -9,7 +9,7 @@
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
-- Launch policy: this process is entered only from explicit `CURRENT_AND_NEW` schema activation scope in `ONB_SCHEMA_MANAGE`.
+- Launch policy: this process is entered only from explicit `CurrentAndNew` schema activation scope in `ONB_SCHEMA_MANAGE`.
 
 ## 2) Required Inputs
 - `tenant_id`
@@ -37,7 +37,7 @@ total_target_count: integer
 |---|---|---|---|---|---|---:|---:|---:|---|
 | ONB_BACKFILL_S01 | PH1.C | PH1C_TRANSCRIPT_OK_COMMIT_ROW | correlation_id, turn_id, transcript_hash | transcript_ok evidence row | DB_WRITE | 1200 | 1 | 150 | [STT_FAIL_PROVIDER_TIMEOUT, STT_FAIL_NETWORK_UNAVAILABLE] |
 | ONB_BACKFILL_S02 | PH1.NLP | PH1NLP_INTENT_DRAFT_COMMIT_ROW | transcript_ok, intent_type=ONB_REQUIREMENT_BACKFILL | intent_draft | DB_WRITE | 200 | 1 | 100 | [NLP_INPUT_MISSING] |
-| ONB_BACKFILL_S03 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | company_id, position_id, schema_version_id, rollout_scope=CURRENT_AND_NEW | confirmation prompt state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
+| ONB_BACKFILL_S03 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | company_id, position_id, schema_version_id, rollout_scope=CurrentAndNew | confirmation prompt state | DB_WRITE | 300 | 1 | 100 | [OS_CONFIRM_TIMEOUT] |
 | ONB_BACKFILL_S04 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | actor_user_id, tenant_id, requested_action=ONB_REQUIREMENT_BACKFILL | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
 | ONB_BACKFILL_S05 | PH1.ONB | PH1ONB_BACKFILL_START_DRAFT_ROW | actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope, idempotency_key | campaign_id, state, pending_target_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_BACKFILL_START_RETRYABLE] |
 | ONB_BACKFILL_S06 | PH1.BCAST | BCAST_DRAFT_CREATE | tenant_id, sender_user_id=actor_user_id, audience_spec(target_population), classification, content_payload_ref, idempotency_key | broadcast_id, status=draft_created | INTERNAL_DB_WRITE (simulation-gated) | 400 | 1 | 100 | [BCAST_INPUT_SCHEMA_INVALID] |

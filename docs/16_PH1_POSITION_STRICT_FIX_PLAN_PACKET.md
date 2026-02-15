@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: READY_FOR_EXECUTION
+Status: STEP1_COMPLETED_PENDING_STEP2
 
 ## 1) Purpose
 
@@ -329,5 +329,19 @@ scripts/selene_design_readiness_audit.sh
 - If a step requires touching unlisted files, pause and amend this packet first.
 - If idempotency shape is changed, update docs + migration + store in the same step.
 - If rollout semantics are changed, update blueprint, contract, runtime, and tests in lock-step.
+
+## 9) Execution Record
+
+- Step 1: COMPLETED (2026-02-15)
+- Step 2: NOT_STARTED
+- Step 3: NOT_STARTED
+- Step 4: NOT_STARTED
+- Step 5: NOT_STARTED
+- Step 6: NOT_STARTED
+- Step 7: NOT_STARTED
+- Step 8: NOT_STARTED
+
+Step 1 note:
+- Locked rollout scope naming for ONB backfill handoff to `CurrentAndNew` in blueprint flow docs so PH1.POSITION activation handoff language matches PH1.ONB kernel contract enum semantics (`BackfillRolloutScope::CurrentAndNew`).
 
 END OF PACKET
