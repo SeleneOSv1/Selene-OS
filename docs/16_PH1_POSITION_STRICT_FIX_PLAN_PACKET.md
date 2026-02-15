@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP6_COMPLETED_PENDING_STEP7
+Status: STEP7_COMPLETED_PENDING_STEP8
 
 ## 1) Purpose
 
@@ -338,7 +338,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 4: COMPLETED (2026-02-15)
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15, N/A no migration delta required)
-- Step 7: NOT_STARTED
+- Step 7: COMPLETED (2026-02-15)
 - Step 8: NOT_STARTED
 
 Step 1 note:
@@ -358,5 +358,8 @@ Step 5 note:
 
 Step 6 note:
 - Migration contract parity gate is already satisfied in `0014_position_requirements_schema_and_backfill_tables.sql`: SQL already persists/guards `change_reason` and `apply_scope`, and idempotency uniqueness/index shapes match KC.25 + DB wiring + storage behavior; no SQL patch required in this step.
+
+Step 7 note:
+- Test closure gate is satisfied with no code delta required: AT-05 (`at_position_db_05_requirements_schema_activation_monotonic`) and AT-06 (`at_position_db_06_onb_read_only_schema_boundary`) already exist in `crates/selene_storage/tests/ph1_position/db_wiring.rs`, runtime requirements-schema lifecycle tests already exist in `crates/selene_os/src/ph1position.rs`, and acceptance test suites pass.
 
 END OF PACKET
