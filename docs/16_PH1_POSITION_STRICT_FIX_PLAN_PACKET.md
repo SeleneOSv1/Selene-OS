@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP4_COMPLETED_PENDING_STEP5
+Status: STEP5_COMPLETED_PENDING_STEP6
 
 ## 1) Purpose
 
@@ -336,7 +336,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
-- Step 5: NOT_STARTED
+- Step 5: COMPLETED (2026-02-15)
 - Step 6: NOT_STARTED
 - Step 7: NOT_STARTED
 - Step 8: NOT_STARTED
@@ -352,5 +352,8 @@ Step 3 note:
 
 Step 4 note:
 - Storage behavior parity gate is already satisfied in `ph1f.rs`: no ignored placeholder fields remain (`_change_reason`/`_apply_scope` absent), conditional required rules are predicate-evaluated, schema update persists `change_reason`, schema activation persists `apply_scope`, and PH1.POSITION DB wiring tests pass.
+
+Step 5 note:
+- Runtime wiring parity gate is already satisfied in `ph1position.rs`: requirements-schema activate path returns explicit scope semantics (`NewHiresOnly` vs `CurrentAndNew`) through `requirements_schema_lifecycle_result`, and PH1.POSITION runtime tests pass without adding direct PH1.ONB execution coupling.
 
 END OF PACKET
