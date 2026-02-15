@@ -435,7 +435,7 @@ For each item:
 - Execution status:
   - Step 1 complete (docs lock)
   - Step 2 complete (kernel/runtime recheck)
-  - Step 3 not started
+  - Step 3 complete (storage/repo recheck)
   - Step 4 not started
 - Step 1 lock actions:
   - normalized DB wiring simulation name from `CAPREQ_SUBMIT_COMMIT` to canonical `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT`.
@@ -447,3 +447,7 @@ For each item:
   - `cargo test -p selene_kernel_contracts ph1capreq -- --nocapture`
   - `cargo test -p selene_os capreq -- --nocapture`
   - result: both pass; kernel/runtime naming and lifecycle transition wiring remain coherent.
+- Step 3 proof command:
+  - `rg -n "trait Ph1CapreqRepo|ph1capreq_|CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT|SubmitForApproval|CancelRevoke|CAPREQ_CANCEL_REVOKE|CAPREQ_SUBMIT_COMMIT" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -S`
+  - `rg -n "CapabilityRequestAction::SubmitForApproval|CapabilityRequestAction::Cancel|CAPREQ_TRANSITION_INVALID|CAPREQ_ID_REQUIRED|capreq_ledger|capreq_current" crates/selene_storage/src/ph1f.rs crates/selene_storage/src/repo.rs -S`
+  - result: no storage/repo drift found; no code patch required in Step 3.

@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP2_COMPLETED_PENDING_STEP3
+Status: STEP3_COMPLETED_PENDING_STEP4
 
 ## 1) Purpose
 
@@ -105,7 +105,7 @@ scripts/selene_design_readiness_audit.sh
 
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
-- Step 3: NOT_STARTED
+- Step 3: COMPLETED (2026-02-15)
 - Step 4: NOT_STARTED
 
 Step 1 note:
@@ -115,6 +115,10 @@ Step 1 note:
 Step 2 note:
 - Kernel/runtime recheck passed with no production code delta required.
 - `ph1capreq` contract tests and CAPREQ runtime transition tests pass on current commit.
+
+Step 3 note:
+- Storage/repo recheck passed with no production code delta required.
+- `Ph1CapreqRepo` typed surface and `Ph1fStore` CAPREQ append/current/rebuild wiring are coherent with lifecycle naming and current simulation set.
 
 ## 6) Done Criteria
 
