@@ -2,6 +2,7 @@
 
 pub mod common;
 pub mod ph1_voice_id;
+pub mod ph1access;
 pub mod ph1art;
 pub mod ph1c;
 pub mod ph1capreq;

@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP1_COMPLETED_PENDING_STEP2
+Status: STEP2_COMPLETED_PENDING_STEP3
 
 ## 1) Purpose
 
@@ -281,7 +281,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 ## 12) Execution Record
 
 - Step 1: COMPLETED (2026-02-15)
-- Step 2: PENDING
+- Step 2: COMPLETED (2026-02-15)
 - Step 3: PENDING
 - Step 4: PENDING
 - Step 5: PENDING
@@ -297,3 +297,16 @@ Step 1 note:
   - Screen/voice review branch is required (phone/desktop review or read-out-loud).
   - Rule-by-rule agree/disagree/edit/delete/disable/add behavior is required.
   - Screen-facing output uses professional writing quality.
+
+Step 2 note:
+- Locked kernel contract objects for master-access schema in `docs/04_KERNEL_CONTRACTS.md` via new `KC.26 PH1.ACCESS Master Access Schema Kernel Contract`.
+- Added new Rust kernel contract module `crates/selene_kernel_contracts/src/ph1access.rs` and exported it in `crates/selene_kernel_contracts/src/lib.rs`.
+- Step-2 object lock now includes:
+  - AP lifecycle/versioning objects (`DRAFT | ACTIVE | RETIRED`, global vs tenant scope).
+  - overlay operation enums/spec (`ADD_PERMISSION | REMOVE_PERMISSION | TIGHTEN_CONSTRAINT | SET_ESCALATION_POLICY`).
+  - board/approval threshold policy primitives (`SINGLE_APPROVER | N_OF_M | BOARD_QUORUM_PERCENT | UNANIMOUS_BOARD | MIXED`).
+  - per-user access compiled lineage refs (global AP ref, tenant AP ref, overlay refs, position ref).
+- Verified gate compatibility lock remains explicit (`ALLOW | DENY | ESCALATE` unchanged externally).
+- Step-2 proof:
+  - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass
+  - `rg` checks for KC.26 and `ph1access` anchors -> pass

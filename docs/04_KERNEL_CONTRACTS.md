@@ -2297,3 +2297,113 @@ KC.25.5 Hard Rules
 Backfill campaigns are explicit, simulation-gated workflows; no implicit retroactive schema enforcement is allowed.
 
 For `CurrentAndNew` rollout scope, target population selection and progress state must be deterministic and auditable via campaign + target rows.
+
+KC.26 PH1.ACCESS Master Access Schema Kernel Contract (Minimum)
+
+Purpose: lock schema-driven Master Access objects so AP templates, tenant AP versions, overlays, board approval policies, and per-user compiled lineage are deterministic, versioned, and replay-safe without changing the runtime decision contract.
+
+KC.26.1 Object: access_profile_schema_record
+
+Required fields (minimum):
+
+schema_version (> 0)
+
+access_profile_id
+
+profile_name
+
+scope (GLOBAL | TENANT)
+
+lifecycle_state (DRAFT | ACTIVE | RETIRED)
+
+owner_tenant_id (required when scope=TENANT; absent when scope=GLOBAL)
+
+derived_from_global_profile_id (nullable)
+
+capability_allow_list (non-empty, bounded capability ids)
+
+Hard rules:
+
+AP lifecycle is monotonic: DRAFT -> ACTIVE -> RETIRED.
+
+Edit means create a new schema version and activate it; no silent in-place mutation of ACTIVE AP records.
+
+Delete means RETIRED (history remains replayable and auditable).
+
+KC.26.2 Object: access_overlay_op_spec
+
+Required fields (minimum):
+
+op (ADD_PERMISSION | REMOVE_PERMISSION | TIGHTEN_CONSTRAINT | SET_ESCALATION_POLICY)
+
+capability_id (required for add/remove permission ops)
+
+constraint_ref (required for tighten constraint op)
+
+escalation_policy_ref (required for set escalation policy op)
+
+Hard rules:
+
+Overlay ops are bounded and tenant-scoped.
+
+Overlay ops must never mutate Selene global AP library records.
+
+KC.26.3 Object: access_approval_policy_spec
+
+Required fields (minimum):
+
+primitive (SINGLE_APPROVER | N_OF_M | BOARD_QUORUM_PERCENT | UNANIMOUS_BOARD | MIXED)
+
+required_approvals (required for N_OF_M; bounded)
+
+approver_pool_size (required for N_OF_M; bounded)
+
+board_quorum_percent (required for BOARD_QUORUM_PERCENT; range 1..100)
+
+require_cfo_approval (bool; optional mixed-signal primitive)
+
+Hard rules:
+
+Policy thresholds are deterministic and simulation-gated.
+
+N_OF_M must satisfy `1 <= required_approvals <= approver_pool_size`.
+
+MIXED policies must specify at least one approval signal.
+
+KC.26.4 Object: access_compiled_lineage_ref
+
+Required fields (minimum):
+
+global_profile_version (required)
+
+tenant_profile_version (nullable)
+
+overlay_version_ids (bounded list)
+
+position_id (nullable)
+
+Hard rules:
+
+Per-user access instance compile lineage must reference AP/overlay source versions used by runtime gate evaluation.
+
+Lineage refs must be tenant-safe and replay-safe.
+
+KC.26.5 Runtime Decision Contract Compatibility
+
+Hard rules:
+
+Runtime gate output contract remains fixed:
+
+decision (ALLOW | DENY | ESCALATE)
+
+No schema-registry introduction may change the external gate decision envelope in this phase.
+
+No Simulation -> No Execution applies to:
+
+AP create/update/activate/retire,
+
+overlay updates,
+
+approval policy updates,
+
+override apply/revoke.
