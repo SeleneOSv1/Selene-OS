@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP2_COMPLETED_PENDING_STEP3
+Status: STEP3_COMPLETED_PENDING_STEP4
 
 ## 1) Purpose
 
@@ -87,7 +87,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
-- Step 3: PENDING
+- Step 3: COMPLETED (2026-02-15)
 - Step 4: PENDING
 - Step 5: PENDING
 - Step 6: PENDING
@@ -112,3 +112,23 @@ Step 2 note:
 - Step-2 proof:
   - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass (46 tests)
   - `rg` anchors for KC.26.5..KC.26.8 + new `ph1access` objects -> pass
+
+Step 3 note:
+- Locked AP authoring review blueprint + simulation surfaces in docs:
+  - `docs/BLUEPRINTS/ACCESS_SCHEMA_MANAGE.md`
+  - `docs/08_SIMULATION_CATALOG.md`
+  - `docs/COVERAGE_MATRIX.md`
+- Blueprint lock additions:
+  - explicit review-channel gate (`PHONE_DESKTOP | READ_OUT_LOUD`) before AP lifecycle writes
+  - explicit rule-review confirmation gate for bounded actions (`AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`)
+  - simulation requirements expanded with AP authoring review simulation IDs
+- Simulation catalog lock additions:
+  - `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT`
+  - `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT`
+  - `ACCESS_AP_AUTHORING_CONFIRM_COMMIT`
+  - index rows + full simulation blocks added with bounded schemas and idempotency rules
+- Coverage lock update:
+  - PH1.ACCESS owned simulation list expanded with the three AP authoring review simulation IDs.
+- Step-3 proof:
+  - `rg` checks for new AP authoring simulation IDs in blueprint + simulation catalog + coverage matrix -> pass
+  - readiness audit (`scripts/selene_design_readiness_audit.sh`) -> pass (no capability-id gaps, no missing simulation IDs, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)

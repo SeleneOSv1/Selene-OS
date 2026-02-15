@@ -73,6 +73,9 @@ Locked schema rules:
 | ACCESS_OVERRIDE_TEMP_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved temporary/one-shot override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
 | ACCESS_OVERRIDE_PERM_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved permanent override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 baseline/override state |
 | ACCESS_OVERRIDE_REVOKE_COMMIT | COMMIT | Access | Revoke a prior override from a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
+| ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT | COMMIT | Access | Persist explicit AP authoring review-channel choice before schema lifecycle writes | DRAFT | v1 | Append AP authoring review state |
+| ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT | COMMIT | Access | Persist one bounded AP rule-review action (agree/disagree/edit/delete/disable/add custom) | DRAFT | v1 | Append AP authoring rule review action |
+| ACCESS_AP_AUTHORING_CONFIRM_COMMIT | COMMIT | Access | Persist final AP authoring confirmation state before activation path | DRAFT | v1 | Append AP authoring confirmation state |
 | ACCESS_AP_SCHEMA_CREATE_DRAFT | DRAFT | Access | Create AP schema draft row for global/tenant scope | DRAFT | v1 | Append AP schema ledger row only |
 | ACCESS_AP_SCHEMA_UPDATE_COMMIT | COMMIT | Access | Update AP schema draft version deterministically | DRAFT | v1 | Append AP schema ledger row only |
 | ACCESS_AP_SCHEMA_ACTIVATE_COMMIT | COMMIT | Access | Activate AP schema version into current projection | DRAFT | v1 | Update AP current projection |
@@ -1296,6 +1299,114 @@ status: REVOKED
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (target_user_id + override_id + idempotency_key)
 - audit_events: ACCESS_OVERRIDE_REVOKED (example)
+
+### ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT (COMMIT)
+
+- name: Access AP Authoring Review Channel Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Persist explicit AP authoring review channel selection (`PHONE_DESKTOP | READ_OUT_LOUD`) before AP schema lifecycle writes
+- triggers: ACCESS_SCHEMA_MANAGE (authoring review channel path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (explicit channel selection)
+- input_schema (minimum):
+```text
+tenant_id: string (required when scope=TENANT)
+scope: enum (GLOBAL | TENANT)
+access_profile_id: string
+schema_version_id: string
+review_channel: enum (PHONE_DESKTOP | READ_OUT_LOUD)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+review_channel: enum (PHONE_DESKTOP | READ_OUT_LOUD)
+authoring_confirmation_state: REVIEW_IN_PROGRESS
+```
+- preconditions: caller scope is valid for requested AP scope; review channel is bounded and explicit
+- postconditions: AP authoring review-channel state is persisted deterministically
+- side_effects: Append AP authoring review state
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + review_channel + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT (COMMIT)
+
+- name: Access AP Authoring Rule Action Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Persist one bounded AP rule-review action (`AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`) deterministically
+- triggers: ACCESS_SCHEMA_MANAGE (authoring rule action path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none
+- required_confirmations: required (rule action commit)
+- input_schema (minimum):
+```text
+tenant_id: string (required when scope=TENANT)
+scope: enum (GLOBAL | TENANT)
+access_profile_id: string
+schema_version_id: string
+rule_action: enum (AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE)
+suggested_rule_ref: string (required for AGREE | DISAGREE | EDIT | DELETE | DISABLE)
+capability_id: string (required for EDIT | ADD_CUSTOM_RULE)
+constraint_ref: string (optional)
+escalation_policy_ref: string (optional)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+rule_action: enum (AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE)
+review_action_row_id: string
+```
+- preconditions: review channel state exists; rule action payload passes bounded validation
+- postconditions: AP rule-review action row is appended deterministically
+- side_effects: Append AP authoring rule review action
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + rule_action + suggested_rule_ref + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
+### ACCESS_AP_AUTHORING_CONFIRM_COMMIT (COMMIT)
+
+- name: Access AP Authoring Confirm Commit
+- owning_domain: Access
+- simulation_type: COMMIT
+- purpose: Persist final AP authoring confirmation state before activation path
+- triggers: ACCESS_SCHEMA_MANAGE (authoring confirmation path)
+- required_roles: POLICY_ROLE_BOUND (resolved by PH1.ACCESS.001 -> PH2.ACCESS.002 + blueprint policy)
+- required_approvals: none (activation approvals are policy-bound in lifecycle simulations)
+- required_confirmations: required (final authoring confirmation)
+- input_schema (minimum):
+```text
+tenant_id: string (required when scope=TENANT)
+scope: enum (GLOBAL | TENANT)
+access_profile_id: string
+schema_version_id: string
+authoring_confirmation_state: enum (PENDING_ACTIVATION_CONFIRMATION | CONFIRMED_FOR_ACTIVATION | DECLINED)
+reason_code: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+access_profile_id: string
+schema_version_id: string
+authoring_confirmation_state: enum (CONFIRMED_FOR_ACTIVATION | DECLINED)
+```
+- preconditions: review channel selection exists and required rule actions are recorded
+- postconditions: AP authoring confirmation state is persisted deterministically
+- side_effects: Append AP authoring confirmation state
+- reads_tables[]: inherited from owning_domain profile (or stricter record override)
+- writes_tables[]: inherited from owning_domain profile (or stricter record override)
+- idempotency_key_rule: idempotent on (scope_key + access_profile_id + schema_version_id + authoring_confirmation_state + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ACCESS_AP_SCHEMA_CREATE_DRAFT (DRAFT)
 
