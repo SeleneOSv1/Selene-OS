@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP6_COMPLETED_PENDING_STEP7
+Status: STEP7_COMPLETED_PENDING_STEP8
 
 ## 1) Purpose
 
@@ -286,7 +286,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 - Step 4: COMPLETED (2026-02-15)
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15)
-- Step 7: PENDING
+- Step 7: COMPLETED (2026-02-15)
 - Step 8: PENDING
 
 Step 1 note:
@@ -391,5 +391,21 @@ Step 6 note:
 - Added repository trait parity for new access schema/overlay/board/compile capabilities and typed read accessors.
 - Step-6 proof:
   - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass
+  - `cargo test -p selene_storage -- --nocapture` -> pass
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
+
+Step 7 note:
+- Added strict Step-7 test closure coverage in:
+  - `crates/selene_storage/tests/ph1_access_ph2_access/db_wiring.rs`
+- New test groups now covered:
+  - deny-by-default on missing AP rules (`at_access_db_10_*`)
+  - AP version pin and replay determinism (`at_access_db_11_*`)
+  - overlay merge determinism (`at_access_db_12_*`)
+  - position AP binding required for compile (`at_access_db_13_*`)
+  - escalation board-policy + vote paths for `N_OF_M` and quorum policy payloads (`at_access_db_14_*`)
+  - override lifecycle type coverage (`at_access_db_15_*`)
+  - schema-chain tenant isolation (`at_access_db_16_*`)
+- Step-7 proof:
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (16 tests)
   - `cargo test -p selene_storage -- --nocapture` -> pass
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
