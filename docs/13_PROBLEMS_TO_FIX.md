@@ -360,7 +360,7 @@ For each item:
 - Proof command 3 (item index continuity includes 19):
   - `rg -n '^\\| 19 \\|' docs/13_PROBLEMS_TO_FIX.md` -> `EXIT:0`
 
-## PH1.POSITION strict packet execution status (2026-02-15)
+## PH1.POSITION strict packet execution status (2026-02-15, clean closure checkpoint)
 
 - Packet reference:
   - `docs/16_PH1_POSITION_STRICT_FIX_PLAN_PACKET.md`
@@ -376,7 +376,8 @@ For each item:
 - Step 8 proof command 1 (design readiness audit):
   - `scripts/selene_design_readiness_audit.sh` -> `AUDIT_EXIT:0`
   - key lines:
-    - `AUDIT_TREE_STATE: DIRTY`
+    - `PINNED COMMIT HASH: 76a39f6ef7b818c8a8034d193cd1d870fe36f6b5`
+    - `AUDIT_TREE_STATE: CLEAN`
     - `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`
     - `END OF AUDIT`
   - note: Section 6 legacy Link lines are expected `LEGACY_DO_NOT_WIRE` compliance evidence.
@@ -385,4 +386,4 @@ For each item:
   - no `FAILED` test result lines.
 - Closure note:
   - PH1.POSITION packet acceptance checks pass end-to-end.
-  - repo remains dirty until this patch set is committed; closure should be tied to pinned commit hash + dirty listing or rerun on clean tree.
+  - closure proofs are recorded from a clean-tree checkpoint and can be used directly for readiness sign-off.

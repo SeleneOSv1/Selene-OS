@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP7_COMPLETED_PENDING_STEP8
+Status: COMPLETED
 
 ## 1) Purpose
 
@@ -339,7 +339,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15, N/A no migration delta required)
 - Step 7: COMPLETED (2026-02-15)
-- Step 8: NOT_STARTED
+- Step 8: COMPLETED (2026-02-15)
 
 Step 1 note:
 - Locked rollout scope naming for ONB backfill handoff to `CurrentAndNew` in blueprint flow docs so PH1.POSITION activation handoff language matches PH1.ONB kernel contract enum semantics (`BackfillRolloutScope::CurrentAndNew`).
@@ -361,5 +361,8 @@ Step 6 note:
 
 Step 7 note:
 - Test closure gate is satisfied with no code delta required: AT-05 (`at_position_db_05_requirements_schema_activation_monotonic`) and AT-06 (`at_position_db_06_onb_read_only_schema_boundary`) already exist in `crates/selene_storage/tests/ph1_position/db_wiring.rs`, runtime requirements-schema lifecycle tests already exist in `crates/selene_os/src/ph1position.rs`, and acceptance test suites pass.
+
+Step 8 note:
+- Final closure gates are satisfied on a clean tree: readiness audit passes with `AUDIT_TREE_STATE: CLEAN` and `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`, and `cargo test --workspace` passes; closure tracker is updated in `docs/13_PROBLEMS_TO_FIX.md`.
 
 END OF PACKET
