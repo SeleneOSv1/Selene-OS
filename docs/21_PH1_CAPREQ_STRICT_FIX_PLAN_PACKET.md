@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP3_COMPLETED_PENDING_STEP4
+Status: EXECUTED_COMMITTED
 
 ## 1) Purpose
 
@@ -106,7 +106,7 @@ scripts/selene_design_readiness_audit.sh
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
-- Step 4: NOT_STARTED
+- Step 4: COMPLETED (2026-02-15)
 
 Step 1 note:
 - CAPREQ docs-lock pass started and completed.
@@ -119,6 +119,12 @@ Step 2 note:
 Step 3 note:
 - Storage/repo recheck passed with no production code delta required.
 - `Ph1CapreqRepo` typed surface and `Ph1fStore` CAPREQ append/current/rebuild wiring are coherent with lifecycle naming and current simulation set.
+
+Step 4 note:
+- CAPREQ closure proof commands passed:
+  - `cargo test -p selene_storage --test db_wiring_ph1capreq_tables -- --nocapture`
+  - `cargo test -p selene_os capreq -- --nocapture`
+  - `scripts/selene_design_readiness_audit.sh` (checkpoint includes `AUDIT_TREE_STATE: CLEAN` and `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
 
 ## 6) Done Criteria
 

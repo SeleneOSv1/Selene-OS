@@ -428,7 +428,7 @@ For each item:
     - packet 17 shows superseded status + supersession note.
     - packet 20 shows `Status: EXECUTED_COMMITTED`.
 
-## PH1.CAPREQ strict packet execution status (2026-02-15, Step 1 docs lock started)
+## PH1.CAPREQ strict packet execution status (2026-02-15, full closure checkpoint)
 
 - Packet reference:
   - `docs/21_PH1_CAPREQ_STRICT_FIX_PLAN_PACKET.md`
@@ -436,7 +436,7 @@ For each item:
   - Step 1 complete (docs lock)
   - Step 2 complete (kernel/runtime recheck)
   - Step 3 complete (storage/repo recheck)
-  - Step 4 not started
+  - Step 4 complete (test closure + audit checkpoint)
 - Step 1 lock actions:
   - normalized DB wiring simulation name from `CAPREQ_SUBMIT_COMMIT` to canonical `CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT`.
   - expanded DB wiring lifecycle write coverage to include `CAPREQ_FULFILL_COMMIT` and `CAPREQ_CANCEL_REVOKE`.
@@ -451,3 +451,10 @@ For each item:
   - `rg -n "trait Ph1CapreqRepo|ph1capreq_|CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT|SubmitForApproval|CancelRevoke|CAPREQ_CANCEL_REVOKE|CAPREQ_SUBMIT_COMMIT" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -S`
   - `rg -n "CapabilityRequestAction::SubmitForApproval|CapabilityRequestAction::Cancel|CAPREQ_TRANSITION_INVALID|CAPREQ_ID_REQUIRED|capreq_ledger|capreq_current" crates/selene_storage/src/ph1f.rs crates/selene_storage/src/repo.rs -S`
   - result: no storage/repo drift found; no code patch required in Step 3.
+- Step 4 proof command:
+  - `cargo test -p selene_storage --test db_wiring_ph1capreq_tables -- --nocapture`
+  - `cargo test -p selene_os capreq -- --nocapture`
+  - `scripts/selene_design_readiness_audit.sh` (key checkpoint lines: `AUDIT_TREE_STATE: CLEAN`, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
+  - result: CAPREQ closure tests + readiness checkpoint passed.
+- Closure note:
+  - PH1.CAPREQ strict packet is executed and committed; Step 1-4 gates are closed.
