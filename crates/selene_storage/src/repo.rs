@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
+use selene_kernel_contracts::ph1access::AccessCompiledLineageRef;
 use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
@@ -43,8 +44,8 @@ use selene_kernel_contracts::ph1pbs::{
 use selene_kernel_contracts::ph1position::{
     PositionId, PositionLifecycleState, PositionPolicyResult, PositionRecord,
     PositionRequestedAction, PositionRequirementFieldSpec, PositionRequirementsSchemaDraftResult,
-    PositionRequirementsSchemaLifecycleResult, PositionSchemaApplyScope,
-    PositionSchemaSelectorSnapshot, PositionScheduleType, PositionValidationStatus, TenantId,
+    PositionRequirementsSchemaLifecycleResult, PositionScheduleType, PositionSchemaApplyScope,
+    PositionSchemaSelectorSnapshot, PositionValidationStatus, TenantId,
 };
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
@@ -56,13 +57,16 @@ use selene_kernel_contracts::ph1work::{
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
 use crate::ph1f::{
-    AccessDeviceTrustLevel, AccessGateDecisionRecord, AccessInstanceRecord, AccessLifecycleState,
-    AccessMode, AccessOverrideRecord, AccessOverrideType, AccessVerificationLevel, DeviceRecord,
-    IdentityRecord, LinkGenerateResultParts, MemoryCurrentRecord, MemoryLedgerRow,
-    OnboardingSessionRecord, Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult,
-    Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind,
-    Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SessionRecord, StorageError,
-    TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
+    AccessApSchemaCurrentRecord, AccessApSchemaLedgerRecord, AccessBoardPolicyCurrentRecord,
+    AccessBoardPolicyRecord, AccessBoardVoteRecord, AccessBoardVoteValue, AccessDeviceTrustLevel,
+    AccessGateDecisionRecord, AccessInstanceRecord, AccessLifecycleState, AccessMode,
+    AccessOverlayCurrentRecord, AccessOverlayRecord, AccessOverrideRecord, AccessOverrideType,
+    AccessSchemaChainReadResult, AccessSchemaEventAction, AccessSchemaScope,
+    AccessVerificationLevel, DeviceRecord, IdentityRecord, LinkGenerateResultParts,
+    MemoryCurrentRecord, MemoryLedgerRow, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
+    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SessionRecord,
+    StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
     VoiceProfileRecord, VoiceSampleResult, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
     WakeRuntimeEventRecord, WakeSampleResult,
 };
@@ -321,6 +325,88 @@ pub trait Ph1AccessPh2AccessRepo {
         idempotency_key: String,
     ) -> Result<AccessOverrideRecord, StorageError>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_ap_schema_lifecycle_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        event_action: AccessSchemaEventAction,
+        profile_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApSchemaLedgerRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_ap_overlay_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        overlay_id: String,
+        overlay_version_id: String,
+        event_action: AccessSchemaEventAction,
+        overlay_ops_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessOverlayRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_board_policy_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        board_policy_id: String,
+        policy_version_id: String,
+        event_action: AccessSchemaEventAction,
+        policy_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardPolicyRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_board_vote_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        escalation_case_id: String,
+        board_policy_id: String,
+        voter_user_id: UserId,
+        vote_value: AccessBoardVoteValue,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardVoteRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1access_instance_compile_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        user_id: UserId,
+        role_template_id: String,
+        effective_access_mode: AccessMode,
+        effective_permissions_json: String,
+        identity_verified: bool,
+        verification_level: AccessVerificationLevel,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+        policy_snapshot_ref: String,
+        compile_chain_refs: AccessCompiledLineageRef,
+        idempotency_key: Option<String>,
+    ) -> Result<AccessInstanceRecord, StorageError>;
+
+    fn ph1access_read_schema_chain_row(
+        &self,
+        tenant_id: &str,
+        access_profile_id: &str,
+        overlay_ids: &[String],
+        board_policy_id: Option<&str>,
+    ) -> Result<AccessSchemaChainReadResult, StorageError>;
+
     fn ph2access_instance_row_by_tenant_user(
         &self,
         tenant_id: &str,
@@ -339,6 +425,19 @@ pub trait Ph1AccessPh2AccessRepo {
 
     fn ph2access_instance_rows(&self) -> &BTreeMap<(String, UserId), AccessInstanceRecord>;
     fn ph2access_override_rows(&self) -> &[AccessOverrideRecord];
+    fn ph1access_ap_schema_ledger_rows(&self) -> &[AccessApSchemaLedgerRecord];
+    fn ph1access_ap_schema_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord>;
+    fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord];
+    fn ph1access_ap_overlay_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessOverlayCurrentRecord>;
+    fn ph1access_board_policy_ledger_rows(&self) -> &[AccessBoardPolicyRecord];
+    fn ph1access_board_policy_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessBoardPolicyCurrentRecord>;
+    fn ph1access_board_vote_rows(&self) -> &[AccessBoardVoteRecord];
 
     fn ph1access_gate_decide_row(
         &self,
@@ -988,8 +1087,10 @@ pub trait Ph1LinkRepo {
         token_id: &TokenId,
     ) -> Option<&selene_kernel_contracts::ph1link::LinkRecord>;
 
-    fn ph1link_mark_sent_commit_row(&mut self, token_id: TokenId)
-        -> Result<LinkStatus, StorageError>;
+    fn ph1link_mark_sent_commit_row(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<LinkStatus, StorageError>;
 
     fn ph1link_invite_draft_update_commit_row(
         &mut self,
@@ -1777,6 +1878,149 @@ impl Ph1AccessPh2AccessRepo for Ph1fStore {
         )
     }
 
+    fn ph1access_ap_schema_lifecycle_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        event_action: AccessSchemaEventAction,
+        profile_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApSchemaLedgerRecord, StorageError> {
+        self.ph1access_ap_schema_lifecycle_commit(
+            now,
+            tenant_id,
+            access_profile_id,
+            schema_version_id,
+            scope,
+            event_action,
+            profile_payload_json,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_ap_overlay_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        overlay_id: String,
+        overlay_version_id: String,
+        event_action: AccessSchemaEventAction,
+        overlay_ops_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessOverlayRecord, StorageError> {
+        self.ph1access_ap_overlay_update_commit(
+            now,
+            tenant_id,
+            overlay_id,
+            overlay_version_id,
+            event_action,
+            overlay_ops_json,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_board_policy_update_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        board_policy_id: String,
+        policy_version_id: String,
+        event_action: AccessSchemaEventAction,
+        policy_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardPolicyRecord, StorageError> {
+        self.ph1access_board_policy_update_commit(
+            now,
+            tenant_id,
+            board_policy_id,
+            policy_version_id,
+            event_action,
+            policy_payload_json,
+            reason_code,
+            created_by_user_id,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_board_vote_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        escalation_case_id: String,
+        board_policy_id: String,
+        voter_user_id: UserId,
+        vote_value: AccessBoardVoteValue,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardVoteRecord, StorageError> {
+        self.ph1access_board_vote_commit(
+            now,
+            tenant_id,
+            escalation_case_id,
+            board_policy_id,
+            voter_user_id,
+            vote_value,
+            reason_code,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_instance_compile_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        user_id: UserId,
+        role_template_id: String,
+        effective_access_mode: AccessMode,
+        effective_permissions_json: String,
+        identity_verified: bool,
+        verification_level: AccessVerificationLevel,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+        policy_snapshot_ref: String,
+        compile_chain_refs: AccessCompiledLineageRef,
+        idempotency_key: Option<String>,
+    ) -> Result<AccessInstanceRecord, StorageError> {
+        self.ph1access_instance_compile_commit(
+            now,
+            tenant_id,
+            user_id,
+            role_template_id,
+            effective_access_mode,
+            effective_permissions_json,
+            identity_verified,
+            verification_level,
+            device_trust_level,
+            lifecycle_state,
+            policy_snapshot_ref,
+            compile_chain_refs,
+            idempotency_key,
+        )
+    }
+
+    fn ph1access_read_schema_chain_row(
+        &self,
+        tenant_id: &str,
+        access_profile_id: &str,
+        overlay_ids: &[String],
+        board_policy_id: Option<&str>,
+    ) -> Result<AccessSchemaChainReadResult, StorageError> {
+        self.ph1access_read_schema_chain(tenant_id, access_profile_id, overlay_ids, board_policy_id)
+    }
+
     fn ph2access_instance_row_by_tenant_user(
         &self,
         tenant_id: &str,
@@ -1805,6 +2049,40 @@ impl Ph1AccessPh2AccessRepo for Ph1fStore {
 
     fn ph2access_override_rows(&self) -> &[AccessOverrideRecord] {
         Ph1fStore::ph2access_override_rows(self)
+    }
+
+    fn ph1access_ap_schema_ledger_rows(&self) -> &[AccessApSchemaLedgerRecord] {
+        Ph1fStore::ph1access_ap_schema_ledger_rows(self)
+    }
+
+    fn ph1access_ap_schema_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord> {
+        Ph1fStore::ph1access_ap_schema_current_rows(self)
+    }
+
+    fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord] {
+        Ph1fStore::ph1access_ap_overlay_ledger_rows(self)
+    }
+
+    fn ph1access_ap_overlay_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessOverlayCurrentRecord> {
+        Ph1fStore::ph1access_ap_overlay_current_rows(self)
+    }
+
+    fn ph1access_board_policy_ledger_rows(&self) -> &[AccessBoardPolicyRecord] {
+        Ph1fStore::ph1access_board_policy_ledger_rows(self)
+    }
+
+    fn ph1access_board_policy_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessBoardPolicyCurrentRecord> {
+        Ph1fStore::ph1access_board_policy_current_rows(self)
+    }
+
+    fn ph1access_board_vote_rows(&self) -> &[AccessBoardVoteRecord] {
+        Ph1fStore::ph1access_board_vote_rows(self)
     }
 
     fn ph1access_gate_decide_row(

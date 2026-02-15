@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
+use selene_kernel_contracts::ph1access::AccessCompiledLineageRef;
 use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
@@ -28,8 +29,9 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
-    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, DraftId, DraftStatus,
-    InviteeType, LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
+    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, DraftId,
+    DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef,
+    TokenId,
 };
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind,
@@ -49,11 +51,11 @@ use selene_kernel_contracts::ph1pbs::{
     ProcessBlueprintEventInput, ProcessId,
 };
 use selene_kernel_contracts::ph1position::{
-    PositionId, PositionLifecycleAction, PositionLifecycleState, PositionPolicyResult, PositionRecord,
-    PositionRequestedAction, PositionRequirementEvidenceMode, PositionRequirementFieldSpec,
-    PositionRequirementRuleType,
+    PositionId, PositionLifecycleAction, PositionLifecycleState, PositionPolicyResult,
+    PositionRecord, PositionRequestedAction, PositionRequirementEvidenceMode,
+    PositionRequirementFieldSpec, PositionRequirementRuleType,
     PositionRequirementsSchemaDraftResult, PositionRequirementsSchemaLifecycleResult,
-    PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, PositionScheduleType,
+    PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot,
     PositionValidationStatus, TenantId,
 };
 use selene_kernel_contracts::ph1simcat::{
@@ -427,7 +429,8 @@ pub struct Ph1fStore {
     onb_access_instance_idempotency_index: BTreeMap<(UserId, String, String), String>,
     onb_complete_idempotency_index: BTreeMap<(OnboardingSessionId, String), OnboardingStatus>,
     // Backfill campaign state and idempotency indexes.
-    onb_requirement_backfill_campaigns: BTreeMap<BackfillCampaignId, OnbRequirementBackfillCampaignRecord>,
+    onb_requirement_backfill_campaigns:
+        BTreeMap<BackfillCampaignId, OnbRequirementBackfillCampaignRecord>,
     onb_requirement_backfill_targets:
         BTreeMap<(BackfillCampaignId, UserId), OnbRequirementBackfillTargetRecord>,
     onb_requirement_backfill_start_idempotency_index:
@@ -448,6 +451,24 @@ pub struct Ph1fStore {
     access_overrides: Vec<AccessOverrideRecord>,
     // Idempotency: (tenant_id, access_instance_id, idempotency_key) -> override_id
     access_override_idempotency_index: BTreeMap<(String, String, String), String>,
+    access_ap_schema_ledger: Vec<AccessApSchemaLedgerRecord>,
+    access_ap_schema_current: BTreeMap<(String, String), AccessApSchemaCurrentRecord>,
+    // Idempotency: (scope_key, access_profile_id, schema_version_id, event_action, idempotency_key) -> event_id
+    access_ap_schema_idempotency_index:
+        BTreeMap<(String, String, String, AccessSchemaEventAction, String), u64>,
+    access_overlay_ledger: Vec<AccessOverlayRecord>,
+    access_overlay_current: BTreeMap<(String, String), AccessOverlayCurrentRecord>,
+    // Idempotency: (tenant_id, overlay_id, overlay_version_id, event_action, idempotency_key) -> event_id
+    access_overlay_idempotency_index:
+        BTreeMap<(String, String, String, AccessSchemaEventAction, String), u64>,
+    access_board_policy_ledger: Vec<AccessBoardPolicyRecord>,
+    access_board_policy_current: BTreeMap<(String, String), AccessBoardPolicyCurrentRecord>,
+    // Idempotency: (tenant_id, board_policy_id, policy_version_id, event_action, idempotency_key) -> event_id
+    access_board_policy_idempotency_index:
+        BTreeMap<(String, String, String, AccessSchemaEventAction, String), u64>,
+    access_board_votes_ledger: Vec<AccessBoardVoteRecord>,
+    // Idempotency: (tenant_id, escalation_case_id, voter_user_id, idempotency_key) -> vote_row_id
+    access_board_vote_idempotency_index: BTreeMap<(String, String, UserId, String), u64>,
 
     // ------------------------
     // PH1.K (Voice Runtime I/O).
@@ -637,6 +658,8 @@ pub struct Ph1fStore {
     next_ph1k_runtime_event_id: u64,
     next_position_requirements_schema_event_id: u64,
     next_onb_requirement_backfill_target_row_id: u64,
+    next_access_schema_event_id: u64,
+    next_access_board_vote_row_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -757,6 +780,12 @@ pub struct AccessInstanceRecord {
     pub device_trust_level: AccessDeviceTrustLevel,
     pub lifecycle_state: AccessLifecycleState,
     pub policy_snapshot_ref: String,
+    pub compiled_global_profile_id: Option<String>,
+    pub compiled_global_profile_version: Option<String>,
+    pub compiled_tenant_profile_id: Option<String>,
+    pub compiled_tenant_profile_version: Option<String>,
+    pub compiled_overlay_set_ref: Option<String>,
+    pub compiled_position_id: Option<String>,
     pub created_at: MonotonicTimeNs,
     pub updated_at: MonotonicTimeNs,
     pub idempotency_key: Option<String>,
@@ -817,6 +846,138 @@ pub struct AccessGateDecisionRecord {
     pub restriction_flags: Vec<String>,
     pub escalation_trigger: Option<AccessEscalationTrigger>,
     pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AccessSchemaScope {
+    Global,
+    Tenant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AccessSchemaEventAction {
+    CreateDraft,
+    UpdateDraft,
+    Activate,
+    Retire,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AccessSchemaLifecycleState {
+    Draft,
+    Active,
+    Retired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApSchemaLedgerRecord {
+    pub schema_version: SchemaVersion,
+    pub event_id: u64,
+    pub tenant_id: Option<String>,
+    pub access_profile_id: String,
+    pub schema_version_id: String,
+    pub scope: AccessSchemaScope,
+    pub event_action: AccessSchemaEventAction,
+    pub lifecycle_state: AccessSchemaLifecycleState,
+    pub profile_payload_json: String,
+    pub reason_code: ReasonCodeId,
+    pub created_by_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessApSchemaCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub scope_key: String,
+    pub access_profile_id: String,
+    pub active_schema_version_id: String,
+    pub active_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessOverlayRecord {
+    pub schema_version: SchemaVersion,
+    pub event_id: u64,
+    pub tenant_id: String,
+    pub overlay_id: String,
+    pub overlay_version_id: String,
+    pub event_action: AccessSchemaEventAction,
+    pub lifecycle_state: AccessSchemaLifecycleState,
+    pub overlay_ops_json: String,
+    pub reason_code: ReasonCodeId,
+    pub created_by_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessOverlayCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: String,
+    pub overlay_id: String,
+    pub active_overlay_version_id: String,
+    pub active_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessBoardPolicyRecord {
+    pub schema_version: SchemaVersion,
+    pub event_id: u64,
+    pub tenant_id: String,
+    pub board_policy_id: String,
+    pub policy_version_id: String,
+    pub event_action: AccessSchemaEventAction,
+    pub lifecycle_state: AccessSchemaLifecycleState,
+    pub policy_payload_json: String,
+    pub reason_code: ReasonCodeId,
+    pub created_by_user_id: UserId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessBoardPolicyCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: String,
+    pub board_policy_id: String,
+    pub active_policy_version_id: String,
+    pub active_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AccessBoardVoteValue {
+    Approve,
+    Reject,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessBoardVoteRecord {
+    pub schema_version: SchemaVersion,
+    pub vote_row_id: u64,
+    pub tenant_id: String,
+    pub escalation_case_id: String,
+    pub board_policy_id: String,
+    pub voter_user_id: UserId,
+    pub vote_value: AccessBoardVoteValue,
+    pub reason_code: ReasonCodeId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessSchemaChainReadResult {
+    pub schema_version: SchemaVersion,
+    pub global_ap_version: AccessApSchemaCurrentRecord,
+    pub tenant_ap_version: Option<AccessApSchemaCurrentRecord>,
+    pub active_overlays: Vec<AccessOverlayCurrentRecord>,
+    pub active_board_policy: Option<AccessBoardPolicyCurrentRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1201,6 +1362,17 @@ impl Ph1fStore {
             access_instance_idempotency_index: BTreeMap::new(),
             access_overrides: Vec::new(),
             access_override_idempotency_index: BTreeMap::new(),
+            access_ap_schema_ledger: Vec::new(),
+            access_ap_schema_current: BTreeMap::new(),
+            access_ap_schema_idempotency_index: BTreeMap::new(),
+            access_overlay_ledger: Vec::new(),
+            access_overlay_current: BTreeMap::new(),
+            access_overlay_idempotency_index: BTreeMap::new(),
+            access_board_policy_ledger: Vec::new(),
+            access_board_policy_current: BTreeMap::new(),
+            access_board_policy_idempotency_index: BTreeMap::new(),
+            access_board_votes_ledger: Vec::new(),
+            access_board_vote_idempotency_index: BTreeMap::new(),
             ph1k_runtime_events: Vec::new(),
             ph1k_runtime_current: BTreeMap::new(),
             ph1k_runtime_event_idempotency_index: BTreeMap::new(),
@@ -1279,6 +1451,8 @@ impl Ph1fStore {
             next_ph1k_runtime_event_id: 1,
             next_position_requirements_schema_event_id: 1,
             next_onb_requirement_backfill_target_row_id: 1,
+            next_access_schema_event_id: 1,
+            next_access_board_vote_row_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -2563,27 +2737,36 @@ impl Ph1fStore {
         idempotency_key: &str,
     ) -> Result<(), StorageError> {
         if idempotency_key.trim().is_empty() {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field,
-                reason: "must not be empty",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must not be empty",
+                },
+            ));
         }
         if idempotency_key.len() > 128 {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field,
-                reason: "must be <= 128 chars",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be <= 128 chars",
+                },
+            ));
         }
         if !idempotency_key.is_ascii() {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field,
-                reason: "must be ASCII",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be ASCII",
+                },
+            ));
         }
         Ok(())
     }
 
-    fn ph1link_prefilled_has_field(prefilled_context: &Option<PrefilledContext>, field_key: &str) -> bool {
+    fn ph1link_prefilled_has_field(
+        prefilled_context: &Option<PrefilledContext>,
+        field_key: &str,
+    ) -> bool {
         let Some(ctx) = prefilled_context.as_ref() else {
             return false;
         };
@@ -2624,21 +2807,21 @@ impl Ph1fStore {
         match spec.required_rule {
             PositionRequirementRuleType::Always => Ok(true),
             PositionRequirementRuleType::Conditional => {
-                let pred =
-                    spec.required_predicate_ref
-                        .as_deref()
-                        .ok_or(StorageError::ContractViolation(
-                            ContractViolation::InvalidValue {
-                                field: "position_requirement_field_spec.required_predicate_ref",
-                                reason: "must be present when required_rule=Conditional",
-                            },
-                        ))?;
-                let (lhs_raw, rhs_raw) = pred.split_once('=').or_else(|| pred.split_once(':')).ok_or(
+                let pred = spec.required_predicate_ref.as_deref().ok_or(
                     StorageError::ContractViolation(ContractViolation::InvalidValue {
                         field: "position_requirement_field_spec.required_predicate_ref",
-                        reason: "must use [selector.]<key>=<value> or [selector.]<key>:<value>",
+                        reason: "must be present when required_rule=Conditional",
                     }),
                 )?;
+                let (lhs_raw, rhs_raw) = pred
+                    .split_once('=')
+                    .or_else(|| pred.split_once(':'))
+                    .ok_or(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "position_requirement_field_spec.required_predicate_ref",
+                            reason: "must use [selector.]<key>=<value> or [selector.]<key>:<value>",
+                        },
+                    ))?;
                 let lhs = lhs_raw.trim();
                 let rhs = rhs_raw.trim();
                 if lhs.is_empty() || rhs.is_empty() {
@@ -2650,7 +2833,8 @@ impl Ph1fStore {
                     ));
                 }
                 let selector_key = lhs.strip_prefix("selector.").unwrap_or(lhs);
-                let Some(actual) = Self::ph1position_selector_value(selectors, selector_key)? else {
+                let Some(actual) = Self::ph1position_selector_value(selectors, selector_key)?
+                else {
                     return Ok(false);
                 };
                 Ok(actual == rhs)
@@ -2713,8 +2897,11 @@ impl Ph1fStore {
         schema_version_id: &Option<String>,
         prefilled_context: &Option<PrefilledContext>,
     ) -> Result<Vec<String>, StorageError> {
-        let required =
-            self.ph1link_schema_required_fields(invitee_type, schema_version_id, prefilled_context)?;
+        let required = self.ph1link_schema_required_fields(
+            invitee_type,
+            schema_version_id,
+            prefilled_context,
+        )?;
         let mut missing: BTreeSet<String> = BTreeSet::new();
         for field_key in required {
             if !Self::ph1link_prefilled_has_field(prefilled_context, &field_key) {
@@ -2731,10 +2918,12 @@ impl Ph1fStore {
         for (key, value_raw) in creator_update_fields {
             let value = value_raw.trim();
             if value.is_empty() {
-                return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                    field: "ph1link_invite_draft_update_commit.creator_update_fields.value",
-                    reason: "must not be empty",
-                }));
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1link_invite_draft_update_commit.creator_update_fields.value",
+                        reason: "must not be empty",
+                    },
+                ));
             }
             match key.as_str() {
                 "tenant_id" => prefilled_context.tenant_id = Some(value.to_string()),
@@ -2882,7 +3071,10 @@ impl Ph1fStore {
         self.links.get(token_id)
     }
 
-    pub fn ph1link_mark_sent_commit(&mut self, token_id: TokenId) -> Result<LinkStatus, StorageError> {
+    pub fn ph1link_mark_sent_commit(
+        &mut self,
+        token_id: TokenId,
+    ) -> Result<LinkStatus, StorageError> {
         let rec = self
             .links
             .get_mut(&token_id)
@@ -2955,10 +3147,12 @@ impl Ph1fStore {
                 .unwrap_or(false)
         });
         if !has_non_terminal_link {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1link_invite_draft_update_commit.link_status",
-                reason: "linked token state is terminal (CONSUMED|REVOKED|EXPIRED)",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_draft_update_commit.link_status",
+                    reason: "linked token state is terminal (CONSUMED|REVOKED|EXPIRED)",
+                },
+            ));
         }
 
         let mut planned_updates: Vec<(TokenId, Option<PrefilledContext>, Vec<String>)> = Vec::new();
@@ -2971,15 +3165,30 @@ impl Ph1fStore {
                     key: token_id.as_str().to_string(),
                 })?;
 
-            let mut updated_prefilled = rec.prefilled_context.clone().unwrap_or(
-                PrefilledContext::v1(None, None, None, None, None, None, None, Vec::new())?,
-            );
-            Self::ph1link_apply_creator_update_fields(&mut updated_prefilled, &creator_update_fields)?;
+            let mut updated_prefilled =
+                rec.prefilled_context
+                    .clone()
+                    .unwrap_or(PrefilledContext::v1(
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Vec::new(),
+                    )?);
+            Self::ph1link_apply_creator_update_fields(
+                &mut updated_prefilled,
+                &creator_update_fields,
+            )?;
             let updated_prefilled_opt = Some(updated_prefilled);
 
             Self::validate_ph1link_inviter_tenant_scope(
                 &rec.inviter_user_id,
-                &updated_prefilled_opt.as_ref().and_then(|ctx| ctx.tenant_id.clone()),
+                &updated_prefilled_opt
+                    .as_ref()
+                    .and_then(|ctx| ctx.tenant_id.clone()),
                 &updated_prefilled_opt,
             )?;
 
@@ -3008,7 +3217,9 @@ impl Ph1fStore {
             rec.payload_hash = deterministic_payload_hash_hex(
                 &rec.inviter_user_id,
                 rec.invitee_type,
-                &updated_prefilled_opt.as_ref().and_then(|ctx| ctx.tenant_id.clone()),
+                &updated_prefilled_opt
+                    .as_ref()
+                    .and_then(|ctx| ctx.tenant_id.clone()),
                 &rec.schema_version_id,
                 &rec.expiration_policy_id,
                 &updated_prefilled_opt,
@@ -3162,7 +3373,10 @@ impl Ph1fStore {
                             .prefilled_context
                             .as_ref()
                             .map(|_| {
-                                PrefilledContextRef::new(format!("prefilled:{}", rec.token_id.as_str()))
+                                PrefilledContextRef::new(format!(
+                                    "prefilled:{}",
+                                    rec.token_id.as_str()
+                                ))
                             })
                             .transpose()?;
                         outcome = Some((
@@ -3190,10 +3404,12 @@ impl Ph1fStore {
                 None,
             )
         } else {
-            outcome.ok_or(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1link_invite_open_activate_commit.result",
-                reason: "no deterministic activation outcome produced",
-            }))?
+            outcome.ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.result",
+                    reason: "no deterministic activation outcome produced",
+                },
+            ))?
         };
 
         self.link_open_activate_idempotency_index
@@ -3208,16 +3424,20 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         let reason_trimmed = reason.trim();
         if reason_trimmed.is_empty() {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1link_invite_revoke_revoke.reason",
-                reason: "must not be empty",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_revoke_revoke.reason",
+                    reason: "must not be empty",
+                },
+            ));
         }
         if reason_trimmed.len() > 256 {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1link_invite_revoke_revoke.reason",
-                reason: "must be <= 256 chars",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_revoke_revoke.reason",
+                    reason: "must be <= 256 chars",
+                },
+            ));
         }
 
         let rec = self
@@ -3230,12 +3450,12 @@ impl Ph1fStore {
 
         match rec.status {
             LinkStatus::Revoked => Ok(()),
-            LinkStatus::Opened | LinkStatus::Activated => {
-                Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+            LinkStatus::Opened | LinkStatus::Activated => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
                     field: "ph1link_invite_revoke_revoke.ap_override_ref",
                     reason: "required when link status is OPENED or ACTIVATED",
-                }))
-            }
+                },
+            )),
             LinkStatus::Consumed => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1link_invite_revoke_revoke.link_status",
@@ -3651,10 +3871,13 @@ impl Ph1fStore {
         ),
         StorageError,
     > {
-        let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
-            table: "links.token_id",
-            key: token_id.as_str().to_string(),
-        })?;
+        let link = self
+            .links
+            .get(token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?;
 
         let mut pinned_schema_id = Some(format!(
             "invitee:{}",
@@ -3677,10 +3900,10 @@ impl Ph1fStore {
                     prefilled.position_id.as_deref(),
                     tenant_hint.or(prefilled.tenant_id.as_deref()),
                 ) {
-                    let tenant_id =
-                        TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
-                    let position_id =
-                        PositionId::new(position_id_raw.to_string()).map_err(StorageError::ContractViolation)?;
+                    let tenant_id = TenantId::new(tenant_raw.to_string())
+                        .map_err(StorageError::ContractViolation)?;
+                    let position_id = PositionId::new(position_id_raw.to_string())
+                        .map_err(StorageError::ContractViolation)?;
                     if let Some(current) = self
                         .position_requirements_schema_current
                         .get(&(tenant_id, position_id))
@@ -3829,8 +4052,10 @@ impl Ph1fStore {
             return Ok(false);
         }
 
-        let derived = self
-            .ph1onb_required_verification_gates_for_token(&rec.token_id, rec.tenant_id.as_deref())?;
+        let derived = self.ph1onb_required_verification_gates_for_token(
+            &rec.token_id,
+            rec.tenant_id.as_deref(),
+        )?;
         Ok(derived.iter().any(|g| g == gate))
     }
 
@@ -3850,10 +4075,13 @@ impl Ph1fStore {
         const GATE_PHOTO_EVIDENCE_CAPTURE: &str = "PHOTO_EVIDENCE_CAPTURE";
         const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
 
-        let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
-            table: "links.token_id",
-            key: token_id.as_str().to_string(),
-        })?;
+        let link = self
+            .links
+            .get(token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?;
 
         if link.invitee_type != InviteeType::Employee {
             return Ok(Vec::new());
@@ -3869,7 +4097,8 @@ impl Ph1fStore {
             return Ok(Vec::new());
         };
 
-        let tenant_id = TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
+        let tenant_id =
+            TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
         let position_id =
             PositionId::new(position_id_raw.clone()).map_err(StorageError::ContractViolation)?;
 
@@ -3962,7 +4191,10 @@ impl Ph1fStore {
             )?);
         }
 
-        if !self.ph1onb_verification_gate_required(&onboarding_session_id, GATE_PHOTO_EVIDENCE_CAPTURE)? {
+        if !self.ph1onb_verification_gate_required(
+            &onboarding_session_id,
+            GATE_PHOTO_EVIDENCE_CAPTURE,
+        )? {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_employee_photo_capture_send_commit.required_verification_gates",
@@ -4027,7 +4259,9 @@ impl Ph1fStore {
             )?);
         }
 
-        if !self.ph1onb_verification_gate_required(&onboarding_session_id, GATE_SENDER_CONFIRMATION)? {
+        if !self
+            .ph1onb_verification_gate_required(&onboarding_session_id, GATE_SENDER_CONFIRMATION)?
+        {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_employee_sender_verify_commit.required_verification_gates",
@@ -4192,7 +4426,9 @@ impl Ph1fStore {
         }
         let sender_verification_required =
             self.ph1onb_sender_verification_required(&onboarding_session_id)?;
-        if sender_verification_required && verification_status != Some(VerificationStatus::Confirmed) {
+        if sender_verification_required
+            && verification_status != Some(VerificationStatus::Confirmed)
+        {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_access_instance_create_commit.verification_status",
@@ -4311,7 +4547,9 @@ impl Ph1fStore {
         }
         let sender_verification_required =
             self.ph1onb_sender_verification_required(&onboarding_session_id)?;
-        if sender_verification_required && verification_status != Some(VerificationStatus::Confirmed) {
+        if sender_verification_required
+            && verification_status != Some(VerificationStatus::Confirmed)
+        {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_complete_commit.verification_status",
@@ -5685,11 +5923,9 @@ impl Ph1fStore {
         compact.contains("\"financial_auth\":true")
     }
 
-    fn allows_requested_action(
-        baseline_permissions_json: &str,
-        requested_action: &str,
-    ) -> bool {
-        let compact = Self::compact_permissions_json(baseline_permissions_json).to_ascii_lowercase();
+    fn allows_requested_action(baseline_permissions_json: &str, requested_action: &str) -> bool {
+        let compact =
+            Self::compact_permissions_json(baseline_permissions_json).to_ascii_lowercase();
         if !compact.contains("\"allow\":[") {
             // Legacy rows may not carry explicit allow-lists; preserve backward-compatibility.
             return true;
@@ -5747,6 +5983,81 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn validate_access_identifier(
+        field: &'static str,
+        value: &str,
+        max_len: usize,
+    ) -> Result<(), StorageError> {
+        if value.trim().is_empty() || value.len() > max_len {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and within max length",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_access_payload_json(
+        field: &'static str,
+        payload_json: &str,
+        max_len: usize,
+    ) -> Result<(), StorageError> {
+        if payload_json.trim().is_empty() || payload_json.len() > max_len {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and within max length",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn access_scope_key(
+        scope: AccessSchemaScope,
+        tenant_id: &Option<String>,
+    ) -> Result<String, StorageError> {
+        match scope {
+            AccessSchemaScope::Global => {
+                if tenant_id.is_some() {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "access_scope_key.tenant_id",
+                            reason: "must be absent when scope=GLOBAL",
+                        },
+                    ));
+                }
+                Ok("GLOBAL".to_string())
+            }
+            AccessSchemaScope::Tenant => {
+                let Some(tid) = tenant_id.as_ref() else {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "access_scope_key.tenant_id",
+                            reason: "must be present when scope=TENANT",
+                        },
+                    ));
+                };
+                Self::validate_access_tenant_id(tid)?;
+                Ok(tid.clone())
+            }
+        }
+    }
+
+    fn access_lifecycle_from_event_action(
+        event_action: AccessSchemaEventAction,
+    ) -> AccessSchemaLifecycleState {
+        match event_action {
+            AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft => {
+                AccessSchemaLifecycleState::Draft
+            }
+            AccessSchemaEventAction::Activate => AccessSchemaLifecycleState::Active,
+            AccessSchemaEventAction::Retire => AccessSchemaLifecycleState::Retired,
+        }
+    }
+
     fn ph2access_effective_mode(
         &self,
         access_instance_id: &str,
@@ -5778,7 +6089,569 @@ impl Ph1fStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn ph2access_upsert_instance_commit(
+    pub fn ph1access_ap_schema_lifecycle_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: Option<String>,
+        access_profile_id: String,
+        schema_version_id: String,
+        scope: AccessSchemaScope,
+        event_action: AccessSchemaEventAction,
+        profile_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessApSchemaLedgerRecord, StorageError> {
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_schemas_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        let scope_key = Self::access_scope_key(scope, &tenant_id)?;
+        Self::validate_access_identifier(
+            "access_ap_schemas_ledger.access_profile_id",
+            &access_profile_id,
+            64,
+        )?;
+        Self::validate_access_identifier(
+            "access_ap_schemas_ledger.schema_version_id",
+            &schema_version_id,
+            64,
+        )?;
+        Self::validate_access_payload_json(
+            "access_ap_schemas_ledger.profile_payload_json",
+            &profile_payload_json,
+            8192,
+        )?;
+        Self::validate_access_idempotency(
+            "access_ap_schemas_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idempotency_idx = (
+            scope_key.clone(),
+            access_profile_id.clone(),
+            schema_version_id.clone(),
+            event_action,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .access_ap_schema_idempotency_index
+            .get(&idempotency_idx)
+        {
+            if let Some(existing) = self
+                .access_ap_schema_ledger
+                .iter()
+                .find(|row| row.event_id == *existing_event_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_schemas_ledger.event_id",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        if matches!(
+            event_action,
+            AccessSchemaEventAction::Activate | AccessSchemaEventAction::Retire
+        ) {
+            let has_prior_draft = self.access_ap_schema_ledger.iter().rev().any(|row| {
+                row.scope == scope
+                    && row.tenant_id == tenant_id
+                    && row.access_profile_id == access_profile_id
+                    && row.schema_version_id == schema_version_id
+                    && matches!(
+                        row.event_action,
+                        AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft
+                    )
+            });
+            if !has_prior_draft {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "access_ap_schemas_ledger.schema_version_id",
+                    key: schema_version_id,
+                });
+            }
+        }
+
+        let event_id = self.next_access_schema_event_id;
+        self.next_access_schema_event_id = self.next_access_schema_event_id.saturating_add(1);
+
+        let row = AccessApSchemaLedgerRecord {
+            schema_version: SchemaVersion(1),
+            event_id,
+            tenant_id: tenant_id.clone(),
+            access_profile_id: access_profile_id.clone(),
+            schema_version_id: schema_version_id.clone(),
+            scope,
+            event_action,
+            lifecycle_state: Self::access_lifecycle_from_event_action(event_action),
+            profile_payload_json,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+
+        self.access_ap_schema_ledger.push(row.clone());
+        self.access_ap_schema_idempotency_index
+            .insert(idempotency_idx, event_id);
+
+        let current_key = (scope_key, access_profile_id.clone());
+        match event_action {
+            AccessSchemaEventAction::Activate => {
+                self.access_ap_schema_current.insert(
+                    current_key,
+                    AccessApSchemaCurrentRecord {
+                        schema_version: SchemaVersion(1),
+                        scope_key: match scope {
+                            AccessSchemaScope::Global => "GLOBAL".to_string(),
+                            AccessSchemaScope::Tenant => tenant_id.unwrap_or_default(),
+                        },
+                        access_profile_id,
+                        active_schema_version_id: schema_version_id,
+                        active_event_id: event_id,
+                        updated_at: now,
+                        reason_code,
+                    },
+                );
+            }
+            AccessSchemaEventAction::Retire => {
+                if let Some(current) = self.access_ap_schema_current.get(&current_key) {
+                    if current.active_schema_version_id == schema_version_id {
+                        self.access_ap_schema_current.remove(&current_key);
+                    }
+                }
+            }
+            AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft => {}
+        }
+
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_ap_overlay_update_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        overlay_id: String,
+        overlay_version_id: String,
+        event_action: AccessSchemaEventAction,
+        overlay_ops_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessOverlayRecord, StorageError> {
+        Self::validate_access_tenant_id(&tenant_id)?;
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_overlay_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        Self::validate_access_identifier("access_ap_overlay_ledger.overlay_id", &overlay_id, 64)?;
+        Self::validate_access_identifier(
+            "access_ap_overlay_ledger.overlay_version_id",
+            &overlay_version_id,
+            64,
+        )?;
+        Self::validate_access_payload_json(
+            "access_ap_overlay_ledger.overlay_ops_json",
+            &overlay_ops_json,
+            8192,
+        )?;
+        Self::validate_access_idempotency(
+            "access_ap_overlay_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idempotency_idx = (
+            tenant_id.clone(),
+            overlay_id.clone(),
+            overlay_version_id.clone(),
+            event_action,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self.access_overlay_idempotency_index.get(&idempotency_idx)
+        {
+            if let Some(existing) = self
+                .access_overlay_ledger
+                .iter()
+                .find(|row| row.event_id == *existing_event_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_ap_overlay_ledger.event_id",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        if matches!(
+            event_action,
+            AccessSchemaEventAction::Activate | AccessSchemaEventAction::Retire
+        ) {
+            let has_prior_draft = self.access_overlay_ledger.iter().rev().any(|row| {
+                row.tenant_id == tenant_id
+                    && row.overlay_id == overlay_id
+                    && row.overlay_version_id == overlay_version_id
+                    && matches!(
+                        row.event_action,
+                        AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft
+                    )
+            });
+            if !has_prior_draft {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "access_ap_overlay_ledger.overlay_version_id",
+                    key: overlay_version_id,
+                });
+            }
+        }
+
+        let event_id = self.next_access_schema_event_id;
+        self.next_access_schema_event_id = self.next_access_schema_event_id.saturating_add(1);
+        let row = AccessOverlayRecord {
+            schema_version: SchemaVersion(1),
+            event_id,
+            tenant_id: tenant_id.clone(),
+            overlay_id: overlay_id.clone(),
+            overlay_version_id: overlay_version_id.clone(),
+            event_action,
+            lifecycle_state: Self::access_lifecycle_from_event_action(event_action),
+            overlay_ops_json,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.access_overlay_ledger.push(row.clone());
+        self.access_overlay_idempotency_index
+            .insert(idempotency_idx, event_id);
+
+        let current_key = (tenant_id.clone(), overlay_id.clone());
+        match event_action {
+            AccessSchemaEventAction::Activate => {
+                self.access_overlay_current.insert(
+                    current_key,
+                    AccessOverlayCurrentRecord {
+                        schema_version: SchemaVersion(1),
+                        tenant_id,
+                        overlay_id,
+                        active_overlay_version_id: overlay_version_id,
+                        active_event_id: event_id,
+                        updated_at: now,
+                        reason_code,
+                    },
+                );
+            }
+            AccessSchemaEventAction::Retire => {
+                if let Some(current) = self.access_overlay_current.get(&current_key) {
+                    if current.active_overlay_version_id == overlay_version_id {
+                        self.access_overlay_current.remove(&current_key);
+                    }
+                }
+            }
+            AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft => {}
+        }
+
+        Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_board_policy_update_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        board_policy_id: String,
+        policy_version_id: String,
+        event_action: AccessSchemaEventAction,
+        policy_payload_json: String,
+        reason_code: ReasonCodeId,
+        created_by_user_id: UserId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardPolicyRecord, StorageError> {
+        Self::validate_access_tenant_id(&tenant_id)?;
+        if !self.identities.contains_key(&created_by_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_board_policy_ledger.created_by_user_id",
+                key: created_by_user_id.as_str().to_string(),
+            });
+        }
+        Self::validate_access_identifier(
+            "access_board_policy_ledger.board_policy_id",
+            &board_policy_id,
+            64,
+        )?;
+        Self::validate_access_identifier(
+            "access_board_policy_ledger.policy_version_id",
+            &policy_version_id,
+            64,
+        )?;
+        Self::validate_access_payload_json(
+            "access_board_policy_ledger.policy_payload_json",
+            &policy_payload_json,
+            8192,
+        )?;
+        Self::validate_access_idempotency(
+            "access_board_policy_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idempotency_idx = (
+            tenant_id.clone(),
+            board_policy_id.clone(),
+            policy_version_id.clone(),
+            event_action,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .access_board_policy_idempotency_index
+            .get(&idempotency_idx)
+        {
+            if let Some(existing) = self
+                .access_board_policy_ledger
+                .iter()
+                .find(|row| row.event_id == *existing_event_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_board_policy_ledger.event_id",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        if matches!(
+            event_action,
+            AccessSchemaEventAction::Activate | AccessSchemaEventAction::Retire
+        ) {
+            let has_prior_draft = self.access_board_policy_ledger.iter().rev().any(|row| {
+                row.tenant_id == tenant_id
+                    && row.board_policy_id == board_policy_id
+                    && row.policy_version_id == policy_version_id
+                    && matches!(
+                        row.event_action,
+                        AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft
+                    )
+            });
+            if !has_prior_draft {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "access_board_policy_ledger.policy_version_id",
+                    key: policy_version_id,
+                });
+            }
+        }
+
+        let event_id = self.next_access_schema_event_id;
+        self.next_access_schema_event_id = self.next_access_schema_event_id.saturating_add(1);
+        let row = AccessBoardPolicyRecord {
+            schema_version: SchemaVersion(1),
+            event_id,
+            tenant_id: tenant_id.clone(),
+            board_policy_id: board_policy_id.clone(),
+            policy_version_id: policy_version_id.clone(),
+            event_action,
+            lifecycle_state: Self::access_lifecycle_from_event_action(event_action),
+            policy_payload_json,
+            reason_code,
+            created_by_user_id,
+            created_at: now,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.access_board_policy_ledger.push(row.clone());
+        self.access_board_policy_idempotency_index
+            .insert(idempotency_idx, event_id);
+
+        let current_key = (tenant_id.clone(), board_policy_id.clone());
+        match event_action {
+            AccessSchemaEventAction::Activate => {
+                self.access_board_policy_current.insert(
+                    current_key,
+                    AccessBoardPolicyCurrentRecord {
+                        schema_version: SchemaVersion(1),
+                        tenant_id,
+                        board_policy_id,
+                        active_policy_version_id: policy_version_id,
+                        active_event_id: event_id,
+                        updated_at: now,
+                        reason_code,
+                    },
+                );
+            }
+            AccessSchemaEventAction::Retire => {
+                if let Some(current) = self.access_board_policy_current.get(&current_key) {
+                    if current.active_policy_version_id == policy_version_id {
+                        self.access_board_policy_current.remove(&current_key);
+                    }
+                }
+            }
+            AccessSchemaEventAction::CreateDraft | AccessSchemaEventAction::UpdateDraft => {}
+        }
+
+        Ok(row)
+    }
+
+    pub fn ph1access_board_vote_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        escalation_case_id: String,
+        board_policy_id: String,
+        voter_user_id: UserId,
+        vote_value: AccessBoardVoteValue,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<AccessBoardVoteRecord, StorageError> {
+        Self::validate_access_tenant_id(&tenant_id)?;
+        if !self.identities.contains_key(&voter_user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_board_votes_ledger.voter_user_id",
+                key: voter_user_id.as_str().to_string(),
+            });
+        }
+        Self::validate_access_identifier(
+            "access_board_votes_ledger.escalation_case_id",
+            &escalation_case_id,
+            96,
+        )?;
+        Self::validate_access_identifier(
+            "access_board_votes_ledger.board_policy_id",
+            &board_policy_id,
+            64,
+        )?;
+        Self::validate_access_idempotency(
+            "access_board_votes_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+        if !self
+            .access_board_policy_current
+            .contains_key(&(tenant_id.clone(), board_policy_id.clone()))
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_board_policy_current.board_policy_id",
+                key: board_policy_id,
+            });
+        }
+
+        let idempotency_idx = (
+            tenant_id.clone(),
+            escalation_case_id.clone(),
+            voter_user_id.clone(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_vote_row_id) = self
+            .access_board_vote_idempotency_index
+            .get(&idempotency_idx)
+        {
+            if let Some(existing) = self
+                .access_board_votes_ledger
+                .iter()
+                .find(|row| row.vote_row_id == *existing_vote_row_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "access_board_votes_ledger.vote_row_id",
+                key: existing_vote_row_id.to_string(),
+            });
+        }
+
+        let vote_row_id = self.next_access_board_vote_row_id;
+        self.next_access_board_vote_row_id = self.next_access_board_vote_row_id.saturating_add(1);
+        let row = AccessBoardVoteRecord {
+            schema_version: SchemaVersion(1),
+            vote_row_id,
+            tenant_id,
+            escalation_case_id,
+            board_policy_id,
+            voter_user_id,
+            vote_value,
+            reason_code,
+            created_at: now,
+            idempotency_key,
+        };
+        self.access_board_votes_ledger.push(row.clone());
+        self.access_board_vote_idempotency_index
+            .insert(idempotency_idx, vote_row_id);
+        Ok(row)
+    }
+
+    pub fn ph1access_read_schema_chain(
+        &self,
+        tenant_id: &str,
+        access_profile_id: &str,
+        overlay_ids: &[String],
+        board_policy_id: Option<&str>,
+    ) -> Result<AccessSchemaChainReadResult, StorageError> {
+        Self::validate_access_tenant_id(tenant_id)?;
+        Self::validate_access_identifier(
+            "ph1access_read_schema_chain.access_profile_id",
+            access_profile_id,
+            64,
+        )?;
+        let global_key = ("GLOBAL".to_string(), access_profile_id.to_string());
+        let global_ap_version = self
+            .access_ap_schema_current
+            .get(&global_key)
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "access_ap_schemas_current.global",
+                key: access_profile_id.to_string(),
+            })?;
+        let tenant_ap_version = self
+            .access_ap_schema_current
+            .get(&(tenant_id.to_string(), access_profile_id.to_string()))
+            .cloned();
+
+        let mut active_overlays = Vec::with_capacity(overlay_ids.len());
+        for overlay_id in overlay_ids {
+            Self::validate_access_identifier(
+                "ph1access_read_schema_chain.overlay_id",
+                overlay_id,
+                64,
+            )?;
+            let row = self
+                .access_overlay_current
+                .get(&(tenant_id.to_string(), overlay_id.clone()))
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "access_ap_overlay_current.overlay_id",
+                    key: overlay_id.clone(),
+                })?;
+            active_overlays.push(row);
+        }
+
+        let active_board_policy = if let Some(policy_id) = board_policy_id {
+            Self::validate_access_identifier(
+                "ph1access_read_schema_chain.board_policy_id",
+                policy_id,
+                64,
+            )?;
+            Some(
+                self.access_board_policy_current
+                    .get(&(tenant_id.to_string(), policy_id.to_string()))
+                    .cloned()
+                    .ok_or(StorageError::ForeignKeyViolation {
+                        table: "access_board_policy_current.board_policy_id",
+                        key: policy_id.to_string(),
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        Ok(AccessSchemaChainReadResult {
+            schema_version: SchemaVersion(1),
+            global_ap_version,
+            tenant_ap_version,
+            active_overlays,
+            active_board_policy,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph2access_upsert_instance_commit_internal(
         &mut self,
         now: MonotonicTimeNs,
         tenant_id: String,
@@ -5792,6 +6665,7 @@ impl Ph1fStore {
         lifecycle_state: AccessLifecycleState,
         policy_snapshot_ref: String,
         idempotency_key: Option<String>,
+        compile_chain_refs: Option<&AccessCompiledLineageRef>,
     ) -> Result<AccessInstanceRecord, StorageError> {
         Self::validate_access_tenant_id(&tenant_id)?;
         if role_template_id.trim().is_empty() || role_template_id.len() > 96 {
@@ -5867,6 +6741,34 @@ impl Ph1fStore {
             device_trust_level,
             lifecycle_state,
             policy_snapshot_ref,
+            compiled_global_profile_id: compile_chain_refs.map(|r| {
+                r.global_profile_version
+                    .access_profile_id
+                    .as_str()
+                    .to_string()
+            }),
+            compiled_global_profile_version: compile_chain_refs
+                .map(|r| r.global_profile_version.schema_version_id.clone()),
+            compiled_tenant_profile_id: compile_chain_refs.and_then(|r| {
+                r.tenant_profile_version
+                    .as_ref()
+                    .map(|v| v.access_profile_id.as_str().to_string())
+            }),
+            compiled_tenant_profile_version: compile_chain_refs.and_then(|r| {
+                r.tenant_profile_version
+                    .as_ref()
+                    .map(|v| v.schema_version_id.clone())
+            }),
+            compiled_overlay_set_ref: compile_chain_refs.map(|r| {
+                let mut overlay_refs: Vec<String> = r
+                    .overlay_version_ids
+                    .iter()
+                    .map(|v| v.as_str().to_string())
+                    .collect();
+                overlay_refs.sort();
+                overlay_refs.join(",")
+            }),
+            compiled_position_id: compile_chain_refs.and_then(|r| r.position_id.clone()),
             created_at,
             updated_at: now,
             idempotency_key: idempotency_key_norm.clone(),
@@ -5880,6 +6782,153 @@ impl Ph1fStore {
                 .insert((tenant_id, user_id, k), access_instance_id);
         }
         Ok(row)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph2access_upsert_instance_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        user_id: UserId,
+        role_template_id: String,
+        effective_access_mode: AccessMode,
+        baseline_permissions_json: String,
+        identity_verified: bool,
+        verification_level: AccessVerificationLevel,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+        policy_snapshot_ref: String,
+        idempotency_key: Option<String>,
+    ) -> Result<AccessInstanceRecord, StorageError> {
+        self.ph2access_upsert_instance_commit_internal(
+            now,
+            tenant_id,
+            user_id,
+            role_template_id,
+            effective_access_mode,
+            baseline_permissions_json,
+            identity_verified,
+            verification_level,
+            device_trust_level,
+            lifecycle_state,
+            policy_snapshot_ref,
+            idempotency_key,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_instance_compile_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        user_id: UserId,
+        role_template_id: String,
+        effective_access_mode: AccessMode,
+        effective_permissions_json: String,
+        identity_verified: bool,
+        verification_level: AccessVerificationLevel,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+        policy_snapshot_ref: String,
+        compile_chain_refs: AccessCompiledLineageRef,
+        idempotency_key: Option<String>,
+    ) -> Result<AccessInstanceRecord, StorageError> {
+        compile_chain_refs.validate()?;
+        let global_profile_id = compile_chain_refs
+            .global_profile_version
+            .access_profile_id
+            .as_str()
+            .to_string();
+        let global_current = self
+            .access_ap_schema_current
+            .get(&("GLOBAL".to_string(), global_profile_id.clone()))
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "access_ap_schemas_current.global",
+                key: global_profile_id.clone(),
+            })?;
+        if global_current.active_schema_version_id
+            != compile_chain_refs.global_profile_version.schema_version_id
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1access_instance_compile_commit.global_profile_version",
+                    reason: "must reference active GLOBAL profile version",
+                },
+            ));
+        }
+
+        if let Some(tenant_profile_version) = &compile_chain_refs.tenant_profile_version {
+            let tenant_current = self
+                .access_ap_schema_current
+                .get(&(
+                    tenant_id.clone(),
+                    tenant_profile_version
+                        .access_profile_id
+                        .as_str()
+                        .to_string(),
+                ))
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "access_ap_schemas_current.tenant",
+                    key: tenant_profile_version
+                        .access_profile_id
+                        .as_str()
+                        .to_string(),
+                })?;
+            if tenant_current.active_schema_version_id != tenant_profile_version.schema_version_id {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1access_instance_compile_commit.tenant_profile_version",
+                        reason: "must reference active TENANT profile version",
+                    },
+                ));
+            }
+        }
+
+        for overlay_ref in &compile_chain_refs.overlay_version_ids {
+            let ref_id = overlay_ref.as_str();
+            let found_overlay = self.access_overlay_current.iter().any(
+                |((overlay_tenant_id, overlay_id), current)| {
+                    overlay_tenant_id == &tenant_id
+                        && (overlay_id == ref_id || current.active_overlay_version_id == ref_id)
+                },
+            );
+            if !found_overlay {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "access_ap_overlay_current.overlay_ref",
+                    key: ref_id.to_string(),
+                });
+            }
+        }
+
+        if let Some(position_id_raw) = &compile_chain_refs.position_id {
+            let position_id = PositionId::new(position_id_raw.as_str())
+                .map_err(StorageError::ContractViolation)?;
+            let tenant =
+                TenantId::new(tenant_id.as_str()).map_err(StorageError::ContractViolation)?;
+            if !self.positions.contains_key(&(tenant, position_id)) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "positions.position_id",
+                    key: position_id_raw.clone(),
+                });
+            }
+        }
+
+        self.ph2access_upsert_instance_commit_internal(
+            now,
+            tenant_id,
+            user_id,
+            role_template_id,
+            effective_access_mode,
+            effective_permissions_json,
+            identity_verified,
+            verification_level,
+            device_trust_level,
+            lifecycle_state,
+            policy_snapshot_ref,
+            idempotency_key,
+            Some(&compile_chain_refs),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6068,6 +7117,40 @@ impl Ph1fStore {
         &self.access_overrides
     }
 
+    pub fn ph1access_ap_schema_ledger_rows(&self) -> &[AccessApSchemaLedgerRecord] {
+        &self.access_ap_schema_ledger
+    }
+
+    pub fn ph1access_ap_schema_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessApSchemaCurrentRecord> {
+        &self.access_ap_schema_current
+    }
+
+    pub fn ph1access_ap_overlay_ledger_rows(&self) -> &[AccessOverlayRecord] {
+        &self.access_overlay_ledger
+    }
+
+    pub fn ph1access_ap_overlay_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessOverlayCurrentRecord> {
+        &self.access_overlay_current
+    }
+
+    pub fn ph1access_board_policy_ledger_rows(&self) -> &[AccessBoardPolicyRecord] {
+        &self.access_board_policy_ledger
+    }
+
+    pub fn ph1access_board_policy_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, String), AccessBoardPolicyCurrentRecord> {
+        &self.access_board_policy_current
+    }
+
+    pub fn ph1access_board_vote_rows(&self) -> &[AccessBoardVoteRecord] {
+        &self.access_board_votes_ledger
+    }
+
     pub fn attempt_overwrite_access_override(
         &mut self,
         _override_id: &str,
@@ -6172,7 +7255,8 @@ impl Ph1fStore {
             });
         }
 
-        let effective_device_trust_level = std::cmp::min(device_trust_level, instance.device_trust_level);
+        let effective_device_trust_level =
+            std::cmp::min(device_trust_level, instance.device_trust_level);
         if effective_device_trust_level <= AccessDeviceTrustLevel::Dtl2
             && access_mode_rank(access_request_context) >= access_mode_rank(AccessMode::A)
         {
@@ -9971,7 +11055,8 @@ impl Ph1fStore {
         if position.lifecycle_state != PositionLifecycleState::Active {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "ph1position_requirements_schema_activate_commit.position_lifecycle_state",
+                    field:
+                        "ph1position_requirements_schema_activate_commit.position_lifecycle_state",
                     reason: "position must be ACTIVE",
                 },
             ));

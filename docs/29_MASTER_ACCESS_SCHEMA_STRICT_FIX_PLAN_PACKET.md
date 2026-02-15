@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP5_COMPLETED_PENDING_STEP6
+Status: STEP6_COMPLETED_PENDING_STEP7
 
 ## 1) Purpose
 
@@ -285,7 +285,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
 - Step 5: COMPLETED (2026-02-15)
-- Step 6: PENDING
+- Step 6: COMPLETED (2026-02-15)
 - Step 7: PENDING
 - Step 8: PENDING
 
@@ -372,3 +372,24 @@ Step 5 note:
   - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
   - `cargo test -p selene_os ph1x -- --nocapture` -> pass
+
+Step 6 note:
+- Storage + repo parity patch applied across:
+  - `crates/selene_storage/src/ph1f.rs`
+  - `crates/selene_storage/src/repo.rs`
+  - `crates/selene_storage/migrations/0015_access_master_schema_tables.sql`
+- Added deterministic ledger/current storage surfaces for:
+  - AP schema lifecycle (`access_ap_schema_ledger/current`)
+  - overlay lifecycle (`access_overlay_ledger/current`)
+  - board policy lifecycle (`access_board_policy_ledger/current`)
+  - board votes ledger (`access_board_votes_ledger`)
+- Added schema-chain read API (`ph1access_read_schema_chain`) and compile-lineage commit API (`ph1access_instance_compile_commit`) with fail-closed reference checks.
+- Extended `access_instances` row model and compile upsert path with lineage refs:
+  - `compiled_global_profile_id`, `compiled_global_profile_version`
+  - `compiled_tenant_profile_id`, `compiled_tenant_profile_version`
+  - `compiled_overlay_set_ref`, `compiled_position_id`
+- Added repository trait parity for new access schema/overlay/board/compile capabilities and typed read accessors.
+- Step-6 proof:
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass
+  - `cargo test -p selene_storage -- --nocapture` -> pass
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
