@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP7_COMPLETED_PENDING_STEP8
+Status: STEP8_COMPLETED
 
 ## 1) Purpose
 
@@ -197,7 +197,7 @@ Checkpoint expectations:
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15)
 - Step 7: COMPLETED (2026-02-15)
-- Step 8: PENDING
+- Step 8: COMPLETED (2026-02-15)
 
 Step 1 note:
 - Updated `docs/02_BUILD_PLAN.md` to freeze packet 27 closure checkpoint (`40c25b8`) and set this packet as canonical next strict scope.
@@ -292,6 +292,17 @@ Step 7 note:
 - Verification:
   - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` passed (9 tests)
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` passed (17 tests)
+
+Step 8 note:
+- Final proof sequence executed end-to-end at clean checkpoint `e35c0f5cd4cab1b6acb6e5582f4a3dc8b770e73e`:
+  - `scripts/selene_design_readiness_audit.sh` passed (`AUDIT_TREE_STATE: CLEAN`)
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` passed
+  - `cargo test -p selene_os capreq -- --nocapture` passed
+  - `cargo test -p selene_os ph1onb -- --nocapture` passed
+  - `cargo test -p selene_os ph1position -- --nocapture` passed
+  - `cargo test -p selene_os ph1link -- --nocapture` passed
+  - `cargo test --workspace` passed
+- Freeze checkpoint criteria satisfied: docs/contracts/runtime/storage/tests coherent and clean-tree proof complete.
 
 ## 6) Done Criteria
 
