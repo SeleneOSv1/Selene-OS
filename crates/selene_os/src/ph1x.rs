@@ -985,12 +985,17 @@ fn confirm_text(d: &IntentDraft) -> String {
             let action = field_original(d, FieldKey::ApAction)
                 .unwrap_or("CREATE_DRAFT")
                 .to_ascii_uppercase();
-            let profile_id = field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
+            let profile_id =
+                field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
             let version = field_original(d, FieldKey::SchemaVersionId).unwrap_or("a schema version");
             let scope = field_original(d, FieldKey::ApScope).unwrap_or("TENANT");
             let tenant = field_original(d, FieldKey::TenantId).unwrap_or("the tenant");
+            let review_channel =
+                field_original(d, FieldKey::AccessReviewChannel).unwrap_or("PHONE_DESKTOP");
+            let rule_action =
+                field_original(d, FieldKey::AccessRuleAction).unwrap_or("AGREE");
             format!(
-                "You want to {action} for access profile {profile_id} ({version}) in {scope} scope for {tenant}. Is that correct?"
+                "You are requesting {action} for access profile {profile_id} ({version}) in {scope} scope for {tenant}, using review channel {review_channel} with rule action {rule_action}. Please confirm."
             )
         }
         IntentType::AccessEscalationVote => {
@@ -1156,6 +1161,22 @@ fn clarify_for_missing(
                 "RETIRE".to_string(),
             ],
         ),
+        (_, FieldKey::AccessReviewChannel) => (
+            "Should I send this to your phone or desktop for review, or read it out loud?"
+                .to_string(),
+            vec!["PHONE_DESKTOP".to_string(), "READ_OUT_LOUD".to_string()],
+        ),
+        (_, FieldKey::AccessRuleAction) => (
+            "Which rule action should I record?".to_string(),
+            vec![
+                "AGREE".to_string(),
+                "DISAGREE".to_string(),
+                "EDIT".to_string(),
+                "DELETE".to_string(),
+                "DISABLE".to_string(),
+                "ADD_CUSTOM_RULE".to_string(),
+            ],
+        ),
         (_, FieldKey::ProfilePayloadJson) => (
             "Please provide the profile rule payload.".to_string(),
             vec![
@@ -1244,6 +1265,8 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
     for k in [
         FieldKey::IntentChoice,
         FieldKey::ReferenceTarget,
+        FieldKey::AccessReviewChannel,
+        FieldKey::AccessRuleAction,
         FieldKey::ApAction,
         FieldKey::AccessProfileId,
         FieldKey::SchemaVersionId,

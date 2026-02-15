@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP3_COMPLETED_PENDING_STEP4
+Status: STEP4_COMPLETED_PENDING_STEP5
 
 ## 1) Purpose
 
@@ -88,7 +88,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
 - Step 3: COMPLETED (2026-02-15)
-- Step 4: PENDING
+- Step 4: COMPLETED (2026-02-15)
 - Step 5: PENDING
 - Step 6: PENDING
 - Step 7: PENDING
@@ -132,3 +132,31 @@ Step 3 note:
 - Step-3 proof:
   - `rg` checks for new AP authoring simulation IDs in blueprint + simulation catalog + coverage matrix -> pass
   - readiness audit (`scripts/selene_design_readiness_audit.sh`) -> pass (no capability-id gaps, no missing simulation IDs, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
+
+Step 4 note:
+- Locked deterministic runtime orchestration for AP authoring review/channel surfaces across:
+  - `crates/selene_kernel_contracts/src/ph1n.rs`
+  - `crates/selene_engines/src/ph1n.rs`
+  - `crates/selene_os/src/ph1x.rs`
+  - `crates/selene_os/src/simulation_executor.rs`
+  - `crates/selene_os/src/ph1explain.rs`
+- Runtime lock additions:
+  - `FieldKey` surfaces for explicit AP review flow:
+    - `AccessReviewChannel`
+    - `AccessRuleAction`
+  - Deterministic extraction/clarify ordering in `PH1.NLP` for AP authoring:
+    - explicit review-channel capture (`PHONE_DESKTOP | READ_OUT_LOUD`)
+    - bounded rule-action capture (`AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`)
+  - `PH1.X` clarification and confirmation text updated to include:
+    - professional review wording
+    - explicit review-channel + rule-action context
+  - simulation executor fail-closed gates tightened for `AccessSchemaManage`:
+    - review channel required for AP schema manage commits
+    - rule-action required for activate path
+    - payload required for create/update paths
+- Step-4 proof:
+  - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass (46 tests)
+  - `cargo test -p selene_engines -- --nocapture` -> pass (61 tests)
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (21 tests)
+  - `cargo test -p selene_os at_x_ -- --nocapture` -> pass (19 tests)
+  - `cargo test -p selene_os -- --nocapture` -> pass (81 tests)

@@ -816,15 +816,284 @@ fn normalize_access_control(
     req: &Ph1nRequest,
     intent_type: IntentType,
 ) -> Result<Ph1nResponse, ContractViolation> {
+    match intent_type {
+        IntentType::AccessSchemaManage => normalize_access_schema_manage(req),
+        IntentType::AccessEscalationVote => normalize_access_escalation_vote(req),
+        IntentType::AccessInstanceCompileRefresh => normalize_access_instance_compile_refresh(req),
+        _ => Err(ContractViolation::InvalidValue {
+            field: "intent_type",
+            reason: "unsupported access intent",
+        }),
+    }
+}
+
+fn normalize_access_schema_manage(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
     let t = &req.transcript_ok.transcript_text;
-    let (sens, confirm) = meta_for_intent(intent_type);
+    let lower = t.to_ascii_lowercase();
+
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    let action = detect_access_schema_action(&lower);
+    fields.push(IntentField {
+        key: FieldKey::ApAction,
+        value: FieldValue::normalized(action.to_string(), action.to_string())?,
+        confidence: OverallConfidence::High,
+    });
+    evidence.push(evidence_span(FieldKey::ApAction, t, t)?);
+
+    let scope = detect_access_scope(&lower);
+    fields.push(IntentField {
+        key: FieldKey::ApScope,
+        value: FieldValue::normalized(scope.to_string(), scope.to_string())?,
+        confidence: OverallConfidence::High,
+    });
+    evidence.push(evidence_span(FieldKey::ApScope, t, t)?);
+
+    if let Some(profile_id) = extract_access_profile_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::AccessProfileId,
+            value: FieldValue::verbatim(profile_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::AccessProfileId, t, &profile_id)?);
+    } else {
+        missing.push(FieldKey::AccessProfileId);
+    }
+
+    if let Some(version_id) = extract_schema_version_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::SchemaVersionId,
+            value: FieldValue::verbatim(version_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::SchemaVersionId, t, &version_id)?);
+    } else {
+        missing.push(FieldKey::SchemaVersionId);
+    }
+
+    if scope == "TENANT" {
+        if let Some(tenant_id) = extract_tenant_id(&lower, t) {
+            fields.push(IntentField {
+                key: FieldKey::TenantId,
+                value: FieldValue::verbatim(tenant_id.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::TenantId, t, &tenant_id)?);
+        } else {
+            missing.push(FieldKey::TenantId);
+        }
+    }
+
+    if let Some((orig, norm)) = detect_access_review_channel(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::AccessReviewChannel,
+            value: FieldValue::normalized(orig.clone(), norm.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::AccessReviewChannel, t, &orig)?);
+    } else {
+        missing.push(FieldKey::AccessReviewChannel);
+    }
+
+    if let Some((orig, norm)) = detect_access_rule_action(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::AccessRuleAction,
+            value: FieldValue::normalized(orig.clone(), norm.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::AccessRuleAction, t, &orig)?);
+    } else if action == "ACTIVATE" {
+        // Activation requires explicit rule-review confirmation state.
+        missing.push(FieldKey::AccessRuleAction);
+    }
+
+    if action == "CREATE_DRAFT" || action == "UPDATE" {
+        if let Some(payload) = extract_profile_payload_json(t) {
+            fields.push(IntentField {
+                key: FieldKey::ProfilePayloadJson,
+                value: FieldValue::verbatim(payload.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::ProfilePayloadJson, t, &payload)?);
+        }
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::AccessSchemaManage),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::AccessSchemaManage);
     Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
-        intent_type,
+        IntentType::AccessSchemaManage,
         INTENT_SCHEMA_VERSION_V1,
-        vec![],
+        fields,
         vec![],
         OverallConfidence::High,
-        vec![evidence_span(FieldKey::Task, t, t)?],
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_access_escalation_vote(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some(tenant_id) = extract_tenant_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::TenantId,
+            value: FieldValue::verbatim(tenant_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::TenantId, t, &tenant_id)?);
+    } else {
+        missing.push(FieldKey::TenantId);
+    }
+
+    let vote_action = detect_vote_action(&lower);
+    fields.push(IntentField {
+        key: FieldKey::VoteAction,
+        value: FieldValue::normalized(vote_action.to_string(), vote_action.to_string())?,
+        confidence: OverallConfidence::High,
+    });
+    evidence.push(evidence_span(FieldKey::VoteAction, t, t)?);
+
+    let vote_value = detect_vote_value(&lower);
+    fields.push(IntentField {
+        key: FieldKey::VoteValue,
+        value: FieldValue::normalized(vote_value.to_string(), vote_value.to_string())?,
+        confidence: OverallConfidence::High,
+    });
+    evidence.push(evidence_span(FieldKey::VoteValue, t, t)?);
+
+    if let Some(case_id) = extract_escalation_case_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::EscalationCaseId,
+            value: FieldValue::verbatim(case_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::EscalationCaseId, t, &case_id)?);
+    } else {
+        missing.push(FieldKey::EscalationCaseId);
+    }
+
+    if let Some(board_policy_id) = extract_board_policy_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::BoardPolicyId,
+            value: FieldValue::verbatim(board_policy_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::BoardPolicyId, t, &board_policy_id)?);
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::AccessEscalationVote),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::AccessEscalationVote);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::AccessEscalationVote,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_access_instance_compile_refresh(
+    req: &Ph1nRequest,
+) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some(tenant_id) = extract_tenant_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::TenantId,
+            value: FieldValue::verbatim(tenant_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::TenantId, t, &tenant_id)?);
+    } else {
+        missing.push(FieldKey::TenantId);
+    }
+
+    if let Some(target_user_id) = extract_target_user_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::TargetUserId,
+            value: FieldValue::verbatim(target_user_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::TargetUserId, t, &target_user_id)?);
+    } else {
+        missing.push(FieldKey::TargetUserId);
+    }
+
+    if let Some(profile_id) = extract_access_profile_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::AccessProfileId,
+            value: FieldValue::verbatim(profile_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::AccessProfileId, t, &profile_id)?);
+    }
+
+    if let Some(position_id) = extract_position_id(&lower, t) {
+        fields.push(IntentField {
+            key: FieldKey::PositionId,
+            value: FieldValue::verbatim(position_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::PositionId, t, &position_id)?);
+    }
+
+    let compile_reason = detect_compile_reason(&lower);
+    fields.push(IntentField {
+        key: FieldKey::CompileReason,
+        value: FieldValue::normalized(compile_reason.to_string(), compile_reason.to_string())?,
+        confidence: OverallConfidence::High,
+    });
+    evidence.push(evidence_span(FieldKey::CompileReason, t, t)?);
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::AccessInstanceCompileRefresh),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::AccessInstanceCompileRefresh);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::AccessInstanceCompileRefresh,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
         reason_codes::N_INTENT_OK,
         sens,
         confirm,
@@ -955,6 +1224,85 @@ fn clarify_for_missing(
                 "selene_inc".to_string(),
             ],
         ),
+        (IntentType::AccessSchemaManage, FieldKey::AccessProfileId) => (
+            "Which access profile should I manage?".to_string(),
+            vec![
+                "AP_CLERK".to_string(),
+                "AP_DRIVER".to_string(),
+                "AP_CEO".to_string(),
+            ],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::SchemaVersionId) => (
+            "Which schema version should I use?".to_string(),
+            vec!["v1".to_string(), "v2".to_string(), "v3".to_string()],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::ApScope) => (
+            "Is this global or tenant scope?".to_string(),
+            vec!["GLOBAL".to_string(), "TENANT".to_string()],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::ApAction) => (
+            "What access profile action should I run?".to_string(),
+            vec![
+                "CREATE_DRAFT".to_string(),
+                "UPDATE".to_string(),
+                "ACTIVATE".to_string(),
+                "RETIRE".to_string(),
+            ],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::AccessReviewChannel) => (
+            "Should I send this to your phone or desktop for review, or read it out loud?".to_string(),
+            vec!["PHONE_DESKTOP".to_string(), "READ_OUT_LOUD".to_string()],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::AccessRuleAction) => (
+            "Which rule action should I record?".to_string(),
+            vec![
+                "AGREE".to_string(),
+                "DISAGREE".to_string(),
+                "EDIT".to_string(),
+                "DELETE".to_string(),
+                "DISABLE".to_string(),
+                "ADD_CUSTOM_RULE".to_string(),
+            ],
+        ),
+        (IntentType::AccessSchemaManage, FieldKey::ProfilePayloadJson) => (
+            "Please provide the profile rule payload.".to_string(),
+            vec![
+                "{\"allow\":[\"LINK_INVITE\"]}".to_string(),
+                "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"],\"limits\":{\"amount\":5000}}".to_string(),
+            ],
+        ),
+        (IntentType::AccessEscalationVote, FieldKey::EscalationCaseId) => (
+            "Which escalation case is this for?".to_string(),
+            vec![
+                "esc_case_001".to_string(),
+                "esc_case_store_17".to_string(),
+                "esc_case_budget_2026".to_string(),
+            ],
+        ),
+        (IntentType::AccessEscalationVote, FieldKey::VoteAction) => (
+            "What vote action should I run?".to_string(),
+            vec!["CAST_VOTE".to_string(), "RESOLVE".to_string()],
+        ),
+        (IntentType::AccessEscalationVote, FieldKey::VoteValue) => (
+            "What vote value should I record?".to_string(),
+            vec!["APPROVE".to_string(), "REJECT".to_string()],
+        ),
+        (IntentType::AccessInstanceCompileRefresh, FieldKey::TargetUserId) => (
+            "Which user should I compile access for?".to_string(),
+            vec![
+                "user_123".to_string(),
+                "employee_warehouse_mgr".to_string(),
+                "driver_27".to_string(),
+            ],
+        ),
+        (IntentType::AccessInstanceCompileRefresh, FieldKey::CompileReason) => (
+            "Why are we compiling this access instance?".to_string(),
+            vec![
+                "POSITION_CHANGED".to_string(),
+                "AP_VERSION_ACTIVATED".to_string(),
+                "OVERRIDE_UPDATED".to_string(),
+            ],
+        ),
         // Default deterministic fallback.
         (_, _) => (
             "Can you clarify that?".to_string(),
@@ -995,6 +1343,18 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
     for k in [
         FieldKey::IntentChoice,
         FieldKey::ReferenceTarget,
+        FieldKey::AccessReviewChannel,
+        FieldKey::AccessRuleAction,
+        FieldKey::ApAction,
+        FieldKey::AccessProfileId,
+        FieldKey::SchemaVersionId,
+        FieldKey::ApScope,
+        FieldKey::ProfilePayloadJson,
+        FieldKey::EscalationCaseId,
+        FieldKey::VoteAction,
+        FieldKey::VoteValue,
+        FieldKey::TargetUserId,
+        FieldKey::CompileReason,
         FieldKey::CapreqAction,
         FieldKey::CapreqId,
         FieldKey::RequestedCapabilityId,
@@ -1638,6 +1998,190 @@ fn extract_tail_after_phrase(lower: &str, original: &str, phrase: &str) -> Optio
     Some(tail.to_string())
 }
 
+fn detect_access_schema_action(lower: &str) -> &'static str {
+    if lower.contains("activate ap")
+        || lower.contains("activate profile")
+        || lower.contains("activate access profile")
+        || lower.contains("set active")
+    {
+        return "ACTIVATE";
+    }
+    if lower.contains("retire ap")
+        || lower.contains("retire profile")
+        || lower.contains("retire access profile")
+        || lower.contains("deactivate ap")
+    {
+        return "RETIRE";
+    }
+    if lower.contains("update ap")
+        || lower.contains("edit ap")
+        || lower.contains("modify ap")
+        || lower.contains("change ap")
+    {
+        return "UPDATE";
+    }
+    "CREATE_DRAFT"
+}
+
+fn detect_access_scope(lower: &str) -> &'static str {
+    if lower.contains("global") || lower.contains("selene global") {
+        "GLOBAL"
+    } else {
+        "TENANT"
+    }
+}
+
+fn detect_access_review_channel(lower: &str, original: &str) -> Option<(String, String)> {
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "read out loud") {
+        return Some((orig, "READ_OUT_LOUD".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "read it out loud") {
+        return Some((orig, "READ_OUT_LOUD".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "read aloud") {
+        return Some((orig, "READ_OUT_LOUD".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "phone")
+        .or_else(|| excerpt_from_lower_match(lower, original, "desktop"))
+    {
+        return Some((orig, "PHONE_DESKTOP".to_string()));
+    }
+    None
+}
+
+fn detect_access_rule_action(lower: &str, original: &str) -> Option<(String, String)> {
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "add custom")
+        .or_else(|| excerpt_from_lower_match(lower, original, "add rule"))
+    {
+        return Some((orig, "ADD_CUSTOM_RULE".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "disable") {
+        return Some((orig, "DISABLE".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "delete") {
+        return Some((orig, "DELETE".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "edit") {
+        return Some((orig, "EDIT".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "disagree")
+        .or_else(|| excerpt_from_lower_match(lower, original, "reject"))
+    {
+        return Some((orig, "DISAGREE".to_string()));
+    }
+    if let Some(orig) = excerpt_from_lower_match(lower, original, "agree")
+        .or_else(|| excerpt_from_lower_match(lower, original, "approve"))
+    {
+        return Some((orig, "AGREE".to_string()));
+    }
+    None
+}
+
+fn extract_access_profile_id(lower: &str, original: &str) -> Option<String> {
+    if let Some(found) = original.split_whitespace().find_map(|tok| {
+        let cleaned = tok.trim_matches(|c: char| {
+            matches!(
+                c,
+                ',' | ';' | ':' | ')' | ']' | '}' | '!' | '?' | '"' | '\'' | '(' | '[' | '{'
+            )
+        });
+        let up = cleaned.to_ascii_uppercase();
+        if up.starts_with("AP_") && up.len() <= 64 {
+            Some(up)
+        } else {
+            None
+        }
+    }) {
+        return Some(found);
+    }
+
+    extract_token_after_phrase(lower, original, "profile ")
+        .or_else(|| extract_token_after_phrase(lower, original, "ap "))
+}
+
+fn extract_schema_version_id(lower: &str, original: &str) -> Option<String> {
+    if let Some(tok) = original.split_whitespace().find_map(|tok| {
+        let cleaned = tok.trim_matches(|c: char| {
+            matches!(
+                c,
+                ',' | ';' | ':' | ')' | ']' | '}' | '!' | '?' | '"' | '\'' | '(' | '[' | '{'
+            )
+        });
+        let lower = cleaned.to_ascii_lowercase();
+        if lower.starts_with('v') && lower.len() <= 16 && lower[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            Some(lower)
+        } else {
+            None
+        }
+    }) {
+        return Some(tok);
+    }
+    extract_token_after_phrase(lower, original, "version ")
+        .map(|v| v.to_ascii_lowercase())
+}
+
+fn extract_profile_payload_json(original: &str) -> Option<String> {
+    let start = original.find('{')?;
+    let end = original.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    let payload = original[start..=end].trim();
+    if payload.is_empty() {
+        return None;
+    }
+    Some(payload.to_string())
+}
+
+fn detect_vote_action(lower: &str) -> &'static str {
+    if lower.contains("resolve") || lower.contains("finalize vote") {
+        "RESOLVE"
+    } else {
+        "CAST_VOTE"
+    }
+}
+
+fn detect_vote_value(lower: &str) -> &'static str {
+    if lower.contains("reject") || lower.contains("deny") {
+        "REJECT"
+    } else {
+        "APPROVE"
+    }
+}
+
+fn extract_escalation_case_id(lower: &str, original: &str) -> Option<String> {
+    extract_token_after_phrase(lower, original, "case ")
+        .or_else(|| extract_token_after_phrase(lower, original, "case id "))
+        .or_else(|| extract_token_after_phrase(lower, original, "escalation "))
+}
+
+fn extract_board_policy_id(lower: &str, original: &str) -> Option<String> {
+    extract_token_after_phrase(lower, original, "board policy ")
+        .or_else(|| extract_token_after_phrase(lower, original, "policy "))
+}
+
+fn extract_target_user_id(lower: &str, original: &str) -> Option<String> {
+    extract_token_after_phrase(lower, original, "user ")
+        .or_else(|| extract_token_after_phrase(lower, original, "employee "))
+}
+
+fn extract_position_id(lower: &str, original: &str) -> Option<String> {
+    extract_token_after_phrase(lower, original, "position ")
+}
+
+fn detect_compile_reason(lower: &str) -> &'static str {
+    if lower.contains("position changed") || lower.contains("position update") {
+        "POSITION_CHANGED"
+    } else if lower.contains("ap version") || lower.contains("profile version") {
+        "AP_VERSION_ACTIVATED"
+    } else if lower.contains("override") {
+        "OVERRIDE_UPDATED"
+    } else {
+        "MANUAL_REFRESH"
+    }
+}
+
 fn extract_requested_capability_id(lower: &str, original: &str) -> Option<String> {
     extract_token_after_phrase(lower, original, "capability ")
         .or_else(|| extract_token_after_phrase(lower, original, "request capability "))
@@ -1942,6 +2486,48 @@ mod tests {
                 assert_eq!(c.what_is_missing, vec![FieldKey::CapreqId]);
             }
             _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn at_n_16_access_schema_manage_requires_review_channel() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene create AP_CLERK version v1 for tenant tenant_1",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::Clarify(c) => {
+                assert_eq!(c.what_is_missing, vec![FieldKey::AccessReviewChannel]);
+            }
+            _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn at_n_17_access_schema_manage_structured_with_channel_and_action() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene activate AP_CLERK version v2 tenant tenant_1 read out loud agree",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::AccessSchemaManage);
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::ApAction));
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::AccessProfileId));
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::SchemaVersionId));
+                assert!(d
+                    .fields
+                    .iter()
+                    .any(|f| f.key == FieldKey::AccessReviewChannel));
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::AccessRuleAction));
+            }
+            _ => panic!("expected intent_draft"),
         }
     }
 }

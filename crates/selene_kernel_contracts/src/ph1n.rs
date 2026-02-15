@@ -73,6 +73,10 @@ pub enum FieldKey {
     ApAction,
     /// ACCESS schema: bounded payload descriptor reference.
     ProfilePayloadJson,
+    /// ACCESS schema authoring review channel (`PHONE_DESKTOP | READ_OUT_LOUD`).
+    AccessReviewChannel,
+    /// ACCESS schema authoring per-rule action (`AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`).
+    AccessRuleAction,
     /// ACCESS voting: escalation case identifier.
     EscalationCaseId,
     /// ACCESS voting: board policy identifier.

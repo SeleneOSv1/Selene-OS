@@ -185,6 +185,8 @@ fn field_name(k: FieldKey) -> &'static str {
         FieldKey::SchemaVersionId => "schema version",
         FieldKey::ApScope => "access profile scope",
         FieldKey::ApAction => "access profile action",
+        FieldKey::AccessReviewChannel => "review channel",
+        FieldKey::AccessRuleAction => "rule review action",
         FieldKey::ProfilePayloadJson => "access profile rules payload",
         FieldKey::EscalationCaseId => "escalation case",
         FieldKey::BoardPolicyId => "board policy",

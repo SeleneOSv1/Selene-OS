@@ -408,6 +408,23 @@ impl SimulationExecutor {
             }
             IntentType::AccessSchemaManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                let action =
+                    parse_access_ap_action(required_field_value(d, FieldKey::ApAction)?)?;
+                let _review_channel = parse_access_review_channel(required_field_value(
+                    d,
+                    FieldKey::AccessReviewChannel,
+                )?)?;
+                let _access_profile_id =
+                    required_field_value(d, FieldKey::AccessProfileId)?;
+                let _schema_version_id =
+                    required_field_value(d, FieldKey::SchemaVersionId)?;
+                if matches!(action, AccessApAction::CreateDraft | AccessApAction::Update) {
+                    let _profile_payload =
+                        required_field_value(d, FieldKey::ProfilePayloadJson)?;
+                }
+                if action == AccessApAction::Activate {
+                    let _rule_action = required_field_value(d, FieldKey::AccessRuleAction)?;
+                }
                 self.enforce_access_schema_gate(store, &actor_user_id, &tenant_id, now)?;
                 Ok(SimulationDispatchOutcome::AccessGatePassed {
                     requested_action: "ACCESS_SCHEMA_MANAGE".to_string(),
@@ -625,6 +642,43 @@ fn parse_invitee_type(
 
 fn parse_tenant_id(v: &FieldValue) -> Result<TenantId, StorageError> {
     TenantId::new(field_str(v).to_string()).map_err(StorageError::ContractViolation)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AccessApAction {
+    CreateDraft,
+    Update,
+    Activate,
+    Retire,
+}
+
+fn parse_access_ap_action(v: &FieldValue) -> Result<AccessApAction, StorageError> {
+    let s = field_str(v).to_ascii_uppercase();
+    match s.as_str() {
+        "CREATE_DRAFT" => Ok(AccessApAction::CreateDraft),
+        "UPDATE" => Ok(AccessApAction::Update),
+        "ACTIVATE" => Ok(AccessApAction::Activate),
+        "RETIRE" => Ok(AccessApAction::Retire),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.fields.ap_action",
+                reason: "must be one of: CREATE_DRAFT, UPDATE, ACTIVATE, RETIRE",
+            },
+        )),
+    }
+}
+
+fn parse_access_review_channel(v: &FieldValue) -> Result<(), StorageError> {
+    let s = field_str(v).to_ascii_uppercase();
+    match s.as_str() {
+        "PHONE_DESKTOP" | "READ_OUT_LOUD" => Ok(()),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.fields.access_review_channel",
+                reason: "must be PHONE_DESKTOP or READ_OUT_LOUD",
+            },
+        )),
+    }
 }
 
 fn parse_capreq_action(v: Option<&FieldValue>) -> Result<CapabilityRequestAction, StorageError> {
@@ -2144,7 +2198,17 @@ mod tests {
                     1,
                     access_draft(
                         IntentType::AccessSchemaManage,
-                        vec![access_field(FieldKey::TenantId, "tenant_1")],
+                        vec![
+                            access_field(FieldKey::TenantId, "tenant_1"),
+                            access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                            access_field(FieldKey::AccessProfileId, "AP_CLERK"),
+                            access_field(FieldKey::SchemaVersionId, "v1"),
+                            access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+                            access_field(
+                                FieldKey::ProfilePayloadJson,
+                                "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                            ),
+                        ],
                     ),
                     "idem-access-schema-allow-1",
                 ),
@@ -2255,6 +2319,67 @@ mod tests {
                 ContractViolation::InvalidValue {
                     field: "simulation_candidate_dispatch.access_instance_compile.access_decision",
                     reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_22_access_schema_manage_missing_review_channel_fails_closed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-schema-actor-2").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_schema_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(203),
+            &access_x(
+                1,
+                access_draft(
+                    IntentType::AccessSchemaManage,
+                    vec![
+                        access_field(FieldKey::TenantId, "tenant_1"),
+                        access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                        access_field(FieldKey::AccessProfileId, "AP_CLERK"),
+                        access_field(FieldKey::SchemaVersionId, "v1"),
+                        access_field(
+                            FieldKey::ProfilePayloadJson,
+                            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                        ),
+                    ],
+                ),
+                "idem-access-schema-missing-channel-1",
+            ),
+        );
+
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.fields",
+                    reason: "missing required field",
                 }
             ))
         ));
