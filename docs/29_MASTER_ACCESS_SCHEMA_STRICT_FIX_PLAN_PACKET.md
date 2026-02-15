@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP7_COMPLETED_PENDING_STEP8
+Status: STEP8_COMPLETED
 
 ## 1) Purpose
 
@@ -287,7 +287,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-15)
 - Step 7: COMPLETED (2026-02-15)
-- Step 8: PENDING
+- Step 8: COMPLETED (2026-02-15)
 
 Step 1 note:
 - Added this packet as canonical master-access schema scope (`docs/29_MASTER_ACCESS_SCHEMA_STRICT_FIX_PLAN_PACKET.md`).
@@ -409,3 +409,18 @@ Step 7 note:
   - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (16 tests)
   - `cargo test -p selene_storage -- --nocapture` -> pass
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass
+
+Step 8 note:
+- Resolved final workspace-proof blocker in deterministic NLP engine:
+  - `crates/selene_engines/src/ph1n.rs`
+  - Added exhaustive handling for new access intents:
+    - `AccessSchemaManage`
+    - `AccessEscalationVote`
+    - `AccessInstanceCompileRefresh`
+  - Added deterministic keyword detection + intent labels for the three access intents.
+- Step-8 proof commands/results:
+  - `cargo test -p selene_engines -- --nocapture` -> pass (59 tests)
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (16 tests)
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (20 tests)
+  - `cargo test --workspace` -> pass
+  - `scripts/selene_design_readiness_audit.sh` -> `EXIT:0`

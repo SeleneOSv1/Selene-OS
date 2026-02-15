@@ -96,8 +96,11 @@ impl Ph1nRuntime {
 fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
     match intent_type {
         IntentType::SendMoney => (SensitivityLevel::Confidential, true),
-        IntentType::CreateInviteLink => (SensitivityLevel::Private, true),
-        IntentType::CapreqManage => (SensitivityLevel::Private, true),
+        IntentType::CreateInviteLink
+        | IntentType::CapreqManage
+        | IntentType::AccessSchemaManage
+        | IntentType::AccessEscalationVote
+        | IntentType::AccessInstanceCompileRefresh => (SensitivityLevel::Private, true),
         IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
@@ -222,6 +225,28 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     {
         push(IntentType::CapreqManage);
     }
+    if s.contains("access schema")
+        || s.contains("access profile")
+        || s.contains("permission template")
+        || s.contains("master access")
+        || s.contains(" ap_")
+    {
+        push(IntentType::AccessSchemaManage);
+    }
+    if s.contains("escalation vote")
+        || s.contains("access vote")
+        || s.contains("vote on access")
+        || s.contains("board vote")
+    {
+        push(IntentType::AccessEscalationVote);
+    }
+    if s.contains("compile access")
+        || s.contains("refresh access instance")
+        || s.contains("rebuild access instance")
+        || s.contains("access compile refresh")
+    {
+        push(IntentType::AccessInstanceCompileRefresh);
+    }
     out
 }
 
@@ -278,6 +303,9 @@ fn normalize_intent(
         IntentType::SendMoney => normalize_send_money(req),
         IntentType::CreateInviteLink => normalize_create_invite_link(req),
         IntentType::CapreqManage => normalize_capreq_manage(req),
+        IntentType::AccessSchemaManage
+        | IntentType::AccessEscalationVote
+        | IntentType::AccessInstanceCompileRefresh => normalize_access_control(req, intent_type),
     }
 }
 
@@ -784,6 +812,27 @@ fn normalize_capreq_manage(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractVi
     )?))
 }
 
+fn normalize_access_control(
+    req: &Ph1nRequest,
+    intent_type: IntentType,
+) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let (sens, confirm) = meta_for_intent(intent_type);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        intent_type,
+        INTENT_SCHEMA_VERSION_V1,
+        vec![],
+        vec![],
+        OverallConfidence::High,
+        vec![evidence_span(FieldKey::Task, t, t)?],
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
 fn intent_type_for_missing(intent: IntentType) -> IntentType {
     intent
 }
@@ -1050,6 +1099,11 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::SendMoney => "Send money".to_string(),
         IntentType::CreateInviteLink => "Create an invite link".to_string(),
         IntentType::CapreqManage => "Manage a capability request".to_string(),
+        IntentType::AccessSchemaManage => "Manage access schemas".to_string(),
+        IntentType::AccessEscalationVote => "Manage access escalation votes".to_string(),
+        IntentType::AccessInstanceCompileRefresh => {
+            "Compile or refresh access instance".to_string()
+        }
         IntentType::Continue => "Continue".to_string(),
         IntentType::MoreDetail => "More detail".to_string(),
     }
