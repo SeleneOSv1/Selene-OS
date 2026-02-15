@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP2_COMPLETED_PENDING_STEP3
+Status: STEP3_COMPLETED_PENDING_STEP4
 
 ## 1) Purpose
 
@@ -282,7 +282,7 @@ Run readiness audit + targeted suites + workspace tests from clean tree and pin 
 
 - Step 1: COMPLETED (2026-02-15)
 - Step 2: COMPLETED (2026-02-15)
-- Step 3: PENDING
+- Step 3: COMPLETED (2026-02-15)
 - Step 4: PENDING
 - Step 5: PENDING
 - Step 6: PENDING
@@ -310,3 +310,18 @@ Step 2 note:
 - Step-2 proof:
   - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass
   - `rg` checks for KC.26 and `ph1access` anchors -> pass
+
+Step 3 note:
+- Locked DB wiring + ECM surfaces for master-access schema chain in:
+  - `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md`
+  - `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
+- Step-3 lock additions include:
+  - AP registry ledger/current wiring (`access_ap_schemas_ledger`, `access_ap_schemas_current`)
+  - overlay registry ledger/current wiring (`access_ap_overlay_ledger`, `access_ap_overlay_current`)
+  - board policy + vote wiring (`access_board_policy_ledger/current`, `access_board_votes_ledger`)
+  - access instance compile lineage refs and fail-closed schema-ref invariants
+  - deterministic chain order lock (global AP -> tenant AP -> overlays -> position rules -> per-user overrides)
+  - ECM capability rows for AP lifecycle, overlay update, board policy/vote, and access compile paths
+- Verified gate compatibility remains explicit (`ALLOW | DENY | ESCALATE` unchanged externally).
+- Step-3 proof:
+  - `rg` checks for Step-3 anchors in DB wiring + ECM docs -> pass
