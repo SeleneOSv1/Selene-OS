@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: READY_FOR_EXECUTION
+Status: EXECUTED_COMMITTED
 
 ## 1) Purpose
 
@@ -300,6 +300,7 @@ Step 7 note:
 Step 8 note:
 - Canonical audit script completed with `EXIT:0`.
 - PH1.ONB grep checkpoint confirms docs/contracts/storage/runtime reference parity for pinned schema + gate semantics.
+- Revalidated on 2026-02-15 from clean tree: `AUDIT_TREE_STATE: CLEAN` and ONB parity grep checkpoint remains aligned.
 
 ## 6) Done Criteria
 

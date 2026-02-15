@@ -387,3 +387,28 @@ For each item:
 - Closure note:
   - PH1.POSITION packet acceptance checks pass end-to-end.
   - closure proofs are recorded from a clean-tree checkpoint and can be used directly for readiness sign-off.
+
+## PH1.ONB strict packet execution status (2026-02-15, clean revalidation checkpoint)
+
+- Packet reference:
+  - `docs/18_PH1_ONB_STRICT_FIX_PLAN_PACKET.md`
+- Execution status:
+  - Step 1 complete (docs lock)
+  - Step 2 complete (kernel contract delta)
+  - Step 3 complete (typed repo parity)
+  - Step 4 complete (storage behavior fixes)
+  - Step 5 complete (runtime wiring)
+  - Step 6 complete (migration parity / N/A in branch)
+  - Step 7 complete (test closure)
+  - Step 8 complete (final closure gates)
+- Revalidation proof command 1 (design readiness audit):
+  - `scripts/selene_design_readiness_audit.sh` -> `AUDIT_EXIT:0`
+  - key lines:
+    - `AUDIT_TREE_STATE: CLEAN`
+    - `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`
+    - `END OF AUDIT`
+- Revalidation proof command 2 (ONB parity grep checkpoint):
+  - `rg -n "PH1\\.ONB|ONB_SESSION_START_DRAFT|ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT|ONB_EMPLOYEE_SENDER_VERIFY_COMMIT|required_verification_gates|pinned_schema" docs/COVERAGE_MATRIX.md docs/DB_WIRING/PH1_ONB.md docs/ECM/PH1_ONB.md docs/BLUEPRINTS/ONB_INVITED.md crates/selene_kernel_contracts/src/ph1onb.rs crates/selene_storage/src/ph1f.rs crates/selene_os/src/ph1onb.rs`
+  - result: references remain coherent across docs/contracts/storage/runtime.
+- Closure note:
+  - PH1.ONB packet remains closed and aligned after PH1.POSITION closure updates.
