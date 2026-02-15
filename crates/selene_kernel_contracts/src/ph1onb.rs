@@ -250,6 +250,11 @@ pub struct OnbSessionStartResult {
     pub onboarding_session_id: OnboardingSessionId,
     pub status: OnboardingStatus,
     pub next_step: OnboardingNextStep,
+    pub pinned_schema_id: Option<String>,
+    pub pinned_schema_version: Option<String>,
+    pub pinned_overlay_set_id: Option<String>,
+    pub pinned_selector_snapshot_ref: Option<String>,
+    pub required_verification_gates: Vec<String>,
 }
 
 impl OnbSessionStartResult {
@@ -263,9 +268,31 @@ impl OnbSessionStartResult {
             onboarding_session_id,
             status,
             next_step,
+            pinned_schema_id: None,
+            pinned_schema_version: None,
+            pinned_overlay_set_id: None,
+            pinned_selector_snapshot_ref: None,
+            required_verification_gates: Vec::new(),
         };
         r.validate()?;
         Ok(r)
+    }
+
+    pub fn with_pinned_schema_context(
+        mut self,
+        pinned_schema_id: Option<String>,
+        pinned_schema_version: Option<String>,
+        pinned_overlay_set_id: Option<String>,
+        pinned_selector_snapshot_ref: Option<String>,
+        required_verification_gates: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.pinned_schema_id = pinned_schema_id;
+        self.pinned_schema_version = pinned_schema_version;
+        self.pinned_overlay_set_id = pinned_overlay_set_id;
+        self.pinned_selector_snapshot_ref = pinned_selector_snapshot_ref;
+        self.required_verification_gates = required_verification_gates;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -278,6 +305,39 @@ impl Validate for OnbSessionStartResult {
             });
         }
         self.onboarding_session_id.validate()?;
+        validate_opt_id(
+            "onb_session_start_result.pinned_schema_id",
+            &self.pinned_schema_id,
+            128,
+        )?;
+        validate_opt_id(
+            "onb_session_start_result.pinned_schema_version",
+            &self.pinned_schema_version,
+            128,
+        )?;
+        validate_opt_id(
+            "onb_session_start_result.pinned_overlay_set_id",
+            &self.pinned_overlay_set_id,
+            128,
+        )?;
+        validate_opt_id(
+            "onb_session_start_result.pinned_selector_snapshot_ref",
+            &self.pinned_selector_snapshot_ref,
+            256,
+        )?;
+        if self.required_verification_gates.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_session_start_result.required_verification_gates",
+                reason: "must contain <= 32 gates",
+            });
+        }
+        for gate in &self.required_verification_gates {
+            validate_id(
+                "onb_session_start_result.required_verification_gates[]",
+                gate,
+                64,
+            )?;
+        }
         Ok(())
     }
 }

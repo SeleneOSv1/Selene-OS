@@ -50,10 +50,11 @@ Deterministic boundary rules:
   - position-linked onboarding (`invitee_type=EMPLOYEE`) reads active requirements from PH1.POSITION for the pinned `position_id`.
   - non-position onboarding types read active requirements from the schema registry selected by onboarding type.
 - On session start, PH1.ONB pins the effective schema context for replay stability:
-  - `schema_id`
-  - `schema_version`
-  - `effective_overlay_set_id`
-  - bounded selector snapshot used for deterministic evaluation
+  - `pinned_schema_id`
+  - `pinned_schema_version`
+  - `pinned_overlay_set_id`
+  - `pinned_selector_snapshot`
+- PH1.ONB also computes and persists `required_verification_gates[]` from pinned schema rules.
 - `missing_required_fields` is computed from pinned schema context plus current payload/resolved answers.
 - never ask twice: if a value exists in pinned payload context or resolved fields, PH1.ONB must not ask that field again.
 
@@ -92,7 +93,7 @@ Deterministic boundary rules:
   - access-instance creation resolves user-scoped identity/access safely
 
 ### Pinned context load rule (clarify loop source of truth)
-- on session start, PH1.ONB resolves activated link context by `token_id` and pins schema context (`schema_id`, `schema_version`, overlay set, selectors).
+- on session start, PH1.ONB resolves activated link context by `token_id` and pins schema context (`pinned_schema_id`, `pinned_schema_version`, `pinned_overlay_set_id`, `pinned_selector_snapshot`).
 - this deterministic pinned context drives one-question-at-a-time clarify and prevents repeats.
 
 ## 4) Writes (outputs)
@@ -101,7 +102,8 @@ Deterministic boundary rules:
 - writes: `onboarding_sessions` (create or deterministic reuse by activated token)
 - required fields:
   - `token_id`, `device_fingerprint`, optional `prefilled_context_ref`, optional `tenant_id`
-  - pinned schema context: `schema_id`, `schema_version`, `effective_overlay_set_id`, bounded selector snapshot
+  - pinned schema context: `pinned_schema_id`, `pinned_schema_version`, `pinned_overlay_set_id`, `pinned_selector_snapshot`
+  - `required_verification_gates[]` derived from pinned schema
 - idempotency rule:
   - deterministic reuse by `onboarding_session_by_link` (one session per activated token)
 
@@ -112,11 +114,13 @@ Deterministic boundary rules:
 
 ### `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT`
 - writes: schema-required evidence capture refs in `onboarding_sessions` (legacy capability id retained)
+- gate rule: execute only when `required_verification_gates[]` includes photo evidence gate
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
 ### `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT`
 - writes: schema-required sender confirmation decision (`CONFIRMED` / `REJECTED`) in `onboarding_sessions` (legacy capability id retained)
+- gate rule: execute only when `required_verification_gates[]` includes sender confirmation gate
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 

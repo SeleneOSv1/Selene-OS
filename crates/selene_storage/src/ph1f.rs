@@ -50,7 +50,8 @@ use selene_kernel_contracts::ph1pbs::{
 };
 use selene_kernel_contracts::ph1position::{
     PositionId, PositionLifecycleAction, PositionLifecycleState, PositionPolicyResult, PositionRecord,
-    PositionRequestedAction, PositionRequirementFieldSpec, PositionRequirementRuleType,
+    PositionRequestedAction, PositionRequirementEvidenceMode, PositionRequirementFieldSpec,
+    PositionRequirementRuleType,
     PositionRequirementsSchemaDraftResult, PositionRequirementsSchemaLifecycleResult,
     PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, PositionScheduleType,
     PositionValidationStatus, TenantId,
@@ -690,6 +691,11 @@ pub struct OnboardingSessionRecord {
     pub invitee_type: InviteeType,
     pub tenant_id: Option<String>,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
+    pub pinned_schema_id: Option<String>,
+    pub pinned_schema_version: Option<String>,
+    pub pinned_overlay_set_id: Option<String>,
+    pub pinned_selector_snapshot_ref: Option<String>,
+    pub required_verification_gates: Vec<String>,
     pub device_fingerprint_hash: String,
     pub status: OnboardingStatus,
     pub created_at: MonotonicTimeNs,
@@ -3537,6 +3543,13 @@ impl Ph1fStore {
                 rec.onboarding_session_id.clone(),
                 OnboardingStatus::DraftCreated,
                 next_step,
+            )?
+            .with_pinned_schema_context(
+                rec.pinned_schema_id.clone(),
+                rec.pinned_schema_version.clone(),
+                rec.pinned_overlay_set_id.clone(),
+                rec.pinned_selector_snapshot_ref.clone(),
+                rec.required_verification_gates.clone(),
             )?);
         }
 
@@ -3560,6 +3573,13 @@ impl Ph1fStore {
         let onboarding_session_id = OnboardingSessionId::new(format!("onb_{session_hash}"))?;
 
         let df_hash = deterministic_device_fingerprint_hash_hex(&device_fingerprint);
+        let (
+            pinned_schema_id,
+            pinned_schema_version,
+            pinned_overlay_set_id,
+            pinned_selector_snapshot_ref,
+            required_verification_gates,
+        ) = self.ph1onb_resolve_pinned_schema_context(&token_id, effective_tenant_id.as_deref())?;
 
         let rec = OnboardingSessionRecord {
             schema_version: SchemaVersion(1),
@@ -3568,6 +3588,11 @@ impl Ph1fStore {
             invitee_type: link.invitee_type,
             tenant_id: effective_tenant_id.clone(),
             prefilled_context_ref: effective_prefilled_context_ref.clone(),
+            pinned_schema_id: pinned_schema_id.clone(),
+            pinned_schema_version: pinned_schema_version.clone(),
+            pinned_overlay_set_id: pinned_overlay_set_id.clone(),
+            pinned_selector_snapshot_ref: pinned_selector_snapshot_ref.clone(),
+            required_verification_gates: required_verification_gates.clone(),
             device_fingerprint_hash: df_hash,
             status: OnboardingStatus::DraftCreated,
             created_at: now,
@@ -3602,7 +3627,85 @@ impl Ph1fStore {
             onboarding_session_id,
             OnboardingStatus::DraftCreated,
             next_step,
+        )?
+        .with_pinned_schema_context(
+            pinned_schema_id,
+            pinned_schema_version,
+            pinned_overlay_set_id,
+            pinned_selector_snapshot_ref,
+            required_verification_gates,
         )?)
+    }
+
+    fn ph1onb_resolve_pinned_schema_context(
+        &self,
+        token_id: &TokenId,
+        tenant_hint: Option<&str>,
+    ) -> Result<
+        (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Vec<String>,
+        ),
+        StorageError,
+    > {
+        let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
+            table: "links.token_id",
+            key: token_id.as_str().to_string(),
+        })?;
+
+        let mut pinned_schema_id = Some(format!(
+            "invitee:{}",
+            match link.invitee_type {
+                InviteeType::Company => "company",
+                InviteeType::Customer => "customer",
+                InviteeType::Employee => "employee",
+                InviteeType::FamilyMember => "family_member",
+                InviteeType::Friend => "friend",
+                InviteeType::Associate => "associate",
+            }
+        ));
+        let mut pinned_schema_version = link.schema_version_id.clone();
+        let mut pinned_overlay_set_id = Some("default".to_string());
+        let mut pinned_selector_snapshot_ref = None;
+
+        if link.invitee_type == InviteeType::Employee {
+            if let Some(prefilled) = link.prefilled_context.as_ref() {
+                if let (Some(position_id_raw), Some(tenant_raw)) = (
+                    prefilled.position_id.as_deref(),
+                    tenant_hint.or(prefilled.tenant_id.as_deref()),
+                ) {
+                    let tenant_id =
+                        TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
+                    let position_id =
+                        PositionId::new(position_id_raw.to_string()).map_err(StorageError::ContractViolation)?;
+                    if let Some(current) = self
+                        .position_requirements_schema_current
+                        .get(&(tenant_id, position_id))
+                    {
+                        pinned_schema_id = Some(format!("position:{position_id_raw}"));
+                        pinned_schema_version = Some(current.active_schema_version_id.clone());
+                        pinned_overlay_set_id = Some("position_requirements_active".to_string());
+                        pinned_selector_snapshot_ref = Some(format!(
+                            "selector:{tenant_raw}:{position_id_raw}:{}",
+                            current.source_event_id
+                        ));
+                    }
+                }
+            }
+        }
+
+        let required_verification_gates =
+            self.ph1onb_required_verification_gates_for_token(token_id, tenant_hint)?;
+        Ok((
+            pinned_schema_id,
+            pinned_schema_version,
+            pinned_overlay_set_id,
+            pinned_selector_snapshot_ref,
+            required_verification_gates,
+        ))
     }
 
     fn ph1onb_validate_employee_position_prereq(
@@ -3699,81 +3802,60 @@ impl Ph1fStore {
         Ok(())
     }
 
-    fn ph1onb_field_required_for_token(
+    fn ph1onb_verification_gate_required(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+        gate: &str,
+    ) -> Result<bool, StorageError> {
+        let rec = self.onboarding_sessions.get(onboarding_session_id).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            },
+        )?;
+
+        if rec.required_verification_gates.iter().any(|g| g == gate) {
+            return Ok(true);
+        }
+
+        let derived =
+            self.ph1onb_required_verification_gates_for_token(&rec.token_id, rec.tenant_id.as_deref())?;
+        Ok(derived.iter().any(|g| g == gate))
+    }
+
+    fn ph1onb_sender_verification_required(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Result<bool, StorageError> {
+        const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
+        self.ph1onb_verification_gate_required(onboarding_session_id, GATE_SENDER_CONFIRMATION)
+    }
+
+    fn ph1onb_required_verification_gates_for_token(
         &self,
         token_id: &TokenId,
         tenant_hint: Option<&str>,
-        field_key: &str,
-    ) -> Result<bool, StorageError> {
-        fn selector_value<'a>(
-            selectors: &'a PositionSchemaSelectorSnapshot,
-            selector_key: &str,
-        ) -> Result<Option<&'a str>, StorageError> {
-            match selector_key {
-                "company_size" => Ok(selectors.company_size.as_deref()),
-                "industry_code" => Ok(selectors.industry_code.as_deref()),
-                "jurisdiction" => Ok(selectors.jurisdiction.as_deref()),
-                "position_family" => Ok(selectors.position_family.as_deref()),
-                _ => Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                    field: "position_requirement_field_spec.required_predicate_ref",
-                    reason: "selector key must be one of company_size|industry_code|jurisdiction|position_family",
-                })),
-            }
-        }
-
-        fn required_by_rule(
-            spec: &PositionRequirementFieldSpec,
-            selectors: &PositionSchemaSelectorSnapshot,
-        ) -> Result<bool, StorageError> {
-            match spec.required_rule {
-                PositionRequirementRuleType::Always => Ok(true),
-                PositionRequirementRuleType::Conditional => {
-                    let pred = spec.required_predicate_ref.as_deref().ok_or(
-                        StorageError::ContractViolation(ContractViolation::InvalidValue {
-                            field: "position_requirement_field_spec.required_predicate_ref",
-                            reason: "must be present when required_rule=Conditional",
-                        }),
-                    )?;
-                    let (lhs_raw, rhs_raw) = pred.split_once('=').or_else(|| pred.split_once(':')).ok_or(
-                        StorageError::ContractViolation(ContractViolation::InvalidValue {
-                            field: "position_requirement_field_spec.required_predicate_ref",
-                            reason: "must use [selector.]<key>=<value> or [selector.]<key>:<value>",
-                        }),
-                    )?;
-                    let lhs = lhs_raw.trim();
-                    let rhs = rhs_raw.trim();
-                    if lhs.is_empty() || rhs.is_empty() {
-                        return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                            field: "position_requirement_field_spec.required_predicate_ref",
-                            reason: "selector key and selector value must be non-empty",
-                        }));
-                    }
-                    let selector_key = lhs.strip_prefix("selector.").unwrap_or(lhs);
-                    let Some(actual) = selector_value(selectors, selector_key)? else {
-                        return Ok(false);
-                    };
-                    Ok(actual == rhs)
-                }
-            }
-        }
+    ) -> Result<Vec<String>, StorageError> {
+        const GATE_PHOTO_EVIDENCE_CAPTURE: &str = "PHOTO_EVIDENCE_CAPTURE";
+        const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
 
         let link = self.links.get(token_id).ok_or(StorageError::ForeignKeyViolation {
             table: "links.token_id",
             key: token_id.as_str().to_string(),
         })?;
 
-        if link.missing_required_fields.iter().any(|f| f == field_key) {
-            return Ok(true);
+        if link.invitee_type != InviteeType::Employee {
+            return Ok(Vec::new());
         }
 
         let Some(prefilled) = link.prefilled_context.as_ref() else {
-            return Ok(false);
+            return Ok(Vec::new());
         };
         let Some(position_id_raw) = prefilled.position_id.as_ref() else {
-            return Ok(false);
+            return Ok(Vec::new());
         };
         let Some(tenant_raw) = tenant_hint.or(prefilled.tenant_id.as_deref()) else {
-            return Ok(false);
+            return Ok(Vec::new());
         };
 
         let tenant_id = TenantId::new(tenant_raw.to_string()).map_err(StorageError::ContractViolation)?;
@@ -3784,66 +3866,20 @@ impl Ph1fStore {
             .position_requirements_schema_current
             .get(&(tenant_id, position_id))
         else {
-            return Ok(false);
+            return Ok(Vec::new());
         };
 
-        for spec in current
-            .active_field_specs
-            .iter()
-            .filter(|spec| spec.field_key == field_key)
-        {
-            if required_by_rule(spec, &current.active_selector_snapshot)? {
-                return Ok(true);
+        let mut gates: BTreeSet<String> = BTreeSet::new();
+        for spec in &current.active_field_specs {
+            if !Self::ph1position_required_by_rule(spec, &current.active_selector_snapshot)? {
+                continue;
+            }
+            if spec.evidence_mode == PositionRequirementEvidenceMode::DocRequired {
+                gates.insert(GATE_PHOTO_EVIDENCE_CAPTURE.to_string());
+                gates.insert(GATE_SENDER_CONFIRMATION.to_string());
             }
         }
-
-        Ok(false)
-    }
-
-    fn ph1onb_field_required_for_session(
-        &self,
-        onboarding_session_id: &OnboardingSessionId,
-        field_key: &str,
-    ) -> Result<bool, StorageError> {
-        let rec = self.onboarding_sessions.get(onboarding_session_id).ok_or(
-            StorageError::ForeignKeyViolation {
-                table: "onboarding_sessions.onboarding_session_id",
-                key: onboarding_session_id.as_str().to_string(),
-            },
-        )?;
-
-        self.ph1onb_field_required_for_token(&rec.token_id, rec.tenant_id.as_deref(), field_key)
-    }
-
-    fn ph1onb_sender_verification_required(
-        &self,
-        onboarding_session_id: &OnboardingSessionId,
-    ) -> Result<bool, StorageError> {
-        const PHOTO_FIELD_KEYS: [&str; 3] = ["photo_blob_ref", "photo_proof_ref", "employee_photo"];
-        const VERIFY_FIELD_KEYS: [&str; 3] = [
-            "sender_verification",
-            "photo_sender_verification",
-            "employee_sender_verify",
-        ];
-
-        let photo_required = PHOTO_FIELD_KEYS
-            .iter()
-            .try_fold(false, |acc, k| {
-                if acc {
-                    return Ok(true);
-                }
-                self.ph1onb_field_required_for_session(onboarding_session_id, k)
-            })?;
-        if photo_required {
-            return Ok(true);
-        }
-
-        VERIFY_FIELD_KEYS.iter().try_fold(false, |acc, k| {
-            if acc {
-                return Ok(true);
-            }
-            self.ph1onb_field_required_for_session(onboarding_session_id, k)
-        })
+        Ok(gates.into_iter().collect())
     }
 
     pub fn ph1onb_terms_accept_commit(
@@ -3904,6 +3940,8 @@ impl Ph1fStore {
         sender_user_id: UserId,
         idempotency_key: String,
     ) -> Result<OnbEmployeePhotoCaptureSendResult, StorageError> {
+        const GATE_PHOTO_EVIDENCE_CAPTURE: &str = "PHOTO_EVIDENCE_CAPTURE";
+
         let idx = (onboarding_session_id.clone(), idempotency_key.clone());
         if let Some(existing_photo_proof_ref) = self.onb_photo_idempotency_index.get(&idx) {
             return Ok(OnbEmployeePhotoCaptureSendResult::v1(
@@ -3911,6 +3949,15 @@ impl Ph1fStore {
                 existing_photo_proof_ref.clone(),
                 VerificationStatus::Pending,
             )?);
+        }
+
+        if !self.ph1onb_verification_gate_required(&onboarding_session_id, GATE_PHOTO_EVIDENCE_CAPTURE)? {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_employee_photo_capture_send_commit.required_verification_gates",
+                    reason: "photo evidence gate is not required by pinned schema context",
+                },
+            ));
         }
 
         let rec = self
@@ -3959,12 +4006,23 @@ impl Ph1fStore {
         decision: SenderVerifyDecision,
         idempotency_key: String,
     ) -> Result<OnbEmployeeSenderVerifyResult, StorageError> {
+        const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
+
         let idx = (onboarding_session_id.clone(), idempotency_key.clone());
         if let Some(existing_status) = self.onb_sender_verify_idempotency_index.get(&idx) {
             return Ok(OnbEmployeeSenderVerifyResult::v1(
                 onboarding_session_id,
                 *existing_status,
             )?);
+        }
+
+        if !self.ph1onb_verification_gate_required(&onboarding_session_id, GATE_SENDER_CONFIRMATION)? {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_employee_sender_verify_commit.required_verification_gates",
+                    reason: "sender confirmation gate is not required by pinned schema context",
+                },
+            ));
         }
 
         let rec = self
@@ -10087,6 +10145,11 @@ mod tests {
                 invitee_type: InviteeType::Employee,
                 tenant_id: Some("tenant_1".to_string()),
                 prefilled_context_ref: None,
+                pinned_schema_id: None,
+                pinned_schema_version: None,
+                pinned_overlay_set_id: None,
+                pinned_selector_snapshot_ref: None,
+                required_verification_gates: Vec::new(),
                 device_fingerprint_hash: "fp_hash_1".to_string(),
                 status: OnboardingStatus::DraftCreated,
                 created_at: MonotonicTimeNs(5),

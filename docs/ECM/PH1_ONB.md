@@ -12,10 +12,10 @@
 ### `PH1ONB_SESSION_START_DRAFT_ROW`
 - `name`: Start onboarding session from `LINK_OPEN_ACTIVATE` handoff
 - `input_schema`: `(token_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
-- `output_schema`: `Result<OnbSessionStartResult, StorageError>`
+- `output_schema`: `Result<OnbSessionStartResult{onboarding_session_id,status,next_step,pinned_schema_id,pinned_schema_version,pinned_overlay_set_id,pinned_selector_snapshot,required_verification_gates[]}, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
-- `load_rule_note`: ONB session start resolves activated link context by `token_id`, pins schema context, then drives one-question clarify from pinned requirements.
+- `load_rule_note`: ONB session start resolves activated link context by `token_id`, pins schema context, computes `required_verification_gates[]`, then drives one-question clarify from pinned requirements.
 
 ### `PH1ONB_SESSION_ROW`
 - `name`: Read one onboarding session row
@@ -44,6 +44,7 @@
 - `output_schema`: `Result<OnbEmployeePhotoCaptureSendResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `gate_rule`: callable only when pinned `required_verification_gates[]` contains photo evidence gate.
 
 ### `PH1ONB_EMPLOYEE_SENDER_VERIFY_COMMIT_ROW`
 - `name`: Commit schema-required sender verification decision (legacy capability id retained)
@@ -51,6 +52,7 @@
 - `output_schema`: `Result<OnbEmployeeSenderVerifyResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `gate_rule`: callable only when pinned `required_verification_gates[]` contains sender confirmation gate.
 
 ### `PH1ONB_PRIMARY_DEVICE_CONFIRM_COMMIT_ROW`
 - `name`: Commit primary-device proof outcome
@@ -98,6 +100,7 @@
 - deterministic onboarding failure domains include:
   - link/session scope mismatch
   - required gate not satisfied (terms/verify/device/access)
+- required verification gates are schema-derived from pinned schema context; no hardcoded field alias fallback.
 - blocked completion when schema-required sender confirmation is not satisfied
   - idempotency replay/no-op
 - all failures are fail-closed and reason-coded.

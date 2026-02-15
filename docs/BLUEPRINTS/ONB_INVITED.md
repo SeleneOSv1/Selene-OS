@@ -34,6 +34,11 @@
 ```text
 onboarding_session_id: string
 status: enum (COMPLETE | BLOCKED | DEFERRED | FAILED)
+pinned_schema_id: string
+pinned_schema_version: string
+pinned_overlay_set_id: string
+pinned_selector_snapshot: object (bounded)
+required_verification_gates: string[]
 required_gates_remaining: string[]
 access_engine_instance_id: string (optional)
 ```
@@ -42,13 +47,13 @@ access_engine_instance_id: string (optional)
 
 | step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
 |---|---|---|---|---|---|---:|---:|---:|---|
-| ONB_INVITED_S01 | PH1.ONB | PH1ONB_SESSION_START_DRAFT_ROW | token_id, device_fingerprint | onboarding_session_id, onboarding_state, pinned_schema_context | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_START_RETRYABLE] |
+| ONB_INVITED_S01 | PH1.ONB | PH1ONB_SESSION_START_DRAFT_ROW | token_id, device_fingerprint | onboarding_session_id, onboarding_state, pinned_schema_context, required_verification_gates | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_START_RETRYABLE] |
 | ONB_INVITED_S02 | PH1.C | PH1C_TRANSCRIPT_OK_COMMIT_ROW | correlation_id, turn_id, transcript_hash | transcript_ok evidence row | DB_WRITE | 1200 | 1 | 150 | [STT_FAIL_PROVIDER_TIMEOUT, STT_FAIL_NETWORK_UNAVAILABLE] |
 | ONB_INVITED_S03 | PH1.NLP | PH1NLP_INTENT_DRAFT_COMMIT_ROW | transcript_ok, onboarding_context | intent_draft / missing field signal | DB_WRITE | 200 | 1 | 100 | [NLP_INPUT_MISSING] |
 | ONB_INVITED_S04 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | missing field signal | one-question clarify state | DB_WRITE | 300 | 1 | 100 | [OS_CLARIFY_TIMEOUT] |
 | ONB_INVITED_S05 | PH1.ONB | PH1ONB_TERMS_ACCEPT_COMMIT_ROW | onboarding_session_id, terms_version_id, accepted, idempotency_key | terms_state | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_TERMS_RETRYABLE] |
-| ONB_INVITED_S06 | PH1.ONB | PH1ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT_ROW | onboarding_session_id, photo_blob_ref, sender_user_id, idempotency_key | sender_verification_pending | DB_WRITE (simulation-gated, conditional: run only when pinned schema requires photo evidence + sender confirmation) | 1000 | 2 | 350 | [ONB_PHOTO_SEND_RETRYABLE] |
-| ONB_INVITED_S07 | PH1.ONB | PH1ONB_EMPLOYEE_SENDER_VERIFY_COMMIT_ROW | onboarding_session_id, sender_user_id, decision, idempotency_key | sender_verification_state | DB_WRITE (simulation-gated, conditional: run only when pinned schema requires sender confirmation) | 800 | 2 | 300 | [ONB_SENDER_VERIFY_RETRYABLE] |
+| ONB_INVITED_S06 | PH1.ONB | PH1ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT_ROW | onboarding_session_id, photo_blob_ref, sender_user_id, idempotency_key | sender_verification_pending | DB_WRITE (simulation-gated, conditional: run only when `required_verification_gates` includes photo evidence gate; legacy capability id retained) | 1000 | 2 | 350 | [ONB_PHOTO_SEND_RETRYABLE] |
+| ONB_INVITED_S07 | PH1.ONB | PH1ONB_EMPLOYEE_SENDER_VERIFY_COMMIT_ROW | onboarding_session_id, sender_user_id, decision, idempotency_key | sender_verification_state | DB_WRITE (simulation-gated, conditional: run only when `required_verification_gates` includes sender confirmation gate; legacy capability id retained) | 800 | 2 | 300 | [ONB_SENDER_VERIFY_RETRYABLE] |
 | ONB_INVITED_S08 | PH1.ONB | PH1ONB_PRIMARY_DEVICE_CONFIRM_COMMIT_ROW | onboarding_session_id, device_id, proof_type, proof_ok, idempotency_key | primary_device_confirmed | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_PRIMARY_DEVICE_RETRYABLE] |
 | ONB_INVITED_S09 | PH1.VOICE.ID | VID_ENROLL_START_DRAFT_ROW | onboarding_session_id, device_id, consent_asserted | voice_enrollment_session_id | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [VID_IDEMPOTENCY_REPLAY] |
 | ONB_INVITED_S10 | PH1.VOICE.ID | VID_ENROLL_SAMPLE_COMMIT_ROW | voice_enrollment_session_id, sample payload, idempotency_key | enrollment_progress | DB_WRITE (simulation-gated) | 900 | 3 | 250 | [VID_IDEMPOTENCY_REPLAY] |
@@ -101,3 +106,4 @@ Deferral/reminder rule (S01/S04 consent/clarify flow):
 - `AT-PBS-ONB-07`: ONB evaluates missing required fields from pinned schema context and asks only those fields (never ask twice).
 - `AT-PBS-ONB-08`: Resume after interruption continues from persisted onboarding session state with no re-asks.
 - `AT-PBS-ONB-09`: Device mismatch on resume fails closed.
+- `AT-PBS-ONB-10`: Schema-required verification gates are evaluated from pinned schema context (no hardcoded field alias fallback).

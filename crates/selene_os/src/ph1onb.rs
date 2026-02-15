@@ -1050,7 +1050,7 @@ mod tests {
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1_voice_id::VoiceSampleResult as ContractVoiceSampleResult;
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
-    use selene_kernel_contracts::ph1link::{InviteeType, Ph1LinkRequest};
+    use selene_kernel_contracts::ph1link::{InviteeType, Ph1LinkRequest, PrefilledContext};
     use selene_kernel_contracts::ph1onb::{
         OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
         OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
@@ -1059,7 +1059,10 @@ mod tests {
         TermsStatus, VerificationStatus,
     };
     use selene_kernel_contracts::ph1position::{
-        PositionLifecycleState, PositionPolicyResult, PositionScheduleType, TenantId,
+        PositionLifecycleState, PositionPolicyResult, PositionRequirementEvidenceMode,
+        PositionRequirementExposureRule, PositionRequirementFieldSpec, PositionRequirementFieldType,
+        PositionRequirementRuleType, PositionRequirementSensitivity, PositionScheduleType,
+        PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, TenantId,
     };
     use selene_storage::ph1f::{
         DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState,
@@ -1150,11 +1153,144 @@ mod tests {
         token_id
     }
 
+    fn selector_snapshot() -> PositionSchemaSelectorSnapshot {
+        PositionSchemaSelectorSnapshot {
+            company_size: Some("SMALL".to_string()),
+            industry_code: Some("LOGISTICS".to_string()),
+            jurisdiction: Some("US".to_string()),
+            position_family: Some("DRIVER".to_string()),
+        }
+    }
+
+    fn required_doc_field(field_key: &str) -> PositionRequirementFieldSpec {
+        PositionRequirementFieldSpec {
+            field_key: field_key.to_string(),
+            field_type: PositionRequirementFieldType::String,
+            required_rule: PositionRequirementRuleType::Always,
+            required_predicate_ref: None,
+            validation_ref: None,
+            sensitivity: PositionRequirementSensitivity::Private,
+            exposure_rule: PositionRequirementExposureRule::InternalOnly,
+            evidence_mode: PositionRequirementEvidenceMode::DocRequired,
+            prompt_short: format!("Provide {field_key}"),
+            prompt_long: format!("Please provide required field {field_key}."),
+        }
+    }
+
+    fn make_activated_link_with_required_verification(
+        store: &mut Ph1fStore,
+    ) -> selene_kernel_contracts::ph1link::TokenId {
+        upsert_active_company(store);
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let position = store
+            .ph1position_create_draft(
+                MonotonicTimeNs(now().0 + 1),
+                user("inviter"),
+                tenant_id.clone(),
+                "company_1".to_string(),
+                "Driver".to_string(),
+                "Logistics".to_string(),
+                "US".to_string(),
+                PositionScheduleType::FullTime,
+                "profile_driver".to_string(),
+                "band_l2".to_string(),
+                "onb-os-pos-create".to_string(),
+                "POSITION_SIM_001_CREATE_DRAFT",
+                ReasonCodeId(0x5900_0001),
+            )
+            .unwrap();
+        store
+            .ph1position_activate_commit(
+                MonotonicTimeNs(now().0 + 2),
+                user("inviter"),
+                tenant_id.clone(),
+                position.position_id.clone(),
+                "onb-os-pos-activate".to_string(),
+                "POSITION_SIM_004_ACTIVATE_COMMIT",
+                ReasonCodeId(0x5900_0004),
+            )
+            .unwrap();
+        store
+            .ph1position_requirements_schema_create_draft(
+                MonotonicTimeNs(now().0 + 3),
+                user("inviter"),
+                tenant_id.clone(),
+                "company_1".to_string(),
+                position.position_id.clone(),
+                "schema_v1".to_string(),
+                selector_snapshot(),
+                vec![required_doc_field("driver_license_doc_ref")],
+                "onb-os-schema-create".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+                ReasonCodeId(0x5900_0006),
+            )
+            .unwrap();
+        store
+            .ph1position_requirements_schema_activate_commit(
+                MonotonicTimeNs(now().0 + 4),
+                user("inviter"),
+                tenant_id,
+                "company_1".to_string(),
+                position.position_id.clone(),
+                "schema_v1".to_string(),
+                PositionSchemaApplyScope::NewHiresOnly,
+                "onb-os-schema-activate".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+                ReasonCodeId(0x5900_0008),
+            )
+            .unwrap();
+
+        let prefilled = PrefilledContext::v1(
+            Some("tenant_1".to_string()),
+            Some("company_1".to_string()),
+            Some(position.position_id.as_str().to_string()),
+            Some("loc_1".to_string()),
+            Some("2026-02-15".to_string()),
+            None,
+            Some("band_l2".to_string()),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let req = Ph1LinkRequest::invite_generate_draft_v1(
+            corr(),
+            turn(),
+            now(),
+            user("inviter"),
+            InviteeType::Employee,
+            Some("tenant_1".to_string()),
+            None,
+            Some(prefilled),
+            None,
+        )
+        .unwrap();
+        let link_rt = crate::ph1link::Ph1LinkRuntime::new(crate::ph1link::Ph1LinkConfig::mvp_v1());
+        let out = link_rt.run(store, &req).unwrap();
+        let token_id = match out {
+            selene_kernel_contracts::ph1link::Ph1LinkResponse::Ok(ok) => {
+                ok.link_generate_result.unwrap().token_id
+            }
+            _ => panic!("expected ok"),
+        };
+
+        let open = Ph1LinkRequest::invite_open_activate_commit_v1(
+            corr(),
+            turn(),
+            MonotonicTimeNs(now().0 + 5),
+            token_id.clone(),
+            "device_fp_required_verify".to_string(),
+            "idem_onb_open_required_verify".to_string(),
+        )
+        .unwrap();
+        let _ = link_rt.run(store, &open).unwrap();
+        token_id
+    }
+
     #[test]
     fn onb_happy_path_employee_minimal() {
         let rt = Ph1OnbOrchRuntime::default();
         let mut store = store_with_inviter();
-        let token_id = make_activated_link(&mut store);
+        let token_id = make_activated_link_with_required_verification(&mut store);
 
         // Start session.
         let start = Ph1OnbRequest {
@@ -1172,10 +1308,24 @@ mod tests {
             }),
         };
         let out = rt.run(&mut store, &start).unwrap();
-        let session_id = match out {
-            Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap().onboarding_session_id,
+        let session_start = match out {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap(),
             _ => panic!("expected ok"),
         };
+        assert!(session_start
+            .required_verification_gates
+            .iter()
+            .any(|g| g == "PHOTO_EVIDENCE_CAPTURE"));
+        assert!(session_start
+            .required_verification_gates
+            .iter()
+            .any(|g| g == "SENDER_CONFIRMATION"));
+        assert!(session_start
+            .pinned_schema_id
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("position:"));
+        let session_id = session_start.onboarding_session_id;
 
         // Terms accept.
         let terms = Ph1OnbRequest {
