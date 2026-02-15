@@ -78,3 +78,13 @@ Related docs:
 - LA6 (endpointing + language): goal: implement PH1.ENDPOINT + PH1.LANG; acceptance bar: faster turns with fewer clipped utterances; no forced translation; code-switch preserved.
 - LA7 (context + cache): goal: implement PH1.CONTEXT + PH1.CACHE as bounded advisory helpers; acceptance bar: cache/context never bypass gates; all context is evidence-backed.
 - LA8 (offline optimizers): goal: implement PH1.PATTERN + PH1.RLL as offline-only artifact generators; acceptance bar: outputs are artifacts only and require approval to activate; never a runtime controller.
+
+## Strict Packet Checkpoint (2026-02-15)
+- Completed strict packet wave (executed + committed): `docs/16_PH1_POSITION_STRICT_FIX_PLAN_PACKET.md`, `docs/18_PH1_ONB_STRICT_FIX_PLAN_PACKET.md`, `docs/19_ONB_BACKFILL_STRICT_FIX_PLAN_PACKET.md`, `docs/20_PH1_LINK_CLOSURE_STRICT_FIX_PLAN_PACKET.md`, `docs/21_PH1_CAPREQ_STRICT_FIX_PLAN_PACKET.md`.
+- Historical note: `docs/17_PH1_LINK_STRICT_FIX_PLAN_PACKET.md` is superseded by packet 20.
+- Baseline freeze checkpoint: commit `c384094` (clean readiness audit + full workspace tests).
+
+## Next Strict Packet
+- Next focus: cross-engine integration closure across LINK -> ONB -> POSITION -> CAPREQ handoffs.
+- Canonical packet: `docs/22_CROSS_ENGINE_INTEGRATION_PACKET.md`.
+- Execution mode: strict 8-step order with step-level acceptance checks; do not skip steps.

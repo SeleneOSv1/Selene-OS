@@ -70,6 +70,20 @@ Perception and Conversation
 Access
 - `PH1.ACCESS.001 + PH2.ACCESS.002`: `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` + `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
 
+Onboarding, Position Schema, and Governance
+- `PH1.LINK`: `docs/DB_WIRING/PH1_LINK.md` + `docs/ECM/PH1_LINK.md`
+- `PH1.ONB`: `docs/DB_WIRING/PH1_ONB.md` + `docs/ECM/PH1_ONB.md`
+- `PH1.POSITION`: `docs/DB_WIRING/PH1_POSITION.md` + `docs/ECM/PH1_POSITION.md`
+- `PH1.CAPREQ`: `docs/DB_WIRING/PH1_CAPREQ.md` + `docs/ECM/PH1_CAPREQ.md`
+- `PH1.REM`: `docs/DB_WIRING/PH1_REM.md` + `docs/ECM/PH1_REM.md`
+- `PH1.BCAST`: `docs/DB_WIRING/PH1_BCAST.md` + `docs/ECM/PH1_BCAST.md`
+- Ownership lock:
+  - `PH1.POSITION` owns requirements-schema truth and lifecycle writes.
+  - `PH1.ONB` executes pinned active schema only and owns onboarding session/backfill progress state.
+  - `PH1.LINK` owns invite draft/token lifecycle and selector-hint capture only.
+  - `PH1.REM` owns reminder timing mechanics only; message lifecycle/content remains `PH1.BCAST`.
+  - Access/approval gates (`PH1.ACCESS` + `PH1.CAPREQ` paths where applicable) must succeed before any governed commit side effects.
+
 Onboarding and Messaging Setup
 - `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
 - `MESSAGE_COMPOSE_AND_SEND` process: `docs/BLUEPRINTS/MESSAGE_COMPOSE_AND_SEND.md`

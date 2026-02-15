@@ -3179,7 +3179,7 @@ tenant_id: string
 position_id: string
 schema_id: string
 schema_version: string
-rollout_scope: enum (NEW_HIRES_ONLY | INCLUDE_CURRENT_STAFF)
+apply_scope: enum (NewHiresOnly | CurrentAndNew)
 idempotency_key: string
 ```
 - output_schema (minimum):
@@ -3187,9 +3187,11 @@ idempotency_key: string
 schema_id: string
 schema_version: string
 schema_status: enum (ACTIVE)
+apply_scope_result: enum (NewHiresOnly | CurrentAndNew)
+backfill_handoff_required: bool
 ```
 - preconditions: schema draft validates; rollout scope explicitly confirmed
-- postconditions: active requirements schema for position is updated deterministically (new hires by default)
+- postconditions: active requirements schema for position is updated deterministically; `CurrentAndNew` activation requires explicit backfill handoff context
 - side_effects: Update active schema version for position
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)

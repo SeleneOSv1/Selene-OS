@@ -80,8 +80,8 @@
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `apply_scope_rule`:
-  - `apply_scope=NEW_HIRES_ONLY`: activate schema for future onboarding sessions only.
-  - `apply_scope=CURRENT_AND_NEW`: activate schema and emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`.
+  - `apply_scope=NewHiresOnly`: activate schema for future onboarding sessions only.
+  - `apply_scope=CurrentAndNew`: activate schema and emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`.
 
 ### `PH1POSITION_ROW`
 - `name`: Read one position row

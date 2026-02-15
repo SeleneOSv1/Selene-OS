@@ -25,6 +25,16 @@
   - rebuildable from `capreq_ledger` in deterministic event order
   - source event reference (`source_event_id`) points to latest applied ledger row
 
+## 2A) Governance Boundary (Locked)
+
+CAPREQ records request lifecycle truth; CAPREQ does not grant authority by itself.
+
+Deterministic boundary rules:
+- PH1.CAPREQ persists request state (`Draft -> PendingApproval -> Approved/Rejected -> Fulfilled/Canceled`) only.
+- PH1.ACCESS + AP policy decide execution authority for governed side effects.
+- Selene OS orchestrates CAPREQ + ACCESS sequencing; engines do not call engines directly.
+- No CAPREQ lifecycle write may be interpreted as execution approval unless Access/approval gates pass in the same orchestrated flow.
+
 ## 3) Reads (dependencies)
 
 - identity prerequisite:

@@ -6,6 +6,7 @@
 - `data_owned`: `onboarding_sessions` runtime state (plus deterministic idempotency indexes in PH1.F for onboarding steps)
 - `version`: `v1`
 - `status`: `ACTIVE`
+- `ownership_boundary`: PH1.ONB executes pinned requirements schema only; schema definition/activation ownership remains outside PH1.ONB (position-linked schema ownership is PH1.POSITION).
 
 ## Capability List
 

@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS position_requirements_schema_ledger (
         OR (action <> 'UPDATE_COMMIT' AND change_reason IS NULL)
     ),
     CHECK (
-        (action = 'ACTIVATE_COMMIT' AND apply_scope IN ('NEW_HIRES_ONLY', 'CURRENT_AND_NEW'))
+        (action = 'ACTIVATE_COMMIT' AND apply_scope IN ('NewHiresOnly', 'CurrentAndNew'))
         OR (action <> 'ACTIVATE_COMMIT' AND apply_scope IS NULL)
     )
 );
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS onboarding_requirement_backfill_campaigns (
     updated_at BIGINT NOT NULL,
     completed_at BIGINT,
     idempotency_key TEXT,
-    CHECK (rollout_scope IN ('NEW_HIRES_ONLY', 'CURRENT_AND_NEW')),
+    CHECK (rollout_scope = 'CurrentAndNew'),
     CHECK (state IN ('DRAFT_CREATED', 'RUNNING', 'COMPLETED', 'CANCELED'))
 );
 

@@ -49,6 +49,7 @@ Direction lock:
 | PH1.ONBOARDING_SMS | E Onboarding/Tools | Control | Authoritative (setup lifecycle only) | SMS app setup verification/confirmation before any SMS send path (placement: TURN_OPTIONAL) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` | `docs/ECM/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | E Onboarding/Tools | Control/Governance | Authoritative | Invite link lifecycle (simulation-gated) | `docs/DB_WIRING/PH1_LINK.md` | `docs/ECM/PH1_LINK.md` |
 | PH1.ONB | E Onboarding/Tools | Governance/Control | Authoritative | Onboarding execution (deterministic one-question runner); executes pinned requirements schema only | `docs/DB_WIRING/PH1_ONB.md` | `docs/ECM/PH1_ONB.md` |
+| PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder timing state machine) | Deterministic reminder scheduling/delivery timing mechanics (includes BCAST.MHP follow-up timing handoff; simulation-gated) | `docs/DB_WIRING/PH1_REM.md` | `docs/ECM/PH1_REM.md` |
 | PH1.POSITION | E Onboarding/Tools | Governance/Storage | Authoritative | Position lifecycle + position requirements schema ownership (versioned, auditable) | `docs/DB_WIRING/PH1_POSITION.md` | `docs/ECM/PH1_POSITION.md` |
 | PH1.M | F Memory/Learning | Storage/Learning | Non-Authoritative | Memory Engine vNext (atoms + retrieval + emotional threads + device persistence via Engine B; canonical narrative: `docs/12_MEMORY_ARCHITECTURE.md`) | `docs/DB_WIRING/PH1_M.md` | `docs/ECM/PH1_M.md` |
 | PH1.PERSONA | F Memory/Learning | Learning | Non-Authoritative | User style/tone profile hints | `docs/DB_WIRING/PH1_PERSONA.md` | `docs/ECM/PH1_PERSONA.md` |
@@ -90,7 +91,6 @@ These engines are planned in current MVP design scope but do not yet have finali
 
 | engine_id | phase | layer | authority | primary_role | db_wiring | ecm |
 |---|---|---|---|---|---|---|
-| PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder state machine) | Deterministic reminder scheduling/delivery orchestration | `docs/DB_WIRING/PH1_REM.md` | `docs/ECM/PH1_REM.md` |
 | PH1.EMO | F Memory/Learning | Learning | Non-Authoritative (tone-only) | Emotional continuity and tone guidance profile lifecycle | `docs/DB_WIRING/PH1_EMO.md` | `docs/ECM/PH1_EMO.md` |
 
 ## Maintenance

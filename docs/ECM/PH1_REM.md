@@ -87,6 +87,7 @@ REM_FAIL_STATE_TRANSITION_INVALID
 Hard Rules
 PH1.REM must not decide message urgency/classification/content.
 For BCAST_MHP_FOLLOWUP, PH1.REM stores only timing/linkage fields and Selene OS resumes PH1.BCAST at REMINDER_SET -> REMINDER_FIRED.
+For ONB requirement backfill recipient follow-ups, PH1.REM remains timing-only; PH1.ONB owns campaign/target progress state commits.
 
 Sources
 docs/DB_WIRING/PH1_REM.md

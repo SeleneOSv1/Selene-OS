@@ -101,6 +101,11 @@
   - `CAPREQ_OK_CANCEL`
 - scope/idempotency failures are fail-closed and auditable.
 
+## Hard Rules
+- PH1.CAPREQ records governed request lifecycle truth only; it does not grant authority by itself.
+- Access/approval authority remains in PH1.ACCESS + AP policy flow; Selene OS must gate governed execution on Access outcomes.
+- Engines never call engines directly; cross-engine CAPREQ/ACCESS sequencing is Selene OS orchestration only.
+
 ## Audit Emission Requirements Per Capability
 - lifecycle execution capabilities must emit PH1.J state-transition events with deterministic reason codes and bounded payload.
 - storage projection write capabilities emit audit in replay/diagnostic mode when invoked outside normal runtime flow.

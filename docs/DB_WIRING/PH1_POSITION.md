@@ -35,8 +35,8 @@
   - activation is monotonic and auditable (no silent in-place mutation)
   - schema update commits persist `change_reason` as auditable mutation intent
   - `apply_scope` semantics are deterministic and auditable:
-    - `NEW_HIRES_ONLY`: activation applies to future onboarding sessions only
-    - `CURRENT_AND_NEW`: activation applies to new sessions and requires explicit backfill orchestration
+    - `NewHiresOnly`: activation applies to future onboarding sessions only
+    - `CurrentAndNew`: activation applies to new sessions and requires explicit backfill orchestration
   - required-rule evaluation is deterministic and fail-closed:
     - `ALWAYS`: field is required
     - `CONDITIONAL`: predicate reference must be evaluated against bounded selector snapshot
@@ -89,8 +89,8 @@
 - writes:
   - create requirements schema draft for position
   - update requirements schema draft (add/remove/override fields and conditional rules) and persist `change_reason`
-  - activate new schema version for position with explicit `apply_scope` (`NEW_HIRES_ONLY | CURRENT_AND_NEW`)
-  - when `apply_scope=CURRENT_AND_NEW`, emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`
+  - activate new schema version for position with explicit `apply_scope` (`NewHiresOnly | CurrentAndNew`)
+  - when `apply_scope=CurrentAndNew`, emit deterministic handoff context for `ONB_REQUIREMENT_BACKFILL`
 - simulation bindings:
   - `POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT`
   - `POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT`
@@ -104,7 +104,7 @@
 - lifecycle rows are tenant-position scoped and never mutated in place.
 - position requirements schema records are keyed by `(tenant_id, position_id, schema_version)` and linked to position lifecycle scope.
 - PH1.ONB session pinning references active position schema version and effective overlays at session start.
-- when `apply_scope=CURRENT_AND_NEW`, PH1.ONB backfill campaign flow is launched as an explicit, simulation-gated process (`ONB_REQUIREMENT_BACKFILL`).
+- when `apply_scope=CurrentAndNew`, PH1.ONB backfill campaign flow is launched as an explicit, simulation-gated process (`ONB_REQUIREMENT_BACKFILL`).
 
 ## 6) Audit/Proof Emissions
 

@@ -40,6 +40,11 @@ This file is non-canonical by design.
 - `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
 - `PH1.BCAST`: `docs/DB_WIRING/PH1_BCAST.md` + `docs/ECM/PH1_BCAST.md`
 - `PH1.DELIVERY`: `docs/DB_WIRING/PH1_DELIVERY.md` + `docs/ECM/PH1_DELIVERY.md`
+- `PH1.LINK`: `docs/DB_WIRING/PH1_LINK.md` + `docs/ECM/PH1_LINK.md`
+- `PH1.ONB`: `docs/DB_WIRING/PH1_ONB.md` + `docs/ECM/PH1_ONB.md`
+- `PH1.POSITION`: `docs/DB_WIRING/PH1_POSITION.md` + `docs/ECM/PH1_POSITION.md`
+- `PH1.REM`: `docs/DB_WIRING/PH1_REM.md` + `docs/ECM/PH1_REM.md`
+- `PH1.CAPREQ`: `docs/DB_WIRING/PH1_CAPREQ.md` + `docs/ECM/PH1_CAPREQ.md`
 
 ## Phase C Navigation (Perception + Understanding + Orchestration)
 
@@ -112,6 +117,13 @@ Broadcast/delivery side-effect wiring (Selene OS orchestrated):
   - Selene OS opens PH1.BCAST approval flow ->
   - Selene OS applies override through Access simulations ->
   - Selene OS re-checks access before any execution.
+
+Onboarding schema ownership and backfill wiring (Selene OS orchestrated):
+- `PH1.POSITION` is schema owner: requirements-schema create/update/activate and rollout scope decision are position-owned lifecycle writes.
+- `PH1.ONB` is schema executor: ONB runs pinned active schema only (one-question discipline), never mutates schema definitions.
+- `PH1.LINK` captures selector hints in draft/token lifecycle to seed ONB schema selection deterministically.
+- For rollout scope `CurrentAndNew`, ONB backfill campaign state is ONB-owned; external delivery/reminder handoff runs through `PH1.BCAST` + `PH1.REM`.
+- For governed changes, Selene OS enforces access/approval gates before commit paths (`PH1.ACCESS` and CAPREQ-managed capability request lifecycle where policy requires).
 
 Learning wiring (not in-turn execution path):
 - PH1.LISTEN/PH1.PAE/PH1.CACHE/PH1.MULTI/PH1.CONTEXT feed hints and policy snapshots only (no execution path).

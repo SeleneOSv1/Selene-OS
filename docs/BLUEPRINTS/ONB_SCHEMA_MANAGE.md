@@ -19,7 +19,7 @@
 - `selectors` (bounded selector snapshot)
 - `field_specs` (typed requirement field definitions)
 - `change_reason` (required for update commit)
-- `apply_scope` (`NEW_HIRES_ONLY | CURRENT_AND_NEW`)
+- `apply_scope` (`NewHiresOnly | CurrentAndNew`)
 - `idempotency_key`
 
 ## 3) Success Output Schema
@@ -27,7 +27,7 @@
 position_id: string
 schema_version_id: string
 field_count: integer (create/update)
-apply_scope_result: enum (NEW_HIRES_ONLY | CURRENT_AND_NEW)
+apply_scope_result: enum (NewHiresOnly | CurrentAndNew)
 backfill_handoff_required: boolean
 backfill_campaign_id: string | null
 ```
@@ -44,13 +44,13 @@ backfill_campaign_id: string | null
 | ONB_SCHEMA_S06 | PH1.POSITION | PH1POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT_ROW | actor_user_id, tenant_id, company_id, position_id, schema_version_id, selectors, field_specs, idempotency_key | position_id, schema_version_id, field_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [POSITION_SCHEMA_CREATE_RETRYABLE] |
 | ONB_SCHEMA_S07 | PH1.POSITION | PH1POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT_ROW | actor_user_id, tenant_id, company_id, position_id, schema_version_id, selectors, field_specs, change_reason, idempotency_key | position_id, schema_version_id, field_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [POSITION_SCHEMA_UPDATE_RETRYABLE] |
 | ONB_SCHEMA_S08 | PH1.POSITION | PH1POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT_ROW | actor_user_id, tenant_id, company_id, position_id, schema_version_id, apply_scope, idempotency_key | position_id, schema_version_id, apply_scope_result, backfill_handoff_required | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [POSITION_SCHEMA_ACTIVATE_RETRYABLE] |
-| ONB_SCHEMA_S09 | PH1.ONB | PH1ONB_BACKFILL_START_DRAFT_ROW | when apply_scope=CURRENT_AND_NEW: actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope=CurrentAndNew, idempotency_key | backfill_campaign_id, backfill_state, pending_target_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_BACKFILL_START_RETRYABLE] |
+| ONB_SCHEMA_S09 | PH1.ONB | PH1ONB_BACKFILL_START_DRAFT_ROW | when apply_scope=CurrentAndNew: actor_user_id, tenant_id, company_id, position_id, schema_version_id, rollout_scope=CurrentAndNew, idempotency_key | backfill_campaign_id, backfill_state, pending_target_count | DB_WRITE (simulation-gated) | 700 | 2 | 250 | [ONB_BACKFILL_START_RETRYABLE] |
 | ONB_SCHEMA_S10 | PH1.X | PH1X_RESPOND_COMMIT_ROW | schema activation result (+ optional backfill campaign result) | completion response | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
 
 ## 5) Confirmation Points
 - `ONB_SCHEMA_S04` mandatory before any schema commit/activation step.
-- Additional confirmation is required when `apply_scope=CURRENT_AND_NEW`.
-- when `apply_scope=CURRENT_AND_NEW`, explicit confirmation includes backfill launch acknowledgment (`ONB_REQUIREMENT_BACKFILL` path).
+- Additional confirmation is required when `apply_scope=CurrentAndNew`.
+- when `apply_scope=CurrentAndNew`, explicit confirmation includes backfill launch acknowledgment (`ONB_REQUIREMENT_BACKFILL` path).
 
 ## 6) Simulation Requirements
 - `POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT`
@@ -67,4 +67,4 @@ backfill_campaign_id: string | null
 - `AT-PBS-ONBSCHEMA-01`: position requirements schema changes are versioned and simulation-gated.
 - `AT-PBS-ONBSCHEMA-02`: activation requires explicit confirmation and access allow.
 - `AT-PBS-ONBSCHEMA-03`: capability IDs resolve to active ECM entries.
-- `AT-PBS-ONBSCHEMA-04`: `CURRENT_AND_NEW` activation deterministically launches `ONB_REQUIREMENT_BACKFILL` start.
+- `AT-PBS-ONBSCHEMA-04`: `CurrentAndNew` activation deterministically launches `ONB_REQUIREMENT_BACKFILL` start.

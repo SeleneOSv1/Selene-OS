@@ -335,3 +335,187 @@ fn short_hash_hex(parts: &[&str]) -> String {
     }
     format!("{h:016x}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1capreq::{CapabilityRequestStatus, Ph1CapreqResponse};
+    use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+    use selene_kernel_contracts::ph1position::TenantId;
+    use selene_kernel_contracts::MonotonicTimeNs;
+    use selene_storage::ph1f::{IdentityRecord, IdentityStatus};
+
+    fn seed_identity(store: &mut Ph1fStore, user_id: &str) -> UserId {
+        let user_id = UserId::new(user_id).unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        user_id
+    }
+
+    fn tenant(id: &str) -> TenantId {
+        TenantId::new(id).unwrap()
+    }
+
+    fn lifecycle_out(resp: Ph1CapreqResponse) -> selene_kernel_contracts::ph1capreq::CapreqLifecycleResult {
+        match resp {
+            Ph1CapreqResponse::Ok(ok) => ok.lifecycle_result,
+            Ph1CapreqResponse::Refuse(_) => panic!("expected ok"),
+        }
+    }
+
+    #[test]
+    fn capreq_create_submit_approve_happy_path() {
+        let rt = Ph1CapreqRuntime;
+        let mut store = Ph1fStore::new_in_memory();
+        let actor = seed_identity(&mut store, "tenant_a:user_alice");
+        let tenant_id = tenant("tenant_a");
+
+        let create = Ph1CapreqRequest::create_draft_v1(
+            CorrelationId(1),
+            TurnId(1),
+            MonotonicTimeNs(10),
+            actor.clone(),
+            tenant_id.clone(),
+            "PH1.POSITION.REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT".to_string(),
+            "company:tenant_a:company_1:position:driver".to_string(),
+            "require AP approval for current+new rollout".to_string(),
+            "capreq-create-1".to_string(),
+        )
+        .unwrap();
+        let created = lifecycle_out(rt.run(&mut store, &create).unwrap());
+        assert_eq!(created.status, CapabilityRequestStatus::Draft);
+
+        let submit = Ph1CapreqRequest::submit_for_approval_commit_v1(
+            CorrelationId(1),
+            TurnId(2),
+            MonotonicTimeNs(11),
+            actor.clone(),
+            tenant_id.clone(),
+            created.capreq_id.clone(),
+            "capreq-submit-1".to_string(),
+        )
+        .unwrap();
+        let submitted = lifecycle_out(rt.run(&mut store, &submit).unwrap());
+        assert_eq!(submitted.status, CapabilityRequestStatus::PendingApproval);
+
+        let approve = Ph1CapreqRequest::approve_commit_v1(
+            CorrelationId(1),
+            TurnId(3),
+            MonotonicTimeNs(12),
+            actor,
+            tenant_id.clone(),
+            submitted.capreq_id.clone(),
+            "capreq-approve-1".to_string(),
+        )
+        .unwrap();
+        let approved = lifecycle_out(rt.run(&mut store, &approve).unwrap());
+        assert_eq!(approved.status, CapabilityRequestStatus::Approved);
+
+        let current = store
+            .capreq_current_row(&tenant_id, &approved.capreq_id)
+            .expect("current row");
+        assert_eq!(current.status, CapabilityRequestStatus::Approved);
+    }
+
+    #[test]
+    fn capreq_create_submit_reject_happy_path() {
+        let rt = Ph1CapreqRuntime;
+        let mut store = Ph1fStore::new_in_memory();
+        let actor = seed_identity(&mut store, "tenant_b:user_bob");
+        let tenant_id = tenant("tenant_b");
+
+        let create = Ph1CapreqRequest::create_draft_v1(
+            CorrelationId(2),
+            TurnId(1),
+            MonotonicTimeNs(20),
+            actor.clone(),
+            tenant_id.clone(),
+            "PH1.ONB.REQUIREMENT_BACKFILL_START_DRAFT".to_string(),
+            "company:tenant_b:company_9:position:warehouse_manager".to_string(),
+            "request temporary exception denied".to_string(),
+            "capreq-create-2".to_string(),
+        )
+        .unwrap();
+        let created = lifecycle_out(rt.run(&mut store, &create).unwrap());
+        assert_eq!(created.status, CapabilityRequestStatus::Draft);
+
+        let submit = Ph1CapreqRequest::submit_for_approval_commit_v1(
+            CorrelationId(2),
+            TurnId(2),
+            MonotonicTimeNs(21),
+            actor.clone(),
+            tenant_id.clone(),
+            created.capreq_id.clone(),
+            "capreq-submit-2".to_string(),
+        )
+        .unwrap();
+        let submitted = lifecycle_out(rt.run(&mut store, &submit).unwrap());
+        assert_eq!(submitted.status, CapabilityRequestStatus::PendingApproval);
+
+        let reject = Ph1CapreqRequest::reject_commit_v1(
+            CorrelationId(2),
+            TurnId(3),
+            MonotonicTimeNs(22),
+            actor,
+            tenant_id.clone(),
+            submitted.capreq_id.clone(),
+            "capreq-reject-2".to_string(),
+        )
+        .unwrap();
+        let rejected = lifecycle_out(rt.run(&mut store, &reject).unwrap());
+        assert_eq!(rejected.status, CapabilityRequestStatus::Rejected);
+
+        let current = store
+            .capreq_current_row(&tenant_id, &rejected.capreq_id)
+            .expect("current row");
+        assert_eq!(current.status, CapabilityRequestStatus::Rejected);
+    }
+
+    #[test]
+    fn capreq_fail_closed_when_approve_without_pending_approval() {
+        let rt = Ph1CapreqRuntime;
+        let mut store = Ph1fStore::new_in_memory();
+        let actor = seed_identity(&mut store, "tenant_c:user_carla");
+        let tenant_id = tenant("tenant_c");
+
+        let create = Ph1CapreqRequest::create_draft_v1(
+            CorrelationId(3),
+            TurnId(1),
+            MonotonicTimeNs(30),
+            actor.clone(),
+            tenant_id.clone(),
+            "PH1.POSITION.REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT".to_string(),
+            "company:tenant_c:company_2:position:driver".to_string(),
+            "draft only".to_string(),
+            "capreq-create-3".to_string(),
+        )
+        .unwrap();
+        let created = lifecycle_out(rt.run(&mut store, &create).unwrap());
+        assert_eq!(created.status, CapabilityRequestStatus::Draft);
+
+        let approve_without_submit = Ph1CapreqRequest::approve_commit_v1(
+            CorrelationId(3),
+            TurnId(2),
+            MonotonicTimeNs(31),
+            actor,
+            tenant_id,
+            created.capreq_id,
+            "capreq-approve-without-submit".to_string(),
+        )
+        .unwrap();
+
+        let out = rt.run(&mut store, &approve_without_submit);
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(ContractViolation::InvalidValue { .. }))
+        ));
+    }
+}

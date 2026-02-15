@@ -6,6 +6,7 @@
 - `data_owned`: `onboarding_drafts`, `onboarding_link_tokens`, `onboarding_draft_write_dedupe`, PH1.F link runtime state
 - `version`: `v1`
 - `status`: `ACTIVE`
+- `handoff_boundary`: PH1.LINK captures deterministic selector/prefill hints in draft payload context; PH1.ONB consumes those hints to pin schema context at onboarding session start.
 
 ## Capability List
 
