@@ -80,6 +80,7 @@ Onboarding, Position Schema, and Governance
 - Ownership lock:
   - `PH1.POSITION` owns requirements-schema truth and lifecycle writes.
   - `PH1.ONB` executes pinned active schema only and owns onboarding session/backfill progress state.
+  - ONB requirement prompts (for example photo/license capture) must come from active position schema field specs, not hardcoded ONB-only branches.
   - `PH1.LINK` owns invite draft/token lifecycle and selector-hint capture only.
   - `PH1.REM` owns reminder timing mechanics only; message lifecycle/content remains `PH1.BCAST`.
   - Access/approval gates (`PH1.ACCESS` + `PH1.CAPREQ` paths where applicable) must succeed before any governed commit side effects.

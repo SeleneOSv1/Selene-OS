@@ -7,6 +7,7 @@
 - `version`: `v1`
 - `status`: `ACTIVE`
 - `handoff_boundary`: PH1.LINK captures deterministic selector/prefill hints in draft payload context; PH1.ONB consumes those hints to pin schema context at onboarding session start.
+- `ownership_boundary`: PH1.LINK does not own requirements schema definitions or activation; schema ownership remains outside PH1.LINK.
 
 ## Capability List
 

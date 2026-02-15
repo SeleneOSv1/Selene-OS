@@ -121,7 +121,7 @@ Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 Onboarding schema ownership and backfill wiring (Selene OS orchestrated):
 - `PH1.POSITION` is schema owner: requirements-schema create/update/activate and rollout scope decision are position-owned lifecycle writes.
 - `PH1.ONB` is schema executor: ONB runs pinned active schema only (one-question discipline), never mutates schema definitions.
-- `PH1.LINK` captures selector hints in draft/token lifecycle to seed ONB schema selection deterministically.
+- `PH1.LINK` captures selector hints in draft/token lifecycle to seed ONB schema selection deterministically; LINK does not own schema definitions.
 - For rollout scope `CurrentAndNew`, ONB backfill campaign state is ONB-owned; external delivery/reminder handoff runs through `PH1.BCAST` + `PH1.REM`.
 - For governed changes, Selene OS enforces access/approval gates before commit paths (`PH1.ACCESS` and CAPREQ-managed capability request lifecycle where policy requires).
 

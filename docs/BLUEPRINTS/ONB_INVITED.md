@@ -9,6 +9,7 @@
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+- ONB prompt/gate behavior is schema-driven from pinned field specs and required gates; no hardcoded ONB-only requirement branch is allowed.
 
 ## 1B) Entry Preconditions (Link is out-of-scope)
 - Link validation/expiry/revocation/device binding are handled by the Link process (`LINK_OPEN_ACTIVATE`).
@@ -77,8 +78,8 @@ Deferral/reminder rule (S01/S04 consent/clarify flow):
 - `ONB_SESSION_START_DRAFT`
 - `ONB_DRAFT_UPDATE_COMMIT`
 - `ONB_TERMS_ACCEPT_COMMIT`
-- `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT` (conditional: schema-required only)
-- `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT` (conditional: schema-required only)
+- `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT`
+- `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT`
 - `ONB_PRIMARY_DEVICE_CONFIRM_COMMIT`
 - `ONB_ACCESS_INSTANCE_CREATE_COMMIT`
 - `ONB_COMPLETE_COMMIT`
@@ -90,6 +91,9 @@ Deferral/reminder rule (S01/S04 consent/clarify flow):
 - `WAKE_ENROLL_SAMPLE_COMMIT`
 - `WAKE_ENROLL_COMPLETE_COMMIT`
 - `WAKE_ENROLL_DEFER_REMINDER_COMMIT`
+
+Conditional execution note:
+- `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT` and `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT` execute only when pinned schema-required verification gates include them.
 
 ## 7) Refusal Conditions
 - Terms declined -> `ONB_TERMS_DECLINED`

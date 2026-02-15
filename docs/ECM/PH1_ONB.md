@@ -7,6 +7,7 @@
 - `version`: `v1`
 - `status`: `ACTIVE`
 - `ownership_boundary`: PH1.ONB executes pinned requirements schema only; schema definition/activation ownership remains outside PH1.ONB (position-linked schema ownership is PH1.POSITION).
+- `prompt_boundary`: ONB required-question prompting is derived from pinned schema field specs and required gates only; no hardcoded ONB-only requirement branch.
 
 ## Capability List
 

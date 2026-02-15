@@ -9,6 +9,7 @@
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+- Schema truth ownership is PH1.POSITION; ONB is executor-only and is used here only for explicit `CurrentAndNew` backfill campaign launch/progress.
 
 ## 2) Required Inputs
 - `tenant_id`

@@ -2220,7 +2220,7 @@ position_id
 
 schema_version_id
 
-rollout_scope (NEW_HIRES_ONLY | CURRENT_AND_NEW)
+rollout_scope (NewHiresOnly | CurrentAndNew)
 
 state (DRAFT_CREATED | RUNNING | COMPLETED | CANCELED)
 
@@ -2292,6 +2292,8 @@ KC.25.5 Hard Rules
 
 `PH1.ONB` executes pinned active schema only and must not mutate schema definitions.
 
+`PH1.LINK` may provide selector-hint input only and must not write or mutate schema definitions.
+
 Backfill campaigns are explicit, simulation-gated workflows; no implicit retroactive schema enforcement is allowed.
 
-For `CURRENT_AND_NEW` rollout scope, target population selection and progress state must be deterministic and auditable via campaign + target rows.
+For `CurrentAndNew` rollout scope, target population selection and progress state must be deterministic and auditable via campaign + target rows.

@@ -5,6 +5,7 @@
 - `engine_id`: `PH1.LINK`
 - `purpose`: Persist deterministic onboarding/invite link lifecycle (`generate`, `draft_update`, `open/activate`, `revoke`, `forward-block`) with strict token->draft mapping, schema-driven missing-field computation, and deterministic binding guards.
 - canonical identifier rule: canonical external identifier is `token_id`; internal draft identifier is `draft_id`; `link_url` is a transport artifact.
+- ownership boundary: PH1.LINK captures selector/prefill hints only; PH1.LINK must not define, activate, or mutate requirements schema truth.
 - `version`: `v1`
 - `status`: `PASS`
 

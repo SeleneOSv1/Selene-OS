@@ -10,6 +10,7 @@
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
 - Launch policy: this process is entered only from explicit `CurrentAndNew` schema activation scope in `ONB_SCHEMA_MANAGE`.
+- Ownership split in this flow: PH1.ONB owns campaign/target progress state; PH1.BCAST owns delivery lifecycle; PH1.REM owns reminder timing mechanics.
 
 ## 2) Required Inputs
 - `tenant_id`

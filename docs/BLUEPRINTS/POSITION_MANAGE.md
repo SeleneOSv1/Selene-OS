@@ -9,6 +9,7 @@
 ## 1A) Contract Boundary
 - This blueprint defines orchestration flow only.
 - Engine behavior/schema/capability contracts are canonical in `docs/DB_WIRING/*.md` and `docs/ECM/*.md`.
+- POSITION schema definition/activation ownership remains in PH1.POSITION schema lifecycle capabilities; ONB executes pinned schema only.
 
 ## 2) Required Inputs
 - `tenant_id`

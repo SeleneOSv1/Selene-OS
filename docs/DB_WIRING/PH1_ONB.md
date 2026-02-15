@@ -56,6 +56,7 @@ Deterministic boundary rules:
   - `pinned_selector_snapshot`
 - PH1.ONB also computes and persists `required_verification_gates[]` from pinned schema rules.
 - `missing_required_fields` is computed from pinned schema context plus current payload/resolved answers.
+- ONB requirement prompts are schema-driven from pinned field specs only; no hardcoded ONB-only requirement branch is allowed.
 - never ask twice: if a value exists in pinned payload context or resolved fields, PH1.ONB must not ask that field again.
 
 ## 3) Reads (dependencies)

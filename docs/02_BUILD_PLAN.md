@@ -83,8 +83,9 @@ Related docs:
 - Completed strict packet wave (executed + committed): `docs/16_PH1_POSITION_STRICT_FIX_PLAN_PACKET.md`, `docs/18_PH1_ONB_STRICT_FIX_PLAN_PACKET.md`, `docs/19_ONB_BACKFILL_STRICT_FIX_PLAN_PACKET.md`, `docs/20_PH1_LINK_CLOSURE_STRICT_FIX_PLAN_PACKET.md`, `docs/21_PH1_CAPREQ_STRICT_FIX_PLAN_PACKET.md`.
 - Historical note: `docs/17_PH1_LINK_STRICT_FIX_PLAN_PACKET.md` is superseded by packet 20.
 - Baseline freeze checkpoint: commit `c384094` (clean readiness audit + full workspace tests).
+- Cross-engine integration closure checkpoint: commit `a22c5fe` (`docs/22_CROSS_ENGINE_INTEGRATION_PACKET.md`, Step 8 complete, clean tree).
 
 ## Next Strict Packet
-- Next focus: cross-engine integration closure across LINK -> ONB -> POSITION -> CAPREQ handoffs.
-- Canonical packet: `docs/22_CROSS_ENGINE_INTEGRATION_PACKET.md`.
+- Next focus: PH1.POSITION requirements-schema ownership lock (POSITION owns schema truth; ONB executes pinned schema).
+- Canonical packet: `docs/23_PH1_POSITION_SCHEMA_OWNERSHIP_STRICT_FIX_PLAN_PACKET.md`.
 - Execution mode: strict 8-step order with step-level acceptance checks; do not skip steps.
