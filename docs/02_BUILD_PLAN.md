@@ -91,8 +91,9 @@ Related docs:
 - PH1.ACCESS + PH1.CAPREQ governance closure checkpoint: commit `40c25b8` (`docs/27_PH1_ACCESS_CAPREQ_GOVERNANCE_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 - PH1.ACCESS execution closure checkpoint: commit `321ceec` (`docs/28_PH1_ACCESS_EXECUTION_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 - PH1.ACCESS master schema closure checkpoint: commit `e9a0725` (`docs/29_MASTER_ACCESS_SCHEMA_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
+- PH1.ACCESS AP authoring review closure checkpoint: commit `f75ea97` (`docs/30_ACCESS_AP_AUTHORING_REVIEW_STRICT_FIX_PLAN_PACKET.md`, Step 8 complete, clean tree).
 
 ## Next Strict Packet
-- Next focus: AP authoring review workflow (market baseline suggestions + phone/desktop or read-out-loud review + rule-by-rule agree/disagree/edit/delete/disable + professional writing output) with strict non-authoritative assist boundaries.
-- Canonical packet: `docs/30_ACCESS_AP_AUTHORING_REVIEW_STRICT_FIX_PLAN_PACKET.md`.
-- Execution mode: strict 8-step order with step-level acceptance checks; do not skip steps.
+- Next focus: PH1.ACCESS authoritative doc parity closure for AP authoring review row capabilities and storage lineage fields.
+- Canonical packet: `docs/31_PH1_ACCESS_ECM_DB_ALIGNMENT_STRICT_FIX_PLAN_PACKET.md`.
+- Execution mode: strict 6-step order with step-level acceptance checks; do not skip steps.
