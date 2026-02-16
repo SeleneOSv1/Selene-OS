@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP5_COMPLETED_PENDING_STEP6
+Status: STEP6_COMPLETED_FROZEN
 
 ## 1) Purpose
 
@@ -64,7 +64,7 @@ From clean tree, run final proof set and commit freeze checkpoint.
 - Step 3: COMPLETED (2026-02-16)
 - Step 4: COMPLETED (2026-02-16)
 - Step 5: COMPLETED (2026-02-16)
-- Step 6: PENDING
+- Step 6: COMPLETED (2026-02-16)
 
 Step 1 note:
 - Added this packet as canonical PH1.ACCESS ECM/DB parity closure scope (`docs/31_PH1_ACCESS_ECM_DB_ALIGNMENT_STRICT_FIX_PLAN_PACKET.md`).
@@ -144,3 +144,11 @@ Step 5 note:
   - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21/21)
   - `bash scripts/selene_design_readiness_audit.sh` -> pass (`AUDIT_TREE_STATE: CLEAN`, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
 - Audit section 6 output remains expected legacy LINK compliance evidence only (`LEGACY_DO_NOT_WIRE` lines); no PH1.ACCESS drift finding.
+
+Step 6 note:
+- Executed final freeze proof set from clean tree before checkpoint commit.
+- Final freeze proof:
+  - `git status --short` -> clean
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21/21)
+  - `bash scripts/selene_design_readiness_audit.sh` -> pass (`AUDIT_TREE_STATE: CLEAN`, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
+- Packet 31 is frozen complete for PH1.ACCESS ECM + DB alignment scope.
