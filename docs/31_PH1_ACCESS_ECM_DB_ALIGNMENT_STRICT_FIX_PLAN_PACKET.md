@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP2_COMPLETED_PENDING_STEP3
+Status: STEP3_COMPLETED_PENDING_STEP4
 
 ## 1) Purpose
 
@@ -61,7 +61,7 @@ From clean tree, run final proof set and commit freeze checkpoint.
 
 - Step 1: COMPLETED (2026-02-16)
 - Step 2: COMPLETED (2026-02-16)
-- Step 3: PENDING
+- Step 3: COMPLETED (2026-02-16)
 - Step 4: PENDING
 - Step 5: PENDING
 - Step 6: PENDING
@@ -84,4 +84,34 @@ Step 2 note:
   - documented activation-lineage persistence fields (`activation_review_event_id`, `activation_rule_action_count`, `activation_rule_action_set_ref`) for activation output behavior.
 - Step-2 proof:
   - `rg -n "ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT_ROW|ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT_ROW|ACCESS_AP_AUTHORING_CONFIRM_COMMIT_ROW|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md -n` -> pass
+  - `rg -n "ph1access_ap_authoring_review_channel_commit_row|ph1access_ap_authoring_rule_action_commit_row|ph1access_ap_authoring_confirm_commit_row|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -n` -> pass
+
+Step 3 note:
+- Locked PH1.ACCESS DB wiring parity in:
+  - `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md`
+- DB wiring lock additions:
+  - added AP authoring review storage objects to authoritative data-owned set:
+    - `access_ap_authoring_review_ledger`
+    - `access_ap_authoring_review_current`
+    - `access_ap_rule_review_actions_ledger`
+  - added AP schema activation-lineage invariants and write-field requirements:
+    - `activation_review_event_id`
+    - `activation_rule_action_count`
+    - `activation_rule_action_set_ref`
+  - added AP authoring review read dependencies, index requirements, and cross-tenant scope rules.
+  - added AP authoring row write contracts:
+    - `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT`
+    - `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT`
+    - `ACCESS_AP_AUTHORING_CONFIRM_COMMIT`
+  - aligned relation/constraint section with migration-backed indexes:
+    - `ux_access_ap_authoring_review_channel_idem`
+    - `ux_access_ap_authoring_confirm_idem`
+    - `ux_access_ap_rule_review_action_idem`
+    - `ix_access_ap_authoring_review_scope_profile_version`
+    - `ix_access_ap_rule_review_action_scope_profile_version`
+    - `ix_access_ap_schemas_activation_review_event`
+  - aligned DB wiring acceptance coverage to AP authoring tests (`AT-ACCESS-17..21`) and migration references (`0015`, `0016`).
+- Step-3 proof:
+  - `rg -n "access_ap_authoring_review_ledger|access_ap_authoring_review_current|access_ap_rule_review_actions_ledger|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md -n` -> pass
+  - `rg -n "CREATE TABLE IF NOT EXISTS access_ap_authoring_review_ledger|CREATE TABLE IF NOT EXISTS access_ap_authoring_review_current|CREATE TABLE IF NOT EXISTS access_ap_rule_review_actions_ledger|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/migrations/0016_access_ap_authoring_review_tables.sql -n` -> pass
   - `rg -n "ph1access_ap_authoring_review_channel_commit_row|ph1access_ap_authoring_rule_action_commit_row|ph1access_ap_authoring_confirm_commit_row|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -n` -> pass

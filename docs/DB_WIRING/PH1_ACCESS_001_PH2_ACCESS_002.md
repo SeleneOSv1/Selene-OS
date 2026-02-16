@@ -48,6 +48,14 @@
   - `event_action` in `CREATE_DRAFT | UPDATE_DRAFT | ACTIVATE | RETIRE`
   - tenant rows require non-null `tenant_id`
   - global rows require null `tenant_id`
+  - activation lineage fields on AP lifecycle rows:
+    - `activation_review_event_id` (nullable)
+    - `activation_rule_action_count` (nullable)
+    - `activation_rule_action_set_ref` (nullable)
+  - activation lineage rule:
+    - non-`ACTIVATE` rows may keep activation lineage fields null
+    - `ACTIVATE` rows must persist activation lineage when AP authoring review state exists for `(scope_key, access_profile_id, schema_version_id)`
+    - when present, `activation_rule_action_count >= 1`
   - idempotent append dedupe on `(coalesce(tenant_id,'GLOBAL'), access_profile_id, schema_version_id, event_action, idempotency_key)`
   - overwrite/delete prohibited
 
@@ -58,6 +66,53 @@
   - exactly one ACTIVE version per `(scope_key, access_profile_id)`
   - projection source must reference one ledger `event_id`
   - scope_key uses `GLOBAL` or tenant id
+
+### `os_core.access_ap_authoring_review_ledger`
+- `truth_type`: `LEDGER` (append-only AP authoring review lifecycle rows)
+- `primary key`: `review_event_id`
+- invariants:
+  - `ap_scope` in `GLOBAL | TENANT`
+  - `event_kind` in `REVIEW_CHANNEL_COMMIT | CONFIRMATION_COMMIT`
+  - `review_channel` is null or in `PHONE_DESKTOP | READ_OUT_LOUD`
+  - `confirmation_state` in:
+    - `NEEDS_CHANNEL_CHOICE`
+    - `REVIEW_IN_PROGRESS`
+    - `PENDING_ACTIVATION_CONFIRMATION`
+    - `CONFIRMED_FOR_ACTIVATION`
+    - `DECLINED`
+  - tenant rows require non-null `tenant_id`
+  - global rows require null `tenant_id`
+  - channel idempotency dedupe on `(scope_key, access_profile_id, schema_version_id, review_channel, idempotency_key)` when `review_channel` is non-null
+  - confirmation idempotency dedupe on `(scope_key, access_profile_id, schema_version_id, confirmation_state, idempotency_key)`
+  - overwrite/delete prohibited
+
+### `os_core.access_ap_authoring_review_current`
+- `truth_type`: `CURRENT` (projection from AP authoring review ledger)
+- `primary key`: `(scope_key, access_profile_id, schema_version_id)`
+- invariants:
+  - `latest_review_event_id` references one row in `access_ap_authoring_review_ledger`
+  - `review_channel` in `PHONE_DESKTOP | READ_OUT_LOUD`
+  - `confirmation_state` in:
+    - `NEEDS_CHANNEL_CHOICE`
+    - `REVIEW_IN_PROGRESS`
+    - `PENDING_ACTIVATION_CONFIRMATION`
+    - `CONFIRMED_FOR_ACTIVATION`
+    - `DECLINED`
+
+### `os_core.access_ap_rule_review_actions_ledger`
+- `truth_type`: `LEDGER` (append-only AP rule-review action rows)
+- `primary key`: `review_action_row_id`
+- invariants:
+  - `ap_scope` in `GLOBAL | TENANT`
+  - tenant rows require non-null `tenant_id`
+  - global rows require null `tenant_id`
+  - `rule_action` in `AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`
+  - bounded payload-shape checks:
+    - `ADD_CUSTOM_RULE` requires `capability_id` and null `suggested_rule_ref`
+    - `AGREE | DISAGREE | DELETE | DISABLE` require non-null `suggested_rule_ref`
+    - `EDIT` requires non-null `suggested_rule_ref` and `capability_id`
+  - idempotent append dedupe on `(scope_key, access_profile_id, schema_version_id, rule_action, coalesce(suggested_rule_ref,''), idempotency_key)`
+  - overwrite/delete prohibited
 
 ### `os_core.access_ap_overlay_ledger`
 - `truth_type`: `LEDGER` (append-only overlay lifecycle rows)
@@ -149,6 +204,26 @@
   - tenant overlays only for the same tenant
 - why this read is required: deterministic effective permission compile before gate decision
 
+### AP authoring review reads
+- reads:
+  - `access_ap_authoring_review_current`
+  - `access_ap_authoring_review_ledger`
+  - `access_ap_rule_review_actions_ledger`
+- keys/joins used:
+  - `(scope_key, access_profile_id, schema_version_id)` for authoring current row
+  - `latest_review_event_id -> review_event_id` for review lineage
+  - `(scope_key, access_profile_id, schema_version_id)` for rule-action lineage aggregation
+- required indices:
+  - `ix_access_ap_authoring_review_scope_profile_version`
+  - `ix_access_ap_rule_review_action_scope_profile_version`
+  - `ix_access_ap_schemas_activation_review_event`
+- scope rules:
+  - reads are constrained by one `scope_key` chain (`GLOBAL` or one tenant id)
+  - cross-tenant authoring review reads are forbidden
+- why this read is required:
+  - fail-closed authoring confirmation validation
+  - deterministic activation lineage persistence on AP schema activation
+
 ### Board policy + vote reads
 - reads:
   - `access_board_policy_current`
@@ -191,12 +266,71 @@
   - `ACCESS_DEVICE_UNTRUSTED`
   - `ACCESS_SENSITIVE_DENY`
 
+### Append AP authoring review channel row + upsert current projection (commit)
+- writes:
+  - `access_ap_authoring_review_ledger`
+  - `access_ap_authoring_review_current`
+- required fields:
+  - ledger:
+    - `review_event_id`, `tenant_id` (nullable for global), `ap_scope`, `scope_key`,
+    - `access_profile_id`, `schema_version_id`, `event_kind=REVIEW_CHANNEL_COMMIT`,
+    - `review_channel`, `confirmation_state`, `reason_code`,
+    - `created_by_user_id`, `created_at`, `idempotency_key`
+  - current:
+    - `scope_key`, `access_profile_id`, `schema_version_id`,
+    - `latest_review_event_id`, `review_channel`, `confirmation_state`, `updated_at`, `reason_code`
+- ledger event_type (if ledger): `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(scope_key, access_profile_id, schema_version_id, review_channel, idempotency_key)`
+- failure reason codes:
+  - `ACCESS_CONTRACT_VALIDATION_FAILED`
+  - `ACCESS_SCOPE_VIOLATION`
+
+### Append AP rule-review action row (commit)
+- writes: `access_ap_rule_review_actions_ledger`
+- required fields:
+  - `review_action_row_id`, `tenant_id` (nullable for global), `ap_scope`, `scope_key`,
+  - `access_profile_id`, `schema_version_id`, `rule_action`,
+  - `suggested_rule_ref`, `capability_id`, `constraint_ref`, `escalation_policy_ref`,
+  - `reason_code`, `created_by_user_id`, `created_at`, `idempotency_key`
+- ledger event_type (if ledger): `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(scope_key, access_profile_id, schema_version_id, rule_action, coalesce(suggested_rule_ref,''), idempotency_key)`
+- failure reason codes:
+  - `ACCESS_CONTRACT_VALIDATION_FAILED`
+  - `ACCESS_SCOPE_VIOLATION`
+
+### Append AP authoring confirmation row + upsert current projection (commit)
+- writes:
+  - `access_ap_authoring_review_ledger`
+  - `access_ap_authoring_review_current`
+- required fields:
+  - ledger:
+    - `review_event_id`, `tenant_id` (nullable for global), `ap_scope`, `scope_key`,
+    - `access_profile_id`, `schema_version_id`, `event_kind=CONFIRMATION_COMMIT`,
+    - `review_channel` (nullable), `confirmation_state`, `reason_code`,
+    - `created_by_user_id`, `created_at`, `idempotency_key`
+  - current:
+    - `scope_key`, `access_profile_id`, `schema_version_id`,
+    - `latest_review_event_id`, `review_channel`, `confirmation_state`, `updated_at`, `reason_code`
+- ledger event_type (if ledger): `ACCESS_AP_AUTHORING_CONFIRM_COMMIT`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(scope_key, access_profile_id, schema_version_id, confirmation_state, idempotency_key)`
+- failure reason codes:
+  - `ACCESS_CONTRACT_VALIDATION_FAILED`
+  - `ACCESS_SCOPE_VIOLATION`
+
 ### Append AP schema lifecycle row (draft/update/activate/retire)
 - writes: `access_ap_schemas_ledger`
 - required fields:
   - `event_id`, `tenant_id` (nullable for global), `access_profile_id`, `schema_version_id`,
   - `event_action`, `lifecycle_state`, `profile_payload_json`, `reason_code`,
-  - `created_by_user_id`, `created_at`, `idempotency_key`
+  - `created_by_user_id`, `created_at`,
+  - activation lineage fields (nullable unless activation requires lineage):
+    - `activation_review_event_id`
+    - `activation_rule_action_count`
+    - `activation_rule_action_set_ref`
+  - `idempotency_key`
 - ledger event_type (if ledger): `ACCESS_AP_SCHEMA_*`
 - idempotency_key rule (exact formula):
   - dedupe key = `(coalesce(tenant_id,'GLOBAL'), access_profile_id, schema_version_id, event_action, idempotency_key)`
@@ -204,6 +338,7 @@
   - `ACCESS_AP_SCHEMA_INVALID`
   - `ACCESS_AP_SCOPE_VIOLATION`
   - `ACCESS_AP_ACTIVATION_CONFLICT`
+  - `ACCESS_CONTRACT_VALIDATION_FAILED`
 
 ### Upsert AP current projection row (commit)
 - writes: `access_ap_schemas_current`
@@ -341,6 +476,7 @@ FKs:
 - `access_overrides.access_instance_id -> access_instances.access_instance_id`
 - `access_overrides.approved_by_user_id -> identities.user_id`
 - `access_ap_schemas_current.active_event_id -> access_ap_schemas_ledger.event_id`
+- `access_ap_authoring_review_current.latest_review_event_id -> access_ap_authoring_review_ledger.review_event_id`
 - `access_ap_overlay_current.active_event_id -> access_ap_overlay_ledger.event_id`
 - `access_board_policy_current.active_event_id -> access_board_policy_ledger.event_id`
 - `access_board_votes_ledger.board_policy_id -> access_board_policy_current.board_policy_id`
@@ -354,11 +490,17 @@ Unique constraints:
 - `ux_access_overrides_active_scope`
 - `ux_access_ap_schemas_ledger_scope_profile_version_action_idem`
 - `ux_access_ap_schemas_current_scope_profile`
+- `ux_access_ap_authoring_review_channel_idem`
+- `ux_access_ap_authoring_confirm_idem`
+- `ux_access_ap_rule_review_action_idem`
 - `ux_access_ap_overlay_ledger_tenant_overlay_version_action_idem`
 - `ux_access_ap_overlay_current_tenant_overlay`
 - `ux_access_board_policy_ledger_tenant_policy_version_action_idem`
 - `ux_access_board_policy_current_tenant_policy`
 - `ix_access_board_votes_tenant_case`
+- `ix_access_ap_authoring_review_scope_profile_version`
+- `ix_access_ap_rule_review_action_scope_profile_version`
+- `ix_access_ap_schemas_activation_review_event`
 
 State/boundary constraints:
 - PH1.ACCESS gate path is read-only in this slice
@@ -380,6 +522,9 @@ PH1.ACCESS/PH2.ACCESS writes and gate outcomes must emit PH1.J audit events with
   - `ACCESS_AP_SCHEMA_UPDATE_COMMIT`
   - `ACCESS_AP_SCHEMA_ACTIVATE_COMMIT`
   - `ACCESS_AP_SCHEMA_RETIRE_COMMIT`
+  - `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT`
+  - `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT`
+  - `ACCESS_AP_AUTHORING_CONFIRM_COMMIT`
   - `ACCESS_AP_OVERLAY_UPDATE_COMMIT`
   - `ACCESS_BOARD_POLICY_UPDATE_COMMIT`
   - `ACCESS_BOARD_VOTE_COMMIT`
@@ -398,6 +543,7 @@ PH1.ACCESS/PH2.ACCESS writes and gate outcomes must emit PH1.J audit events with
   - `ACCESS_OVERLAY_REF_INVALID`
   - `ACCESS_BOARD_POLICY_INVALID`
   - `ACCESS_BOARD_MEMBER_REQUIRED`
+  - `ACCESS_CONTRACT_VALIDATION_FAILED`
 - `payload_min` allowlisted keys:
   - `access_instance_id`
   - `tenant_id`
@@ -434,9 +580,21 @@ PH1.ACCESS/PH2.ACCESS writes and gate outcomes must emit PH1.J audit events with
   - `at_access_12_board_threshold_deterministic`
 - `AT-ACCESS-13` compiled lineage refs are persisted on access instance compile
   - `at_access_13_access_instance_compile_lineage_persisted`
+- `AT-ACCESS-17` AP authoring review channel persists and idempotency dedupe holds
+  - `at_access_db_17_ap_authoring_review_channel_persists_and_dedupes`
+- `AT-ACCESS-18` AP rule-action requires authoring review state and idempotency dedupe holds
+  - `at_access_db_18_ap_authoring_rule_action_requires_review_state_and_dedupes`
+- `AT-ACCESS-19` AP authoring confirmation requires rule-actions and blocks rule-actions after decline
+  - `at_access_db_19_ap_authoring_confirm_requires_rule_actions_and_blocks_after_decline`
+- `AT-ACCESS-20` AP activation captures authoring lineage fields when confirmation is complete
+  - `at_access_db_20_ap_activation_captures_authoring_lineage_when_confirmed`
+- `AT-ACCESS-21` AP activation fails closed when authoring confirmation is not in confirmed state
+  - `at_access_db_21_ap_activation_fails_closed_without_confirmed_review_state`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
 - typed repo: `crates/selene_storage/src/repo.rs`
-- migration: `crates/selene_storage/migrations/0009_access_instance_tables.sql`
+- migrations:
+  - `crates/selene_storage/migrations/0015_access_master_schema_tables.sql`
+  - `crates/selene_storage/migrations/0016_access_ap_authoring_review_tables.sql`
 - tests: `crates/selene_storage/tests/ph1_access_ph2_access/db_wiring.rs`
