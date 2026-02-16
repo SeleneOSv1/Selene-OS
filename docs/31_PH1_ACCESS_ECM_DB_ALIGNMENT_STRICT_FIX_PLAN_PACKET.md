@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP4_COMPLETED_PENDING_STEP5
+Status: STEP5_COMPLETED_PENDING_STEP6
 
 ## 1) Purpose
 
@@ -63,7 +63,7 @@ From clean tree, run final proof set and commit freeze checkpoint.
 - Step 2: COMPLETED (2026-02-16)
 - Step 3: COMPLETED (2026-02-16)
 - Step 4: COMPLETED (2026-02-16)
-- Step 5: PENDING
+- Step 5: COMPLETED (2026-02-16)
 - Step 6: PENDING
 
 Step 1 note:
@@ -133,3 +133,14 @@ Step 4 note:
 - Step-4 proof:
   - `rg -n "^\\| PH1\\.ACCESS\\.001_PH2\\.ACCESS\\.002 \\|" docs/COVERAGE_MATRIX.md docs/10_DB_OWNERSHIP_MATRIX.md -n` -> pass
   - `rg -n "ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT|ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT|ACCESS_AP_AUTHORING_CONFIRM_COMMIT|activation lineage|AP authoring review" docs/COVERAGE_MATRIX.md docs/10_DB_OWNERSHIP_MATRIX.md -n` -> pass
+
+Step 5 note:
+- Completed strict PH1.ACCESS drift sweep across docs, contracts, storage runtime, migrations, tests, and design-readiness audit.
+- Drift sweep proof:
+  - `rg -n "ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT_ROW|ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT_ROW|ACCESS_AP_AUTHORING_CONFIRM_COMMIT_ROW|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -n` -> pass
+  - `rg -n "access_ap_authoring_review_ledger|access_ap_authoring_review_current|access_ap_rule_review_actions_ledger|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref|ux_access_ap_authoring_review_channel_idem|ux_access_ap_authoring_confirm_idem|ux_access_ap_rule_review_action_idem" docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md crates/selene_storage/migrations/0016_access_ap_authoring_review_tables.sql -n` -> pass
+  - `rg -n "^\\| PH1\\.ACCESS\\.001_PH2\\.ACCESS\\.002 \\||AP authoring review row capabilities|compile-lineage refs" docs/COVERAGE_MATRIX.md docs/10_DB_OWNERSHIP_MATRIX.md -n` -> pass
+- Acceptance proof:
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21/21)
+  - `bash scripts/selene_design_readiness_audit.sh` -> pass (`AUDIT_TREE_STATE: CLEAN`, `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`)
+- Audit section 6 output remains expected legacy LINK compliance evidence only (`LEGACY_DO_NOT_WIRE` lines); no PH1.ACCESS drift finding.
