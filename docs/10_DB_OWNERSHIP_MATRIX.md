@@ -32,7 +32,7 @@ Detailed contracts source:
 | ARTIFACTS_LEDGER_TABLES | Artifacts/tool-cache tables | `docs/DB_WIRING/ARTIFACTS_LEDGER_TABLES.md` |
 | PH1.L | Session lifecycle state rows | `docs/DB_WIRING/PH1_L.md` |
 | PH1.VOICE.ID | Voice enrollment/profile bindings (where applicable) | `docs/DB_WIRING/PH1_VOICE_ID.md` |
-| PH1.ACCESS.001_PH2.ACCESS.002 | Access instances/overrides (PH2 truth) | `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` |
+| PH1.ACCESS.001_PH2.ACCESS.002 | Access gate + schema lifecycle storage truth: access instances/overrides, AP schema ledger/current, AP authoring review ledger/current, AP rule-review action ledger, overlay/board policy ledgers/current, board-vote ledger, compile-lineage refs | `docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md` |
 | PH1.K | Audio runtime event/current projection tables + bounded VAD marker rows in conversation ledger | `docs/DB_WIRING/PH1_K.md` |
 | PH1.W | Wake enrollment/runtime/profile tables + tuning snapshot references in audit payloads | `docs/DB_WIRING/PH1_W.md` |
 | PH1.C | STT transcript ledger rows + provider-arbitration/evidence-span audit rows | `docs/DB_WIRING/PH1_C.md` |

@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP3_COMPLETED_PENDING_STEP4
+Status: STEP4_COMPLETED_PENDING_STEP5
 
 ## 1) Purpose
 
@@ -62,7 +62,7 @@ From clean tree, run final proof set and commit freeze checkpoint.
 - Step 1: COMPLETED (2026-02-16)
 - Step 2: COMPLETED (2026-02-16)
 - Step 3: COMPLETED (2026-02-16)
-- Step 4: PENDING
+- Step 4: COMPLETED (2026-02-16)
 - Step 5: PENDING
 - Step 6: PENDING
 
@@ -115,3 +115,21 @@ Step 3 note:
   - `rg -n "access_ap_authoring_review_ledger|access_ap_authoring_review_current|access_ap_rule_review_actions_ledger|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" docs/DB_WIRING/PH1_ACCESS_001_PH2_ACCESS_002.md -n` -> pass
   - `rg -n "CREATE TABLE IF NOT EXISTS access_ap_authoring_review_ledger|CREATE TABLE IF NOT EXISTS access_ap_authoring_review_current|CREATE TABLE IF NOT EXISTS access_ap_rule_review_actions_ledger|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/migrations/0016_access_ap_authoring_review_tables.sql -n` -> pass
   - `rg -n "ph1access_ap_authoring_review_channel_commit_row|ph1access_ap_authoring_rule_action_commit_row|ph1access_ap_authoring_confirm_commit_row|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -n` -> pass
+
+Step 4 note:
+- Locked PH1.ACCESS coverage/ownership parity in:
+  - `docs/COVERAGE_MATRIX.md`
+  - `docs/10_DB_OWNERSHIP_MATRIX.md`
+- Coverage/ownership lock updates:
+  - kept PH1.ACCESS coverage row simulation and blueprint bindings unchanged (already matching ECM/DB wiring).
+  - extended PH1.ACCESS coverage blocker note to explicitly include AP authoring review + activation-lineage parity lock.
+  - corrected DB ownership summary from "instances/overrides only" to full PH1.ACCESS storage scope:
+    - AP schema ledger/current
+    - AP authoring review ledger/current
+    - AP rule-review action ledger
+    - overlay/board lifecycle ledgers/current
+    - board vote ledger
+    - compile-lineage refs on access instances
+- Step-4 proof:
+  - `rg -n "^\\| PH1\\.ACCESS\\.001_PH2\\.ACCESS\\.002 \\|" docs/COVERAGE_MATRIX.md docs/10_DB_OWNERSHIP_MATRIX.md -n` -> pass
+  - `rg -n "ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT|ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT|ACCESS_AP_AUTHORING_CONFIRM_COMMIT|activation lineage|AP authoring review" docs/COVERAGE_MATRIX.md docs/10_DB_OWNERSHIP_MATRIX.md -n` -> pass
