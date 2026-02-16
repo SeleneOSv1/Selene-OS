@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-15
 Owner: Selene core design + runtime
-Status: STEP5_COMPLETED_PENDING_STEP6
+Status: STEP6_COMPLETED_PENDING_STEP7
 
 ## 1) Purpose
 
@@ -90,7 +90,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 - Step 3: COMPLETED (2026-02-15)
 - Step 4: COMPLETED (2026-02-15)
 - Step 5: COMPLETED (2026-02-15)
-- Step 6: PENDING
+- Step 6: COMPLETED (2026-02-16)
 - Step 7: PENDING
 - Step 8: PENDING
 
@@ -189,3 +189,28 @@ Step 5 note:
 - Step-5 proof:
   - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21 tests)
   - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (21 tests)
+
+Step 6 note:
+- Closed AP authoring review runtime test coverage in:
+  - `crates/selene_os/src/simulation_executor.rs`
+  - `crates/selene_os/src/ph1x.rs`
+- Added/locked test coverage for Step-6 requirements:
+  - phone/desktop review path:
+    - existing `at_sim_exec_19_access_schema_manage_gate_allow_returns_gate_passed`
+  - read-out-loud review path:
+    - `at_sim_exec_23_access_schema_manage_read_out_loud_gate_allow_returns_gate_passed`
+  - rule-by-rule actions:
+    - `at_sim_exec_25_access_schema_manage_activate_rule_actions_bounded_and_validated`
+  - fail-closed activation when required gates are missing:
+    - existing `at_sim_exec_22_access_schema_manage_missing_review_channel_fails_closed`
+    - `at_sim_exec_24_access_schema_manage_activate_missing_rule_action_fails_closed`
+    - invalid rule-action fail-closed branch in `at_sim_exec_25_access_schema_manage_activate_rule_actions_bounded_and_validated`
+  - professional-writing presence in screen path:
+    - `at_x_access_schema_manage_confirm_uses_professional_screen_writing`
+    - `at_x_access_schema_manage_missing_review_channel_asks_explicit_channel_question`
+- Runtime validation hardening:
+  - access schema activation path now validates `access_rule_action` against the bounded enum set in simulation dispatch.
+- Step-6 proof:
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (24 tests)
+  - `cargo test -p selene_os at_x_ -- --nocapture` -> pass (21 tests)
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21 tests)

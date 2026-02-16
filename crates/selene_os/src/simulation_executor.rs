@@ -408,22 +408,21 @@ impl SimulationExecutor {
             }
             IntentType::AccessSchemaManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
-                let action =
-                    parse_access_ap_action(required_field_value(d, FieldKey::ApAction)?)?;
+                let action = parse_access_ap_action(required_field_value(d, FieldKey::ApAction)?)?;
                 let _review_channel = parse_access_review_channel(required_field_value(
                     d,
                     FieldKey::AccessReviewChannel,
                 )?)?;
-                let _access_profile_id =
-                    required_field_value(d, FieldKey::AccessProfileId)?;
-                let _schema_version_id =
-                    required_field_value(d, FieldKey::SchemaVersionId)?;
+                let _access_profile_id = required_field_value(d, FieldKey::AccessProfileId)?;
+                let _schema_version_id = required_field_value(d, FieldKey::SchemaVersionId)?;
                 if matches!(action, AccessApAction::CreateDraft | AccessApAction::Update) {
-                    let _profile_payload =
-                        required_field_value(d, FieldKey::ProfilePayloadJson)?;
+                    let _profile_payload = required_field_value(d, FieldKey::ProfilePayloadJson)?;
                 }
                 if action == AccessApAction::Activate {
-                    let _rule_action = required_field_value(d, FieldKey::AccessRuleAction)?;
+                    let _rule_action = parse_access_rule_action(required_field_value(
+                        d,
+                        FieldKey::AccessRuleAction,
+                    )?)?;
                 }
                 self.enforce_access_schema_gate(store, &actor_user_id, &tenant_id, now)?;
                 Ok(SimulationDispatchOutcome::AccessGatePassed {
@@ -634,7 +633,8 @@ fn parse_invitee_type(
         _ => Err(StorageError::ContractViolation(
             ContractViolation::InvalidValue {
                 field: "simulation_candidate_dispatch.intent_draft.fields.invitee_type",
-                reason: "must be one of: company, customer, employee, family_member, friend, associate",
+                reason:
+                    "must be one of: company, customer, employee, family_member, friend, associate",
             },
         )),
     }
@@ -676,6 +676,19 @@ fn parse_access_review_channel(v: &FieldValue) -> Result<(), StorageError> {
             ContractViolation::InvalidValue {
                 field: "simulation_candidate_dispatch.intent_draft.fields.access_review_channel",
                 reason: "must be PHONE_DESKTOP or READ_OUT_LOUD",
+            },
+        )),
+    }
+}
+
+fn parse_access_rule_action(v: &FieldValue) -> Result<(), StorageError> {
+    let s = field_str(v).to_ascii_uppercase();
+    match s.as_str() {
+        "AGREE" | "DISAGREE" | "EDIT" | "DELETE" | "DISABLE" | "ADD_CUSTOM_RULE" => Ok(()),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.fields.access_rule_action",
+                reason: "must be one of: AGREE, DISAGREE, EDIT, DELETE, DISABLE, ADD_CUSTOM_RULE",
             },
         )),
     }
@@ -868,7 +881,8 @@ mod tests {
     use selene_kernel_contracts::{ReasonCodeId, SchemaVersion};
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState, TenantCompanyRecord,
+        DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState,
+        TenantCompanyRecord,
     };
 
     fn capreq_field(key: FieldKey, value: &str) -> IntentField {
@@ -936,11 +950,7 @@ mod tests {
         .unwrap()
     }
 
-    fn seed_capreq_access_instance(
-        store: &mut Ph1fStore,
-        actor: &UserId,
-        tenant: &str,
-    ) {
+    fn seed_capreq_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
         seed_capreq_access_instance_with(
             store,
             actor,
@@ -2380,6 +2390,229 @@ mod tests {
                 ContractViolation::InvalidValue {
                     field: "simulation_candidate_dispatch.intent_draft.fields",
                     reason: "missing required field",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_23_access_schema_manage_read_out_loud_gate_allow_returns_gate_passed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-schema-actor-3").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_schema_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(204),
+                &access_x(
+                    1,
+                    access_draft(
+                        IntentType::AccessSchemaManage,
+                        vec![
+                            access_field(FieldKey::TenantId, "tenant_1"),
+                            access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                            access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                            access_field(FieldKey::SchemaVersionId, "v1"),
+                            access_field(FieldKey::AccessReviewChannel, "READ_OUT_LOUD"),
+                            access_field(
+                                FieldKey::ProfilePayloadJson,
+                                "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                            ),
+                        ],
+                    ),
+                    "idem-access-schema-read-out-loud-1",
+                ),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            out,
+            SimulationDispatchOutcome::AccessGatePassed {
+                requested_action
+            } if requested_action == "ACCESS_SCHEMA_MANAGE"
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_24_access_schema_manage_activate_missing_rule_action_fails_closed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-schema-actor-4").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_schema_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(205),
+            &access_x(
+                1,
+                access_draft(
+                    IntentType::AccessSchemaManage,
+                    vec![
+                        access_field(FieldKey::TenantId, "tenant_1"),
+                        access_field(FieldKey::ApAction, "ACTIVATE"),
+                        access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                        access_field(FieldKey::SchemaVersionId, "v2"),
+                        access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+                    ],
+                ),
+                "idem-access-schema-activate-missing-rule-action-1",
+            ),
+        );
+
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.fields",
+                    reason: "missing required field",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_25_access_schema_manage_activate_rule_actions_bounded_and_validated() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("access-schema-actor-5").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_schema_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let allowed_actions = [
+            "AGREE",
+            "DISAGREE",
+            "EDIT",
+            "DELETE",
+            "DISABLE",
+            "ADD_CUSTOM_RULE",
+        ];
+
+        for (idx, action) in allowed_actions.iter().enumerate() {
+            let review_channel = if idx % 2 == 0 {
+                "PHONE_DESKTOP"
+            } else {
+                "READ_OUT_LOUD"
+            };
+            let out = exec
+                .execute_ph1x_dispatch_simulation_candidate(
+                    &mut store,
+                    actor.clone(),
+                    MonotonicTimeNs(206 + idx as u64),
+                    &access_x(
+                        idx as u64 + 1,
+                        access_draft(
+                            IntentType::AccessSchemaManage,
+                            vec![
+                                access_field(FieldKey::TenantId, "tenant_1"),
+                                access_field(FieldKey::ApAction, "ACTIVATE"),
+                                access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                                access_field(FieldKey::SchemaVersionId, &format!("v{}", idx + 1)),
+                                access_field(FieldKey::AccessReviewChannel, review_channel),
+                                access_field(FieldKey::AccessRuleAction, action),
+                            ],
+                        ),
+                        &format!("idem-access-schema-activate-action-{}", idx + 1),
+                    ),
+                )
+                .unwrap();
+            assert!(matches!(
+                out,
+                SimulationDispatchOutcome::AccessGatePassed {
+                    requested_action
+                } if requested_action == "ACCESS_SCHEMA_MANAGE"
+            ));
+        }
+
+        let invalid = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(213),
+            &access_x(
+                999,
+                access_draft(
+                    IntentType::AccessSchemaManage,
+                    vec![
+                        access_field(FieldKey::TenantId, "tenant_1"),
+                        access_field(FieldKey::ApAction, "ACTIVATE"),
+                        access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                        access_field(FieldKey::SchemaVersionId, "v999"),
+                        access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+                        access_field(FieldKey::AccessRuleAction, "UNBOUNDED_ACTION"),
+                    ],
+                ),
+                "idem-access-schema-activate-action-invalid",
+            ),
+        );
+        assert!(matches!(
+            invalid,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.fields.access_rule_action",
+                    reason:
+                        "must be one of: AGREE, DISAGREE, EDIT, DELETE, DISABLE, ADD_CUSTOM_RULE",
                 }
             ))
         ));

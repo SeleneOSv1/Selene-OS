@@ -987,28 +987,31 @@ fn confirm_text(d: &IntentDraft) -> String {
                 .to_ascii_uppercase();
             let profile_id =
                 field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
-            let version = field_original(d, FieldKey::SchemaVersionId).unwrap_or("a schema version");
+            let version =
+                field_original(d, FieldKey::SchemaVersionId).unwrap_or("a schema version");
             let scope = field_original(d, FieldKey::ApScope).unwrap_or("TENANT");
             let tenant = field_original(d, FieldKey::TenantId).unwrap_or("the tenant");
             let review_channel =
                 field_original(d, FieldKey::AccessReviewChannel).unwrap_or("PHONE_DESKTOP");
-            let rule_action =
-                field_original(d, FieldKey::AccessRuleAction).unwrap_or("AGREE");
+            let rule_action = field_original(d, FieldKey::AccessRuleAction).unwrap_or("AGREE");
             format!(
                 "You are requesting {action} for access profile {profile_id} ({version}) in {scope} scope for {tenant}, using review channel {review_channel} with rule action {rule_action}. Please confirm."
             )
         }
         IntentType::AccessEscalationVote => {
             let vote_action = field_original(d, FieldKey::VoteAction).unwrap_or("CAST_VOTE");
-            let case_id = field_original(d, FieldKey::EscalationCaseId).unwrap_or("an escalation case");
+            let case_id =
+                field_original(d, FieldKey::EscalationCaseId).unwrap_or("an escalation case");
             let vote_value = field_original(d, FieldKey::VoteValue).unwrap_or("APPROVE");
             format!(
                 "You want to run {vote_action} on escalation case {case_id} with vote {vote_value}. Is that correct?"
             )
         }
         IntentType::AccessInstanceCompileRefresh => {
-            let target_user = field_original(d, FieldKey::TargetUserId).unwrap_or("the target user");
-            let profile_id = field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
+            let target_user =
+                field_original(d, FieldKey::TargetUserId).unwrap_or("the target user");
+            let profile_id =
+                field_original(d, FieldKey::AccessProfileId).unwrap_or("an access profile");
             let tenant = field_original(d, FieldKey::TenantId).unwrap_or("the tenant");
             format!(
                 "You want to compile or refresh access for {target_user} using profile {profile_id} in {tenant}. Is that correct?"
@@ -1190,7 +1193,10 @@ fn clarify_for_missing(
         ),
         (_, FieldKey::BoardPolicyId) => (
             "Which board policy should apply?".to_string(),
-            vec!["board_policy_2_of_3".to_string(), "board_policy_70pct".to_string()],
+            vec![
+                "board_policy_2_of_3".to_string(),
+                "board_policy_70pct".to_string(),
+            ],
         ),
         (_, FieldKey::TargetUserId) => (
             "Which user is the target?".to_string(),
@@ -1779,6 +1785,117 @@ mod tests {
             out.thread_state.pending,
             Some(PendingState::Clarify { .. })
         ));
+    }
+
+    #[test]
+    fn at_x_access_schema_manage_missing_review_channel_asks_explicit_channel_question() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let mut d = intent_draft(IntentType::AccessSchemaManage);
+        d.required_fields_missing = vec![FieldKey::AccessReviewChannel];
+
+        let req = Ph1xRequest::v1(
+            8,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Clarify(c) => {
+                let lower = c.question.to_ascii_lowercase();
+                assert!(lower.contains("phone"));
+                assert!(lower.contains("desktop"));
+                assert!(lower.contains("read it out loud"));
+                assert_eq!(c.what_is_missing, vec![FieldKey::AccessReviewChannel]);
+            }
+            _ => panic!("expected Clarify directive"),
+        }
+    }
+
+    #[test]
+    fn at_x_access_schema_manage_confirm_uses_professional_screen_writing() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let mut d = intent_draft(IntentType::AccessSchemaManage);
+        d.fields = vec![
+            IntentField {
+                key: FieldKey::ApAction,
+                value: FieldValue::verbatim("ACTIVATE".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessProfileId,
+                value: FieldValue::verbatim("AP_CLERK".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::SchemaVersionId,
+                value: FieldValue::verbatim("v3".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::ApScope,
+                value: FieldValue::verbatim("TENANT".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::TenantId,
+                value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessReviewChannel,
+                value: FieldValue::verbatim("PHONE_DESKTOP".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessRuleAction,
+                value: FieldValue::verbatim("DISABLE".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+        ];
+
+        let req = Ph1xRequest::v1(
+            8,
+            2,
+            now(2),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Confirm(c) => {
+                assert!(c.text.contains("AP_CLERK"));
+                assert!(c.text.contains("PHONE_DESKTOP"));
+                assert!(c.text.contains("DISABLE"));
+                assert!(c.text.contains("Please confirm."));
+            }
+            _ => panic!("expected Confirm directive"),
+        }
     }
 
     #[test]
