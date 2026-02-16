@@ -3,7 +3,7 @@
 ## Engine Header
 - `engine_id`: `PH1.ACCESS.001_PH2.ACCESS.002`
 - `purpose`: Persist schema-driven master-access truth (AP versions/overlays/board policy) plus per-user access truth and deterministic override lifecycle while exposing read-only gate decisions.
-- `data_owned`: `access_instances`, `access_overrides`, `access_ap_schemas_ledger`, `access_ap_schemas_current`, `access_ap_overlay_ledger`, `access_ap_overlay_current`, `access_board_policy_ledger`, `access_board_policy_current`, `access_board_votes_ledger`
+- `data_owned`: `access_instances`, `access_overrides`, `access_ap_schemas_ledger`, `access_ap_schemas_current`, `access_ap_authoring_review_ledger`, `access_ap_authoring_review_current`, `access_ap_rule_review_actions_ledger`, `access_ap_overlay_ledger`, `access_ap_overlay_current`, `access_board_policy_ledger`, `access_board_policy_current`, `access_board_votes_ledger`
 - `version`: `v1`
 - `status`: `ACTIVE`
 
@@ -23,31 +23,52 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT_ROW`
+- `name`: Persist AP authoring review channel choice for an AP version
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, review_channel, reason_code, created_by_user_id, idempotency_key)`
+- `output_schema`: `Result<AccessApAuthoringReviewCurrentRecord, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT_ROW`
+- `name`: Persist one bounded AP rule-review action row
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, rule_action_payload(action|suggested_rule_ref?|capability_id?|constraint_ref?|escalation_policy_ref?), reason_code, created_by_user_id, idempotency_key)`
+- `output_schema`: `Result<AccessApRuleReviewActionRecord, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
+### `ACCESS_AP_AUTHORING_CONFIRM_COMMIT_ROW`
+- `name`: Persist AP authoring confirmation-state transition for an AP version
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, confirmation_state, reason_code, created_by_user_id, idempotency_key)`
+- `output_schema`: `Result<AccessApAuthoringReviewCurrentRecord, StorageError>`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+
 ### `ACCESS_AP_SCHEMA_CREATE_DRAFT_ROW`
 - `name`: Append AP schema draft row
-- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, profile_payload_json, reason_code, created_by_user_id, idempotency_key)`
-- `output_schema`: `Result<AccessProfileSchemaRecord, StorageError>`
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, profile_payload_json, reason_code, created_by_user_id, idempotency_key)` where `event_action=CREATE_DRAFT`
+- `output_schema`: `Result<AccessApSchemaLedgerRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `ACCESS_AP_SCHEMA_UPDATE_COMMIT_ROW`
 - `name`: Append AP schema update row
-- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, update_payload_json, reason_code, created_by_user_id, idempotency_key)`
-- `output_schema`: `Result<AccessProfileSchemaRecord, StorageError>`
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, profile_payload_json, reason_code, created_by_user_id, idempotency_key)` where `event_action=UPDATE_DRAFT`
+- `output_schema`: `Result<AccessApSchemaLedgerRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `ACCESS_AP_SCHEMA_ACTIVATE_COMMIT_ROW`
 - `name`: Activate AP schema version in current projection
-- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, reason_code, created_by_user_id, idempotency_key)`
-- `output_schema`: `Result<AccessProfileSchemaRecord, StorageError>`
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, profile_payload_json, reason_code, created_by_user_id, idempotency_key)` where `event_action=ACTIVATE`
+- `output_schema`: `Result<AccessApSchemaLedgerRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
 ### `ACCESS_AP_SCHEMA_RETIRE_COMMIT_ROW`
 - `name`: Retire AP schema version
-- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, reason_code, created_by_user_id, idempotency_key)`
-- `output_schema`: `Result<AccessProfileSchemaRecord, StorageError>`
+- `input_schema`: `(now, tenant_id|null, access_profile_id, schema_version_id, scope, profile_payload_json, reason_code, created_by_user_id, idempotency_key)` where `event_action=RETIRE`
+- `output_schema`: `Result<AccessApSchemaLedgerRecord, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
@@ -117,6 +138,9 @@
 - idempotency replay/no-op: `ACCESS_IDEMPOTENCY_REPLAY`
 - tenant/user scope mismatch: `ACCESS_SCOPE_VIOLATION`
 - contract validation failure: `ACCESS_CONTRACT_VALIDATION_FAILED`
+- AP authoring review state missing for rule-action/confirmation commit: `ACCESS_CONTRACT_VALIDATION_FAILED`
+- AP authoring review action/channel/confirmation value out of bounded enum set: `ACCESS_CONTRACT_VALIDATION_FAILED`
+- AP schema activation attempted without required AP authoring confirmation/action lineage when review state exists: `ACCESS_CONTRACT_VALIDATION_FAILED`
 - policy denies all approval paths: `ACCESS_DENY_NO_APPROVAL_PATH`
 - SMS setup required before SMS send path: `ACCESS_SMS_SETUP_REQUIRED`
 - schema reference missing in compile/eval chain: `ACCESS_SCHEMA_REF_MISSING`
@@ -137,6 +161,17 @@
 - callers must treat non-allow decisions as non-executable for governed commits:
   - `DENY` -> fail closed, no governed commit
   - `ESCALATE` -> fail closed pending approval/override resolution
+
+## AP Authoring Review Rule Set (Deterministic)
+- review channel is bounded to `PHONE_DESKTOP | READ_OUT_LOUD`.
+- rule action is bounded to `AGREE | DISAGREE | EDIT | DELETE | DISABLE | ADD_CUSTOM_RULE`.
+- rule-action commit requires existing authoring review current row for `(scope_key, access_profile_id, schema_version_id)`.
+- confirmation commit requires existing authoring review current row.
+- confirmation state `PENDING_ACTIVATION_CONFIRMATION` and `CONFIRMED_FOR_ACTIVATION` requires at least one persisted rule-action row.
+- activation commit behavior:
+  - if no AP authoring review state exists, activation can proceed under baseline AP lifecycle rules.
+  - if AP authoring review state exists, activation is fail-closed unless confirmation state is `CONFIRMED_FOR_ACTIVATION` and at least one rule-action row exists.
+  - successful activation persists authoring lineage fields (`activation_review_event_id`, `activation_rule_action_count`, `activation_rule_action_set_ref`) in AP schema ledger output.
 
 ## Audit Emission Requirements Per Capability
 - Write capabilities must emit PH1.J events with:

@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP1_COMPLETED_PENDING_STEP2
+Status: STEP2_COMPLETED_PENDING_STEP3
 
 ## 1) Purpose
 
@@ -60,7 +60,7 @@ From clean tree, run final proof set and commit freeze checkpoint.
 ## 6) Execution Record
 
 - Step 1: COMPLETED (2026-02-16)
-- Step 2: PENDING
+- Step 2: COMPLETED (2026-02-16)
 - Step 3: PENDING
 - Step 4: PENDING
 - Step 5: PENDING
@@ -70,3 +70,18 @@ Step 1 note:
 - Added this packet as canonical PH1.ACCESS ECM/DB parity closure scope (`docs/31_PH1_ACCESS_ECM_DB_ALIGNMENT_STRICT_FIX_PLAN_PACKET.md`).
 - Updated `docs/02_BUILD_PLAN.md` next strict packet pointer from Packet 30 to Packet 31.
 - Logged Packet 30 freeze checkpoint commit (`f75ea97`) in build-plan strict checkpoint history.
+
+Step 2 note:
+- Locked PH1.ACCESS ECM capability parity in:
+  - `docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md`
+- ECM lock additions:
+  - added AP authoring review row capabilities:
+    - `ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT_ROW`
+    - `ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT_ROW`
+    - `ACCESS_AP_AUTHORING_CONFIRM_COMMIT_ROW`
+  - corrected AP schema lifecycle row outputs to `AccessApSchemaLedgerRecord` for create/update/activate/retire capabilities.
+  - documented AP authoring fail-closed semantics (bounded channel/action sets, required review state, confirmation/action requirements).
+  - documented activation-lineage persistence fields (`activation_review_event_id`, `activation_rule_action_count`, `activation_rule_action_set_ref`) for activation output behavior.
+- Step-2 proof:
+  - `rg -n "ACCESS_AP_AUTHORING_REVIEW_CHANNEL_COMMIT_ROW|ACCESS_AP_AUTHORING_RULE_ACTION_COMMIT_ROW|ACCESS_AP_AUTHORING_CONFIRM_COMMIT_ROW|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" docs/ECM/PH1_ACCESS_001_PH2_ACCESS_002.md -n` -> pass
+  - `rg -n "ph1access_ap_authoring_review_channel_commit_row|ph1access_ap_authoring_rule_action_commit_row|ph1access_ap_authoring_confirm_commit_row|activation_review_event_id|activation_rule_action_count|activation_rule_action_set_ref" crates/selene_storage/src/repo.rs crates/selene_storage/src/ph1f.rs -n` -> pass
