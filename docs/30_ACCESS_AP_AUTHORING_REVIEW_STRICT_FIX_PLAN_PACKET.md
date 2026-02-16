@@ -2,7 +2,7 @@
 
 Last updated: 2026-02-16
 Owner: Selene core design + runtime
-Status: STEP7_COMPLETED_PENDING_STEP8
+Status: STEP8_COMPLETED_FROZEN
 
 ## 1) Purpose
 
@@ -92,7 +92,7 @@ From clean tree, run targeted suites + workspace tests + readiness audit, then c
 - Step 5: COMPLETED (2026-02-15)
 - Step 6: COMPLETED (2026-02-16)
 - Step 7: COMPLETED (2026-02-16)
-- Step 8: PENDING
+- Step 8: COMPLETED (2026-02-16)
 
 Step 1 note:
 - Added this packet as canonical AP authoring review scope (`docs/30_ACCESS_AP_AUTHORING_REVIEW_STRICT_FIX_PLAN_PACKET.md`).
@@ -231,3 +231,20 @@ Step 7 note:
 - Regression proof run for contract/runtime surfaces after drift sweep:
   - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass (46 tests)
   - `cargo test -p selene_engines -- --nocapture` -> pass (61 tests)
+
+Step 8 note:
+- Final freeze proof executed from clean tree (`AUDIT_TREE_STATE: CLEAN` prior to patching this note).
+- Targeted proof suites:
+  - `cargo test -p selene_kernel_contracts -- --nocapture` -> pass (46 tests)
+  - `cargo test -p selene_engines -- --nocapture` -> pass (61 tests)
+  - `cargo test -p selene_os at_sim_exec_ -- --nocapture` -> pass (24 tests)
+  - `cargo test -p selene_os at_x_ -- --nocapture` -> pass (21 tests)
+  - `cargo test -p selene_storage --test db_wiring_access_tables -- --nocapture` -> pass (21 tests)
+- Workspace proof:
+  - `cargo test --workspace -- --nocapture` -> pass (all workspace packages/tests)
+- Final readiness audit:
+  - `bash scripts/selene_design_readiness_audit.sh` -> pass
+  - `AUDIT_TREE_STATE: CLEAN`
+  - `BAD_ACTIVE_SIMREQ_NONE_FOUND:0`
+  - legacy LINK `LEGACY_DO_NOT_WIRE` lines remain expected compliance evidence only.
+- Packet 30 is now frozen and ready for handoff to the next strict packet scope.
