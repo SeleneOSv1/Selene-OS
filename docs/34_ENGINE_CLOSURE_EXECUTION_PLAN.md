@@ -1036,3 +1036,39 @@ ENFORCE_BUILDER_CONTROLLED_ROLLOUT_START=1 scripts/selene_design_readiness_audit
 Hard rule:
 - If this gate fails, rollout does not start.
 - No manual bypass is allowed; fix failing precondition(s) and re-run this command.
+
+### 13.26 Controlled Rollback Drill (Dry-Run Revert Safety)
+Mission:
+- Prove rollback safety remains executable before/while rollout.
+- Ensure regression-triggered revert path and missing-gate fail-closed path remain intact.
+
+Operational command:
+```bash
+bash scripts/check_builder_rollback_drill.sh
+```
+
+What this command enforces:
+1. Post-deploy judge rollback path is still executable:
+   - `at_builder_os_07_post_deploy_judge_reverts_on_latency_threshold_breach`
+2. Missing gate outcomes still fail closed:
+   - `at_builder_os_08_post_deploy_judge_refuses_missing_gate_outcomes`
+
+Expected pass signal:
+```text
+CHECK_OK builder_rollback_drill=pass
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13n.sh
+```
+
+Readiness audit:
+- Section `1AC` enforces Phase13-N rollback-drill guardrail checks on each run.
+- Section `1AD` optionally enforces rollback drill execution when:
+```bash
+ENFORCE_BUILDER_ROLLBACK_DRILL=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- If rollback drill fails, rollout progression is blocked until rollback safety is restored.

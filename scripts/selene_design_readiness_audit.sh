@@ -245,6 +245,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AC) BUILDER PIPELINE PHASE13-N ROLLBACK-DRILL GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13n.sh
+
+echo
+echo "=================================================="
+echo "1AD) BUILDER ROLLBACK DRILL (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_ROLLBACK_DRILL:-0}" == "1" ]]; then
+  ./scripts/check_builder_rollback_drill.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_ROLLBACK_DRILL=1 to require dry-run revert safety proof before rollout progression."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true
