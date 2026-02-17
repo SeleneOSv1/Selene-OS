@@ -1158,6 +1158,7 @@ ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE=1 scripts/selene_design_readiness_audi
 Hard rule:
 - No execution write is allowed without `EXECUTE=1`, `LAUNCH_EXECUTE_ACK=YES`, and `LAUNCH_EXECUTE_IDEMPOTENCY_KEY`.
 - If execution preconditions fail, launch progression is blocked.
+- Terminal stages are non-promotable: `PRODUCTION(status=COMPLETED)` and `ROLLED_BACK(status=REVERTED)` must fail with `no_next_stage`.
 
 ### 13.29 Stage-Bound Judge Gate (Per-Stage Promotion Proof)
 Mission:

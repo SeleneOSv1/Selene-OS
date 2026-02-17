@@ -97,6 +97,24 @@ if [[ -z "${current_release_row}" ]]; then
 fi
 
 IFS='|' read -r current_release_state_id current_stage current_status current_rollback_hook current_rollback_ready <<< "${current_release_row}"
+
+case "${current_stage}" in
+  PRODUCTION)
+    if [[ "${current_status}" == "COMPLETED" ]]; then
+      fail "no_next_stage current_stage=PRODUCTION status=COMPLETED"
+    fi
+    fail "terminal_stage_status_mismatch expected_status=COMPLETED actual=${current_status}"
+    ;;
+  ROLLED_BACK)
+    if [[ "${current_status}" == "REVERTED" ]]; then
+      fail "no_next_stage current_stage=ROLLED_BACK status=REVERTED"
+    fi
+    fail "terminal_stage_status_mismatch expected_status=REVERTED actual=${current_status}"
+    ;;
+  STAGING|CANARY|RAMP_25|RAMP_50) ;;
+  *) fail "unknown_current_stage value=${current_stage}" ;;
+esac
+
 if [[ "${current_status}" != "ACTIVE" ]]; then
   fail "current_release_state_not_active proposal_id=${PROPOSAL_ID} stage=${current_stage} status=${current_status}"
 fi
@@ -106,7 +124,6 @@ case "${current_stage}" in
   CANARY) computed_next_stage="RAMP_25" ;;
   RAMP_25) computed_next_stage="RAMP_50" ;;
   RAMP_50) computed_next_stage="PRODUCTION" ;;
-  PRODUCTION|ROLLED_BACK) computed_next_stage="" ;;
   *) fail "unknown_current_stage value=${current_stage}" ;;
 esac
 if [[ -z "${computed_next_stage}" ]]; then
