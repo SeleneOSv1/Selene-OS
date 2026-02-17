@@ -1158,3 +1158,46 @@ ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE=1 scripts/selene_design_readiness_audi
 Hard rule:
 - No execution write is allowed without `EXECUTE=1`, `LAUNCH_EXECUTE_ACK=YES`, and `LAUNCH_EXECUTE_IDEMPOTENCY_KEY`.
 - If execution preconditions fail, launch progression is blocked.
+
+### 13.29 Stage-Bound Judge Gate (Per-Stage Promotion Proof)
+Mission:
+- Prevent promotion from one rollout stage to the next using telemetry from a different stage.
+- Require a fresh, stage-bound judge pass before each non-initial stage advance.
+
+Operational command (stage-bound mode enabled by default):
+```bash
+REQUIRE_STAGE_JUDGE=1 \
+bash scripts/check_builder_controlled_launch_execute.sh
+```
+
+What this command enforces:
+1. For `CANARY -> RAMP_25`, `RAMP_25 -> RAMP_50`, and `RAMP_50 -> PRODUCTION`:
+   - post-deploy judge telemetry must exist for the current `release_state_id`
+   - telemetry must satisfy freshness threshold (`MAX_TELEMETRY_AGE_MINUTES`)
+   - stage metrics must pass `check_builder_stage2_promotion_gate.sh`
+2. Judge export is scope-bound by:
+   - `REQUIRED_PROPOSAL_ID=<current proposal_id>`
+   - `REQUIRED_RELEASE_STATE_ID=<current release_state_id>`
+3. If scoped telemetry is missing/stale/failing, launch execution fails closed.
+
+Expected pass/fail signal examples:
+```text
+CHECK_OK builder_controlled_launch_execute=preview ...
+NO_CANARY_TELEMETRY: ... (scope=release_state:...)
+STALE_CANARY_TELEMETRY: ... (scope=release_state:...)
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13q.sh
+```
+
+Readiness audit:
+- Section `1AI` enforces Phase13-Q stage-bound judge guardrail checks on each run.
+- Section `1AJ` optionally enforces stage-bound preview checks when:
+```bash
+ENFORCE_BUILDER_STAGE_JUDGE_BINDING=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- Stage progression is blocked unless the current stage has fresh, scoped judge evidence that passes promotion thresholds.

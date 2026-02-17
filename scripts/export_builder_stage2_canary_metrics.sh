@@ -6,6 +6,8 @@ ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.dev/db.env}"
 OUTPUT_CSV="${1:-${ROOT_DIR}/.dev/stage2_canary_metrics_snapshot.csv}"
 LOOKBACK_HOURS="${LOOKBACK_HOURS:-168}"
 MAX_TELEMETRY_AGE_MINUTES="${MAX_TELEMETRY_AGE_MINUTES:-180}"
+REQUIRED_PROPOSAL_ID="${REQUIRED_PROPOSAL_ID:-}"
+REQUIRED_RELEASE_STATE_ID="${REQUIRED_RELEASE_STATE_ID:-}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "Missing env file: ${ENV_FILE}" >&2
@@ -47,16 +49,42 @@ run_psql() {
     "$@"
 }
 
+sql_quote() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+judge_scope_where=""
+judge_scope_label="scope=latest"
+if [[ -n "${REQUIRED_PROPOSAL_ID}" ]]; then
+  if ! [[ "${REQUIRED_PROPOSAL_ID}" =~ ^[A-Za-z0-9._:-]{4,128}$ ]]; then
+    echo "REQUIRED_PROPOSAL_ID has invalid format." >&2
+    exit 1
+  fi
+  required_proposal_sql="$(sql_quote "${REQUIRED_PROPOSAL_ID}")"
+  judge_scope_where="${judge_scope_where} AND proposal_id = '${required_proposal_sql}'"
+  judge_scope_label="scope=proposal:${REQUIRED_PROPOSAL_ID}"
+fi
+if [[ -n "${REQUIRED_RELEASE_STATE_ID}" ]]; then
+  if ! [[ "${REQUIRED_RELEASE_STATE_ID}" =~ ^[A-Za-z0-9._:-]{4,128}$ ]]; then
+    echo "REQUIRED_RELEASE_STATE_ID has invalid format." >&2
+    exit 1
+  fi
+  required_release_state_sql="$(sql_quote "${REQUIRED_RELEASE_STATE_ID}")"
+  judge_scope_where="${judge_scope_where} AND release_state_id = '${required_release_state_sql}'"
+  judge_scope_label="scope=release_state:${REQUIRED_RELEASE_STATE_ID}"
+fi
+
 recent_count="$(
   run_psql -Atqc "
     SELECT count(*)::text
     FROM builder_post_deploy_judge_results
-    WHERE recorded_at >= ((EXTRACT(EPOCH FROM now())::bigint - (${LOOKBACK_HOURS} * 3600)) * 1000000000);
+    WHERE recorded_at >= ((EXTRACT(EPOCH FROM now())::bigint - (${LOOKBACK_HOURS} * 3600)) * 1000000000)
+      ${judge_scope_where};
   "
 )"
 
 if [[ "${recent_count}" == "0" ]]; then
-  echo "NO_CANARY_TELEMETRY: builder_post_deploy_judge_results has no rows in last ${LOOKBACK_HOURS}h" >&2
+  echo "NO_CANARY_TELEMETRY: builder_post_deploy_judge_results has no rows in last ${LOOKBACK_HOURS}h (${judge_scope_label})" >&2
   exit 1
 fi
 
@@ -66,12 +94,13 @@ latest_age_minutes="$(
       (EXTRACT(EPOCH FROM now())::bigint - max(recorded_at) / 1000000000) / 60
     )::text
     FROM builder_post_deploy_judge_results
-    WHERE recorded_at >= ((EXTRACT(EPOCH FROM now())::bigint - (${LOOKBACK_HOURS} * 3600)) * 1000000000);
+    WHERE recorded_at >= ((EXTRACT(EPOCH FROM now())::bigint - (${LOOKBACK_HOURS} * 3600)) * 1000000000)
+      ${judge_scope_where};
   "
 )"
 
 if [[ -z "${latest_age_minutes}" ]]; then
-  echo "NO_CANARY_TELEMETRY: unable to compute latest telemetry age in last ${LOOKBACK_HOURS}h" >&2
+  echo "NO_CANARY_TELEMETRY: unable to compute latest telemetry age in last ${LOOKBACK_HOURS}h (${judge_scope_label})" >&2
   exit 1
 fi
 if ! [[ "${latest_age_minutes}" =~ ^-?[0-9]+$ ]]; then
@@ -83,7 +112,7 @@ if (( latest_age_minutes < 0 )); then
   exit 1
 fi
 if (( latest_age_minutes > MAX_TELEMETRY_AGE_MINUTES )); then
-  echo "STALE_CANARY_TELEMETRY: age_minutes=${latest_age_minutes} max_allowed_minutes=${MAX_TELEMETRY_AGE_MINUTES}" >&2
+  echo "STALE_CANARY_TELEMETRY: age_minutes=${latest_age_minutes} max_allowed_minutes=${MAX_TELEMETRY_AGE_MINUTES} (${judge_scope_label})" >&2
   exit 1
 fi
 
@@ -103,6 +132,7 @@ COPY (
       recorded_at
     FROM builder_post_deploy_judge_results
     WHERE recorded_at >= ((EXTRACT(EPOCH FROM now())::bigint - (${LOOKBACK_HOURS} * 3600)) * 1000000000)
+      ${judge_scope_where}
     ORDER BY recorded_at DESC
     LIMIT 1
   ),
@@ -137,4 +167,4 @@ COPY (
 ) TO STDOUT WITH CSV HEADER;
 " > "${OUTPUT_CSV}"
 
-echo "EXPORTED_CANARY_TELEMETRY:${OUTPUT_CSV} age_minutes=${latest_age_minutes} max_allowed_minutes=${MAX_TELEMETRY_AGE_MINUTES}"
+echo "EXPORTED_CANARY_TELEMETRY:${OUTPUT_CSV} age_minutes=${latest_age_minutes} max_allowed_minutes=${MAX_TELEMETRY_AGE_MINUTES} ${judge_scope_label}"

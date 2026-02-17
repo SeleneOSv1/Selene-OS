@@ -293,6 +293,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AI) BUILDER PIPELINE PHASE13-Q STAGE-BOUND JUDGE GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13q.sh
+
+echo
+echo "=================================================="
+echo "1AJ) BUILDER STAGE-BOUND JUDGE BINDING (OPTIONAL ENFORCED, PREVIEW-ONLY)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_STAGE_JUDGE_BINDING:-0}" == "1" ]]; then
+  EXECUTE=0 REQUIRE_STAGE_JUDGE=1 ./scripts/check_builder_controlled_launch_execute.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_STAGE_JUDGE_BINDING=1 to require stage-bound judge telemetry checks per current release_state in readiness audit."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

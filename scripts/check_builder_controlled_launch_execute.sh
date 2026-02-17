@@ -9,6 +9,7 @@ PROPOSAL_ID="${PROPOSAL_ID:-}"
 TARGET_STAGE="${TARGET_STAGE:-NEXT}"   # NEXT | CANARY | RAMP_25 | RAMP_50 | PRODUCTION
 EXECUTE="${EXECUTE:-0}"                # 0 preview-only, 1 perform DB write
 PRECHECK="${PRECHECK:-1}"              # 1 run pre-launch bundle before proceeding
+REQUIRE_STAGE_JUDGE="${REQUIRE_STAGE_JUDGE:-1}"   # 1 require stage-bound post-deploy judge pass before advance
 LAUNCH_EXECUTE_ACK="${LAUNCH_EXECUTE_ACK:-NO}"
 LAUNCH_EXECUTE_IDEMPOTENCY_KEY="${LAUNCH_EXECUTE_IDEMPOTENCY_KEY:-}"
 
@@ -22,6 +23,9 @@ if [[ "${EXECUTE}" != "0" && "${EXECUTE}" != "1" ]]; then
 fi
 if [[ "${PRECHECK}" != "0" && "${PRECHECK}" != "1" ]]; then
   fail "invalid_PRECHECK expected=0_or_1 actual=${PRECHECK}"
+fi
+if [[ "${REQUIRE_STAGE_JUDGE}" != "0" && "${REQUIRE_STAGE_JUDGE}" != "1" ]]; then
+  fail "invalid_REQUIRE_STAGE_JUDGE expected=0_or_1 actual=${REQUIRE_STAGE_JUDGE}"
 fi
 case "${TARGET_STAGE}" in
   NEXT|CANARY|RAMP_25|RAMP_50|PRODUCTION) ;;
@@ -107,6 +111,26 @@ case "${current_stage}" in
 esac
 if [[ -z "${computed_next_stage}" ]]; then
   fail "no_next_stage current_stage=${current_stage}"
+fi
+
+if [[ "${REQUIRE_STAGE_JUDGE}" == "1" ]]; then
+  case "${current_stage}" in
+    CANARY|RAMP_25|RAMP_50)
+      stage_bound_metrics_csv="$(mktemp "${TMPDIR:-/tmp}/builder_stage_bound_metrics.XXXXXX.csv")"
+      cleanup_stage_metrics() {
+        rm -f "${stage_bound_metrics_csv}"
+      }
+      trap cleanup_stage_metrics EXIT
+      REQUIRED_PROPOSAL_ID="${PROPOSAL_ID}" \
+      REQUIRED_RELEASE_STATE_ID="${current_release_state_id}" \
+      bash scripts/export_builder_stage2_canary_metrics.sh "${stage_bound_metrics_csv}" >/dev/null
+      bash scripts/check_builder_stage2_promotion_gate.sh "${stage_bound_metrics_csv}" >/dev/null
+      ;;
+    STAGING) ;;
+    *)
+      fail "stage_judge_policy_unknown_stage stage=${current_stage}"
+      ;;
+  esac
 fi
 
 target_stage="${computed_next_stage}"
