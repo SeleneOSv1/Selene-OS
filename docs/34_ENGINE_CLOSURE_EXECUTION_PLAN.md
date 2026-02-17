@@ -967,14 +967,17 @@ Hard rule:
 - This is the canonical release-check entrypoint.
 - If hard gate fails (including `NO_CANARY_TELEMETRY`), no launch/ramp progression is allowed.
 
-### 13.24 Local Freeze Checkpoint (No Push Yet)
+### 13.24 Freeze Checkpoint (Remote Published)
 Status:
-- `FROZEN_LOCAL_ONLY` (checkpoint is committed + tagged locally; remote push intentionally deferred).
+- `FROZEN_REMOTE_PUBLISHED` (checkpoint is committed, tagged, and pushed to origin).
 
 Frozen release point:
 - commit: `a3a002a` (`chore(release): freeze stage3 fresh-cycle checkpoint`)
 - tag: `freeze-stage3-fresh-cycle-20260217`
 - ledger proof: `docs/03_BUILD_LEDGER.md` entry `FREEZE_CHECKPOINT_STAGE3_FRESH_CYCLE`
+- remote publish proof:
+  - `origin/main` head includes commit `65a10ed`
+  - `origin` tag `freeze-stage3-fresh-cycle-20260217` exists
 
 Local verification commands:
 ```bash
@@ -984,11 +987,12 @@ bash scripts/check_builder_release_hard_gate.sh
 ENFORCE_BUILDER_LEARNING_BRIDGE=1 ENFORCE_BUILDER_HUMAN_PERMISSION=1 ENFORCE_BUILDER_E2E_GATE_FLOW=1 ENFORCE_STAGE3_RELEASE_GATE=1 ENFORCE_BUILDER_RELEASE_HARD_GATE=1 scripts/selene_design_readiness_audit.sh
 ```
 
-Deferred remote publish (run only when explicitly approved):
+Remote verification commands:
 ```bash
-git push origin main
-git push origin freeze-stage3-fresh-cycle-20260217
+git ls-remote --heads origin main
+git ls-remote --tags origin freeze-stage3-fresh-cycle-20260217
+git show -s --oneline freeze-stage3-fresh-cycle-20260217^{}
 ```
 
 Hard rule:
-- Until explicit push approval is given, this freeze remains local and is the canonical working checkpoint for continued validation.
+- This published freeze tag is the canonical rollback anchor for the Stage-3 fresh-cycle release checkpoint.
