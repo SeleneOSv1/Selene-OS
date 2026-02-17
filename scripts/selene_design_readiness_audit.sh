@@ -325,6 +325,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AM) BUILDER PIPELINE PHASE13-S PRODUCTION-SOAK RUNNER GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13s.sh
+
+echo
+echo "=================================================="
+echo "1AN) BUILDER PRODUCTION SOAK RUNNER (OPTIONAL ENFORCED, ONCE MODE)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER:-0}" == "1" ]]; then
+  RUN_MODE=once ./scripts/check_builder_production_soak_runner.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 to require fail-closed production-soak runner checks (once mode) in readiness audit."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

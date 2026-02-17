@@ -1245,3 +1245,54 @@ ENFORCE_BUILDER_PRODUCTION_SOAK=1 scripts/selene_design_readiness_audit.sh
 
 Hard rule:
 - Production is not considered stable unless watchdog checks pass with scoped, fresh production judge evidence.
+
+### 13.31 Production Soak Recurring Runner (Fail-Closed Alerting)
+Mission:
+- Run production soak checks on a recurring schedule with deterministic fail-closed alerting.
+- Ensure freshness regressions (including telemetry age breaches) trigger immediate alert + non-zero exit.
+
+Operational command (single tick):
+```bash
+RUN_MODE=once \
+bash scripts/check_builder_production_soak_runner.sh
+```
+
+Operational command (recurring loop):
+```bash
+RUN_MODE=loop \
+INTERVAL_MINUTES=60 \
+bash scripts/check_builder_production_soak_runner.sh
+```
+
+What this command enforces:
+1. Calls `check_builder_production_soak_watchdog.sh` each tick.
+2. On success:
+   - emits `CHECK_OK builder_production_soak_runner=tick_pass ...`
+   - appends state line to `STATE_FILE` (default `.dev/builder_production_soak_runner_state.log`).
+3. On failure:
+   - classifies stale freshness as `PRODUCTION_SOAK_STALE_TELEMETRY` when output contains `STALE_CANARY_TELEMETRY`.
+   - emits/records alert lines to `ALERT_LOG_FILE` (default `.dev/builder_production_soak_alerts.log`).
+4. `FAIL_CLOSED=1` (default):
+   - exits non-zero immediately on any failed tick.
+
+Expected signals:
+```text
+CHECK_OK builder_production_soak_runner=tick_pass ...
+ALERT builder_production_soak_runner=PRODUCTION_SOAK_STALE_TELEMETRY ...
+ALERT builder_production_soak_runner=PRODUCTION_SOAK_CHECK_FAILED ...
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13s.sh
+```
+
+Readiness audit:
+- Section `1AM` enforces Phase13-S runner guardrail checks on each run.
+- Section `1AN` optionally enforces once-mode runner execution when:
+```bash
+ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- Recurring soak monitoring must be fail-closed by default; stale telemetry must alert and terminate the tick with non-zero status.
