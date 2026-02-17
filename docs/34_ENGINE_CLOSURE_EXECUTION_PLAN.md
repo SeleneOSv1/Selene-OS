@@ -1296,3 +1296,58 @@ ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 scripts/selene_design_readiness_audit.s
 
 Hard rule:
 - Recurring soak monitoring must be fail-closed by default; stale telemetry must alert and terminate the tick with non-zero status.
+
+### 13.32 Production Soak Mac Automation (launchd)
+Mission:
+- Make production-soak monitoring automatic on your Mac without manual triggering.
+- Keep scheduler setup deterministic, inspectable, and removable.
+
+Install automation (hourly default):
+```bash
+INTERVAL_MINUTES=60 \
+bash scripts/setup_builder_production_soak_launchd.sh
+```
+
+Check automation status:
+```bash
+bash scripts/status_builder_production_soak_launchd.sh
+```
+
+Remove automation:
+```bash
+bash scripts/remove_builder_production_soak_launchd.sh
+```
+
+What this automation enforces:
+1. LaunchAgent label default:
+   - `com.selene.builder.production_soak_runner`
+2. Runtime bundle default location (outside protected Documents path):
+   - `~/.selene_automation/production_soak`
+3. launchd executes runner in fail-closed once mode each interval:
+   - `RUN_MODE=once`
+   - `FAIL_CLOSED=1`
+   - `ALERT_ON_FAIL=1`
+4. Uses watchdog command inside runtime bundle:
+   - `~/.selene_automation/production_soak/scripts/check_builder_production_soak_watchdog.sh`
+5. Logs:
+   - runner stdout/stderr under `~/.selene_automation/production_soak/launchd/`
+   - alert/state logs under `~/.selene_automation/production_soak/.dev/`
+6. Scheduler lifecycle is explicit:
+   - setup (bootstrap + kickstart)
+   - status (loaded/not loaded)
+   - remove (bootout + plist delete; optional runtime bundle removal)
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13t.sh
+```
+
+Readiness audit:
+- Section `1AO` enforces Phase13-T automation guardrail checks on each run.
+- Section `1AP` optionally enforces loaded automation status when:
+```bash
+ENFORCE_BUILDER_PRODUCTION_SOAK_AUTOMATION=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- Production monitoring is treated as operationally incomplete until launchd automation is installed and status shows loaded.

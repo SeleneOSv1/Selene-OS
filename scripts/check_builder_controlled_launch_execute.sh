@@ -133,7 +133,7 @@ fi
 if [[ "${REQUIRE_STAGE_JUDGE}" == "1" ]]; then
   case "${current_stage}" in
     CANARY|RAMP_25|RAMP_50)
-      stage_bound_metrics_csv="$(mktemp "${TMPDIR:-/tmp}/builder_stage_bound_metrics.XXXXXX.csv")"
+      stage_bound_metrics_csv="$(mktemp "${TMPDIR:-/tmp}/builder_stage_bound_metrics.$$.XXXXXXXXXXXX.csv")"
       cleanup_stage_metrics() {
         rm -f "${stage_bound_metrics_csv}"
       }

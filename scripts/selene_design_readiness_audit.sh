@@ -341,6 +341,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AO) BUILDER PIPELINE PHASE13-T PRODUCTION-SOAK AUTOMATION GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13t.sh
+
+echo
+echo "=================================================="
+echo "1AP) BUILDER PRODUCTION SOAK AUTOMATION STATUS (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_PRODUCTION_SOAK_AUTOMATION:-0}" == "1" ]]; then
+  REQUIRE_LOADED=1 ./scripts/status_builder_production_soak_launchd.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_AUTOMATION=1 to require launchd automation loaded-status checks in readiness audit."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

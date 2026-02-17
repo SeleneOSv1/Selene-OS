@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT_DIR="${SELENE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 ENV_FILE="${ENV_FILE:-${ROOT_DIR}/.dev/db.env}"
 OUTPUT_CSV="${1:-${ROOT_DIR}/.dev/stage2_canary_metrics_snapshot.csv}"
 LOOKBACK_HOURS="${LOOKBACK_HOURS:-168}"

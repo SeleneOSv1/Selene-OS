@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+ROOT_DIR="${SELENE_ROOT:-$(git rev-parse --show-toplevel)}"
+cd "${ROOT_DIR}"
 
 RUN_MODE="${RUN_MODE:-once}"                 # once | loop
 INTERVAL_MINUTES="${INTERVAL_MINUTES:-60}"   # used only in loop mode

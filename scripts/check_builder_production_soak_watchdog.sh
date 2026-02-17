@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+ROOT_DIR="${SELENE_ROOT:-$(git rev-parse --show-toplevel)}"
+cd "${ROOT_DIR}"
 
 ENV_FILE="${ENV_FILE:-.dev/db.env}"
 PROPOSAL_ID="${PROPOSAL_ID:-}"
@@ -113,7 +114,7 @@ if [[ "${judge_action}" != "ACCEPT" ]]; then
   fail "production_judge_not_accept proposal_id=${PROPOSAL_ID} release_state_id=${release_state_id} action=${judge_action} reason_code=${judge_reason_code}"
 fi
 
-soak_metrics_csv="$(mktemp "${TMPDIR:-/tmp}/builder_production_soak_metrics.XXXXXX.csv")"
+soak_metrics_csv="$(mktemp "${TMPDIR:-/tmp}/builder_production_soak_metrics.$$.XXXXXXXXXXXX.csv")"
 cleanup_soak_metrics() {
   rm -f "${soak_metrics_csv}"
 }
