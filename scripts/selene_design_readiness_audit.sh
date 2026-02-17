@@ -277,6 +277,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AG) BUILDER PIPELINE PHASE13-P CONTROLLED-LAUNCH EXECUTOR GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13p.sh
+
+echo
+echo "=================================================="
+echo "1AH) BUILDER CONTROLLED LAUNCH EXECUTOR (OPTIONAL ENFORCED, PREVIEW-ONLY)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE:-0}" == "1" ]]; then
+  EXECUTE=0 ./scripts/check_builder_controlled_launch_execute.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE=1 to require controlled launch-executor preview checks in readiness audit."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

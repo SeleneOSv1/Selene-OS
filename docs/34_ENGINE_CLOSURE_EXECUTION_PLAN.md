@@ -1110,3 +1110,51 @@ ENFORCE_BUILDER_PRELAUNCH_BUNDLE=1 scripts/selene_design_readiness_audit.sh
 
 Hard rule:
 - If pre-launch bundle fails, no launch/ramp progression is allowed.
+
+### 13.28 Controlled Launch Executor (One-Step Stage Advance)
+Mission:
+- Execute one deterministic release-stage promotion at a time after all gates are green.
+- Keep launch progression explicit, idempotent, and fail-closed.
+
+Operational command (preview default):
+```bash
+bash scripts/check_builder_controlled_launch_execute.sh
+```
+
+Execution command (writes one release-state row):
+```bash
+EXECUTE=1 \
+LAUNCH_EXECUTE_ACK=YES \
+LAUNCH_EXECUTE_IDEMPOTENCY_KEY=<unique_key> \
+bash scripts/check_builder_controlled_launch_execute.sh
+```
+
+What this command enforces:
+1. Pre-launch bundle passes first (`check_builder_prelaunch_bundle.sh`), unless explicitly disabled with `PRECHECK=0`.
+2. Launch permission gate passes (`check_builder_human_permission_gate.sh launch`).
+3. Promotion is one-step only (`STAGING -> CANARY -> RAMP_25 -> RAMP_50 -> PRODUCTION`).
+4. `PRODUCTION` promotion requires latest approval status `APPROVED`.
+5. Execution mode requires explicit ack + idempotency key; duplicate key resolves deterministically as idempotent reuse.
+
+Expected pass signals:
+```text
+CHECK_OK builder_controlled_launch_execute=preview ...
+CHECK_OK builder_controlled_launch_execute=executed ...
+CHECK_OK builder_controlled_launch_execute=idempotent_reuse ...
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13p.sh
+```
+
+Readiness audit:
+- Section `1AG` enforces Phase13-P launch-executor guardrail checks on each run.
+- Section `1AH` optionally enforces launch-executor preview checks when:
+```bash
+ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- No execution write is allowed without `EXECUTE=1`, `LAUNCH_EXECUTE_ACK=YES`, and `LAUNCH_EXECUTE_IDEMPOTENCY_KEY`.
+- If execution preconditions fail, launch progression is blocked.
