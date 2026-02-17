@@ -58,6 +58,193 @@ done
 
 echo
 echo "=================================================="
+echo "1B) ENGINE TRACKER DUPLICATION GUARDRAIL"
+echo "=================================================="
+./scripts/check_engine_tracker_duplicates.sh
+
+echo
+echo "=================================================="
+echo "1C) OPTIONAL ENGINE UTILITY GATES (U4/U5)"
+echo "=================================================="
+./scripts/check_optional_engine_utility_gates.sh docs/fixtures/optional_engine_utility_snapshot.csv --fail-on-u4
+
+echo
+echo "=================================================="
+echo "1D) RUNTIME BOUNDARY GUARDRAIL (OFFLINE/CONTROL-PLANE)"
+echo "=================================================="
+./scripts/check_runtime_boundary_guards.sh
+
+echo
+echo "=================================================="
+echo "1E) DELIVERY OWNERSHIP BOUNDARY GUARDRAIL"
+echo "=================================================="
+./scripts/check_delivery_ownership_boundaries.sh
+
+echo
+echo "=================================================="
+echo "1F) UNDERSTANDING + CLARIFY PRECEDENCE GUARDRAIL"
+echo "=================================================="
+./scripts/check_understanding_clarify_precedence.sh
+
+echo
+echo "=================================================="
+echo "1G) LEARNING OWNERSHIP BOUNDARY GUARDRAIL"
+echo "=================================================="
+./scripts/check_learning_ownership_boundaries.sh
+
+echo
+echo "=================================================="
+echo "1H) BUILDER PIPELINE PHASE13-A GUARDRAIL"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13a.sh
+
+echo
+echo "=================================================="
+echo "1I) BUILDER PIPELINE PHASE13-B GUARDRAIL"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13b.sh
+
+echo
+echo "=================================================="
+echo "1J) BUILDER PIPELINE PHASE13-C GUARDRAIL"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13c.sh
+
+echo
+echo "=================================================="
+echo "1K) BUILDER PIPELINE PHASE13-D GUARDRAIL"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13d.sh
+
+echo
+echo "=================================================="
+echo "1L) BUILDER STAGE-2 CANARY REPLAY GUARDRAIL"
+echo "=================================================="
+./scripts/check_builder_stage2_canary_replay.sh
+
+echo
+echo "=================================================="
+echo "1M) BUILDER STAGE-2 PROMOTION GATE CHECK"
+echo "=================================================="
+./scripts/check_builder_stage2_promotion_gate.sh docs/fixtures/stage2_canary_metrics_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1N) BUILDER STAGE-3 RELEASE GATE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_STAGE3_RELEASE_GATE:-0}" == "1" ]]; then
+  ./scripts/check_builder_stage3_release_gate.sh .dev/stage2_canary_metrics_snapshot.csv
+else
+  echo "SKIP: set ENFORCE_STAGE3_RELEASE_GATE=1 to require real telemetry export + promotion gate before Stage-3 ramp."
+fi
+
+echo
+echo "=================================================="
+echo "1O) BUILDER HUMAN PERMISSION LOOP (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_HUMAN_PERMISSION:-0}" == "1" ]]; then
+  ./scripts/check_builder_human_permission_gate.sh code
+  ./scripts/check_builder_human_permission_gate.sh launch
+else
+  echo "SKIP: set ENFORCE_BUILDER_HUMAN_PERMISSION=1 to require BCAST/REM-backed human code+launch approvals, daily-review freshness, and plain-language issue/fix permission prompts."
+fi
+
+echo
+echo "=================================================="
+echo "1P) BUILDER LEARNING->PATCH BRIDGE GATE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_LEARNING_BRIDGE:-0}" == "1" ]]; then
+  ./scripts/check_builder_learning_bridge_gate.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_LEARNING_BRIDGE=1 to require evidence-backed learning reports before learning-triggered builder patching."
+fi
+
+echo
+echo "=================================================="
+echo "1Q) BUILDER PIPELINE PHASE13-E LEARNING BRIDGE CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13e.sh
+
+echo
+echo "=================================================="
+echo "1R) BUILDER E2E GATE FLOW (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_E2E_GATE_FLOW:-0}" == "1" ]]; then
+  ./scripts/check_builder_e2e_gate_flow.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_E2E_GATE_FLOW=1 to require one-command learning->approval->stage gate chain."
+fi
+
+echo
+echo "=================================================="
+echo "1S) BUILDER PIPELINE PHASE13-F HUMAN BRIEF AUTOGEN CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13f.sh
+
+echo
+echo "=================================================="
+echo "1T) BUILDER PIPELINE PHASE13-G PERMISSION PACKET CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13g.sh
+
+echo
+echo "=================================================="
+echo "1U) BUILDER PIPELINE PHASE13-H DECISION INGEST CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13h.sh
+
+echo
+echo "=================================================="
+echo "1V) BUILDER PIPELINE PHASE13-I DECISION-FILE INGEST CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13i.sh
+
+echo
+echo "=================================================="
+echo "1W) BUILDER PIPELINE PHASE13-J DECISION-SEED EXPORT CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13j.sh
+
+echo
+echo "=================================================="
+echo "1X) BUILDER PIPELINE PHASE13-K DECISION-FILE AUTO-SYNC CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13k.sh
+
+echo
+echo "=================================================="
+echo "1Y) BUILDER RELEASE HARD GATE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_RELEASE_HARD_GATE:-0}" == "1" ]]; then
+  ./scripts/check_builder_release_hard_gate.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_RELEASE_HARD_GATE=1 to require one strict release entrypoint (auto-sync decision files + live telemetry stage gate)."
+fi
+
+echo
+echo "=================================================="
+echo "1Z) BUILDER PIPELINE PHASE13-L HARD-GATE GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13l.sh
+
+echo
+echo "=================================================="
+echo "1AA) BUILDER PIPELINE PHASE13-M CONTROLLED-ROLLOUT START GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13m.sh
+
+echo
+echo "=================================================="
+echo "1AB) BUILDER CONTROLLED ROLLOUT START GATE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_CONTROLLED_ROLLOUT_START:-0}" == "1" ]]; then
+  ./scripts/check_builder_controlled_rollout_start.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_CONTROLLED_ROLLOUT_START=1 to require synchronized remote head + freeze-tag parity + replay + strict hard-gate before rollout kickoff."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

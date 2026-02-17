@@ -1018,6 +1018,18 @@ Expected pass signal:
 CHECK_OK builder_controlled_rollout_start=pass commit=<head> freeze_tag=freeze-stage3-fresh-cycle-20260217 freeze_target=<commit>
 ```
 
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13m.sh
+```
+
+Readiness audit:
+- Section `1AA` enforces Phase13-M rollout-start guardrail checks on each run.
+- Section `1AB` optionally enforces live rollout-start gate execution when:
+```bash
+ENFORCE_BUILDER_CONTROLLED_ROLLOUT_START=1 scripts/selene_design_readiness_audit.sh
+```
+
 Hard rule:
 - If this gate fails, rollout does not start.
 - No manual bypass is allowed; fix failing precondition(s) and re-run this command.
