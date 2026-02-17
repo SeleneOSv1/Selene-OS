@@ -496,7 +496,7 @@ Status:
 
 Promotion gate source:
 1. Export latest canary telemetry from isolated Selene Postgres (`builder_post_deploy_judge_results` + gate coverage).
-   - Freshness is mandatory: telemetry age must be within `MAX_TELEMETRY_AGE_MINUTES` (default `1440`).
+   - Freshness is mandatory: telemetry age must be within `MAX_TELEMETRY_AGE_MINUTES` (default `180`).
 2. Compute deterministic promotion metrics:
    - `p95_delta_bp`
    - `p99_delta_bp`
@@ -1014,6 +1014,7 @@ What this command enforces:
 2. Freeze tag `freeze-stage3-fresh-cycle-20260217` must exist locally and on remote with the same target commit.
 3. Release-controller staged-transition replay tests must pass (`check_builder_stage2_canary_replay.sh`).
 4. Canonical strict release hard gate must pass (`check_builder_release_hard_gate.sh`).
+   - Live telemetry freshness is fail-closed (`MAX_TELEMETRY_AGE_MINUTES`, default `180`).
 
 Expected pass signal:
 ```text

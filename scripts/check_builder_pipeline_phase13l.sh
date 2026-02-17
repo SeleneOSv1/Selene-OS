@@ -30,6 +30,7 @@ check_file "docs/fixtures/builder_change_brief_template.md"
 
 check_contains "scripts/check_builder_release_hard_gate.sh" "AUTO_SYNC_DECISION_FILES=1" "hard gate missing auto-sync enforcement"
 check_contains "scripts/check_builder_release_hard_gate.sh" "STAGE_GATE_MODE=live" "hard gate missing live-stage enforcement"
+check_contains "scripts/check_builder_release_hard_gate.sh" "MAX_TELEMETRY_AGE_MINUTES" "hard gate missing telemetry freshness default propagation"
 check_contains "scripts/check_builder_release_hard_gate.sh" "check_builder_e2e_gate_flow.sh" "hard gate missing e2e chain call"
 check_contains "scripts/selene_design_readiness_audit.sh" "ENFORCE_BUILDER_RELEASE_HARD_GATE" "readiness missing hard-gate enforcement switch"
 check_contains "scripts/selene_design_readiness_audit.sh" "check_builder_release_hard_gate.sh" "readiness missing hard-gate call"
