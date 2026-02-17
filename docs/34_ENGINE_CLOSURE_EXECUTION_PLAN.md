@@ -996,3 +996,28 @@ git show -s --oneline freeze-stage3-fresh-cycle-20260217^{}
 
 Hard rule:
 - This published freeze tag is the canonical rollback anchor for the Stage-3 fresh-cycle release checkpoint.
+
+### 13.25 Controlled Rollout Start Command (Single Kickoff Gate)
+Mission:
+- Start rollout only from a synchronized, published checkpoint with deterministic rollback anchor.
+- Avoid manual operator drift across release-controller replay checks, approval gates, and live telemetry gates.
+
+Operational command:
+```bash
+bash scripts/check_builder_controlled_rollout_start.sh
+```
+
+What this command enforces:
+1. Local `HEAD` must match `origin/main` (no hidden unpushed rollout start).
+2. Freeze tag `freeze-stage3-fresh-cycle-20260217` must exist locally and on remote with the same target commit.
+3. Release-controller staged-transition replay tests must pass (`check_builder_stage2_canary_replay.sh`).
+4. Canonical strict release hard gate must pass (`check_builder_release_hard_gate.sh`).
+
+Expected pass signal:
+```text
+CHECK_OK builder_controlled_rollout_start=pass commit=<head> freeze_tag=freeze-stage3-fresh-cycle-20260217 freeze_target=<commit>
+```
+
+Hard rule:
+- If this gate fails, rollout does not start.
+- No manual bypass is allowed; fix failing precondition(s) and re-run this command.
