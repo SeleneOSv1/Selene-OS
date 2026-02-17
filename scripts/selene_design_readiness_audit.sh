@@ -261,6 +261,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AE) BUILDER PIPELINE PHASE13-O PRE-LAUNCH BUNDLE GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13o.sh
+
+echo
+echo "=================================================="
+echo "1AF) BUILDER PRE-LAUNCH BUNDLE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_PRELAUNCH_BUNDLE:-0}" == "1" ]]; then
+  ./scripts/check_builder_prelaunch_bundle.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_PRELAUNCH_BUNDLE=1 to require rollout-start + rollback-drill + hard-gate final checklist before launch progression."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

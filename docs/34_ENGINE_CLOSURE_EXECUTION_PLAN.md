@@ -1072,3 +1072,41 @@ ENFORCE_BUILDER_ROLLBACK_DRILL=1 scripts/selene_design_readiness_audit.sh
 
 Hard rule:
 - If rollback drill fails, rollout progression is blocked until rollback safety is restored.
+
+### 13.27 Pre-Launch Bundle Command (Single Final Checklist)
+Mission:
+- Provide one deterministic final command before launch progression.
+- Ensure rollout-start gating, rollback safety, and strict release hard-gate are all green in a single operator action.
+
+Operational command:
+```bash
+bash scripts/check_builder_prelaunch_bundle.sh
+```
+
+What this command enforces:
+1. Controlled rollout-start gate is green:
+   - `check_builder_controlled_rollout_start.sh`
+2. Rollback drill safety is green:
+   - `check_builder_rollback_drill.sh`
+3. Strict release hard-gate is re-confirmed:
+   - `check_builder_release_hard_gate.sh`
+
+Expected pass signal:
+```text
+CHECK_OK builder_prelaunch_bundle=pass
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13o.sh
+```
+
+Readiness audit:
+- Section `1AE` enforces Phase13-O pre-launch-bundle guardrail checks on each run.
+- Section `1AF` optionally enforces pre-launch bundle execution when:
+```bash
+ENFORCE_BUILDER_PRELAUNCH_BUNDLE=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- If pre-launch bundle fails, no launch/ramp progression is allowed.
