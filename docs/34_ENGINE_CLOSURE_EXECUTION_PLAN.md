@@ -496,6 +496,7 @@ Status:
 
 Promotion gate source:
 1. Export latest canary telemetry from isolated Selene Postgres (`builder_post_deploy_judge_results` + gate coverage).
+   - Freshness is mandatory: telemetry age must be within `MAX_TELEMETRY_AGE_MINUTES` (default `1440`).
 2. Compute deterministic promotion metrics:
    - `p95_delta_bp`
    - `p99_delta_bp`
@@ -519,6 +520,7 @@ ENFORCE_STAGE3_RELEASE_GATE=1 scripts/selene_design_readiness_audit.sh
 Hard rule:
 - No successful `CHECK_OK builder_stage3_release_gate=pass` means no Stage-3 ramp progression.
 - No canary telemetry rows (`NO_CANARY_TELEMETRY`) is an automatic fail-closed block on Stage-3 ramp.
+- Stale canary telemetry (`STALE_CANARY_TELEMETRY`) is an automatic fail-closed block on Stage-3 ramp.
 
 ### 13.12 Builder Human Permission Interrupt Loop (BCAST + REM)
 Status:
