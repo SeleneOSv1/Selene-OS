@@ -309,6 +309,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AK) BUILDER PIPELINE PHASE13-R PRODUCTION-SOAK WATCHDOG GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13r.sh
+
+echo
+echo "=================================================="
+echo "1AL) BUILDER PRODUCTION SOAK WATCHDOG (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_BUILDER_PRODUCTION_SOAK:-0}" == "1" ]]; then
+  ./scripts/check_builder_production_soak_watchdog.sh
+else
+  echo "SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK=1 to require fresh production-stage judge telemetry and fail-closed production soak checks."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true

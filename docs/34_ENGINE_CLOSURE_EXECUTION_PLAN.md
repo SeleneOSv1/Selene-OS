@@ -1202,3 +1202,46 @@ ENFORCE_BUILDER_STAGE_JUDGE_BINDING=1 scripts/selene_design_readiness_audit.sh
 
 Hard rule:
 - Stage progression is blocked unless the current stage has fresh, scoped judge evidence that passes promotion thresholds.
+
+### 13.30 Production Soak Watchdog (Fresh Production Judge Required)
+Mission:
+- Keep production state guarded by fresh, production-scoped post-deploy judge evidence.
+- Fail closed if production judge evidence is missing, stale, non-ACCEPT, or policy-incomplete.
+
+Operational command:
+```bash
+bash scripts/check_builder_production_soak_watchdog.sh
+```
+
+What this command enforces:
+1. Latest release state for target proposal is exactly:
+   - `stage=PRODUCTION`
+   - `status=COMPLETED`
+2. Latest approval status remains `APPROVED`.
+3. A judge row exists for the exact production release_state.
+4. Judge action is `ACCEPT` (non-accept is fail-closed).
+5. Judge telemetry is fresh and scope-bound:
+   - `REQUIRED_PROPOSAL_ID=<proposal_id>`
+   - `REQUIRED_RELEASE_STATE_ID=<production release_state_id>`
+6. Scoped metrics still pass deterministic promotion thresholds via:
+   - `check_builder_stage2_promotion_gate.sh`
+
+Expected pass signal:
+```text
+CHECK_OK builder_production_soak_watchdog=pass ...
+```
+
+Guardrail command:
+```bash
+bash scripts/check_builder_pipeline_phase13r.sh
+```
+
+Readiness audit:
+- Section `1AK` enforces Phase13-R production-soak guardrail checks on each run.
+- Section `1AL` optionally enforces production soak watchdog execution when:
+```bash
+ENFORCE_BUILDER_PRODUCTION_SOAK=1 scripts/selene_design_readiness_audit.sh
+```
+
+Hard rule:
+- Production is not considered stable unless watchdog checks pass with scoped, fresh production judge evidence.
