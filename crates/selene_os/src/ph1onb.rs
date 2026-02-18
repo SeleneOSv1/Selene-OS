@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use selene_kernel_contracts::ph1_voice_id::{
     Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse, VoiceEnrollmentSessionId,
     VoiceIdEnrollCompleteCommitRequest, VoiceIdEnrollCompleteResult,
-    VoiceIdEnrollDeferReminderCommitRequest, VoiceIdEnrollDeferResult,
-    VoiceIdEnrollSampleCommitRequest, VoiceIdEnrollSampleResult, VoiceIdEnrollStartDraftRequest,
-    VoiceIdEnrollStartResult, VoiceIdSimulationRequest, VoiceIdSimulationType,
+    VoiceIdEnrollDeferCommitRequest, VoiceIdEnrollDeferResult, VoiceIdEnrollSampleCommitRequest,
+    VoiceIdEnrollSampleResult, VoiceIdEnrollStartDraftRequest, VoiceIdEnrollStartResult,
+    VoiceIdSimulationRequest, VoiceIdSimulationType,
     VoiceSampleResult as VoiceEnrollSampleResultType, PH1VOICEID_SIM_CONTRACT_VERSION,
-    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT,
-    VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
+    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_DEFER_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
+    VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
@@ -723,10 +723,10 @@ impl Ph1OnbOrchRuntime {
                         correlation_id: req.correlation_id,
                         turn_id: TurnId(turn),
                         now: MonotonicTimeNs(now),
-                        simulation_id: VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT.to_string(),
+                        simulation_id: VOICE_ID_ENROLL_DEFER_COMMIT.to_string(),
                         simulation_type: VoiceIdSimulationType::Commit,
-                        request: VoiceIdSimulationRequest::EnrollDeferReminderCommit(
-                            VoiceIdEnrollDeferReminderCommitRequest {
+                        request: VoiceIdSimulationRequest::EnrollDeferCommit(
+                            VoiceIdEnrollDeferCommitRequest {
                                 voice_enrollment_session_id: voice_enrollment_session_id.clone(),
                                 reason_code: *reason_code,
                                 idempotency_key: idempotency_key.clone(),
@@ -1063,9 +1063,9 @@ mod tests {
     };
     use selene_kernel_contracts::ph1position::{
         PositionLifecycleState, PositionPolicyResult, PositionRequirementEvidenceMode,
-        PositionRequirementExposureRule, PositionRequirementFieldSpec, PositionRequirementFieldType,
-        PositionRequirementRuleType, PositionRequirementSensitivity, PositionScheduleType,
-        PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, TenantId,
+        PositionRequirementExposureRule, PositionRequirementFieldSpec,
+        PositionRequirementFieldType, PositionRequirementRuleType, PositionRequirementSensitivity,
+        PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, TenantId,
     };
     use selene_storage::ph1f::{
         DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState,
@@ -1746,8 +1746,9 @@ mod tests {
             correlation_id: corr(),
             turn_id: turn(),
             now: MonotonicTimeNs(now().0 + 24),
-            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
-                .to_string(),
+            simulation_id:
+                selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
+                    .to_string(),
             simulation_type: SimulationType::Commit,
             request: OnbRequest::RequirementBackfillCompleteCommit(
                 OnbRequirementBackfillCompleteCommitRequest {
@@ -1824,15 +1825,19 @@ mod tests {
             ),
         };
         let notify_out = rt.run(&mut store, &notify_wrong_tenant);
-        assert!(matches!(notify_out, Err(StorageError::ContractViolation(_))));
+        assert!(matches!(
+            notify_out,
+            Err(StorageError::ContractViolation(_))
+        ));
 
         let complete_wrong_tenant = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
             correlation_id: corr(),
             turn_id: turn(),
             now: MonotonicTimeNs(now().0 + 27),
-            simulation_id: selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
-                .to_string(),
+            simulation_id:
+                selene_kernel_contracts::ph1onb::ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
+                    .to_string(),
             simulation_type: SimulationType::Commit,
             request: OnbRequest::RequirementBackfillCompleteCommit(
                 OnbRequirementBackfillCompleteCommitRequest {
@@ -1843,7 +1848,10 @@ mod tests {
             ),
         };
         let complete_out = rt.run(&mut store, &complete_wrong_tenant);
-        assert!(matches!(complete_out, Err(StorageError::ContractViolation(_))));
+        assert!(matches!(
+            complete_out,
+            Err(StorageError::ContractViolation(_))
+        ));
     }
 
     #[test]
@@ -1922,7 +1930,10 @@ mod tests {
             }),
         };
         let access_out = rt.run(&mut store, &access);
-        assert!(matches!(access_out, Err(StorageError::ContractViolation(_))));
+        assert!(matches!(
+            access_out,
+            Err(StorageError::ContractViolation(_))
+        ));
 
         let complete = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
@@ -1937,7 +1948,10 @@ mod tests {
             }),
         };
         let complete_out = rt.run(&mut store, &complete);
-        assert!(matches!(complete_out, Err(StorageError::ContractViolation(_))));
+        assert!(matches!(
+            complete_out,
+            Err(StorageError::ContractViolation(_))
+        ));
     }
 
     #[test]

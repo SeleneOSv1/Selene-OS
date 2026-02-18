@@ -45,3 +45,15 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1jAuditRepo`)
 - `docs/DB_WIRING/PH1_J.md`
+
+## Related Engine Boundary (`PH1.KMS`)
+- PH1.J accepts KMS audit events only when secret-bearing fields are opaque references.
+- Any PH1.KMS payload that includes raw secret material must be rejected as contract validation failure.
+
+## Related Engine Boundary (`PH1.EXPORT`)
+- PH1.J accepts export-completion audit events only when export fields are bounded (`export_artifact_id`, `export_hash`, `export_payload_ref`) and reason-coded.
+- Export events missing tamper-evident hash metadata or indicating raw-audio inclusion must be rejected as contract validation failure.
+
+## Related Engine Boundary (`PH1.EXPLAIN`)
+- PH1.J-provided explain context must remain bounded to deterministic reason-code metadata.
+- Any attempt to persist provider internals/debug thresholds for explain paths must fail contract validation.

@@ -3,6 +3,15 @@
 use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
+use selene_kernel_contracts::ph1builder::{
+    required_approvals_for_change_class, BuilderApprovalState, BuilderApprovalStateStatus,
+    BuilderChangeClass, BuilderExpectedEffect, BuilderLearningContext, BuilderPatchProposal,
+    BuilderProposalStatus,
+    BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult, BuilderReleaseStage,
+    BuilderReleaseState, BuilderReleaseStateStatus, BuilderSignalWindow,
+    BuilderValidationGateId, BuilderValidationGateResult, BuilderValidationRun,
+    BuilderValidationRunStatus, BuilderMetricsSnapshot,
+};
 use selene_kernel_contracts::ph1f::ConversationTurnInput;
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
@@ -16,7 +25,8 @@ use selene_kernel_contracts::ph1m::{
 use selene_kernel_contracts::ph1position::{PositionScheduleType, TenantId};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord, StorageError,
+    BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore,
+    SessionRecord, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord,
 };
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo};
@@ -84,6 +94,139 @@ fn mem_event(
         MemoryConfidence::High,
         MemoryConsent::NotRequested,
         ReasonCodeId(0xF000_0001),
+    )
+    .unwrap()
+}
+
+fn builder_proposal(proposal_id: &str, source_signal_hash: &str) -> BuilderPatchProposal {
+    BuilderPatchProposal::v1(
+        proposal_id.to_string(),
+        MonotonicTimeNs(100),
+        BuilderSignalWindow::v1(MonotonicTimeNs(10), MonotonicTimeNs(20), 6).unwrap(),
+        source_signal_hash.to_string(),
+        vec![
+            "crates/selene_os/src/ph1os.rs".to_string(),
+            "crates/selene_storage/src/ph1f.rs".to_string(),
+        ],
+        BuilderChangeClass::ClassB,
+        2700,
+        BuilderExpectedEffect::v1(-120, -140, 230, 0).unwrap(),
+        "compile + tests + guardrails".to_string(),
+        "revert to previous patch set".to_string(),
+        BuilderProposalStatus::Draft,
+    )
+    .unwrap()
+}
+
+fn builder_proposal_with_learning_context(
+    proposal_id: &str,
+    source_signal_hash: &str,
+) -> BuilderPatchProposal {
+    builder_proposal(proposal_id, source_signal_hash)
+        .with_learning_context(
+            BuilderLearningContext::v1(
+                format!("learn_report_{}", proposal_id),
+                vec![
+                    "PH1.FEEDBACK".to_string(),
+                    "PH1.LEARN".to_string(),
+                    "PH1.KNOW".to_string(),
+                ],
+                3,
+                vec![
+                    "evidence_ref:9200:2:PH1.FEEDBACK:STT_REJECT".to_string(),
+                    "evidence_ref:9200:2:PH1.LEARN:CLARIFY_LOOP".to_string(),
+                    "evidence_ref:9200:2:PH1.KNOW:VOCAB_MISS".to_string(),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
+fn builder_approval_state(
+    approval_state_id: &str,
+    proposal_id: &str,
+    change_class: BuilderChangeClass,
+    status: BuilderApprovalStateStatus,
+    idempotency_key: &str,
+) -> BuilderApprovalState {
+    let required = required_approvals_for_change_class(change_class);
+    let (tech_approved, product_security_approved) = match (change_class, status) {
+        (BuilderChangeClass::ClassA, _) => (false, false),
+        (BuilderChangeClass::ClassB, BuilderApprovalStateStatus::Approved) => (true, false),
+        (BuilderChangeClass::ClassC, BuilderApprovalStateStatus::Approved) => (true, true),
+        _ => (false, false),
+    };
+    let approvals_granted = (u8::from(tech_approved)) + (u8::from(product_security_approved));
+    let resolved_at = match status {
+        BuilderApprovalStateStatus::Pending => None,
+        BuilderApprovalStateStatus::Approved | BuilderApprovalStateStatus::Rejected => {
+            Some(MonotonicTimeNs(320))
+        }
+    };
+    BuilderApprovalState::v1(
+        approval_state_id.to_string(),
+        proposal_id.to_string(),
+        change_class,
+        required,
+        approvals_granted,
+        tech_approved,
+        product_security_approved,
+        status,
+        ReasonCodeId(0xB1D0_1001),
+        MonotonicTimeNs(300),
+        resolved_at,
+        Some(idempotency_key.to_string()),
+    )
+    .unwrap()
+}
+
+fn builder_release_state(
+    release_state_id: &str,
+    proposal_id: &str,
+    stage: BuilderReleaseStage,
+    status: BuilderReleaseStateStatus,
+    idempotency_key: &str,
+) -> BuilderReleaseState {
+    let stage_rollout_pct = match stage {
+        BuilderReleaseStage::Staging => 0,
+        BuilderReleaseStage::Canary => 5,
+        BuilderReleaseStage::Ramp25 => 25,
+        BuilderReleaseStage::Ramp50 => 50,
+        BuilderReleaseStage::Production => 100,
+        BuilderReleaseStage::RolledBack => 0,
+    };
+    BuilderReleaseState::v1(
+        release_state_id.to_string(),
+        proposal_id.to_string(),
+        stage,
+        stage_rollout_pct,
+        status,
+        "rollback_hook_ref".to_string(),
+        true,
+        ReasonCodeId(0xB1D0_1002),
+        MonotonicTimeNs(400),
+        Some(idempotency_key.to_string()),
+    )
+    .unwrap()
+}
+
+fn builder_post_deploy_result(
+    judge_result_id: &str,
+    proposal_id: &str,
+    release_state_id: &str,
+    idempotency_key: &str,
+) -> BuilderPostDeployJudgeResult {
+    BuilderPostDeployJudgeResult::v1(
+        judge_result_id.to_string(),
+        proposal_id.to_string(),
+        release_state_id.to_string(),
+        BuilderMetricsSnapshot::v1(180, 260, 40, 0, 30).unwrap(),
+        BuilderMetricsSnapshot::v1(184, 266, 45, 10, 30).unwrap(),
+        BuilderPostDeployDecisionAction::Accept,
+        ReasonCodeId(0xB1D0_1003),
+        MonotonicTimeNs(500),
+        Some(idempotency_key.to_string()),
     )
     .unwrap()
 }
@@ -372,4 +515,334 @@ fn at_f_db_04_rebuild_current_from_ledger() {
     s.rebuild_memory_current_rows();
     let after = s.memory_current_rows().clone();
     assert_eq!(before, after);
+}
+
+#[test]
+fn at_f_db_05_builder_proposal_run_result_append_only_with_idempotency() {
+    let mut s = store_with_identity_device_session();
+
+    let proposal_row_id = s
+        .append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+            proposal: builder_proposal("proposal_dbw_01", "signal_hash_dbw_01"),
+            idempotency_key: Some("builder_prop_idem_01".to_string()),
+        })
+        .unwrap();
+    let proposal_row_id_retry = s
+        .append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+            proposal: builder_proposal("proposal_dbw_02", "signal_hash_dbw_01"),
+            idempotency_key: Some("builder_prop_idem_01".to_string()),
+        })
+        .unwrap();
+    assert_eq!(proposal_row_id, proposal_row_id_retry);
+    assert_eq!(s.builder_proposal_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_proposal_ledger_row(proposal_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let run_row_id = s
+        .append_builder_validation_run_ledger_row(
+            BuilderValidationRun::v1(
+                "run_dbw_01".to_string(),
+                "proposal_dbw_01".to_string(),
+                MonotonicTimeNs(200),
+                Some(MonotonicTimeNs(220)),
+                BuilderValidationRunStatus::Passed,
+                1,
+                1,
+                Some("builder_run_idem_01".to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let run_row_id_retry = s
+        .append_builder_validation_run_ledger_row(
+            BuilderValidationRun::v1(
+                "run_dbw_02".to_string(),
+                "proposal_dbw_01".to_string(),
+                MonotonicTimeNs(201),
+                Some(MonotonicTimeNs(220)),
+                BuilderValidationRunStatus::Passed,
+                1,
+                1,
+                Some("builder_run_idem_01".to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(run_row_id, run_row_id_retry);
+    assert_eq!(s.builder_validation_run_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_validation_run_ledger_row(run_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let gate_row_id = s
+        .append_builder_validation_gate_result_ledger_row(
+            BuilderValidationGateResult::v1(
+                "run_dbw_01".to_string(),
+                "proposal_dbw_01".to_string(),
+                BuilderValidationGateId::BldG1,
+                true,
+                MonotonicTimeNs(221),
+                ReasonCodeId(0xB1D0_0001),
+                "reproducible diff check passed".to_string(),
+                Some("builder_gate_idem_01".to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let gate_row_id_retry = s
+        .append_builder_validation_gate_result_ledger_row(
+            BuilderValidationGateResult::v1(
+                "run_dbw_01".to_string(),
+                "proposal_dbw_01".to_string(),
+                BuilderValidationGateId::BldG1,
+                true,
+                MonotonicTimeNs(221),
+                ReasonCodeId(0xB1D0_0001),
+                "reproducible diff check passed".to_string(),
+                Some("builder_gate_idem_01".to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(gate_row_id, gate_row_id_retry);
+    assert_eq!(s.builder_validation_gate_result_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_validation_gate_result_ledger_row(gate_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_f_db_06_builder_run_result_requires_foreign_keys_and_match() {
+    let mut s = store_with_identity_device_session();
+
+    let run_without_proposal = s.append_builder_validation_run_ledger_row(
+        BuilderValidationRun::v1(
+            "run_fk_bad".to_string(),
+            "missing_proposal".to_string(),
+            MonotonicTimeNs(10),
+            Some(MonotonicTimeNs(20)),
+            BuilderValidationRunStatus::Failed,
+            1,
+            1,
+            Some("builder_run_fk_bad".to_string()),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        run_without_proposal,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    s.append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+        proposal: builder_proposal("proposal_dbw_10", "signal_hash_dbw_10"),
+        idempotency_key: Some("builder_prop_10".to_string()),
+    })
+    .unwrap();
+    s.append_builder_validation_run_ledger_row(
+        BuilderValidationRun::v1(
+            "run_dbw_10".to_string(),
+            "proposal_dbw_10".to_string(),
+            MonotonicTimeNs(30),
+            Some(MonotonicTimeNs(40)),
+            BuilderValidationRunStatus::Passed,
+            1,
+            1,
+            Some("builder_run_10".to_string()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    let mismatched_result = s.append_builder_validation_gate_result_ledger_row(
+        BuilderValidationGateResult::v1(
+            "run_dbw_10".to_string(),
+            "proposal_dbw_11".to_string(),
+            BuilderValidationGateId::BldG2,
+            false,
+            MonotonicTimeNs(41),
+            ReasonCodeId(0xB1D0_0002),
+            "compile gate failed".to_string(),
+            Some("builder_gate_mismatch".to_string()),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        mismatched_result,
+        Err(StorageError::ForeignKeyViolation { .. })
+            | Err(StorageError::ContractViolation(_))
+    ));
+}
+
+#[test]
+fn at_f_db_07_builder_approval_release_append_only_with_fk_and_idempotency() {
+    let mut s = store_with_identity_device_session();
+
+    let approval_without_proposal = s.append_builder_approval_state_ledger_row(
+        builder_approval_state(
+            "approval_missing",
+            "missing_proposal",
+            BuilderChangeClass::ClassB,
+            BuilderApprovalStateStatus::Pending,
+            "builder_approval_missing",
+        ),
+    );
+    assert!(matches!(
+        approval_without_proposal,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    let release_without_proposal = s.append_builder_release_state_ledger_row(builder_release_state(
+        "release_missing",
+        "missing_proposal",
+        BuilderReleaseStage::Staging,
+        BuilderReleaseStateStatus::Blocked,
+        "builder_release_missing",
+    ));
+    assert!(matches!(
+        release_without_proposal,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    s.append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+        proposal: builder_proposal("proposal_dbw_20", "signal_hash_dbw_20"),
+        idempotency_key: Some("builder_prop_20".to_string()),
+    })
+    .unwrap();
+
+    let approval_row_id = s
+        .append_builder_approval_state_ledger_row(builder_approval_state(
+            "approval_dbw_20",
+            "proposal_dbw_20",
+            BuilderChangeClass::ClassB,
+            BuilderApprovalStateStatus::Pending,
+            "builder_approval_idem_20",
+        ))
+        .unwrap();
+    let approval_row_id_retry = s
+        .append_builder_approval_state_ledger_row(builder_approval_state(
+            "approval_dbw_20_retry",
+            "proposal_dbw_20",
+            BuilderChangeClass::ClassB,
+            BuilderApprovalStateStatus::Pending,
+            "builder_approval_idem_20",
+        ))
+        .unwrap();
+    assert_eq!(approval_row_id, approval_row_id_retry);
+    assert_eq!(s.builder_approval_state_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_approval_state_ledger_row(approval_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let release_row_id = s
+        .append_builder_release_state_ledger_row(builder_release_state(
+            "release_dbw_20",
+            "proposal_dbw_20",
+            BuilderReleaseStage::Staging,
+            BuilderReleaseStateStatus::Blocked,
+            "builder_release_idem_20",
+        ))
+        .unwrap();
+    let release_row_id_retry = s
+        .append_builder_release_state_ledger_row(builder_release_state(
+            "release_dbw_20_retry",
+            "proposal_dbw_20",
+            BuilderReleaseStage::Staging,
+            BuilderReleaseStateStatus::Blocked,
+            "builder_release_idem_20",
+        ))
+        .unwrap();
+    assert_eq!(release_row_id, release_row_id_retry);
+    assert_eq!(s.builder_release_state_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_release_state_ledger_row(release_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_f_db_08_builder_post_deploy_judge_append_only_with_fk_and_idempotency() {
+    let mut s = store_with_identity_device_session();
+
+    let judge_without_fk = s.append_builder_post_deploy_judge_result_ledger_row(
+        builder_post_deploy_result(
+            "judge_missing",
+            "missing_proposal",
+            "missing_release",
+            "builder_judge_missing",
+        ),
+    );
+    assert!(matches!(
+        judge_without_fk,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    s.append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+        proposal: builder_proposal("proposal_dbw_30", "signal_hash_dbw_30"),
+        idempotency_key: Some("builder_prop_30".to_string()),
+    })
+    .unwrap();
+    s.append_builder_release_state_ledger_row(builder_release_state(
+        "release_dbw_30",
+        "proposal_dbw_30",
+        BuilderReleaseStage::Production,
+        BuilderReleaseStateStatus::Completed,
+        "builder_release_30",
+    ))
+    .unwrap();
+
+    let judge_row_id = s
+        .append_builder_post_deploy_judge_result_ledger_row(builder_post_deploy_result(
+            "judge_dbw_30",
+            "proposal_dbw_30",
+            "release_dbw_30",
+            "builder_judge_idem_30",
+        ))
+        .unwrap();
+    let judge_row_id_retry = s
+        .append_builder_post_deploy_judge_result_ledger_row(builder_post_deploy_result(
+            "judge_dbw_30_retry",
+            "proposal_dbw_30",
+            "release_dbw_30",
+            "builder_judge_idem_30",
+        ))
+        .unwrap();
+    assert_eq!(judge_row_id, judge_row_id_retry);
+    assert_eq!(s.builder_post_deploy_judge_result_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_builder_post_deploy_judge_result_ledger_row(judge_row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_f_db_09_builder_learning_context_persists_in_proposal_rows() {
+    let mut s = store_with_identity_device_session();
+    s.append_builder_proposal_ledger_row(BuilderProposalLedgerRowInput {
+        proposal: builder_proposal_with_learning_context("proposal_dbw_40", "signal_hash_dbw_40"),
+        idempotency_key: Some("builder_prop_40".to_string()),
+    })
+    .unwrap();
+
+    let row = s
+        .builder_proposal_ledger_rows()
+        .iter()
+        .find(|r| r.proposal.proposal_id == "proposal_dbw_40")
+        .expect("missing proposal row");
+    let learning = row
+        .proposal
+        .learning_context
+        .as_ref()
+        .expect("missing learning context");
+    assert_eq!(learning.learning_report_id, "learn_report_proposal_dbw_40");
+    assert_eq!(learning.learning_signal_count, 3);
+    assert!(learning
+        .source_engines
+        .iter()
+        .any(|engine| engine == "PH1.FEEDBACK"));
+    assert_eq!(learning.evidence_refs.len(), 3);
 }

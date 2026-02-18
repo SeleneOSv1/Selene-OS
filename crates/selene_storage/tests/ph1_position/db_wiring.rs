@@ -455,7 +455,10 @@ fn at_position_db_05_requirements_schema_activation_monotonic() {
         draft.position_id.clone(),
         "schema_v2".to_string(),
         selector_snapshot(),
-        vec![required_field("sender_verification"), required_field("employee_photo")],
+        vec![
+            required_field("sender_verification"),
+            required_field("employee_photo"),
+        ],
         "schema-v2-create".to_string(),
         "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
         ReasonCodeId(0x5900_0006),

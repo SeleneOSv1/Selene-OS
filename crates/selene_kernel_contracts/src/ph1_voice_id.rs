@@ -7,6 +7,32 @@ use crate::ph1w::WakeDecision;
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1_VOICE_ID_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1VOICEID_ENGINE_ID: &str = "PH1.VOICE.ID";
+pub const PH1VOICEID_IMPLEMENTATION_ID: &str = "PH1.VOICE.ID.001";
+pub const PH1VOICEID_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1VOICEID_IMPLEMENTATION_ID];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1VoiceIdImplementation {
+    V001,
+}
+
+impl Ph1VoiceIdImplementation {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Ph1VoiceIdImplementation::V001 => PH1VOICEID_IMPLEMENTATION_ID,
+        }
+    }
+
+    pub fn parse(implementation_id: &str) -> Result<Self, ContractViolation> {
+        match implementation_id {
+            PH1VOICEID_IMPLEMENTATION_ID => Ok(Ph1VoiceIdImplementation::V001),
+            _ => Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id.implementation_id",
+                reason: "unknown implementation_id",
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SpeakerId(String);
@@ -65,6 +91,12 @@ pub enum IdentityConfidence {
     High,
     Medium,
     Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VoiceIdRiskSignal {
+    MeetingMode,
+    HighEchoRisk,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -155,6 +187,8 @@ pub struct Ph1VoiceIdRequest {
     pub wake_event: Option<WakeDecision>,
     /// Echo-safety hint derived from TTS playback markers/events.
     pub tts_playback_active: bool,
+    /// Optional bounded risk hints supplied by policy/OS.
+    pub risk_signals: Vec<VoiceIdRiskSignal>,
 }
 
 impl Ph1VoiceIdRequest {
@@ -170,6 +204,33 @@ impl Ph1VoiceIdRequest {
         device_trust_level: DeviceTrustLevel,
         device_owner_user_id: Option<UserId>,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_risk_signals(
+            now,
+            processed_audio_stream_ref,
+            vad_events,
+            device_id,
+            session_state_ref,
+            wake_event,
+            tts_playback_active,
+            device_trust_level,
+            device_owner_user_id,
+            vec![],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_risk_signals(
+        now: MonotonicTimeNs,
+        processed_audio_stream_ref: AudioStreamRef,
+        vad_events: Vec<VadEvent>,
+        device_id: AudioDeviceId,
+        session_state_ref: SessionSnapshot,
+        wake_event: Option<WakeDecision>,
+        tts_playback_active: bool,
+        device_trust_level: DeviceTrustLevel,
+        device_owner_user_id: Option<UserId>,
+        risk_signals: Vec<VoiceIdRiskSignal>,
+    ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
             now,
@@ -181,6 +242,7 @@ impl Ph1VoiceIdRequest {
             session_state_ref,
             wake_event,
             tts_playback_active,
+            risk_signals,
         };
         r.validate()?;
         Ok(r)
@@ -205,6 +267,20 @@ impl Validate for Ph1VoiceIdRequest {
                 field: "ph1_voice_id_request.vad_events",
                 reason: "must be <= 256 entries",
             });
+        }
+        if self.risk_signals.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id_request.risk_signals",
+                reason: "must be <= 8 entries",
+            });
+        }
+        for i in 0..self.risk_signals.len() {
+            if self.risk_signals[..i].contains(&self.risk_signals[i]) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1_voice_id_request.risk_signals",
+                    reason: "must not contain duplicates",
+                });
+            }
         }
         for ev in &self.vad_events {
             ev.validate()?;
@@ -351,7 +427,7 @@ pub const PH1VOICEID_SIM_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 pub const VOICE_ID_ENROLL_START_DRAFT: &str = "VOICE_ID_ENROLL_START_DRAFT";
 pub const VOICE_ID_ENROLL_SAMPLE_COMMIT: &str = "VOICE_ID_ENROLL_SAMPLE_COMMIT";
 pub const VOICE_ID_ENROLL_COMPLETE_COMMIT: &str = "VOICE_ID_ENROLL_COMPLETE_COMMIT";
-pub const VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT: &str = "VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT";
+pub const VOICE_ID_ENROLL_DEFER_COMMIT: &str = "VOICE_ID_ENROLL_DEFER_COMMIT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VoiceIdSimulationType {
@@ -521,23 +597,23 @@ impl Validate for VoiceIdEnrollCompleteCommitRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VoiceIdEnrollDeferReminderCommitRequest {
+pub struct VoiceIdEnrollDeferCommitRequest {
     pub voice_enrollment_session_id: VoiceEnrollmentSessionId,
     pub reason_code: ReasonCodeId,
     pub idempotency_key: String,
 }
 
-impl Validate for VoiceIdEnrollDeferReminderCommitRequest {
+impl Validate for VoiceIdEnrollDeferCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.voice_enrollment_session_id.validate()?;
         if self.reason_code.0 == 0 {
             return Err(ContractViolation::InvalidValue {
-                field: "voice_id_enroll_defer_reminder_commit_request.reason_code",
+                field: "voice_id_enroll_defer_commit_request.reason_code",
                 reason: "must be > 0",
             });
         }
         validate_id(
-            "voice_id_enroll_defer_reminder_commit_request.idempotency_key",
+            "voice_id_enroll_defer_commit_request.idempotency_key",
             &self.idempotency_key,
             128,
         )?;
@@ -723,7 +799,7 @@ pub enum VoiceIdSimulationRequest {
     EnrollStartDraft(VoiceIdEnrollStartDraftRequest),
     EnrollSampleCommit(VoiceIdEnrollSampleCommitRequest),
     EnrollCompleteCommit(VoiceIdEnrollCompleteCommitRequest),
-    EnrollDeferReminderCommit(VoiceIdEnrollDeferReminderCommitRequest),
+    EnrollDeferCommit(VoiceIdEnrollDeferCommitRequest),
 }
 
 impl Validate for VoiceIdSimulationRequest {
@@ -732,7 +808,7 @@ impl Validate for VoiceIdSimulationRequest {
             VoiceIdSimulationRequest::EnrollStartDraft(v) => v.validate(),
             VoiceIdSimulationRequest::EnrollSampleCommit(v) => v.validate(),
             VoiceIdSimulationRequest::EnrollCompleteCommit(v) => v.validate(),
-            VoiceIdSimulationRequest::EnrollDeferReminderCommit(v) => v.validate(),
+            VoiceIdSimulationRequest::EnrollDeferCommit(v) => v.validate(),
         }
     }
 }
@@ -769,9 +845,7 @@ impl Validate for Ph1VoiceIdSimRequest {
             VoiceIdSimulationRequest::EnrollStartDraft(_) => VOICE_ID_ENROLL_START_DRAFT,
             VoiceIdSimulationRequest::EnrollSampleCommit(_) => VOICE_ID_ENROLL_SAMPLE_COMMIT,
             VoiceIdSimulationRequest::EnrollCompleteCommit(_) => VOICE_ID_ENROLL_COMPLETE_COMMIT,
-            VoiceIdSimulationRequest::EnrollDeferReminderCommit(_) => {
-                VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT
-            }
+            VoiceIdSimulationRequest::EnrollDeferCommit(_) => VOICE_ID_ENROLL_DEFER_COMMIT,
         };
         if self.simulation_id != expected_simulation_id {
             return Err(ContractViolation::InvalidValue {
@@ -913,8 +987,8 @@ mod tests {
     use super::*;
     use crate::ph1j::{CorrelationId, DeviceId, TurnId};
     use crate::ph1k::{
-        AudioFormat, AudioStreamId, AudioStreamRef, ChannelCount, Confidence, SampleFormat,
-        SampleRateHz, SpeechLikeness, VadEvent,
+        AudioFormat, AudioStreamId, AudioStreamRef, ChannelCount, Confidence, FrameDurationMs,
+        SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
     use crate::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
     use crate::SessionState;
@@ -928,6 +1002,7 @@ mod tests {
                 channels: ChannelCount(1),
                 sample_format: SampleFormat::PcmS16LE,
             },
+            FrameDurationMs::Ms20,
         )
     }
 
@@ -942,6 +1017,32 @@ mod tests {
                 must_rewake: false,
             },
         }
+    }
+
+    #[test]
+    fn implementation_id_lock_is_v001() {
+        assert_eq!(PH1VOICEID_ENGINE_ID, "PH1.VOICE.ID");
+        assert_eq!(PH1VOICEID_IMPLEMENTATION_ID, "PH1.VOICE.ID.001");
+        assert_eq!(PH1VOICEID_ACTIVE_IMPLEMENTATION_IDS, &["PH1.VOICE.ID.001"]);
+        assert_eq!(
+            Ph1VoiceIdImplementation::V001.id(),
+            PH1VOICEID_IMPLEMENTATION_ID
+        );
+    }
+
+    #[test]
+    fn implementation_id_parser_fails_closed_on_unknown_values() {
+        assert_eq!(
+            Ph1VoiceIdImplementation::parse("PH1.VOICE.ID.001").unwrap(),
+            Ph1VoiceIdImplementation::V001
+        );
+        assert!(matches!(
+            Ph1VoiceIdImplementation::parse("PH1.VOICE.ID.999"),
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
     }
 
     #[test]
@@ -960,6 +1061,65 @@ mod tests {
             None,
         );
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn request_rejects_too_many_risk_signals() {
+        let r = Ph1VoiceIdRequest::v1_with_risk_signals(
+            MonotonicTimeNs(0),
+            processed_stream(),
+            vec![],
+            AudioDeviceId::new("mic").unwrap(),
+            snapshot_active(),
+            None,
+            false,
+            DeviceTrustLevel::Trusted,
+            None,
+            vec![
+                VoiceIdRiskSignal::MeetingMode,
+                VoiceIdRiskSignal::HighEchoRisk,
+                VoiceIdRiskSignal::MeetingMode,
+                VoiceIdRiskSignal::HighEchoRisk,
+                VoiceIdRiskSignal::MeetingMode,
+                VoiceIdRiskSignal::HighEchoRisk,
+                VoiceIdRiskSignal::MeetingMode,
+                VoiceIdRiskSignal::HighEchoRisk,
+                VoiceIdRiskSignal::MeetingMode,
+            ],
+        );
+        assert!(matches!(
+            r,
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id_request.risk_signals",
+                reason: "must be <= 8 entries",
+            })
+        ));
+    }
+
+    #[test]
+    fn request_rejects_duplicate_risk_signals() {
+        let r = Ph1VoiceIdRequest::v1_with_risk_signals(
+            MonotonicTimeNs(0),
+            processed_stream(),
+            vec![],
+            AudioDeviceId::new("mic").unwrap(),
+            snapshot_active(),
+            None,
+            false,
+            DeviceTrustLevel::Trusted,
+            None,
+            vec![
+                VoiceIdRiskSignal::HighEchoRisk,
+                VoiceIdRiskSignal::HighEchoRisk,
+            ],
+        );
+        assert!(matches!(
+            r,
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id_request.risk_signals",
+                reason: "must not contain duplicates",
+            })
+        ));
     }
 
     #[test]

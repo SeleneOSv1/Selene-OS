@@ -722,4 +722,49 @@ mod tests {
         );
         assert!(req.is_err());
     }
+
+    #[test]
+    fn tool_response_fail_requires_reason_match() {
+        let mut resp = ToolResponse::fail_v1(
+            ToolRequestId(1),
+            ToolQueryHash(1),
+            ReasonCodeId(42),
+            CacheStatus::Miss,
+        )
+        .unwrap();
+        resp.reason_code = ReasonCodeId(43);
+        assert!(resp.validate().is_err());
+    }
+
+    #[test]
+    fn tool_response_ok_requires_result_and_metadata() {
+        let mut resp = ToolResponse::ok_v1(
+            ToolRequestId(1),
+            ToolQueryHash(1),
+            ToolResult::Time {
+                local_time_iso: "2026-01-01T00:00:00Z".to_string(),
+            },
+            SourceMetadata {
+                schema_version: PH1E_CONTRACT_VERSION,
+                provider_hint: Some("stub".to_string()),
+                retrieved_at_unix_ms: 1_700_000_000_000,
+                sources: vec![SourceRef {
+                    title: "Example".to_string(),
+                    url: "https://example.com".to_string(),
+                }],
+            },
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Hit,
+        )
+        .unwrap();
+        resp.source_metadata = None;
+        assert!(resp.validate().is_err());
+    }
+
+    #[test]
+    fn tool_catalog_rejects_other_tool_entries() {
+        let catalog = ToolCatalogRef::v1(vec![ToolName::other("custom").unwrap()]);
+        assert!(catalog.is_err());
+    }
 }

@@ -9,11 +9,10 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1position::{
     Ph1PositionOk, Ph1PositionRequest, Ph1PositionResponse, PositionBandPolicyCheckResult,
     PositionCreateDraftResult, PositionLifecycleResult, PositionLifecycleState, PositionRequest,
-    PositionSchemaApplyScope,
-    PositionValidateAuthCompanyResult, PositionValidationStatus, POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
-    POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT, POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
-    POSITION_SIM_001_CREATE_DRAFT, POSITION_SIM_004_ACTIVATE_COMMIT,
-    POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT,
+    PositionSchemaApplyScope, PositionValidateAuthCompanyResult, PositionValidationStatus,
+    POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT, POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+    POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT, POSITION_SIM_001_CREATE_DRAFT,
+    POSITION_SIM_004_ACTIVATE_COMMIT, POSITION_SIM_005_RETIRE_OR_SUSPEND_COMMIT,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
@@ -28,8 +27,10 @@ pub mod reason_codes {
     pub const POSITION_OK_BAND_POLICY_CHECK: ReasonCodeId = ReasonCodeId(0x5900_0003);
     pub const POSITION_OK_ACTIVATE_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0004);
     pub const POSITION_OK_RETIRE_OR_SUSPEND_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0005);
-    pub const POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT: ReasonCodeId = ReasonCodeId(0x5900_0006);
-    pub const POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT: ReasonCodeId = ReasonCodeId(0x5900_0007);
+    pub const POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT: ReasonCodeId =
+        ReasonCodeId(0x5900_0006);
+    pub const POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT: ReasonCodeId =
+        ReasonCodeId(0x5900_0007);
     pub const POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT: ReasonCodeId =
         ReasonCodeId(0x5900_0008);
 }
@@ -277,7 +278,8 @@ impl Ph1PositionRuntime {
                 )?;
 
                 let ok = Ph1PositionOk {
-                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    schema_version:
+                        selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
                     simulation_id: req.simulation_id.clone(),
                     reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
                     create_draft_result: None,
@@ -318,7 +320,8 @@ impl Ph1PositionRuntime {
                 )?;
 
                 let ok = Ph1PositionOk {
-                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    schema_version:
+                        selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
                     simulation_id: req.simulation_id.clone(),
                     reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
                     create_draft_result: None,
@@ -346,7 +349,9 @@ impl Ph1PositionRuntime {
                 )?;
 
                 let state_to = match out.apply_scope_result {
-                    PositionSchemaApplyScope::NewHiresOnly => "REQUIREMENTS_SCHEMA_ACTIVE_NEW_HIRES_ONLY",
+                    PositionSchemaApplyScope::NewHiresOnly => {
+                        "REQUIREMENTS_SCHEMA_ACTIVE_NEW_HIRES_ONLY"
+                    }
                     PositionSchemaApplyScope::CurrentAndNew => {
                         "REQUIREMENTS_SCHEMA_ACTIVE_CURRENT_AND_NEW"
                     }
@@ -363,7 +368,8 @@ impl Ph1PositionRuntime {
                 )?;
 
                 let ok = Ph1PositionOk {
-                    schema_version: selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
+                    schema_version:
+                        selene_kernel_contracts::ph1position::PH1POSITION_CONTRACT_VERSION,
                     simulation_id: req.simulation_id.clone(),
                     reason_code: reason_codes::POSITION_OK_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
                     create_draft_result: None,
@@ -468,12 +474,13 @@ mod tests {
         PositionRequestedAction, PositionRequirementEvidenceMode, PositionRequirementExposureRule,
         PositionRequirementFieldSpec, PositionRequirementFieldType, PositionRequirementRuleType,
         PositionRequirementSensitivity, PositionRequirementsSchemaActivateCommitRequest,
-        PositionRequirementsSchemaCreateDraftRequest, PositionRequirementsSchemaUpdateCommitRequest,
-        PositionRetireOrSuspendCommitRequest, PositionScheduleType, PositionSchemaApplyScope,
-        PositionSchemaSelectorSnapshot, PositionSimulationType, PositionValidateAuthCompanyRequest,
-        PH1POSITION_CONTRACT_VERSION, POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT,
-        POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT, POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT,
-        POSITION_SIM_002_VALIDATE_AUTH_COMPANY, POSITION_SIM_003_BAND_POLICY_CHECK,
+        PositionRequirementsSchemaCreateDraftRequest,
+        PositionRequirementsSchemaUpdateCommitRequest, PositionRetireOrSuspendCommitRequest,
+        PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot,
+        PositionSimulationType, PositionValidateAuthCompanyRequest, PH1POSITION_CONTRACT_VERSION,
+        POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT, POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT,
+        POSITION_REQUIREMENTS_SCHEMA_UPDATE_COMMIT, POSITION_SIM_002_VALIDATE_AUTH_COMPANY,
+        POSITION_SIM_003_BAND_POLICY_CHECK,
     };
     use selene_storage::ph1f::{
         IdentityRecord, IdentityStatus, TenantCompanyLifecycleState, TenantCompanyRecord,

@@ -172,7 +172,11 @@ impl Validate for AccessProfileSchemaRecord {
             });
         }
         self.access_profile_id.validate()?;
-        validate_text("access_profile_schema_record.profile_name", &self.profile_name, 128)?;
+        validate_text(
+            "access_profile_schema_record.profile_name",
+            &self.profile_name,
+            128,
+        )?;
         match self.scope {
             AccessProfileScope::Global => {
                 if self.owner_tenant_id.is_some() {

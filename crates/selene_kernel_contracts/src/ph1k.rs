@@ -3,6 +3,36 @@
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1K_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1K_ENGINE_ID: &str = "PH1.K";
+pub const PH1K_IMPLEMENTATION_ID: &str = "PH1.K.001";
+pub const PH1K_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1K_IMPLEMENTATION_ID];
+pub const PH1K_CANONICAL_PROCESSED_SAMPLE_RATE_HZ: SampleRateHz = SampleRateHz(16_000);
+pub const PH1K_CANONICAL_PROCESSED_CHANNELS: ChannelCount = ChannelCount(1);
+pub const PH1K_CANONICAL_PROCESSED_SAMPLE_FORMAT: SampleFormat = SampleFormat::PcmF32LE;
+pub const PH1K_CANONICAL_PROCESSED_FRAME_MS: FrameDurationMs = FrameDurationMs::Ms20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1kImplementation {
+    V001,
+}
+
+impl Ph1kImplementation {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Ph1kImplementation::V001 => PH1K_IMPLEMENTATION_ID,
+        }
+    }
+
+    pub fn parse(implementation_id: &str) -> Result<Self, ContractViolation> {
+        match implementation_id {
+            PH1K_IMPLEMENTATION_ID => Ok(Ph1kImplementation::V001),
+            _ => Err(ContractViolation::InvalidValue {
+                field: "ph1_k.implementation_id",
+                reason: "unknown implementation_id",
+            }),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AudioStreamId(pub u128);
@@ -117,15 +147,22 @@ pub struct AudioStreamRef {
     pub stream_id: AudioStreamId,
     pub kind: AudioStreamKind,
     pub format: AudioFormat,
+    pub frame_ms: FrameDurationMs,
 }
 
 impl AudioStreamRef {
-    pub fn v1(stream_id: AudioStreamId, kind: AudioStreamKind, format: AudioFormat) -> Self {
+    pub fn v1(
+        stream_id: AudioStreamId,
+        kind: AudioStreamKind,
+        format: AudioFormat,
+        frame_ms: FrameDurationMs,
+    ) -> Self {
         Self {
             schema_version: PH1K_CONTRACT_VERSION,
             stream_id,
             kind,
             format,
+            frame_ms,
         }
     }
 }
@@ -204,6 +241,7 @@ pub struct AudioFrame {
     pub stream_id: AudioStreamId,
     pub seq_no: AudioSeqNo,
     pub t_capture: MonotonicTimeNs,
+    pub format: AudioFormat,
     pub frame_ms: FrameDurationMs,
     pub payload: AudioPayload,
 }
@@ -213,6 +251,7 @@ impl AudioFrame {
         stream_id: AudioStreamId,
         seq_no: AudioSeqNo,
         t_capture: MonotonicTimeNs,
+        format: AudioFormat,
         frame_ms: FrameDurationMs,
         payload: AudioPayload,
     ) -> Self {
@@ -221,16 +260,23 @@ impl AudioFrame {
             stream_id,
             seq_no,
             t_capture,
+            format,
             frame_ms,
             payload,
         }
+    }
+
+    pub fn expected_payload_bytes(&self) -> Result<usize, ContractViolation> {
+        expected_payload_bytes(self.format, self.frame_ms)
     }
 }
 
 impl Validate for AudioFrame {
     fn validate(&self) -> Result<(), ContractViolation> {
+        self.format.validate()?;
         // Frame size is intentionally restricted to 10ms or 20ms for determinism.
         let _ = self.frame_ms.as_u16();
+        let expected_bytes = self.expected_payload_bytes()?;
 
         match &self.payload {
             AudioPayload::Inline(bytes) => {
@@ -238,6 +284,12 @@ impl Validate for AudioFrame {
                     return Err(ContractViolation::InvalidValue {
                         field: "audio_frame.payload.inline",
                         reason: "must not be empty",
+                    });
+                }
+                if bytes.len() != expected_bytes {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "audio_frame.payload.inline",
+                        reason: "size must match expected_bytes for format+frame_ms",
                     });
                 }
             }
@@ -248,11 +300,45 @@ impl Validate for AudioFrame {
                         reason: "must be > 0",
                     });
                 }
+                if usize::try_from(r.byte_len).ok() != Some(expected_bytes) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "audio_frame.payload.ref.byte_len",
+                        reason: "must match expected_bytes for format+frame_ms",
+                    });
+                }
             }
         }
 
         Ok(())
     }
+}
+
+fn expected_payload_bytes(
+    format: AudioFormat,
+    frame_ms: FrameDurationMs,
+) -> Result<usize, ContractViolation> {
+    let sr = u64::from(format.sample_rate_hz.0);
+    let frame_ms_u64 = u64::from(frame_ms.as_u16());
+    let samples_per_channel_times_ms = sr.saturating_mul(frame_ms_u64);
+    if samples_per_channel_times_ms % 1_000 != 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "audio_frame.frame_ms",
+            reason: "sample_rate_hz * frame_ms must be divisible by 1000",
+        });
+    }
+    let samples_per_channel = samples_per_channel_times_ms / 1_000;
+    let channels = u64::from(format.channels.0);
+    let bytes_per_sample = match format.sample_format {
+        SampleFormat::PcmS16LE => 2u64,
+        SampleFormat::PcmF32LE => 4u64,
+    };
+    let total = samples_per_channel
+        .saturating_mul(channels)
+        .saturating_mul(bytes_per_sample);
+    usize::try_from(total).map_err(|_| ContractViolation::InvalidValue {
+        field: "audio_frame.payload",
+        reason: "expected byte size overflow",
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -325,6 +411,15 @@ pub enum DeviceHealth {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DeviceRoute {
+    BuiltIn,
+    Usb,
+    Bluetooth,
+    Virtual,
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceError {
     pub code: ReasonCodeId,
@@ -336,6 +431,7 @@ pub struct DeviceState {
     pub schema_version: SchemaVersion,
     pub selected_mic: AudioDeviceId,
     pub selected_speaker: AudioDeviceId,
+    pub device_route: DeviceRoute,
     pub health: DeviceHealth,
     pub errors: Vec<DeviceError>,
 }
@@ -347,10 +443,27 @@ impl DeviceState {
         health: DeviceHealth,
         errors: Vec<DeviceError>,
     ) -> Self {
+        Self::v1_with_route(
+            selected_mic,
+            selected_speaker,
+            DeviceRoute::Unknown,
+            health,
+            errors,
+        )
+    }
+
+    pub fn v1_with_route(
+        selected_mic: AudioDeviceId,
+        selected_speaker: AudioDeviceId,
+        device_route: DeviceRoute,
+        health: DeviceHealth,
+        errors: Vec<DeviceError>,
+    ) -> Self {
         Self {
             schema_version: PH1K_CONTRACT_VERSION,
             selected_mic,
             selected_speaker,
+            device_route,
             health,
             errors,
         }
@@ -401,6 +514,42 @@ impl TimingStats {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1kState {
+    Init,
+    Ready,
+    FullDuplexActive,
+    DeviceSwitching,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StateTransitionEvent {
+    pub schema_version: SchemaVersion,
+    pub from_state: Ph1kState,
+    pub to_state: Ph1kState,
+    pub t_event: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+impl StateTransitionEvent {
+    pub fn v1(
+        from_state: Ph1kState,
+        to_state: Ph1kState,
+        t_event: MonotonicTimeNs,
+        reason_code: ReasonCodeId,
+    ) -> Self {
+        Self {
+            schema_version: PH1K_CONTRACT_VERSION,
+            from_state,
+            to_state,
+            t_event,
+            reason_code,
+        }
+    }
+}
+
 impl Validate for TimingStats {
     fn validate(&self) -> Result<(), ContractViolation> {
         for (field, v) in [
@@ -426,6 +575,9 @@ impl Validate for TimingStats {
 pub struct InterruptPhraseId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InterruptPhraseSetVersion(pub u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterruptGates {
     pub vad_ok: bool,
     pub echo_safe_ok: bool,
@@ -433,42 +585,83 @@ pub struct InterruptGates {
     pub nearfield_ok: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InterruptGateConfidences {
+    pub vad_confidence: Confidence,
+    pub speech_likeness: SpeechLikeness,
+    pub echo_safe_confidence: Confidence,
+    pub phrase_confidence: Confidence,
+    pub nearfield_confidence: Option<Confidence>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterruptCandidate {
     pub schema_version: SchemaVersion,
+    pub phrase_set_version: InterruptPhraseSetVersion,
     pub phrase_id: InterruptPhraseId,
     pub phrase_text: String,
-    pub confidence: Confidence,
+    pub phrase_confidence: Confidence,
     pub gates: InterruptGates,
+    pub gate_confidences: InterruptGateConfidences,
     pub t_event: MonotonicTimeNs,
     pub reason_code: ReasonCodeId,
 }
 
 impl InterruptCandidate {
     pub fn v1(
+        phrase_set_version: InterruptPhraseSetVersion,
         phrase_id: InterruptPhraseId,
         phrase_text: String,
-        confidence: Confidence,
+        phrase_confidence: Confidence,
         gates: InterruptGates,
+        gate_confidences: InterruptGateConfidences,
         t_event: MonotonicTimeNs,
         reason_code: ReasonCodeId,
     ) -> Result<Self, ContractViolation> {
-        if phrase_text.trim().is_empty() {
+        if phrase_set_version.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.phrase_set_version",
+                reason: "must be > 0",
+            });
+        }
+        let normalized = normalize_ascii_phrase(&phrase_text);
+        if normalized.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "interrupt_candidate.phrase_text",
                 reason: "must not be empty",
             });
         }
+        if !normalized.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.phrase_text",
+                reason: "must be ASCII normalized text",
+            });
+        }
+        if normalized.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.phrase_text",
+                reason: "must be <= 128 chars",
+            });
+        }
         Ok(Self {
             schema_version: PH1K_CONTRACT_VERSION,
+            phrase_set_version,
             phrase_id,
-            phrase_text,
-            confidence,
+            phrase_text: normalized,
+            phrase_confidence,
             gates,
+            gate_confidences,
             t_event,
             reason_code,
         })
     }
+}
+
+fn normalize_ascii_phrase(s: &str) -> String {
+    s.split_whitespace()
+        .map(|part| part.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -526,9 +719,68 @@ mod tests {
             AudioStreamId(1),
             AudioSeqNo(1),
             MonotonicTimeNs(1),
+            AudioFormat {
+                sample_rate_hz: SampleRateHz(16_000),
+                channels: ChannelCount(1),
+                sample_format: SampleFormat::PcmS16LE,
+            },
             FrameDurationMs::Ms10,
             AudioPayload::Inline(vec![]),
         );
         assert!(frame.validate().is_err());
+    }
+
+    #[test]
+    fn audio_frame_payload_must_match_expected_bytes() {
+        let bad = AudioFrame::v1(
+            AudioStreamId(1),
+            AudioSeqNo(1),
+            MonotonicTimeNs(1),
+            AudioFormat {
+                sample_rate_hz: SampleRateHz(16_000),
+                channels: ChannelCount(1),
+                sample_format: SampleFormat::PcmS16LE,
+            },
+            FrameDurationMs::Ms20,
+            AudioPayload::Inline(vec![0; 10]),
+        );
+        assert!(bad.validate().is_err());
+
+        let good = AudioFrame::v1(
+            AudioStreamId(1),
+            AudioSeqNo(2),
+            MonotonicTimeNs(2),
+            AudioFormat {
+                sample_rate_hz: SampleRateHz(16_000),
+                channels: ChannelCount(1),
+                sample_format: SampleFormat::PcmS16LE,
+            },
+            FrameDurationMs::Ms20,
+            AudioPayload::Inline(vec![0; 640]),
+        );
+        assert!(good.validate().is_ok());
+    }
+
+    #[test]
+    fn implementation_id_lock_is_v001() {
+        assert_eq!(PH1K_ENGINE_ID, "PH1.K");
+        assert_eq!(PH1K_IMPLEMENTATION_ID, "PH1.K.001");
+        assert_eq!(PH1K_ACTIVE_IMPLEMENTATION_IDS, &["PH1.K.001"]);
+        assert_eq!(Ph1kImplementation::V001.id(), PH1K_IMPLEMENTATION_ID);
+    }
+
+    #[test]
+    fn implementation_id_parser_fails_closed_on_unknown_values() {
+        assert_eq!(
+            Ph1kImplementation::parse("PH1.K.001").unwrap(),
+            Ph1kImplementation::V001
+        );
+        assert!(matches!(
+            Ph1kImplementation::parse("PH1.K.999"),
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_k.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
     }
 }

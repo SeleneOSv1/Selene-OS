@@ -6,6 +6,32 @@ use crate::ph1position::TenantId;
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1CAPREQ_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1CAPREQ_ENGINE_ID: &str = "PH1.CAPREQ";
+pub const PH1CAPREQ_IMPLEMENTATION_ID: &str = "PH1.CAPREQ.001";
+pub const PH1CAPREQ_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1CAPREQ_IMPLEMENTATION_ID];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1CapreqImplementation {
+    V001,
+}
+
+impl Ph1CapreqImplementation {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Ph1CapreqImplementation::V001 => PH1CAPREQ_IMPLEMENTATION_ID,
+        }
+    }
+
+    pub fn parse(implementation_id: &str) -> Result<Self, ContractViolation> {
+        match implementation_id {
+            PH1CAPREQ_IMPLEMENTATION_ID => Ok(Ph1CapreqImplementation::V001),
+            _ => Err(ContractViolation::InvalidValue {
+                field: "ph1capreq.implementation_id",
+                reason: "unknown implementation_id",
+            }),
+        }
+    }
+}
 
 fn validate_id(field: &'static str, value: &str, max_len: usize) -> Result<(), ContractViolation> {
     if value.trim().is_empty() {
@@ -561,6 +587,10 @@ pub struct Ph1CapreqRequest {
 }
 
 impl Ph1CapreqRequest {
+    pub const fn implementation_id() -> &'static str {
+        PH1CAPREQ_IMPLEMENTATION_ID
+    }
+
     pub fn create_draft_v1(
         correlation_id: CorrelationId,
         turn_id: TurnId,
@@ -932,7 +962,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_simulation_id_and_type_must_match_variant() {
+    fn at_capreq_contract_01_request_simulation_id_and_type_match_variant() {
         let req = Ph1CapreqRequest {
             schema_version: PH1CAPREQ_CONTRACT_VERSION,
             correlation_id: CorrelationId(1),
@@ -951,7 +981,7 @@ mod tests {
     }
 
     #[test]
-    fn ok_response_requires_valid_lifecycle_payload() {
+    fn at_capreq_contract_02_ok_response_requires_valid_lifecycle_payload() {
         let res = Ph1CapreqOk::v1(
             CAPREQ_CREATE_DRAFT.to_string(),
             ReasonCodeId(1),
@@ -964,5 +994,31 @@ mod tests {
             .unwrap(),
         );
         assert!(res.is_ok());
+    }
+
+    #[test]
+    fn at_capreq_contract_03_implementation_id_constant_is_stable() {
+        assert_eq!(PH1CAPREQ_ENGINE_ID, "PH1.CAPREQ");
+        assert_eq!(Ph1CapreqRequest::implementation_id(), "PH1.CAPREQ.001");
+    }
+
+    #[test]
+    fn at_capreq_contract_04_family_active_implementation_ids_are_locked() {
+        assert_eq!(PH1CAPREQ_ACTIVE_IMPLEMENTATION_IDS, &["PH1.CAPREQ.001"]);
+    }
+
+    #[test]
+    fn at_capreq_contract_05_family_parser_rejects_unknown_implementation_id() {
+        assert_eq!(
+            Ph1CapreqImplementation::parse("PH1.CAPREQ.001").unwrap(),
+            Ph1CapreqImplementation::V001
+        );
+        assert!(matches!(
+            Ph1CapreqImplementation::parse("PH1.CAPREQ.999"),
+            Err(ContractViolation::InvalidValue {
+                field: "ph1capreq.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
     }
 }

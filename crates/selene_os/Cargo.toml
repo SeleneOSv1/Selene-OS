@@ -8,4 +8,5 @@ path = "src/lib.rs"
 
 [dependencies]
 selene_kernel_contracts = { path = "../selene_kernel_contracts" }
+selene_engines = { path = "../selene_engines" }
 selene_storage = { path = "../selene_storage" }

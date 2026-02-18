@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.WRITE`
-- `purpose`: Persist deterministic writing/formatting outcomes as bounded audit events without introducing PH1.WRITE-owned tables.
+- `purpose`: Deterministically format PH1.X response text without meaning drift, then persist the formatting outcome as bounded audit events without introducing PH1.WRITE-owned tables.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -54,6 +54,8 @@
 - deterministic `format_mode` examples:
   - `FORMATTED_TEXT`
   - `FALLBACK_ORIGINAL`
+- hard rule:
+  - when critical-token or refusal/policy safety checks fail, PH1.WRITE must commit `FALLBACK_ORIGINAL` and preserve the original response text unchanged.
 
 ## 5) Relations & Keys
 
@@ -92,8 +94,18 @@ PH1.WRITE writes emit PH1.J audit events with:
 - `AT-WRITE-DB-04` no PH1.WRITE current-table rebuild is required
   - `at_write_db_04_no_current_table_rebuild_required`
 
+## 8) Runtime Acceptance Tests (Contract + Wiring)
+
+- `AT-WRITE-01` critical-token preservation under formatting
+  - `crates/selene_engines/src/ph1write.rs` -> `at_write_01_preserves_critical_tokens_while_formatting`
+- `AT-WRITE-02` refusal/policy text is never weakened
+  - `crates/selene_engines/src/ph1write.rs` -> `at_write_02_refusal_and_policy_text_is_never_weakened`
+
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
 - typed repo: `crates/selene_storage/src/repo.rs`
+- kernel contracts: `crates/selene_kernel_contracts/src/ph1write.rs`
+- engine runtime: `crates/selene_engines/src/ph1write.rs`
+- OS wiring: `crates/selene_os/src/ph1write.rs`
 - migration: none required for row 17 (`PH1.WRITE` uses existing `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_write/db_wiring.rs`

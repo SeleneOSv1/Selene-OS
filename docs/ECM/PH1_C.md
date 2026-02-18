@@ -53,3 +53,17 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1cSttRepo`)
 - `docs/DB_WIRING/PH1_C.md`
+
+## Related Engine Boundary (`PH1.ENDPOINT`)
+- PH1.C may consume one Selene OS-curated endpoint hint from PH1.ENDPOINT before transcript finalization.
+- PH1.C must not treat PH1.ENDPOINT output as transcript authority; PH1.C remains the transcript gate owner.
+
+## Related Engine Boundary (`PH1.KNOW`)
+- PH1.C may consume one Selene OS-curated PH1.KNOW vocabulary hint bundle before transcript finalization.
+- PH1.C must not treat PH1.KNOW output as transcript authority; PH1.C remains the transcript gate owner.
+- PH1.KNOW-derived hints must remain tenant-scoped and authorized-only in PH1.C capability execution.
+
+## Related Engine Boundary (`PH1.QUOTA`)
+- PH1.C capability execution may be pre-gated by Selene OS using `PH1.QUOTA` lane decisions.
+- If quota posture is `REFUSE`, PH1.C capability calls must not run.
+- If quota posture is `WAIT`, Selene OS may pause before PH1.C; PH1.C output contracts remain unchanged when resumed.

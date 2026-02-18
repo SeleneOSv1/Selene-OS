@@ -336,7 +336,7 @@ echo "=================================================="
 if [[ "${ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER:-0}" == "1" ]]; then
   RUN_MODE=once ./scripts/check_builder_production_soak_runner.sh
 else
-  echo "SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 to require fail-closed production-soak runner checks (once mode) in readiness audit."
+  echo "SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 to require fail-closed production-soak runner checks (once mode) with BCAST failure-alert dispatch in readiness audit."
 fi
 
 echo

@@ -3,9 +3,13 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.ONB`
-- `purpose`: Persist deterministic invitee onboarding execution state transitions for `PH1.ONB.CORE / PH1.ONB.ORCH / PH1.ONB.BIZ` (`session_start`, `terms`, `schema-required evidence/approval gates`, `primary device proof`, `access instance create`, `complete`) under simulation-gated idempotent writes. PH1.ONB executes pinned requirements schemas and does not own schema definitions.
+- `purpose`: Persist deterministic invitee onboarding execution state transitions (`session_start`, `terms`, `schema-required evidence/approval gates`, `primary device proof`, `access instance create`, `complete`) under simulation-gated idempotent writes. PH1.ONB executes pinned requirements schemas and does not own schema definitions.
 - `version`: `v1`
 - `status`: `PASS`
+
+Canonical naming note:
+- In this repo, `PH1.ONB` is the single wired onboarding engine surface.
+- Labels such as `PH1.ONB.CORE.001`, `PH1.ONB.ORCH`, `PH1.ONB.ORCH.001`, and `PH1.ONB.BIZ.001` are legacy/spec slices and are tracked as merged aliases, not separate runtime modules.
 
 ## 2) Data Owned (authoritative)
 

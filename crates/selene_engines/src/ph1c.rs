@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
 use selene_kernel_contracts::ph1c::{
-    ConfidenceBucket, LanguageHintConfidence, LanguageTag, Ph1cRequest, Ph1cResponse, RetryAdvice,
+    ConfidenceBucket, LanguageHintConfidence, LanguageTag, Ph1cAuditMeta, Ph1cRequest,
+    Ph1cResponse, QualityBucket, RetryAdvice, RouteClassUsed, RoutingModeUsed, SelectedSlot,
     TranscriptOk, TranscriptReject,
 };
 use selene_kernel_contracts::ph1k::DeviceHealth;
@@ -18,6 +19,12 @@ pub mod reason_codes {
     pub const STT_FAIL_LANGUAGE_MISMATCH: ReasonCodeId = ReasonCodeId(0x4300_0005);
     pub const STT_FAIL_AUDIO_DEGRADED: ReasonCodeId = ReasonCodeId(0x4300_0006);
     pub const STT_FAIL_BUDGET_EXCEEDED: ReasonCodeId = ReasonCodeId(0x4300_0007);
+    pub const STT_FAIL_POLICY_RESTRICTED: ReasonCodeId = ReasonCodeId(0x4300_0008);
+    pub const STT_FAIL_PROVIDER_TIMEOUT: ReasonCodeId = ReasonCodeId(0x4300_0009);
+    pub const STT_FAIL_NETWORK_UNAVAILABLE: ReasonCodeId = ReasonCodeId(0x4300_000A);
+    pub const STT_FAIL_BACKGROUND_SPEECH: ReasonCodeId = ReasonCodeId(0x4300_000B);
+    pub const STT_FAIL_ECHO_SUSPECTED: ReasonCodeId = ReasonCodeId(0x4300_000C);
+    pub const STT_FAIL_QUOTA_THROTTLED: ReasonCodeId = ReasonCodeId(0x4300_000D);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +58,7 @@ pub struct Ph1cConfig {
 
     pub min_chars_per_second: f32,
     pub min_chars_absolute: usize,
+    pub routing_mode_used: RoutingModeUsed,
 }
 
 impl Ph1cConfig {
@@ -66,6 +74,7 @@ impl Ph1cConfig {
             // Coverage heuristics are deliberately conservative in the skeleton.
             min_chars_per_second: 1.5,
             min_chars_absolute: 2,
+            routing_mode_used: RoutingModeUsed::Lead,
         }
     }
 }
@@ -97,7 +106,7 @@ impl Ph1cRuntime {
         let mut attempts_used: u8 = 0;
         let mut total_latency_ms: u32 = 0;
 
-        let mut best_ok: Option<(TranscriptOk, u32 /*score*/)> = None;
+        let mut best_ok: Option<(TranscriptOk, u32 /*score*/, ProviderSlot)> = None;
         let mut best_fail: Option<ReasonCodeId> = None;
 
         for slot in ladder {
@@ -122,8 +131,8 @@ impl Ph1cRuntime {
 
             match self.eval_attempt(req, att) {
                 AttemptEval::Ok { out, score } => match &best_ok {
-                    Some((_, best_score)) if *best_score >= score => {}
-                    _ => best_ok = Some((out, score)),
+                    Some((_, best_score, _)) if *best_score >= score => {}
+                    _ => best_ok = Some((out, score, slot)),
                 },
                 AttemptEval::Reject { reason } => {
                     best_fail = Some(select_more_specific_failure(best_fail, reason));
@@ -131,12 +140,52 @@ impl Ph1cRuntime {
             }
         }
 
-        if let Some((ok, _)) = best_ok {
+        if let Some((ok, _, selected_provider)) = best_ok {
+            let audit_meta = build_audit_meta(
+                &self.config,
+                attempts_used,
+                attempts_used,
+                selected_slot_for_provider(selected_provider),
+                total_latency_ms,
+                quality_bucket_from_confidence(ok.confidence_bucket),
+                quality_bucket_from_confidence(ok.confidence_bucket),
+                QualityBucket::High,
+                None,
+                None,
+                None,
+                None,
+            );
+            let ok = TranscriptOk::v1_with_metadata(
+                ok.transcript_text,
+                ok.language_tag,
+                ok.confidence_bucket,
+                ok.uncertain_spans,
+                Some(audit_meta),
+            )
+            .expect("transcript_ok with audit metadata must be constructible");
             return Ph1cResponse::TranscriptOk(ok);
         }
 
         let reason = best_fail.unwrap_or(reason_codes::STT_FAIL_BUDGET_EXCEEDED);
-        Ph1cResponse::TranscriptReject(TranscriptReject::v1(reason, retry_advice_for(reason)))
+        let reject_meta = build_audit_meta(
+            &self.config,
+            attempts_used,
+            attempts_used,
+            SelectedSlot::None,
+            total_latency_ms,
+            QualityBucket::Low,
+            QualityBucket::Low,
+            QualityBucket::Low,
+            None,
+            None,
+            None,
+            None,
+        );
+        Ph1cResponse::TranscriptReject(TranscriptReject::v1_with_metadata(
+            reason,
+            retry_advice_for(reason),
+            Some(reject_meta),
+        ))
     }
 
     fn eval_attempt(&self, req: &Ph1cRequest, att: &SttAttempt) -> AttemptEval {
@@ -336,8 +385,61 @@ fn retry_advice_for(reason: ReasonCodeId) -> RetryAdvice {
         reason_codes::STT_FAIL_LANGUAGE_MISMATCH => RetryAdvice::Repeat,
         reason_codes::STT_FAIL_AUDIO_DEGRADED => RetryAdvice::MoveCloser,
         reason_codes::STT_FAIL_BUDGET_EXCEEDED => RetryAdvice::Repeat,
+        reason_codes::STT_FAIL_QUOTA_THROTTLED => RetryAdvice::SwitchToText,
+        reason_codes::STT_FAIL_POLICY_RESTRICTED => RetryAdvice::SwitchToText,
+        reason_codes::STT_FAIL_NETWORK_UNAVAILABLE => RetryAdvice::SwitchToText,
         _ => RetryAdvice::Repeat,
     }
+}
+
+fn selected_slot_for_provider(provider: ProviderSlot) -> SelectedSlot {
+    match provider {
+        ProviderSlot::Primary => SelectedSlot::Primary,
+        ProviderSlot::Secondary => SelectedSlot::Secondary,
+        ProviderSlot::Tertiary => SelectedSlot::Tertiary,
+    }
+}
+
+fn quality_bucket_from_confidence(c: ConfidenceBucket) -> QualityBucket {
+    match c {
+        ConfidenceBucket::High => QualityBucket::High,
+        ConfidenceBucket::Med => QualityBucket::Med,
+        ConfidenceBucket::Low => QualityBucket::Low,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_audit_meta(
+    cfg: &Ph1cConfig,
+    attempt_count: u8,
+    candidate_count: u8,
+    selected_slot: SelectedSlot,
+    total_latency_ms: u32,
+    quality_coverage_bucket: QualityBucket,
+    quality_confidence_bucket: QualityBucket,
+    quality_plausibility_bucket: QualityBucket,
+    tenant_vocabulary_pack_id: Option<String>,
+    user_vocabulary_pack_id: Option<String>,
+    policy_profile_id: Option<String>,
+    stt_routing_policy_pack_id: Option<String>,
+) -> Ph1cAuditMeta {
+    Ph1cAuditMeta::v1(
+        RouteClassUsed::OnDevice,
+        attempt_count,
+        candidate_count,
+        selected_slot,
+        cfg.routing_mode_used,
+        attempt_count > 1,
+        total_latency_ms,
+        quality_coverage_bucket,
+        quality_confidence_bucket,
+        quality_plausibility_bucket,
+        tenant_vocabulary_pack_id,
+        user_vocabulary_pack_id,
+        policy_profile_id,
+        stt_routing_policy_pack_id,
+    )
+    .expect("ph1c_audit_meta must be constructible")
 }
 
 #[cfg(test)]

@@ -153,3 +153,8 @@ Read capabilities emit audit only when explicit trace mode is enabled:
 ## Blocker
 
 - `none`
+
+## Related Engine Boundary (`PH1.EXPLAIN`)
+
+- `MEM_QUERY_SAFE_SUMMARY` / memory-candidate outputs may feed PH1.EXPLAIN `HOW_KNOW` responses as bounded evidence refs only.
+- PH1.EXPLAIN must respect PH1.M sensitivity flags; sensitive quotes require refusal or explicit policy allowance.

@@ -53,7 +53,7 @@ reason_code: string
 | MSG_S12 | PH1.BCAST | BCAST_DRAFT_CREATE | recipient, delivery_method, subject_topic, body_content, classification, receipt_mode | broadcast_id | INTERNAL_DB_WRITE | 400 | 1 | 100 | [BCAST_INPUT_SCHEMA_INVALID] |
 | MSG_S13 | PH1.BCAST | BCAST_DELIVER_COMMIT | broadcast_id, recipient, delivery_method, simulation_context | delivery_request_ref | EXTERNAL_DELIVERY_REQUEST (simulation-gated) | 500 | 2 | 200 | [BCAST_DELIVERY_PLAN_INVALID] |
 | MSG_S14 | PH1.DELIVERY | DELIVERY_SEND | delivery_request_ref, simulation_context, idempotency_key | delivery_proof_ref, delivery_status | EXTERNAL_SEND (simulation-gated) | 700 | 2 | 300 | [DELIVERY_CHANNEL_UNAVAILABLE, DELIVERY_PROVIDER_SEND_FAILED] |
-| MSG_S15 | PH1.LEARNING_ADAPTIVE | LEARN_DRAFT_FEEDBACK | draft_ref, feedback(optional), simulation_context | quality_delta_bucket | INTERNAL_DB_WRITE (simulation-gated) | 300 | 1 | 100 | [LEARN_SIMULATION_CONTEXT_MISSING] |
+| MSG_S15 | PH1.LEARN | LEARN_SIGNAL_AGGREGATE | tenant_id, feedback_signals(optional) | selected_artifact_id | NONE | 300 | 1 | 100 | [PH1_LEARN_UPSTREAM_INPUT_MISSING] |
 
 Notes:
 - Multilingual unraveling is system-wide via PH1.LANG + PH1.SRL + PH1.NLP pipeline before PH1.X decisions.
@@ -67,7 +67,6 @@ Notes:
 - BCAST_CREATE_DRAFT
 - BCAST_DELIVER_COMMIT
 - DELIVERY_SEND_COMMIT
-- LEARN_MODEL_UPDATE_SIM
 
 ## 8) Refusal / Escalation Conditions
 - If access_decision = DENY -> refuse with reason-coded access outcome.

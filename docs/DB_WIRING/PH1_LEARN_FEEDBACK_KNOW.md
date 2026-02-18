@@ -1,4 +1,4 @@
-# PH1.LEARN / PH1.FEEDBACK / PH1.KNOW DB Wiring Spec
+# PH1.LEARN / PH1.FEEDBACK / PH1.KNOW DB Wiring Spec (Storage Grouping Only)
 
 ## 1) Engine Header
 
@@ -6,6 +6,10 @@
 - `purpose`: Persist learning-layer feedback signals and versioned adaptation/dictionary artifacts using existing append-only ledgers (`audit_events` + `artifacts_ledger`) with deterministic tenant scope and idempotency.
 - `version`: `v1`
 - `status`: `PASS`
+- hard boundary:
+  - this file defines persistence grouping semantics only.
+  - this file is not a callable runtime engine contract.
+  - runtime ownership stays split across `PH1.FEEDBACK`, `PH1.LEARN`, and `PH1.KNOW`.
 
 ## 2) Data Owned (authoritative)
 
@@ -21,8 +25,16 @@
 - `truth_type`: `LEDGER`
 - `primary key`: `artifact_id`
 - invariants:
-  - PH1.LEARN writes versioned adaptation artifacts (`created_by=PH1.LEARN`)
-  - PH1.KNOW writes tenant dictionary packs (`created_by=PH1.KNOW`)
+  - PH1.LEARN writes versioned adaptation artifacts only (`created_by=PH1.LEARN`):
+    - `STT_ROUTING_POLICY_PACK`
+    - `STT_ADAPTATION_PROFILE`
+    - `TTS_ROUTING_POLICY_PACK`
+  - PH1.KNOW writes tenant dictionary artifacts only (`created_by=PH1.KNOW`):
+    - `STT_VOCAB_PACK`
+    - `TTS_PRONUNCIATION_PACK`
+  - artifact-type ownership is single-writer and fail-closed:
+    - PH1.LEARN must not write PH1.KNOW artifact types
+    - PH1.KNOW must not write PH1.LEARN artifact types
   - scope/version uniqueness is enforced by `(scope_type, scope_id, artifact_type, artifact_version)`
   - idempotent retries are deduped by `(scope_type, scope_id, artifact_type, artifact_version, idempotency_key)`
   - append-only enforcement applies (`no overwrite`, `no delete`)
@@ -61,6 +73,8 @@ No PH1.LEARN/PH1.FEEDBACK/PH1.KNOW-owned current projection table is introduced 
 - writes: `artifacts_ledger`
 - required fields:
   - `scope_type`, `scope_id`, `artifact_type`, `artifact_version`, `package_hash`, `payload_ref`, `provenance_ref`, `status`, `created_by=PH1.LEARN`
+- artifact_type boundary:
+  - allowed only `STT_ROUTING_POLICY_PACK | STT_ADAPTATION_PROFILE | TTS_ROUTING_POLICY_PACK`
 - idempotency key rule:
   - dedupe key = `(scope_type, scope_id, artifact_type, artifact_version, idempotency_key)`
 
@@ -100,9 +114,37 @@ Row 25 lock proof is ledger discipline:
   - `at_learn_db_03_idempotency_dedupe_works`
 - `AT-LEARNDB-04` ledger-only (no current-table rebuild in this row)
   - `at_learn_db_04_ledger_only_no_current_rebuild_required`
+- `AT-LEARNDB-05` single-writer artifact ownership enforced
+  - `at_learn_db_05_single_writer_artifact_types_enforced`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 25 (uses existing `audit_events` + `artifacts_ledger`)
 - tests: `crates/selene_storage/tests/ph1_learn_feedback_know/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.FEEDBACK`)
+
+- Runtime FEEDBACK capability flow is defined in:
+  - `docs/DB_WIRING/PH1_FEEDBACK.md`
+  - `docs/ECM/PH1_FEEDBACK.md`
+- This combined storage contract remains authoritative for append-only ledger persistence of feedback/artifact rows.
+
+## 9) Related Engine Boundary (`PH1.LEARN`)
+
+- Runtime LEARN capability flow is defined in:
+  - `docs/DB_WIRING/PH1_LEARN.md`
+  - `docs/ECM/PH1_LEARN.md`
+- This combined storage contract remains authoritative for append-only artifact persistence semantics only (`created_by=PH1.LEARN`).
+
+## 10) Related Engine Boundary (`PH1.KG`)
+
+- PH1.KNOW tenant dictionary artifacts may be consumed by PH1.KG only as tenant-scoped seed metadata through Selene OS wiring.
+- PH1.LEARN/PH1.KNOW storage rows must not be interpreted by PH1.KG as authority truth; PH1.KG still requires explicit evidence-backed, no-guessing relationship composition.
+
+## 11) Related Engine Boundary (`PH1.KNOW`)
+
+- Runtime PH1.KNOW capability flow is defined in:
+  - `docs/DB_WIRING/PH1_KNOW.md`
+  - `docs/ECM/PH1_KNOW.md`
+- This combined row-25 storage contract remains authoritative for append-only artifact persistence semantics only (`created_by=PH1.KNOW`).

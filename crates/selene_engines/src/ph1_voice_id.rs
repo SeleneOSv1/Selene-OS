@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, DiarizationSegment, IdentityConfidence, Ph1VoiceIdRequest,
     Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
-    UserId,
+    UserId, VoiceIdRiskSignal, PH1VOICEID_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId};
 
@@ -23,6 +23,9 @@ pub mod reason_codes {
     pub const VID_SPOOF_RISK: ReasonCodeId = ReasonCodeId(0x5649_0008);
     pub const VID_DEVICE_CLAIM_REQUIRED: ReasonCodeId = ReasonCodeId(0x5649_0009);
 }
+
+pub const PH1_VOICE_ID_ENGINE_ID: &str = "PH1.VOICE.ID";
+pub const PH1_VOICE_ID_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1VOICEID_IMPLEMENTATION_ID];
 
 #[derive(Debug, Clone)]
 pub struct EnrolledSpeaker {
@@ -44,6 +47,10 @@ pub struct Ph1VoiceIdConfig {
     pub forbid_binding_during_tts: bool,
     pub enable_spoof_guard: bool,
     pub require_reauth_on_untrusted_device: bool,
+    pub enforce_wake_window_when_present: bool,
+    /// Recommended default: 3 seconds.
+    pub wake_binding_window_ns: u64,
+    pub fail_closed_on_high_echo_risk: bool,
     /// Recommended default: 10 minutes.
     pub reauth_interval_ns: u64,
 }
@@ -54,6 +61,9 @@ impl Ph1VoiceIdConfig {
             forbid_binding_during_tts: true,
             enable_spoof_guard: true,
             require_reauth_on_untrusted_device: true,
+            enforce_wake_window_when_present: true,
+            wake_binding_window_ns: 3_000_000_000,
+            fail_closed_on_high_echo_risk: true,
             reauth_interval_ns: 600_000_000_000,
         }
     }
@@ -94,6 +104,26 @@ impl Ph1VoiceIdRuntime {
     }
 
     pub fn run(&mut self, req: &Ph1VoiceIdRequest, obs: VoiceIdObservation) -> Ph1VoiceIdResponse {
+        self.run_for_implementation(PH1VOICEID_IMPLEMENTATION_ID, req, obs)
+            .expect("PH1.VOICE.ID.001 must be valid")
+    }
+
+    pub fn run_for_implementation(
+        &mut self,
+        implementation_id: &str,
+        req: &Ph1VoiceIdRequest,
+        obs: VoiceIdObservation,
+    ) -> Result<Ph1VoiceIdResponse, ContractViolation> {
+        if implementation_id != PH1VOICEID_IMPLEMENTATION_ID {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id.implementation_id",
+                reason: "unknown implementation_id",
+            });
+        }
+        Ok(self.evaluate(req, obs))
+    }
+
+    fn evaluate(&mut self, req: &Ph1VoiceIdRequest, obs: VoiceIdObservation) -> Ph1VoiceIdResponse {
         // Reset locks when the session_id changes (or the session is CLOSED).
         let sid = req.session_state_ref.session_id.map(|s| s.0);
         if sid != self.locked_session_id {
@@ -119,6 +149,47 @@ impl Ph1VoiceIdRuntime {
             return unknown(
                 IdentityConfidence::Low,
                 reason_codes::VID_SPOOF_RISK,
+                diarization_segments(req, 1, None),
+                None,
+                req.device_owner_user_id.clone(),
+            );
+        }
+
+        // Identity window: when wake context is present, only bind within a bounded post-wake window.
+        if self.config.enforce_wake_window_when_present {
+            if let Some(wake) = &req.wake_event {
+                if !wake.accepted {
+                    return unknown(
+                        IdentityConfidence::Medium,
+                        reason_codes::VID_FAIL_LOW_CONFIDENCE,
+                        diarization_segments(req, 1, None),
+                        None,
+                        req.device_owner_user_id.clone(),
+                    );
+                }
+
+                let age_ns = req.now.0.saturating_sub(wake.t_decision.0);
+                if age_ns > self.config.wake_binding_window_ns {
+                    return unknown(
+                        IdentityConfidence::Medium,
+                        reason_codes::VID_FAIL_LOW_CONFIDENCE,
+                        diarization_segments(req, 1, None),
+                        None,
+                        req.device_owner_user_id.clone(),
+                    );
+                }
+            }
+        }
+
+        // Optional bounded risk hint: high-echo environments must fail closed when policy enables it.
+        if self.config.fail_closed_on_high_echo_risk
+            && req
+                .risk_signals
+                .contains(&VoiceIdRiskSignal::HighEchoRisk)
+        {
+            return unknown(
+                IdentityConfidence::Medium,
+                reason_codes::VID_FAIL_ECHO_UNSAFE,
                 diarization_segments(req, 1, None),
                 None,
                 req.device_owner_user_id.clone(),
@@ -333,9 +404,11 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1k::{
         AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
-        Confidence, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+        Confidence, FrameDurationMs, PreRollBufferId, SampleFormat, SampleRateHz, SpeechLikeness,
+        VadEvent,
     };
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+    use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, WakeDecision, WakeGateResults};
     use selene_kernel_contracts::SchemaVersion;
     use selene_kernel_contracts::SessionState;
 
@@ -346,6 +419,26 @@ mod tests {
         device_trust_level: DeviceTrustLevel,
         device_owner_user_id: Option<UserId>,
     ) -> Ph1VoiceIdRequest {
+        req_with(
+            now,
+            vad,
+            tts_playback_active,
+            device_trust_level,
+            device_owner_user_id,
+            None,
+            vec![],
+        )
+    }
+
+    fn req_with(
+        now: u64,
+        vad: Vec<VadEvent>,
+        tts_playback_active: bool,
+        device_trust_level: DeviceTrustLevel,
+        device_owner_user_id: Option<UserId>,
+        wake_event: Option<WakeDecision>,
+        risk_signals: Vec<VoiceIdRiskSignal>,
+    ) -> Ph1VoiceIdRequest {
         let stream = AudioStreamRef::v1(
             AudioStreamId(1),
             AudioStreamKind::MicProcessed,
@@ -354,6 +447,7 @@ mod tests {
                 channels: ChannelCount(1),
                 sample_format: SampleFormat::PcmS16LE,
             },
+            FrameDurationMs::Ms20,
         );
 
         let snap = SessionSnapshot {
@@ -367,16 +461,17 @@ mod tests {
             },
         };
 
-        Ph1VoiceIdRequest::v1(
+        Ph1VoiceIdRequest::v1_with_risk_signals(
             MonotonicTimeNs(now),
             stream,
             vad,
             AudioDeviceId::new("mic").unwrap(),
             snap,
-            None,
+            wake_event,
             tts_playback_active,
             device_trust_level,
             device_owner_user_id,
+            risk_signals,
         )
         .unwrap()
     }
@@ -389,6 +484,50 @@ mod tests {
             Confidence::new(0.9).unwrap(),
             SpeechLikeness::new(0.9).unwrap(),
         )
+    }
+
+    fn wake_gates_all_pass() -> WakeGateResults {
+        WakeGateResults {
+            g0_integrity_ok: true,
+            g1_activity_ok: true,
+            g1a_utterance_start_ok: true,
+            g2_light_ok: true,
+            g3_strong_ok: true,
+            g3a_liveness_ok: true,
+            g4_personalization_ok: true,
+            g5_policy_ok: true,
+        }
+    }
+
+    fn wake_accept(t_decision: u64) -> WakeDecision {
+        WakeDecision::accept_v1(
+            ReasonCodeId(1),
+            wake_gates_all_pass(),
+            MonotonicTimeNs(t_decision),
+            None,
+            None,
+            BoundedAudioSegmentRef::v1(
+                AudioStreamId(1),
+                PreRollBufferId(1),
+                MonotonicTimeNs(t_decision),
+                MonotonicTimeNs(t_decision + 10),
+                MonotonicTimeNs(t_decision + 1),
+                MonotonicTimeNs(t_decision + 2),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn wake_reject(t_decision: u64) -> WakeDecision {
+        WakeDecision::reject_v1(
+            ReasonCodeId(1),
+            wake_gates_all_pass(),
+            MonotonicTimeNs(t_decision),
+            None,
+            None,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -696,5 +835,145 @@ mod tests {
             }
             _ => panic!("expected reauth-required unknown"),
         }
+    }
+
+    #[test]
+    fn at_vid_11_wake_window_rejects_stale_wake() {
+        let mut cfg = Ph1VoiceIdConfig::mvp_v1();
+        cfg.wake_binding_window_ns = 5;
+        let mut rt = Ph1VoiceIdRuntime::new(
+            cfg,
+            vec![EnrolledSpeaker {
+                speaker_id: SpeakerId::new("speaker_1").unwrap(),
+                user_id: Some(UserId::new("user_1").unwrap()),
+                fingerprint: 1,
+            }],
+        )
+        .unwrap();
+
+        let out = rt.run(
+            &req_with(
+                10,
+                vec![vad(10, 20)],
+                false,
+                DeviceTrustLevel::Trusted,
+                None,
+                Some(wake_accept(0)),
+                vec![],
+            ),
+            VoiceIdObservation {
+                primary_fingerprint: Some(1),
+                secondary_fingerprint: None,
+                spoof_risk: false,
+            },
+        );
+
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u)
+                if u.reason_code == reason_codes::VID_FAIL_LOW_CONFIDENCE
+        ));
+    }
+
+    #[test]
+    fn at_vid_12_wake_reject_fails_closed() {
+        let mut rt = Ph1VoiceIdRuntime::new(
+            Ph1VoiceIdConfig::mvp_v1(),
+            vec![EnrolledSpeaker {
+                speaker_id: SpeakerId::new("speaker_1").unwrap(),
+                user_id: Some(UserId::new("user_1").unwrap()),
+                fingerprint: 1,
+            }],
+        )
+        .unwrap();
+
+        let out = rt.run(
+            &req_with(
+                0,
+                vec![vad(0, 10)],
+                false,
+                DeviceTrustLevel::Trusted,
+                None,
+                Some(wake_reject(0)),
+                vec![],
+            ),
+            VoiceIdObservation {
+                primary_fingerprint: Some(1),
+                secondary_fingerprint: None,
+                spoof_risk: false,
+            },
+        );
+
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u)
+                if u.reason_code == reason_codes::VID_FAIL_LOW_CONFIDENCE
+        ));
+    }
+
+    #[test]
+    fn at_vid_13_high_echo_risk_signal_fails_closed() {
+        let mut rt = Ph1VoiceIdRuntime::new(
+            Ph1VoiceIdConfig::mvp_v1(),
+            vec![EnrolledSpeaker {
+                speaker_id: SpeakerId::new("speaker_1").unwrap(),
+                user_id: Some(UserId::new("user_1").unwrap()),
+                fingerprint: 1,
+            }],
+        )
+        .unwrap();
+
+        let out = rt.run(
+            &req_with(
+                0,
+                vec![vad(0, 10)],
+                false,
+                DeviceTrustLevel::Trusted,
+                None,
+                Some(wake_accept(0)),
+                vec![VoiceIdRiskSignal::HighEchoRisk],
+            ),
+            VoiceIdObservation {
+                primary_fingerprint: Some(1),
+                secondary_fingerprint: None,
+                spoof_risk: false,
+            },
+        );
+
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u)
+                if u.reason_code == reason_codes::VID_FAIL_ECHO_UNSAFE
+        ));
+    }
+
+    #[test]
+    fn at_vid_impl_01_unknown_implementation_fails_closed() {
+        let mut rt = Ph1VoiceIdRuntime::new(Ph1VoiceIdConfig::mvp_v1(), vec![]).unwrap();
+        let out = rt.run_for_implementation(
+            "PH1.VOICE.ID.999",
+            &req(0, vec![vad(0, 10)], false, DeviceTrustLevel::Trusted, None),
+            VoiceIdObservation {
+                primary_fingerprint: Some(1),
+                secondary_fingerprint: None,
+                spoof_risk: false,
+            },
+        );
+        assert!(matches!(
+            out,
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_voice_id.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
+    }
+
+    #[test]
+    fn at_vid_impl_02_active_implementation_list_is_locked() {
+        assert_eq!(PH1_VOICE_ID_ENGINE_ID, "PH1.VOICE.ID");
+        assert_eq!(
+            PH1_VOICE_ID_ACTIVE_IMPLEMENTATION_IDS,
+            &["PH1.VOICE.ID.001"]
+        );
     }
 }

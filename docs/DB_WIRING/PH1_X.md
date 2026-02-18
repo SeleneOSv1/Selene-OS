@@ -122,6 +122,11 @@ State/boundary constraints:
   - `CONFIRM` (impactful intent awaiting yes/no)
   - `DISPATCH` (candidate handoff only)
   - `RESPOND` / `WAIT` (non-executing output/control)
+- PH1.X continuity gates are explicit and fail closed:
+  - `subject_ref` is required on every PH1.X request and is stamped into returned thread state.
+  - `active_speaker_user_id` is required on every PH1.X request and is stamped into returned thread state.
+  - if `thread_state.active_speaker_user_id != request.active_speaker_user_id`: PH1.X emits a single clarify (`X_CONTINUITY_SPEAKER_MISMATCH`) and does not dispatch.
+  - if `thread_state.active_subject_ref != request.subject_ref` while a pending state exists: PH1.X emits a single clarify (`X_CONTINUITY_SUBJECT_MISMATCH`) and does not dispatch.
 - WorkOrder state transitions (`DRAFT -> CLARIFY -> CONFIRM -> EXECUTING`) are persisted by `SELENE_OS_CORE_TABLES`; PH1.X emits directive rows that deterministically wire back into those transitions.
 
 ## 6) Audit Emissions (PH1.J)
@@ -148,17 +153,46 @@ PH1.X writes emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-PH1-X-DB-01` tenant isolation enforced
+- `AT-X-01` tenant isolation enforced
   - `at_x_db_01_tenant_isolation_enforced`
-- `AT-PH1-X-DB-02` append-only enforcement for PH1.X ledger writes
+- `AT-X-02` append-only enforcement for PH1.X ledger writes
   - `at_x_db_02_append_only_enforced`
-- `AT-PH1-X-DB-03` idempotency dedupe works
+- `AT-X-03` idempotency dedupe works
   - `at_x_db_03_idempotency_dedupe_works`
-- `AT-PH1-X-DB-04` no PH1.X current-table rebuild is required
+- `AT-X-04` no PH1.X current-table rebuild is required
   - `at_x_db_04_no_current_table_rebuild_required`
+- `AT-X-13` continuity speaker mismatch is fail-closed and clarify-only
+  - `at_x_continuity_speaker_mismatch_fails_closed_into_one_clarify`
+- `AT-X-14` continuity subject mismatch with pending state is fail-closed and clarify-only
+  - `at_x_continuity_subject_mismatch_with_pending_fails_closed_into_one_clarify`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 16 (`PH1.X` uses existing `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_x/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.PRUNE`)
+
+- Before PH1.X `clarify` commit rows are emitted, Selene OS may invoke PH1.PRUNE when multiple required fields exist.
+- If PH1.PRUNE is used, `what_is_missing` should map to PH1.PRUNE `selected_missing_field`; if PH1.PRUNE validation fails, Selene OS must fail closed and skip PRUNE-derived handoff.
+- PH1.X remains authoritative for one conversational move per turn; PH1.PRUNE output is advisory input only.
+
+## 9) Related Engine Boundary (`PH1.EXPLAIN`)
+
+- PH1.X may request PH1.EXPLAIN packets only for explicit explain triggers (`why/how/what happened`) or accountability prompts.
+- PH1.X decides whether to surface PH1.EXPLAIN output; PH1.EXPLAIN remains advisory and non-executing.
+- PH1.X must never treat PH1.EXPLAIN text as authority, confirmation, or execution approval.
+
+## 10) Related Engine Boundary (`PH1.EMO.GUIDE`)
+
+- Before PH1.X final `respond` directive shaping, Selene OS may invoke PH1.EMO.GUIDE to compute a bounded style profile hint (`DOMINANT | GENTLE` + ordered modifiers).
+- If PH1.EMO.GUIDE validation fails (`validation_status != OK`), Selene OS must fail closed on EMO.GUIDE handoff and continue without EMO-guided tone hints.
+- PH1.X may consume PH1.EMO.GUIDE hints for tone/pacing only; PH1.X must not allow EMO.GUIDE to alter facts, missing-field logic, confirmation semantics, or dispatch gating.
+
+## 11) Related Engine Boundary (`PH1.PERSONA`)
+
+- Before PH1.X final `respond` directive shaping, Selene OS may invoke PH1.PERSONA and forward persona hints only when `PERSONA_PROFILE_VALIDATE` returns `validation_status=OK`.
+- PH1.X may consume `style_profile_ref` + `delivery_policy_ref` as phrasing/tone posture hints only.
+- PH1.X must not allow PH1.PERSONA output to alter truth, intent selection, missing-field logic, confirmation semantics, access outcomes, or dispatch gating.
+- If PH1.PERSONA validation fails, Selene OS must fail closed on persona handoff and continue with deterministic default PH1.X behavior.

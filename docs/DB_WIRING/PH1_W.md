@@ -3,6 +3,8 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.W`
+- `implementation_id`: `PH1.W.001`
+- `active_implementation_ids`: `[PH1.W.001]`
 - `purpose`: Persist deterministic wake enrollment lifecycle, enrollment sample quality ledger, runtime wake accept/reject/suppress events, and active wake profile bindings.
 - `version`: `v1`
 - `status`: `PASS`
@@ -74,6 +76,20 @@
 - scope rules: wake runtime event is device-scoped
 - why this read is required: deterministic runtime event validity and no orphan rows
 
+### Runtime policy context inputs (non-DB)
+- reads: bounded `WakePolicyContext` from Selene OS
+  - `session_state`
+  - `do_not_disturb`
+  - `privacy_mode`
+  - `tts_playback_active`
+  - `media_playback_active`
+  - `explicit_trigger_only`
+- keys/joins used: n/a (in-memory contract input only)
+- scope rules:
+  - policy context may disarm wake, but cannot assert identity or authority
+  - `explicit_trigger_only=true` suppresses wake and must remain reason-coded/auditable
+- why this read is required: deterministic fail-closed wake disarm/suppression behavior
+
 ### Wake state reads
 - reads:
   - `wake_enrollment_sessions` by `wake_enrollment_session_id`
@@ -88,6 +104,14 @@
   - `ux_wake_profile_bindings_active_user_device`
 - scope rules: no cross-user wake profile lookups
 - why this read is required: deterministic dedupe, enrollment progression, and active profile retrieval
+
+### Pronunciation robustness hints (related engine boundary)
+- reads: bounded pronunciation lexicon hints supplied by Selene OS from `PH1.PRON` (optional)
+- keys/joins used: `pack_id` + tenant/user scope checks in OS context
+- scope rules:
+  - tenant-scoped hints only by default
+  - user-scoped hints require explicit consent assertion before use
+- why this read is required: improve wake phrase variant robustness without changing wake authority boundaries
 
 ## 4) Writes (outputs)
 
@@ -128,6 +152,8 @@
 - required fields:
   - `wake_event_id`, `device_id`, `created_at`, `accepted`, `reason_code`, `idempotency_key`
   - runtime gate snapshots persisted in row scope: `tts_active_at_trigger`, `media_playback_active_at_trigger`, `suppression_reason_code?`
+  - runtime policy snapshot persisted in row scope: `explicit_trigger_only_at_trigger`
+  - runtime gate snapshots persisted in row scope: `g1a_utterance_start_ok`, `g3a_liveness_ok`
   - runtime parameter/tuning snapshots persisted in PH1.J payload scope:
     - `parameter_set_id`
     - `enter_threshold`
@@ -182,12 +208,14 @@ PH1.W writes must emit PH1.J audit events with:
   - `WAKE_ENROLL_START_DRAFT`
   - `WAKE_ENROLL_SAMPLE_COMMIT`
   - `WAKE_ENROLL_COMPLETE_COMMIT`
-  - `WAKE_ENROLL_DEFER_REMINDER_COMMIT`
+  - `WAKE_ENROLL_DEFER_COMMIT`
   - `WAKE_RUNTIME_EVENT_COMMIT`
 - `reason_code(s)`:
   - `FAIL_G0_DEVICE_UNHEALTHY`
+  - `FAIL_G1A_NOT_UTTERANCE_START`
   - `FAIL_G3_SCORE_LOW`
   - `FAIL_G3A_REPLAY_SUSPECTED`
+  - `SUPPRESS_EXPLICIT_TRIGGER_ONLY`
   - `SUPPRESS_COOLDOWN`
   - `SUPPRESS_POLICY_SUSPENDED`
 - `payload_min` allowlisted keys:
@@ -204,13 +232,13 @@ PH1.W writes must emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-PH1-W-DB-01` tenant isolation enforced
+- `AT-W-01` tenant isolation enforced
   - `at_w_db_01_tenant_isolation_enforced`
-- `AT-PH1-W-DB-02` append-only enforcement for wake ledgers
+- `AT-W-02` append-only enforcement for wake ledgers
   - `at_w_db_02_append_only_enforced`
-- `AT-PH1-W-DB-03` idempotency dedupe works
+- `AT-W-03` idempotency dedupe works
   - `at_w_db_03_idempotency_dedupe_works`
-- `AT-PH1-W-DB-04` current-state consistency with enrollment/runtime ledgers
+- `AT-W-04` current-state consistency with enrollment/runtime ledgers
   - `at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger`
 
 Implementation references:

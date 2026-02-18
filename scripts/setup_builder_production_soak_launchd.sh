@@ -15,6 +15,16 @@ RUNNER_PATH="${RUNNER_PATH:-${RUNTIME_SCRIPTS_DIR}/check_builder_production_soak
 WATCHDOG_PATH="${WATCHDOG_PATH:-${RUNTIME_SCRIPTS_DIR}/check_builder_production_soak_watchdog.sh}"
 ALERT_LOG_FILE="${ALERT_LOG_FILE:-${RUNTIME_DEV_DIR}/builder_production_soak_alerts.log}"
 STATE_FILE="${STATE_FILE:-${RUNTIME_DEV_DIR}/builder_production_soak_runner_state.log}"
+BCAST_ALERT_CMD="${BCAST_ALERT_CMD:-${RUNTIME_SCRIPTS_DIR}/emit_builder_failure_bcast_alert.sh}"
+BCAST_LOG_FILE="${BCAST_LOG_FILE:-${RUNTIME_DEV_DIR}/builder_failure_bcast_ledger.log}"
+BCAST_APP_INBOX_FILE="${BCAST_APP_INBOX_FILE:-${RUNTIME_DEV_DIR}/selene_app_inbox.log}"
+BCAST_ROUTING_FILE="${BCAST_ROUTING_FILE:-${RUNTIME_DEV_DIR}/builder_failure_alert_routing.env}"
+BCAST_ACK_FILE="${BCAST_ACK_FILE:-${RUNTIME_DEV_DIR}/builder_failure_alert_ack.log}"
+BCAST_ROUTING_AUDIT_FILE="${BCAST_ROUTING_AUDIT_FILE:-${RUNTIME_DEV_DIR}/builder_failure_alert_routing_audit.log}"
+BCAST_RECIPIENT_DISPLAY="${BCAST_RECIPIENT_DISPLAY:-JD}"
+BCAST_URGENCY="${BCAST_URGENCY:-URGENT}"
+BCAST_ALERT_COOLDOWN_MINUTES="${BCAST_ALERT_COOLDOWN_MINUTES:-60}"
+BCAST_NOTIFY_DESKTOP="${BCAST_NOTIFY_DESKTOP:-1}"
 LOG_DIR="${LOG_DIR:-${RUNTIME_ROOT}/launchd}"
 STDOUT_LOG="${STDOUT_LOG:-${LOG_DIR}/builder_production_soak_runner.out.log}"
 STDERR_LOG="${STDERR_LOG:-${LOG_DIR}/builder_production_soak_runner.err.log}"
@@ -42,12 +52,20 @@ mkdir -p "${LAUNCH_AGENTS_DIR}"
 mkdir -p "${LOG_DIR}"
 mkdir -p "$(dirname "${ALERT_LOG_FILE}")"
 mkdir -p "$(dirname "${STATE_FILE}")"
+mkdir -p "$(dirname "${BCAST_LOG_FILE}")"
+mkdir -p "$(dirname "${BCAST_APP_INBOX_FILE}")"
+mkdir -p "$(dirname "${BCAST_ROUTING_FILE}")"
+mkdir -p "$(dirname "${BCAST_ACK_FILE}")"
+mkdir -p "$(dirname "${BCAST_ROUTING_AUDIT_FILE}")"
 
 for src in \
   "${REPO_ROOT}/scripts/check_builder_production_soak_runner.sh" \
   "${REPO_ROOT}/scripts/check_builder_production_soak_watchdog.sh" \
   "${REPO_ROOT}/scripts/export_builder_stage2_canary_metrics.sh" \
-  "${REPO_ROOT}/scripts/check_builder_stage2_promotion_gate.sh"
+  "${REPO_ROOT}/scripts/check_builder_stage2_promotion_gate.sh" \
+  "${REPO_ROOT}/scripts/emit_builder_failure_bcast_alert.sh" \
+  "${REPO_ROOT}/scripts/set_builder_failure_alert_recipient.sh" \
+  "${REPO_ROOT}/scripts/ack_builder_failure_alert.sh"
 do
   if [[ ! -x "${src}" ]]; then
     fail "required_script_not_executable path=${src}"
@@ -63,6 +81,9 @@ fi
 if [[ ! -x "${WATCHDOG_PATH}" ]]; then
   fail "watchdog_not_executable_after_deploy path=${WATCHDOG_PATH}"
 fi
+if [[ ! -x "${BCAST_ALERT_CMD}" ]]; then
+  fail "bcast_alert_cmd_not_executable_after_deploy path=${BCAST_ALERT_CMD}"
+fi
 
 interval_seconds="$(( INTERVAL_MINUTES * 60 ))"
 
@@ -77,7 +98,7 @@ cat > "${PLIST_PATH}" <<EOF
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd '${RUNTIME_ROOT}' &amp;&amp; SELENE_ROOT='${RUNTIME_ROOT}' RUN_MODE=once FAIL_CLOSED=1 ALERT_ON_FAIL=1 WATCHDOG_CMD='${WATCHDOG_PATH}' ALERT_LOG_FILE='${ALERT_LOG_FILE}' STATE_FILE='${STATE_FILE}' ENV_FILE='${DB_ENV_DEST}' '${RUNNER_PATH}'</string>
+    <string>cd '${RUNTIME_ROOT}' &amp;&amp; SELENE_ROOT='${RUNTIME_ROOT}' RUN_MODE=once FAIL_CLOSED=1 ALERT_ON_FAIL=1 BCAST_ON_FAIL=1 WATCHDOG_CMD='${WATCHDOG_PATH}' ALERT_LOG_FILE='${ALERT_LOG_FILE}' STATE_FILE='${STATE_FILE}' BCAST_ALERT_CMD='${BCAST_ALERT_CMD}' BCAST_LOG_FILE='${BCAST_LOG_FILE}' BCAST_APP_INBOX_FILE='${BCAST_APP_INBOX_FILE}' BCAST_ROUTING_FILE='${BCAST_ROUTING_FILE}' BCAST_ACK_FILE='${BCAST_ACK_FILE}' BCAST_ROUTING_AUDIT_FILE='${BCAST_ROUTING_AUDIT_FILE}' BCAST_RECIPIENT_DISPLAY='${BCAST_RECIPIENT_DISPLAY}' BCAST_URGENCY='${BCAST_URGENCY}' BCAST_ALERT_COOLDOWN_MINUTES='${BCAST_ALERT_COOLDOWN_MINUTES}' BCAST_NOTIFY_DESKTOP='${BCAST_NOTIFY_DESKTOP}' ENV_FILE='${DB_ENV_DEST}' '${RUNNER_PATH}'</string>
   </array>
   <key>WorkingDirectory</key>
   <string>${RUNTIME_ROOT}</string>

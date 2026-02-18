@@ -975,7 +975,9 @@ impl OnbRequest {
             OnbRequest::AccessInstanceCreateCommit(_) => ONB_ACCESS_INSTANCE_CREATE_COMMIT,
             OnbRequest::CompleteCommit(_) => ONB_COMPLETE_COMMIT,
             OnbRequest::RequirementBackfillStartDraft(_) => ONB_REQUIREMENT_BACKFILL_START_DRAFT,
-            OnbRequest::RequirementBackfillNotifyCommit(_) => ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
+            OnbRequest::RequirementBackfillNotifyCommit(_) => {
+                ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT
+            }
             OnbRequest::RequirementBackfillCompleteCommit(_) => {
                 ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT
             }

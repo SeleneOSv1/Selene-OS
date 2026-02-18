@@ -16,3 +16,11 @@ Icon?
 .idea/
 *.swp
 *.swo
+
+# Local development secrets/config
+.env
+.env.local
+.dev/*.env
+.dev/*.md
+.dev/*.csv
+.dev/postgres/

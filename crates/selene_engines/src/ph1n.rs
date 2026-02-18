@@ -96,11 +96,15 @@ impl Ph1nRuntime {
 fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
     match intent_type {
         IntentType::SendMoney => (SensitivityLevel::Confidential, true),
+        IntentType::MemoryForgetRequest => (SensitivityLevel::Private, true),
         IntentType::CreateInviteLink
         | IntentType::CapreqManage
         | IntentType::AccessSchemaManage
         | IntentType::AccessEscalationVote
         | IntentType::AccessInstanceCompileRefresh => (SensitivityLevel::Private, true),
+        IntentType::MemoryRememberRequest | IntentType::MemoryQuery => {
+            (SensitivityLevel::Private, false)
+        }
         IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
@@ -184,6 +188,27 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
 
     if s.contains("weather") {
         push(IntentType::WeatherQuery);
+    }
+    if s.contains("forget")
+        || s.contains("delete memory")
+        || s.contains("erase memory")
+        || s.contains("remove memory")
+    {
+        push(IntentType::MemoryForgetRequest);
+    }
+    if s.contains("what do you remember")
+        || s.contains("what did we say about")
+        || s.contains("what did i say about")
+        || s.contains("remember about")
+        || s.contains("recall")
+    {
+        push(IntentType::MemoryQuery);
+    }
+    if (s.contains("remember ") || s == "remember")
+        && !s.contains("what do you remember")
+        && !s.contains("remember about")
+    {
+        push(IntentType::MemoryRememberRequest);
     }
     if s.contains("what time")
         || s == "time"
@@ -301,12 +326,164 @@ fn normalize_intent(
         IntentType::CreateCalendarEvent => normalize_calendar_event(req),
         IntentType::BookTable => normalize_book_table(req),
         IntentType::SendMoney => normalize_send_money(req),
+        IntentType::MemoryRememberRequest => normalize_memory_remember(req),
+        IntentType::MemoryForgetRequest => normalize_memory_forget(req),
+        IntentType::MemoryQuery => normalize_memory_query(req),
         IntentType::CreateInviteLink => normalize_create_invite_link(req),
         IntentType::CapreqManage => normalize_capreq_manage(req),
         IntentType::AccessSchemaManage
         | IntentType::AccessEscalationVote
         | IntentType::AccessInstanceCompileRefresh => normalize_access_control(req, intent_type),
     }
+}
+
+fn normalize_memory_remember(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let subject = extract_memory_subject(&lower, t, &["remember this ", "remember that ", "remember "]);
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+    let mut flags = Vec::new();
+
+    if let Some(span) = subject {
+        if req.confirmed_context.is_none() && is_reference_like(&span) {
+            missing.push(FieldKey::ReferenceTarget);
+            flags.push(AmbiguityFlag::ReferenceAmbiguous);
+        } else {
+            fields.push(IntentField {
+                key: FieldKey::Task,
+                value: FieldValue::verbatim(span.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::Task, t, &span)?);
+        }
+    } else if req.confirmed_context.is_none() && contains_reference_word(&lower) {
+        missing.push(FieldKey::ReferenceTarget);
+        flags.push(AmbiguityFlag::ReferenceAmbiguous);
+    } else {
+        missing.push(FieldKey::Task);
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::MemoryRememberRequest);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::MemoryRememberRequest,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        missing,
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        flags,
+        vec![],
+    )?))
+}
+
+fn normalize_memory_forget(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let subject = extract_memory_subject(
+        &lower,
+        t,
+        &["forget this ", "forget that ", "forget ", "delete memory ", "remove memory "],
+    );
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+    let mut flags = Vec::new();
+
+    if let Some(span) = subject {
+        if req.confirmed_context.is_none() && is_reference_like(&span) {
+            missing.push(FieldKey::ReferenceTarget);
+            flags.push(AmbiguityFlag::ReferenceAmbiguous);
+        } else {
+            fields.push(IntentField {
+                key: FieldKey::Task,
+                value: FieldValue::verbatim(span.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::Task, t, &span)?);
+        }
+    } else if req.confirmed_context.is_none() && contains_reference_word(&lower) {
+        missing.push(FieldKey::ReferenceTarget);
+        flags.push(AmbiguityFlag::ReferenceAmbiguous);
+    } else {
+        missing.push(FieldKey::Task);
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::MemoryForgetRequest);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::MemoryForgetRequest,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        missing,
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        flags,
+        vec![],
+    )?))
+}
+
+fn normalize_memory_query(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let subject = extract_memory_subject(
+        &lower,
+        t,
+        &[
+            "what do you remember about ",
+            "what did we say about ",
+            "what did i say about ",
+            "remember about ",
+            "recall ",
+        ],
+    );
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+    let mut flags = Vec::new();
+
+    if let Some(span) = subject {
+        if req.confirmed_context.is_none() && is_reference_like(&span) {
+            missing.push(FieldKey::ReferenceTarget);
+            flags.push(AmbiguityFlag::ReferenceAmbiguous);
+        } else {
+            fields.push(IntentField {
+                key: FieldKey::Task,
+                value: FieldValue::verbatim(span.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::Task, t, &span)?);
+        }
+    } else if req.confirmed_context.is_none() && contains_reference_word(&lower) {
+        missing.push(FieldKey::ReferenceTarget);
+        flags.push(AmbiguityFlag::ReferenceAmbiguous);
+    } else {
+        evidence.push(evidence_span(FieldKey::Task, t, t)?);
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::MemoryQuery);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::MemoryQuery,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        missing,
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        flags,
+        vec![],
+    )?))
 }
 
 fn normalize_reminder(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
@@ -1176,6 +1353,30 @@ fn clarify_for_missing(
             "Who should I send it to?".to_string(),
             vec!["To Alex".to_string(), "To John".to_string()],
         ),
+        (IntentType::MemoryRememberRequest, FieldKey::Task) => (
+            "What exactly should I remember?".to_string(),
+            vec![
+                "Remember that Benji is my preferred name".to_string(),
+                "Remember my parking spot is B12".to_string(),
+                "Remember I prefer short replies".to_string(),
+            ],
+        ),
+        (IntentType::MemoryForgetRequest, FieldKey::Task) => (
+            "What should I forget?".to_string(),
+            vec![
+                "Forget my old nickname".to_string(),
+                "Forget parking spot B12".to_string(),
+                "Forget that preference".to_string(),
+            ],
+        ),
+        (IntentType::MemoryQuery, FieldKey::Task) => (
+            "What topic should I recall?".to_string(),
+            vec![
+                "What do you remember about payroll".to_string(),
+                "Recall my language preference".to_string(),
+                "What did we say about Japan".to_string(),
+            ],
+        ),
         (IntentType::CapreqManage, FieldKey::RequestedCapabilityId) => (
             "Which capability should this request cover?".to_string(),
             vec![
@@ -1250,7 +1451,8 @@ fn clarify_for_missing(
             ],
         ),
         (IntentType::AccessSchemaManage, FieldKey::AccessReviewChannel) => (
-            "Should I send this to your phone or desktop for review, or read it out loud?".to_string(),
+            "Should I send this to your phone or desktop for review, or read it out loud?"
+                .to_string(),
             vec!["PHONE_DESKTOP".to_string(), "READ_OUT_LOUD".to_string()],
         ),
         (IntentType::AccessSchemaManage, FieldKey::AccessRuleAction) => (
@@ -1457,6 +1659,9 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
         IntentType::SendMoney => "Send money".to_string(),
+        IntentType::MemoryRememberRequest => "Remember this".to_string(),
+        IntentType::MemoryForgetRequest => "Forget memory".to_string(),
+        IntentType::MemoryQuery => "Recall memory".to_string(),
         IntentType::CreateInviteLink => "Create an invite link".to_string(),
         IntentType::CapreqManage => "Manage a capability request".to_string(),
         IntentType::AccessSchemaManage => "Manage access schemas".to_string(),
@@ -1611,6 +1816,17 @@ fn extract_task_after(
         return Some((None, None));
     }
     Some((Some(task.to_string()), None))
+}
+
+fn extract_memory_subject(lower: &str, original: &str, markers: &[&str]) -> Option<String> {
+    for marker in markers {
+        if let Some((subject, _norm)) = extract_task_after(lower, original, marker) {
+            if let Some(subject) = subject {
+                return Some(subject);
+            }
+        }
+    }
+    None
 }
 
 fn earliest_stop_index(haystack: &str, needles: &[&str]) -> Option<usize> {
@@ -2108,7 +2324,9 @@ fn extract_schema_version_id(lower: &str, original: &str) -> Option<String> {
             )
         });
         let lower = cleaned.to_ascii_lowercase();
-        if lower.starts_with('v') && lower.len() <= 16 && lower[1..].chars().all(|c| c.is_ascii_digit())
+        if lower.starts_with('v')
+            && lower.len() <= 16
+            && lower[1..].chars().all(|c| c.is_ascii_digit())
         {
             Some(lower)
         } else {
@@ -2117,8 +2335,7 @@ fn extract_schema_version_id(lower: &str, original: &str) -> Option<String> {
     }) {
         return Some(tok);
     }
-    extract_token_after_phrase(lower, original, "version ")
-        .map(|v| v.to_ascii_lowercase())
+    extract_token_after_phrase(lower, original, "version ").map(|v| v.to_ascii_lowercase())
 }
 
 fn extract_profile_payload_json(original: &str) -> Option<String> {

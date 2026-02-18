@@ -1,11 +1,26 @@
-# PH1.BCAST DB Wiring (Design vNext)
+# PH1.BCAST / PH1.BCAST.001 DB Wiring (Design vNext)
 
 ## A) Engine Header
 - engine_id: PH1.BCAST
+- implementation_id: PH1.BCAST.001
 - layer: Control
 - authority: Authoritative (broadcast lifecycle state only)
 - role: broadcast lifecycle orchestrator (draft -> deliver -> ack/defer -> retry -> close)
 - placement: TURN_OPTIONAL (invoked by Selene OS after Access+Simulation when a broadcast is requested)
+
+## A1) Implementation Lock (Row 50)
+- `PH1.BCAST` implementation-active ids (locked for this row):
+  - `PH1.BCAST.001`
+- Unknown implementation ids must fail closed.
+- `PH1.BCAST.001` runtime accepts only simulation-gated request variants:
+  - `BCAST_CREATE_DRAFT` (DRAFT)
+  - `BCAST_DELIVER_COMMIT`
+  - `BCAST_DEFER_COMMIT`
+  - `BCAST_REMINDER_FIRED_COMMIT`
+  - `BCAST_ACK_COMMIT`
+  - `BCAST_ESCALATE_COMMIT`
+  - `BCAST_EXPIRE_COMMIT`
+  - `BCAST_CANCEL_COMMIT`
 
 ## B) Ownership (tables owned - design)
 Owned tables:
@@ -44,6 +59,9 @@ Rules:
 - AT-BCAST-04: never-ask-twice works via prompt dedupe key persistence.
 - AT-BCAST-05: classification policy enforcement is deterministic.
 - AT-BCAST-06: duplicate idempotency key resolves as NOOP.
+- AT-BCAST-13: simulation envelope id/type must match request variant in PH1.BCAST.001.
+- AT-BCAST-14: deliver fails closed when simulation_context is missing.
+- AT-BCAST-15: terminal recipient states (`CANCELED|EXPIRED|CONCLUDED`) reject new deliver attempts.
 
 ## Section BCAST.MHP: Message Handling Process (Phone-First, Deterministic)
 
@@ -63,6 +81,10 @@ Primary delivery behavior (default):
 Urgency notification pattern:
 - `NON-URGENT`: normal single notification pattern; default WAITING timeout is 5 minutes.
 - `URGENT`: stronger notification pattern with multiple vibration pulses and repeated alert pattern (bounded, deterministic).
+- Runtime lock (`PH1.BCAST.001`):
+  - `BroadcastClassification::Emergency` is treated as `URGENT` and transitions to `FOLLOWUP` immediately after delivery commit.
+  - `BroadcastClassification::Simple|Priority` is treated as `NON-URGENT` and transitions to `WAITING`.
+  - `WAITING -> FOLLOWUP` escalation is fail-closed until `now >= deliver_time + 5 minutes`.
 
 Reply handling:
 - If JD replies inside Selene App thread (example: "6pm"), Selene OS auto-forwards the resolved reply to wife Selene App and marks thread `CONCLUDED`.
@@ -79,9 +101,23 @@ Fallback order (only when Selene App is unavailable):
 2. WhatsApp (outside China)
 3. WeChat (in China)
 4. Email (last resort)
+- Runtime lock (`PH1.BCAST.001`):
+  - fallback delivery requests must set `app_unavailable=true` or they fail closed.
+  - Global region fallback path: `SMS -> WhatsApp -> Email`.
+  - China region fallback path: `SMS -> WeChat -> Email`.
+  - fallback order cannot move backward or skip steps.
 
 Policy integration note:
 - FOLLOWUP/REMINDER voice interruptions must consult `PH1.POLICY` interruption decision before speaking; phone delivery is already done first.
+- Follow-up modality lock:
+  - default is `VOICE` for `FOLLOWUP` and `REMINDER_FIRED` communication.
+  - `TEXT` follow-up is allowed only when explicitly requested by the recipient or when the recipient cannot speak.
+  - no silent modality switching.
+- Subject + speaker continuity lock:
+  - every follow-up turn must carry a deterministic `subject_ref` bound to the active broadcast thread.
+  - every voice follow-up turn must carry both `recipient_user_id` and `active_speaker_user_id`.
+  - `active_speaker_user_id` must match the targeted recipient for that follow-up; mismatch fails closed.
+  - if `subject_ref` is missing/ambiguous, Selene must clarify instead of changing topic.
 
 ### Section BCAST.MHP.REM: BCAST ↔ REM Handoff (Timing Only)
 
@@ -102,8 +138,10 @@ Handoff rules (deterministic)
   - priority_level derived from classification (SIMPLE < PRIORITY < EMERGENCY)
   - idempotency_key tied to (broadcast_id + recipient_id + due_at + prompt_dedupe_key)
 - When PH1.REM fires the reminder, Selene OS resumes PH1.BCAST at:
-  - REMINDER_SET → REMINDER_FIRED
+  - REMINDER_SET → REMINDER_FIRED (`BCAST_REMINDER_FIRED_COMMIT`)
   - and PH1.BCAST emits the follow-up prompt (device-first delivery still applies).
+- Runtime lock (`PH1.BCAST.001`):
+  - reminder handoff (`handoff_to_reminder=true`) is allowed only from `FOLLOWUP` or `REMINDER_FIRED` state.
 
 ONB backfill usage note
 - `ONB_REQUIREMENT_BACKFILL` uses the same BCAST→REM timing handoff discipline for recipient follow-ups.
@@ -112,6 +150,8 @@ ONB backfill usage note
 Device-first rule preserved
 - Reminder delivery follows the same BCAST.MHP rule:
   - deliver to Selene App thread first
+  - follow-up communication is voice by default.
+  - text follow-up is allowed only for explicit text-only/cannot-speak cases.
   - voice interruption occurs only if policy requires and the recipient has not responded.
 
 No-repeat rule preserved
@@ -124,3 +164,11 @@ Additional acceptance tests for BCAST.MHP:
 - `AT-BCAST-10`: Verbal JD reply is forwarded to wife Selene App and thread concludes deterministically.
 - `AT-BCAST-11`: Urgent classification uses stronger/multi-pulse notification profile before follow-up/reminder.
 - `AT-BCAST-12`: Fallback routing is used only when Selene App unavailable, in the locked order (SMS -> WhatsApp -> WeChat -> Email).
+- `AT-BCAST-16`: Follow-up communication defaults to voice; explicit text-only mode is honored only for `USER_REQUESTED_TEXT` or `CANNOT_SPEAK`.
+- `AT-BCAST-17`: Follow-up voice path fails closed on speaker mismatch (`active_speaker_user_id != recipient_user_id`).
+- `AT-BCAST-18`: Follow-up path preserves `subject_ref` continuity; missing/unknown subject triggers clarify/fail-closed behavior.
+
+Implementation references:
+- kernel contracts: `crates/selene_kernel_contracts/src/ph1bcast.rs`
+- engine runtime: `crates/selene_engines/src/ph1bcast.rs`
+- os wiring: `crates/selene_os/src/ph1bcast.rs`

@@ -65,11 +65,11 @@ Locked schema rules:
 | VOICE_ID_ENROLL_START_DRAFT | DRAFT | VoiceIdentity | Start voice recognition enrollment loop (tight record->grade) | DRAFT | v1 | Write enrollment session state only |
 | VOICE_ID_ENROLL_SAMPLE_COMMIT | COMMIT | VoiceIdentity | Capture + grade one voice enrollment sample and update progress | DRAFT | v1 | Store derived features + update enrollment progress |
 | VOICE_ID_ENROLL_COMPLETE_COMMIT | COMMIT | VoiceIdentity | Finalize voice profile artifact after PASS target reached | DRAFT | v1 | Write voice profile artifact (derived; no raw audio) |
-| VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT | COMMIT | VoiceIdentity | Mark voice enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
+| VOICE_ID_ENROLL_DEFER_COMMIT | COMMIT | VoiceIdentity | Mark voice enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
 | WAKE_ENROLL_START_DRAFT | DRAFT | Wake | Start wake-word enrollment loop (tight record->grade) | DRAFT | v1 | Write enrollment session state only |
 | WAKE_ENROLL_SAMPLE_COMMIT | COMMIT | Wake | Capture + grade one wake enrollment sample and update progress | DRAFT | v1 | Store wake sample features + update enrollment progress |
 | WAKE_ENROLL_COMPLETE_COMMIT | COMMIT | Wake | Finalize wake profile artifact after PASS target reached | DRAFT | v1 | Write wake profile artifact (derived; no raw audio) |
-| WAKE_ENROLL_DEFER_REMINDER_COMMIT | COMMIT | Wake | Mark wake enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
+| WAKE_ENROLL_DEFER_COMMIT | COMMIT | Wake | Mark wake enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
 | ACCESS_OVERRIDE_TEMP_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved temporary/one-shot override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
 | ACCESS_OVERRIDE_PERM_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved permanent override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 baseline/override state |
 | ACCESS_OVERRIDE_REVOKE_COMMIT | COMMIT | Access | Revoke a prior override from a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
@@ -118,6 +118,7 @@ Locked schema rules:
 | BCAST_CREATE_DRAFT | DRAFT | Broadcast | Create canonical broadcast envelope draft used by PH1.BCAST lifecycle | DRAFT | v1 | Append draft lifecycle event + current projection update |
 | BCAST_DELIVER_COMMIT | COMMIT | Broadcast | Commit one recipient delivery request from approved broadcast envelope | DRAFT | v1 | Append delivery attempt + recipient state transition |
 | BCAST_DEFER_COMMIT | COMMIT | Broadcast | Commit recipient defer decision and deterministic retry schedule | DRAFT | v1 | Append defer lifecycle event + retry schedule update |
+| BCAST_REMINDER_FIRED_COMMIT | COMMIT | Broadcast | Commit BCAST.MHP reminder-fire lifecycle resume (`REMINDER_SET -> REMINDER_FIRED`) | DRAFT | v1 | Append reminder-fired lifecycle event + recipient state transition |
 | BCAST_ACK_COMMIT | COMMIT | Broadcast | Commit recipient acknowledgement (READ/CONFIRM/ACTION_CONFIRM) | DRAFT | v1 | Append ack lifecycle event + recipient state transition |
 | BCAST_ESCALATE_COMMIT | COMMIT | Broadcast | Commit escalation-to-sender lifecycle update for blocked/unreachable recipients | DRAFT | v1 | Append escalation lifecycle event |
 | BCAST_EXPIRE_COMMIT | COMMIT | Broadcast | Commit broadcast expiry and close unresolved recipient states | DRAFT | v1 | Append expire lifecycle event + envelope close |
@@ -125,7 +126,7 @@ Locked schema rules:
 | DELIVERY_SEND_COMMIT | COMMIT | Delivery | Commit provider send request for a prepared recipient payload | DRAFT | v1 | Append delivery provider attempt + proof reference |
 | DELIVERY_CANCEL_COMMIT | COMMIT | Delivery | Commit provider cancel request for an in-flight delivery attempt | DRAFT | v1 | Append provider cancel attempt + status update |
 | SMS_SETUP_SIM | COMMIT | OnboardingSms | Commit SMS app setup completion state for a user | DRAFT | v1 | Append SMS setup lifecycle event + current projection update |
-| LEARN_MODEL_UPDATE_SIM | COMMIT | LearningAdaptive | Commit learning feedback updates for draft/language adaptation hints | DRAFT | v1 | Append learning feedback events + current hint projection update |
+| LEARN_MODEL_UPDATE_SIM | COMMIT | Learning | Commit governed learning artifact updates from feedback/correction loops | DRAFT | v1 | Append adaptation artifact event rows |
 | MEMORY_FORGET_COMMIT | COMMIT | Memory | Commit memory forget request with deterministic bounded scope | ACTIVE | v1 | Append forget event + update memory current projection |
 | MEMORY_SUPPRESSION_SET_COMMIT | COMMIT | Memory | Commit memory suppression control update (`DO_NOT_MENTION|DO_NOT_REPEAT|DO_NOT_STORE`) | ACTIVE | v1 | Upsert suppression rule state |
 | MEMORY_ATOM_UPSERT_COMMIT | COMMIT | Memory | Commit one memory atom store/update event deterministically | ACTIVE | v1 | Append atom event + update atom current projection |
@@ -142,8 +143,8 @@ Locked schema rules:
 | GOV_ACTIVATE_DEFINITION_COMMIT | COMMIT | Governance | Activate a signed blueprint/simulation definition set | DRAFT | v1 | Update governance_definitions state |
 | GOV_ROLLBACK_DEFINITION_COMMIT | COMMIT | Governance | Roll back active definition set to prior version | DRAFT | v1 | Update governance_definitions state |
 | EXPORT_BUILD_PACK_COMMIT | COMMIT | Export | Build tamper-evident compliance export pack | DRAFT | v1 | Write export_jobs row + artifact ref |
-| REVIEW_ROUTE_CASE_DRAFT | DRAFT | Review | Route a policy-required human review case | DRAFT | v1 | Write review_cases draft row |
-| REVIEW_DECISION_COMMIT | COMMIT | Review | Commit human review decision deterministically | DRAFT | v1 | Update review_cases decision state |
+| REVIEW_ROUTE_CASE_DRAFT | DRAFT | Governance | Route a policy-required human review case through governance flow | DRAFT | v1 | Write review_cases draft row |
+| REVIEW_DECISION_COMMIT | COMMIT | Governance | Commit human review decision deterministically through governance flow | DRAFT | v1 | Update review_cases decision state |
 
 ## Domain DB Binding Profiles (Authoritative)
 
@@ -169,7 +170,7 @@ Hard rules
 | Delivery | [`comms.delivery_attempts_current`, `comms.delivery_provider_health`] | [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`] |
 | OnboardingSms | [`comms.sms_app_setup_current`] | [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`] |
 | Language | [`conversation_ledger`] | [`audit_events`] |
-| LearningAdaptive | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`] | [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`] |
+| Learning | [`artifacts_ledger`] | [`artifacts_ledger`] |
 | Memory | [`memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] | [`memory.memory_atoms_ledger`, `memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] |
 | Tool | [`identities`, `devices`, `sessions`, `audit_events`] | [`audit_events`] |
 | Tenant | [`tenant_companies`] | [`tenant_companies`] |
@@ -178,9 +179,8 @@ Hard rules
 | WorkOrder | [`work_order_ledger`] | [`work_order_ledger`] |
 | WorkLease | [`work_order_ledger`, `work_order_leases`] | [`work_order_leases`] |
 | Scheduler | [`work_order_ledger`, `work_order_leases`] | [`work_order_ledger`] |
-| Governance | [`governance_definitions`] | [`governance_definitions`] |
+| Governance | [`governance_definitions`, `review_cases`, `work_order_ledger`] | [`governance_definitions`, `review_cases`] |
 | Export | [`audit_events`, `conversation_ledger`, `work_order_ledger`] | [`export_jobs`, `artifacts_ledger`] |
-| Review | [`review_cases`, `work_order_ledger`] | [`review_cases`] |
 
 ## Contract Completeness Defaults (No TBD Allowed)
 
@@ -1034,7 +1034,7 @@ voice_enroll_status: enum (LOCKED)
 - idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
-### VOICE_ID_ENROLL_DEFER_REMINDER_COMMIT (COMMIT)
+### VOICE_ID_ENROLL_DEFER_COMMIT (COMMIT)
 
 - name: Voice ID Enroll Defer (Commit)
 - owning_domain: VoiceIdentity
@@ -1170,7 +1170,7 @@ wake_enroll_status: enum (COMPLETE)
 - idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
-### WAKE_ENROLL_DEFER_REMINDER_COMMIT (COMMIT)
+### WAKE_ENROLL_DEFER_COMMIT (COMMIT)
 
 - name: Wake Enroll Defer (Commit)
 - owning_domain: Wake
@@ -2819,6 +2819,39 @@ next_retry_at: timestamp_ms
 - idempotency_key_rule: idempotent on (tenant_id + broadcast_id + recipient_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
+### BCAST_REMINDER_FIRED_COMMIT (COMMIT)
+
+- name: Broadcast Reminder Fired Commit (Canonical)
+- owning_domain: Broadcast
+- simulation_type: COMMIT
+- purpose: Resume BCAST.MHP lifecycle after REM timer fires (`REMINDER_SET -> REMINDER_FIRED`)
+- triggers: BCAST_MHP_REMINDER_FIRED_STEP (process step)
+- required_roles: policy-authorized system actor
+- required_approvals: none
+- required_confirmations: none
+- input_schema (minimum):
+```text
+tenant_id: string
+broadcast_id: string
+recipient_id: string
+reminder_ref: string
+idempotency_key: string
+```
+- output_schema (minimum):
+```text
+broadcast_id: string
+recipient_id: string
+recipient_status: REMINDER_FIRED
+reminder_ref: string
+```
+- preconditions: recipient is in REMINDER_SET state
+- postconditions: recipient state becomes REMINDER_FIRED; next BCAST follow-up step is eligible
+- side_effects: append reminder-fired lifecycle event + recipient state transition
+- reads_tables[]: [`comms.broadcast_recipients_current`]
+- writes_tables[]: [`comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_recipients_current`]
+- idempotency_key_rule: idempotent on (tenant_id + broadcast_id + recipient_id + idempotency_key)
+- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
+
 ### BCAST_ACK_COMMIT (COMMIT)
 
 - name: Broadcast Ack Commit (Canonical)
@@ -3047,10 +3080,10 @@ setup_state: enum (IN_PROGRESS | COMPLETE | BLOCKED)
 
 ### LEARN_MODEL_UPDATE_SIM (COMMIT)
 
-- name: Learning Adaptive Feedback Commit
-- owning_domain: LearningAdaptive
+- name: Learning Artifact Update Commit
+- owning_domain: Learning
 - simulation_type: COMMIT
-- purpose: Commit learning feedback updates that influence future draft and language hint ranking
+- purpose: Commit governed learning artifact updates derived from feedback and correction loops
 - triggers: post-send feedback and correction loops
 - required_roles: authenticated requester within tenant scope
 - required_approvals: none
@@ -3070,9 +3103,9 @@ quality_delta_bucket: string
 ```
 - preconditions: feedback payload exists and belongs to requester scope
 - postconditions: feedback event is appended and current adaptation projection updated
-- side_effects: append learning feedback event + update adaptation projection
-- reads_tables[]: [`learning.adaptive_feedback_current`]
-- writes_tables[]: [`learning.adaptive_feedback_ledger`, `learning.adaptive_feedback_current`, `learning.adaptive_language_usage_ledger`]
+- side_effects: append governed learning artifact update event
+- reads_tables[]: [`artifacts_ledger`]
+- writes_tables[]: [`artifacts_ledger`]
 - idempotency_key_rule: idempotent on (tenant_id + user_id + feedback_type + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
@@ -3921,7 +3954,7 @@ status: COMPLETED
 ### REVIEW_ROUTE_CASE_DRAFT (DRAFT)
 
 - name: Review Route Case
-- owning_domain: Review
+- owning_domain: Governance
 - simulation_type: DRAFT
 - purpose: Route policy-required human review case before commit
 - triggers: REVIEW_REQUIRED
@@ -3950,7 +3983,7 @@ status: OPEN
 ### REVIEW_DECISION_COMMIT (COMMIT)
 
 - name: Review Decision Commit
-- owning_domain: Review
+- owning_domain: Governance
 - simulation_type: COMMIT
 - purpose: Commit human review decision (approve/reject) with deterministic reason codes
 - triggers: REVIEW_DECISION

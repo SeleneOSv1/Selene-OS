@@ -83,3 +83,13 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`SeleneOsWorkOrderRepo`)
 - `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md`
+
+## Related Engine Boundary (`PH1.SCHED`)
+- WorkOrder orchestration consumes PH1.SCHED decisions to determine `RETRY_AT | FAIL | WAIT` posture.
+- `WAIT` must preserve attempt index (`attempt_next_index == attempt_index`) before any ledger append.
+- Scheduler decisions are advisory-only to orchestration and cannot bypass append-only WorkOrder state rules.
+
+## Related Engine Boundary (`PH1.LEASE`)
+- WorkOrder orchestration consumes PH1.LEASE decisions to enforce single-owner execution posture before lease-gated step transitions.
+- `work_order_leases` must preserve one-active-lease-per-work-order invariants and token-owner renew/release checks.
+- Expired takeover must be replay-safe and resume from persisted ledger state (never RAM-only takeover).

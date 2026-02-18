@@ -11,6 +11,7 @@ use crate::ph1w::SessionState;
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1X_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID: &str = "unknown";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeliveryHint {
@@ -237,6 +238,10 @@ pub struct ThreadState {
     pub schema_version: SchemaVersion,
     pub pending: Option<PendingState>,
     pub resume_buffer: Option<ResumeBuffer>,
+    /// Optional continuity topic carried across turns in one correlation chain.
+    pub active_subject_ref: Option<String>,
+    /// Optional active speaker user identity carried across turns.
+    pub active_speaker_user_id: Option<String>,
 }
 
 impl ThreadState {
@@ -245,6 +250,8 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending: None,
             resume_buffer: None,
+            active_subject_ref: None,
+            active_speaker_user_id: None,
         }
     }
 
@@ -253,7 +260,20 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending,
             resume_buffer,
+            active_subject_ref: None,
+            active_speaker_user_id: None,
         }
+    }
+
+    pub fn with_continuity(
+        mut self,
+        active_subject_ref: Option<String>,
+        active_speaker_user_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.active_subject_ref = active_subject_ref;
+        self.active_speaker_user_id = active_speaker_user_id;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -270,6 +290,115 @@ impl Validate for ThreadState {
         }
         if let Some(b) = &self.resume_buffer {
             b.validate()?;
+        }
+        if let Some(subject_ref) = &self.active_subject_ref {
+            if subject_ref.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.active_subject_ref",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if subject_ref.len() > 256 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.active_subject_ref",
+                    reason: "must be <= 256 chars",
+                });
+            }
+        }
+        if let Some(active_speaker_user_id) = &self.active_speaker_user_id {
+            if active_speaker_user_id.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.active_speaker_user_id",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if active_speaker_user_id.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.active_speaker_user_id",
+                    reason: "must be <= 128 chars",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TtsResumeSnapshot {
+    pub schema_version: SchemaVersion,
+    pub answer_id: AnswerId,
+    pub topic_hint: Option<String>,
+    pub response_text: String,
+    pub spoken_cursor_byte: u32,
+}
+
+impl TtsResumeSnapshot {
+    pub fn v1(
+        answer_id: AnswerId,
+        topic_hint: Option<String>,
+        response_text: String,
+        spoken_cursor_byte: u32,
+    ) -> Result<Self, ContractViolation> {
+        let s = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            answer_id,
+            topic_hint,
+            response_text,
+            spoken_cursor_byte,
+        };
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+impl Validate for TtsResumeSnapshot {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_resume_snapshot.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        if let Some(h) = &self.topic_hint {
+            if h.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "tts_resume_snapshot.topic_hint",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if h.len() > 64 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "tts_resume_snapshot.topic_hint",
+                    reason: "must be <= 64 chars",
+                });
+            }
+        }
+        if self.response_text.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_resume_snapshot.response_text",
+                reason: "must not be empty",
+            });
+        }
+        if self.response_text.len() > 32_768 {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_resume_snapshot.response_text",
+                reason: "must be <= 32768 chars",
+            });
+        }
+        if (self.spoken_cursor_byte as usize) > self.response_text.len() {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_resume_snapshot.spoken_cursor_byte",
+                reason: "must be <= response_text byte length",
+            });
+        }
+        if !self
+            .response_text
+            .is_char_boundary(self.spoken_cursor_byte as usize)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_resume_snapshot.spoken_cursor_byte",
+                reason: "must align to a UTF-8 char boundary",
+            });
         }
         Ok(())
     }
@@ -288,6 +417,10 @@ pub struct Ph1xRequest {
     pub session_state: SessionState,
     /// Identity context (voice or text). Used for privacy-safe personalization decisions.
     pub identity_context: IdentityContext,
+    /// Topic continuity key for this turn.
+    pub subject_ref: String,
+    /// Active speaker user identity for this turn ("unknown" when not user-bound).
+    pub active_speaker_user_id: String,
     pub policy_context_ref: PolicyContextRef,
     /// Optional memory candidates proposed/returned by PH1.M (bounded, evidence-backed).
     /// PH1.X decides whether to use silently, ask permission, or ignore.
@@ -300,6 +433,8 @@ pub struct Ph1xRequest {
     pub tool_response: Option<ToolResponse>,
     /// Interrupt candidate (barge-in). If present, PH1.X may cancel speech immediately.
     pub interruption: Option<InterruptCandidate>,
+    /// Optional active TTS snapshot used to build Resume Buffer when barge-in cancels speech.
+    pub tts_resume_snapshot: Option<TtsResumeSnapshot>,
     pub locale: Option<String>,
     pub last_failure_reason_code: Option<ReasonCodeId>,
 }
@@ -322,6 +457,15 @@ impl Ph1xRequest {
         locale: Option<String>,
         last_failure_reason_code: Option<ReasonCodeId>,
     ) -> Result<Self, ContractViolation> {
+        let subject_ref = derive_subject_ref(
+            &thread_state,
+            &nlp_output,
+            &tool_response,
+            &interruption,
+            confirm_answer,
+            last_failure_reason_code,
+        );
+        let active_speaker_user_id = derive_active_speaker_user_id(&identity_context);
         let r = Self {
             schema_version: PH1X_CONTRACT_VERSION,
             correlation_id,
@@ -330,17 +474,40 @@ impl Ph1xRequest {
             thread_state,
             session_state,
             identity_context,
+            subject_ref,
+            active_speaker_user_id,
             policy_context_ref,
             memory_candidates,
             confirm_answer,
             nlp_output,
             tool_response,
             interruption,
+            tts_resume_snapshot: None,
             locale,
             last_failure_reason_code,
         };
         r.validate()?;
         Ok(r)
+    }
+
+    pub fn with_continuity_context(
+        mut self,
+        subject_ref: String,
+        active_speaker_user_id: String,
+    ) -> Result<Self, ContractViolation> {
+        self.subject_ref = subject_ref;
+        self.active_speaker_user_id = active_speaker_user_id;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_tts_resume_snapshot(
+        mut self,
+        tts_resume_snapshot: Option<TtsResumeSnapshot>,
+    ) -> Result<Self, ContractViolation> {
+        self.tts_resume_snapshot = tts_resume_snapshot;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -366,6 +533,34 @@ impl Validate for Ph1xRequest {
         }
         self.thread_state.validate()?;
         self.identity_context.validate()?;
+        if self.subject_ref.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.subject_ref",
+                reason: "must not be empty",
+            });
+        }
+        if self.subject_ref.len() > 256 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.subject_ref",
+                reason: "must be <= 256 chars",
+            });
+        }
+        if self.active_speaker_user_id.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.active_speaker_user_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.active_speaker_user_id.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.active_speaker_user_id",
+                reason: "must be <= 128 chars",
+            });
+        }
+        validate_active_speaker_matches_identity(
+            &self.identity_context,
+            &self.active_speaker_user_id,
+        )?;
         self.policy_context_ref.validate()?;
         if self.memory_candidates.len() > 32 {
             return Err(ContractViolation::InvalidValue {
@@ -417,6 +612,15 @@ impl Validate for Ph1xRequest {
         if let Some(c) = &self.interruption {
             validate_interrupt_candidate(c)?;
         }
+        if let Some(s) = &self.tts_resume_snapshot {
+            s.validate()?;
+            if self.interruption.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.tts_resume_snapshot",
+                    reason: "is only valid when interruption is present",
+                });
+            }
+        }
         if let Some(loc) = &self.locale {
             if loc.trim().is_empty() {
                 return Err(ContractViolation::InvalidValue {
@@ -433,6 +637,98 @@ impl Validate for Ph1xRequest {
         }
         Ok(())
     }
+}
+
+fn derive_subject_ref(
+    thread_state: &ThreadState,
+    nlp_output: &Option<Ph1nResponse>,
+    tool_response: &Option<ToolResponse>,
+    interruption: &Option<InterruptCandidate>,
+    confirm_answer: Option<ConfirmAnswer>,
+    last_failure_reason_code: Option<ReasonCodeId>,
+) -> String {
+    if let Some(subject_ref) = &thread_state.active_subject_ref {
+        return subject_ref.clone();
+    }
+
+    if let Some(out) = nlp_output {
+        return match out {
+            Ph1nResponse::IntentDraft(d) => {
+                format!(
+                    "intent_{}",
+                    format!("{:?}", d.intent_type).to_ascii_lowercase()
+                )
+            }
+            Ph1nResponse::Clarify(_) => "clarify".to_string(),
+            Ph1nResponse::Chat(_) => "chat".to_string(),
+        };
+    }
+    if tool_response.is_some() {
+        return "tool_followup".to_string();
+    }
+    if interruption.is_some() {
+        return "interruption".to_string();
+    }
+    if confirm_answer.is_some() {
+        return "confirmation".to_string();
+    }
+    if last_failure_reason_code.is_some() {
+        return "failure_recovery".to_string();
+    }
+    "general".to_string()
+}
+
+fn derive_active_speaker_user_id(identity_context: &IdentityContext) -> String {
+    match identity_context {
+        IdentityContext::TextUserId(user_id) => user_id.clone(),
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionOk(ok)) => ok
+            .user_id
+            .as_ref()
+            .map(|u| u.as_str().to_string())
+            .unwrap_or_else(|| PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID.to_string()),
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)) => {
+            PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID.to_string()
+        }
+    }
+}
+
+fn validate_active_speaker_matches_identity(
+    identity_context: &IdentityContext,
+    active_speaker_user_id: &str,
+) -> Result<(), ContractViolation> {
+    match identity_context {
+        IdentityContext::TextUserId(user_id) => {
+            if user_id != active_speaker_user_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.active_speaker_user_id",
+                    reason: "must match identity_context.text_user_id",
+                });
+            }
+        }
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionOk(ok)) => {
+            let expected = ok
+                .user_id
+                .as_ref()
+                .map(|u| u.as_str())
+                .unwrap_or(PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID);
+            if active_speaker_user_id != expected {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.active_speaker_user_id",
+                    reason: "must match identity_context.voice.speaker_assertion_ok.user_id (or unknown)",
+                });
+            }
+        }
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)) => {
+            if active_speaker_user_id != PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.active_speaker_user_id",
+                    reason:
+                        "must be unknown when identity_context.voice is speaker_assertion_unknown",
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_interrupt_candidate(c: &InterruptCandidate) -> Result<(), ContractViolation> {
@@ -454,19 +750,70 @@ fn validate_interrupt_candidate(c: &InterruptCandidate) -> Result<(), ContractVi
             reason: "must be <= 128 chars",
         });
     }
-    let conf = c.confidence.0;
+    if c.phrase_set_version.0 == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.phrase_set_version",
+            reason: "must be > 0",
+        });
+    }
+    let conf = c.phrase_confidence.0;
     if !conf.is_finite() {
         return Err(ContractViolation::NotFinite {
-            field: "ph1x_request.interruption.confidence",
+            field: "ph1x_request.interruption.phrase_confidence",
         });
     }
     if !(0.0..=1.0).contains(&conf) {
         return Err(ContractViolation::InvalidRange {
-            field: "ph1x_request.interruption.confidence",
+            field: "ph1x_request.interruption.phrase_confidence",
             min: 0.0,
             max: 1.0,
             got: conf as f64,
         });
+    }
+    for (field, v) in [
+        (
+            "ph1x_request.interruption.gate_confidences.vad_confidence",
+            c.gate_confidences.vad_confidence.0,
+        ),
+        (
+            "ph1x_request.interruption.gate_confidences.speech_likeness",
+            c.gate_confidences.speech_likeness.0,
+        ),
+        (
+            "ph1x_request.interruption.gate_confidences.echo_safe_confidence",
+            c.gate_confidences.echo_safe_confidence.0,
+        ),
+        (
+            "ph1x_request.interruption.gate_confidences.phrase_confidence",
+            c.gate_confidences.phrase_confidence.0,
+        ),
+    ] {
+        if !v.is_finite() {
+            return Err(ContractViolation::NotFinite { field });
+        }
+        if !(0.0..=1.0).contains(&v) {
+            return Err(ContractViolation::InvalidRange {
+                field,
+                min: 0.0,
+                max: 1.0,
+                got: v as f64,
+            });
+        }
+    }
+    if let Some(v) = c.gate_confidences.nearfield_confidence {
+        if !v.0.is_finite() {
+            return Err(ContractViolation::NotFinite {
+                field: "ph1x_request.interruption.gate_confidences.nearfield_confidence",
+            });
+        }
+        if !(0.0..=1.0).contains(&v.0) {
+            return Err(ContractViolation::InvalidRange {
+                field: "ph1x_request.interruption.gate_confidences.nearfield_confidence",
+                min: 0.0,
+                max: 1.0,
+                got: v.0 as f64,
+            });
+        }
     }
     Ok(())
 }
@@ -892,6 +1239,10 @@ pub fn requires_clarify(draft: &IntentDraft) -> bool {
 mod tests {
     use super::*;
     use crate::ph1d::SafetyTier;
+    use crate::ph1k::{
+        Confidence, InterruptCandidate, InterruptGateConfidences, InterruptGates,
+        InterruptPhraseId, InterruptPhraseSetVersion, SpeechLikeness,
+    };
     use crate::ph1n::{EvidenceSpan, IntentType, SensitivityLevel, TranscriptHash};
 
     fn policy_ok() -> PolicyContextRef {
@@ -900,6 +1251,92 @@ mod tests {
 
     fn id_text() -> IdentityContext {
         IdentityContext::TextUserId("user-1".to_string())
+    }
+
+    #[test]
+    fn continuity_defaults_are_set_for_text_identity() {
+        let req = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                crate::ph1n::Chat::v1("hello".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(!req.subject_ref.trim().is_empty());
+        assert_eq!(req.active_speaker_user_id, "user-1");
+    }
+
+    #[test]
+    fn continuity_context_rejects_active_speaker_mismatch_for_text_identity() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                crate::ph1n::Chat::v1("hello".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_continuity_context("chat".to_string(), "user-2".to_string())
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.active_speaker_user_id");
+            }
+            _ => panic!("expected InvalidValue for active speaker mismatch"),
+        }
+    }
+
+    #[test]
+    fn request_allows_thread_state_speaker_mismatch_for_runtime_gate() {
+        let thread = ThreadState::empty_v1()
+            .with_continuity(Some("chat".to_string()), Some("user-2".to_string()))
+            .unwrap();
+
+        let req = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                crate::ph1n::Chat::v1("hello".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(req.active_speaker_user_id, "user-1");
     }
 
     fn intent_draft_with_evidence() -> IntentDraft {
@@ -938,6 +1375,31 @@ mod tests {
             true,
             vec![],
             vec![],
+        )
+        .unwrap()
+    }
+
+    fn interrupt_wait() -> InterruptCandidate {
+        InterruptCandidate::v1(
+            InterruptPhraseSetVersion(1),
+            InterruptPhraseId(1),
+            "wait".to_string(),
+            Confidence::new(0.9).unwrap(),
+            InterruptGates {
+                vad_ok: true,
+                echo_safe_ok: true,
+                phrase_ok: true,
+                nearfield_ok: true,
+            },
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.9).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.9).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                phrase_confidence: Confidence::new(0.9).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            MonotonicTimeNs(1),
+            ReasonCodeId(1),
         )
         .unwrap()
     }
@@ -1074,5 +1536,78 @@ mod tests {
             }
             _ => panic!("expected InvalidValue for confirm evidence_spans"),
         }
+    }
+
+    #[test]
+    fn tts_resume_snapshot_requires_interruption() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                crate::ph1n::Chat::v1("hi".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(
+                TtsResumeSnapshot::v1(
+                    AnswerId(1),
+                    None,
+                    "First. Second.".to_string(),
+                    "First.".len() as u32,
+                )
+                .unwrap(),
+            ))
+        })
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.tts_resume_snapshot");
+            }
+            _ => panic!("expected InvalidValue for tts_resume_snapshot"),
+        }
+    }
+
+    #[test]
+    fn tts_resume_snapshot_allows_interruption() {
+        let req = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(
+                TtsResumeSnapshot::v1(
+                    AnswerId(1),
+                    Some("topic".to_string()),
+                    "First. Second.".to_string(),
+                    "First.".len() as u32,
+                )
+                .unwrap(),
+            ))
+        });
+        assert!(req.is_ok());
     }
 }

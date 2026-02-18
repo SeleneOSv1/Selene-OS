@@ -53,15 +53,22 @@ Detailed contracts source:
 | PH1.M | `memory_graph_nodes` + `memory_graph_edges` (non-authoritative graph retrieval index) | `docs/DB_WIRING/PH1_M.md` |
 | PH1.M | `memory_archive_index` (optional pointer index for deterministic paging/page-in) | `docs/DB_WIRING/PH1_M.md` |
 | PH1.M | `memory_metrics_ledger` (Q12-MEM..Q18-MEM quality telemetry; non-authoritative) | `docs/DB_WIRING/PH1_M.md` |
-| PH1.PERSONA | Persona-related bounded writes (if present) | `docs/DB_WIRING/PH1_PERSONA.md` |
-| PH1.LEARN_FEEDBACK_KNOW | Learning feedback/artifact tables as scoped | `docs/DB_WIRING/PH1_LEARN_FEEDBACK_KNOW.md` |
-| PH1.LEARNING_ADAPTIVE | `learning.adaptive_feedback_ledger/current`, `learning.adaptive_language_usage_ledger` (non-authoritative quality adaptation signals) | `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` |
+| PH1.PERSONA | No direct runtime table ownership; identity-verified persona profile outputs are advisory and storage persistence remains append-only under PH1.F/PH1.J contracts | `docs/DB_WIRING/PH1_PERSONA.md` |
+| PH1.FEEDBACK | `audit_events` feedback signal rows only (`engine=PH1.FEEDBACK`; append-only) | `docs/DB_WIRING/PH1_FEEDBACK.md` |
+| PH1.LEARN | `artifacts_ledger` adaptation artifact rows only (`created_by=PH1.LEARN`; `STT_ROUTING_POLICY_PACK | STT_ADAPTATION_PROFILE | TTS_ROUTING_POLICY_PACK`) | `docs/DB_WIRING/PH1_LEARN.md` |
+| PH1.KNOW | `artifacts_ledger` tenant dictionary/pronunciation artifact rows only (`created_by=PH1.KNOW`; `STT_VOCAB_PACK | TTS_PRONUNCIATION_PACK`) | `docs/DB_WIRING/PH1_KNOW.md` |
 | PH1.CAPREQ | Capability request lifecycle tables | `docs/DB_WIRING/PH1_CAPREQ.md` |
-| PH1.EXPLAIN | Planned; expected explanation mapping + audit-only writes scope (to be locked) | `docs/DB_WIRING/PH1_EXPLAIN.md` (stub) |
+| PH1.EXPLAIN | No owned tables in current slice; deterministic explanation/evidence selection over OS-provided context (advisory only) | `docs/DB_WIRING/PH1_EXPLAIN.md` |
+| PH1.EMO.GUIDE | No owned tables in current slice; deterministic tone-policy guidance outputs only (`DOMINANT | GENTLE` + bounded modifiers), fail-closed validation before handoff | `docs/DB_WIRING/PH1_EMO_GUIDE.md` |
 | PH1.REM | `reminders`, `reminder_occurrences`, `reminder_delivery_attempts` (timing mechanics truth; includes `BCAST_MHP_FOLLOWUP` scheduling handoff) | `docs/DB_WIRING/PH1_REM.md` |
 | PH1.BCAST | `comms.broadcast_envelopes_ledger/current`, `comms.broadcast_recipients_current`, `comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_ack_ledger` (broadcast lifecycle truth) | `docs/DB_WIRING/PH1_BCAST.md` |
 | PH1.DELIVERY | `comms.delivery_attempts_ledger/current`, `comms.delivery_provider_health` (provider send/status attempt truth) | `docs/DB_WIRING/PH1_DELIVERY.md` |
-| PH1.EMO | Planned; emotional profile/privacy directive tables scope (to be locked) | `docs/DB_WIRING/PH1_EMO.md` (stub) |
+| PH1.EMO.CORE | No owned tables in current runtime slice; deterministic emotional snapshot/profile core outputs only (classify/reevaluate/privacy/tone/audit contracts) | `docs/DB_WIRING/PH1_EMO_CORE.md` |
+
+Learning storage grouping lock:
+- `PH1.LEARN_FEEDBACK_KNOW` is storage-group documentation only.
+- It is not a runtime writer id in this matrix.
+- Runtime single-writer ownership is split across `PH1.FEEDBACK`, `PH1.LEARN`, and `PH1.KNOW` rows above.
 
 ## Non-Duplication Rule
 

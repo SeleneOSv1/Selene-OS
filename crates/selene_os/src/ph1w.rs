@@ -11,6 +11,7 @@ use selene_kernel_contracts::ph1w::{
     Ph1wOk, Ph1wRequest, Ph1wResponse, WakeEnrollCompleteResult, WakeEnrollDeferResult,
     WakeEnrollSampleResult, WakeEnrollStartResult, WakeEnrollStatus as ContractWakeEnrollStatus,
     WakeEnrollmentSessionId, WakeRequest, WakeSampleResult as ContractWakeSampleResult,
+    PH1W_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{
@@ -26,8 +27,11 @@ pub mod reason_codes {
     pub const WAKE_OK_ENROLL_START_DRAFT: ReasonCodeId = ReasonCodeId(0x5700_0001);
     pub const WAKE_OK_ENROLL_SAMPLE_COMMIT: ReasonCodeId = ReasonCodeId(0x5700_0002);
     pub const WAKE_OK_ENROLL_COMPLETE_COMMIT: ReasonCodeId = ReasonCodeId(0x5700_0003);
-    pub const WAKE_OK_ENROLL_DEFER_REMINDER_COMMIT: ReasonCodeId = ReasonCodeId(0x5700_0004);
+    pub const WAKE_OK_ENROLL_DEFER_COMMIT: ReasonCodeId = ReasonCodeId(0x5700_0004);
 }
+
+pub const PH1_W_ENGINE_ID: &str = "PH1.W";
+pub const PH1_W_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1W_IMPLEMENTATION_ID];
 
 #[derive(Debug, Default, Clone)]
 pub struct Ph1wRuntime;
@@ -38,6 +42,23 @@ impl Ph1wRuntime {
         store: &mut Ph1fStore,
         req: &Ph1wRequest,
     ) -> Result<Ph1wResponse, StorageError> {
+        self.run_for_implementation(store, PH1W_IMPLEMENTATION_ID, req)
+    }
+
+    pub fn run_for_implementation(
+        &self,
+        store: &mut Ph1fStore,
+        implementation_id: &str,
+        req: &Ph1wRequest,
+    ) -> Result<Ph1wResponse, StorageError> {
+        if implementation_id != PH1W_IMPLEMENTATION_ID {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1_w.implementation_id",
+                    reason: "unknown implementation_id",
+                },
+            ));
+        }
         req.validate().map_err(StorageError::ContractViolation)?;
 
         match &req.request {
@@ -192,8 +213,8 @@ impl Ph1wRuntime {
                     .map_err(StorageError::ContractViolation)?,
                 ))
             }
-            WakeRequest::EnrollDeferReminderCommit(r) => {
-                let rec = store.ph1w_enroll_defer_reminder_commit(
+            WakeRequest::EnrollDeferCommit(r) => {
+                let rec = store.ph1w_enroll_defer_commit(
                     req.now,
                     r.wake_enrollment_session_id.as_str().to_string(),
                     r.deferred_until,
@@ -217,14 +238,14 @@ impl Ph1wRuntime {
                     req.turn_id,
                     "WAKE_ENROLL_IN_PROGRESS",
                     status_label(rec.wake_enroll_status),
-                    reason_codes::WAKE_OK_ENROLL_DEFER_REMINDER_COMMIT,
+                    reason_codes::WAKE_OK_ENROLL_DEFER_COMMIT,
                     Some(r.idempotency_key.clone()),
                 )?;
 
                 Ok(Ph1wResponse::Ok(
                     Ph1wOk::v1(
                         req.simulation_id.clone(),
-                        reason_codes::WAKE_OK_ENROLL_DEFER_REMINDER_COMMIT,
+                        reason_codes::WAKE_OK_ENROLL_DEFER_COMMIT,
                         None,
                         None,
                         None,
@@ -316,10 +337,10 @@ mod tests {
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1w::{
-        Ph1wResponse, WakeEnrollCompleteCommitRequest, WakeEnrollDeferReminderCommitRequest,
+        Ph1wResponse, WakeEnrollCompleteCommitRequest, WakeEnrollDeferCommitRequest,
         WakeEnrollSampleCommitRequest, WakeEnrollStartDraftRequest, WakeRequest,
         WakeSampleResult as ContractWakeSampleResult, WakeSimulationType, PH1W_CONTRACT_VERSION,
-        WAKE_ENROLL_COMPLETE_COMMIT, WAKE_ENROLL_DEFER_REMINDER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT,
+        WAKE_ENROLL_COMPLETE_COMMIT, WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT,
         WAKE_ENROLL_START_DRAFT,
     };
     use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus};
@@ -494,9 +515,9 @@ mod tests {
             correlation_id: CorrelationId(200),
             turn_id: TurnId(2),
             now: MonotonicTimeNs(now().0 + 2),
-            simulation_id: WAKE_ENROLL_DEFER_REMINDER_COMMIT.to_string(),
+            simulation_id: WAKE_ENROLL_DEFER_COMMIT.to_string(),
             simulation_type: WakeSimulationType::Commit,
-            request: WakeRequest::EnrollDeferReminderCommit(WakeEnrollDeferReminderCommitRequest {
+            request: WakeRequest::EnrollDeferCommit(WakeEnrollDeferCommitRequest {
                 wake_enrollment_session_id: wake_session_id,
                 deferred_until: Some(MonotonicTimeNs(now().0 + 10_000)),
                 reason_code: ReasonCodeId(0x5700_0203),
@@ -518,5 +539,48 @@ mod tests {
             }
             _ => panic!("expected ok"),
         }
+    }
+
+    #[test]
+    fn at_w_wiring_01_unknown_implementation_fails_closed() {
+        let rt = Ph1wRuntime;
+        let uid = user("wake-user-3");
+        let did = device("wake-device-3");
+        let mut store = setup_store(&uid, &did);
+
+        let req = Ph1wRequest {
+            schema_version: PH1W_CONTRACT_VERSION,
+            correlation_id: CorrelationId(300),
+            turn_id: TurnId(1),
+            now: MonotonicTimeNs(now().0 + 1),
+            simulation_id: WAKE_ENROLL_START_DRAFT.to_string(),
+            simulation_type: WakeSimulationType::Draft,
+            request: WakeRequest::EnrollStartDraft(WakeEnrollStartDraftRequest {
+                user_id: uid,
+                device_id: did,
+                onboarding_session_id: None,
+                pass_target: 3,
+                max_attempts: 12,
+                enrollment_timeout_ms: 300_000,
+                idempotency_key: "wake-start-3".to_string(),
+            }),
+        };
+
+        let out = rt.run_for_implementation(&mut store, "PH1.W.999", &req);
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1_w.implementation_id",
+                    reason: "unknown implementation_id",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_w_wiring_02_active_implementation_list_is_locked() {
+        assert_eq!(PH1_W_ENGINE_ID, "PH1.W");
+        assert_eq!(PH1_W_ACTIVE_IMPLEMENTATION_IDS, &["PH1.W.001"]);
     }
 }

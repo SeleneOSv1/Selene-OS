@@ -42,6 +42,14 @@
 - scope rules: no cross-tenant writes; tenant attribution required
 - why this read is required: deterministic replay and dedupe verification
 
+### Pronunciation assist inputs (related engine boundary)
+- reads: bounded pronunciation pack hints supplied by Selene OS from `PH1.PRON`
+- keys/joins used: `pack_id` + tenant scope match (input-only contract)
+- scope rules:
+  - pronunciation hints must remain tenant-scoped
+  - user-scoped pronunciation hints require explicit consent proof before use
+- why this read is required: pronunciation shaping for TTS output without changing semantic content
+
 ## 4) Writes (outputs)
 
 ### Commit `tts_render_summary`
@@ -111,13 +119,13 @@ PH1.TTS writes emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-TTS-DB-01` tenant isolation enforced
+- `AT-TTS-01` tenant isolation enforced
   - `at_tts_db_01_tenant_isolation_enforced`
-- `AT-TTS-DB-02` append-only enforcement for PH1.TTS ledger writes
+- `AT-TTS-02` append-only enforcement for PH1.TTS ledger writes
   - `at_tts_db_02_append_only_enforced`
-- `AT-TTS-DB-03` idempotency dedupe works
+- `AT-TTS-03` idempotency dedupe works
   - `at_tts_db_03_idempotency_dedupe_works`
-- `AT-TTS-DB-04` no PH1.TTS current-table rebuild is required
+- `AT-TTS-04` no PH1.TTS current-table rebuild is required
   - `at_tts_db_04_no_current_table_rebuild_required`
 
 Implementation references:
@@ -125,3 +133,21 @@ Implementation references:
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 18 (`PH1.TTS` uses existing `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_tts/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.KNOW`)
+
+- Selene OS may provide PH1.KNOW pronunciation-hint subsets to PH1.TTS as optional rendering hints.
+- PH1.TTS must treat PH1.KNOW output as advisory only and must not alter semantic meaning.
+- PH1.KNOW hints must remain tenant-scoped and authorized-only before PH1.TTS consumption.
+
+## 9) Related Engine Boundary (`PH1.EMO.GUIDE`)
+
+- Selene OS may provide PH1.EMO.GUIDE style-profile hints (`DOMINANT | GENTLE` + ordered modifiers) to PH1.TTS render-plan inputs only after EMO.GUIDE validation passes.
+- PH1.TTS must treat PH1.EMO.GUIDE output as tone/render policy only and must not alter factual meaning, intent outcomes, or execution semantics.
+- If PH1.EMO.GUIDE is unavailable or fails validation, PH1.TTS must fail open on style hint input (use deterministic default render plan) while preserving all core safety gates.
+
+## 10) Related Engine Boundary (`PH1.PERSONA`)
+
+- Selene OS may provide PH1.PERSONA hints (`style_profile_ref`, `delivery_policy_ref`) to PH1.TTS render-plan inputs only after `PERSONA_PROFILE_VALIDATE` returns `validation_status=OK`.
+- PH1.TTS must treat PH1.PERSONA output as advisory rendering posture only and must not alter factual meaning, intent outcomes, confirmation semantics, or execution order.
+- If PH1.PERSONA is unavailable or fails validation, PH1.TTS must use deterministic default render policy while preserving all core safety gates.

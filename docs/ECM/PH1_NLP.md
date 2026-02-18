@@ -62,3 +62,25 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1NlpRepo`)
 - `docs/DB_WIRING/PH1_NLP.md`
+
+## Related Engine Boundary (`PH1.PRUNE`)
+- PH1.NLP may provide `required_fields_missing` to Selene OS for optional PH1.PRUNE candidate narrowing.
+- PH1.NLP does not depend on PH1.PRUNE for core intent/clarify decisions; PH1.PRUNE is a turn-optional assist path only.
+
+## Related Engine Boundary (salience ranking)
+- PH1.NLP may consume one Selene OS-curated `selected_focus_span` and ordered salience hints from deterministic upstream context handling.
+- PH1.NLP must not treat salience metadata as intent authority; PH1.NLP remains the deterministic intent/clarify owner.
+
+## Related Engine Boundary (`PH1.SRL`)
+- PH1.NLP consumes Selene OS-curated SRL repaired transcript/frame output as deterministic upstream normalization input.
+- PH1.NLP remains final owner of intent/clarify/chat decision mode and must not treat SRL as execution authority.
+
+## Related Engine Boundary (tangled utterance parsing)
+- PH1.NLP performs tangled-utterance unraveling internally and may consume only bounded upstream ambiguity metadata.
+- PH1.NLP remains authoritative for final decision mode and field completeness.
+- When ambiguity remains unresolved, PH1.NLP must keep clarify-first behavior and must not guess missing fields.
+
+## Related Engine Boundary (`PH1.KNOW`)
+- PH1.NLP may consume Selene OS-curated PH1.KNOW dictionary hints as advisory metadata only.
+- PH1.NLP remains deterministic owner of final intent/clarify/chat outputs and must not treat PH1.KNOW hints as transcript evidence replacement.
+- PH1.KNOW-derived hints must remain tenant-scoped and authorized-only in PH1.NLP capability execution.

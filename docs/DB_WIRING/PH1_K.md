@@ -3,6 +3,8 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.K`
+- `implementation_id`: `PH1.K.001`
+- `active_implementation_ids`: `[PH1.K.001]`
 - `purpose`: Persist deterministic voice-runtime substrate outputs (stream refs, device state, timing, interrupt candidates, degradation flags) as an append-only ledger plus a rebuildable current projection.
 - `version`: `v1`
 - `status`: `PASS`
@@ -140,6 +142,7 @@ Unique constraints:
 State/boundary constraints:
 - `audio_runtime_events` is append-only.
 - `audio_runtime_current` must be derivable from `audio_runtime_events` only.
+- unknown `implementation_id` is fail-closed at runtime dispatch (`ph1_k.implementation_id`).
 - PH1.K persists substrate facts only; it does not persist intent/authority decisions.
 - PH1.K must not persist raw transcript text or sensitive phrase content; interrupt rows persist only normalized interrupt phrases and VAD rows persist bounded markers.
 
@@ -177,13 +180,13 @@ PH1.K runtime writes must emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-PH1-K-DB-01` tenant isolation enforced
+- `AT-K-01` tenant isolation enforced
   - `at_k_db_01_tenant_isolation_enforced`
-- `AT-PH1-K-DB-02` append-only enforcement for PH1.K runtime ledger
+- `AT-K-02` append-only enforcement for PH1.K runtime ledger
   - `at_k_db_02_append_only_enforced`
-- `AT-PH1-K-DB-03` idempotency dedupe works
+- `AT-K-03` idempotency dedupe works
   - `at_k_db_03_idempotency_dedupe_works`
-- `AT-PH1-K-DB-04` current-table rebuild from runtime ledger is deterministic
+- `AT-K-04` current-table rebuild from runtime ledger is deterministic
   - `at_k_db_04_current_table_rebuild_from_ledger`
 
 Implementation references:
@@ -191,3 +194,9 @@ Implementation references:
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: `crates/selene_storage/migrations/0010_ph1k_audio_runtime_tables.sql`
 - tests: `crates/selene_storage/tests/ph1_k/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.ENDPOINT`)
+
+- Selene OS may consume PH1.K VAD windows/timing stats and invoke PH1.ENDPOINT for boundary refinement before PH1.C finalization.
+- PH1.K remains owner of runtime substrate events; PH1.ENDPOINT does not write PH1.K-owned tables.
+- If PH1.ENDPOINT validation fails, Selene OS must fail closed for endpoint handoff and keep PH1.K runtime truth unchanged.

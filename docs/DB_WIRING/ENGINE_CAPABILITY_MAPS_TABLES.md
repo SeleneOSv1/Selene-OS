@@ -62,6 +62,9 @@ This row locks DB wiring for engine capability maps tables. Runtime activation/d
 - tenant/work_order/correlation scope
 - reason-coded governance transitions
 
+Governance boundary:
+- activation/deprecation/rollback decisions for capability-map definitions are owned by `PH1.GOV` (`GOV_POLICY_EVALUATE -> GOV_DECISION_COMPUTE`) before these table-state transitions are committed.
+
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 - `AT-ECM-DB-01` tenant isolation enforced

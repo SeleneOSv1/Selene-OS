@@ -44,6 +44,9 @@
   - `idempotency_key`
 - Rebuild/read operations emit audit only when executed under explicit diagnostic/replay mode.
 
+## Related Governance Boundary
+- `PH1.GOV` owns deterministic activation/deprecation/rollback decision logic for blueprint definitions before `PBS_APPEND_PROCESS_BLUEPRINT_ROW` transitions are allowed.
+
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`PbsTablesRepo`)
 - `docs/DB_WIRING/PBS_TABLES.md`

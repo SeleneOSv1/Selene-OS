@@ -11,6 +11,10 @@ use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
 };
+use selene_kernel_contracts::ph1builder::{
+    BuilderApprovalState, BuilderPostDeployJudgeResult, BuilderReleaseState,
+    BuilderValidationGateResult, BuilderValidationRun,
+};
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket as Ph1cConfidenceBucket, LanguageTag, RetryAdvice as Ph1cRetryAdvice,
 };
@@ -32,7 +36,11 @@ use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
     DraftId, DraftStatus, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
-use selene_kernel_contracts::ph1m::{MemoryKey, MemoryLedgerEvent, MemoryUsePolicy};
+use selene_kernel_contracts::ph1m::{
+    MemoryEmotionalThreadState, MemoryGraphEdgeInput, MemoryGraphNodeInput, MemoryKey,
+    MemoryLedgerEvent, MemoryMetricPayload, MemoryRetentionMode, MemorySuppressionRule,
+    MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest, MemoryUsePolicy,
+};
 use selene_kernel_contracts::ph1onb::{
     BackfillCampaignId, BackfillRolloutScope, OnbAccessInstanceCreateResult, OnbCompleteResult,
     OnbEmployeePhotoCaptureSendResult, OnbEmployeeSenderVerifyResult,
@@ -66,8 +74,15 @@ use crate::ph1f::{
     AccessBoardVoteValue, AccessDeviceTrustLevel, AccessGateDecisionRecord, AccessInstanceRecord,
     AccessLifecycleState, AccessMode, AccessOverlayCurrentRecord, AccessOverlayRecord,
     AccessOverrideRecord, AccessOverrideType, AccessSchemaChainReadResult, AccessSchemaEventAction,
-    AccessSchemaScope, AccessVerificationLevel, DeviceRecord, IdentityRecord,
-    LinkGenerateResultParts, MemoryCurrentRecord, MemoryLedgerRow, OnboardingSessionRecord,
+    AccessSchemaScope, AccessVerificationLevel, BuilderApprovalStateLedgerRow,
+    BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow,
+    BuilderProposalLedgerRowInput, BuilderReleaseStateLedgerRow,
+    BuilderValidationGateResultLedgerRow, BuilderValidationRunLedgerRow, DeviceRecord,
+    IdentityRecord, LinkGenerateResultParts, MemoryArchiveIndexRecord, MemoryCurrentRecord,
+    MemoryEmotionalThreadCurrentRecord, MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord,
+    MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow,
+    MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord, MemoryThreadCurrentRecord,
+    MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord, OnboardingSessionRecord,
     Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth,
     Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord,
     PositionLifecycleEventRecord, SessionRecord, StorageError, TenantCompanyRecord,
@@ -268,7 +283,7 @@ pub trait Ph1VidEnrollmentRepo {
         idempotency_key: String,
     ) -> Result<VoiceEnrollmentSessionRecord, StorageError>;
 
-    fn ph1vid_enroll_defer_reminder_commit_row(
+    fn ph1vid_enroll_defer_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         voice_enrollment_session_id: String,
@@ -599,7 +614,7 @@ pub trait Ph1wWakeRepo {
         idempotency_key: String,
     ) -> Result<WakeEnrollmentSessionRecord, StorageError>;
 
-    fn ph1w_enroll_defer_reminder_commit_row(
+    fn ph1w_enroll_defer_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         wake_enrollment_session_id: String,
@@ -1114,6 +1129,66 @@ pub trait Ph1LearnFeedbackKnowRepo {
     ) -> Vec<&ArtifactLedgerRow>;
 }
 
+/// Typed repository interface for Builder Selene Phase 13-A append-only proposal/run/result persistence.
+pub trait BuilderSeleneRepo {
+    fn append_builder_proposal_row(
+        &mut self,
+        input: BuilderProposalLedgerRowInput,
+    ) -> Result<u64, StorageError>;
+    fn builder_proposal_rows(&self) -> &[BuilderProposalLedgerRow];
+    fn attempt_overwrite_builder_proposal_row(&mut self, row_id: u64) -> Result<(), StorageError>;
+
+    fn append_builder_validation_run_row(
+        &mut self,
+        run: BuilderValidationRun,
+    ) -> Result<u64, StorageError>;
+    fn builder_validation_run_rows(&self) -> &[BuilderValidationRunLedgerRow];
+    fn attempt_overwrite_builder_validation_run_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_builder_validation_gate_result_row(
+        &mut self,
+        result: BuilderValidationGateResult,
+    ) -> Result<u64, StorageError>;
+    fn builder_validation_gate_result_rows(&self) -> &[BuilderValidationGateResultLedgerRow];
+    fn attempt_overwrite_builder_validation_gate_result_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_builder_approval_state_row(
+        &mut self,
+        approval: BuilderApprovalState,
+    ) -> Result<u64, StorageError>;
+    fn builder_approval_state_rows(&self) -> &[BuilderApprovalStateLedgerRow];
+    fn attempt_overwrite_builder_approval_state_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_builder_release_state_row(
+        &mut self,
+        release: BuilderReleaseState,
+    ) -> Result<u64, StorageError>;
+    fn builder_release_state_rows(&self) -> &[BuilderReleaseStateLedgerRow];
+    fn attempt_overwrite_builder_release_state_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_builder_post_deploy_judge_result_row(
+        &mut self,
+        result: BuilderPostDeployJudgeResult,
+    ) -> Result<u64, StorageError>;
+    fn builder_post_deploy_judge_result_rows(&self) -> &[BuilderPostDeployJudgeResultLedgerRow];
+    fn attempt_overwrite_builder_post_deploy_judge_result_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+}
+
 /// Typed repository interface for PH1.LINK link lifecycle persistence.
 pub trait Ph1LinkRepo {
     #[allow(clippy::too_many_arguments)]
@@ -1489,6 +1564,137 @@ pub trait Ph1MRepo {
         &mut self,
         ledger_id: u64,
     ) -> Result<(), StorageError>;
+
+    fn ph1m_set_suppression_rule_row(
+        &mut self,
+        user_id: &UserId,
+        rule: MemorySuppressionRule,
+        now: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<bool, StorageError>;
+
+    fn ph1m_suppression_rule_rows(&self) -> Vec<&MemorySuppressionRuleRecord>;
+
+    fn ph1m_suppression_rule_row(
+        &self,
+        user_id: &UserId,
+        target_type: MemorySuppressionTargetType,
+        target_id: &str,
+        rule_kind: MemorySuppressionRuleKind,
+    ) -> Option<&MemorySuppressionRuleRecord>;
+
+    fn ph1m_emotional_thread_update_commit_row(
+        &mut self,
+        user_id: &UserId,
+        state: MemoryEmotionalThreadState,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError>;
+
+    fn ph1m_emotional_thread_ledger_rows(&self) -> &[MemoryEmotionalThreadLedgerRow];
+
+    fn ph1m_emotional_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_key: &str,
+    ) -> Option<&MemoryEmotionalThreadCurrentRecord>;
+
+    fn ph1m_attempt_overwrite_emotional_thread_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn ph1m_metrics_emit_commit_row(
+        &mut self,
+        user_id: &UserId,
+        payload: MemoryMetricPayload,
+        reason_code: ReasonCodeId,
+        created_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError>;
+
+    fn ph1m_metrics_ledger_rows(&self) -> &[MemoryMetricLedgerRow];
+
+    fn ph1m_attempt_overwrite_metrics_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn ph1m_thread_digest_upsert_commit_row(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        digest: MemoryThreadDigest,
+        event_kind: MemoryThreadEventKind,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<(u64, bool), StorageError>;
+
+    fn ph1m_thread_ledger_rows(&self) -> &[MemoryThreadLedgerRow];
+
+    fn ph1m_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Option<&MemoryThreadCurrentRecord>;
+
+    fn ph1m_upsert_thread_refs(
+        &mut self,
+        user_id: &UserId,
+        thread_id: &str,
+        conversation_turn_ids: Vec<u64>,
+        now: MonotonicTimeNs,
+    ) -> Result<u16, StorageError>;
+
+    fn ph1m_thread_ref_rows_for_thread(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Vec<&MemoryThreadRefRecord>;
+
+    fn ph1m_attempt_overwrite_thread_ledger_row(&mut self, event_id: u64)
+        -> Result<(), StorageError>;
+
+    fn ph1m_graph_upsert_commit_row(
+        &mut self,
+        user_id: &UserId,
+        nodes: Vec<MemoryGraphNodeInput>,
+        edges: Vec<MemoryGraphEdgeInput>,
+        updated_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u16, StorageError>;
+
+    fn ph1m_graph_node_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphNodeRecord>;
+
+    fn ph1m_graph_edge_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphEdgeRecord>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1m_archive_index_upsert_row(
+        &mut self,
+        user_id: &UserId,
+        archive_ref_id: String,
+        thread_id: Option<String>,
+        conversation_turn_id: Option<u64>,
+        rank_score: Option<i64>,
+        updated_at: MonotonicTimeNs,
+    ) -> Result<(), StorageError>;
+
+    fn ph1m_archive_index_rows_for_user(&self, user_id: &UserId)
+        -> Vec<&MemoryArchiveIndexRecord>;
+
+    fn ph1m_retention_mode_set_commit_row(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        updated_at: MonotonicTimeNs,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<MonotonicTimeNs, StorageError>;
+
+    fn ph1m_retention_preference_row(
+        &self,
+        user_id: &UserId,
+    ) -> Option<&MemoryRetentionPreferenceRecord>;
 }
 
 impl Ph1fFoundationRepo for Ph1fStore {
@@ -1827,14 +2033,14 @@ impl Ph1VidEnrollmentRepo for Ph1fStore {
         self.ph1vid_enroll_complete_commit(now, voice_enrollment_session_id, idempotency_key)
     }
 
-    fn ph1vid_enroll_defer_reminder_commit_row(
+    fn ph1vid_enroll_defer_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         voice_enrollment_session_id: String,
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<VoiceEnrollmentSessionRecord, StorageError> {
-        self.ph1vid_enroll_defer_reminder_commit(
+        self.ph1vid_enroll_defer_commit(
             now,
             voice_enrollment_session_id,
             reason_code,
@@ -2413,7 +2619,7 @@ impl Ph1wWakeRepo for Ph1fStore {
         )
     }
 
-    fn ph1w_enroll_defer_reminder_commit_row(
+    fn ph1w_enroll_defer_commit_row(
         &mut self,
         now: MonotonicTimeNs,
         wake_enrollment_session_id: String,
@@ -2421,7 +2627,7 @@ impl Ph1wWakeRepo for Ph1fStore {
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<WakeEnrollmentSessionRecord, StorageError> {
-        self.ph1w_enroll_defer_reminder_commit(
+        self.ph1w_enroll_defer_commit(
             now,
             wake_enrollment_session_id,
             deferred_until,
@@ -3305,6 +3511,116 @@ impl Ph1LearnFeedbackKnowRepo for Ph1fStore {
     }
 }
 
+impl BuilderSeleneRepo for Ph1fStore {
+    fn append_builder_proposal_row(
+        &mut self,
+        input: BuilderProposalLedgerRowInput,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_proposal_ledger_row(input)
+    }
+
+    fn builder_proposal_rows(&self) -> &[BuilderProposalLedgerRow] {
+        self.builder_proposal_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_proposal_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_proposal_ledger_row(row_id)
+    }
+
+    fn append_builder_validation_run_row(
+        &mut self,
+        run: BuilderValidationRun,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_validation_run_ledger_row(run)
+    }
+
+    fn builder_validation_run_rows(&self) -> &[BuilderValidationRunLedgerRow] {
+        self.builder_validation_run_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_validation_run_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_validation_run_ledger_row(row_id)
+    }
+
+    fn append_builder_validation_gate_result_row(
+        &mut self,
+        result: BuilderValidationGateResult,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_validation_gate_result_ledger_row(result)
+    }
+
+    fn builder_validation_gate_result_rows(&self) -> &[BuilderValidationGateResultLedgerRow] {
+        self.builder_validation_gate_result_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_validation_gate_result_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_validation_gate_result_ledger_row(row_id)
+    }
+
+    fn append_builder_approval_state_row(
+        &mut self,
+        approval: BuilderApprovalState,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_approval_state_ledger_row(approval)
+    }
+
+    fn builder_approval_state_rows(&self) -> &[BuilderApprovalStateLedgerRow] {
+        self.builder_approval_state_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_approval_state_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_approval_state_ledger_row(row_id)
+    }
+
+    fn append_builder_release_state_row(
+        &mut self,
+        release: BuilderReleaseState,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_release_state_ledger_row(release)
+    }
+
+    fn builder_release_state_rows(&self) -> &[BuilderReleaseStateLedgerRow] {
+        self.builder_release_state_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_release_state_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_release_state_ledger_row(row_id)
+    }
+
+    fn append_builder_post_deploy_judge_result_row(
+        &mut self,
+        result: BuilderPostDeployJudgeResult,
+    ) -> Result<u64, StorageError> {
+        self.append_builder_post_deploy_judge_result_ledger_row(result)
+    }
+
+    fn builder_post_deploy_judge_result_rows(&self) -> &[BuilderPostDeployJudgeResultLedgerRow] {
+        self.builder_post_deploy_judge_result_ledger_rows()
+    }
+
+    fn attempt_overwrite_builder_post_deploy_judge_result_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_builder_post_deploy_judge_result_ledger_row(row_id)
+    }
+}
+
 impl Ph1LinkRepo for Ph1fStore {
     fn ph1link_invite_generate_draft_row(
         &mut self,
@@ -3911,5 +4227,228 @@ impl Ph1MRepo for Ph1fStore {
         ledger_id: u64,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_memory_ledger_row(ledger_id)
+    }
+
+    fn ph1m_set_suppression_rule_row(
+        &mut self,
+        user_id: &UserId,
+        rule: MemorySuppressionRule,
+        now: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<bool, StorageError> {
+        Ph1fStore::ph1m_set_suppression_rule(self, user_id, rule, now, idempotency_key)
+    }
+
+    fn ph1m_suppression_rule_rows(&self) -> Vec<&MemorySuppressionRuleRecord> {
+        Ph1fStore::ph1m_suppression_rule_rows(self)
+    }
+
+    fn ph1m_suppression_rule_row(
+        &self,
+        user_id: &UserId,
+        target_type: MemorySuppressionTargetType,
+        target_id: &str,
+        rule_kind: MemorySuppressionRuleKind,
+    ) -> Option<&MemorySuppressionRuleRecord> {
+        Ph1fStore::ph1m_suppression_rule_row(self, user_id, target_type, target_id, rule_kind)
+    }
+
+    fn ph1m_emotional_thread_update_commit_row(
+        &mut self,
+        user_id: &UserId,
+        state: MemoryEmotionalThreadState,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        Ph1fStore::ph1m_emotional_thread_update_commit(
+            self,
+            user_id,
+            state,
+            reason_code,
+            idempotency_key,
+        )
+    }
+
+    fn ph1m_emotional_thread_ledger_rows(&self) -> &[MemoryEmotionalThreadLedgerRow] {
+        Ph1fStore::ph1m_emotional_thread_ledger_rows(self)
+    }
+
+    fn ph1m_emotional_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_key: &str,
+    ) -> Option<&MemoryEmotionalThreadCurrentRecord> {
+        Ph1fStore::ph1m_emotional_thread_current_row(self, user_id, thread_key)
+    }
+
+    fn ph1m_attempt_overwrite_emotional_thread_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_emotional_threads_ledger_row(event_id)
+    }
+
+    fn ph1m_metrics_emit_commit_row(
+        &mut self,
+        user_id: &UserId,
+        payload: MemoryMetricPayload,
+        reason_code: ReasonCodeId,
+        created_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        Ph1fStore::ph1m_metrics_emit_commit(
+            self,
+            user_id,
+            payload,
+            reason_code,
+            created_at,
+            idempotency_key,
+        )
+    }
+
+    fn ph1m_metrics_ledger_rows(&self) -> &[MemoryMetricLedgerRow] {
+        Ph1fStore::ph1m_memory_metrics_ledger_rows(self)
+    }
+
+    fn ph1m_attempt_overwrite_metrics_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_memory_metrics_ledger_row(event_id)
+    }
+
+    fn ph1m_thread_digest_upsert_commit_row(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        digest: MemoryThreadDigest,
+        event_kind: MemoryThreadEventKind,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<(u64, bool), StorageError> {
+        Ph1fStore::ph1m_thread_digest_upsert_commit(
+            self,
+            user_id,
+            memory_retention_mode,
+            digest,
+            event_kind,
+            reason_code,
+            idempotency_key,
+        )
+    }
+
+    fn ph1m_thread_ledger_rows(&self) -> &[MemoryThreadLedgerRow] {
+        Ph1fStore::ph1m_thread_ledger_rows(self)
+    }
+
+    fn ph1m_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Option<&MemoryThreadCurrentRecord> {
+        Ph1fStore::ph1m_thread_current_row(self, user_id, thread_id)
+    }
+
+    fn ph1m_upsert_thread_refs(
+        &mut self,
+        user_id: &UserId,
+        thread_id: &str,
+        conversation_turn_ids: Vec<u64>,
+        now: MonotonicTimeNs,
+    ) -> Result<u16, StorageError> {
+        Ph1fStore::ph1m_upsert_thread_refs(self, user_id, thread_id, conversation_turn_ids, now)
+    }
+
+    fn ph1m_thread_ref_rows_for_thread(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Vec<&MemoryThreadRefRecord> {
+        Ph1fStore::ph1m_thread_ref_rows_for_thread(self, user_id, thread_id)
+    }
+
+    fn ph1m_attempt_overwrite_thread_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_memory_threads_ledger_row(event_id)
+    }
+
+    fn ph1m_graph_upsert_commit_row(
+        &mut self,
+        user_id: &UserId,
+        nodes: Vec<MemoryGraphNodeInput>,
+        edges: Vec<MemoryGraphEdgeInput>,
+        updated_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u16, StorageError> {
+        Ph1fStore::ph1m_graph_upsert_commit(
+            self,
+            user_id,
+            nodes,
+            edges,
+            updated_at,
+            idempotency_key,
+        )
+    }
+
+    fn ph1m_graph_node_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphNodeRecord> {
+        Ph1fStore::ph1m_graph_node_rows_for_user(self, user_id)
+    }
+
+    fn ph1m_graph_edge_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphEdgeRecord> {
+        Ph1fStore::ph1m_graph_edge_rows_for_user(self, user_id)
+    }
+
+    fn ph1m_archive_index_upsert_row(
+        &mut self,
+        user_id: &UserId,
+        archive_ref_id: String,
+        thread_id: Option<String>,
+        conversation_turn_id: Option<u64>,
+        rank_score: Option<i64>,
+        updated_at: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        Ph1fStore::ph1m_archive_index_upsert(
+            self,
+            user_id,
+            archive_ref_id,
+            thread_id,
+            conversation_turn_id,
+            rank_score,
+            updated_at,
+        )
+    }
+
+    fn ph1m_archive_index_rows_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Vec<&MemoryArchiveIndexRecord> {
+        Ph1fStore::ph1m_archive_index_rows_for_user(self, user_id)
+    }
+
+    fn ph1m_retention_mode_set_commit_row(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        updated_at: MonotonicTimeNs,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<MonotonicTimeNs, StorageError> {
+        Ph1fStore::ph1m_retention_mode_set_commit(
+            self,
+            user_id,
+            memory_retention_mode,
+            updated_at,
+            reason_code,
+            idempotency_key,
+        )
+    }
+
+    fn ph1m_retention_preference_row(
+        &self,
+        user_id: &UserId,
+    ) -> Option<&MemoryRetentionPreferenceRecord> {
+        Ph1fStore::ph1m_retention_preference_row(self, user_id)
     }
 }

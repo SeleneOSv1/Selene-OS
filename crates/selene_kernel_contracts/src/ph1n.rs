@@ -18,6 +18,12 @@ pub enum IntentType {
     SetReminder,
     BookTable,
     SendMoney,
+    /// Memory control: explicit "remember this" request.
+    MemoryRememberRequest,
+    /// Memory control: explicit "forget this" request.
+    MemoryForgetRequest,
+    /// Memory control: explicit recall/query request.
+    MemoryQuery,
     /// Governance/control: generate an onboarding/invite link (simulation-gated via PH1.LINK.001).
     CreateInviteLink,
     /// Governance/control: manage capability-request lifecycle (simulation-gated via PH1.CAPREQ).

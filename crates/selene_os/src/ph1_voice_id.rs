@@ -7,7 +7,7 @@ use selene_kernel_contracts::ph1_voice_id::{
     VoiceEnrollStatus as ContractVoiceEnrollStatus, VoiceEnrollmentSessionId,
     VoiceIdEnrollCompleteResult, VoiceIdEnrollDeferResult, VoiceIdEnrollSampleResult,
     VoiceIdEnrollStartResult, VoiceIdSimulationRequest,
-    VoiceSampleResult as ContractVoiceSampleResult,
+    VoiceSampleResult as ContractVoiceSampleResult, PH1VOICEID_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
@@ -28,8 +28,11 @@ pub mod reason_codes {
     pub const VID_OK_ENROLL_START_DRAFT: ReasonCodeId = ReasonCodeId(0x5649_1001);
     pub const VID_OK_ENROLL_SAMPLE_COMMIT: ReasonCodeId = ReasonCodeId(0x5649_1002);
     pub const VID_OK_ENROLL_COMPLETE_COMMIT: ReasonCodeId = ReasonCodeId(0x5649_1003);
-    pub const VID_OK_ENROLL_DEFER_REMINDER_COMMIT: ReasonCodeId = ReasonCodeId(0x5649_1004);
+    pub const VID_OK_ENROLL_DEFER_COMMIT: ReasonCodeId = ReasonCodeId(0x5649_1004);
 }
+
+pub const PH1_VOICE_ID_ENGINE_ID: &str = "PH1.VOICE.ID";
+pub const PH1_VOICE_ID_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1VOICEID_IMPLEMENTATION_ID];
 
 #[derive(Debug, Default, Clone)]
 pub struct Ph1VoiceIdRuntime;
@@ -40,6 +43,23 @@ impl Ph1VoiceIdRuntime {
         store: &mut Ph1fStore,
         req: &Ph1VoiceIdSimRequest,
     ) -> Result<Ph1VoiceIdSimResponse, StorageError> {
+        self.run_for_implementation(store, PH1VOICEID_IMPLEMENTATION_ID, req)
+    }
+
+    pub fn run_for_implementation(
+        &self,
+        store: &mut Ph1fStore,
+        implementation_id: &str,
+        req: &Ph1VoiceIdSimRequest,
+    ) -> Result<Ph1VoiceIdSimResponse, StorageError> {
+        if implementation_id != PH1VOICEID_IMPLEMENTATION_ID {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1_voice_id.implementation_id",
+                    reason: "unknown implementation_id",
+                },
+            ));
+        }
         req.validate().map_err(StorageError::ContractViolation)?;
 
         match &req.request {
@@ -186,8 +206,8 @@ impl Ph1VoiceIdRuntime {
                     .map_err(StorageError::ContractViolation)?,
                 ))
             }
-            VoiceIdSimulationRequest::EnrollDeferReminderCommit(r) => {
-                let rec = store.ph1vid_enroll_defer_reminder_commit(
+            VoiceIdSimulationRequest::EnrollDeferCommit(r) => {
+                let rec = store.ph1vid_enroll_defer_commit(
                     req.now,
                     r.voice_enrollment_session_id.as_str().to_string(),
                     r.reason_code,
@@ -209,14 +229,14 @@ impl Ph1VoiceIdRuntime {
                     req.turn_id,
                     "VOICE_ENROLL_IN_PROGRESS",
                     status_label(rec.voice_enroll_status),
-                    reason_codes::VID_OK_ENROLL_DEFER_REMINDER_COMMIT,
+                    reason_codes::VID_OK_ENROLL_DEFER_COMMIT,
                     Some(r.idempotency_key.clone()),
                 )?;
 
                 Ok(Ph1VoiceIdSimResponse::Ok(
                     Ph1VoiceIdSimOk::v1(
                         req.simulation_id.clone(),
-                        reason_codes::VID_OK_ENROLL_DEFER_REMINDER_COMMIT,
+                        reason_codes::VID_OK_ENROLL_DEFER_COMMIT,
                         None,
                         None,
                         None,
@@ -296,5 +316,61 @@ fn map_sample_result(v: ContractVoiceSampleResult) -> StoreVoiceSampleResult {
     match v {
         ContractVoiceSampleResult::Pass => StoreVoiceSampleResult::Pass,
         ContractVoiceSampleResult::Fail => StoreVoiceSampleResult::Fail,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use selene_kernel_contracts::ph1_voice_id::{
+        Ph1VoiceIdSimRequest, VoiceIdEnrollStartDraftRequest, VoiceIdSimulationRequest,
+        VoiceIdSimulationType, PH1VOICEID_SIM_CONTRACT_VERSION,
+    };
+    use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+    use selene_kernel_contracts::MonotonicTimeNs;
+
+    fn sample_start_request() -> Ph1VoiceIdSimRequest {
+        Ph1VoiceIdSimRequest {
+            schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+            correlation_id: CorrelationId(1),
+            turn_id: TurnId(1),
+            now: MonotonicTimeNs(1),
+            simulation_id: "VOICE_ID_ENROLL_START_DRAFT".to_string(),
+            simulation_type: VoiceIdSimulationType::Draft,
+            request: VoiceIdSimulationRequest::EnrollStartDraft(VoiceIdEnrollStartDraftRequest {
+                onboarding_session_id: "onb_1".to_string(),
+                device_id: DeviceId::new("device_1").unwrap(),
+                consent_asserted: true,
+                max_total_attempts: 8,
+                max_session_enroll_time_ms: 120_000,
+                lock_after_consecutive_passes: 3,
+            }),
+        }
+    }
+
+    #[test]
+    fn at_vid_impl_01_unknown_implementation_fails_closed() {
+        let runtime = Ph1VoiceIdRuntime;
+        let mut store = Ph1fStore::new_in_memory();
+        let out =
+            runtime.run_for_implementation(&mut store, "PH1.VOICE.ID.999", &sample_start_request());
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1_voice_id.implementation_id",
+                    reason: "unknown implementation_id",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_vid_impl_02_active_implementation_list_is_locked() {
+        assert_eq!(PH1_VOICE_ID_ENGINE_ID, "PH1.VOICE.ID");
+        assert_eq!(
+            PH1_VOICE_ID_ACTIVE_IMPLEMENTATION_IDS,
+            &["PH1.VOICE.ID.001"]
+        );
     }
 }

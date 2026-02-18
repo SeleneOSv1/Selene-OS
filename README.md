@@ -21,3 +21,25 @@ How field collection works:
 
 Start here: [docs/00_INDEX.md](docs/00_INDEX.md)
 Current ordered "what's next" checklist: [docs/11_DESIGN_LOCK_SEQUENCE.md](docs/11_DESIGN_LOCK_SEQUENCE.md)
+
+## Local PostgreSQL Wiring (Hard-Isolated)
+
+Bootstrap a dedicated Postgres instance for Selene OS only (separate cluster, port, role, DB, migrations):
+
+```bash
+./scripts/dev_postgres_setup.sh
+```
+
+Re-run migrations only:
+
+```bash
+./scripts/dev_postgres_migrate.sh
+```
+
+Local DB connection env is written to:
+
+```text
+.dev/db.env
+```
+
+The setup script also writes `.env.local` and isolates the cluster under `.dev/postgres` (default port `55432`).

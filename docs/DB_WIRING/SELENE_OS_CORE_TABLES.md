@@ -115,6 +115,16 @@ State constraints:
 - WorkOrder table slice relies on PH1.J for audit envelope; this row locks storage wiring.
 - Required correlation keys remain: `tenant_id`, `work_order_id`, `correlation_id`, `turn_id`.
 
+### related engine boundary: `PH1.SCHED`
+- Scheduler outputs (`RETRY_AT | FAIL | WAIT`) must be consumed via Selene OS orchestration and reflected through append-only WorkOrder ledger transitions.
+- `WAIT` decisions must not advance attempt index in `work_orders_current` projection.
+- `SCHED_NEXT_ACTION_DRAFT` simulation remains deterministic and contract-scoped; no hidden retries are allowed.
+
+### related engine boundary: `PH1.LEASE`
+- WorkOrder step execution paths must require an active lease before advancing lease-gated step events.
+- At most one active lease may exist per `(tenant_id, work_order_id)` in `work_order_leases`.
+- Renew/release paths require lease-token ownership checks; expired takeover must resume from persisted ledger state only.
+
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 - `AT-OS-CORE-DB-01` tenant isolation enforced

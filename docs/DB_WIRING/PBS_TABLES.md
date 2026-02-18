@@ -63,6 +63,9 @@ This row locks DB wiring for PBS tables. Runtime audit emission remains through 
 - tenant/work_order/correlation scope
 - reason-coded governance transitions
 
+Governance boundary:
+- activation/deprecation/rollback decisions for blueprint definitions are owned by `PH1.GOV` (`GOV_POLICY_EVALUATE -> GOV_DECISION_COMPUTE`) before these table-state transitions are committed.
+
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 - `AT-PBS-DB-01` tenant isolation enforced

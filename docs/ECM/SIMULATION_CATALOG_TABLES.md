@@ -45,6 +45,9 @@
   - `idempotency_key`
 - Rebuild/read operations emit audit only in explicit governance/replay flows.
 
+## Related Governance Boundary
+- `PH1.GOV` owns deterministic activation/deprecation/rollback decision logic for simulation definitions before `SIMCAT_APPEND_SIMULATION_CATALOG_ROW` transitions are allowed.
+
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`SimulationCatalogTablesRepo`)
 - `docs/DB_WIRING/SIMULATION_CATALOG_TABLES.md`

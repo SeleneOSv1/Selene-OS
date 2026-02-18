@@ -22,7 +22,9 @@ use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord,
 };
-use selene_storage::repo::{Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1fFoundationRepo, Ph1jAuditRepo};
+use selene_storage::repo::{
+    Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1fFoundationRepo, Ph1jAuditRepo,
+};
 
 fn user(id: &str) -> UserId {
     UserId::new(id).unwrap()
@@ -539,19 +541,20 @@ fn at_onb_db_05_session_start_pins_schema_context_and_required_gates() {
         )
         .unwrap();
     let expected_schema_id = format!("position:{position_id}");
-    assert_eq!(started.pinned_schema_id.as_deref(), Some(expected_schema_id.as_str()));
+    assert_eq!(
+        started.pinned_schema_id.as_deref(),
+        Some(expected_schema_id.as_str())
+    );
     assert_eq!(started.pinned_schema_version.as_deref(), Some("schema_v1"));
     assert_eq!(
         started.pinned_overlay_set_id.as_deref(),
         Some("position_requirements_active")
     );
-    assert!(
-        started
-            .pinned_selector_snapshot_ref
-            .as_deref()
-            .unwrap_or("")
-            .starts_with(&format!("selector:{tenant_id}:{position_id}:"))
-    );
+    assert!(started
+        .pinned_selector_snapshot_ref
+        .as_deref()
+        .unwrap_or("")
+        .starts_with(&format!("selector:{tenant_id}:{position_id}:")));
     assert!(started
         .required_verification_gates
         .iter()
@@ -581,7 +584,10 @@ fn at_onb_db_05_session_start_pins_schema_context_and_required_gates() {
     let current = s
         .ph1onb_session_row(&started.onboarding_session_id)
         .unwrap();
-    assert_eq!(current.pinned_schema_id.as_deref(), Some(expected_schema_id.as_str()));
+    assert_eq!(
+        current.pinned_schema_id.as_deref(),
+        Some(expected_schema_id.as_str())
+    );
     assert_eq!(current.pinned_schema_version.as_deref(), Some("schema_v1"));
     assert_eq!(
         current.pinned_overlay_set_id.as_deref(),
@@ -782,7 +788,10 @@ fn at_onb_db_12_required_verification_commit_idempotency_replays_deterministical
         )
         .unwrap();
     assert_eq!(replay_photo.photo_proof_ref, first_photo.photo_proof_ref);
-    assert_eq!(replay_photo.verification_status, VerificationStatus::Pending);
+    assert_eq!(
+        replay_photo.verification_status,
+        VerificationStatus::Pending
+    );
 
     let after_photo = s
         .ph1onb_session_row(&started.onboarding_session_id)
@@ -1051,7 +1060,10 @@ fn at_onb_db_10_backfill_notify_loop_and_complete_are_idempotent() {
             ReasonCodeId(0x4F00_0009),
         )
         .unwrap();
-    assert_eq!(notify_reminder.target_status, BackfillTargetStatus::Requested);
+    assert_eq!(
+        notify_reminder.target_status,
+        BackfillTargetStatus::Requested
+    );
 
     let complete_first = s
         .ph1onb_requirement_backfill_complete_commit_row(
@@ -1065,7 +1077,10 @@ fn at_onb_db_10_backfill_notify_loop_and_complete_are_idempotent() {
         .unwrap();
     assert_eq!(complete_first.state, BackfillCampaignState::Completed);
     assert_eq!(complete_first.completed_target_count, 0);
-    assert_eq!(complete_first.total_target_count, started.pending_target_count);
+    assert_eq!(
+        complete_first.total_target_count,
+        started.pending_target_count
+    );
 
     let complete_replay = s
         .ph1onb_requirement_backfill_complete_commit_row(
@@ -1082,7 +1097,10 @@ fn at_onb_db_10_backfill_notify_loop_and_complete_are_idempotent() {
         complete_replay.completed_target_count,
         complete_first.completed_target_count
     );
-    assert_eq!(complete_replay.total_target_count, complete_first.total_target_count);
+    assert_eq!(
+        complete_replay.total_target_count,
+        complete_first.total_target_count
+    );
 }
 
 #[test]

@@ -152,7 +152,7 @@ Current notable engine groups:
 - Perception/Understanding/Control core: `PH1.K`, `PH1.W`, `PH1.C`, `PH1.NLP`, `PH1.D`, `PH1.X`
 - Output: `PH1.WRITE`, `PH1.TTS`
 - Onboarding/Delivery/Tools: `PH1.E`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.ONBOARDING_SMS`, `PH1.LINK`, `PH1.ONB`, `PH1.POSITION`, `PH1.REM`
-- Memory/Learning: `PH1.M`, `PH1.PERSONA`, `PH1.LEARN_FEEDBACK_KNOW`, `PH1.LEARNING_ADAPTIVE`, `PH1.EMO`
+- Memory/Learning: `PH1.M`, `PH1.PERSONA`, `PH1.FEEDBACK`, `PH1.LEARN`, `PH1.PAE`, `PH1.KNOW`, `PH1.LEARN_FEEDBACK_KNOW`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE`
 - Capability requests: `PH1.CAPREQ`
 - Extension assists and offline engines are also listed in registry and remain orchestrator-mediated.
 
@@ -216,7 +216,7 @@ Canonical invitee_type set:
 Canonical link-token lifecycle state set:
 - `DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED`
 
-## 10) PH1.E / PH1.REM / PH1.EMO Closure State
+## 10) PH1.E / PH1.REM / PH1.EMO.GUIDE+PH1.EMO.CORE Closure State
 `PH1.E`
 - DB wiring + ECM docs complete
 - tool blueprints complete (`TOOL_TIME_QUERY`, `TOOL_WEATHER_QUERY`)
@@ -227,8 +227,8 @@ Canonical link-token lifecycle state set:
 - key blueprint: `docs/BLUEPRINTS/REMINDER_MANAGE.md`
 - BCAST handoff path represented (`BCAST_MHP_FOLLOWUP`)
 
-`PH1.EMO`
-- 4-pack present (DB_WIRING + ECM + sim entries + blueprint)
+`PH1.EMO.GUIDE + PH1.EMO.CORE`
+- concrete docs/sim entries + blueprint present
 - key blueprint: `docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md`
 - tone-only guarantees documented in contracts
 
@@ -274,7 +274,7 @@ Coverage source:
 
 Current state summary:
 - no `TODO`, no `BLOCKER`, no `WIP` rows in matrix
-- key rows `PH1.E`, `PH1.LINK`, `PH1.REM`, `PH1.EMO` are all fully `DONE`
+- key rows `PH1.E`, `PH1.LINK`, `PH1.REM`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE` are all fully `DONE`
 
 Problem tracker source:
 - `docs/13_PROBLEMS_TO_FIX.md`
@@ -319,7 +319,7 @@ rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md
 # NOTE: Run scripts/selene_design_readiness_audit.sh for drift/banned-token sweeps; do not paste the regex here.
 
 # registry critical rows
-rg -n "^\| PH1\.E \||^\| PH1\.LINK \||^\| PH1\.REM \||^\| PH1\.EMO \|" docs/COVERAGE_MATRIX.md docs/07_ENGINE_REGISTRY.md
+rg -n "^\| PH1\.E \||^\| PH1\.LINK \||^\| PH1\.REM \||^\| PH1\.EMO\.GUIDE \||^\| PH1\.EMO\.CORE \|" docs/COVERAGE_MATRIX.md docs/07_ENGINE_REGISTRY.md
 ```
 
 ## 16) Mandatory Update Discipline for Any Future Change
@@ -363,7 +363,8 @@ Then subsystem deep dives as needed:
 - memory architecture: `docs/12_MEMORY_ARCHITECTURE.md`
 - PH1.LINK: `docs/DB_WIRING/PH1_LINK.md`, `docs/ECM/PH1_LINK.md`, `crates/selene_kernel_contracts/src/ph1link.rs`
 - PH1.REM: `docs/DB_WIRING/PH1_REM.md`, `docs/ECM/PH1_REM.md`, `docs/BLUEPRINTS/REMINDER_MANAGE.md`
-- PH1.EMO: `docs/DB_WIRING/PH1_EMO.md`, `docs/ECM/PH1_EMO.md`, `docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md`
+- PH1.EMO.GUIDE: `docs/DB_WIRING/PH1_EMO_GUIDE.md`, `docs/ECM/PH1_EMO_GUIDE.md`
+- PH1.EMO.CORE: `docs/DB_WIRING/PH1_EMO_CORE.md`, `docs/ECM/PH1_EMO_CORE.md`, `docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md`
 
 ## 19) Practical Guidance for Build/Design Help in New Chats
 When a new chat is asked to implement a change, it should:

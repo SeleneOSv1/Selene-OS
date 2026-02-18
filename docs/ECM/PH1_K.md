@@ -2,6 +2,8 @@
 
 ## Engine Header
 - `engine_id`: `PH1.K`
+- `implementation_id`: `PH1.K.001`
+- `active_implementation_ids`: `[PH1.K.001]`
 - `purpose`: Persist deterministic voice runtime substrate facts (stream refs, device/timing/interruption/degradation signals) as append-only events plus rebuildable current state.
 - `data_owned`: `audio_runtime_events`, `audio_runtime_current`, `conversation_ledger` (PH1.K VAD markers only)
 - `version`: `v1`
@@ -59,6 +61,7 @@
 - `side_effects`: `NONE`
 
 ## Failure Modes + Reason Codes
+- unknown implementation dispatch: `K_FAIL_UNKNOWN_IMPLEMENTATION`
 - contract/field validation failure: `K_FAIL_EVENT_FIELDS_INVALID`
 - invalid or missing scope binding: `K_FAIL_TENANT_SCOPE_MISMATCH`
 - invalid session reference: `K_FAIL_SESSION_INVALID`
@@ -78,6 +81,15 @@
 - `PH1K_REBUILD_RUNTIME_CURRENT_ROWS` emits audit only in replay/diagnostic mode.
 - Read/guard capabilities emit audit only when explicitly run under verification traces.
 
+## Runtime Guardrails (Voice Substrate Boundary)
+- Unknown `implementation_id` must fail closed at runtime dispatch (`ph1_k.implementation_id`).
+- PH1.K interruption output is candidate-only (`InterruptCandidate`); cancellation policy remains in PH1.X.
+- PH1.K remains non-authoritative for identity/authority/execution decisions.
+
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1kVoiceRuntimeRepo`)
 - `docs/DB_WIRING/PH1_K.md`
+
+## Related Engine Boundary (`PH1.ENDPOINT`)
+- PH1.K runtime capabilities expose VAD/timing substrate signals that Selene OS may pass to PH1.ENDPOINT for optional boundary refinement.
+- PH1.K does not depend on PH1.ENDPOINT for runtime integrity; endpointing is an optional assist path only.

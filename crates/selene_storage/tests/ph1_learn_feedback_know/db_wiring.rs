@@ -365,3 +365,89 @@ fn at_learn_db_04_ledger_only_no_current_rebuild_required() {
         1
     );
 }
+
+#[test]
+fn at_learn_db_05_single_writer_artifact_types_enforced() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u, d);
+
+    let learn_vocab = s.ph1learn_artifact_commit_row(
+        MonotonicTimeNs(500),
+        "tenant_a".to_string(),
+        ArtifactScopeType::Tenant,
+        "tenant_a".to_string(),
+        ArtifactType::SttVocabPack,
+        ArtifactVersion(1),
+        "pkg_hash_learn_vocab".to_string(),
+        "blob://learn_vocab".to_string(),
+        "corr:29001".to_string(),
+        ArtifactStatus::Active,
+        "learn-owner-vocab".to_string(),
+    );
+    assert!(matches!(
+        learn_vocab,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let learn_pron = s.ph1learn_artifact_commit_row(
+        MonotonicTimeNs(501),
+        "tenant_a".to_string(),
+        ArtifactScopeType::Tenant,
+        "tenant_a".to_string(),
+        ArtifactType::TtsPronunciationPack,
+        ArtifactVersion(1),
+        "pkg_hash_learn_pron".to_string(),
+        "blob://learn_pron".to_string(),
+        "corr:29001b".to_string(),
+        ArtifactStatus::Active,
+        "learn-owner-pron".to_string(),
+    );
+    assert!(matches!(
+        learn_pron,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let know_routing = s.ph1know_dictionary_pack_commit_row(
+        MonotonicTimeNs(502),
+        "tenant_a".to_string(),
+        ArtifactType::SttRoutingPolicyPack,
+        ArtifactVersion(1),
+        "pkg_hash_know_routing".to_string(),
+        "blob://know_routing".to_string(),
+        "corr:29002".to_string(),
+        "know-owner-routing".to_string(),
+    );
+    assert!(matches!(
+        know_routing,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    s.ph1learn_artifact_commit_row(
+        MonotonicTimeNs(503),
+        "tenant_a".to_string(),
+        ArtifactScopeType::Tenant,
+        "tenant_a".to_string(),
+        ArtifactType::SttAdaptationProfile,
+        ArtifactVersion(1),
+        "pkg_hash_learn_ok".to_string(),
+        "blob://learn_ok".to_string(),
+        "corr:29003".to_string(),
+        ArtifactStatus::Active,
+        "learn-owner-ok".to_string(),
+    )
+    .unwrap();
+
+    s.ph1know_dictionary_pack_commit_row(
+        MonotonicTimeNs(504),
+        "tenant_a".to_string(),
+        ArtifactType::SttVocabPack,
+        ArtifactVersion(1),
+        "pkg_hash_know_ok".to_string(),
+        "blob://know_ok".to_string(),
+        "corr:29004".to_string(),
+        "know-owner-ok".to_string(),
+    )
+    .unwrap();
+}

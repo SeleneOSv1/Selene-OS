@@ -3,6 +3,8 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.VOICE.ID`
+- `implementation_id`: `PH1.VOICE.ID.001`
+- `active_implementation_ids`: `[PH1.VOICE.ID.001]`
 - `purpose`: Persist deterministic voice-enrollment session state, append-only enrollment samples, and stable voice profile artifacts for identity binding.
 - `version`: `v1`
 - `status`: `PASS`
@@ -78,6 +80,22 @@
   - `voice_profile_bindings(onboarding_session_id, device_id)` (PK)
 - scope rules: per onboarding-session/device pairing
 - why this read is required: deterministic completion and retrieval
+
+### Pronunciation robustness hints (related engine boundary)
+- reads: bounded pronunciation lexicon hints supplied by Selene OS from `PH1.PRON` (optional)
+- keys/joins used: `pack_id` + tenant/user scope checks in OS context
+- scope rules:
+  - tenant-scoped hints only by default
+  - user-scoped hints require explicit consent assertion before use
+- why this read is required: improve enrollment/verification robustness without changing identity authority rules
+
+### Wake context + risk hints (non-DB policy/runtime inputs)
+- reads: bounded runtime context from Selene OS (`wake_event`, `tts_playback_active`, `risk_signals[]`)
+- keys/joins used: n/a (in-memory contract inputs only)
+- scope rules:
+  - wake context, when present, is used only for bounded identity-window checks
+  - risk signals are advisory policy inputs; no authority changes
+- why this read is required: deterministic fail-closed identity decisions under stale/rejected wake context and high-echo risk conditions
 
 ## 4) Writes (outputs)
 
@@ -157,7 +175,7 @@ PH1.VOICE.ID enrollment writes must emit PH1.J audit events with:
   - `VOICE_ENROLL_START_DRAFT`
   - `VOICE_ENROLL_SAMPLE_COMMIT`
   - `VOICE_ENROLL_COMPLETE_COMMIT`
-  - `VOICE_ENROLL_DEFER_REMINDER_COMMIT`
+  - `VOICE_ENROLL_DEFER_COMMIT`
 - `reason_code(s)`:
   - `VID_FAIL_NO_SPEECH`
   - `VID_FAIL_LOW_CONFIDENCE`

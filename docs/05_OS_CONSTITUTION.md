@@ -90,7 +90,8 @@ Onboarding and Messaging Setup
 - `MESSAGE_COMPOSE_AND_SEND` process: `docs/BLUEPRINTS/MESSAGE_COMPOSE_AND_SEND.md`
 
 Learning Adaptation
-- `PH1.LEARNING_ADAPTIVE`: `docs/DB_WIRING/PH1_LEARNING_ADAPTIVE.md` + `docs/ECM/PH1_LEARNING_ADAPTIVE.md`
+- `PH1.LEARN`: `docs/DB_WIRING/PH1_LEARN.md` + `docs/ECM/PH1_LEARN.md`
+- `PH1.PAE`: `docs/DB_WIRING/PH1_PAE.md` + `docs/ECM/PH1_PAE.md`
 
 Process and Execution
 - Blueprints index: `docs/09_BLUEPRINT_REGISTRY.md`

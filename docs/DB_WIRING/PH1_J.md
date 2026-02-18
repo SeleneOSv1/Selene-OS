@@ -80,6 +80,19 @@ Payload policy:
 - `payload_min` allowlisted keys only
 - `evidence_ref` must be reference-only (no raw sensitive payloads)
 
+### related engine boundary: `PH1.KMS`
+- KMS-originated audit events must include opaque references only (`secret_ref`, `secret_handle`, `ephemeral_credential_ref`).
+- Raw secret material must never appear in `payload_min`, `evidence_ref`, or any PH1.J persisted field.
+
+### related engine boundary: `PH1.EXPORT`
+- Export completion events must include bounded metadata only (`export_artifact_id`, `export_hash`, `export_payload_ref`, `export_scope_ref`).
+- `export_hash` must be present for tamper-evident replay proofs.
+- Raw audio references are forbidden by default; any violation must fail closed before append.
+
+### related engine boundary: `PH1.EXPLAIN`
+- Explain-related audit context must remain reason-coded and bounded (`primary_reason_code`, optional related reason list, optional `verbatim_trigger` hash/reference).
+- PH1.J must never persist provider internals, threshold values, or chain-of-thought fields for PH1.EXPLAIN consumption paths.
+
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 Required by design lock:

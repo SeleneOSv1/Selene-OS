@@ -55,6 +55,9 @@
 - PH1.X outputs must always carry deterministic PH1.X reason_code values from the PH1.X contract path.
 - storage scope/idempotency failures are fail-closed and reason-coded in PH1.X audit emissions.
 - gating failures are deterministic and reason-coded (`X_FAIL_WORK_ORDER_SCOPE_INVALID`, `X_FAIL_LEASE_REQUIRED`, `X_FAIL_PENDING_STATE_INVALID`).
+- continuity failures are deterministic and reason-coded:
+  - `X_CONTINUITY_SPEAKER_MISMATCH`: active speaker mismatch against thread continuity; PH1.X returns one clarify and blocks dispatch.
+  - `X_CONTINUITY_SUBJECT_MISMATCH`: subject drift while pending exists; PH1.X returns one clarify and blocks dispatch.
 
 ## Audit Emission Requirements Per Capability
 - write capabilities emit PH1.J rows using:
@@ -78,3 +81,19 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1xConversationRepo`)
 - `docs/DB_WIRING/PH1_X.md`
+
+## Related Engine Boundary (`PH1.PRUNE`)
+- PH1.X clarify packet construction may consume PH1.PRUNE `selected_missing_field` when the turn has multiple missing fields.
+- PH1.X must not treat PH1.PRUNE as authoritative; PH1.X remains responsible for final move selection and fail-closed behavior.
+
+## Related Engine Boundary (`PH1.EXPLAIN`)
+- PH1.X can invoke PH1.EXPLAIN only for explicit explain triggers or accountability responses.
+- PH1.X must treat PH1.EXPLAIN as advisory output only; no authority or execution semantics are inferred from explanation text.
+
+## Related Engine Boundary (`PH1.EMO.GUIDE`)
+- PH1.X may consume PH1.EMO.GUIDE style-profile hints only when `EMO_GUIDE_PROFILE_VALIDATE` returns `validation_status=OK`.
+- PH1.X must treat PH1.EMO.GUIDE as advisory tone policy only; no authority, execution, truth, or confirmation semantics can be inferred from EMO.GUIDE output.
+
+## Related Engine Boundary (`PH1.PERSONA`)
+- PH1.X may consume PH1.PERSONA style/delivery profile hints only when `PERSONA_PROFILE_VALIDATE` returns `validation_status=OK`.
+- PH1.X must treat PH1.PERSONA as advisory tone/delivery policy only; no authority, execution, truth, or confirmation semantics can be inferred from PH1.PERSONA output.

@@ -6,6 +6,7 @@
 - `data_owned`: `audit_events` writes in PH1.TTS scope
 - `version`: `v1`
 - `status`: `ACTIVE`
+- `related_inputs`: Optional `pron_pack_ref` hints from `PH1.PRON` (tenant-scoped; user-scoped only with explicit consent)
 
 ## Capability List
 
@@ -61,3 +62,16 @@
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1TtsRepo`)
 - `docs/DB_WIRING/PH1_TTS.md`
+
+## Related Engine Boundary (`PH1.KNOW`)
+- PH1.TTS may consume Selene OS-curated PH1.KNOW pronunciation hints as optional render assist inputs.
+- PH1.TTS capability execution remains deterministic rendering-only and must not treat PH1.KNOW hints as semantic authority.
+- PH1.KNOW-derived hints must remain tenant-scoped and authorized-only in PH1.TTS capability execution.
+
+## Related Engine Boundary (`PH1.EMO.GUIDE`)
+- PH1.TTS may consume Selene OS-curated PH1.EMO.GUIDE style-profile hints only when EMO.GUIDE validation is `OK`.
+- PH1.TTS must treat PH1.EMO.GUIDE output as advisory tone policy only; it cannot modify factual meaning, intent outcomes, or execution ordering.
+
+## Related Engine Boundary (`PH1.PERSONA`)
+- PH1.TTS may consume Selene OS-curated PH1.PERSONA style/delivery profile hints only when `PERSONA_PROFILE_VALIDATE` is `OK`.
+- PH1.TTS must treat PH1.PERSONA output as advisory rendering policy only; it cannot modify factual meaning, intent outcomes, confirmation semantics, or execution ordering.

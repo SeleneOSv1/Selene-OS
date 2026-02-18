@@ -6,6 +6,32 @@ use crate::ph1k::{AudioStreamId, Confidence, PreRollBufferId};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1W_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1W_ENGINE_ID: &str = "PH1.W";
+pub const PH1W_IMPLEMENTATION_ID: &str = "PH1.W.001";
+pub const PH1W_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1W_IMPLEMENTATION_ID];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1wImplementation {
+    V001,
+}
+
+impl Ph1wImplementation {
+    pub const fn id(self) -> &'static str {
+        match self {
+            Ph1wImplementation::V001 => PH1W_IMPLEMENTATION_ID,
+        }
+    }
+
+    pub fn parse(implementation_id: &str) -> Result<Self, ContractViolation> {
+        match implementation_id {
+            PH1W_IMPLEMENTATION_ID => Ok(Ph1wImplementation::V001),
+            _ => Err(ContractViolation::InvalidValue {
+                field: "ph1_w.implementation_id",
+                reason: "unknown implementation_id",
+            }),
+        }
+    }
+}
 
 pub use crate::SessionState;
 
@@ -16,6 +42,8 @@ pub struct WakePolicyContext {
     pub do_not_disturb: bool,
     pub privacy_mode: bool,
     pub tts_playback_active: bool,
+    pub media_playback_active: bool,
+    pub explicit_trigger_only: bool,
 }
 
 impl WakePolicyContext {
@@ -25,12 +53,49 @@ impl WakePolicyContext {
         privacy_mode: bool,
         tts_playback_active: bool,
     ) -> Self {
+        Self::v1_with_media_and_trigger(
+            session_state,
+            do_not_disturb,
+            privacy_mode,
+            tts_playback_active,
+            false,
+            false,
+        )
+    }
+
+    pub fn v1_with_media(
+        session_state: SessionState,
+        do_not_disturb: bool,
+        privacy_mode: bool,
+        tts_playback_active: bool,
+        media_playback_active: bool,
+    ) -> Self {
+        Self::v1_with_media_and_trigger(
+            session_state,
+            do_not_disturb,
+            privacy_mode,
+            tts_playback_active,
+            media_playback_active,
+            false,
+        )
+    }
+
+    pub fn v1_with_media_and_trigger(
+        session_state: SessionState,
+        do_not_disturb: bool,
+        privacy_mode: bool,
+        tts_playback_active: bool,
+        media_playback_active: bool,
+        explicit_trigger_only: bool,
+    ) -> Self {
         Self {
             schema_version: PH1W_CONTRACT_VERSION,
             session_state,
             do_not_disturb,
             privacy_mode,
             tts_playback_active,
+            media_playback_active,
+            explicit_trigger_only,
         }
     }
 }
@@ -147,8 +212,10 @@ impl Validate for WakeArtifactPackage {
 pub struct WakeGateResults {
     pub g0_integrity_ok: bool,
     pub g1_activity_ok: bool,
+    pub g1a_utterance_start_ok: bool,
     pub g2_light_ok: bool,
     pub g3_strong_ok: bool,
+    pub g3a_liveness_ok: bool,
     pub g4_personalization_ok: bool,
     pub g5_policy_ok: bool,
 }
@@ -299,7 +366,7 @@ impl Validate for WakeDecision {
 pub const WAKE_ENROLL_START_DRAFT: &str = "WAKE_ENROLL_START_DRAFT";
 pub const WAKE_ENROLL_SAMPLE_COMMIT: &str = "WAKE_ENROLL_SAMPLE_COMMIT";
 pub const WAKE_ENROLL_COMPLETE_COMMIT: &str = "WAKE_ENROLL_COMPLETE_COMMIT";
-pub const WAKE_ENROLL_DEFER_REMINDER_COMMIT: &str = "WAKE_ENROLL_DEFER_REMINDER_COMMIT";
+pub const WAKE_ENROLL_DEFER_COMMIT: &str = "WAKE_ENROLL_DEFER_COMMIT";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WakeSimulationType {
@@ -513,24 +580,24 @@ impl Validate for WakeEnrollCompleteCommitRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WakeEnrollDeferReminderCommitRequest {
+pub struct WakeEnrollDeferCommitRequest {
     pub wake_enrollment_session_id: WakeEnrollmentSessionId,
     pub deferred_until: Option<MonotonicTimeNs>,
     pub reason_code: ReasonCodeId,
     pub idempotency_key: String,
 }
 
-impl Validate for WakeEnrollDeferReminderCommitRequest {
+impl Validate for WakeEnrollDeferCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.wake_enrollment_session_id.validate()?;
         if self.reason_code.0 == 0 {
             return Err(ContractViolation::InvalidValue {
-                field: "wake_enroll_defer_reminder_commit_request.reason_code",
+                field: "wake_enroll_defer_commit_request.reason_code",
                 reason: "must be > 0",
             });
         }
         validate_id(
-            "wake_enroll_defer_reminder_commit_request.idempotency_key",
+            "wake_enroll_defer_commit_request.idempotency_key",
             &self.idempotency_key,
             128,
         )?;
@@ -543,7 +610,7 @@ pub enum WakeRequest {
     EnrollStartDraft(WakeEnrollStartDraftRequest),
     EnrollSampleCommit(WakeEnrollSampleCommitRequest),
     EnrollCompleteCommit(WakeEnrollCompleteCommitRequest),
-    EnrollDeferReminderCommit(WakeEnrollDeferReminderCommitRequest),
+    EnrollDeferCommit(WakeEnrollDeferCommitRequest),
 }
 
 impl WakeRequest {
@@ -552,7 +619,7 @@ impl WakeRequest {
             WakeRequest::EnrollStartDraft(_) => WAKE_ENROLL_START_DRAFT,
             WakeRequest::EnrollSampleCommit(_) => WAKE_ENROLL_SAMPLE_COMMIT,
             WakeRequest::EnrollCompleteCommit(_) => WAKE_ENROLL_COMPLETE_COMMIT,
-            WakeRequest::EnrollDeferReminderCommit(_) => WAKE_ENROLL_DEFER_REMINDER_COMMIT,
+            WakeRequest::EnrollDeferCommit(_) => WAKE_ENROLL_DEFER_COMMIT,
         }
     }
 
@@ -561,7 +628,7 @@ impl WakeRequest {
             WakeRequest::EnrollStartDraft(_) => WakeSimulationType::Draft,
             WakeRequest::EnrollSampleCommit(_)
             | WakeRequest::EnrollCompleteCommit(_)
-            | WakeRequest::EnrollDeferReminderCommit(_) => WakeSimulationType::Commit,
+            | WakeRequest::EnrollDeferCommit(_) => WakeSimulationType::Commit,
         }
     }
 }
@@ -609,7 +676,7 @@ impl Validate for Ph1wRequest {
             WakeRequest::EnrollStartDraft(r) => r.validate(),
             WakeRequest::EnrollSampleCommit(r) => r.validate(),
             WakeRequest::EnrollCompleteCommit(r) => r.validate(),
-            WakeRequest::EnrollDeferReminderCommit(r) => r.validate(),
+            WakeRequest::EnrollDeferCommit(r) => r.validate(),
         }
     }
 }
@@ -961,8 +1028,10 @@ mod tests {
         let gates = WakeGateResults {
             g0_integrity_ok: true,
             g1_activity_ok: true,
+            g1a_utterance_start_ok: true,
             g2_light_ok: true,
             g3_strong_ok: true,
+            g3a_liveness_ok: true,
             g4_personalization_ok: true,
             g5_policy_ok: true,
         };
@@ -1001,5 +1070,36 @@ mod tests {
             MonotonicTimeNs(130),
         );
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn implementation_id_lock_is_v001() {
+        assert_eq!(PH1W_ENGINE_ID, "PH1.W");
+        assert_eq!(PH1W_IMPLEMENTATION_ID, "PH1.W.001");
+        assert_eq!(PH1W_ACTIVE_IMPLEMENTATION_IDS, &["PH1.W.001"]);
+        assert_eq!(Ph1wImplementation::V001.id(), PH1W_IMPLEMENTATION_ID);
+    }
+
+    #[test]
+    fn implementation_id_parser_fails_closed_on_unknown_values() {
+        assert_eq!(
+            Ph1wImplementation::parse("PH1.W.001").unwrap(),
+            Ph1wImplementation::V001
+        );
+        assert!(matches!(
+            Ph1wImplementation::parse("PH1.W.999"),
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_w.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
+    }
+
+    #[test]
+    fn wake_policy_context_can_enable_explicit_trigger_only() {
+        let p =
+            WakePolicyContext::v1_with_media_and_trigger(SessionState::Active, false, false, false, true, true);
+        assert!(p.media_playback_active);
+        assert!(p.explicit_trigger_only);
     }
 }

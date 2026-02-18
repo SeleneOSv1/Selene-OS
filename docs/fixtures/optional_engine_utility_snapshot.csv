@@ -1,0 +1,4 @@
+engine_id,decision_delta_rate,queue_learn_conversion_rate,no_value_rate,latency_cost_p95_ms,latency_cost_p99_ms,fail_streak_days
+PH1.PRUNE,0.11,0.15,0.22,16,28,0
+PH1.DIAG,0.04,0.27,0.34,18,33,0
+PH1.PREFETCH,0.09,0.21,0.18,14,26,1

@@ -329,3 +329,68 @@ impl Validate for ConversationTurnRecord {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_input() -> ConversationTurnInput {
+        ConversationTurnInput::v1(
+            MonotonicTimeNs(1),
+            CorrelationId(9601),
+            TurnId(1),
+            None,
+            UserId::new("f_contract_user_1").unwrap(),
+            None,
+            ConversationRole::User,
+            ConversationSource::TypedText,
+            "hello".to_string(),
+            "hash_1".to_string(),
+            PrivacyScope::PublicChat,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn at_f_contract_01_typed_text_requires_user_role() {
+        let mut input = base_input();
+        input.role = ConversationRole::Selene;
+        assert!(matches!(
+            input.validate(),
+            Err(ContractViolation::InvalidValue {
+                field: "conversation_turn_input.role",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn at_f_contract_02_tombstone_requires_placeholder_and_reason() {
+        let mut input = base_input();
+        input.role = ConversationRole::Selene;
+        input.source = ConversationSource::Tombstone;
+        input.text = "not redacted".to_string();
+        input.tombstone_of_conversation_turn_id = Some(ConversationTurnId(10));
+        input.tombstone_reason_code = Some(ReasonCodeId(1));
+
+        assert!(matches!(
+            input.validate(),
+            Err(ContractViolation::InvalidValue {
+                field: "conversation_turn_input.text",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn at_f_contract_03_record_from_input_roundtrip_is_valid() {
+        let input = base_input();
+        let record = ConversationTurnRecord::from_input_v1(ConversationTurnId(1), input).unwrap();
+        assert_eq!(record.conversation_turn_id, ConversationTurnId(1));
+        assert_eq!(record.source, ConversationSource::TypedText);
+        assert!(record.validate().is_ok());
+    }
+}

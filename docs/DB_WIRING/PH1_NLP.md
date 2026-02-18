@@ -126,3 +126,33 @@ Implementation references:
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 14 (`PH1.NLP` uses existing `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_nlp/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.PRUNE`)
+
+- When `required_fields_missing` contains multiple fields, Selene OS may invoke `PH1.PRUNE` before PH1.X clarify.
+- PH1.NLP remains the source of truth for missing field keys; PH1.PRUNE must not add keys not present in PH1.NLP output.
+- PH1.NLP persistence model is unchanged: audit rows remain PH1.NLP-owned writes only.
+
+## 8A) Related Engine Boundary (`PH1.SRL`)
+
+- PH1.SRL is the deterministic post-STT repair layer immediately upstream of PH1.NLP.
+- PH1.NLP may consume SRL repaired transcript/frame metadata only through Selene OS wiring.
+- PH1.NLP remains authoritative for final `intent_draft | clarify | chat` outputs; SRL never grants execution/authority outcomes.
+
+## 9) Related Engine Boundary (salience ranking)
+
+- Before PH1.NLP parse/normalization finalization, Selene OS may pass bounded salience/focus metadata derived from deterministic upstream context handling.
+- PH1.NLP remains authoritative for intent/clarify/chat outputs; salience hints are advisory only.
+- PH1.NLP audit payloads may include focus-span references only as bounded metadata and must remain deterministic.
+
+## 10) Related Engine Boundary (tangled utterance parsing)
+
+- When utterance structure remains tangled after SRL, PH1.NLP handles deterministic unravel + clarify flow internally.
+- PH1.NLP remains the only deterministic owner of final `intent_draft | clarify | chat` outputs.
+- If ambiguity remains after internal unravel, PH1.NLP must preserve the no-guess rule and keep missing/ambiguous fields explicit.
+
+## 11) Related Engine Boundary (`PH1.KNOW`)
+
+- Selene OS may pass PH1.KNOW dictionary hints into PH1.NLP as advisory context only.
+- PH1.NLP remains authoritative for deterministic `intent_draft | clarify | chat` outputs and must not treat PH1.KNOW hints as evidence replacement.
+- PH1.KNOW hints must stay tenant-scoped and authorized-only; unknown/unverified terms still require clarify when confidence is not HIGH.

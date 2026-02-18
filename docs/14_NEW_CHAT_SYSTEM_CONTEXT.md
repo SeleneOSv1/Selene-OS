@@ -36,7 +36,7 @@ Current key rows (all DONE):
 - `PH1.E`: db_wiring DONE, ecm DONE, sim_catalog DONE, blueprint DONE, blockers none
 - `PH1.LINK`: db_wiring DONE, ecm DONE, sim_catalog DONE, blueprint DONE, blockers none
 - `PH1.REM`: db_wiring DONE, ecm DONE, sim_catalog DONE, blueprint DONE, blockers none
-- `PH1.EMO`: db_wiring DONE, ecm DONE, sim_catalog DONE, blueprint DONE, blockers none
+- `PH1.EMO.GUIDE` + `PH1.EMO.CORE`: db_wiring DONE, ecm DONE, sim_catalog DONE, blueprint DONE, blockers none
 
 Current global matrix state:
 - `TODO|BLOCKER|WIP` sweep in `docs/COVERAGE_MATRIX.md` returns no matches.
@@ -53,7 +53,7 @@ Status:
   - LINK legacy-delivery simulation separation
   - ACTIVE blueprint discipline and simulation/capability resolution
   - PH1.E tool blueprint readiness
-  - PH1.REM + PH1.EMO 4-pack closure
+  - PH1.REM + PH1.EMO.GUIDE/PH1.EMO.CORE closure
   - kernel/db_wiring/sql parity sweeps
   - portable readiness audit runbook and process hardening
 
@@ -118,20 +118,23 @@ Coverage expectations now realized:
 - PH1.E `blueprints_referenced_by = [TOOL_TIME_QUERY, TOOL_WEATHER_QUERY]`
 - PH1.E blockers none
 
-## 7) PH1.REM and PH1.EMO (Locked)
+## 7) PH1.REM and PH1.EMO.GUIDE/PH1.EMO.CORE (Locked)
 PH1.REM canonical docs:
 - `docs/DB_WIRING/PH1_REM.md`
 - `docs/ECM/PH1_REM.md`
 - `docs/BLUEPRINTS/REMINDER_MANAGE.md`
 
-PH1.EMO canonical docs:
-- `docs/DB_WIRING/PH1_EMO.md`
-- `docs/ECM/PH1_EMO.md`
+PH1.EMO.GUIDE + PH1.EMO.CORE canonical docs:
+- `docs/DB_WIRING/PH1_EMO_GUIDE.md`
+- `docs/ECM/PH1_EMO_GUIDE.md`
+- `docs/DB_WIRING/PH1_EMO_CORE.md`
+- `docs/ECM/PH1_EMO_CORE.md`
 - `docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md`
 
 Engine registry planned rows point to canonical docs:
 - `PH1.REM` -> `docs/DB_WIRING/PH1_REM.md` + `docs/ECM/PH1_REM.md`
-- `PH1.EMO` -> `docs/DB_WIRING/PH1_EMO.md` + `docs/ECM/PH1_EMO.md`
+- `PH1.EMO.GUIDE` -> `docs/DB_WIRING/PH1_EMO_GUIDE.md` + `docs/ECM/PH1_EMO_GUIDE.md`
+- `PH1.EMO.CORE` -> `docs/DB_WIRING/PH1_EMO_CORE.md` + `docs/ECM/PH1_EMO_CORE.md`
 
 ## 8) Readiness Audit: Canonical Execution Path
 Canonical script:
@@ -208,5 +211,5 @@ Then open subsystem contracts as needed:
 - Link: `docs/DB_WIRING/PH1_LINK.md`, `docs/ECM/PH1_LINK.md`
 - Tools: `docs/DB_WIRING/PH1_E.md`, `docs/ECM/PH1_E.md`
 - Reminders: `docs/DB_WIRING/PH1_REM.md`, `docs/ECM/PH1_REM.md`
-- Emotion: `docs/DB_WIRING/PH1_EMO.md`, `docs/ECM/PH1_EMO.md`
+- Emotion: `docs/DB_WIRING/PH1_EMO_GUIDE.md`, `docs/ECM/PH1_EMO_GUIDE.md`, `docs/DB_WIRING/PH1_EMO_CORE.md`, `docs/ECM/PH1_EMO_CORE.md`
 - Memory: `docs/12_MEMORY_ARCHITECTURE.md`, `docs/DB_WIRING/PH1_M.md`, `docs/ECM/PH1_M.md`

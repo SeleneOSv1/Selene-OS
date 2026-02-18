@@ -258,6 +258,12 @@ Payload discipline:
 - `AT-MEM-DB-02` append-only enforced for all PH1.M ledgers
 - `AT-MEM-DB-03` deterministic idempotency dedupe
 - `AT-MEM-DB-04` current rebuild parity from ledgers
+
+## 9) Related Engine Boundary (`PH1.EXPLAIN`)
+
+- PH1.M may provide bounded `memory_candidate_ref` inputs to PH1.EXPLAIN (`evidence_quote`, optional provenance, sensitivity flag).
+- Sensitive memory evidence must remain gated by policy; PH1.EXPLAIN may refuse disclosure instead of quoting.
+- PH1.M never delegates authority to PH1.EXPLAIN; memory evidence is continuity context only.
 - `AT-MEM-DB-05` suppression enforcement prevents leakage
 - `AT-MEM-DB-06` emotional-thread writes remain tone-only
 - `AT-MEM-THREAD-01` Thread digest persists on close with pointer refs only (no raw dumps)

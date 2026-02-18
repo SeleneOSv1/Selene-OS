@@ -172,6 +172,199 @@ pub enum RetryAdvice {
     SpeakSlower,
     MoveCloser,
     QuietEnv,
+    SwitchToText,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RouteClassUsed {
+    OnDevice,
+    OnPrem,
+    CloudAllowed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SelectedSlot {
+    Primary,
+    Secondary,
+    Tertiary,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RoutingModeUsed {
+    Shadow,
+    Assist,
+    Lead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QualityBucket {
+    High,
+    Med,
+    Low,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1cAuditMeta {
+    pub schema_version: SchemaVersion,
+    pub route_class_used: RouteClassUsed,
+    pub attempt_count: u8,
+    pub candidate_count: u8,
+    pub selected_slot: SelectedSlot,
+    pub mode_used: RoutingModeUsed,
+    pub second_pass_used: bool,
+    pub total_latency_ms: u32,
+    pub quality_coverage_bucket: QualityBucket,
+    pub quality_confidence_bucket: QualityBucket,
+    pub quality_plausibility_bucket: QualityBucket,
+    pub tenant_vocabulary_pack_id: Option<String>,
+    pub user_vocabulary_pack_id: Option<String>,
+    pub policy_profile_id: Option<String>,
+    pub stt_routing_policy_pack_id: Option<String>,
+}
+
+impl Ph1cAuditMeta {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        route_class_used: RouteClassUsed,
+        attempt_count: u8,
+        candidate_count: u8,
+        selected_slot: SelectedSlot,
+        mode_used: RoutingModeUsed,
+        second_pass_used: bool,
+        total_latency_ms: u32,
+        quality_coverage_bucket: QualityBucket,
+        quality_confidence_bucket: QualityBucket,
+        quality_plausibility_bucket: QualityBucket,
+        tenant_vocabulary_pack_id: Option<String>,
+        user_vocabulary_pack_id: Option<String>,
+        policy_profile_id: Option<String>,
+        stt_routing_policy_pack_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let m = Self {
+            schema_version: PH1C_CONTRACT_VERSION,
+            route_class_used,
+            attempt_count,
+            candidate_count,
+            selected_slot,
+            mode_used,
+            second_pass_used,
+            total_latency_ms,
+            quality_coverage_bucket,
+            quality_confidence_bucket,
+            quality_plausibility_bucket,
+            tenant_vocabulary_pack_id,
+            user_vocabulary_pack_id,
+            policy_profile_id,
+            stt_routing_policy_pack_id,
+        };
+        m.validate()?;
+        Ok(m)
+    }
+}
+
+impl Validate for Ph1cAuditMeta {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1c_audit_meta.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        if self.candidate_count < self.attempt_count {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1c_audit_meta.candidate_count",
+                reason: "must be >= attempt_count",
+            });
+        }
+        for (field, value, max_len) in [
+            (
+                "ph1c_audit_meta.tenant_vocabulary_pack_id",
+                self.tenant_vocabulary_pack_id.as_ref(),
+                128usize,
+            ),
+            (
+                "ph1c_audit_meta.user_vocabulary_pack_id",
+                self.user_vocabulary_pack_id.as_ref(),
+                128usize,
+            ),
+            (
+                "ph1c_audit_meta.policy_profile_id",
+                self.policy_profile_id.as_ref(),
+                128usize,
+            ),
+            (
+                "ph1c_audit_meta.stt_routing_policy_pack_id",
+                self.stt_routing_policy_pack_id.as_ref(),
+                128usize,
+            ),
+        ] {
+            if let Some(v) = value {
+                if v.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field,
+                        reason: "must not be empty when provided",
+                    });
+                }
+                if v.len() > max_len {
+                    return Err(ContractViolation::InvalidValue {
+                        field,
+                        reason: "too long",
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncertainSpan {
+    pub start_byte: u32,
+    pub end_byte: u32,
+    pub field_hint: Option<String>,
+}
+
+impl UncertainSpan {
+    pub fn v1(
+        start_byte: u32,
+        end_byte: u32,
+        field_hint: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let s = Self {
+            start_byte,
+            end_byte,
+            field_hint,
+        };
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+impl Validate for UncertainSpan {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.end_byte <= self.start_byte {
+            return Err(ContractViolation::InvalidValue {
+                field: "uncertain_span.end_byte",
+                reason: "must be > start_byte",
+            });
+        }
+        if let Some(h) = &self.field_hint {
+            if h.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "uncertain_span.field_hint",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if h.len() > 64 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "uncertain_span.field_hint",
+                    reason: "must be <= 64 chars",
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,6 +373,8 @@ pub struct TranscriptOk {
     pub transcript_text: String,
     pub language_tag: LanguageTag,
     pub confidence_bucket: ConfidenceBucket,
+    pub uncertain_spans: Vec<UncertainSpan>,
+    pub audit_meta: Option<Ph1cAuditMeta>,
 }
 
 impl TranscriptOk {
@@ -188,11 +383,29 @@ impl TranscriptOk {
         language_tag: LanguageTag,
         confidence_bucket: ConfidenceBucket,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_metadata(
+            transcript_text,
+            language_tag,
+            confidence_bucket,
+            vec![],
+            None,
+        )
+    }
+
+    pub fn v1_with_metadata(
+        transcript_text: String,
+        language_tag: LanguageTag,
+        confidence_bucket: ConfidenceBucket,
+        uncertain_spans: Vec<UncertainSpan>,
+        audit_meta: Option<Ph1cAuditMeta>,
+    ) -> Result<Self, ContractViolation> {
         let out = Self {
             schema_version: PH1C_CONTRACT_VERSION,
             transcript_text,
             language_tag,
             confidence_bucket,
+            uncertain_spans,
+            audit_meta,
         };
         out.validate()?;
         Ok(out)
@@ -213,6 +426,32 @@ impl Validate for TranscriptOk {
                 reason: "must be <= 32768 bytes",
             });
         }
+        if self.uncertain_spans.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "transcript_ok.uncertain_spans",
+                reason: "must contain <= 8 entries",
+            });
+        }
+        for s in &self.uncertain_spans {
+            s.validate()?;
+            if (s.end_byte as usize) > self.transcript_text.len() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "transcript_ok.uncertain_spans.end_byte",
+                    reason: "must be <= transcript_text byte length",
+                });
+            }
+            if !self.transcript_text.is_char_boundary(s.start_byte as usize)
+                || !self.transcript_text.is_char_boundary(s.end_byte as usize)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "transcript_ok.uncertain_spans",
+                    reason: "start/end must align to UTF-8 char boundaries",
+                });
+            }
+        }
+        if let Some(m) = &self.audit_meta {
+            m.validate()?;
+        }
         Ok(())
     }
 }
@@ -222,15 +461,46 @@ pub struct TranscriptReject {
     pub schema_version: SchemaVersion,
     pub reason_code: ReasonCodeId,
     pub retry_advice: RetryAdvice,
+    pub audit_meta: Option<Ph1cAuditMeta>,
 }
 
 impl TranscriptReject {
     pub fn v1(reason_code: ReasonCodeId, retry_advice: RetryAdvice) -> Self {
+        Self::v1_with_metadata(reason_code, retry_advice, None)
+    }
+
+    pub fn v1_with_metadata(
+        reason_code: ReasonCodeId,
+        retry_advice: RetryAdvice,
+        audit_meta: Option<Ph1cAuditMeta>,
+    ) -> Self {
         Self {
             schema_version: PH1C_CONTRACT_VERSION,
             reason_code,
             retry_advice,
+            audit_meta,
         }
+    }
+}
+
+impl Validate for TranscriptReject {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "transcript_reject.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "transcript_reject.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        if let Some(m) = &self.audit_meta {
+            m.validate()?;
+        }
+        Ok(())
     }
 }
 

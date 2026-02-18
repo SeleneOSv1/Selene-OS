@@ -333,6 +333,26 @@ Stage C (Round 2-3): Consolidation + Retirement
 4. `PH1.PRIORITY` + `PH1.COST`: completed consolidation under `PH1.COST`; standalone `PH1.PRIORITY` retired.
 5. `PH1.ATTN` + `PH1.PRUNE` + `PH1.DIAG` + `PH1.PUZZLE`: completed consolidation to `PH1.PRUNE` + `PH1.DIAG`; standalone `PH1.ATTN` + `PH1.PUZZLE` retired.
 
+### 12.8 PH1.M Round-2 Hardening Addendum (2026-02-18)
+Status:
+- `DONE` (targeted hardening pass completed end-to-end).
+
+Scope completed:
+1. Added PH1.OS orchestration test coverage for memory outcome-utilization forwarding (`at_os_20`).
+2. Added PH1.OS fail-closed validation on memory outcome correlation mismatch (`at_os_21`).
+3. Added SimulationExecutor fail-closed guard proving memory simulation dispatch blocks when PH1.M wiring is disabled (`at_sim_exec_01j`).
+4. Revalidated memory path suites across PH1.NLP, PH1.X, SimulationExecutor, and PH1.M OS wiring.
+
+Proof command bundle:
+```bash
+cargo test -p selene_os ph1os -- --nocapture
+cargo test -p selene_os simulation_executor -- --nocapture
+cargo test -p selene_os ph1m -- --nocapture
+cargo test -p selene_os ph1x -- --nocapture
+cargo test -p selene_engines ph1n -- --nocapture
+cargo test -p selene_engines ph1x -- --nocapture
+```
+
 ## 13) Governed Self-Change Pipeline (Runtime Selene + Builder Selene)
 Purpose:
 - Enable Selene to improve code/config safely from factual signals.
@@ -1250,6 +1270,7 @@ Hard rule:
 Mission:
 - Run production soak checks on a recurring schedule with deterministic fail-closed alerting.
 - Ensure freshness regressions (including telemetry age breaches) trigger immediate alert + non-zero exit.
+- On failed ticks, dispatch a canonical `PH1.BCAST.001` failure alert bridge (`BCAST_CREATE_DRAFT` -> `BCAST_DELIVER_COMMIT`) so operator notification is automatic.
 
 Operational command (single tick):
 ```bash
@@ -1272,6 +1293,17 @@ What this command enforces:
 3. On failure:
    - classifies stale freshness as `PRODUCTION_SOAK_STALE_TELEMETRY` when output contains `STALE_CANARY_TELEMETRY`.
    - emits/records alert lines to `ALERT_LOG_FILE` (default `.dev/builder_production_soak_alerts.log`).
+   - dispatches BCAST alert bridge (default `BCAST_ON_FAIL=1`) via:
+     - `scripts/emit_builder_failure_bcast_alert.sh`
+     - simulation markers: `BCAST_CREATE_DRAFT` then `BCAST_DELIVER_COMMIT`
+     - default urgent recipient state progression: `SENT -> FOLLOWUP`
+   - app-thread log: `.dev/selene_app_inbox.log`
+   - BCAST ledger log: `.dev/builder_failure_bcast_ledger.log`
+   - routing state + ack evidence:
+     - `.dev/builder_failure_alert_routing.env`
+     - `.dev/builder_failure_alert_ack.log`
+     - `.dev/builder_failure_alert_routing_audit.log`
+   - desktop notification send attempt (`osascript`) for immediate local awareness.
 4. `FAIL_CLOSED=1` (default):
    - exits non-zero immediately on any failed tick.
 
@@ -1280,6 +1312,7 @@ Expected signals:
 CHECK_OK builder_production_soak_runner=tick_pass ...
 ALERT builder_production_soak_runner=PRODUCTION_SOAK_STALE_TELEMETRY ...
 ALERT builder_production_soak_runner=PRODUCTION_SOAK_CHECK_FAILED ...
+ALERT_BCAST_OK builder_production_soak_runner ...
 ```
 
 Guardrail command:
@@ -1327,12 +1360,18 @@ What this automation enforces:
    - `RUN_MODE=once`
    - `FAIL_CLOSED=1`
    - `ALERT_ON_FAIL=1`
+   - `BCAST_ON_FAIL=1`
 4. Uses watchdog command inside runtime bundle:
    - `~/.selene_automation/production_soak/scripts/check_builder_production_soak_watchdog.sh`
-5. Logs:
+5. Uses BCAST failure alert bridge inside runtime bundle:
+   - `~/.selene_automation/production_soak/scripts/emit_builder_failure_bcast_alert.sh`
+   - keeps BCAST ledger/app thread logs under `~/.selene_automation/production_soak/.dev/`
+   - raises desktop notification on failure by default.
+   - enforces routing-state files under runtime `.dev/` for delegated-recipient timeout fallback.
+6. Logs:
    - runner stdout/stderr under `~/.selene_automation/production_soak/launchd/`
    - alert/state logs under `~/.selene_automation/production_soak/.dev/`
-6. Scheduler lifecycle is explicit:
+7. Scheduler lifecycle is explicit:
    - setup (bootstrap + kickstart)
    - status (loaded/not loaded)
    - remove (bootout + plist delete; optional runtime bundle removal)
@@ -1351,3 +1390,57 @@ ENFORCE_BUILDER_PRODUCTION_SOAK_AUTOMATION=1 scripts/selene_design_readiness_aud
 
 Hard rule:
 - Production monitoring is treated as operationally incomplete until launchd automation is installed and status shows loaded.
+
+### 13.33 Failure Alert Recipient Routing Policy (Owner-First, Delegatable)
+Mission:
+- Keep failure alerts actionable without requiring manual log watching.
+- Start with owner-first routing, allow controlled delegation to another AP/person, and always fail back to JD (or JD-nominated Selene-company fallback) when delegated routing is ignored.
+
+Default routing:
+1. Initial recipient is the owner (you).
+2. Failure alerts use BCAST lifecycle delivery (Selene App first) and follow MHP behavior.
+
+Recipient change behavior:
+1. Owner can issue a direct command:
+   - "In future send these alerts to <person/AP>."
+2. Selene updates the active alert recipient to that person.
+3. Selene confirms the new target once and uses it for all future failure alerts.
+4. Operational command surface (deterministic):
+```bash
+# delegate alerts to a person/AP
+bash scripts/set_builder_failure_alert_recipient.sh set-delegate <user_id> <display_name> [timeout_minutes]
+
+# clear delegation and route back to JD owner path
+bash scripts/set_builder_failure_alert_recipient.sh clear-delegate
+
+# inspect active routing state
+bash scripts/set_builder_failure_alert_recipient.sh show
+```
+
+Ignore/fallback behavior:
+1. If delegated recipient ignores alerts (or does not respond through the expected BCAST flow), Selene must always route alerts back to:
+   - JD (owner), or
+   - JD-nominated fallback person inside Selene company.
+2. Selene sends JD/fallback recipient a short summary:
+   - issue
+   - attempted recipient
+   - fallback reason (ignored/no response)
+3. JD then chooses:
+   - keep owner routing
+   - choose a different recipient
+
+Hard rules:
+1. No silent recipient changes.
+2. No permanent delegation without explicit owner command.
+3. Delegated alert failure always returns control to JD or JD-nominated Selene-company fallback, and delegation is deactivated until JD re-delegates.
+4. Routing changes are auditable and reason-coded.
+5. Acknowledgement marker can be captured deterministically with:
+```bash
+bash scripts/ack_builder_failure_alert.sh <bcast_id> [recipient_user_id]
+```
+
+Simple communication requirement:
+- Alert messages must stay plain-language:
+  - "Issue is ..."
+  - "Fix is ..."
+  - "Should I proceed?"

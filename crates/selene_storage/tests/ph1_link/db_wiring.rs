@@ -12,8 +12,8 @@ use selene_kernel_contracts::ph1position::{
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError, TenantCompanyLifecycleState,
-    TenantCompanyRecord,
+    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
+    TenantCompanyLifecycleState, TenantCompanyRecord,
 };
 use selene_storage::repo::{Ph1LinkRepo, Ph1PositionRepo, Ph1fFoundationRepo};
 
@@ -606,7 +606,10 @@ fn at_link_db_11_missing_required_fields_recompute_is_schema_driven() {
         )
         .unwrap();
 
-    assert_eq!(link.missing_required_fields, vec!["working_hours".to_string()]);
+    assert_eq!(
+        link.missing_required_fields,
+        vec!["working_hours".to_string()]
+    );
 
     let mut updates = BTreeMap::new();
     updates.insert("working_hours".to_string(), "09:00-17:00".to_string());

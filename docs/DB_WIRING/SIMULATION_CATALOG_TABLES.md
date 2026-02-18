@@ -62,6 +62,9 @@ This row locks DB wiring for simulation catalog tables. Runtime activation/depre
 - tenant/work_order/correlation scope
 - reason-coded governance transitions
 
+Governance boundary:
+- activation/deprecation/rollback decisions for simulation definitions are owned by `PH1.GOV` (`GOV_POLICY_EVALUATE -> GOV_DECISION_COMPUTE`) before these table-state transitions are committed.
+
 ## 7) Acceptance Tests (DB Wiring Proof)
 
 - `AT-SIMCAT-DB-01` tenant isolation enforced

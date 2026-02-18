@@ -3,7 +3,7 @@
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestAction, CapabilityRequestLedgerEventInput, CapabilityRequestStatus,
     CapreqCreateDraftRequest, CapreqId, CapreqLifecycleResult, CapreqRequest, Ph1CapreqOk,
-    Ph1CapreqRequest, Ph1CapreqResponse,
+    Ph1CapreqRequest, Ph1CapreqResponse, PH1CAPREQ_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
@@ -12,13 +12,16 @@ pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
     // PH1.CAPREQ reason-code namespace. Values are placeholders until global registry finalization.
-    pub const CAPREQ_OK_CREATE_DRAFT: ReasonCodeId = ReasonCodeId(0xCA00_0001);
-    pub const CAPREQ_OK_SUBMIT_FOR_APPROVAL: ReasonCodeId = ReasonCodeId(0xCA00_0002);
-    pub const CAPREQ_OK_APPROVE: ReasonCodeId = ReasonCodeId(0xCA00_0003);
-    pub const CAPREQ_OK_REJECT: ReasonCodeId = ReasonCodeId(0xCA00_0004);
-    pub const CAPREQ_OK_FULFILL: ReasonCodeId = ReasonCodeId(0xCA00_0005);
-    pub const CAPREQ_OK_CANCEL: ReasonCodeId = ReasonCodeId(0xCA00_0006);
+    pub const CAPREQ_CREATED: ReasonCodeId = ReasonCodeId(0xCA00_0001);
+    pub const CAPREQ_SUBMITTED: ReasonCodeId = ReasonCodeId(0xCA00_0002);
+    pub const CAPREQ_APPROVED: ReasonCodeId = ReasonCodeId(0xCA00_0003);
+    pub const CAPREQ_REJECTED: ReasonCodeId = ReasonCodeId(0xCA00_0004);
+    pub const CAPREQ_FULFILLED: ReasonCodeId = ReasonCodeId(0xCA00_0005);
+    pub const CAPREQ_CANCELED: ReasonCodeId = ReasonCodeId(0xCA00_0006);
 }
+
+pub const PH1_CAPREQ_ENGINE_ID: &str = "PH1.CAPREQ";
+pub const PH1_CAPREQ_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1CAPREQ_IMPLEMENTATION_ID];
 
 #[derive(Debug, Default, Clone)]
 pub struct Ph1CapreqRuntime;
@@ -29,6 +32,16 @@ impl Ph1CapreqRuntime {
         store: &mut Ph1fStore,
         req: &Ph1CapreqRequest,
     ) -> Result<Ph1CapreqResponse, StorageError> {
+        self.run_for_implementation(store, PH1CAPREQ_IMPLEMENTATION_ID, req)
+    }
+
+    pub fn run_for_implementation(
+        &self,
+        store: &mut Ph1fStore,
+        implementation_id: &str,
+        req: &Ph1CapreqRequest,
+    ) -> Result<Ph1CapreqResponse, StorageError> {
+        validate_capreq_implementation_id(implementation_id)?;
         req.validate().map_err(StorageError::ContractViolation)?;
 
         match &req.request {
@@ -171,6 +184,18 @@ impl Ph1CapreqRuntime {
     }
 }
 
+fn validate_capreq_implementation_id(implementation_id: &str) -> Result<(), StorageError> {
+    match implementation_id {
+        PH1CAPREQ_IMPLEMENTATION_ID => Ok(()),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1capreq.implementation_id",
+                reason: "unknown implementation_id",
+            },
+        )),
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CapreqPayloadSnapshot<'a> {
     requested_capability_id: Option<&'a str>,
@@ -180,12 +205,12 @@ struct CapreqPayloadSnapshot<'a> {
 
 fn capreq_reason_code(action: CapabilityRequestAction) -> ReasonCodeId {
     match action {
-        CapabilityRequestAction::CreateDraft => reason_codes::CAPREQ_OK_CREATE_DRAFT,
-        CapabilityRequestAction::SubmitForApproval => reason_codes::CAPREQ_OK_SUBMIT_FOR_APPROVAL,
-        CapabilityRequestAction::Approve => reason_codes::CAPREQ_OK_APPROVE,
-        CapabilityRequestAction::Reject => reason_codes::CAPREQ_OK_REJECT,
-        CapabilityRequestAction::Fulfill => reason_codes::CAPREQ_OK_FULFILL,
-        CapabilityRequestAction::Cancel => reason_codes::CAPREQ_OK_CANCEL,
+        CapabilityRequestAction::CreateDraft => reason_codes::CAPREQ_CREATED,
+        CapabilityRequestAction::SubmitForApproval => reason_codes::CAPREQ_SUBMITTED,
+        CapabilityRequestAction::Approve => reason_codes::CAPREQ_APPROVED,
+        CapabilityRequestAction::Reject => reason_codes::CAPREQ_REJECTED,
+        CapabilityRequestAction::Fulfill => reason_codes::CAPREQ_FULFILLED,
+        CapabilityRequestAction::Cancel => reason_codes::CAPREQ_CANCELED,
     }
 }
 
@@ -364,7 +389,9 @@ mod tests {
         TenantId::new(id).unwrap()
     }
 
-    fn lifecycle_out(resp: Ph1CapreqResponse) -> selene_kernel_contracts::ph1capreq::CapreqLifecycleResult {
+    fn lifecycle_out(
+        resp: Ph1CapreqResponse,
+    ) -> selene_kernel_contracts::ph1capreq::CapreqLifecycleResult {
         match resp {
             Ph1CapreqResponse::Ok(ok) => ok.lifecycle_result,
             Ph1CapreqResponse::Refuse(_) => panic!("expected ok"),
@@ -522,5 +549,43 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn at_capreq_family_01_unknown_implementation_fails_closed() {
+        let rt = Ph1CapreqRuntime;
+        let mut store = Ph1fStore::new_in_memory();
+        let actor = seed_identity(&mut store, "tenant_d:user_dan");
+        let tenant_id = tenant("tenant_d");
+
+        let create = Ph1CapreqRequest::create_draft_v1(
+            CorrelationId(4),
+            TurnId(1),
+            MonotonicTimeNs(40),
+            actor,
+            tenant_id,
+            "PH1.CAPREQ.MANAGE".to_string(),
+            "scope:tenant_d".to_string(),
+            "family isolation".to_string(),
+            "capreq-create-4".to_string(),
+        )
+        .unwrap();
+
+        let out = rt.run_for_implementation(&mut store, "PH1.CAPREQ.999", &create);
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1capreq.implementation_id",
+                    reason: "unknown implementation_id",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_capreq_family_02_active_implementation_list_is_locked() {
+        assert_eq!(PH1_CAPREQ_ENGINE_ID, "PH1.CAPREQ");
+        assert_eq!(PH1_CAPREQ_ACTIVE_IMPLEMENTATION_IDS, &["PH1.CAPREQ.001"]);
     }
 }

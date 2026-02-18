@@ -375,6 +375,15 @@ pub enum Ph1ExplainResponse {
     ExplanationRefuse(ExplanationRefuse),
 }
 
+impl Validate for Ph1ExplainResponse {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        match self {
+            Ph1ExplainResponse::Explanation(out) => out.validate(),
+            Ph1ExplainResponse::ExplanationRefuse(out) => out.validate(),
+        }
+    }
+}
+
 fn sentence_terminator_count(s: &str) -> usize {
     s.chars().filter(|c| matches!(c, '.' | '!' | '?')).count()
 }
@@ -403,5 +412,27 @@ mod tests {
         let policy = PolicyContextRef::v1(false, false, SafetyTier::Standard);
         let input = Ph1ExplainInput::v1(req, ctx, None, policy).unwrap();
         assert_eq!(input.schema_version, PH1EXPLAIN_CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn response_validate_accepts_valid_variants() {
+        let ok = Ph1ExplainResponse::Explanation(
+            ExplanationOk::v1(
+                "I asked because I was missing the time.".to_string(),
+                ExplanationType::Why,
+                None,
+            )
+            .unwrap(),
+        );
+        assert!(ok.validate().is_ok());
+
+        let refuse = Ph1ExplainResponse::ExplanationRefuse(
+            ExplanationRefuse::v1(
+                ReasonCodeId(1),
+                "I can’t explain that out loud right now.".to_string(),
+            )
+            .unwrap(),
+        );
+        assert!(refuse.validate().is_ok());
     }
 }

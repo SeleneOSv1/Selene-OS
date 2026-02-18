@@ -52,9 +52,9 @@ Every engine slice must include:
 | 18 | D Output | PH1.TTS | PASS | TTS runtime DB wiring locked on existing `audit_events`; typed repo + DB tests completed |
 | 19 | E Tooling + Onboarding | PH1.E | PASS | Tool router DB wiring locked on existing `audit_events`; typed repo + DB tests completed |
 | 20 | E Tooling + Onboarding | PH1.LINK | PASS | Link lifecycle DB wiring locked: draft/token schema migration + typed repo + DB tests completed |
-| 21 | E Tooling + Onboarding | PH1.ONB.CORE / PH1.ONB.ORCH / PH1.ONB.BIZ | PASS | Onboarding session DB wiring locked on current PH1.F onboarding runtime state + tenant scope/idempotency guards; typed repo + DB tests completed |
+| 21 | E Tooling + Onboarding | PH1.ONB | PASS | Onboarding session DB wiring locked on current PH1.F onboarding runtime state + tenant scope/idempotency guards; typed repo + DB tests completed |
 | 22 | E Tooling + Onboarding | PH1.POSITION | PASS | Position DB wiring locked on tenant-scoped current + append-only lifecycle ledger; typed repo + DB tests completed |
-| 23 | F Memory + Learning | PH1.M | PASS | Memory DB wiring locked on existing `memory_ledger` + rebuildable `memory_current`; typed repo + DB tests completed |
+| 23 | F Memory + Learning | PH1.M | PASS | PH1.M vNext DB wiring locked: legacy `memory_ledger`/`memory_current` plus suppression/emotional/metrics/thread-digest/graph/archive/retention tables (`0021_ph1m_vnext_memory_tables.sql`); typed repo + DB tests completed |
 | 24 | F Memory + Learning | PH1.PERSONA | PASS | Persona DB wiring locked on existing `audit_events` with tenant/device scope guards; typed repo + DB tests completed |
 | 25 | F Memory + Learning | PH1.LEARN / PH1.FEEDBACK / PH1.KNOW (if in MVP scope) | PASS | Audit-backed feedback events + artifact-ledger learning/dictionary packs wired; typed repo + DB tests completed |
 | 26 | G Capability Requests | PH1.CAPREQ | PASS | CAPREQ reopened as active slice: kernel/storage contracts + migration + typed repo + DB wiring tests completed (`AT-CAPREQ-DB-01..04`) |

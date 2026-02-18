@@ -4,7 +4,7 @@
 - engine_id: PH1.VISION
 - layer: Evidence Analyzer
 - authority: Non-Authoritative
-- role: Image evidence extraction
+- role: Visual perception evidence extraction (image/screenshot/diagram)
 - placement: TURN_OPTIONAL
 
 ## B) Ownership
@@ -19,12 +19,14 @@
 - Must never grant authority, alter permissions, or bypass Access + Simulation ordering.
 - Must never perform side effects, tool execution, or engine-to-engine direct calls.
 - Read-only analyzer constraint: no camera/tool execution; extraction only from OS-provided evidence.
+- Opt-in only: this engine runs only when explicitly enabled by policy/runtime configuration.
+- No inference beyond visible content: outputs must be evidence-backed to what is present in the provided visual input.
 
 ## D) Wiring
-- Invoked_by: OS step: when user-provided image evidence is attached
+- Invoked_by: OS step: when user-provided visual evidence is attached
 - Inputs_from: Selene OS image refs/blobs only
-- Outputs_to: vision_evidence_bundle returned to Selene OS and forwarded to PH1_CONTEXT/PH1.NLP
-- Invocation_condition: OPTIONAL(image evidence present)
+- Outputs_to: vision_evidence_bundle returned to Selene OS and forwarded to PH1_MULTI/PH1_CONTEXT
+- Invocation_condition: OPTIONAL(visual evidence present AND vision opt-in enabled)
 - Not allowed:
   - Engine-to-engine direct calls.
   - Any execution commit or authority mutation.
@@ -33,3 +35,5 @@
 ## E) Acceptance Tests
 - AT-VISION-01: Selene OS can invoke capability_id and output is schema-valid.
 - AT-VISION-02: Output is bounded and deterministic ordering is preserved.
+- AT-VISION-03: Engine is not invoked when vision opt-in is disabled.
+- AT-VISION-04: Outputs include only visible-content evidence (no inferred unseen facts).

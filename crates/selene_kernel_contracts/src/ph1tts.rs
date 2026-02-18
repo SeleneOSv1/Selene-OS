@@ -6,6 +6,7 @@ use crate::MonotonicTimeNs;
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1TTS_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1TTS_ENGINE_ID: &str = "PH1.TTS";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnswerId(pub u128);
@@ -33,6 +34,24 @@ impl VoiceId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Validate for VoiceId {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.0.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.0.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id",
+                reason: "must be <= 64 chars",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -80,6 +99,24 @@ impl VoicePrefRef {
     }
 }
 
+impl Validate for VoicePrefRef {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.0.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_pref_ref",
+                reason: "must not be empty",
+            });
+        }
+        if self.0.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_pref_ref",
+                reason: "must be <= 64 chars",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoiceRenderPlan {
     pub schema_version: SchemaVersion,
@@ -106,6 +143,27 @@ impl VoiceRenderPlan {
             language_tag,
             voice_pref_ref,
         }
+    }
+}
+
+impl Validate for VoiceRenderPlan {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1TTS_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_render_plan.schema_version",
+                reason: "must match PH1TTS_CONTRACT_VERSION",
+            });
+        }
+        if self.modifiers.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_render_plan.modifiers",
+                reason: "must be <= 8 entries",
+            });
+        }
+        if let Some(v) = &self.voice_pref_ref {
+            v.validate()?;
+        }
+        Ok(())
     }
 }
 
@@ -151,6 +209,7 @@ impl Validate for Ph1ttsRequest {
                 reason: "must match PH1TTS_CONTRACT_VERSION",
             });
         }
+        self.render_plan.validate()?;
         self.policy_context_ref.validate()?;
         if self.response_text.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
@@ -241,12 +300,38 @@ pub struct TtsStarted {
     pub t_started: MonotonicTimeNs,
 }
 
+impl Validate for TtsStarted {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1TTS_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_started.schema_version",
+                reason: "must match PH1TTS_CONTRACT_VERSION",
+            });
+        }
+        self.voice_id.validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TtsProgress {
     pub schema_version: SchemaVersion,
     pub answer_id: AnswerId,
     pub ms_played: u32,
     pub spoken_cursor: SpokenCursor,
+}
+
+impl Validate for TtsProgress {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1TTS_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_progress.schema_version",
+                reason: "must match PH1TTS_CONTRACT_VERSION",
+            });
+        }
+        self.spoken_cursor.validate()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,11 +343,42 @@ pub struct TtsStopped {
     pub spoken_cursor: SpokenCursor,
 }
 
+impl Validate for TtsStopped {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1TTS_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_stopped.schema_version",
+                reason: "must match PH1TTS_CONTRACT_VERSION",
+            });
+        }
+        self.spoken_cursor.validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TtsFailed {
     pub schema_version: SchemaVersion,
     pub answer_id: AnswerId,
     pub reason_code: ReasonCodeId,
+}
+
+impl Validate for TtsFailed {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1TTS_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_failed.schema_version",
+                reason: "must match PH1TTS_CONTRACT_VERSION",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "tts_failed.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -271,4 +387,105 @@ pub enum Ph1ttsEvent {
     Progress(TtsProgress),
     Stopped(TtsStopped),
     Failed(TtsFailed),
+}
+
+impl Validate for Ph1ttsEvent {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        match self {
+            Ph1ttsEvent::Started(v) => v.validate(),
+            Ph1ttsEvent::Progress(v) => v.validate(),
+            Ph1ttsEvent::Stopped(v) => v.validate(),
+            Ph1ttsEvent::Failed(v) => v.validate(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ph1c::{LanguageTag, SessionStateRef};
+    use crate::ph1d::{PolicyContextRef, SafetyTier};
+    use crate::ph1w::SessionState;
+
+    fn plan() -> VoiceRenderPlan {
+        VoiceRenderPlan::v1(
+            StyleProfileRef::Gentle,
+            vec![StyleModifier::Warm],
+            BargeInPolicyRef::Standard,
+            LanguageTag::new("en").unwrap(),
+            None,
+        )
+    }
+
+    fn session_state_ref() -> SessionStateRef {
+        SessionStateRef::v1(SessionState::Active, true)
+    }
+
+    #[test]
+    fn request_rejects_empty_text() {
+        let req = Ph1ttsRequest::v1(
+            AnswerId(1),
+            "   ".to_string(),
+            TtsControl::Play,
+            session_state_ref(),
+            plan(),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        );
+        assert!(req.is_err());
+    }
+
+    #[test]
+    fn request_rejects_render_plan_modifier_overflow() {
+        let req = Ph1ttsRequest::v1(
+            AnswerId(1),
+            "hello".to_string(),
+            TtsControl::Play,
+            session_state_ref(),
+            VoiceRenderPlan::v1(
+                StyleProfileRef::Gentle,
+                vec![
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                    StyleModifier::Warm,
+                ],
+                BargeInPolicyRef::Standard,
+                LanguageTag::new("en").unwrap(),
+                None,
+            ),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        );
+        assert!(req.is_err());
+    }
+
+    #[test]
+    fn tts_failed_reason_code_must_be_non_zero() {
+        let ev = Ph1ttsEvent::Failed(TtsFailed {
+            schema_version: PH1TTS_CONTRACT_VERSION,
+            answer_id: AnswerId(1),
+            reason_code: ReasonCodeId(0),
+        });
+        assert!(ev.validate().is_err());
+    }
+
+    #[test]
+    fn tts_progress_requires_valid_spoken_cursor() {
+        let ev = Ph1ttsEvent::Progress(TtsProgress {
+            schema_version: PH1TTS_CONTRACT_VERSION,
+            answer_id: AnswerId(1),
+            ms_played: 10,
+            spoken_cursor: SpokenCursor {
+                schema_version: PH1TTS_CONTRACT_VERSION,
+                byte_offset: 0,
+                segments_spoken: 0,
+                segments_total: 0,
+            },
+        });
+        assert!(ev.validate().is_err());
+    }
 }

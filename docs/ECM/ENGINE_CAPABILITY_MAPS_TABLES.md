@@ -46,6 +46,9 @@
   - `idempotency_key`
 - Rebuild/read operations emit audit only in explicit governance/replay flows.
 
+## Related Governance Boundary
+- `PH1.GOV` owns deterministic activation/deprecation/rollback decision logic for capability-map definitions before `ECM_APPEND_ENGINE_CAPABILITY_MAP_ROW` transitions are allowed.
+
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`EngineCapabilityMapsTablesRepo`)
 - `docs/DB_WIRING/ENGINE_CAPABILITY_MAPS_TABLES.md`

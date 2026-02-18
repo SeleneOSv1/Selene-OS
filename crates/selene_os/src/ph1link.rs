@@ -133,8 +133,8 @@ impl Ph1LinkRuntime {
             }
 
             selene_kernel_contracts::ph1link::LinkRequest::InviteDraftUpdateCommit(r) => {
-                let (draft_id, draft_status, missing_required_fields) =
-                    store.ph1link_invite_draft_update_commit(
+                let (draft_id, draft_status, missing_required_fields) = store
+                    .ph1link_invite_draft_update_commit(
                         req.now,
                         r.draft_id.clone(),
                         r.creator_update_fields.clone(),
@@ -158,8 +158,9 @@ impl Ph1LinkRuntime {
                     Some(format!("link_draft_update:{}", draft_id.as_str())),
                 )?;
 
-                let out = LinkDraftUpdateResult::v1(draft_id, draft_status, missing_required_fields)
-                    .map_err(StorageError::ContractViolation)?;
+                let out =
+                    LinkDraftUpdateResult::v1(draft_id, draft_status, missing_required_fields)
+                        .map_err(StorageError::ContractViolation)?;
 
                 let ok = Ph1LinkOk {
                     schema_version: PH1LINK_CONTRACT_VERSION,
@@ -240,9 +241,13 @@ impl Ph1LinkRuntime {
             }
 
             selene_kernel_contracts::ph1link::LinkRequest::InviteRevokeRevoke(r) => {
-                if let Err(err) = store.ph1link_invite_revoke_revoke(r.token_id.clone(), r.reason.clone()) {
-                    if let StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason })
-                        = &err
+                if let Err(err) =
+                    store.ph1link_invite_revoke_revoke(r.token_id.clone(), r.reason.clone())
+                {
+                    if let StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field,
+                        reason,
+                    }) = &err
                     {
                         if *field == "ph1link_invite_revoke_revoke.ap_override_ref" {
                             let refuse = Ph1LinkRefuse::v1(

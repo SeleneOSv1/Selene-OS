@@ -9,6 +9,10 @@
 - `ownership_boundary`: PH1.ONB executes pinned requirements schema only; schema definition/activation ownership remains outside PH1.ONB (position-linked schema ownership is PH1.POSITION).
 - `prompt_boundary`: ONB required-question prompting is derived from pinned schema field specs and required gates only; no hardcoded ONB-only requirement branch.
 
+Canonical naming note:
+- `PH1.ONB` is the only wired onboarding engine id in this repo.
+- `PH1.ONB.CORE.001`, `PH1.ONB.ORCH`, `PH1.ONB.ORCH.001`, and `PH1.ONB.BIZ.001` are legacy/spec aliases and do not map to separate runtime modules.
+
 ## Capability List
 
 ### `PH1ONB_SESSION_START_DRAFT_ROW`

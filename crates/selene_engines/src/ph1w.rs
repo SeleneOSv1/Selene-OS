@@ -5,8 +5,9 @@ use selene_kernel_contracts::ph1k::{
 };
 use selene_kernel_contracts::ph1w::{
     BoundedAudioSegmentRef, SessionState, WakeDecision, WakeGateResults, WakePolicyContext,
+    PH1W_IMPLEMENTATION_ID,
 };
-use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -17,16 +18,22 @@ pub mod reason_codes {
     pub const W_FAIL_G0_TIMING_UNTRUSTWORTHY: ReasonCodeId = ReasonCodeId(0x5700_0003);
     pub const W_FAIL_G0_CONTRACT_MISMATCH: ReasonCodeId = ReasonCodeId(0x5700_0004);
     pub const W_FAIL_G1_NOISE: ReasonCodeId = ReasonCodeId(0x5700_0010);
+    pub const W_FAIL_G1A_NOT_UTTERANCE_START: ReasonCodeId = ReasonCodeId(0x5700_0011);
     pub const W_FAIL_G2_NOT_WAKE_LIKE: ReasonCodeId = ReasonCodeId(0x5700_0020);
     pub const W_FAIL_G3_SCORE_LOW: ReasonCodeId = ReasonCodeId(0x5700_0030);
     pub const W_FAIL_G3_UNSTABLE_SCORE: ReasonCodeId = ReasonCodeId(0x5700_0031);
     pub const W_FAIL_G3_ALIGNMENT: ReasonCodeId = ReasonCodeId(0x5700_0032);
+    pub const W_FAIL_G3A_REPLAY_SUSPECTED: ReasonCodeId = ReasonCodeId(0x5700_0033);
     pub const W_FAIL_G4_USER_MISMATCH: ReasonCodeId = ReasonCodeId(0x5700_0040);
     pub const W_FAIL_G5_POLICY_BLOCKED: ReasonCodeId = ReasonCodeId(0x5700_0050);
+    pub const W_SUPPRESS_EXPLICIT_TRIGGER_ONLY: ReasonCodeId = ReasonCodeId(0x5700_0051);
 
     pub const W_WAKE_ACCEPTED: ReasonCodeId = ReasonCodeId(0x5700_0100);
     pub const W_WAKE_REJECTED_TIMEOUT: ReasonCodeId = ReasonCodeId(0x5700_0101);
 }
+
+pub const PH1_W_ENGINE_ID: &str = "PH1.W";
+pub const PH1_W_ACTIVE_IMPLEMENTATION_IDS: &[&str] = &[PH1W_IMPLEMENTATION_ID];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ph1wState {
@@ -49,6 +56,8 @@ pub struct WakeConfig {
     pub min_voiced_ms: u32,
     pub min_vad_confidence: f32,
     pub min_speech_likeness: f32,
+    pub min_preceding_silence_ms: u32,
+    pub max_utterance_start_offset_ms: u32,
 
     pub light_score_threshold: f32,
     pub strong_score_threshold: f32,
@@ -56,6 +65,8 @@ pub struct WakeConfig {
     pub strong_stable_required: u8,
     pub strong_stable_required_tts: u8,
     pub require_personalization_when_tts_playback_active: bool,
+    pub require_liveness_gate: bool,
+    pub require_near_field_when_media_playback_active: bool,
 
     pub max_jitter_ms: f32,
     pub max_drift_ppm: f32,
@@ -72,17 +83,28 @@ impl WakeConfig {
             min_voiced_ms: 120,
             min_vad_confidence: 0.60,
             min_speech_likeness: 0.60,
+            min_preceding_silence_ms: 200,
+            max_utterance_start_offset_ms: 1200,
             light_score_threshold: 0.50,
             strong_score_threshold: 0.75,
             strong_score_threshold_tts: 0.85,
             strong_stable_required: 2,
             strong_stable_required_tts: 3,
             require_personalization_when_tts_playback_active: true,
+            require_liveness_gate: true,
+            require_near_field_when_media_playback_active: true,
             max_jitter_ms: 40.0,
             max_drift_ppm: 200.0,
             max_underruns: 0,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceLivenessHint {
+    Live,
+    ReplaySuspected,
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +114,8 @@ pub struct WakeStepInput {
     pub processed_stream: AudioStreamRef,
     pub pre_roll: PreRollBufferRef,
     pub vad: Option<VadEvent>,
+    pub preceding_silence_ms: Option<u32>,
+    pub utterance_start_offset_ms: Option<u32>,
     pub timing: TimingStats,
     pub device_state: DeviceState,
     pub aec_stable: bool,
@@ -99,6 +123,8 @@ pub struct WakeStepInput {
     pub strong_score: Option<Confidence>,
     pub strong_alignment_ok: bool,
     pub speaker_match_ok: bool,
+    pub source_liveness_hint: SourceLivenessHint,
+    pub near_field_speech_hint: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,9 +171,29 @@ impl Ph1wRuntime {
     }
 
     pub fn step(&mut self, input: WakeStepInput) -> Vec<Ph1wOutputEvent> {
+        self.step_for_implementation(PH1W_IMPLEMENTATION_ID, input)
+            .expect("PH1.W.001 must be valid")
+    }
+
+    pub fn step_for_implementation(
+        &mut self,
+        implementation_id: &str,
+        input: WakeStepInput,
+    ) -> Result<Vec<Ph1wOutputEvent>, ContractViolation> {
+        if implementation_id != PH1W_IMPLEMENTATION_ID {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1_w.implementation_id",
+                reason: "unknown implementation_id",
+            });
+        }
+        Ok(self.evaluate(input))
+    }
+
+    fn evaluate(&mut self, input: WakeStepInput) -> Vec<Ph1wOutputEvent> {
         let mut out = Vec::new();
 
-        let policy_disarmed = policy_disarmed(input.policy);
+        let policy_disarm_reason = policy_disarm_reason(input.policy);
+        let policy_disarmed = policy_disarm_reason.is_some();
         let policy_ok = gate5_policy_ok(input.policy);
 
         let integrity_fail = classify_gate0_failure(&self.config, &input);
@@ -159,8 +205,10 @@ impl Ph1wRuntime {
                         WakeGateResults {
                             g0_integrity_ok: false,
                             g1_activity_ok: false,
+                            g1a_utterance_start_ok: false,
                             g2_light_ok: false,
                             g3_strong_ok: false,
+                            g3a_liveness_ok: false,
                             g4_personalization_ok: false,
                             g5_policy_ok: policy_ok,
                         },
@@ -197,6 +245,27 @@ impl Ph1wRuntime {
 
         // Policy can disarm wake regardless of other conditions.
         if policy_disarmed {
+            if self.state == Ph1wState::Candidate {
+                out.push(Ph1wOutputEvent::Decision(
+                    WakeDecision::reject_v1(
+                        policy_disarm_reason.unwrap_or(reason_codes::W_FAIL_G5_POLICY_BLOCKED),
+                        WakeGateResults {
+                            g0_integrity_ok: true,
+                            g1_activity_ok: false,
+                            g1a_utterance_start_ok: false,
+                            g2_light_ok: false,
+                            g3_strong_ok: false,
+                            g3a_liveness_ok: false,
+                            g4_personalization_ok: false,
+                            g5_policy_ok: false,
+                        },
+                        input.now,
+                        self.candidate.as_ref().and_then(|c| c.last_light_score),
+                        self.candidate.as_ref().and_then(|c| c.last_strong_score),
+                    )
+                    .expect("WakeDecision::reject_v1 should be constructible"),
+                ));
+            }
             self.candidate = None;
             self.capture = None;
             self.cooldown_until = None;
@@ -250,11 +319,12 @@ impl Ph1wRuntime {
         // Core state machine.
         match self.state {
             Ph1wState::ArmedIdle => {
-                // Start candidate only when Gate-0, Gate-1, Gate-2 pass.
+                // Start candidate only when Gate-0, Gate-1, Gate-1A, and Gate-2 pass.
                 let g1_ok = gate1_activity_ok(&self.config, &input);
+                let g1a_ok = gate1a_utterance_start_ok(&self.config, &input);
                 let g2_ok = gate2_light_ok(&self.config, input.light_score);
 
-                if g1_ok && g2_ok {
+                if g1_ok && g1a_ok && g2_ok {
                     let t_deadline = MonotonicTimeNs(
                         input
                             .now
@@ -323,10 +393,11 @@ impl Ph1wRuntime {
                 }
 
                 let g3_ok = cand.strong_stable_count >= strong_required;
+                let g3a_ok = gate3a_liveness_ok(&self.config, &input);
                 let g4_ok = gate4_personalization_ok(&self.config, &input);
                 let g5_ok = policy_ok;
 
-                if g3_ok && g4_ok && g5_ok {
+                if g3_ok && g3a_ok && g4_ok && g5_ok {
                     // CONFIRMED -> CAPTURE immediately (bounded segment ref).
                     out.extend(self.transition_to(Ph1wState::Confirmed));
 
@@ -349,8 +420,10 @@ impl Ph1wRuntime {
                     let gates = WakeGateResults {
                         g0_integrity_ok: true,
                         g1_activity_ok: true,
+                        g1a_utterance_start_ok: true,
                         g2_light_ok: true,
                         g3_strong_ok: true,
+                        g3a_liveness_ok: true,
                         g4_personalization_ok: true,
                         g5_policy_ok: true,
                     };
@@ -397,9 +470,17 @@ fn ms_to_ns(ms: u32) -> u64 {
 }
 
 fn policy_disarmed(policy: WakePolicyContext) -> bool {
-    matches!(policy.session_state, SessionState::Closed)
-        || policy.do_not_disturb
-        || policy.privacy_mode
+    policy_disarm_reason(policy).is_some()
+}
+
+fn policy_disarm_reason(policy: WakePolicyContext) -> Option<ReasonCodeId> {
+    if policy.explicit_trigger_only {
+        return Some(reason_codes::W_SUPPRESS_EXPLICIT_TRIGGER_ONLY);
+    }
+    if matches!(policy.session_state, SessionState::Closed) || policy.do_not_disturb || policy.privacy_mode {
+        return Some(reason_codes::W_FAIL_G5_POLICY_BLOCKED);
+    }
+    None
 }
 
 fn gate5_policy_ok(policy: WakePolicyContext) -> bool {
@@ -450,8 +531,35 @@ fn gate1_activity_ok(config: &WakeConfig, input: &WakeStepInput) -> bool {
         && vad.speech_likeness.0 >= config.min_speech_likeness
 }
 
+fn gate1a_utterance_start_ok(config: &WakeConfig, input: &WakeStepInput) -> bool {
+    let Some(preceding_silence_ms) = input.preceding_silence_ms else {
+        return false;
+    };
+    let Some(utterance_start_offset_ms) = input.utterance_start_offset_ms else {
+        return false;
+    };
+    preceding_silence_ms >= config.min_preceding_silence_ms
+        && utterance_start_offset_ms <= config.max_utterance_start_offset_ms
+}
+
 fn gate2_light_ok(config: &WakeConfig, light_score: Option<Confidence>) -> bool {
     light_score.is_some_and(|s| s.0 >= config.light_score_threshold)
+}
+
+fn gate3a_liveness_ok(config: &WakeConfig, input: &WakeStepInput) -> bool {
+    if !config.require_liveness_gate {
+        return true;
+    }
+    if input.source_liveness_hint == SourceLivenessHint::ReplaySuspected {
+        return false;
+    }
+    if input.policy.tts_playback_active && !input.aec_stable {
+        return false;
+    }
+    if input.policy.media_playback_active && config.require_near_field_when_media_playback_active {
+        return input.near_field_speech_hint.unwrap_or(false);
+    }
+    true
 }
 
 fn gate4_personalization_ok(config: &WakeConfig, input: &WakeStepInput) -> bool {
@@ -467,7 +575,9 @@ fn classify_candidate_reject(
     cand: &Candidate,
 ) -> (ReasonCodeId, WakeGateResults) {
     let g5_ok = gate5_policy_ok(input.policy);
+    let g1a_ok = gate1a_utterance_start_ok(config, input);
     let g4_ok = gate4_personalization_ok(config, input);
+    let g3a_ok = gate3a_liveness_ok(config, input);
 
     let (strong_threshold, strong_required) = if input.policy.tts_playback_active {
         (
@@ -486,8 +596,12 @@ fn classify_candidate_reject(
 
     let rc = if !g5_ok {
         reason_codes::W_FAIL_G5_POLICY_BLOCKED
+    } else if !g1a_ok {
+        reason_codes::W_FAIL_G1A_NOT_UTTERANCE_START
     } else if !g4_ok {
         reason_codes::W_FAIL_G4_USER_MISMATCH
+    } else if !g3a_ok {
+        reason_codes::W_FAIL_G3A_REPLAY_SUSPECTED
     } else if !input.strong_alignment_ok && had_strong && strong_above {
         reason_codes::W_FAIL_G3_ALIGNMENT
     } else if had_strong && strong_above {
@@ -503,8 +617,10 @@ fn classify_candidate_reject(
         WakeGateResults {
             g0_integrity_ok: true,
             g1_activity_ok: true,
+            g1a_utterance_start_ok: g1a_ok,
             g2_light_ok: true,
             g3_strong_ok: g3_ok,
+            g3a_liveness_ok: g3a_ok,
             g4_personalization_ok: g4_ok,
             g5_policy_ok: g5_ok,
         },
@@ -515,8 +631,8 @@ fn classify_candidate_reject(
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1k::{
-        AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, ChannelCount, PreRollBufferId,
-        SampleFormat, SampleRateHz, SpeechLikeness,
+        AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, ChannelCount, FrameDurationMs,
+        PreRollBufferId, SampleFormat, SampleRateHz, SpeechLikeness,
     };
 
     fn stream_ref() -> AudioStreamRef {
@@ -528,6 +644,7 @@ mod tests {
                 channels: ChannelCount(1),
                 sample_format: SampleFormat::PcmS16LE,
             },
+            FrameDurationMs::Ms20,
         )
     }
 
@@ -569,6 +686,8 @@ mod tests {
             processed_stream: stream_ref(),
             pre_roll: pre_roll(0, now),
             vad: None,
+            preceding_silence_ms: Some(300),
+            utterance_start_offset_ms: Some(500),
             timing: timing_ok(),
             device_state: healthy_device(),
             aec_stable: true,
@@ -576,6 +695,8 @@ mod tests {
             strong_score: None,
             strong_alignment_ok: true,
             speaker_match_ok: true,
+            source_liveness_hint: SourceLivenessHint::Live,
+            near_field_speech_hint: Some(true),
         }
     }
 
@@ -596,6 +717,26 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn gate1a_blocks_mid_utterance_wake_candidate() {
+        let mut rt = Ph1wRuntime::new(WakeConfig::mvp_desktop_v1());
+        let mut input = base_input(0);
+        input.vad = Some(vad_ok(0, ms_to_ns(200)));
+        input.light_score = Some(Confidence::new(0.9).unwrap());
+        input.preceding_silence_ms = Some(100);
+        input.utterance_start_offset_ms = Some(1500);
+
+        let out = rt.step(input);
+        assert!(!out.iter().any(|e| matches!(
+            e,
+            Ph1wOutputEvent::StateChanged {
+                to: Ph1wState::Candidate,
+                ..
+            }
+        )));
+        assert_eq!(rt.state(), Ph1wState::ArmedIdle);
     }
 
     #[test]
@@ -658,6 +799,30 @@ mod tests {
     }
 
     #[test]
+    fn candidate_rejects_when_liveness_flags_replay() {
+        let cfg = WakeConfig::mvp_desktop_v1();
+        let mut rt = Ph1wRuntime::new(cfg);
+
+        // Start candidate.
+        let mut input = base_input(0);
+        input.vad = Some(vad_ok(0, ms_to_ns(200)));
+        input.light_score = Some(Confidence::new(0.9).unwrap());
+        rt.step(input.clone());
+        assert_eq!(rt.state(), Ph1wState::Candidate);
+
+        // Replay suspicion prevents confirmation and yields deterministic reject on timeout.
+        input.source_liveness_hint = SourceLivenessHint::ReplaySuspected;
+        input.strong_score = Some(Confidence::new(0.95).unwrap());
+        input.now = MonotonicTimeNs(ms_to_ns(cfg.candidate_validation_window_ms) + 1);
+        let out = rt.step(input);
+        assert!(out.iter().any(|e| matches!(
+            e,
+            Ph1wOutputEvent::Decision(d)
+                if !d.accepted && d.reason_code == reason_codes::W_FAIL_G3A_REPLAY_SUSPECTED
+        )));
+    }
+
+    #[test]
     fn integrity_failure_suspends_then_restores_after_stabilization() {
         let cfg = WakeConfig::mvp_desktop_v1();
         let mut rt = Ph1wRuntime::new(cfg);
@@ -692,5 +857,46 @@ mod tests {
         input.policy = WakePolicyContext::v1(SessionState::Active, true, false, false);
         rt.step(input);
         assert_eq!(rt.state(), Ph1wState::Disarmed);
+    }
+
+    #[test]
+    fn explicit_trigger_only_disarms_with_reason_coded_reject_from_candidate() {
+        let mut rt = Ph1wRuntime::new(WakeConfig::mvp_desktop_v1());
+
+        let mut input = base_input(0);
+        input.vad = Some(vad_ok(0, ms_to_ns(200)));
+        input.light_score = Some(Confidence::new(0.9).unwrap());
+        rt.step(input.clone());
+        assert_eq!(rt.state(), Ph1wState::Candidate);
+
+        input.policy =
+            WakePolicyContext::v1_with_media_and_trigger(SessionState::Active, false, false, false, false, true);
+        let out = rt.step(input);
+
+        assert!(out.iter().any(|e| matches!(
+            e,
+            Ph1wOutputEvent::Decision(d)
+                if !d.accepted && d.reason_code == reason_codes::W_SUPPRESS_EXPLICIT_TRIGGER_ONLY
+        )));
+        assert_eq!(rt.state(), Ph1wState::Disarmed);
+    }
+
+    #[test]
+    fn at_w_impl_01_unknown_implementation_fails_closed() {
+        let mut rt = Ph1wRuntime::new(WakeConfig::mvp_desktop_v1());
+        let out = rt.step_for_implementation("PH1.W.999", base_input(0));
+        assert!(matches!(
+            out,
+            Err(ContractViolation::InvalidValue {
+                field: "ph1_w.implementation_id",
+                reason: "unknown implementation_id",
+            })
+        ));
+    }
+
+    #[test]
+    fn at_w_impl_02_active_implementation_list_is_locked() {
+        assert_eq!(PH1_W_ENGINE_ID, "PH1.W");
+        assert_eq!(PH1_W_ACTIVE_IMPLEMENTATION_IDS, &["PH1.W.001"]);
     }
 }

@@ -11,6 +11,10 @@ use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
 };
+use selene_kernel_contracts::ph1builder::{
+    BuilderApprovalState, BuilderPatchProposal, BuilderPostDeployJudgeResult,
+    BuilderReleaseState, BuilderValidationGateResult, BuilderValidationRun,
+};
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket as Ph1cConfidenceBucket, LanguageTag, RetryAdvice as Ph1cRetryAdvice,
 };
@@ -37,8 +41,11 @@ use selene_kernel_contracts::ph1link::{
     TokenId,
 };
 use selene_kernel_contracts::ph1m::{
-    MemoryConfidence, MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind,
-    MemoryProvenance, MemorySensitivityFlag, MemoryUsePolicy, MemoryValue,
+    MemoryConfidence, MemoryEmotionalThreadState, MemoryGraphEdgeInput, MemoryGraphNodeInput,
+    MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind, MemoryMetricPayload,
+    MemoryProvenance, MemoryRetentionMode, MemorySensitivityFlag, MemorySuppressionRule,
+    MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest, MemoryUsePolicy,
+    MemoryValue,
 };
 use selene_kernel_contracts::ph1onb::{
     BackfillCampaignId, BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus,
@@ -49,6 +56,7 @@ use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, OnboardingStatus, ProofType, SenderVerifyDecision,
     TermsStatus, VerificationStatus,
 };
+use selene_kernel_contracts::ph1os::OsOutcomeActionClass;
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, BlueprintStatus, BlueprintVersion, IntentType, ProcessBlueprintEvent,
     ProcessBlueprintEventInput, ProcessId,
@@ -108,6 +116,63 @@ fn hash_hex_64(s: &str) -> String {
 
 fn ms_to_ns(ms: u32) -> u64 {
     (ms as u64).saturating_mul(1_000_000)
+}
+
+fn days_to_ns(days: u64) -> u64 {
+    days.saturating_mul(24)
+        .saturating_mul(60)
+        .saturating_mul(60)
+        .saturating_mul(1_000_000_000)
+}
+
+fn memory_graph_edge_kind_key(kind: selene_kernel_contracts::ph1m::MemoryGraphEdgeKind) -> &'static str {
+    match kind {
+        selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::MentionedWith => "MENTIONED_WITH",
+        selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::DependsOn => "DEPENDS_ON",
+        selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::DecidedIn => "DECIDED_IN",
+        selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::BlockedBy => "BLOCKED_BY",
+    }
+}
+
+fn is_token_safe_ascii(value: &str) -> bool {
+    value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '.' || c == '/'
+    })
+}
+
+fn validate_builder_idempotency_key(
+    field: &'static str,
+    key: &str,
+) -> Result<(), StorageError> {
+    if key.trim().is_empty() || key.len() > 128 || !is_token_safe_ascii(key) {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field,
+                reason: "must be token-safe ASCII and <= 128 chars",
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn validate_ph1m_idempotency_key(field: &'static str, key: &str) -> Result<(), StorageError> {
+    if key.trim().is_empty() {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field,
+                reason: "must not be empty",
+            },
+        ));
+    }
+    if key.len() > 128 {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field,
+                reason: "must be <= 128 chars",
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn is_allowed_session_transition(from: SessionState, to: SessionState) -> bool {
@@ -373,6 +438,198 @@ impl MemoryCurrentRecord {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryThreadEventKind {
+    ThreadDigestUpsert,
+    ThreadResolved,
+    ThreadForgotten,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemorySuppressionRuleRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub rule: MemorySuppressionRule,
+    pub created_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryEmotionalThreadLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub emotional_thread_event_id: u64,
+    pub user_id: UserId,
+    pub state: MemoryEmotionalThreadState,
+    pub reason_code: ReasonCodeId,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryEmotionalThreadCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub state: MemoryEmotionalThreadState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryMetricLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub memory_metric_event_id: u64,
+    pub user_id: UserId,
+    pub payload: MemoryMetricPayload,
+    pub reason_code: ReasonCodeId,
+    pub created_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryThreadLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub memory_thread_event_id: u64,
+    pub user_id: UserId,
+    pub event_kind: MemoryThreadEventKind,
+    pub memory_retention_mode: MemoryRetentionMode,
+    pub digest: MemoryThreadDigest,
+    pub reason_code: ReasonCodeId,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryThreadCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub memory_retention_mode: MemoryRetentionMode,
+    pub digest: MemoryThreadDigest,
+    pub unresolved_deadline_at: Option<MonotonicTimeNs>,
+    pub last_used_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryThreadRefRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub thread_id: String,
+    pub conversation_turn_id: u64,
+    pub created_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryGraphNodeRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub node: MemoryGraphNodeInput,
+    pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryGraphEdgeRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub edge: MemoryGraphEdgeInput,
+    pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryArchiveIndexRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub archive_ref_id: String,
+    pub thread_id: Option<String>,
+    pub conversation_turn_id: Option<u64>,
+    pub rank_score: Option<i64>,
+    pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryRetentionPreferenceRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub memory_retention_mode: MemoryRetentionMode,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutcomeUtilizationLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub engine_id: String,
+    pub outcome_type: String,
+    pub action_class: OsOutcomeActionClass,
+    pub consumed_by: String,
+    pub latency_cost_ms: u32,
+    pub decision_delta: bool,
+    pub reason_code: ReasonCodeId,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutcomeUtilizationLedgerRowInput {
+    pub created_at: MonotonicTimeNs,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub engine_id: String,
+    pub outcome_type: String,
+    pub action_class: OsOutcomeActionClass,
+    pub consumed_by: String,
+    pub latency_cost_ms: u32,
+    pub decision_delta: bool,
+    pub reason_code: ReasonCodeId,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderProposalLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub proposal: BuilderPatchProposal,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderProposalLedgerRowInput {
+    pub proposal: BuilderPatchProposal,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderValidationRunLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub run: BuilderValidationRun,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderValidationGateResultLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub result: BuilderValidationGateResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderApprovalStateLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub approval: BuilderApprovalState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderReleaseStateLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub release: BuilderReleaseState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderPostDeployJudgeResultLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub result: BuilderPostDeployJudgeResult,
+}
+
 #[derive(Debug, Clone)]
 pub struct Ph1fStore {
     identities: BTreeMap<UserId, IdentityRecord>,
@@ -384,8 +641,86 @@ pub struct Ph1fStore {
 
     memory_ledger: Vec<MemoryLedgerRow>,
     memory_current: BTreeMap<(UserId, MemoryKey), MemoryCurrentRecord>,
+    // PH1.M vNext persistence slices.
+    memory_suppression_rules_current: BTreeMap<
+        (
+            UserId,
+            MemorySuppressionTargetType,
+            String,
+            MemorySuppressionRuleKind,
+        ),
+        MemorySuppressionRuleRecord,
+    >,
+    // Idempotency: (user_id, target_type, target_id, rule_kind, idempotency_key) -> applied_changed.
+    memory_suppression_idempotency_index: BTreeMap<
+        (
+            UserId,
+            MemorySuppressionTargetType,
+            String,
+            MemorySuppressionRuleKind,
+            String,
+        ),
+        bool,
+    >,
+    emotional_threads_ledger: Vec<MemoryEmotionalThreadLedgerRow>,
+    emotional_threads_current: BTreeMap<(UserId, String), MemoryEmotionalThreadCurrentRecord>,
+    // Idempotency: (user_id, thread_key, idempotency_key) -> emotional_thread_event_id
+    emotional_threads_idempotency_index: BTreeMap<(UserId, String, String), u64>,
+    memory_metrics_ledger: Vec<MemoryMetricLedgerRow>,
+    // Idempotency: (user_id, idempotency_key) -> memory_metric_event_id
+    memory_metrics_idempotency_index: BTreeMap<(UserId, String), u64>,
+    memory_threads_ledger: Vec<MemoryThreadLedgerRow>,
+    memory_threads_current: BTreeMap<(UserId, String), MemoryThreadCurrentRecord>,
+    // Idempotency: (user_id, idempotency_key) -> (memory_thread_event_id, stored)
+    memory_threads_idempotency_index: BTreeMap<(UserId, String), (u64, bool)>,
+    memory_thread_refs_current: BTreeMap<(UserId, String, u64), MemoryThreadRefRecord>,
+    memory_graph_nodes_current: BTreeMap<(UserId, String), MemoryGraphNodeRecord>,
+    memory_graph_edges_current: BTreeMap<(UserId, String), MemoryGraphEdgeRecord>,
+    // Idempotency: (user_id, idempotency_key) -> graph_update_count
+    memory_graph_idempotency_index: BTreeMap<(UserId, String), u16>,
+    // Deterministic uniqueness: (user_id, from_node_id, to_node_id, edge_kind)
+    memory_graph_edge_uniqueness: BTreeMap<(UserId, String, String, String), String>,
+    memory_archive_index_current: BTreeMap<(UserId, String), MemoryArchiveIndexRecord>,
+    memory_retention_preferences: BTreeMap<UserId, MemoryRetentionPreferenceRecord>,
+    // Idempotency: (user_id, idempotency_key) -> updated_at
+    memory_retention_idempotency_index: BTreeMap<(UserId, String), MonotonicTimeNs>,
 
     conversation_ledger: Vec<ConversationTurnRecord>,
+    outcome_utilization_ledger: Vec<OutcomeUtilizationLedgerRow>,
+    // Idempotency: (correlation_id, turn_id, engine_id, outcome_type, idempotency_key) -> row_id
+    outcome_utilization_idempotency_index:
+        BTreeMap<(CorrelationId, TurnId, String, String, String), u64>,
+    // Builder Selene pipeline append-only tables (proposal -> validation run -> gate results).
+    builder_proposal_ledger: Vec<BuilderProposalLedgerRow>,
+    builder_validation_run_ledger: Vec<BuilderValidationRunLedgerRow>,
+    builder_validation_gate_result_ledger: Vec<BuilderValidationGateResultLedgerRow>,
+    builder_approval_state_ledger: Vec<BuilderApprovalStateLedgerRow>,
+    builder_release_state_ledger: Vec<BuilderReleaseStateLedgerRow>,
+    builder_post_deploy_judge_result_ledger: Vec<BuilderPostDeployJudgeResultLedgerRow>,
+    // Idempotency: (source_signal_hash, idempotency_key) -> proposal_row_id
+    builder_proposal_idempotency_index: BTreeMap<(String, String), u64>,
+    // Uniqueness: proposal_id -> proposal_row_id
+    builder_proposal_id_index: BTreeMap<String, u64>,
+    // Idempotency: (proposal_id, idempotency_key) -> run_row_id
+    builder_validation_run_idempotency_index: BTreeMap<(String, String), u64>,
+    // Uniqueness: run_id -> run_row_id
+    builder_validation_run_id_index: BTreeMap<String, u64>,
+    // Uniqueness: (run_id, gate_id) -> gate_result_row_id
+    builder_validation_gate_result_unique_index: BTreeMap<(String, String), u64>,
+    // Idempotency: (run_id, gate_id, idempotency_key) -> gate_result_row_id
+    builder_validation_gate_result_idempotency_index: BTreeMap<(String, String, String), u64>,
+    // Idempotency: (proposal_id, idempotency_key) -> approval_state_row_id
+    builder_approval_state_idempotency_index: BTreeMap<(String, String), u64>,
+    // Uniqueness: approval_state_id -> approval_state_row_id
+    builder_approval_state_id_index: BTreeMap<String, u64>,
+    // Idempotency: (proposal_id, idempotency_key) -> release_state_row_id
+    builder_release_state_idempotency_index: BTreeMap<(String, String), u64>,
+    // Uniqueness: release_state_id -> release_state_row_id
+    builder_release_state_id_index: BTreeMap<String, u64>,
+    // Idempotency: (proposal_id, idempotency_key) -> judge_result_row_id
+    builder_post_deploy_judge_result_idempotency_index: BTreeMap<(String, String), u64>,
+    // Uniqueness: judge_result_id -> judge_result_row_id
+    builder_post_deploy_judge_result_id_index: BTreeMap<String, u64>,
 
     // PH1.LINK current-state store (authoritative via simulations; audit remains append-only proof).
     links: BTreeMap<TokenId, LinkRecord>,
@@ -660,6 +995,16 @@ pub struct Ph1fStore {
 
     audit_events: Vec<AuditEvent>,
     next_memory_ledger_id: u64,
+    next_emotional_thread_event_id: u64,
+    next_memory_metric_event_id: u64,
+    next_memory_thread_event_id: u64,
+    next_outcome_utilization_row_id: u64,
+    next_builder_proposal_row_id: u64,
+    next_builder_validation_run_row_id: u64,
+    next_builder_validation_gate_result_row_id: u64,
+    next_builder_approval_state_row_id: u64,
+    next_builder_release_state_row_id: u64,
+    next_builder_post_deploy_judge_result_row_id: u64,
     next_conversation_turn_id: u64,
     next_audit_event_id: u64,
     next_position_lifecycle_event_id: u64,
@@ -1410,7 +1755,45 @@ impl Ph1fStore {
             session_lifecycle_idempotency_index: BTreeSet::new(),
             memory_ledger: Vec::new(),
             memory_current: BTreeMap::new(),
+            memory_suppression_rules_current: BTreeMap::new(),
+            memory_suppression_idempotency_index: BTreeMap::new(),
+            emotional_threads_ledger: Vec::new(),
+            emotional_threads_current: BTreeMap::new(),
+            emotional_threads_idempotency_index: BTreeMap::new(),
+            memory_metrics_ledger: Vec::new(),
+            memory_metrics_idempotency_index: BTreeMap::new(),
+            memory_threads_ledger: Vec::new(),
+            memory_threads_current: BTreeMap::new(),
+            memory_threads_idempotency_index: BTreeMap::new(),
+            memory_thread_refs_current: BTreeMap::new(),
+            memory_graph_nodes_current: BTreeMap::new(),
+            memory_graph_edges_current: BTreeMap::new(),
+            memory_graph_idempotency_index: BTreeMap::new(),
+            memory_graph_edge_uniqueness: BTreeMap::new(),
+            memory_archive_index_current: BTreeMap::new(),
+            memory_retention_preferences: BTreeMap::new(),
+            memory_retention_idempotency_index: BTreeMap::new(),
             conversation_ledger: Vec::new(),
+            outcome_utilization_ledger: Vec::new(),
+            outcome_utilization_idempotency_index: BTreeMap::new(),
+            builder_proposal_ledger: Vec::new(),
+            builder_validation_run_ledger: Vec::new(),
+            builder_validation_gate_result_ledger: Vec::new(),
+            builder_approval_state_ledger: Vec::new(),
+            builder_release_state_ledger: Vec::new(),
+            builder_post_deploy_judge_result_ledger: Vec::new(),
+            builder_proposal_idempotency_index: BTreeMap::new(),
+            builder_proposal_id_index: BTreeMap::new(),
+            builder_validation_run_idempotency_index: BTreeMap::new(),
+            builder_validation_run_id_index: BTreeMap::new(),
+            builder_validation_gate_result_unique_index: BTreeMap::new(),
+            builder_validation_gate_result_idempotency_index: BTreeMap::new(),
+            builder_approval_state_idempotency_index: BTreeMap::new(),
+            builder_approval_state_id_index: BTreeMap::new(),
+            builder_release_state_idempotency_index: BTreeMap::new(),
+            builder_release_state_id_index: BTreeMap::new(),
+            builder_post_deploy_judge_result_idempotency_index: BTreeMap::new(),
+            builder_post_deploy_judge_result_id_index: BTreeMap::new(),
             links: BTreeMap::new(),
             next_link_seq: 1,
             link_draft_idempotency_index: BTreeMap::new(),
@@ -1521,6 +1904,16 @@ impl Ph1fStore {
             capreq_idempotency_index: BTreeMap::new(),
             audit_events: Vec::new(),
             next_memory_ledger_id: 1,
+            next_emotional_thread_event_id: 1,
+            next_memory_metric_event_id: 1,
+            next_memory_thread_event_id: 1,
+            next_outcome_utilization_row_id: 1,
+            next_builder_proposal_row_id: 1,
+            next_builder_validation_run_row_id: 1,
+            next_builder_validation_gate_result_row_id: 1,
+            next_builder_approval_state_row_id: 1,
+            next_builder_release_state_row_id: 1,
+            next_builder_post_deploy_judge_result_row_id: 1,
             next_conversation_turn_id: 1,
             next_audit_event_id: 1,
             next_position_lifecycle_event_id: 1,
@@ -1858,6 +2251,1213 @@ impl Ph1fStore {
                     .insert((row.user_id.clone(), k.clone()), row.ledger_id);
             }
         }
+    }
+
+    pub fn ph1m_set_suppression_rule(
+        &mut self,
+        user_id: &UserId,
+        rule: MemorySuppressionRule,
+        now: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<bool, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_suppression_rules.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        rule.validate()?;
+        validate_ph1m_idempotency_key(
+            "memory_suppression_rules.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idem_idx = (
+            user_id.clone(),
+            rule.target_type,
+            rule.target_id.clone(),
+            rule.rule_kind,
+            idempotency_key.clone(),
+        );
+        if let Some(existing) = self.memory_suppression_idempotency_index.get(&idem_idx) {
+            return Ok(*existing);
+        }
+
+        let key = (
+            user_id.clone(),
+            rule.target_type,
+            rule.target_id.clone(),
+            rule.rule_kind,
+        );
+        let changed = match self.memory_suppression_rules_current.get(&key) {
+            Some(existing) => existing.rule != rule,
+            None => true,
+        };
+        let created_at = self
+            .memory_suppression_rules_current
+            .get(&key)
+            .map(|existing| existing.created_at)
+            .unwrap_or(now);
+        let rec = MemorySuppressionRuleRecord {
+            schema_version: SchemaVersion(1),
+            user_id: user_id.clone(),
+            rule,
+            created_at,
+        };
+        self.memory_suppression_rules_current.insert(key, rec);
+        self.memory_suppression_idempotency_index
+            .insert(idem_idx, changed);
+        Ok(changed)
+    }
+
+    pub fn ph1m_suppression_rule_rows(&self) -> Vec<&MemorySuppressionRuleRecord> {
+        self.memory_suppression_rules_current.values().collect()
+    }
+
+    pub fn ph1m_suppression_rule_row(
+        &self,
+        user_id: &UserId,
+        target_type: MemorySuppressionTargetType,
+        target_id: &str,
+        rule_kind: MemorySuppressionRuleKind,
+    ) -> Option<&MemorySuppressionRuleRecord> {
+        self.memory_suppression_rules_current.get(&(
+            user_id.clone(),
+            target_type,
+            target_id.to_string(),
+            rule_kind,
+        ))
+    }
+
+    pub fn ph1m_emotional_thread_update_commit(
+        &mut self,
+        user_id: &UserId,
+        state: MemoryEmotionalThreadState,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "emotional_threads_ledger.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        state.validate()?;
+        if reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "emotional_threads_ledger.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+        validate_ph1m_idempotency_key("emotional_threads_ledger.idempotency_key", &idempotency_key)?;
+
+        let idem_idx = (user_id.clone(), state.thread_key.clone(), idempotency_key.clone());
+        if let Some(existing_id) = self.emotional_threads_idempotency_index.get(&idem_idx) {
+            return Ok(*existing_id);
+        }
+
+        let event_id = self.next_emotional_thread_event_id;
+        self.next_emotional_thread_event_id = self.next_emotional_thread_event_id.saturating_add(1);
+        self.emotional_threads_ledger
+            .push(MemoryEmotionalThreadLedgerRow {
+                schema_version: SchemaVersion(1),
+                emotional_thread_event_id: event_id,
+                user_id: user_id.clone(),
+                state: state.clone(),
+                reason_code,
+                idempotency_key: idempotency_key.clone(),
+            });
+        self.emotional_threads_current.insert(
+            (user_id.clone(), state.thread_key.clone()),
+            MemoryEmotionalThreadCurrentRecord {
+                schema_version: SchemaVersion(1),
+                user_id: user_id.clone(),
+                state,
+            },
+        );
+        self.emotional_threads_idempotency_index
+            .insert(idem_idx, event_id);
+        Ok(event_id)
+    }
+
+    pub fn ph1m_emotional_thread_ledger_rows(&self) -> &[MemoryEmotionalThreadLedgerRow] {
+        &self.emotional_threads_ledger
+    }
+
+    pub fn ph1m_emotional_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_key: &str,
+    ) -> Option<&MemoryEmotionalThreadCurrentRecord> {
+        self.emotional_threads_current
+            .get(&(user_id.clone(), thread_key.to_string()))
+    }
+
+    pub fn attempt_overwrite_emotional_threads_ledger_row(
+        &mut self,
+        _event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "emotional_threads_ledger",
+        })
+    }
+
+    pub fn ph1m_metrics_emit_commit(
+        &mut self,
+        user_id: &UserId,
+        payload: MemoryMetricPayload,
+        reason_code: ReasonCodeId,
+        created_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_metrics_ledger.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        payload.validate()?;
+        if reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_metrics_ledger.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+        validate_ph1m_idempotency_key("memory_metrics_ledger.idempotency_key", &idempotency_key)?;
+
+        let idem_idx = (user_id.clone(), idempotency_key.clone());
+        if let Some(existing_id) = self.memory_metrics_idempotency_index.get(&idem_idx) {
+            return Ok(*existing_id);
+        }
+
+        let event_id = self.next_memory_metric_event_id;
+        self.next_memory_metric_event_id = self.next_memory_metric_event_id.saturating_add(1);
+        self.memory_metrics_ledger.push(MemoryMetricLedgerRow {
+            schema_version: SchemaVersion(1),
+            memory_metric_event_id: event_id,
+            user_id: user_id.clone(),
+            payload,
+            reason_code,
+            created_at,
+            idempotency_key: idempotency_key.clone(),
+        });
+        self.memory_metrics_idempotency_index
+            .insert(idem_idx, event_id);
+        Ok(event_id)
+    }
+
+    pub fn ph1m_memory_metrics_ledger_rows(&self) -> &[MemoryMetricLedgerRow] {
+        &self.memory_metrics_ledger
+    }
+
+    pub fn attempt_overwrite_memory_metrics_ledger_row(
+        &mut self,
+        _event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "memory_metrics_ledger",
+        })
+    }
+
+    pub fn ph1m_thread_digest_upsert_commit(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        digest: MemoryThreadDigest,
+        event_kind: MemoryThreadEventKind,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<(u64, bool), StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_threads_ledger.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        digest.validate()?;
+        if reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_threads_ledger.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+        validate_ph1m_idempotency_key("memory_threads_ledger.idempotency_key", &idempotency_key)?;
+
+        let idem_idx = (user_id.clone(), idempotency_key.clone());
+        if let Some((existing_id, existing_stored)) = self.memory_threads_idempotency_index.get(&idem_idx)
+        {
+            return Ok((*existing_id, *existing_stored));
+        }
+
+        let key = (user_id.clone(), digest.thread_id.clone());
+        let existed = self.memory_threads_current.contains_key(&key);
+
+        let event_id = self.next_memory_thread_event_id;
+        self.next_memory_thread_event_id = self.next_memory_thread_event_id.saturating_add(1);
+        self.memory_threads_ledger.push(MemoryThreadLedgerRow {
+            schema_version: SchemaVersion(1),
+            memory_thread_event_id: event_id,
+            user_id: user_id.clone(),
+            event_kind,
+            memory_retention_mode,
+            digest: digest.clone(),
+            reason_code,
+            idempotency_key: idempotency_key.clone(),
+        });
+
+        match event_kind {
+            MemoryThreadEventKind::ThreadDigestUpsert | MemoryThreadEventKind::ThreadResolved => {
+                let unresolved_deadline_at = if digest.unresolved {
+                    Some(MonotonicTimeNs(
+                        digest.last_updated_at.0.saturating_add(days_to_ns(90)),
+                    ))
+                } else {
+                    None
+                };
+                self.memory_threads_current.insert(
+                    key,
+                    MemoryThreadCurrentRecord {
+                        schema_version: SchemaVersion(1),
+                        user_id: user_id.clone(),
+                        memory_retention_mode,
+                        digest: digest.clone(),
+                        unresolved_deadline_at,
+                        last_used_at: digest.last_updated_at,
+                    },
+                );
+            }
+            MemoryThreadEventKind::ThreadForgotten => {
+                self.memory_threads_current.remove(&key);
+                self.memory_thread_refs_current.retain(|(u, thread_id, _), _| {
+                    !(u == user_id && thread_id == &digest.thread_id)
+                });
+            }
+        }
+        let stored = !existed;
+        self.memory_threads_idempotency_index
+            .insert(idem_idx, (event_id, stored));
+        Ok((event_id, stored))
+    }
+
+    pub fn ph1m_thread_ledger_rows(&self) -> &[MemoryThreadLedgerRow] {
+        &self.memory_threads_ledger
+    }
+
+    pub fn ph1m_thread_current_row(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Option<&MemoryThreadCurrentRecord> {
+        self.memory_threads_current
+            .get(&(user_id.clone(), thread_id.to_string()))
+    }
+
+    pub fn ph1m_thread_ref_rows_for_thread(
+        &self,
+        user_id: &UserId,
+        thread_id: &str,
+    ) -> Vec<&MemoryThreadRefRecord> {
+        self.memory_thread_refs_current
+            .iter()
+            .filter_map(|((uid, tid, _), rec)| {
+                if uid == user_id && tid == thread_id {
+                    Some(rec)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub fn ph1m_upsert_thread_refs(
+        &mut self,
+        user_id: &UserId,
+        thread_id: &str,
+        conversation_turn_ids: Vec<u64>,
+        now: MonotonicTimeNs,
+    ) -> Result<u16, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_thread_refs.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        if thread_id.trim().is_empty() || thread_id.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_thread_refs.thread_id",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if conversation_turn_ids.len() > 64 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_thread_refs.conversation_turn_ids",
+                    reason: "must contain <= 64 entries",
+                },
+            ));
+        }
+        let mut upserted: u16 = 0;
+        for turn_id in conversation_turn_ids {
+            let exists = self
+                .conversation_ledger
+                .iter()
+                .any(|row| row.conversation_turn_id.0 == turn_id);
+            if !exists {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "memory_thread_refs.conversation_turn_id",
+                    key: turn_id.to_string(),
+                });
+            }
+            let key = (user_id.clone(), thread_id.to_string(), turn_id);
+            let rec = MemoryThreadRefRecord {
+                schema_version: SchemaVersion(1),
+                user_id: user_id.clone(),
+                thread_id: thread_id.to_string(),
+                conversation_turn_id: turn_id,
+                created_at: now,
+            };
+            self.memory_thread_refs_current.insert(key, rec);
+            upserted = upserted.saturating_add(1);
+        }
+        Ok(upserted)
+    }
+
+    pub fn attempt_overwrite_memory_threads_ledger_row(
+        &mut self,
+        _event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "memory_threads_ledger",
+        })
+    }
+
+    pub fn ph1m_graph_upsert_commit(
+        &mut self,
+        user_id: &UserId,
+        nodes: Vec<MemoryGraphNodeInput>,
+        edges: Vec<MemoryGraphEdgeInput>,
+        updated_at: MonotonicTimeNs,
+        idempotency_key: String,
+    ) -> Result<u16, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_graph_nodes.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        validate_ph1m_idempotency_key("memory_graph.idempotency_key", &idempotency_key)?;
+        if nodes.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_graph_nodes",
+                    reason: "must contain <= 128 entries",
+                },
+            ));
+        }
+        if edges.len() > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_graph_edges",
+                    reason: "must contain <= 256 entries",
+                },
+            ));
+        }
+        let idem_idx = (user_id.clone(), idempotency_key.clone());
+        if let Some(existing_count) = self.memory_graph_idempotency_index.get(&idem_idx) {
+            return Ok(*existing_count);
+        }
+
+        let mut incoming_node_ids: BTreeSet<String> = BTreeSet::new();
+        for node in &nodes {
+            node.validate()?;
+            incoming_node_ids.insert(node.node_id.clone());
+        }
+        for edge in &edges {
+            edge.validate()?;
+            let from_exists = incoming_node_ids.contains(&edge.from_node_id)
+                || self
+                    .memory_graph_nodes_current
+                    .contains_key(&(user_id.clone(), edge.from_node_id.clone()));
+            if !from_exists {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "memory_graph_edges.from_node_id",
+                        reason: "must reference an existing or incoming node",
+                    },
+                ));
+            }
+            let to_exists = incoming_node_ids.contains(&edge.to_node_id)
+                || self
+                    .memory_graph_nodes_current
+                    .contains_key(&(user_id.clone(), edge.to_node_id.clone()));
+            if !to_exists {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "memory_graph_edges.to_node_id",
+                        reason: "must reference an existing or incoming node",
+                    },
+                ));
+            }
+        }
+
+        let mut count: u16 = 0;
+        for node in nodes {
+            self.memory_graph_nodes_current.insert(
+                (user_id.clone(), node.node_id.clone()),
+                MemoryGraphNodeRecord {
+                    schema_version: SchemaVersion(1),
+                    user_id: user_id.clone(),
+                    node,
+                    updated_at,
+                },
+            );
+            count = count.saturating_add(1);
+        }
+        for edge in edges {
+            let edge_unique_key = (
+                user_id.clone(),
+                edge.from_node_id.clone(),
+                edge.to_node_id.clone(),
+                memory_graph_edge_kind_key(edge.kind).to_string(),
+            );
+            if let Some(existing_edge_id) = self.memory_graph_edge_uniqueness.get(&edge_unique_key) {
+                if existing_edge_id != &edge.edge_id {
+                    self.memory_graph_edges_current
+                        .remove(&(user_id.clone(), existing_edge_id.clone()));
+                }
+            }
+            self.memory_graph_edge_uniqueness
+                .insert(edge_unique_key, edge.edge_id.clone());
+            self.memory_graph_edges_current.insert(
+                (user_id.clone(), edge.edge_id.clone()),
+                MemoryGraphEdgeRecord {
+                    schema_version: SchemaVersion(1),
+                    user_id: user_id.clone(),
+                    edge,
+                    updated_at,
+                },
+            );
+            count = count.saturating_add(1);
+        }
+        self.memory_graph_idempotency_index.insert(idem_idx, count);
+        Ok(count)
+    }
+
+    pub fn ph1m_graph_node_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphNodeRecord> {
+        self.memory_graph_nodes_current
+            .iter()
+            .filter_map(|((uid, _), row)| if uid == user_id { Some(row) } else { None })
+            .collect()
+    }
+
+    pub fn ph1m_graph_edge_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryGraphEdgeRecord> {
+        self.memory_graph_edges_current
+            .iter()
+            .filter_map(|((uid, _), row)| if uid == user_id { Some(row) } else { None })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1m_archive_index_upsert(
+        &mut self,
+        user_id: &UserId,
+        archive_ref_id: String,
+        thread_id: Option<String>,
+        conversation_turn_id: Option<u64>,
+        rank_score: Option<i64>,
+        updated_at: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_archive_index.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        if archive_ref_id.trim().is_empty() || archive_ref_id.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_archive_index.archive_ref_id",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if let Some(thread_id) = &thread_id {
+            if thread_id.trim().is_empty() || thread_id.len() > 128 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "memory_archive_index.thread_id",
+                        reason: "must be non-empty and <= 128 chars when provided",
+                    },
+                ));
+            }
+        }
+        if let Some(turn_id) = conversation_turn_id {
+            let exists = self
+                .conversation_ledger
+                .iter()
+                .any(|row| row.conversation_turn_id.0 == turn_id);
+            if !exists {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "memory_archive_index.conversation_turn_id",
+                    key: turn_id.to_string(),
+                });
+            }
+        }
+        self.memory_archive_index_current.insert(
+            (user_id.clone(), archive_ref_id.clone()),
+            MemoryArchiveIndexRecord {
+                schema_version: SchemaVersion(1),
+                user_id: user_id.clone(),
+                archive_ref_id,
+                thread_id,
+                conversation_turn_id,
+                rank_score,
+                updated_at,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn ph1m_archive_index_rows_for_user(
+        &self,
+        user_id: &UserId,
+    ) -> Vec<&MemoryArchiveIndexRecord> {
+        self.memory_archive_index_current
+            .iter()
+            .filter_map(|((uid, _), row)| if uid == user_id { Some(row) } else { None })
+            .collect()
+    }
+
+    pub fn ph1m_retention_mode_set_commit(
+        &mut self,
+        user_id: &UserId,
+        memory_retention_mode: MemoryRetentionMode,
+        updated_at: MonotonicTimeNs,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<MonotonicTimeNs, StorageError> {
+        if !self.identities.contains_key(user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "memory_retention_preferences.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        if reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "memory_retention_preferences.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+        validate_ph1m_idempotency_key(
+            "memory_retention_preferences.idempotency_key",
+            &idempotency_key,
+        )?;
+        let idem_idx = (user_id.clone(), idempotency_key.clone());
+        if let Some(existing_effective_at) = self.memory_retention_idempotency_index.get(&idem_idx) {
+            return Ok(*existing_effective_at);
+        }
+        self.memory_retention_preferences.insert(
+            user_id.clone(),
+            MemoryRetentionPreferenceRecord {
+                schema_version: SchemaVersion(1),
+                user_id: user_id.clone(),
+                memory_retention_mode,
+                updated_at,
+                reason_code,
+                idempotency_key: Some(idempotency_key.clone()),
+            },
+        );
+        self.memory_retention_idempotency_index
+            .insert(idem_idx, updated_at);
+        Ok(updated_at)
+    }
+
+    pub fn ph1m_retention_preference_row(
+        &self,
+        user_id: &UserId,
+    ) -> Option<&MemoryRetentionPreferenceRecord> {
+        self.memory_retention_preferences.get(user_id)
+    }
+
+    pub fn append_outcome_utilization_ledger_row(
+        &mut self,
+        input: OutcomeUtilizationLedgerRowInput,
+    ) -> Result<u64, StorageError> {
+        input.correlation_id.validate()?;
+        input.turn_id.validate()?;
+
+        if input.engine_id.trim().is_empty()
+            || input.engine_id.len() > 64
+            || !is_token_safe_ascii(&input.engine_id)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.engine_id",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if input.outcome_type.trim().is_empty()
+            || input.outcome_type.len() > 64
+            || !is_token_safe_ascii(&input.outcome_type)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.outcome_type",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if input.consumed_by.trim().is_empty()
+            || input.consumed_by.len() > 64
+            || !is_token_safe_ascii(&input.consumed_by)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.consumed_by",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if matches!(
+            input.action_class,
+            OsOutcomeActionClass::ActNow | OsOutcomeActionClass::QueueLearn
+        ) && input.consumed_by == "NONE"
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.consumed_by",
+                    reason: "ACT_NOW/QUEUE_LEARN require consumed_by owner (not NONE)",
+                },
+            ));
+        }
+        if input.latency_cost_ms > 60_000 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.latency_cost_ms",
+                    reason: "must be <= 60000",
+                },
+            ));
+        }
+        if input.reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "outcome_utilization_ledger.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+
+        if let Some(k) = &input.idempotency_key {
+            if k.trim().is_empty() || k.len() > 128 || !is_token_safe_ascii(k) {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "outcome_utilization_ledger.idempotency_key",
+                        reason: "must be token-safe ASCII and <= 128 chars",
+                    },
+                ));
+            }
+            let idx = (
+                input.correlation_id.clone(),
+                input.turn_id.clone(),
+                input.engine_id.clone(),
+                input.outcome_type.clone(),
+                k.clone(),
+            );
+            if let Some(existing_id) = self.outcome_utilization_idempotency_index.get(&idx) {
+                return Ok(*existing_id);
+            }
+        }
+
+        let row_id = self.next_outcome_utilization_row_id;
+        self.next_outcome_utilization_row_id =
+            self.next_outcome_utilization_row_id.saturating_add(1);
+        let row = OutcomeUtilizationLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            created_at: input.created_at,
+            correlation_id: input.correlation_id.clone(),
+            turn_id: input.turn_id.clone(),
+            engine_id: input.engine_id.clone(),
+            outcome_type: input.outcome_type.clone(),
+            action_class: input.action_class,
+            consumed_by: input.consumed_by.clone(),
+            latency_cost_ms: input.latency_cost_ms,
+            decision_delta: input.decision_delta,
+            reason_code: input.reason_code,
+            idempotency_key: input.idempotency_key.clone(),
+        };
+        self.outcome_utilization_ledger.push(row);
+
+        if let Some(k) = &input.idempotency_key {
+            self.outcome_utilization_idempotency_index.insert(
+                (
+                    input.correlation_id,
+                    input.turn_id,
+                    input.engine_id,
+                    input.outcome_type,
+                    k.clone(),
+                ),
+                row_id,
+            );
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn outcome_utilization_ledger_rows(&self) -> &[OutcomeUtilizationLedgerRow] {
+        &self.outcome_utilization_ledger
+    }
+
+    pub fn attempt_overwrite_outcome_utilization_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "outcome_utilization_ledger",
+        })
+    }
+
+    pub fn append_builder_proposal_ledger_row(
+        &mut self,
+        input: BuilderProposalLedgerRowInput,
+    ) -> Result<u64, StorageError> {
+        input.proposal.validate()?;
+
+        if let Some(k) = &input.idempotency_key {
+            validate_builder_idempotency_key("builder_proposals.idempotency_key", k)?;
+            let idem_idx = (input.proposal.source_signal_hash.clone(), k.clone());
+            if let Some(existing_row_id) = self.builder_proposal_idempotency_index.get(&idem_idx) {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        if self
+            .builder_proposal_id_index
+            .contains_key(&input.proposal.proposal_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "builder_proposals.proposal_id",
+                key: input.proposal.proposal_id.clone(),
+            });
+        }
+
+        let row_id = self.next_builder_proposal_row_id;
+        self.next_builder_proposal_row_id = self.next_builder_proposal_row_id.saturating_add(1);
+
+        let row = BuilderProposalLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            proposal: input.proposal.clone(),
+            idempotency_key: input.idempotency_key.clone(),
+        };
+        self.builder_proposal_ledger.push(row);
+        self.builder_proposal_id_index
+            .insert(input.proposal.proposal_id.clone(), row_id);
+
+        if let Some(k) = &input.idempotency_key {
+            self.builder_proposal_idempotency_index
+                .insert((input.proposal.source_signal_hash, k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_proposal_ledger_rows(&self) -> &[BuilderProposalLedgerRow] {
+        &self.builder_proposal_ledger
+    }
+
+    pub fn attempt_overwrite_builder_proposal_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_proposals",
+        })
+    }
+
+    pub fn append_builder_validation_run_ledger_row(
+        &mut self,
+        run: BuilderValidationRun,
+    ) -> Result<u64, StorageError> {
+        run.validate()?;
+
+        if !self.builder_proposal_id_index.contains_key(&run.proposal_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_validation_runs.proposal_id",
+                key: run.proposal_id.clone(),
+            });
+        }
+
+        if let Some(k) = &run.idempotency_key {
+            let idem_idx = (run.proposal_id.clone(), k.clone());
+            if let Some(existing_row_id) = self.builder_validation_run_idempotency_index.get(&idem_idx)
+            {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        if self.builder_validation_run_id_index.contains_key(&run.run_id) {
+            return Err(StorageError::DuplicateKey {
+                table: "builder_validation_runs.run_id",
+                key: run.run_id.clone(),
+            });
+        }
+
+        let row_id = self.next_builder_validation_run_row_id;
+        self.next_builder_validation_run_row_id =
+            self.next_builder_validation_run_row_id.saturating_add(1);
+        let row = BuilderValidationRunLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            run: run.clone(),
+        };
+        self.builder_validation_run_ledger.push(row);
+        self.builder_validation_run_id_index
+            .insert(run.run_id.clone(), row_id);
+        if let Some(k) = &run.idempotency_key {
+            self.builder_validation_run_idempotency_index
+                .insert((run.proposal_id.clone(), k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_validation_run_ledger_rows(&self) -> &[BuilderValidationRunLedgerRow] {
+        &self.builder_validation_run_ledger
+    }
+
+    pub fn attempt_overwrite_builder_validation_run_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_validation_runs",
+        })
+    }
+
+    pub fn append_builder_validation_gate_result_ledger_row(
+        &mut self,
+        result: BuilderValidationGateResult,
+    ) -> Result<u64, StorageError> {
+        result.validate()?;
+
+        if !self.builder_proposal_id_index.contains_key(&result.proposal_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_validation_gate_results.proposal_id",
+                key: result.proposal_id.clone(),
+            });
+        }
+
+        let run_row_id = self
+            .builder_validation_run_id_index
+            .get(&result.run_id)
+            .copied()
+            .ok_or_else(|| StorageError::ForeignKeyViolation {
+                table: "builder_validation_gate_results.run_id",
+                key: result.run_id.clone(),
+            })?;
+        let run_row = self
+            .builder_validation_run_ledger
+            .iter()
+            .find(|row| row.row_id == run_row_id)
+            .ok_or_else(|| StorageError::ForeignKeyViolation {
+                table: "builder_validation_gate_results.run_id",
+                key: result.run_id.clone(),
+            })?;
+
+        if run_row.run.proposal_id != result.proposal_id {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "builder_validation_gate_results.proposal_id",
+                    reason: "must match proposal_id bound to validation run",
+                },
+            ));
+        }
+
+        let gate_id_text = result.gate_id.as_str().to_string();
+        let unique_key = (result.run_id.clone(), gate_id_text.clone());
+        if let Some(_existing_row_id) = self.builder_validation_gate_result_unique_index.get(&unique_key)
+        {
+            if let Some(k) = &result.idempotency_key {
+                validate_builder_idempotency_key(
+                    "builder_validation_gate_results.idempotency_key",
+                    k,
+                )?;
+                let idem_key = (result.run_id.clone(), gate_id_text.clone(), k.clone());
+                if let Some(existing_idem_row_id) =
+                    self.builder_validation_gate_result_idempotency_index.get(&idem_key)
+                {
+                    return Ok(*existing_idem_row_id);
+                }
+            }
+            return Err(StorageError::DuplicateKey {
+                table: "builder_validation_gate_results.run_id_gate_id",
+                key: format!("{}:{}", unique_key.0, unique_key.1),
+            });
+        }
+
+        if let Some(k) = &result.idempotency_key {
+            validate_builder_idempotency_key("builder_validation_gate_results.idempotency_key", k)?;
+            let idem_key = (result.run_id.clone(), gate_id_text.clone(), k.clone());
+            if let Some(existing_id) = self.builder_validation_gate_result_idempotency_index.get(&idem_key)
+            {
+                return Ok(*existing_id);
+            }
+        }
+
+        let row_id = self.next_builder_validation_gate_result_row_id;
+        self.next_builder_validation_gate_result_row_id = self
+            .next_builder_validation_gate_result_row_id
+            .saturating_add(1);
+
+        let row = BuilderValidationGateResultLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            result: result.clone(),
+        };
+        self.builder_validation_gate_result_ledger.push(row);
+        self.builder_validation_gate_result_unique_index
+            .insert(unique_key, row_id);
+
+        if let Some(k) = &result.idempotency_key {
+            self.builder_validation_gate_result_idempotency_index
+                .insert((result.run_id, gate_id_text, k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_validation_gate_result_ledger_rows(
+        &self,
+    ) -> &[BuilderValidationGateResultLedgerRow] {
+        &self.builder_validation_gate_result_ledger
+    }
+
+    pub fn attempt_overwrite_builder_validation_gate_result_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_validation_gate_results",
+        })
+    }
+
+    pub fn append_builder_approval_state_ledger_row(
+        &mut self,
+        approval: BuilderApprovalState,
+    ) -> Result<u64, StorageError> {
+        approval.validate()?;
+
+        if !self.builder_proposal_id_index.contains_key(&approval.proposal_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_approval_states.proposal_id",
+                key: approval.proposal_id.clone(),
+            });
+        }
+
+        if let Some(k) = &approval.idempotency_key {
+            validate_builder_idempotency_key("builder_approval_states.idempotency_key", k)?;
+            let idem_idx = (approval.proposal_id.clone(), k.clone());
+            if let Some(existing_row_id) = self.builder_approval_state_idempotency_index.get(&idem_idx)
+            {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        if self
+            .builder_approval_state_id_index
+            .contains_key(&approval.approval_state_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "builder_approval_states.approval_state_id",
+                key: approval.approval_state_id.clone(),
+            });
+        }
+
+        let row_id = self.next_builder_approval_state_row_id;
+        self.next_builder_approval_state_row_id =
+            self.next_builder_approval_state_row_id.saturating_add(1);
+        let row = BuilderApprovalStateLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            approval: approval.clone(),
+        };
+        self.builder_approval_state_ledger.push(row);
+        self.builder_approval_state_id_index
+            .insert(approval.approval_state_id.clone(), row_id);
+        if let Some(k) = &approval.idempotency_key {
+            self.builder_approval_state_idempotency_index
+                .insert((approval.proposal_id.clone(), k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_approval_state_ledger_rows(&self) -> &[BuilderApprovalStateLedgerRow] {
+        &self.builder_approval_state_ledger
+    }
+
+    pub fn attempt_overwrite_builder_approval_state_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_approval_states",
+        })
+    }
+
+    pub fn append_builder_release_state_ledger_row(
+        &mut self,
+        release: BuilderReleaseState,
+    ) -> Result<u64, StorageError> {
+        release.validate()?;
+
+        if !self.builder_proposal_id_index.contains_key(&release.proposal_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_release_states.proposal_id",
+                key: release.proposal_id.clone(),
+            });
+        }
+
+        if let Some(k) = &release.idempotency_key {
+            validate_builder_idempotency_key("builder_release_states.idempotency_key", k)?;
+            let idem_idx = (release.proposal_id.clone(), k.clone());
+            if let Some(existing_row_id) = self.builder_release_state_idempotency_index.get(&idem_idx)
+            {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        if self
+            .builder_release_state_id_index
+            .contains_key(&release.release_state_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "builder_release_states.release_state_id",
+                key: release.release_state_id.clone(),
+            });
+        }
+
+        let row_id = self.next_builder_release_state_row_id;
+        self.next_builder_release_state_row_id =
+            self.next_builder_release_state_row_id.saturating_add(1);
+        let row = BuilderReleaseStateLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            release: release.clone(),
+        };
+        self.builder_release_state_ledger.push(row);
+        self.builder_release_state_id_index
+            .insert(release.release_state_id.clone(), row_id);
+        if let Some(k) = &release.idempotency_key {
+            self.builder_release_state_idempotency_index
+                .insert((release.proposal_id.clone(), k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_release_state_ledger_rows(&self) -> &[BuilderReleaseStateLedgerRow] {
+        &self.builder_release_state_ledger
+    }
+
+    pub fn attempt_overwrite_builder_release_state_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_release_states",
+        })
+    }
+
+    pub fn append_builder_post_deploy_judge_result_ledger_row(
+        &mut self,
+        result: BuilderPostDeployJudgeResult,
+    ) -> Result<u64, StorageError> {
+        result.validate()?;
+
+        if !self.builder_proposal_id_index.contains_key(&result.proposal_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_post_deploy_judge_results.proposal_id",
+                key: result.proposal_id.clone(),
+            });
+        }
+        if !self
+            .builder_release_state_id_index
+            .contains_key(&result.release_state_id)
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "builder_post_deploy_judge_results.release_state_id",
+                key: result.release_state_id.clone(),
+            });
+        }
+
+        if let Some(k) = &result.idempotency_key {
+            validate_builder_idempotency_key("builder_post_deploy_judge_results.idempotency_key", k)?;
+            let idem_idx = (result.proposal_id.clone(), k.clone());
+            if let Some(existing_row_id) = self
+                .builder_post_deploy_judge_result_idempotency_index
+                .get(&idem_idx)
+            {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        if self
+            .builder_post_deploy_judge_result_id_index
+            .contains_key(&result.judge_result_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "builder_post_deploy_judge_results.judge_result_id",
+                key: result.judge_result_id.clone(),
+            });
+        }
+
+        let row_id = self.next_builder_post_deploy_judge_result_row_id;
+        self.next_builder_post_deploy_judge_result_row_id = self
+            .next_builder_post_deploy_judge_result_row_id
+            .saturating_add(1);
+        let row = BuilderPostDeployJudgeResultLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            result: result.clone(),
+        };
+        self.builder_post_deploy_judge_result_ledger.push(row);
+        self.builder_post_deploy_judge_result_id_index
+            .insert(result.judge_result_id.clone(), row_id);
+
+        if let Some(k) = &result.idempotency_key {
+            self.builder_post_deploy_judge_result_idempotency_index
+                .insert((result.proposal_id.clone(), k.clone()), row_id);
+        }
+
+        Ok(row_id)
+    }
+
+    pub fn builder_post_deploy_judge_result_ledger_rows(
+        &self,
+    ) -> &[BuilderPostDeployJudgeResultLedgerRow] {
+        &self.builder_post_deploy_judge_result_ledger
+    }
+
+    pub fn attempt_overwrite_builder_post_deploy_judge_result_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "builder_post_deploy_judge_results",
+        })
     }
 
     pub fn append_conversation_turn(
@@ -5387,7 +6987,7 @@ impl Ph1fStore {
         Ok(rec.clone())
     }
 
-    pub fn ph1w_enroll_defer_reminder_commit(
+    pub fn ph1w_enroll_defer_commit(
         &mut self,
         now: MonotonicTimeNs,
         wake_enrollment_session_id: String,
@@ -5398,7 +6998,7 @@ impl Ph1fStore {
         if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "ph1w_enroll_defer_reminder_commit.idempotency_key",
+                    field: "ph1w_enroll_defer_commit.idempotency_key",
                     reason: "must be non-empty and <= 128 chars",
                 },
             ));
@@ -5915,7 +7515,7 @@ impl Ph1fStore {
         Ok(rec_clone)
     }
 
-    pub fn ph1vid_enroll_defer_reminder_commit(
+    pub fn ph1vid_enroll_defer_commit(
         &mut self,
         now: MonotonicTimeNs,
         voice_enrollment_session_id: String,
@@ -5925,7 +7525,7 @@ impl Ph1fStore {
         if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "ph1vid_enroll_defer_reminder_commit.idempotency_key",
+                    field: "ph1vid_enroll_defer_commit.idempotency_key",
                     reason: "must be non-empty and <= 128 chars",
                 },
             ));
@@ -7929,6 +9529,7 @@ impl Ph1fStore {
             Ph1cRetryAdvice::SpeakSlower => "SPEAK_SLOWER",
             Ph1cRetryAdvice::MoveCloser => "MOVE_CLOSER",
             Ph1cRetryAdvice::QuietEnv => "QUIET_ENV",
+            Ph1cRetryAdvice::SwitchToText => "SWITCH_TO_TEXT",
         }
     }
 
@@ -10275,6 +11876,23 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn validate_ph1learn_artifact_type(artifact_type: ArtifactType) -> Result<(), StorageError> {
+        if !matches!(
+            artifact_type,
+            ArtifactType::SttRoutingPolicyPack
+                | ArtifactType::SttAdaptationProfile
+                | ArtifactType::TtsRoutingPolicyPack
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1learn.artifact_type",
+                    reason: "must be STT_ROUTING_POLICY_PACK, STT_ADAPTATION_PROFILE, or TTS_ROUTING_POLICY_PACK",
+                },
+            ));
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ph1feedback_event_commit(
         &mut self,
@@ -10359,6 +11977,7 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
         Self::validate_ph1learn_idempotency("ph1learn.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1learn_artifact_type(artifact_type)?;
         self.validate_ph1learn_scope_and_bindings(&tenant_id, scope_type, &scope_id)?;
 
         let input = ArtifactLedgerRowInput::v1(
@@ -11919,6 +13538,26 @@ mod tests {
         .unwrap()
     }
 
+    fn outcome_row_input(
+        action_class: OsOutcomeActionClass,
+        consumed_by: &str,
+        idempotency_key: Option<&str>,
+    ) -> OutcomeUtilizationLedgerRowInput {
+        OutcomeUtilizationLedgerRowInput {
+            created_at: MonotonicTimeNs(20),
+            correlation_id: CorrelationId(9200),
+            turn_id: TurnId(2),
+            engine_id: "PH1.NLP".to_string(),
+            outcome_type: "INTENT_DRAFT".to_string(),
+            action_class,
+            consumed_by: consumed_by.to_string(),
+            latency_cost_ms: 7,
+            decision_delta: true,
+            reason_code: ReasonCodeId(101),
+            idempotency_key: idempotency_key.map(str::to_string),
+        }
+    }
+
     #[test]
     fn at_f_01_ledger_append_only() {
         let mut s = store_with_user_and_device();
@@ -12210,6 +13849,42 @@ mod tests {
             .unwrap();
         assert_eq!(e1, e2);
         assert_eq!(s.audit_events().len(), 1);
+    }
+
+    #[test]
+    fn at_f_stagea_01_outcome_utilization_ledger_append_and_idempotency() {
+        let mut s = store_with_user_and_device();
+        let id1 = s
+            .append_outcome_utilization_ledger_row(outcome_row_input(
+                OsOutcomeActionClass::ActNow,
+                "PH1.X",
+                Some("util_01"),
+            ))
+            .unwrap();
+        let id2 = s
+            .append_outcome_utilization_ledger_row(outcome_row_input(
+                OsOutcomeActionClass::ActNow,
+                "PH1.X",
+                Some("util_01"),
+            ))
+            .unwrap();
+        assert_eq!(id1, id2);
+        assert_eq!(s.outcome_utilization_ledger_rows().len(), 1);
+        assert!(matches!(
+            s.attempt_overwrite_outcome_utilization_ledger_row(id1),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn at_f_stagea_02_outcome_utilization_rejects_unresolved_consumed_by() {
+        let mut s = store_with_user_and_device();
+        let res = s.append_outcome_utilization_ledger_row(outcome_row_input(
+            OsOutcomeActionClass::QueueLearn,
+            "NONE",
+            None,
+        ));
+        assert!(matches!(res, Err(StorageError::ContractViolation(_))));
     }
 
     #[test]
@@ -12695,7 +14370,7 @@ mod tests {
         );
 
         let deferred = s
-            .ph1w_enroll_defer_reminder_commit(
+            .ph1w_enroll_defer_commit(
                 MonotonicTimeNs(40),
                 started.wake_enrollment_session_id.clone(),
                 Some(MonotonicTimeNs(1000)),
@@ -12875,7 +14550,7 @@ mod tests {
         );
 
         let deferred = s
-            .ph1vid_enroll_defer_reminder_commit(
+            .ph1vid_enroll_defer_commit(
                 MonotonicTimeNs(40),
                 started.voice_enrollment_session_id.clone(),
                 ReasonCodeId(0x5649_3002),

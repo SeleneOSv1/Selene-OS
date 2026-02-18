@@ -125,13 +125,13 @@ PH1.C writes emit PH1.J audit events with:
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
-- `AT-PH1-C-DB-01` tenant isolation enforced
+- `AT-C-01` tenant isolation enforced
   - `at_c_db_01_tenant_isolation_enforced`
-- `AT-PH1-C-DB-02` append-only enforcement for transcript/audit ledgers
+- `AT-C-02` append-only enforcement for transcript/audit ledgers
   - `at_c_db_02_append_only_enforced`
-- `AT-PH1-C-DB-03` idempotency dedupe works
+- `AT-C-03` idempotency dedupe works
   - `at_c_db_03_idempotency_dedupe_works`
-- `AT-PH1-C-DB-04` no PH1.C current-table rebuild is required
+- `AT-C-04` no PH1.C current-table rebuild is required
   - `at_c_db_04_no_current_table_rebuild_required`
 
 Implementation references:
@@ -139,3 +139,21 @@ Implementation references:
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 13 (`PH1.C` uses existing `conversation_ledger` + `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_c/db_wiring.rs`
+
+## 8) Related Engine Boundary (`PH1.ENDPOINT`)
+
+- Before PH1.C transcript finalization, Selene OS may invoke PH1.ENDPOINT and pass back one selected endpoint hint.
+- PH1.C remains authoritative for transcript pass/reject and reason codes; PH1.ENDPOINT hints are advisory only.
+- PH1.C audit payloads may include endpoint-hint references only as bounded metadata and must remain provider-invisible.
+
+## 9) Related Engine Boundary (`PH1.KNOW`)
+
+- Selene OS may provide tenant-scoped PH1.KNOW vocabulary hints to PH1.C before transcript quality gating.
+- PH1.C remains transcript-gate authority and must treat PH1.KNOW hints as advisory only.
+- PH1.KNOW hints must remain tenant-scoped, authorized-only, and provider-invisible in PH1.C audit payloads.
+
+## 10) Related Engine Boundary (`PH1.QUOTA`)
+
+- Selene OS may apply PH1.QUOTA lane decisions (`ALLOW | WAIT | REFUSE`) before PH1.C execution.
+- PH1.C must fail closed when quota returns `REFUSE` and must not execute hidden fallback paths.
+- `WAIT` posture is an OS orchestration pause only; PH1.C transcript authority and audit discipline remain unchanged when resumed.
