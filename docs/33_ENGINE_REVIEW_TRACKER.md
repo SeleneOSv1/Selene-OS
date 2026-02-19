@@ -4,7 +4,7 @@ Execution plan pointer:
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md`
 
 Purpose:
-- Lock the full engine inventory from `docs/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE.md`.
+- Lock the full engine inventory from `docs/archive/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE_POINTER_ARCHIVE_2026-02-19.md`.
 - Review one engine at a time against current Selene OS design.
 - Mark completion only after gap analysis + design updates are applied.
 
