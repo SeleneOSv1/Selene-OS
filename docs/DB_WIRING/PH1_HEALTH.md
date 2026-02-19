@@ -42,7 +42,8 @@
 - Health content may vary; shell layout may not.
 
 ## F) Acceptance Tests
-- AT-HEALTH-DB-01: unified issue list reads from source events without mutating source tables.
-- AT-HEALTH-DB-02: unresolved issue includes owner engine + latest reason code.
-- AT-HEALTH-DB-03: escalated issue includes `bcast_id` proof reference when present.
-- AT-HEALTH-DB-04: no write path is exposed in v1 reporting mode.
+- AT-HEALTH-01: snapshot read is schema-valid + display-only (`crates/selene_engines/src/ph1health.rs`).
+- AT-HEALTH-02: unresolved summary includes owner engine + latest reason code (`crates/selene_engines/src/ph1health.rs`).
+- AT-HEALTH-03: issue timeline includes `bcast_id` proof reference when present (`crates/selene_engines/src/ph1health.rs`).
+- AT-HEALTH-04: tenant scope mismatch fails closed (`crates/selene_engines/src/ph1health.rs`).
+- AT-HEALTH-OS-01..04: OS read wiring enforces disabled gate + response-capability fail-closed behavior (`crates/selene_os/src/ph1health.rs`).

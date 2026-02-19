@@ -68,7 +68,7 @@
   - right detail panel.
 - PH1.HEALTH supplies content/state only; shell layout contract is fixed by app UI.
 
-## Implementation References (to be added in build phase)
-- kernel contracts: `crates/selene_kernel_contracts/src/ph1health.rs` (planned)
-- engine runtime: `crates/selene_engines/src/ph1health.rs` (planned)
-- os wiring: `crates/selene_os/src/ph1health.rs` (planned)
+## Implementation References
+- kernel contracts: `crates/selene_kernel_contracts/src/ph1health.rs`
+- engine runtime: `crates/selene_engines/src/ph1health.rs`
+- os wiring: `crates/selene_os/src/ph1health.rs`

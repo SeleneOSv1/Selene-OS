@@ -147,7 +147,7 @@ Tracker normalization notes:
 | 76 | PH2.ACCESS.002 | Merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`) as source-history access split row | MERGED_INTO_63 |
 | 77 | PH1.POLICY | Global rule-base + snapshot policy decision gate (prompt discipline; ALWAYS_ON) | DONE |
 | 78 | PH1.DELIVERY | Provider delivery attempt truth owner for SMS/Email/WhatsApp/WeChat (simulation-gated) | DONE |
-| 79 | PH1.HEALTH | Display-only health reporting dashboard (issue history + unresolved/escalated visibility) | TODO |
+| 79 | PH1.HEALTH | Display-only health reporting dashboard (issue history + unresolved/escalated visibility) | DONE |
 
 ## Foundation Tables Tracking (Non-Runtime)
 
@@ -2936,3 +2936,45 @@ Verification:
 Completion:
 - Engine 78 (`PH1.DELIVERY`) marked `DONE` for tracker completeness closure.
 - Runtime/code depth was already complete in prior cycles; this pass closed canonical inventory visibility.
+
+## Engine 79 Review Log (`PH1.HEALTH`)
+
+Source extraction (`registry/map/db_wiring/ecm`):
+- Purpose: display-only health issue reporting and timeline projection for app UI.
+- Hard boundaries: no remediation execution, no simulation calls, no authority mutation, no direct engine-to-engine execution actions.
+- Placement: `ENTERPRISE_SUPPORT` (outside in-turn execution).
+
+Gap analysis (before update):
+- Tracker row 79 remained `TODO`.
+- PH1.HEALTH docs existed, but implementation references were still marked planned.
+- No kernel contract module existed for `PH1.HEALTH` request/response shapes.
+- No engine runtime module existed for deterministic snapshot/timeline/unresolved projection.
+- No OS wiring module existed for enable/disable gate + response-capability fail-closed checks.
+- Coverage row note had no PH1.K-level code-depth references.
+
+Updates applied (this cycle):
+- Added PH1.HEALTH kernel contracts + validation/tests:
+  - `crates/selene_kernel_contracts/src/ph1health.rs`
+  - exported via `crates/selene_kernel_contracts/src/lib.rs`
+  - request/output coverage: `HEALTH_SNAPSHOT_READ`, `HEALTH_ISSUE_TIMELINE_READ`, `HEALTH_UNRESOLVED_SUMMARY_READ` + refusal contract.
+- Added PH1.HEALTH engine runtime + acceptance tests:
+  - `crates/selene_engines/src/ph1health.rs`
+  - exported via `crates/selene_engines/src/lib.rs`
+  - deterministic projections for snapshot/timeline/unresolved reads, tenant-scope fail-closed checks, and display-only/no-authority outputs.
+- Added PH1.HEALTH OS wiring + acceptance tests:
+  - `crates/selene_os/src/ph1health.rs`
+  - exported via `crates/selene_os/src/lib.rs`
+  - deterministic enable/disable gate, request-budget clamping, response-capability mismatch fail-closed refusal path.
+- Updated PH1.HEALTH docs:
+  - `docs/ECM/PH1_HEALTH.md` implementation references switched from planned to implemented.
+  - `docs/DB_WIRING/PH1_HEALTH.md` acceptance section aligned to runtime/OS test evidence.
+  - `docs/COVERAGE_MATRIX.md` PH1.HEALTH row now includes PH1.K-level code-depth references.
+
+Verification:
+- `cargo test -p selene_kernel_contracts ph1health -- --nocapture`
+- `cargo test -p selene_engines ph1health -- --nocapture`
+- `cargo test -p selene_os ph1health -- --nocapture`
+
+Completion:
+- Engine 79 (`PH1.HEALTH`) marked `DONE` at PH1.K-level depth (contracts + runtime + OS wiring + tests).
+- Display-only boundary remains locked (`no remediation execution`, `no simulation calls`, `no authority mutation`).
