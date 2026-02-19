@@ -23,6 +23,10 @@
 ## 2) Required Inputs
 - token_id
 - device_fingerprint
+- app_platform (`IOS|ANDROID`)
+- app_instance_id
+- deep_link_nonce
+- link_opened_at
 - idempotency_key
 
 ## 3) Success Output Schema
@@ -32,12 +36,16 @@ draft_id: string
 activation_status: enum (ACTIVATED | BLOCKED | EXPIRED | REVOKED | CONSUMED)
 missing_required_fields: string[]
 bound_device_fingerprint_hash: string
+app_platform: string
+app_instance_id: string
+deep_link_nonce: string
+link_opened_at: timestamp_ms
 ```
 
 ## 4) Ordered Engine Steps
 | step_id | engine_name | capability_id | required_fields | produced_fields | side_effects | timeout_ms | max_retries | retry_backoff_ms | retryable_reason_codes |
 |---|---|---|---|---|---|---:|---:|---:|---|
-| LINK_OPEN_S01 | PH1.LINK | PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW | token_id, device_fingerprint, idempotency_key | activation_status, draft_id, missing_required_fields, bound_device_fingerprint_hash | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [LINK_OPEN_RETRYABLE] |
+| LINK_OPEN_S01 | PH1.LINK | PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW | token_id, device_fingerprint, app_platform, app_instance_id, deep_link_nonce, link_opened_at, idempotency_key | activation_status, draft_id, missing_required_fields, bound_device_fingerprint_hash, app_platform, app_instance_id, deep_link_nonce, link_opened_at | DB_WRITE (simulation-gated) | 600 | 2 | 250 | [LINK_OPEN_RETRYABLE] |
 | LINK_OPEN_S02 | PH1.X | PH1X_RESPOND_COMMIT_ROW | activation_status | user-facing handoff/refusal response | DB_WRITE | 250 | 1 | 100 | [OS_RESPONSE_RETRYABLE] |
 
 ## 5) Confirmation Points
@@ -60,3 +68,5 @@ Single-path mismatch rule:
 - AT-PBS-LINKOPEN-02: Device mismatch must fail closed.
 - AT-PBS-LINKOPEN-03: Handoff includes draft_id when activated.
 - AT-PBS-LINKOPEN-04: Successful activation returns draft_id + missing_required_fields and binds token to device_fingerprint.
+- AT-PBS-LINKOPEN-05: Successful activation includes app-open context for ONB handoff (`app_platform`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`).
+- AT-PBS-LINKOPEN-06: Missing/invalid app-open context fails closed before activation.

@@ -57,6 +57,23 @@ pub enum InviteeType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AppPlatform {
+    Ios,
+    Android,
+    Desktop,
+}
+
+impl AppPlatform {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AppPlatform::Ios => "IOS",
+            AppPlatform::Android => "ANDROID",
+            AppPlatform::Desktop => "DESKTOP",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LinkStatus {
     DraftCreated,
     Sent,
@@ -72,6 +89,14 @@ pub enum LinkStatus {
 pub enum DraftStatus {
     DraftCreated,
     DraftReady,
+}
+
+impl Validate for AppPlatform {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        match self {
+            AppPlatform::Ios | AppPlatform::Android | AppPlatform::Desktop => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -327,6 +352,10 @@ pub struct LinkRecord {
     pub expiration_policy_id: Option<String>,
     pub prefilled_context: Option<PrefilledContext>,
     pub bound_device_fingerprint_hash: Option<String>,
+    pub app_platform: Option<AppPlatform>,
+    pub app_instance_id: Option<String>,
+    pub deep_link_nonce: Option<String>,
+    pub link_opened_at: Option<MonotonicTimeNs>,
     pub revoked_reason: Option<String>,
 }
 
@@ -346,6 +375,10 @@ impl LinkRecord {
         expiration_policy_id: Option<String>,
         prefilled_context: Option<PrefilledContext>,
         bound_device_fingerprint_hash: Option<String>,
+        app_platform: Option<AppPlatform>,
+        app_instance_id: Option<String>,
+        deep_link_nonce: Option<String>,
+        link_opened_at: Option<MonotonicTimeNs>,
         revoked_reason: Option<String>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
@@ -363,6 +396,10 @@ impl LinkRecord {
             expiration_policy_id,
             prefilled_context,
             bound_device_fingerprint_hash,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
             revoked_reason,
         };
         r.validate()?;
@@ -462,6 +499,53 @@ impl Validate for LinkRecord {
                 return Err(ContractViolation::InvalidValue {
                     field: "link_record.bound_device_fingerprint_hash",
                     reason: "must be ASCII",
+                });
+            }
+        }
+        match (
+            self.app_platform,
+            self.app_instance_id.as_ref(),
+            self.deep_link_nonce.as_ref(),
+            self.link_opened_at,
+        ) {
+            (None, None, None, None) => {}
+            (Some(p), Some(app_instance_id), Some(deep_link_nonce), Some(link_opened_at)) => {
+                p.validate()?;
+                if app_instance_id.trim().is_empty() || app_instance_id.len() > 128 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_record.app_instance_id",
+                        reason: "must be non-empty and <= 128 chars",
+                    });
+                }
+                if !app_instance_id.is_ascii() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_record.app_instance_id",
+                        reason: "must be ASCII",
+                    });
+                }
+                if deep_link_nonce.trim().is_empty() || deep_link_nonce.len() > 128 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_record.deep_link_nonce",
+                        reason: "must be non-empty and <= 128 chars",
+                    });
+                }
+                if !deep_link_nonce.is_ascii() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_record.deep_link_nonce",
+                        reason: "must be ASCII",
+                    });
+                }
+                if link_opened_at.0 == 0 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_record.link_opened_at",
+                        reason: "must be > 0",
+                    });
+                }
+            }
+            _ => {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_record.app_open_context",
+                    reason: "must include app_platform, app_instance_id, deep_link_nonce, and link_opened_at together",
                 });
             }
         }
@@ -645,6 +729,10 @@ pub struct LinkActivationResult {
     pub missing_required_fields: Vec<String>,
     pub conflict_reason: Option<String>,
     pub bound_device_fingerprint_hash: Option<String>,
+    pub app_platform: Option<AppPlatform>,
+    pub app_instance_id: Option<String>,
+    pub deep_link_nonce: Option<String>,
+    pub link_opened_at: Option<MonotonicTimeNs>,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
 }
 
@@ -656,6 +744,10 @@ impl LinkActivationResult {
         missing_required_fields: Vec<String>,
         conflict_reason: Option<String>,
         bound_device_fingerprint_hash: Option<String>,
+        app_platform: Option<AppPlatform>,
+        app_instance_id: Option<String>,
+        deep_link_nonce: Option<String>,
+        link_opened_at: Option<MonotonicTimeNs>,
         prefilled_context_ref: Option<PrefilledContextRef>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
@@ -666,6 +758,10 @@ impl LinkActivationResult {
             missing_required_fields,
             conflict_reason,
             bound_device_fingerprint_hash,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
             prefilled_context_ref,
         };
         r.validate()?;
@@ -716,6 +812,69 @@ impl Validate for LinkActivationResult {
                 return Err(ContractViolation::InvalidValue {
                     field: "link_activation_result.bound_device_fingerprint_hash",
                     reason: "must be <= 128 chars",
+                });
+            }
+            if !h.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_activation_result.bound_device_fingerprint_hash",
+                    reason: "must be ASCII",
+                });
+            }
+        }
+        match (
+            self.app_platform,
+            self.app_instance_id.as_ref(),
+            self.deep_link_nonce.as_ref(),
+            self.link_opened_at,
+        ) {
+            (None, None, None, None) => {
+                if matches!(
+                    self.activation_status,
+                    LinkStatus::Opened | LinkStatus::Activated
+                ) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.app_open_context",
+                        reason: "required for OPENED/ACTIVATED status",
+                    });
+                }
+            }
+            (Some(p), Some(app_instance_id), Some(deep_link_nonce), Some(link_opened_at)) => {
+                p.validate()?;
+                if app_instance_id.trim().is_empty() || app_instance_id.len() > 128 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.app_instance_id",
+                        reason: "must be non-empty and <= 128 chars",
+                    });
+                }
+                if !app_instance_id.is_ascii() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.app_instance_id",
+                        reason: "must be ASCII",
+                    });
+                }
+                if deep_link_nonce.trim().is_empty() || deep_link_nonce.len() > 128 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.deep_link_nonce",
+                        reason: "must be non-empty and <= 128 chars",
+                    });
+                }
+                if !deep_link_nonce.is_ascii() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.deep_link_nonce",
+                        reason: "must be ASCII",
+                    });
+                }
+                if link_opened_at.0 == 0 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "link_activation_result.link_opened_at",
+                        reason: "must be > 0",
+                    });
+                }
+            }
+            _ => {
+                return Err(ContractViolation::InvalidValue {
+                    field: "link_activation_result.app_open_context",
+                    reason: "must include app_platform, app_instance_id, deep_link_nonce, and link_opened_at together",
                 });
             }
         }
@@ -1271,12 +1430,17 @@ impl Validate for InviteDraftUpdateCommitRequest {
 pub struct InviteOpenActivateCommitRequest {
     pub token_id: TokenId,
     pub device_fingerprint: String,
+    pub app_platform: AppPlatform,
+    pub app_instance_id: String,
+    pub deep_link_nonce: String,
+    pub link_opened_at: MonotonicTimeNs,
     pub idempotency_key: String,
 }
 
 impl Validate for InviteOpenActivateCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.token_id.validate()?;
+        self.app_platform.validate()?;
         if self.device_fingerprint.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_open_activate_commit_request.device_fingerprint",
@@ -1287,6 +1451,48 @@ impl Validate for InviteOpenActivateCommitRequest {
             return Err(ContractViolation::InvalidValue {
                 field: "invite_open_activate_commit_request.device_fingerprint",
                 reason: "must be <= 256 chars",
+            });
+        }
+        if self.app_instance_id.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.app_instance_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.app_instance_id.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.app_instance_id",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if !self.app_instance_id.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.app_instance_id",
+                reason: "must be ASCII",
+            });
+        }
+        if self.deep_link_nonce.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.deep_link_nonce",
+                reason: "must not be empty",
+            });
+        }
+        if self.deep_link_nonce.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.deep_link_nonce",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if !self.deep_link_nonce.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.deep_link_nonce",
+                reason: "must be ASCII",
+            });
+        }
+        if self.link_opened_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.link_opened_at",
+                reason: "must be > 0",
             });
         }
         if self.idempotency_key.trim().is_empty() {
@@ -1496,11 +1702,19 @@ impl Ph1LinkRequest {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
         idempotency_key: String,
     ) -> Result<Self, ContractViolation> {
         let req = InviteOpenActivateCommitRequest {
             token_id,
             device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
             idempotency_key,
         };
         let r = Self {

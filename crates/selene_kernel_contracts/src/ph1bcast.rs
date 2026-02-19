@@ -316,11 +316,7 @@ impl Validate for BcastReminderFiredCommitRequest {
         )?;
         self.broadcast_id.validate()?;
         self.recipient_id.validate()?;
-        validate_token(
-            "bcast_reminder_fired.reminder_ref",
-            &self.reminder_ref,
-            256,
-        )?;
+        validate_token("bcast_reminder_fired.reminder_ref", &self.reminder_ref, 256)?;
         validate_token(
             "bcast_reminder_fired.idempotency_key",
             &self.idempotency_key,

@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 
 use selene_kernel_contracts::ph1learn::{
     LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnArtifactPackageBuildRequest,
-    LearnArtifactTarget, LearnCapabilityId, LearnRefuse, LearnScope, LearnSignal,
-    LearnSignalAggregateOk, LearnSignalAggregateRequest, LearnSignalType, LearnTargetEngine,
-    LearnValidationStatus, Ph1LearnRequest, Ph1LearnResponse,
+    LearnArtifactTarget, LearnCapabilityId, LearnCasePath, LearnGoldStatus, LearnRefuse,
+    LearnScope, LearnSignal, LearnSignalAggregateOk, LearnSignalAggregateRequest, LearnSignalType,
+    LearnTargetEngine, LearnValidationStatus, Ph1LearnRequest, Ph1LearnResponse,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
@@ -147,12 +147,7 @@ impl Ph1LearnRuntime {
             );
         }
 
-        candidates.sort_by(|a, b| {
-            b.expected_effect_bp
-                .cmp(&a.expected_effect_bp)
-                .then(b.artifact_version.cmp(&a.artifact_version))
-                .then(a.artifact_id.cmp(&b.artifact_id))
-        });
+        sort_artifacts_canonical(&mut candidates);
         candidates.truncate(artifact_budget);
 
         let selected_artifact_id = candidates[0].artifact_id.clone();
@@ -209,12 +204,7 @@ impl Ph1LearnRuntime {
         }
 
         let mut expected = req.ordered_artifacts.clone();
-        expected.sort_by(|a, b| {
-            b.artifact_version
-                .cmp(&a.artifact_version)
-                .then(b.expected_effect_bp.cmp(&a.expected_effect_bp))
-                .then(a.artifact_id.cmp(&b.artifact_id))
-        });
+        sort_artifacts_canonical(&mut expected);
 
         let expected_order = expected
             .iter()
@@ -264,6 +254,24 @@ impl Ph1LearnRuntime {
             .any(|artifact| artifact.scope == LearnScope::GlobalDerived && !artifact.consent_safe)
         {
             diagnostics.push("global_derived_artifact_not_consent_safe".to_string());
+        }
+
+        for artifact in &req.ordered_artifacts {
+            if artifact.source_path == LearnCasePath::Improvement
+                && artifact.gold_status != LearnGoldStatus::Verified
+            {
+                diagnostics.push(format!(
+                    "improvement_artifact_gold_unverified:{}",
+                    artifact.artifact_id
+                ));
+            }
+            if artifact.source_path == LearnCasePath::Improvement && artifact.gold_case_id.is_none()
+            {
+                diagnostics.push(format!(
+                    "improvement_artifact_gold_case_missing:{}",
+                    artifact.artifact_id
+                ));
+            }
         }
 
         diagnostics.truncate(min(
@@ -344,7 +352,7 @@ fn build_candidate(
     let rollback_to = Some(format!("{}.prev", artifact_id));
     let consent_safe = !signal.contains_sensitive_data || signal.consent_asserted;
 
-    LearnArtifactCandidate::v1(
+    LearnArtifactCandidate::v2(
         artifact_id,
         target,
         signal.scope_hint,
@@ -354,6 +362,9 @@ fn build_candidate(
         signal.evidence_ref.clone(),
         rollback_to,
         consent_safe,
+        signal.source_path,
+        signal.gold_case_id.clone(),
+        signal.gold_status,
     )
 }
 
@@ -366,6 +377,15 @@ fn artifact_target_from_signal(signal_type: LearnSignalType) -> LearnArtifactTar
         LearnSignalType::VocabularyRepeat => LearnArtifactTarget::KnowTenantGlossaryPack,
         LearnSignalType::BargeIn => LearnArtifactTarget::ListenEnvironmentProfile,
         LearnSignalType::DeliverySwitch => LearnArtifactTarget::CacheDecisionSkeleton,
+        LearnSignalType::VoiceIdFalseReject => LearnArtifactTarget::VoiceIdThresholdPack,
+        LearnSignalType::VoiceIdFalseAccept => LearnArtifactTarget::VoiceIdThresholdPack,
+        LearnSignalType::VoiceIdMultiSpeaker => LearnArtifactTarget::VoiceIdConfusionPairPack,
+        LearnSignalType::VoiceIdDriftAlert => LearnArtifactTarget::VoiceIdProfileDeltaPack,
+        LearnSignalType::VoiceIdReauthFriction => LearnArtifactTarget::VoiceIdThresholdPack,
+        LearnSignalType::VoiceIdSpoofRisk => LearnArtifactTarget::VoiceIdSpoofPolicyPack,
+        LearnSignalType::VoiceIdConfusionPair => LearnArtifactTarget::VoiceIdConfusionPairPack,
+        LearnSignalType::VoiceIdDrift => LearnArtifactTarget::VoiceIdProfileDeltaPack,
+        LearnSignalType::VoiceIdLowQuality => LearnArtifactTarget::VoiceIdProfileDeltaPack,
     }
 }
 
@@ -378,6 +398,10 @@ pub(crate) fn expected_target_engines(target: LearnArtifactTarget) -> Vec<LearnT
         LearnArtifactTarget::PaeRoutingWeights => vec![LearnTargetEngine::Pae],
         LearnArtifactTarget::SearchWebExtractionHints => vec![LearnTargetEngine::Search],
         LearnArtifactTarget::ListenEnvironmentProfile => vec![LearnTargetEngine::Listen],
+        LearnArtifactTarget::VoiceIdThresholdPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdConfusionPairPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdSpoofPolicyPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdProfileDeltaPack => vec![LearnTargetEngine::VoiceId],
     }
 }
 
@@ -390,12 +414,56 @@ fn score_signal(signal: &LearnSignal) -> i16 {
         LearnSignalType::VocabularyRepeat => 700,
         LearnSignalType::BargeIn => 620,
         LearnSignalType::DeliverySwitch => 560,
+        LearnSignalType::VoiceIdFalseReject => 930,
+        LearnSignalType::VoiceIdFalseAccept => 980,
+        LearnSignalType::VoiceIdMultiSpeaker => 940,
+        LearnSignalType::VoiceIdDriftAlert => 760,
+        LearnSignalType::VoiceIdReauthFriction => 710,
+        LearnSignalType::VoiceIdSpoofRisk => 990,
+        LearnSignalType::VoiceIdConfusionPair => 900,
+        LearnSignalType::VoiceIdDrift => 700,
+        LearnSignalType::VoiceIdLowQuality => 660,
     };
 
     let frequency_component = (signal.occurrence_count as i32 * 25).min(1200);
     let metric_component = signal.metric_value_bp as i32;
-    let total = base + frequency_component + metric_component;
+    let path_component = match signal.source_path {
+        LearnCasePath::Defect => 180,
+        LearnCasePath::Improvement => 0,
+    };
+    let gold_component = match signal.gold_status {
+        LearnGoldStatus::Verified => 120,
+        LearnGoldStatus::Pending => 40,
+        LearnGoldStatus::NotRequired => 0,
+    };
+    let total = base + frequency_component + metric_component + path_component + gold_component;
     total.clamp(-20_000, 20_000) as i16
+}
+
+fn sort_artifacts_canonical(artifacts: &mut [LearnArtifactCandidate]) {
+    artifacts.sort_by(|a, b| {
+        artifact_path_rank(a.source_path)
+            .cmp(&artifact_path_rank(b.source_path))
+            .then(artifact_gold_rank(a.gold_status).cmp(&artifact_gold_rank(b.gold_status)))
+            .then(b.expected_effect_bp.cmp(&a.expected_effect_bp))
+            .then(b.artifact_version.cmp(&a.artifact_version))
+            .then(a.artifact_id.cmp(&b.artifact_id))
+    });
+}
+
+fn artifact_path_rank(path: LearnCasePath) -> u8 {
+    match path {
+        LearnCasePath::Defect => 0,
+        LearnCasePath::Improvement => 1,
+    }
+}
+
+fn artifact_gold_rank(status: LearnGoldStatus) -> u8 {
+    match status {
+        LearnGoldStatus::Verified => 0,
+        LearnGoldStatus::Pending => 1,
+        LearnGoldStatus::NotRequired => 2,
+    }
 }
 
 #[cfg(test)]
@@ -600,6 +668,91 @@ mod tests {
         match out {
             Ph1LearnResponse::LearnArtifactPackageBuildOk(ok) => {
                 assert_eq!(ok.validation_status, LearnValidationStatus::Ok);
+            }
+            _ => panic!("expected LearnArtifactPackageBuildOk"),
+        }
+    }
+
+    #[test]
+    fn at_learn_05_defect_signal_is_prioritized_over_improvement() {
+        let req = Ph1LearnRequest::LearnSignalAggregate(
+            LearnSignalAggregateRequest::v1(
+                envelope(8, 6),
+                "tenant_1".to_string(),
+                vec![
+                    signal(
+                        "sig_improve",
+                        LearnSignalType::UserCorrection,
+                        LearnScope::User,
+                        Some("user_1"),
+                        300,
+                    ),
+                    signal(
+                        "sig_defect",
+                        LearnSignalType::ToolFail,
+                        LearnScope::Tenant,
+                        Some("tenant_1"),
+                        300,
+                    ),
+                ],
+                true,
+                true,
+            )
+            .unwrap(),
+        );
+
+        let out = runtime().run(&req);
+        match out {
+            Ph1LearnResponse::LearnSignalAggregateOk(ok) => {
+                assert_eq!(
+                    ok.selected_artifact_id,
+                    "learn.artifact.tenant_1.sig_defect".to_string()
+                );
+            }
+            _ => panic!("expected LearnSignalAggregateOk"),
+        }
+    }
+
+    #[test]
+    fn at_learn_06_package_build_fails_for_unverified_improvement_artifact() {
+        let artifact = LearnArtifactCandidate::v2(
+            "artifact_improve_pending".to_string(),
+            LearnArtifactTarget::KnowTenantGlossaryPack,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            3,
+            880,
+            "learn:evidence:artifact_improve_pending".to_string(),
+            Some("artifact_improve_pending.prev".to_string()),
+            true,
+            LearnCasePath::Improvement,
+            None,
+            LearnGoldStatus::Pending,
+        )
+        .unwrap();
+
+        let req = Ph1LearnRequest::LearnArtifactPackageBuild(
+            LearnArtifactPackageBuildRequest::v1(
+                envelope(8, 6),
+                "tenant_1".to_string(),
+                "artifact_improve_pending".to_string(),
+                vec![artifact],
+                vec![LearnTargetEngine::Know],
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+        );
+
+        let out = runtime().run(&req);
+        match out {
+            Ph1LearnResponse::LearnArtifactPackageBuildOk(ok) => {
+                assert_eq!(ok.validation_status, LearnValidationStatus::Fail);
+                assert!(ok
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.starts_with("improvement_artifact_gold_unverified:")),);
             }
             _ => panic!("expected LearnArtifactPackageBuildOk"),
         }

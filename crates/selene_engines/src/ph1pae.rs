@@ -5,8 +5,8 @@ use std::cmp::min;
 use selene_kernel_contracts::ph1pae::{
     PaeAdaptationHint, PaeAdaptationHintEmitOk, PaeAdaptationHintEmitRequest, PaeCapabilityId,
     PaeMode, PaePolicyScoreBuildOk, PaePolicyScoreBuildRequest, PaeProviderSlot, PaeRefuse,
-    PaeRouteDomain, PaeScoreEntry, PaeSignalSource,
-    PaeValidationStatus, Ph1PaeRequest, Ph1PaeResponse,
+    PaeRouteDomain, PaeScoreEntry, PaeSignalSource, PaeValidationStatus, Ph1PaeRequest,
+    Ph1PaeResponse,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 

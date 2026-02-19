@@ -21,8 +21,7 @@ Completion gate (per engine):
 User-declared compare exemptions (current design is already newer):
 - `PH1.LINK`
 - `PH1.ONB`
-- `PH1.ACCESS.001`
-- `PH2.ACCESS.002`
+- `PH1.ACCESS.001_PH2.ACCESS.002` (canonical merged access owner row; source rows 63/64 normalized under one tracker row)
 - `PH1.POSITION`
 
 Tracker normalization notes:
@@ -43,19 +42,28 @@ Tracker normalization notes:
 - Broadcast review/patching is executed once under row 50 to avoid duplicate engine/implementation passes.
 - Row 73 (`PH1.VOICE.ID`) is merged into row 52 (`PH1.VOICE.ID.001`).
 - Voice identity review/patching is executed once under row 52 to avoid duplicate engine/implementation passes.
-- Row 43 (`PH1.ACCESS`) is removed from active review scope to keep only concrete access engines:
-  - `PH1.ACCESS.001`
-  - `PH2.ACCESS.002`
+- Row 43 (`PH1.ACCESS`) is removed from active review scope; canonical access tracking is normalized to one merged row:
+  - `PH1.ACCESS.001_PH2.ACCESS.002` (row 63, canonical)
+  - `PH1.ACCESS.001` and `PH2.ACCESS.002` are kept as source-history rows merged into row 63.
 - Row 42 (`PH1.EMO`) is removed from active review scope to keep only concrete emotional engines:
   - `PH1.EMO.GUIDE`
   - `PH1.EMO.CORE`
   - Namespace module exports were retired from active crate surfaces.
 - `PH1.LEARNING_ADAPTIVE` standalone runtime identity is merged into `PH1.LEARN` + `PH1.PAE`; coverage/registry/map/runtime references are retired.
 - `PH1.REVIEW` standalone runtime identity is merged into `PH1.GOV` + access escalation flow; coverage/registry/map/runtime references are retired.
+- Historical log entries from earlier cycles that mention standalone `PH1.REVIEW` runtime wiring are retained for audit history only and are superseded by the merge decision above.
 - Row 05 (`PH1.WEBINT`) is merged into row 06 (`PH1.SEARCH`) as the canonical evidence-query assist tracker row.
 - Row 07 (`PH1.PRIORITY`) is merged into row 08 (`PH1.COST`) as the canonical turn-policy pacing + budget tracker row.
 - Row 15 (`PH1.ATTN`) is merged into row 70 (`PH1.NLP`) as the canonical understanding-owner tracker row.
 - Row 19 (`PH1.PUZZLE`) is merged into row 70 (`PH1.NLP`) as the canonical understanding-owner tracker row.
+- Canonical inventory completeness rule: this tracker must include every runtime engine id in `docs/07_ENGINE_REGISTRY.md` as either:
+  - a direct row (`DONE`/`EXEMPT`/`TODO`), or
+  - a source-history row explicitly merged into a canonical row.
+- Registry-only canonical engines not present in source `docs/32` are tracked as addendum rows:
+  - `PH1.POLICY` (row 77)
+  - `PH1.DELIVERY` (row 78)
+  - `PH1.HEALTH` (row 79)
+- Registry foundation table ids are tracked in a separate mini-section in this file and are excluded from runtime engine review order.
 
 ## Engine Inventory And Status
 
@@ -121,8 +129,8 @@ Tracker normalization notes:
 | 60 | PH1.M | Memory engine (non-authoritative) | DONE |
 | 61 | PH1.J | Audit contract and append-only proof trail | DONE |
 | 62 | PH1.F | Storage schema/migration/invariant owner | DONE |
-| 63 | PH2.ACCESS.002 | Per-user permission truth engine | EXEMPT |
-| 64 | PH1.ACCESS.001 | Master Access/Authority gate interface | EXEMPT |
+| 63 | PH1.ACCESS.001_PH2.ACCESS.002 | Canonical Access/Authority gate + per-user permission truth engine | EXEMPT |
+| 64 | PH1.ACCESS.001 | Merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`) as source-history access split row | MERGED_INTO_63 |
 | 65 | PH1.BCAST | Merged into row 50 (`PH1.BCAST.001`) as the canonical implementation-locked tracker row | MERGED_INTO_50 |
 | 66 | PH1.LINK | Link lifecycle engine (simulation-gated) | EXEMPT |
 | 67 | PH1.E | Read-only tool router engine | DONE |
@@ -134,8 +142,30 @@ Tracker normalization notes:
 | 73 | PH1.VOICE.ID | Merged into row 52 (`PH1.VOICE.ID.001`) as the canonical implementation-locked tracker row | MERGED_INTO_52 |
 | 74 | PH1.W | Wake detection engine | DONE |
 | 75 | PH1.K | Voice runtime I/O substrate engine | DONE |
+| 76 | PH2.ACCESS.002 | Merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`) as source-history access split row | MERGED_INTO_63 |
+| 77 | PH1.POLICY | Global rule-base + snapshot policy decision gate (prompt discipline; ALWAYS_ON) | DONE |
+| 78 | PH1.DELIVERY | Provider delivery attempt truth owner for SMS/Email/WhatsApp/WeChat (simulation-gated) | DONE |
+| 79 | PH1.HEALTH | Display-only health reporting dashboard (issue history + unresolved/escalated visibility) | TODO |
+
+## Foundation Tables Tracking (Non-Runtime)
+
+Build-report inclusion rule:
+- These are authoritative persistence/governance table contracts from `docs/07_ENGINE_REGISTRY.md` and must be listed in every complete build report.
+- They are non-runtime rows, so they do not participate in runtime engine order numbering above.
+
+| tracker_id | table_id | short function | db_wiring_status | ecm_status | coverage_ref |
+|---|---|---|---|---|---|
+| FT-01 | SELENE_OS_CORE_TABLES | WorkOrder/session/core orchestration persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
+| FT-02 | PBS_TABLES | Blueprint registry tables and mappings | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
+| FT-03 | SIMULATION_CATALOG_TABLES | Simulation catalog persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
+| FT-04 | ENGINE_CAPABILITY_MAPS_TABLES | Capability map persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
+| FT-05 | ARTIFACTS_LEDGER_TABLES | Artifacts and cache persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
 
 ## Engine 01 Review Log (`PH1.REVIEW`)
+
+Superseded-history note:
+- This log block captures an earlier review cycle snapshot.
+- Current canonical architecture is the merge declared in normalization notes (`PH1.REVIEW` merged into `PH1.GOV` + access escalation flow), and that canonical merge takes precedence over this historical block.
 
 Source extraction (`docs/32`):
 - Purpose: route actions/drafts to humans for review when policy requires.
@@ -2852,3 +2882,55 @@ Verification:
 Completion:
 - Engine 75 (`PH1.K`) marked `DONE` at PH1.K-level depth (contracts + runtime + OS wiring + tests).
 - Existing PH1.K core runtime logic was preserved; this cycle added missing implementation-lock and OS wiring closure without behavior drift.
+
+## Engine 77 Review Log (`PH1.POLICY`)
+
+Source extraction (`registry/map/coverage`):
+- Purpose: global Rule Base + Snapshot policy decision gate for prompt discipline before `PH1.X`.
+- Hard boundary: policy decision only; execution authority remains in orchestrator and action owners.
+- Placement: `ALWAYS_ON` policy gate in voice/text turn flow.
+
+Gap analysis (before update):
+- `PH1.POLICY` existed as canonical runtime owner in:
+  - `docs/07_ENGINE_REGISTRY.md`
+  - `docs/06_ENGINE_MAP.md`
+  - `docs/COVERAGE_MATRIX.md`
+- Tracker inventory table had no explicit `PH1.POLICY` row, so complete build-report start could miss it.
+
+Updates applied (this cycle):
+- Added row 77 (`PH1.POLICY`) to tracker inventory as `DONE`.
+- Added canonical inventory completeness rule so registry canonical engines cannot be omitted from this tracker in future passes.
+- Preserved existing runtime/docs behavior (tracker-only closure update; no engine logic changes).
+
+Verification:
+- `rg -n "PH1\\.POLICY" docs/07_ENGINE_REGISTRY.md docs/06_ENGINE_MAP.md docs/COVERAGE_MATRIX.md docs/33_ENGINE_REVIEW_TRACKER.md`
+
+Completion:
+- Engine 77 (`PH1.POLICY`) marked `DONE` for tracker completeness closure.
+- Runtime/code depth was already complete in prior cycles; this pass closed canonical inventory visibility.
+
+## Engine 78 Review Log (`PH1.DELIVERY`)
+
+Source extraction (`registry/map/coverage`):
+- Purpose: provider delivery-attempt truth owner for outbound channel sends (SMS/Email/WhatsApp/WeChat), simulation-gated.
+- Hard boundary: lifecycle ownership stays in `PH1.BCAST`; provider send/cancel attempt truth stays in `PH1.DELIVERY`.
+- Placement: `TURN_OPTIONAL` outbound side-effect path under simulation.
+
+Gap analysis (before update):
+- `PH1.DELIVERY` existed as canonical runtime owner in:
+  - `docs/07_ENGINE_REGISTRY.md`
+  - `docs/06_ENGINE_MAP.md`
+  - `docs/COVERAGE_MATRIX.md`
+- Tracker inventory table had no explicit `PH1.DELIVERY` row, creating a canonical coverage blind spot for build-report kickoff.
+
+Updates applied (this cycle):
+- Added row 78 (`PH1.DELIVERY`) to tracker inventory as `DONE`.
+- Kept existing `PH1.BCAST` implementation-lock merge semantics unchanged (`PH1.BCAST` namespace merged into `PH1.BCAST.001` tracker row).
+- Preserved existing runtime/docs behavior (tracker-only closure update; no delivery runtime changes).
+
+Verification:
+- `rg -n "PH1\\.DELIVERY" docs/07_ENGINE_REGISTRY.md docs/06_ENGINE_MAP.md docs/COVERAGE_MATRIX.md docs/33_ENGINE_REVIEW_TRACKER.md`
+
+Completion:
+- Engine 78 (`PH1.DELIVERY`) marked `DONE` for tracker completeness closure.
+- Runtime/code depth was already complete in prior cycles; this pass closed canonical inventory visibility.

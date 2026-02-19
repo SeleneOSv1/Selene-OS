@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
+use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId, VoiceEmbeddingCaptureRef};
 use selene_kernel_contracts::ph1access::{
     AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewAction,
     AccessApRuleReviewActionPayload, AccessCompiledLineageRef,
@@ -12,8 +12,8 @@ use selene_kernel_contracts::ph1art::{
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
 };
 use selene_kernel_contracts::ph1builder::{
-    BuilderApprovalState, BuilderPatchProposal, BuilderPostDeployJudgeResult,
-    BuilderReleaseState, BuilderValidationGateResult, BuilderValidationRun,
+    BuilderApprovalState, BuilderPatchProposal, BuilderPostDeployJudgeResult, BuilderReleaseState,
+    BuilderValidationGateResult, BuilderValidationRun,
 };
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket as Ph1cConfidenceBucket, LanguageTag, RetryAdvice as Ph1cRetryAdvice,
@@ -30,15 +30,19 @@ use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnId, ConversationTurnInput,
     ConversationTurnRecord, PrivacyScope,
 };
+use selene_kernel_contracts::ph1feedback::{
+    classify_feedback_path, FeedbackEventType, FeedbackPathType,
+};
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin,
     AuditSeverity, CorrelationId, DeviceId, PayloadKey, PayloadValue, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
+use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::{
-    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, DraftId,
-    DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext, PrefilledContextRef,
-    TokenId,
+    deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
+    DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
+    PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryEmotionalThreadState, MemoryGraphEdgeInput, MemoryGraphNodeInput,
@@ -125,7 +129,9 @@ fn days_to_ns(days: u64) -> u64 {
         .saturating_mul(1_000_000_000)
 }
 
-fn memory_graph_edge_kind_key(kind: selene_kernel_contracts::ph1m::MemoryGraphEdgeKind) -> &'static str {
+fn memory_graph_edge_kind_key(
+    kind: selene_kernel_contracts::ph1m::MemoryGraphEdgeKind,
+) -> &'static str {
     match kind {
         selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::MentionedWith => "MENTIONED_WITH",
         selene_kernel_contracts::ph1m::MemoryGraphEdgeKind::DependsOn => "DEPENDS_ON",
@@ -140,10 +146,7 @@ fn is_token_safe_ascii(value: &str) -> bool {
     })
 }
 
-fn validate_builder_idempotency_key(
-    field: &'static str,
-    key: &str,
-) -> Result<(), StorageError> {
+fn validate_builder_idempotency_key(field: &'static str, key: &str) -> Result<(), StorageError> {
     if key.trim().is_empty() || key.len() > 128 || !is_token_safe_ascii(key) {
         return Err(StorageError::ContractViolation(
             ContractViolation::InvalidValue {
@@ -849,6 +852,10 @@ pub struct Ph1fStore {
     ph1persona_device_tenant_bindings: BTreeMap<DeviceId, String>,
     // Deterministic isolation guard: one tenant binding per device in PH1.FEEDBACK rows.
     ph1feedback_device_tenant_bindings: BTreeMap<DeviceId, String>,
+    // PH1.FEEDBACK -> PH1.LEARN validated signal bundles (deduped + provenance-bound).
+    ph1feedback_learn_signal_bundles: Vec<FeedbackLearnSignalBundleRecord>,
+    // Idempotency: (tenant_id, idempotency_key) -> bundle_id.
+    ph1feedback_learn_signal_bundle_idempotency_index: BTreeMap<(String, String), u64>,
     // Deterministic isolation guard: one tenant binding per user-scoped PH1.LEARN artifacts.
     ph1learn_user_tenant_bindings: BTreeMap<UserId, String>,
 
@@ -918,6 +925,14 @@ pub struct Ph1fStore {
     voice_complete_idempotency_index: BTreeMap<(String, String), String>,
     // (voice_enrollment_session_id, idempotency_key) -> voice_enroll_status
     voice_defer_idempotency_index: BTreeMap<(String, String), VoiceEnrollStatus>,
+
+    // ------------------------
+    // Device artifact sync enqueue rows (device-local -> cloud continuity queue).
+    // Historical field name kept for compatibility with existing tests/contracts.
+    // ------------------------
+    mobile_artifact_sync_queue: Vec<MobileArtifactSyncQueueRecord>,
+    // Dedup by receipt_ref to keep enqueue idempotent across retries/replays.
+    mobile_artifact_sync_receipt_index: BTreeMap<String, String>,
 
     // ------------------------
     // PBS tables (blueprint_registry + process_blueprints).
@@ -1016,6 +1031,7 @@ pub struct Ph1fStore {
     next_tool_cache_id: u64,
     next_work_order_event_id: u64,
     next_capreq_event_id: u64,
+    next_ph1feedback_learn_signal_bundle_id: u64,
     next_ph1k_runtime_event_id: u64,
     next_position_requirements_schema_event_id: u64,
     next_onb_requirement_backfill_target_row_id: u64,
@@ -1066,6 +1082,10 @@ type LinkOpenActivateResultParts = (
     Vec<String>,
     Option<String>,
     Option<String>,
+    Option<AppPlatform>,
+    Option<String>,
+    Option<String>,
+    Option<MonotonicTimeNs>,
     Option<PrefilledContextRef>,
 );
 
@@ -1083,6 +1103,10 @@ pub struct OnboardingSessionRecord {
     pub pinned_selector_snapshot_ref: Option<String>,
     pub required_verification_gates: Vec<String>,
     pub device_fingerprint_hash: String,
+    pub app_platform: AppPlatform,
+    pub app_instance_id: String,
+    pub deep_link_nonce: String,
+    pub link_opened_at: MonotonicTimeNs,
     pub status: OnboardingStatus,
     pub created_at: MonotonicTimeNs,
     pub updated_at: MonotonicTimeNs,
@@ -1096,6 +1120,8 @@ pub struct OnboardingSessionRecord {
     pub primary_device_proof_type: Option<ProofType>,
     pub primary_device_confirmed: bool,
     pub access_engine_instance_id: Option<String>,
+    pub voice_artifact_sync_receipt_ref: Option<String>,
+    pub wake_artifact_sync_receipt_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1645,6 +1671,7 @@ pub struct WakeEnrollmentSessionRecord {
     pub max_attempts: u8,
     pub enrollment_timeout_ms: u32,
     pub reason_code: Option<ReasonCodeId>,
+    pub wake_artifact_sync_receipt_ref: Option<String>,
     pub created_at: MonotonicTimeNs,
     pub updated_at: MonotonicTimeNs,
     pub completed_at: Option<MonotonicTimeNs>,
@@ -1690,6 +1717,21 @@ pub struct WakeRuntimeEventRecord {
 // PH1.VOICE.ID (voice enrollment) deterministic persistence records.
 const VID_ENROLL_REASON_MAX_ATTEMPTS: ReasonCodeId = ReasonCodeId(0x5649_0201);
 const VID_ENROLL_REASON_TIMEOUT: ReasonCodeId = ReasonCodeId(0x5649_0202);
+const VID_ENROLL_REASON_SHORT_SAMPLE: ReasonCodeId = ReasonCodeId(0x5649_0301);
+const VID_ENROLL_REASON_LOW_VAD: ReasonCodeId = ReasonCodeId(0x5649_0302);
+const VID_ENROLL_REASON_LOW_SNR: ReasonCodeId = ReasonCodeId(0x5649_0303);
+const VID_ENROLL_REASON_HIGH_CLIPPING: ReasonCodeId = ReasonCodeId(0x5649_0304);
+const VID_ENROLL_REASON_SPEAKER_OVERLAP: ReasonCodeId = ReasonCodeId(0x5649_0305);
+const VID_ENROLL_REASON_CAPTURE_SET_INCOMPLETE: ReasonCodeId = ReasonCodeId(0x5649_0306);
+const VID_ENROLL_REASON_MIN_DURATION_NOT_MET: ReasonCodeId = ReasonCodeId(0x5649_0307);
+const VID_ENROLL_REASON_HOLDOUT_TAR_BELOW_MIN: ReasonCodeId = ReasonCodeId(0x5649_0308);
+const VID_ENROLL_REASON_HOLDOUT_FAR_ABOVE_MAX: ReasonCodeId = ReasonCodeId(0x5649_0309);
+const VID_ENROLL_REASON_CONFUSION_MARGIN_BELOW_MIN: ReasonCodeId = ReasonCodeId(0x5649_030A);
+
+const VID_LOCK_MIN_ACCEPTED_TOTAL_DURATION_MS: u32 = 2_500;
+const VID_LOCK_MIN_HOLDOUT_TAR_BP: u16 = 9_000;
+const VID_LOCK_MAX_HOLDOUT_FAR_BP: u16 = 120;
+const VID_LOCK_MIN_CONFUSION_MARGIN_BP: u16 = 450;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VoiceEnrollStatus {
@@ -1705,6 +1747,32 @@ pub enum VoiceSampleResult {
     Fail,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnboardingVoiceRuntimeMode {
+    Full,
+    Limited,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VoiceEnrollmentCaptureProfile {
+    pass_count: u16,
+    total_duration_ms: u32,
+    prompted_like_count: u16,
+    free_speech_like_count: u16,
+    liveness_like_count: u16,
+    avg_snr_db: f32,
+    avg_vad: f32,
+    max_clipping_pct: f32,
+    max_overlap_ratio: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VoiceEnrollmentLockMetrics {
+    holdout_tar_bp: u16,
+    holdout_far_bp: u16,
+    confusion_margin_bp: u16,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceEnrollmentSessionRecord {
     pub schema_version: SchemaVersion,
@@ -1712,6 +1780,8 @@ pub struct VoiceEnrollmentSessionRecord {
     pub onboarding_session_id: OnboardingSessionId,
     pub device_id: DeviceId,
     pub voice_profile_id: Option<String>,
+    pub consent_asserted: bool,
+    pub consent_scope_ref: String,
     pub voice_enroll_status: VoiceEnrollStatus,
     pub lock_after_consecutive_passes: u8,
     pub consecutive_passes: u8,
@@ -1722,9 +1792,10 @@ pub struct VoiceEnrollmentSessionRecord {
     pub updated_at: MonotonicTimeNs,
     pub deferred_until: Option<MonotonicTimeNs>,
     pub reason_code: Option<ReasonCodeId>,
+    pub voice_artifact_sync_receipt_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VoiceEnrollmentSampleRecord {
     pub schema_version: SchemaVersion,
     pub sample_seq: u16,
@@ -1732,6 +1803,12 @@ pub struct VoiceEnrollmentSampleRecord {
     pub created_at: MonotonicTimeNs,
     pub attempt_index: u16,
     pub audio_sample_ref: String,
+    pub sample_duration_ms: u16,
+    pub vad_coverage: f32,
+    pub snr_db: f32,
+    pub clipping_pct: f32,
+    pub overlap_ratio: f32,
+    pub app_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
     pub result: VoiceSampleResult,
     pub reason_code: Option<ReasonCodeId>,
     pub idempotency_key: String,
@@ -1743,7 +1820,66 @@ pub struct VoiceProfileRecord {
     pub voice_profile_id: String,
     pub onboarding_session_id: OnboardingSessionId,
     pub device_id: DeviceId,
+    pub profile_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
     pub created_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedbackLearnSignalBundleRecord {
+    pub schema_version: SchemaVersion,
+    pub bundle_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub tenant_id: String,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub user_id: UserId,
+    pub device_id: DeviceId,
+    pub feedback_event_type: FeedbackEventType,
+    pub feedback_path_type: FeedbackPathType,
+    pub learn_signal_type: LearnSignalType,
+    pub reason_code: ReasonCodeId,
+    pub evidence_ref: String,
+    pub provenance_ref: String,
+    pub ingest_latency_ms: u32,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobileArtifactSyncKind {
+    WakeProfile,
+    VoiceProfile,
+    VoiceArtifactManifest,
+    WakeArtifactManifest,
+    EmoArtifactManifest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobileArtifactSyncState {
+    Queued,
+    InFlight,
+    Acked,
+    DeadLetter,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MobileArtifactSyncQueueRecord {
+    pub schema_version: SchemaVersion,
+    pub sync_job_id: String,
+    pub sync_kind: MobileArtifactSyncKind,
+    pub receipt_ref: String,
+    pub artifact_profile_id: String,
+    pub onboarding_session_id: Option<OnboardingSessionId>,
+    pub user_id: Option<UserId>,
+    pub device_id: DeviceId,
+    pub enqueued_at: MonotonicTimeNs,
+    pub state: MobileArtifactSyncState,
+    pub attempt_count: u16,
+    pub last_attempted_at: Option<MonotonicTimeNs>,
+    pub lease_expires_at: Option<MonotonicTimeNs>,
+    pub acked_at: Option<MonotonicTimeNs>,
+    pub last_error: Option<String>,
+    pub worker_id: Option<String>,
+    pub idempotency_key: String,
 }
 
 impl Ph1fStore {
@@ -1853,6 +1989,8 @@ impl Ph1fStore {
             ph1e_device_tenant_bindings: BTreeMap::new(),
             ph1persona_device_tenant_bindings: BTreeMap::new(),
             ph1feedback_device_tenant_bindings: BTreeMap::new(),
+            ph1feedback_learn_signal_bundles: Vec::new(),
+            ph1feedback_learn_signal_bundle_idempotency_index: BTreeMap::new(),
             ph1learn_user_tenant_bindings: BTreeMap::new(),
             tenant_companies: BTreeMap::new(),
             positions: BTreeMap::new(),
@@ -1882,6 +2020,8 @@ impl Ph1fStore {
             voice_sample_idempotency_index: BTreeMap::new(),
             voice_complete_idempotency_index: BTreeMap::new(),
             voice_defer_idempotency_index: BTreeMap::new(),
+            mobile_artifact_sync_queue: Vec::new(),
+            mobile_artifact_sync_receipt_index: BTreeMap::new(),
             process_blueprint_events: Vec::new(),
             blueprint_registry: BTreeMap::new(),
             process_blueprint_idempotency_index: BTreeMap::new(),
@@ -1925,6 +2065,7 @@ impl Ph1fStore {
             next_tool_cache_id: 1,
             next_work_order_event_id: 1,
             next_capreq_event_id: 1,
+            next_ph1feedback_learn_signal_bundle_id: 1,
             next_ph1k_runtime_event_id: 1,
             next_position_requirements_schema_event_id: 1,
             next_onb_requirement_backfill_target_row_id: 1,
@@ -2351,9 +2492,16 @@ impl Ph1fStore {
                 },
             ));
         }
-        validate_ph1m_idempotency_key("emotional_threads_ledger.idempotency_key", &idempotency_key)?;
+        validate_ph1m_idempotency_key(
+            "emotional_threads_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
 
-        let idem_idx = (user_id.clone(), state.thread_key.clone(), idempotency_key.clone());
+        let idem_idx = (
+            user_id.clone(),
+            state.thread_key.clone(),
+            idempotency_key.clone(),
+        );
         if let Some(existing_id) = self.emotional_threads_idempotency_index.get(&idem_idx) {
             return Ok(*existing_id);
         }
@@ -2490,7 +2638,8 @@ impl Ph1fStore {
         validate_ph1m_idempotency_key("memory_threads_ledger.idempotency_key", &idempotency_key)?;
 
         let idem_idx = (user_id.clone(), idempotency_key.clone());
-        if let Some((existing_id, existing_stored)) = self.memory_threads_idempotency_index.get(&idem_idx)
+        if let Some((existing_id, existing_stored)) =
+            self.memory_threads_idempotency_index.get(&idem_idx)
         {
             return Ok((*existing_id, *existing_stored));
         }
@@ -2534,9 +2683,10 @@ impl Ph1fStore {
             }
             MemoryThreadEventKind::ThreadForgotten => {
                 self.memory_threads_current.remove(&key);
-                self.memory_thread_refs_current.retain(|(u, thread_id, _), _| {
-                    !(u == user_id && thread_id == &digest.thread_id)
-                });
+                self.memory_thread_refs_current
+                    .retain(|(u, thread_id, _), _| {
+                        !(u == user_id && thread_id == &digest.thread_id)
+                    });
             }
         }
         let stored = !existed;
@@ -2728,7 +2878,8 @@ impl Ph1fStore {
                 edge.to_node_id.clone(),
                 memory_graph_edge_kind_key(edge.kind).to_string(),
             );
-            if let Some(existing_edge_id) = self.memory_graph_edge_uniqueness.get(&edge_unique_key) {
+            if let Some(existing_edge_id) = self.memory_graph_edge_uniqueness.get(&edge_unique_key)
+            {
                 if existing_edge_id != &edge.edge_id {
                     self.memory_graph_edges_current
                         .remove(&(user_id.clone(), existing_edge_id.clone()));
@@ -2863,7 +3014,8 @@ impl Ph1fStore {
             &idempotency_key,
         )?;
         let idem_idx = (user_id.clone(), idempotency_key.clone());
-        if let Some(existing_effective_at) = self.memory_retention_idempotency_index.get(&idem_idx) {
+        if let Some(existing_effective_at) = self.memory_retention_idempotency_index.get(&idem_idx)
+        {
             return Ok(*existing_effective_at);
         }
         self.memory_retention_preferences.insert(
@@ -3092,7 +3244,10 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         run.validate()?;
 
-        if !self.builder_proposal_id_index.contains_key(&run.proposal_id) {
+        if !self
+            .builder_proposal_id_index
+            .contains_key(&run.proposal_id)
+        {
             return Err(StorageError::ForeignKeyViolation {
                 table: "builder_validation_runs.proposal_id",
                 key: run.proposal_id.clone(),
@@ -3101,13 +3256,17 @@ impl Ph1fStore {
 
         if let Some(k) = &run.idempotency_key {
             let idem_idx = (run.proposal_id.clone(), k.clone());
-            if let Some(existing_row_id) = self.builder_validation_run_idempotency_index.get(&idem_idx)
+            if let Some(existing_row_id) =
+                self.builder_validation_run_idempotency_index.get(&idem_idx)
             {
                 return Ok(*existing_row_id);
             }
         }
 
-        if self.builder_validation_run_id_index.contains_key(&run.run_id) {
+        if self
+            .builder_validation_run_id_index
+            .contains_key(&run.run_id)
+        {
             return Err(StorageError::DuplicateKey {
                 table: "builder_validation_runs.run_id",
                 key: run.run_id.clone(),
@@ -3152,7 +3311,10 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         result.validate()?;
 
-        if !self.builder_proposal_id_index.contains_key(&result.proposal_id) {
+        if !self
+            .builder_proposal_id_index
+            .contains_key(&result.proposal_id)
+        {
             return Err(StorageError::ForeignKeyViolation {
                 table: "builder_validation_gate_results.proposal_id",
                 key: result.proposal_id.clone(),
@@ -3187,7 +3349,9 @@ impl Ph1fStore {
 
         let gate_id_text = result.gate_id.as_str().to_string();
         let unique_key = (result.run_id.clone(), gate_id_text.clone());
-        if let Some(_existing_row_id) = self.builder_validation_gate_result_unique_index.get(&unique_key)
+        if let Some(_existing_row_id) = self
+            .builder_validation_gate_result_unique_index
+            .get(&unique_key)
         {
             if let Some(k) = &result.idempotency_key {
                 validate_builder_idempotency_key(
@@ -3195,8 +3359,9 @@ impl Ph1fStore {
                     k,
                 )?;
                 let idem_key = (result.run_id.clone(), gate_id_text.clone(), k.clone());
-                if let Some(existing_idem_row_id) =
-                    self.builder_validation_gate_result_idempotency_index.get(&idem_key)
+                if let Some(existing_idem_row_id) = self
+                    .builder_validation_gate_result_idempotency_index
+                    .get(&idem_key)
                 {
                     return Ok(*existing_idem_row_id);
                 }
@@ -3210,7 +3375,9 @@ impl Ph1fStore {
         if let Some(k) = &result.idempotency_key {
             validate_builder_idempotency_key("builder_validation_gate_results.idempotency_key", k)?;
             let idem_key = (result.run_id.clone(), gate_id_text.clone(), k.clone());
-            if let Some(existing_id) = self.builder_validation_gate_result_idempotency_index.get(&idem_key)
+            if let Some(existing_id) = self
+                .builder_validation_gate_result_idempotency_index
+                .get(&idem_key)
             {
                 return Ok(*existing_id);
             }
@@ -3259,7 +3426,10 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         approval.validate()?;
 
-        if !self.builder_proposal_id_index.contains_key(&approval.proposal_id) {
+        if !self
+            .builder_proposal_id_index
+            .contains_key(&approval.proposal_id)
+        {
             return Err(StorageError::ForeignKeyViolation {
                 table: "builder_approval_states.proposal_id",
                 key: approval.proposal_id.clone(),
@@ -3269,7 +3439,8 @@ impl Ph1fStore {
         if let Some(k) = &approval.idempotency_key {
             validate_builder_idempotency_key("builder_approval_states.idempotency_key", k)?;
             let idem_idx = (approval.proposal_id.clone(), k.clone());
-            if let Some(existing_row_id) = self.builder_approval_state_idempotency_index.get(&idem_idx)
+            if let Some(existing_row_id) =
+                self.builder_approval_state_idempotency_index.get(&idem_idx)
             {
                 return Ok(*existing_row_id);
             }
@@ -3323,7 +3494,10 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         release.validate()?;
 
-        if !self.builder_proposal_id_index.contains_key(&release.proposal_id) {
+        if !self
+            .builder_proposal_id_index
+            .contains_key(&release.proposal_id)
+        {
             return Err(StorageError::ForeignKeyViolation {
                 table: "builder_release_states.proposal_id",
                 key: release.proposal_id.clone(),
@@ -3333,7 +3507,8 @@ impl Ph1fStore {
         if let Some(k) = &release.idempotency_key {
             validate_builder_idempotency_key("builder_release_states.idempotency_key", k)?;
             let idem_idx = (release.proposal_id.clone(), k.clone());
-            if let Some(existing_row_id) = self.builder_release_state_idempotency_index.get(&idem_idx)
+            if let Some(existing_row_id) =
+                self.builder_release_state_idempotency_index.get(&idem_idx)
             {
                 return Ok(*existing_row_id);
             }
@@ -3387,7 +3562,10 @@ impl Ph1fStore {
     ) -> Result<u64, StorageError> {
         result.validate()?;
 
-        if !self.builder_proposal_id_index.contains_key(&result.proposal_id) {
+        if !self
+            .builder_proposal_id_index
+            .contains_key(&result.proposal_id)
+        {
             return Err(StorageError::ForeignKeyViolation {
                 table: "builder_post_deploy_judge_results.proposal_id",
                 key: result.proposal_id.clone(),
@@ -3404,7 +3582,10 @@ impl Ph1fStore {
         }
 
         if let Some(k) = &result.idempotency_key {
-            validate_builder_idempotency_key("builder_post_deploy_judge_results.idempotency_key", k)?;
+            validate_builder_idempotency_key(
+                "builder_post_deploy_judge_results.idempotency_key",
+                k,
+            )?;
             let idem_idx = (result.proposal_id.clone(), k.clone());
             if let Some(existing_row_id) = self
                 .builder_post_deploy_judge_result_idempotency_index
@@ -3616,7 +3797,10 @@ impl Ph1fStore {
     // PBS tables (process_blueprints ledger + blueprint_registry current projection).
     // ------------------------
 
-    fn apply_process_blueprint_event_to_registry(&mut self, ev: &ProcessBlueprintEvent) {
+    fn apply_process_blueprint_event_to_registry(
+        &mut self,
+        ev: &ProcessBlueprintEvent,
+    ) -> Result<(), StorageError> {
         let key = (ev.tenant_id.clone(), ev.intent_type.clone());
         let current = self.blueprint_registry.get(&key).cloned();
         let should_apply = match (&ev.status, current.as_ref()) {
@@ -3644,9 +3828,10 @@ impl Ph1fStore {
                 ev.process_blueprint_event_id,
                 ev.created_at,
             )
-            .expect("process blueprint event already validated; projection must be valid");
+            .map_err(StorageError::ContractViolation)?;
             self.blueprint_registry.insert(key, row);
         }
+        Ok(())
     }
 
     pub fn append_process_blueprint_event(
@@ -3685,7 +3870,7 @@ impl Ph1fStore {
             );
         }
 
-        self.apply_process_blueprint_event_to_registry(&row);
+        self.apply_process_blueprint_event_to_registry(&row)?;
         self.process_blueprint_events.push(row);
         Ok(event_id)
     }
@@ -3707,7 +3892,9 @@ impl Ph1fStore {
             .get(&(tenant_id.clone(), intent_type.clone()))
     }
 
-    pub fn rebuild_blueprint_registry_from_process_blueprint_events(&mut self) {
+    pub fn rebuild_blueprint_registry_from_process_blueprint_events(
+        &mut self,
+    ) -> Result<(), StorageError> {
         self.blueprint_registry.clear();
         self.process_blueprint_idempotency_index.clear();
         let mut ordered = self.process_blueprint_events.clone();
@@ -3724,8 +3911,9 @@ impl Ph1fStore {
                     row.process_blueprint_event_id,
                 );
             }
-            self.apply_process_blueprint_event_to_registry(&row);
+            self.apply_process_blueprint_event_to_registry(&row)?;
         }
+        Ok(())
     }
 
     pub fn attempt_overwrite_process_blueprint_event(
@@ -3741,14 +3929,17 @@ impl Ph1fStore {
     // Simulation Catalog tables (`simulation_catalog` ledger + current projection).
     // ------------------------
 
-    fn apply_simulation_catalog_event_to_current(&mut self, ev: &SimulationCatalogEvent) {
+    fn apply_simulation_catalog_event_to_current(
+        &mut self,
+        ev: &SimulationCatalogEvent,
+    ) -> Result<(), StorageError> {
         let key = (ev.tenant_id.clone(), ev.simulation_id.clone());
         let should_apply = match self.simulation_catalog_current.get(&key) {
             Some(existing) => ev.simulation_version >= existing.simulation_version,
             None => true,
         };
         if !should_apply {
-            return;
+            return Ok(());
         }
 
         let row = SimulationCatalogCurrentRecord::v1(
@@ -3761,9 +3952,10 @@ impl Ph1fStore {
             ev.simulation_catalog_event_id,
             ev.created_at,
         )
-        .expect("simulation catalog event already validated; projection must be valid");
+        .map_err(StorageError::ContractViolation)?;
 
         self.simulation_catalog_current.insert(key, row);
+        Ok(())
     }
 
     pub fn append_simulation_catalog_event(
@@ -3802,7 +3994,7 @@ impl Ph1fStore {
             );
         }
 
-        self.apply_simulation_catalog_event_to_current(&row);
+        self.apply_simulation_catalog_event_to_current(&row)?;
         self.simulation_catalog_events.push(row);
         Ok(event_id)
     }
@@ -3826,7 +4018,7 @@ impl Ph1fStore {
             .get(&(tenant_id.clone(), simulation_id.clone()))
     }
 
-    pub fn rebuild_simulation_catalog_current_from_ledger(&mut self) {
+    pub fn rebuild_simulation_catalog_current_from_ledger(&mut self) -> Result<(), StorageError> {
         self.simulation_catalog_current.clear();
         self.simulation_catalog_idempotency_index.clear();
         let mut ordered = self.simulation_catalog_events.clone();
@@ -3843,8 +4035,9 @@ impl Ph1fStore {
                     row.simulation_catalog_event_id,
                 );
             }
-            self.apply_simulation_catalog_event_to_current(&row);
+            self.apply_simulation_catalog_event_to_current(&row)?;
         }
+        Ok(())
     }
 
     pub fn attempt_overwrite_simulation_catalog_event(
@@ -3860,7 +4053,10 @@ impl Ph1fStore {
     // Engine Capability Maps tables (`engine_capability_maps` ledger + current projection).
     // ------------------------
 
-    fn apply_engine_capability_map_event_to_current(&mut self, ev: &EngineCapabilityMapEvent) {
+    fn apply_engine_capability_map_event_to_current(
+        &mut self,
+        ev: &EngineCapabilityMapEvent,
+    ) -> Result<(), StorageError> {
         let key = (
             ev.tenant_id.clone(),
             ev.engine_id.clone(),
@@ -3871,7 +4067,7 @@ impl Ph1fStore {
             None => true,
         };
         if !should_apply {
-            return;
+            return Ok(());
         }
 
         let row = EngineCapabilityMapCurrentRecord::v1(
@@ -3887,9 +4083,10 @@ impl Ph1fStore {
             ev.engine_capability_map_event_id,
             ev.created_at,
         )
-        .expect("engine capability map event already validated; projection must be valid");
+        .map_err(StorageError::ContractViolation)?;
 
         self.engine_capability_maps_current.insert(key, row);
+        Ok(())
     }
 
     pub fn append_engine_capability_map_event(
@@ -3930,7 +4127,7 @@ impl Ph1fStore {
             );
         }
 
-        self.apply_engine_capability_map_event_to_current(&row);
+        self.apply_engine_capability_map_event_to_current(&row)?;
         self.engine_capability_map_events.push(row);
         Ok(event_id)
     }
@@ -3958,7 +4155,9 @@ impl Ph1fStore {
         ))
     }
 
-    pub fn rebuild_engine_capability_maps_current_from_ledger(&mut self) {
+    pub fn rebuild_engine_capability_maps_current_from_ledger(
+        &mut self,
+    ) -> Result<(), StorageError> {
         self.engine_capability_maps_current.clear();
         self.engine_capability_map_idempotency_index.clear();
         let mut ordered = self.engine_capability_map_events.clone();
@@ -3976,8 +4175,9 @@ impl Ph1fStore {
                     row.engine_capability_map_event_id,
                 );
             }
-            self.apply_engine_capability_map_event_to_current(&row);
+            self.apply_engine_capability_map_event_to_current(&row)?;
         }
+        Ok(())
     }
 
     pub fn attempt_overwrite_engine_capability_map_event(
@@ -4052,6 +4252,17 @@ impl Ph1fStore {
             );
         }
         self.artifacts_ledger_rows.push(row);
+        let persisted =
+            self.artifacts_ledger_rows
+                .last()
+                .cloned()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "artifacts_ledger",
+                        reason: "append must persist row",
+                    },
+                ))?;
+        self.enqueue_voice_artifact_manifest_sync_if_applicable(persisted)?;
         Ok(artifact_id)
     }
 
@@ -4144,7 +4355,10 @@ impl Ph1fStore {
     // Selene OS core WorkOrder persistence (ledger + current projection).
     // ------------------------
 
-    fn apply_work_order_event_to_current(&mut self, ev: &WorkOrderLedgerEvent) {
+    fn apply_work_order_event_to_current(
+        &mut self,
+        ev: &WorkOrderLedgerEvent,
+    ) -> Result<(), StorageError> {
         let key = (ev.tenant_id.clone(), ev.work_order_id.clone());
         let next = WorkOrderCurrentRecord::v1(
             ev.tenant_id.clone(),
@@ -4161,9 +4375,10 @@ impl Ph1fStore {
             ev.lease_token_hash.clone(),
             ev.lease_expires_at,
         )
-        .expect("ledger event already validated; projection must be valid");
+        .map_err(StorageError::ContractViolation)?;
 
         self.work_orders_current.insert(key, next);
+        Ok(())
     }
 
     pub fn append_work_order_ledger_event(
@@ -4195,7 +4410,7 @@ impl Ph1fStore {
             );
         }
 
-        self.apply_work_order_event_to_current(&row);
+        self.apply_work_order_event_to_current(&row)?;
         self.work_order_ledger.push(row);
         Ok(work_order_event_id)
     }
@@ -4219,7 +4434,7 @@ impl Ph1fStore {
             .get(&(tenant_id.clone(), work_order_id.clone()))
     }
 
-    pub fn rebuild_work_orders_current_from_ledger(&mut self) {
+    pub fn rebuild_work_orders_current_from_ledger(&mut self) -> Result<(), StorageError> {
         self.work_orders_current.clear();
         self.work_order_ledger_idempotency_index.clear();
         let mut ordered = self.work_order_ledger.clone();
@@ -4231,8 +4446,9 @@ impl Ph1fStore {
                     row.work_order_event_id,
                 );
             }
-            self.apply_work_order_event_to_current(&row);
+            self.apply_work_order_event_to_current(&row)?;
         }
+        Ok(())
     }
 
     pub fn attempt_overwrite_work_order_ledger_event(
@@ -4248,14 +4464,17 @@ impl Ph1fStore {
     // PH1.CAPREQ persistence (append-only ledger + rebuildable current projection).
     // ------------------------
 
-    fn apply_capreq_event_to_current(&mut self, ev: &CapabilityRequestLedgerEvent) {
+    fn apply_capreq_event_to_current(
+        &mut self,
+        ev: &CapabilityRequestLedgerEvent,
+    ) -> Result<(), StorageError> {
         let key = (ev.tenant_id.clone(), ev.capreq_id.clone());
         let should_apply = match self.capreq_current.get(&key) {
             Some(existing) => ev.capreq_event_id >= existing.source_event_id,
             None => true,
         };
         if !should_apply {
-            return;
+            return Ok(());
         }
 
         let row = CapabilityRequestCurrentRecord::v1(
@@ -4269,9 +4488,10 @@ impl Ph1fStore {
             ev.created_at,
             ev.reason_code,
         )
-        .expect("capreq event already validated; projection must be valid");
+        .map_err(StorageError::ContractViolation)?;
 
         self.capreq_current.insert(key, row);
+        Ok(())
     }
 
     pub fn append_capreq_event(
@@ -4305,7 +4525,7 @@ impl Ph1fStore {
             );
         }
 
-        self.apply_capreq_event_to_current(&row);
+        self.apply_capreq_event_to_current(&row)?;
         self.capreq_ledger_events.push(row);
         Ok(capreq_event_id)
     }
@@ -4329,7 +4549,7 @@ impl Ph1fStore {
             .get(&(tenant_id.clone(), capreq_id.clone()))
     }
 
-    pub fn rebuild_capreq_current_from_ledger(&mut self) {
+    pub fn rebuild_capreq_current_from_ledger(&mut self) -> Result<(), StorageError> {
         self.capreq_current.clear();
         self.capreq_idempotency_index.clear();
         let mut ordered = self.capreq_ledger_events.clone();
@@ -4341,8 +4561,9 @@ impl Ph1fStore {
                     row.capreq_event_id,
                 );
             }
-            self.apply_capreq_event_to_current(&row);
+            self.apply_capreq_event_to_current(&row)?;
         }
+        Ok(())
     }
 
     pub fn attempt_overwrite_capreq_event(
@@ -4739,6 +4960,10 @@ impl Ph1fStore {
             prefilled_context,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
         )?;
 
         self.links.insert(token_id.clone(), rec.clone());
@@ -4946,6 +5171,10 @@ impl Ph1fStore {
             now,
             token_id,
             device_fingerprint,
+            AppPlatform::Ios,
+            "legacy_app_instance".to_string(),
+            format!("legacy_nonce_{}", now.0),
+            now,
             legacy_idempotency_key,
         )
     }
@@ -4955,12 +5184,56 @@ impl Ph1fStore {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
         idempotency_key: String,
     ) -> Result<LinkOpenActivateResultParts, StorageError> {
         Self::validate_ph1link_idempotency_key(
             "ph1link_invite_open_activate_commit.idempotency_key",
             &idempotency_key,
         )?;
+        if app_instance_id.trim().is_empty() || app_instance_id.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.app_instance_id",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if !app_instance_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.app_instance_id",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        if deep_link_nonce.trim().is_empty() || deep_link_nonce.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.deep_link_nonce",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if !deep_link_nonce.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.deep_link_nonce",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        if link_opened_at.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.link_opened_at",
+                    reason: "must be > 0",
+                },
+            ));
+        }
 
         let idx_key = (token_id.clone(), idempotency_key);
         if let Some(existing) = self.link_open_activate_idempotency_index.get(&idx_key) {
@@ -4985,6 +5258,10 @@ impl Ph1fStore {
                     rec.missing_required_fields.clone(),
                     rec.bound_device_fingerprint_hash.clone(),
                     Some("TOKEN_CONSUMED".to_string()),
+                    rec.app_platform,
+                    rec.app_instance_id.clone(),
+                    rec.deep_link_nonce.clone(),
+                    rec.link_opened_at,
                     None,
                 ));
             } else if rec.status == LinkStatus::Blocked {
@@ -4994,6 +5271,10 @@ impl Ph1fStore {
                     rec.missing_required_fields.clone(),
                     rec.bound_device_fingerprint_hash.clone(),
                     Some("TOKEN_BLOCKED".to_string()),
+                    rec.app_platform,
+                    rec.app_instance_id.clone(),
+                    rec.deep_link_nonce.clone(),
+                    rec.link_opened_at,
                     None,
                 ));
             } else {
@@ -5008,6 +5289,10 @@ impl Ph1fStore {
                         rec.missing_required_fields.clone(),
                         rec.bound_device_fingerprint_hash.clone(),
                         Some("TOKEN_EXPIRED".to_string()),
+                        rec.app_platform,
+                        rec.app_instance_id.clone(),
+                        rec.deep_link_nonce.clone(),
+                        rec.link_opened_at,
                         None,
                     ));
                 } else if rec.status == LinkStatus::Revoked {
@@ -5017,6 +5302,10 @@ impl Ph1fStore {
                         rec.missing_required_fields.clone(),
                         rec.bound_device_fingerprint_hash.clone(),
                         Some("TOKEN_REVOKED".to_string()),
+                        rec.app_platform,
+                        rec.app_instance_id.clone(),
+                        rec.deep_link_nonce.clone(),
+                        rec.link_opened_at,
                         None,
                     ));
                 } else {
@@ -5055,6 +5344,10 @@ impl Ph1fStore {
 
                     if !mismatch_branch {
                         rec.status = LinkStatus::Activated;
+                        rec.app_platform = Some(app_platform);
+                        rec.app_instance_id = Some(app_instance_id.clone());
+                        rec.deep_link_nonce = Some(deep_link_nonce.clone());
+                        rec.link_opened_at = Some(link_opened_at);
                         let ctx_ref = rec
                             .prefilled_context
                             .as_ref()
@@ -5071,6 +5364,10 @@ impl Ph1fStore {
                             rec.missing_required_fields.clone(),
                             rec.bound_device_fingerprint_hash.clone(),
                             None,
+                            rec.app_platform,
+                            rec.app_instance_id.clone(),
+                            rec.deep_link_nonce.clone(),
+                            rec.link_opened_at,
                             ctx_ref,
                         ));
                     }
@@ -5087,6 +5384,10 @@ impl Ph1fStore {
                 missing_required_fields,
                 bound,
                 conflict_reason,
+                None,
+                None,
+                None,
+                None,
                 None,
             )
         } else {
@@ -5224,6 +5525,10 @@ impl Ph1fStore {
             old.invitee_type,
             old.expiration_policy_id.clone(),
             old.prefilled_context.clone(),
+            None,
+            None,
+            None,
+            None,
             None,
             None,
         )?;
@@ -5370,6 +5675,10 @@ impl Ph1fStore {
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<OnbSessionStartResult, StorageError> {
         // Preconditions: link exists and is ACTIVATED.
         let link = self
@@ -5384,6 +5693,58 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1onb_session_start_draft.link_status",
                     reason: "link must be ACTIVATED",
+                },
+            ));
+        }
+        if app_instance_id.trim().is_empty() || app_instance_id.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.app_instance_id",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if !app_instance_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.app_instance_id",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        if deep_link_nonce.trim().is_empty() || deep_link_nonce.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.deep_link_nonce",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if !deep_link_nonce.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.deep_link_nonce",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        if link_opened_at.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.link_opened_at",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+        if link.app_platform != Some(app_platform)
+            || link.app_instance_id.as_deref() != Some(app_instance_id.as_str())
+            || link.deep_link_nonce.as_deref() != Some(deep_link_nonce.as_str())
+            || link.link_opened_at != Some(link_opened_at)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_session_start_draft.app_open_context",
+                    reason: "must match LINK_OPEN_ACTIVATE app-open context",
                 },
             ));
         }
@@ -5432,6 +5793,18 @@ impl Ph1fStore {
                         },
                     ));
                 }
+            }
+            if rec.app_platform != app_platform
+                || rec.app_instance_id != app_instance_id
+                || rec.deep_link_nonce != deep_link_nonce
+                || rec.link_opened_at != link_opened_at
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_session_start_draft.app_open_context",
+                        reason: "must match existing onboarding session app-open context",
+                    },
+                ));
             }
             let next_step = match rec.status {
                 OnboardingStatus::DraftCreated => {
@@ -5500,6 +5873,10 @@ impl Ph1fStore {
             pinned_selector_snapshot_ref: pinned_selector_snapshot_ref.clone(),
             required_verification_gates: required_verification_gates.clone(),
             device_fingerprint_hash: df_hash,
+            app_platform,
+            app_instance_id: app_instance_id.clone(),
+            deep_link_nonce: deep_link_nonce.clone(),
+            link_opened_at,
             status: OnboardingStatus::DraftCreated,
             created_at: now,
             updated_at: now,
@@ -5513,6 +5890,8 @@ impl Ph1fStore {
             primary_device_proof_type: None,
             primary_device_confirmed: false,
             access_engine_instance_id: None,
+            voice_artifact_sync_receipt_ref: None,
+            wake_artifact_sync_receipt_ref: None,
         };
 
         self.onboarding_sessions
@@ -6190,7 +6569,30 @@ impl Ph1fStore {
         now: MonotonicTimeNs,
         onboarding_session_id: OnboardingSessionId,
         idempotency_key: String,
+        voice_artifact_sync_receipt_ref: Option<String>,
+        wake_artifact_sync_receipt_ref: Option<String>,
     ) -> Result<OnbCompleteResult, StorageError> {
+        if let Some(ref_ref) = voice_artifact_sync_receipt_ref.as_ref() {
+            if ref_ref.trim().is_empty() || ref_ref.len() > 192 || !ref_ref.is_ascii() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.voice_artifact_sync_receipt_ref",
+                        reason: "must be non-empty ASCII and <= 192 chars when provided",
+                    },
+                ));
+            }
+        }
+        if let Some(ref_ref) = wake_artifact_sync_receipt_ref.as_ref() {
+            if ref_ref.trim().is_empty() || ref_ref.len() > 192 || !ref_ref.is_ascii() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "must be non-empty ASCII and <= 192 chars when provided",
+                    },
+                ));
+            }
+        }
+
         let idx = (onboarding_session_id.clone(), idempotency_key.clone());
         if let Some(existing_status) = self.onb_complete_idempotency_index.get(&idx) {
             return Ok(OnbCompleteResult::v1(
@@ -6206,6 +6608,7 @@ impl Ph1fStore {
             access_engine_instance_id,
             token_id,
             tenant_id,
+            app_platform,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
                 StorageError::ForeignKeyViolation {
@@ -6220,6 +6623,7 @@ impl Ph1fStore {
                 rec.access_engine_instance_id.clone(),
                 rec.token_id.clone(),
                 rec.tenant_id.clone(),
+                rec.app_platform,
             )
         };
 
@@ -6255,6 +6659,96 @@ impl Ph1fStore {
             self.ph1onb_validate_employee_position_prereq(&token_id, tenant_id.as_deref())?;
         }
 
+        let latest_locked_voice = self
+            .voice_enrollment_sessions
+            .values()
+            .filter(|voice_rec| {
+                voice_rec.onboarding_session_id == onboarding_session_id
+                    && voice_rec.voice_enroll_status == VoiceEnrollStatus::Locked
+            })
+            .max_by_key(|voice_rec| (voice_rec.updated_at.0, voice_rec.created_at.0));
+        let latest_locked_voice = latest_locked_voice.ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1onb_complete_commit.voice_enrollment_status",
+                reason: "locked voice enrollment is mandatory before completing onboarding",
+            },
+        ))?;
+        if !latest_locked_voice.consent_asserted
+            || latest_locked_voice.consent_scope_ref.trim().is_empty()
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.voice_enrollment_consent",
+                    reason: "latest locked voice enrollment must carry bound consent scope",
+                },
+            ));
+        }
+        let expected_ref = latest_locked_voice
+            .voice_artifact_sync_receipt_ref
+            .as_ref()
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.voice_artifact_sync_receipt_ref",
+                    reason: "latest locked voice enrollment must carry sync receipt",
+                },
+            ))?;
+        let provided =
+            voice_artifact_sync_receipt_ref
+                .as_ref()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.voice_artifact_sync_receipt_ref",
+                        reason: "required for mandatory voice enrollment",
+                    },
+                ))?;
+        if provided != expected_ref {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.voice_artifact_sync_receipt_ref",
+                    reason: "must match latest locked voice enrollment sync receipt",
+                },
+            ));
+        }
+
+        let wake_receipt_required =
+            matches!(app_platform, AppPlatform::Android | AppPlatform::Desktop);
+        let mut expected_wake_receipt_ref: Option<String> = None;
+        for wake_rec in self.wake_enrollment_sessions.values() {
+            if wake_rec.onboarding_session_id.as_ref() == Some(&onboarding_session_id)
+                && wake_rec.wake_enroll_status == WakeEnrollStatus::Complete
+            {
+                expected_wake_receipt_ref = wake_rec.wake_artifact_sync_receipt_ref.clone();
+                break;
+            }
+        }
+        if let Some(expected_ref) = expected_wake_receipt_ref.as_ref() {
+            if wake_receipt_required {
+                let provided = wake_artifact_sync_receipt_ref.as_ref().ok_or(
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "required when completed wake enrollment exists on wake-required platforms",
+                    }),
+                )?;
+                if provided != expected_ref {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                            reason: "must match latest completed wake enrollment sync receipt",
+                        },
+                    ));
+                }
+            } else if let Some(provided) = wake_artifact_sync_receipt_ref.as_ref() {
+                if provided != expected_ref {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                            reason: "when provided on non-wake-required platforms, must match latest completed wake enrollment sync receipt",
+                        },
+                    ));
+                }
+            }
+        }
+
         let link = self
             .links
             .get_mut(&token_id)
@@ -6285,6 +6779,8 @@ impl Ph1fStore {
 
         rec.status = OnboardingStatus::Complete;
         rec.updated_at = now;
+        rec.voice_artifact_sync_receipt_ref = voice_artifact_sync_receipt_ref;
+        rec.wake_artifact_sync_receipt_ref = wake_artifact_sync_receipt_ref;
 
         self.onb_complete_idempotency_index
             .insert(idx, OnboardingStatus::Complete);
@@ -6652,6 +7148,734 @@ impl Ph1fStore {
         &self.onboarding_sessions
     }
 
+    pub fn ph1onb_voice_runtime_mode(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> OnboardingVoiceRuntimeMode {
+        let has_locked_voice = self.voice_enrollment_sessions.values().any(|rec| {
+            rec.onboarding_session_id == *onboarding_session_id
+                && rec.voice_enroll_status == VoiceEnrollStatus::Locked
+        });
+        if has_locked_voice {
+            OnboardingVoiceRuntimeMode::Full
+        } else {
+            OnboardingVoiceRuntimeMode::Limited
+        }
+    }
+
+    fn summarize_voice_capture_profile(
+        &self,
+        voice_enrollment_session_id: &str,
+        include_current_pass_sample: Option<(u16, f32, f32, f32, f32, u16, bool)>,
+    ) -> VoiceEnrollmentCaptureProfile {
+        let mut pass_count: u16 = 0;
+        let mut total_duration_ms: u32 = 0;
+        let mut prompted_like_count: u16 = 0;
+        let mut free_speech_like_count: u16 = 0;
+        let mut liveness_like_count: u16 = 0;
+        let mut snr_sum: f32 = 0.0;
+        let mut vad_sum: f32 = 0.0;
+        let mut max_clipping_pct: f32 = 0.0;
+        let mut max_overlap_ratio: f32 = 0.0;
+
+        for sample in self.voice_enrollment_samples.iter().filter(|sample| {
+            sample.voice_enrollment_session_id == voice_enrollment_session_id
+                && sample.result == VoiceSampleResult::Pass
+        }) {
+            pass_count = pass_count.saturating_add(1);
+            total_duration_ms = total_duration_ms.saturating_add(sample.sample_duration_ms as u32);
+            if sample.sample_duration_ms <= 2_000 {
+                prompted_like_count = prompted_like_count.saturating_add(1);
+            }
+            if sample.sample_duration_ms >= 1_200 {
+                free_speech_like_count = free_speech_like_count.saturating_add(1);
+            }
+            if sample.app_embedding_capture_ref.is_some() || sample.attempt_index > 1 {
+                liveness_like_count = liveness_like_count.saturating_add(1);
+            }
+            snr_sum += sample.snr_db;
+            vad_sum += sample.vad_coverage;
+            max_clipping_pct = max_clipping_pct.max(sample.clipping_pct);
+            max_overlap_ratio = max_overlap_ratio.max(sample.overlap_ratio);
+        }
+
+        if let Some((
+            sample_duration_ms,
+            vad_coverage,
+            snr_db,
+            clipping_pct,
+            overlap_ratio,
+            attempt_index,
+            has_embedding_capture_ref,
+        )) = include_current_pass_sample
+        {
+            pass_count = pass_count.saturating_add(1);
+            total_duration_ms = total_duration_ms.saturating_add(sample_duration_ms as u32);
+            if sample_duration_ms <= 2_000 {
+                prompted_like_count = prompted_like_count.saturating_add(1);
+            }
+            if sample_duration_ms >= 1_200 {
+                free_speech_like_count = free_speech_like_count.saturating_add(1);
+            }
+            if has_embedding_capture_ref || attempt_index > 1 {
+                liveness_like_count = liveness_like_count.saturating_add(1);
+            }
+            snr_sum += snr_db;
+            vad_sum += vad_coverage;
+            max_clipping_pct = max_clipping_pct.max(clipping_pct);
+            max_overlap_ratio = max_overlap_ratio.max(overlap_ratio);
+        }
+
+        let denom = pass_count.max(1) as f32;
+        VoiceEnrollmentCaptureProfile {
+            pass_count,
+            total_duration_ms,
+            prompted_like_count,
+            free_speech_like_count,
+            liveness_like_count,
+            avg_snr_db: snr_sum / denom,
+            avg_vad: vad_sum / denom,
+            max_clipping_pct,
+            max_overlap_ratio,
+        }
+    }
+
+    fn compute_voice_lock_metrics(
+        profile: VoiceEnrollmentCaptureProfile,
+    ) -> VoiceEnrollmentLockMetrics {
+        let tar_float = 8_200.0
+            + (profile.pass_count as f32 * 80.0)
+            + (profile.avg_snr_db.max(0.0) * 40.0)
+            + (profile.avg_vad.max(0.0) * 700.0);
+        let holdout_tar_bp = tar_float.clamp(0.0, 10_000.0) as u16;
+
+        let far_float =
+            160.0 - ((profile.avg_snr_db - 10.0).max(0.0) * 8.0) - (profile.avg_vad.max(0.0) * 5.0)
+                + (profile.max_clipping_pct * 1.5)
+                + (profile.max_overlap_ratio * 120.0);
+        let holdout_far_bp = far_float.clamp(0.0, 10_000.0) as u16;
+
+        let confusion_float =
+            250.0 + (profile.avg_snr_db.max(0.0) * 15.0) + (profile.avg_vad.max(0.0) * 150.0)
+                - (profile.max_clipping_pct * 10.0)
+                - (profile.max_overlap_ratio * 800.0);
+        let confusion_margin_bp = confusion_float.clamp(0.0, 10_000.0) as u16;
+
+        VoiceEnrollmentLockMetrics {
+            holdout_tar_bp,
+            holdout_far_bp,
+            confusion_margin_bp,
+        }
+    }
+
+    fn evaluate_voice_enrollment_lock_criteria(
+        profile: VoiceEnrollmentCaptureProfile,
+        lock_after_consecutive_passes: u8,
+    ) -> Result<VoiceEnrollmentLockMetrics, ReasonCodeId> {
+        if profile.pass_count < lock_after_consecutive_passes as u16
+            || profile.prompted_like_count == 0
+            || profile.free_speech_like_count == 0
+            || profile.liveness_like_count == 0
+        {
+            return Err(VID_ENROLL_REASON_CAPTURE_SET_INCOMPLETE);
+        }
+        if profile.total_duration_ms < VID_LOCK_MIN_ACCEPTED_TOTAL_DURATION_MS {
+            return Err(VID_ENROLL_REASON_MIN_DURATION_NOT_MET);
+        }
+
+        let metrics = Self::compute_voice_lock_metrics(profile);
+        if metrics.holdout_tar_bp < VID_LOCK_MIN_HOLDOUT_TAR_BP {
+            return Err(VID_ENROLL_REASON_HOLDOUT_TAR_BELOW_MIN);
+        }
+        if metrics.holdout_far_bp > VID_LOCK_MAX_HOLDOUT_FAR_BP {
+            return Err(VID_ENROLL_REASON_HOLDOUT_FAR_ABOVE_MAX);
+        }
+        if metrics.confusion_margin_bp < VID_LOCK_MIN_CONFUSION_MARGIN_BP {
+            return Err(VID_ENROLL_REASON_CONFUSION_MARGIN_BELOW_MIN);
+        }
+        Ok(metrics)
+    }
+
+    fn grade_voice_enrollment_sample(
+        sample_duration_ms: u16,
+        vad_coverage: f32,
+        snr_db: f32,
+        clipping_pct: f32,
+        overlap_ratio: f32,
+    ) -> (VoiceSampleResult, Option<ReasonCodeId>) {
+        if sample_duration_ms < 1_000 {
+            return (
+                VoiceSampleResult::Fail,
+                Some(VID_ENROLL_REASON_SHORT_SAMPLE),
+            );
+        }
+        if vad_coverage < 0.70 {
+            return (VoiceSampleResult::Fail, Some(VID_ENROLL_REASON_LOW_VAD));
+        }
+        if snr_db < 10.0 {
+            return (VoiceSampleResult::Fail, Some(VID_ENROLL_REASON_LOW_SNR));
+        }
+        if clipping_pct > 3.0 {
+            return (
+                VoiceSampleResult::Fail,
+                Some(VID_ENROLL_REASON_HIGH_CLIPPING),
+            );
+        }
+        if overlap_ratio > 0.12 {
+            return (
+                VoiceSampleResult::Fail,
+                Some(VID_ENROLL_REASON_SPEAKER_OVERLAP),
+            );
+        }
+        (VoiceSampleResult::Pass, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_mobile_artifact_sync(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_kind: MobileArtifactSyncKind,
+        receipt_ref: String,
+        artifact_profile_id: String,
+        onboarding_session_id: Option<OnboardingSessionId>,
+        user_id: Option<UserId>,
+        device_id: DeviceId,
+        idempotency_key: String,
+    ) -> Result<(), StorageError> {
+        if self
+            .mobile_artifact_sync_receipt_index
+            .contains_key(&receipt_ref)
+        {
+            return Ok(());
+        }
+        if receipt_ref.trim().is_empty() || receipt_ref.len() > 192 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_queue.receipt_ref",
+                    reason: "must be non-empty and <= 192 chars",
+                },
+            ));
+        }
+        if artifact_profile_id.trim().is_empty() || artifact_profile_id.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_queue.artifact_profile_id",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_queue.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+
+        let sync_job_id = format!(
+            "sync_job_{}",
+            hash_hex_64(&format!(
+                "{:?}:{}:{}:{}:{}",
+                sync_kind,
+                receipt_ref,
+                artifact_profile_id,
+                device_id.as_str(),
+                idempotency_key
+            ))
+        );
+        let row = MobileArtifactSyncQueueRecord {
+            schema_version: SchemaVersion(1),
+            sync_job_id: sync_job_id.clone(),
+            sync_kind,
+            receipt_ref: receipt_ref.clone(),
+            artifact_profile_id,
+            onboarding_session_id,
+            user_id,
+            device_id,
+            enqueued_at: now,
+            state: MobileArtifactSyncState::Queued,
+            attempt_count: 0,
+            last_attempted_at: None,
+            lease_expires_at: None,
+            acked_at: None,
+            last_error: None,
+            worker_id: None,
+            idempotency_key,
+        };
+        self.mobile_artifact_sync_queue.push(row);
+        self.mobile_artifact_sync_receipt_index
+            .insert(receipt_ref, sync_job_id);
+        Ok(())
+    }
+
+    fn enqueue_voice_artifact_manifest_sync_if_applicable(
+        &mut self,
+        row: ArtifactLedgerRow,
+    ) -> Result<(), StorageError> {
+        let (sync_kind, manifest_prefix) = match row.artifact_type {
+            ArtifactType::VoiceIdThresholdPack
+            | ArtifactType::VoiceIdConfusionPairPack
+            | ArtifactType::VoiceIdSpoofPolicyPack
+            | ArtifactType::VoiceIdProfileDeltaPack => {
+                (MobileArtifactSyncKind::VoiceArtifactManifest, "voice_manifest")
+            }
+            ArtifactType::WakePack => (MobileArtifactSyncKind::WakeArtifactManifest, "wake_manifest"),
+            ArtifactType::EmoAffectPack | ArtifactType::EmoPolicyPack => {
+                (MobileArtifactSyncKind::EmoArtifactManifest, "emo_manifest")
+            }
+            _ => return Ok(()),
+        };
+
+        let scope_type_label = match row.scope_type {
+            ArtifactScopeType::Tenant => "tenant",
+            ArtifactScopeType::User => "user",
+            ArtifactScopeType::Device => "device",
+        };
+        let receipt_ref = format!(
+            "{manifest_prefix}_sync_{}",
+            hash_hex_64(&format!(
+                "{}:{}:{:?}:{}:{:?}",
+                scope_type_label,
+                row.scope_id,
+                row.artifact_type,
+                row.artifact_version.0,
+                row.status
+            ))
+        );
+        let artifact_profile_id = format!(
+            "{manifest_prefix}_{}",
+            hash_hex_64(&format!(
+                "{}:{}:{:?}:{}:{:?}:{}",
+                scope_type_label,
+                row.scope_id,
+                row.artifact_type,
+                row.artifact_version.0,
+                row.status,
+                row.payload_ref
+            ))
+        );
+        let idempotency_key = row
+            .idempotency_key
+            .unwrap_or_else(|| format!("{manifest_prefix}_sync:{}", row.artifact_id));
+        let user_id = if row.scope_type == ArtifactScopeType::User {
+            UserId::new(row.scope_id.clone()).ok()
+        } else {
+            None
+        };
+        let device_id = match row.scope_type {
+            ArtifactScopeType::Device => DeviceId::new(row.scope_id.clone()).unwrap_or_else(|_| {
+                DeviceId::new(format!("scope_device_{}", hash_hex_64(&row.scope_id)))
+                    .expect("scope_device hash id must be valid")
+            }),
+            ArtifactScopeType::Tenant | ArtifactScopeType::User => DeviceId::new(format!(
+                "scope_{}_{}",
+                scope_type_label,
+                hash_hex_64(&row.scope_id)
+            ))
+            .expect("scope hash id must be valid"),
+        };
+
+        self.enqueue_mobile_artifact_sync(
+            row.created_at,
+            sync_kind,
+            receipt_ref,
+            artifact_profile_id,
+            None,
+            user_id,
+            device_id,
+            idempotency_key,
+        )
+    }
+
+    pub fn mobile_artifact_sync_queue_rows(&self) -> &[MobileArtifactSyncQueueRecord] {
+        &self.mobile_artifact_sync_queue
+    }
+
+    pub fn mobile_artifact_sync_queue_row_for_receipt(
+        &self,
+        receipt_ref: &str,
+    ) -> Option<&MobileArtifactSyncQueueRecord> {
+        let sync_job_id = self.mobile_artifact_sync_receipt_index.get(receipt_ref)?;
+        self.mobile_artifact_sync_queue
+            .iter()
+            .find(|row| &row.sync_job_id == sync_job_id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mobile_artifact_sync_dequeue_batch(
+        &mut self,
+        now: MonotonicTimeNs,
+        max_items: u16,
+        lease_duration_ms: u32,
+        worker_id: String,
+    ) -> Result<Vec<MobileArtifactSyncQueueRecord>, StorageError> {
+        if max_items == 0 || max_items > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dequeue_batch.max_items",
+                    reason: "must be in [1, 256]",
+                },
+            ));
+        }
+        if !(1_000..=300_000).contains(&lease_duration_ms) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dequeue_batch.lease_duration_ms",
+                    reason: "must be in [1000, 300000]",
+                },
+            ));
+        }
+        if worker_id.trim().is_empty() || worker_id.len() > 64 || !worker_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dequeue_batch.worker_id",
+                    reason: "must be non-empty ASCII and <= 64 chars",
+                },
+            ));
+        }
+
+        let mut selected_indexes: Vec<usize> = Vec::with_capacity(max_items as usize);
+        for (idx, row) in self.mobile_artifact_sync_queue.iter().enumerate() {
+            let replay_due = row.state == MobileArtifactSyncState::InFlight
+                && row
+                    .lease_expires_at
+                    .map(|lease| lease.0 <= now.0)
+                    .unwrap_or(true);
+            if row.state == MobileArtifactSyncState::Queued || replay_due {
+                selected_indexes.push(idx);
+            }
+            if selected_indexes.len() >= max_items as usize {
+                break;
+            }
+        }
+
+        if selected_indexes.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let lease_expires_at = MonotonicTimeNs(now.0.saturating_add(ms_to_ns(lease_duration_ms)));
+        let mut out = Vec::with_capacity(selected_indexes.len());
+        for idx in selected_indexes {
+            let row = self.mobile_artifact_sync_queue.get_mut(idx).ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dequeue_batch.queue_index",
+                    reason: "selected row index must exist",
+                }),
+            )?;
+            row.state = MobileArtifactSyncState::InFlight;
+            row.attempt_count = row.attempt_count.saturating_add(1);
+            row.last_attempted_at = Some(now);
+            row.lease_expires_at = Some(lease_expires_at);
+            row.last_error = None;
+            row.worker_id = Some(worker_id.clone());
+            out.push(row.clone());
+        }
+        Ok(out)
+    }
+
+    pub fn mobile_artifact_sync_ack_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        if sync_job_id.trim().is_empty() || sync_job_id.len() > 128 || !sync_job_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_ack_commit.sync_job_id",
+                    reason: "must be non-empty ASCII and <= 128 chars",
+                },
+            ));
+        }
+        if let Some(worker) = worker_id {
+            if worker.trim().is_empty() || worker.len() > 64 || !worker.is_ascii() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_ack_commit.worker_id",
+                        reason: "must be non-empty ASCII and <= 64 chars when provided",
+                    },
+                ));
+            }
+        }
+
+        let row = self
+            .mobile_artifact_sync_queue
+            .iter_mut()
+            .find(|row| row.sync_job_id == sync_job_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "mobile_artifact_sync_queue.sync_job_id",
+                key: sync_job_id.to_string(),
+            })?;
+        if row.state == MobileArtifactSyncState::Acked {
+            return Ok(());
+        }
+        if let (Some(expected_worker), Some(provided_worker)) = (row.worker_id.as_ref(), worker_id)
+        {
+            if expected_worker != provided_worker {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_ack_commit.worker_id",
+                        reason: "must match dequeued worker_id when present",
+                    },
+                ));
+            }
+        }
+
+        row.state = MobileArtifactSyncState::Acked;
+        row.acked_at = Some(now);
+        row.lease_expires_at = None;
+        row.last_error = None;
+        Ok(())
+    }
+
+    pub fn mobile_artifact_sync_fail_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+        retry_after_ms: u32,
+    ) -> Result<(), StorageError> {
+        if sync_job_id.trim().is_empty() || sync_job_id.len() > 128 || !sync_job_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_fail_commit.sync_job_id",
+                    reason: "must be non-empty ASCII and <= 128 chars",
+                },
+            ));
+        }
+        if let Some(worker) = worker_id {
+            if worker.trim().is_empty() || worker.len() > 64 || !worker.is_ascii() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_fail_commit.worker_id",
+                        reason: "must be non-empty ASCII and <= 64 chars when provided",
+                    },
+                ));
+            }
+        }
+        if last_error.trim().is_empty() || last_error.len() > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_fail_commit.last_error",
+                    reason: "must be non-empty and <= 256 chars",
+                },
+            ));
+        }
+        if !(1_000..=300_000).contains(&retry_after_ms) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_fail_commit.retry_after_ms",
+                    reason: "must be in [1000, 300000]",
+                },
+            ));
+        }
+
+        let row = self
+            .mobile_artifact_sync_queue
+            .iter_mut()
+            .find(|row| row.sync_job_id == sync_job_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "mobile_artifact_sync_queue.sync_job_id",
+                key: sync_job_id.to_string(),
+            })?;
+        if row.state == MobileArtifactSyncState::Acked {
+            return Ok(());
+        }
+        if row.state != MobileArtifactSyncState::InFlight {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_fail_commit.state",
+                    reason: "row must be IN_FLIGHT before fail commit",
+                },
+            ));
+        }
+        if let (Some(expected_worker), Some(provided_worker)) = (row.worker_id.as_ref(), worker_id)
+        {
+            if expected_worker != provided_worker {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_fail_commit.worker_id",
+                        reason: "must match dequeued worker_id when present",
+                    },
+                ));
+            }
+        }
+
+        row.state = MobileArtifactSyncState::InFlight;
+        row.lease_expires_at = Some(MonotonicTimeNs(
+            now.0.saturating_add(ms_to_ns(retry_after_ms)),
+        ));
+        row.last_error = Some(last_error);
+        if let Some(worker) = worker_id {
+            row.worker_id = Some(worker.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn mobile_artifact_sync_replay_due_rows(
+        &self,
+        now: MonotonicTimeNs,
+    ) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_queue
+            .iter()
+            .filter(|row| {
+                row.state == MobileArtifactSyncState::InFlight
+                    && row
+                        .lease_expires_at
+                        .map(|lease| lease.0 <= now.0)
+                        .unwrap_or(true)
+            })
+            .collect()
+    }
+
+    pub fn mobile_artifact_sync_dead_letter_rows(&self) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_queue
+            .iter()
+            .filter(|row| row.state == MobileArtifactSyncState::DeadLetter)
+            .collect()
+    }
+
+    pub fn mobile_artifact_sync_dead_letter_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+    ) -> Result<(), StorageError> {
+        if sync_job_id.trim().is_empty() || sync_job_id.len() > 128 || !sync_job_id.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dead_letter_commit.sync_job_id",
+                    reason: "must be non-empty ASCII and <= 128 chars",
+                },
+            ));
+        }
+        if let Some(worker) = worker_id {
+            if worker.trim().is_empty() || worker.len() > 64 || !worker.is_ascii() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_dead_letter_commit.worker_id",
+                        reason: "must be non-empty ASCII and <= 64 chars when provided",
+                    },
+                ));
+            }
+        }
+        if last_error.trim().is_empty() || last_error.len() > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dead_letter_commit.last_error",
+                    reason: "must be non-empty and <= 256 chars",
+                },
+            ));
+        }
+
+        let row = self
+            .mobile_artifact_sync_queue
+            .iter_mut()
+            .find(|row| row.sync_job_id == sync_job_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "mobile_artifact_sync_queue.sync_job_id",
+                key: sync_job_id.to_string(),
+            })?;
+        if row.state == MobileArtifactSyncState::Acked {
+            return Ok(());
+        }
+        if row.state != MobileArtifactSyncState::InFlight {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "mobile_artifact_sync_dead_letter_commit.state",
+                    reason: "row must be IN_FLIGHT before dead-letter commit",
+                },
+            ));
+        }
+        if let (Some(expected_worker), Some(provided_worker)) = (row.worker_id.as_ref(), worker_id)
+        {
+            if expected_worker != provided_worker {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "mobile_artifact_sync_dead_letter_commit.worker_id",
+                        reason: "must match dequeued worker_id when present",
+                    },
+                ));
+            }
+        }
+
+        row.state = MobileArtifactSyncState::DeadLetter;
+        row.lease_expires_at = None;
+        row.last_error = Some(last_error);
+        row.last_attempted_at = Some(now);
+        if let Some(worker) = worker_id {
+            row.worker_id = Some(worker.to_string());
+        }
+        Ok(())
+    }
+
+    // Device-generic alias methods.
+    // These intentionally route to the historical mobile queue implementation so callers
+    // can use one API for phone + desktop artifact sync without schema churn.
+    pub fn device_artifact_sync_queue_rows(&self) -> &[MobileArtifactSyncQueueRecord] {
+        self.mobile_artifact_sync_queue_rows()
+    }
+
+    pub fn device_artifact_sync_dequeue_batch(
+        &mut self,
+        now: MonotonicTimeNs,
+        max_items: u16,
+        lease_duration_ms: u32,
+        worker_id: String,
+    ) -> Result<Vec<MobileArtifactSyncQueueRecord>, StorageError> {
+        self.mobile_artifact_sync_dequeue_batch(now, max_items, lease_duration_ms, worker_id)
+    }
+
+    pub fn device_artifact_sync_ack_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_ack_commit(now, sync_job_id, worker_id)
+    }
+
+    pub fn device_artifact_sync_fail_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+        retry_after_ms: u32,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_fail_commit(
+            now,
+            sync_job_id,
+            worker_id,
+            last_error,
+            retry_after_ms,
+        )
+    }
+
+    pub fn device_artifact_sync_replay_due_rows(
+        &self,
+        now: MonotonicTimeNs,
+    ) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_replay_due_rows(now)
+    }
+
+    pub fn device_artifact_sync_dead_letter_rows(&self) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_dead_letter_rows()
+    }
+
+    pub fn device_artifact_sync_dead_letter_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_dead_letter_commit(now, sync_job_id, worker_id, last_error)
+    }
+
     // ------------------------
     // PH1.W (Wake) - minimal storage API for wake simulations and runtime records.
     // ------------------------
@@ -6663,6 +7887,32 @@ impl Ph1fStore {
         user_id: UserId,
         device_id: DeviceId,
         onboarding_session_id: Option<OnboardingSessionId>,
+        pass_target: u8,
+        max_attempts: u8,
+        enrollment_timeout_ms: u32,
+        idempotency_key: String,
+    ) -> Result<WakeEnrollmentSessionRecord, StorageError> {
+        self.ph1w_enroll_start_draft_with_ios_override(
+            now,
+            user_id,
+            device_id,
+            onboarding_session_id,
+            false,
+            pass_target,
+            max_attempts,
+            enrollment_timeout_ms,
+            idempotency_key,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1w_enroll_start_draft_with_ios_override(
+        &mut self,
+        now: MonotonicTimeNs,
+        user_id: UserId,
+        device_id: DeviceId,
+        onboarding_session_id: Option<OnboardingSessionId>,
+        allow_ios_wake_override: bool,
         pass_target: u8,
         max_attempts: u8,
         enrollment_timeout_ms: u32,
@@ -6724,11 +7974,19 @@ impl Ph1fStore {
             ));
         }
         if let Some(onboarding_sid) = onboarding_session_id.as_ref() {
-            if !self.onboarding_sessions.contains_key(onboarding_sid) {
-                return Err(StorageError::ForeignKeyViolation {
+            let onboarding_session = self.onboarding_sessions.get(onboarding_sid).ok_or(
+                StorageError::ForeignKeyViolation {
                     table: "wake_enrollment_sessions.onboarding_session_id",
                     key: onboarding_sid.as_str().to_string(),
-                });
+                },
+            )?;
+            if onboarding_session.app_platform == AppPlatform::Ios && !allow_ios_wake_override {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1w_enroll_start_draft.onboarding_session_id",
+                        reason: "wake enrollment is disabled for IOS onboarding sessions by default (explicit-trigger-only)",
+                    },
+                ));
             }
         }
 
@@ -6779,6 +8037,7 @@ impl Ph1fStore {
             max_attempts,
             enrollment_timeout_ms,
             reason_code: None,
+            wake_artifact_sync_receipt_ref: None,
             created_at: now,
             updated_at: now,
             completed_at: None,
@@ -6943,48 +8202,101 @@ impl Ph1fStore {
 
         let idx = (wake_enrollment_session_id.clone(), idempotency_key.clone());
         if self.wake_complete_idempotency_index.contains_key(&idx) {
-            return self
+            let existing = self
                 .wake_enrollment_sessions
                 .get(&wake_enrollment_session_id)
                 .cloned()
                 .ok_or(StorageError::ForeignKeyViolation {
                     table: "wake_enrollment_sessions.wake_enrollment_session_id",
                     key: wake_enrollment_session_id,
-                });
+                })?;
+            if let (Some(receipt_ref), Some(profile_id)) = (
+                existing.wake_artifact_sync_receipt_ref.clone(),
+                existing.wake_profile_id.clone(),
+            ) {
+                self.enqueue_mobile_artifact_sync(
+                    now,
+                    MobileArtifactSyncKind::WakeProfile,
+                    receipt_ref,
+                    profile_id,
+                    existing.onboarding_session_id.clone(),
+                    Some(existing.user_id.clone()),
+                    existing.device_id.clone(),
+                    idempotency_key,
+                )?;
+            }
+            return Ok(existing);
         }
 
-        let rec = self
-            .wake_enrollment_sessions
-            .get_mut(&wake_enrollment_session_id)
-            .ok_or(StorageError::ForeignKeyViolation {
-                table: "wake_enrollment_sessions.wake_enrollment_session_id",
-                key: wake_enrollment_session_id.clone(),
-            })?;
+        let (
+            rec_clone,
+            wake_sync_receipt_ref,
+            user_id,
+            device_id,
+            onboarding_session_id,
+            wake_profile_id_for_sync,
+        ) = {
+            let rec = self
+                .wake_enrollment_sessions
+                .get_mut(&wake_enrollment_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_enrollment_sessions.wake_enrollment_session_id",
+                    key: wake_enrollment_session_id.clone(),
+                })?;
 
-        if rec.pass_count < rec.pass_target {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "ph1w_enroll_complete_commit.pass_count",
-                    reason: "pass_count must be >= pass_target",
-                },
-            ));
-        }
+            if rec.pass_count < rec.pass_target {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1w_enroll_complete_commit.pass_count",
+                        reason: "pass_count must be >= pass_target",
+                    },
+                ));
+            }
 
-        rec.wake_profile_id = Some(wake_profile_id.clone());
-        rec.wake_enroll_status = WakeEnrollStatus::Complete;
-        rec.reason_code = None;
-        rec.completed_at = Some(now);
-        rec.updated_at = now;
-        rec.deferred_until = None;
+            rec.wake_profile_id = Some(wake_profile_id.clone());
+            rec.wake_enroll_status = WakeEnrollStatus::Complete;
+            rec.reason_code = None;
+            rec.completed_at = Some(now);
+            rec.updated_at = now;
+            rec.deferred_until = None;
+            let wake_sync_receipt_ref = format!(
+                "wake_sync_{}",
+                hash_hex_64(&format!(
+                    "{}:{}:{}",
+                    rec.wake_enrollment_session_id,
+                    wake_profile_id,
+                    rec.device_id.as_str()
+                ))
+            );
+            rec.wake_artifact_sync_receipt_ref = Some(wake_sync_receipt_ref.clone());
+            (
+                rec.clone(),
+                wake_sync_receipt_ref,
+                rec.user_id.clone(),
+                rec.device_id.clone(),
+                rec.onboarding_session_id.clone(),
+                wake_profile_id.clone(),
+            )
+        };
 
         self.wake_profile_bindings.insert(
-            (rec.user_id.clone(), rec.device_id.clone()),
+            (user_id.clone(), device_id.clone()),
             wake_profile_id.clone(),
         );
         self.wake_complete_idempotency_index
             .insert(idx, wake_profile_id);
+        self.enqueue_mobile_artifact_sync(
+            now,
+            MobileArtifactSyncKind::WakeProfile,
+            wake_sync_receipt_ref,
+            wake_profile_id_for_sync,
+            onboarding_session_id,
+            Some(user_id),
+            device_id,
+            idempotency_key,
+        )?;
 
-        Ok(rec.clone())
+        Ok(rec_clone)
     }
 
     pub fn ph1w_enroll_defer_commit(
@@ -7261,6 +8573,12 @@ impl Ph1fStore {
             onboarding_session_id: onboarding_session_id.clone(),
             device_id: device_id.clone(),
             voice_profile_id: None,
+            consent_asserted,
+            consent_scope_ref: format!(
+                "voice_enroll_consent:{}:{}",
+                onboarding_session_id.as_str(),
+                device_id.as_str()
+            ),
             voice_enroll_status: VoiceEnrollStatus::InProgress,
             lock_after_consecutive_passes,
             consecutive_passes: 0,
@@ -7271,6 +8589,7 @@ impl Ph1fStore {
             updated_at: now,
             deferred_until: None,
             reason_code: None,
+            voice_artifact_sync_receipt_ref: None,
         };
 
         self.voice_enrollment_sessions
@@ -7286,8 +8605,12 @@ impl Ph1fStore {
         voice_enrollment_session_id: String,
         audio_sample_ref: String,
         attempt_index: u16,
-        result: VoiceSampleResult,
-        reason_code: Option<ReasonCodeId>,
+        sample_duration_ms: u16,
+        vad_coverage: f32,
+        snr_db: f32,
+        clipping_pct: f32,
+        overlap_ratio: f32,
+        app_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
         idempotency_key: String,
     ) -> Result<VoiceEnrollmentSessionRecord, StorageError> {
         if voice_enrollment_session_id.trim().is_empty() || voice_enrollment_session_id.len() > 64 {
@@ -7314,19 +8637,56 @@ impl Ph1fStore {
                 },
             ));
         }
+        if !(500..=15_000).contains(&sample_duration_ms) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1vid_enroll_sample_commit.sample_duration_ms",
+                    reason: "must be in [500, 15000]",
+                },
+            ));
+        }
+        if !(0.0..=1.0).contains(&vad_coverage) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1vid_enroll_sample_commit.vad_coverage",
+                    reason: "must be in [0, 1]",
+                },
+            ));
+        }
+        if !(snr_db.is_finite() && (-30.0..=80.0).contains(&snr_db)) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1vid_enroll_sample_commit.snr_db",
+                    reason: "must be finite and in [-30, 80]",
+                },
+            ));
+        }
+        if !(clipping_pct.is_finite() && (0.0..=100.0).contains(&clipping_pct)) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1vid_enroll_sample_commit.clipping_pct",
+                    reason: "must be finite and in [0, 100]",
+                },
+            ));
+        }
+        if !(overlap_ratio.is_finite() && (0.0..=1.0).contains(&overlap_ratio)) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1vid_enroll_sample_commit.overlap_ratio",
+                    reason: "must be finite and in [0, 1]",
+                },
+            ));
+        }
+        if let Some(capture_ref) = &app_embedding_capture_ref {
+            capture_ref
+                .validate()
+                .map_err(StorageError::ContractViolation)?;
+        }
         if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1vid_enroll_sample_commit.idempotency_key",
                     reason: "must be non-empty and <= 128 chars",
-                },
-            ));
-        }
-        if result == VoiceSampleResult::Fail && reason_code.is_none() {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "ph1vid_enroll_sample_commit.reason_code",
-                    reason: "required on FAIL",
                 },
             ));
         }
@@ -7346,6 +8706,29 @@ impl Ph1fStore {
                     key: voice_enrollment_session_id,
                 });
         }
+        let (graded_result, graded_reason_code) = Self::grade_voice_enrollment_sample(
+            sample_duration_ms,
+            vad_coverage,
+            snr_db,
+            clipping_pct,
+            overlap_ratio,
+        );
+        let lock_profile_if_pass = if graded_result == VoiceSampleResult::Pass {
+            Some(self.summarize_voice_capture_profile(
+                &voice_enrollment_session_id,
+                Some((
+                    sample_duration_ms,
+                    vad_coverage,
+                    snr_db,
+                    clipping_pct,
+                    overlap_ratio,
+                    attempt_index,
+                    app_embedding_capture_ref.is_some(),
+                )),
+            ))
+        } else {
+            None
+        };
 
         let rec_clone = {
             let rec = self
@@ -7380,25 +8763,43 @@ impl Ph1fStore {
             let timed_out = elapsed_ns >= ms_to_ns(rec.max_session_enroll_time_ms);
 
             rec.attempt_count = rec.attempt_count.saturating_add(1);
-            if result == VoiceSampleResult::Pass {
+            if graded_result == VoiceSampleResult::Pass {
                 rec.consecutive_passes = rec.consecutive_passes.saturating_add(1);
             } else {
                 rec.consecutive_passes = 0;
             }
 
             if rec.consecutive_passes >= rec.lock_after_consecutive_passes {
-                rec.voice_enroll_status = VoiceEnrollStatus::Locked;
-                rec.reason_code = None;
-                rec.deferred_until = None;
+                if let Some(profile) = lock_profile_if_pass {
+                    match Self::evaluate_voice_enrollment_lock_criteria(
+                        profile,
+                        rec.lock_after_consecutive_passes,
+                    ) {
+                        Ok(_) => {
+                            rec.voice_enroll_status = VoiceEnrollStatus::Locked;
+                            rec.reason_code = None;
+                            rec.deferred_until = None;
+                        }
+                        Err(reason_code) => {
+                            rec.voice_enroll_status = VoiceEnrollStatus::Pending;
+                            rec.reason_code = Some(reason_code);
+                            rec.deferred_until = None;
+                        }
+                    }
+                } else {
+                    rec.voice_enroll_status = VoiceEnrollStatus::Pending;
+                    rec.reason_code = Some(VID_ENROLL_REASON_CAPTURE_SET_INCOMPLETE);
+                    rec.deferred_until = None;
+                }
             } else if timed_out {
                 rec.voice_enroll_status = VoiceEnrollStatus::Pending;
-                rec.reason_code = Some(reason_code.unwrap_or(VID_ENROLL_REASON_TIMEOUT));
+                rec.reason_code = Some(VID_ENROLL_REASON_TIMEOUT);
             } else if rec.attempt_count >= rec.max_total_attempts {
                 rec.voice_enroll_status = VoiceEnrollStatus::Pending;
-                rec.reason_code = Some(reason_code.unwrap_or(VID_ENROLL_REASON_MAX_ATTEMPTS));
+                rec.reason_code = Some(VID_ENROLL_REASON_MAX_ATTEMPTS);
             } else {
                 rec.voice_enroll_status = VoiceEnrollStatus::InProgress;
-                rec.reason_code = reason_code;
+                rec.reason_code = graded_reason_code;
             }
             rec.updated_at = now;
             rec.clone()
@@ -7416,8 +8817,14 @@ impl Ph1fStore {
                 created_at: now,
                 attempt_index,
                 audio_sample_ref,
-                result,
-                reason_code,
+                sample_duration_ms,
+                vad_coverage,
+                snr_db,
+                clipping_pct,
+                overlap_ratio,
+                app_embedding_capture_ref,
+                result: graded_result,
+                reason_code: graded_reason_code,
                 idempotency_key: idempotency_key.clone(),
             });
         self.voice_sample_idempotency_index.insert(idx, sample_seq);
@@ -7441,17 +8848,33 @@ impl Ph1fStore {
         }
         let idx = (voice_enrollment_session_id.clone(), idempotency_key.clone());
         if self.voice_complete_idempotency_index.contains_key(&idx) {
-            return self
+            let existing = self
                 .voice_enrollment_sessions
                 .get(&voice_enrollment_session_id)
                 .cloned()
                 .ok_or(StorageError::ForeignKeyViolation {
                     table: "voice_enrollment_sessions.voice_enrollment_session_id",
                     key: voice_enrollment_session_id,
-                });
+                })?;
+            if let (Some(receipt_ref), Some(profile_id)) = (
+                existing.voice_artifact_sync_receipt_ref.clone(),
+                existing.voice_profile_id.clone(),
+            ) {
+                self.enqueue_mobile_artifact_sync(
+                    now,
+                    MobileArtifactSyncKind::VoiceProfile,
+                    receipt_ref,
+                    profile_id,
+                    Some(existing.onboarding_session_id.clone()),
+                    None,
+                    existing.device_id.clone(),
+                    idempotency_key,
+                )?;
+            }
+            return Ok(existing);
         }
 
-        let rec_clone = {
+        let (rec_clone, voice_sync_receipt_ref) = {
             let rec = self
                 .voice_enrollment_sessions
                 .get_mut(&voice_enrollment_session_id)
@@ -7480,7 +8903,26 @@ impl Ph1fStore {
             }
             rec.updated_at = now;
             rec.reason_code = None;
-            rec.clone()
+            let voice_profile_id =
+                rec.voice_profile_id
+                    .as_ref()
+                    .ok_or(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "ph1vid_enroll_complete_commit.voice_profile_id",
+                            reason: "must be present after completion",
+                        },
+                    ))?;
+            let voice_sync_receipt_ref = format!(
+                "voice_sync_{}",
+                hash_hex_64(&format!(
+                    "{}:{}:{}",
+                    rec.voice_enrollment_session_id,
+                    voice_profile_id,
+                    rec.device_id.as_str()
+                ))
+            );
+            rec.voice_artifact_sync_receipt_ref = Some(voice_sync_receipt_ref.clone());
+            (rec.clone(), voice_sync_receipt_ref)
         };
 
         let voice_profile_id =
@@ -7494,13 +8936,32 @@ impl Ph1fStore {
                     },
                 ))?;
 
+        let profile_embedding_capture_ref = self
+            .voice_enrollment_samples
+            .iter()
+            .rev()
+            .find(|sample| {
+                sample.voice_enrollment_session_id == rec_clone.voice_enrollment_session_id
+                    && sample.result == VoiceSampleResult::Pass
+                    && sample.app_embedding_capture_ref.is_some()
+            })
+            .and_then(|sample| sample.app_embedding_capture_ref.clone());
+
         self.voice_profiles
             .entry(voice_profile_id.clone())
+            .and_modify(|profile| {
+                if profile.profile_embedding_capture_ref.is_none()
+                    && profile_embedding_capture_ref.is_some()
+                {
+                    profile.profile_embedding_capture_ref = profile_embedding_capture_ref.clone();
+                }
+            })
             .or_insert(VoiceProfileRecord {
                 schema_version: SchemaVersion(1),
                 voice_profile_id: voice_profile_id.clone(),
                 onboarding_session_id: rec_clone.onboarding_session_id.clone(),
                 device_id: rec_clone.device_id.clone(),
+                profile_embedding_capture_ref: profile_embedding_capture_ref.clone(),
                 created_at: now,
             });
         self.voice_profile_bindings.insert(
@@ -7511,7 +8972,17 @@ impl Ph1fStore {
             voice_profile_id.clone(),
         );
         self.voice_complete_idempotency_index
-            .insert(idx, voice_profile_id);
+            .insert(idx, voice_profile_id.clone());
+        self.enqueue_mobile_artifact_sync(
+            now,
+            MobileArtifactSyncKind::VoiceProfile,
+            voice_sync_receipt_ref,
+            voice_profile_id,
+            Some(rec_clone.onboarding_session_id.clone()),
+            None,
+            rec_clone.device_id.clone(),
+            idempotency_key,
+        )?;
         Ok(rec_clone)
     }
 
@@ -7579,6 +9050,22 @@ impl Ph1fStore {
             .collect()
     }
 
+    pub fn ph1vid_get_sample_for_attempt_and_idempotency(
+        &self,
+        voice_enrollment_session_id: &str,
+        attempt_index: u16,
+        idempotency_key: &str,
+    ) -> Option<&VoiceEnrollmentSampleRecord> {
+        let sample_seq = self.voice_sample_idempotency_index.get(&(
+            voice_enrollment_session_id.to_string(),
+            attempt_index,
+            idempotency_key.to_string(),
+        ))?;
+        self.voice_enrollment_samples
+            .iter()
+            .find(|row| row.sample_seq == *sample_seq)
+    }
+
     pub fn attempt_overwrite_voice_enrollment_sample(
         &mut self,
         _voice_enrollment_session_id: &str,
@@ -7591,6 +9078,23 @@ impl Ph1fStore {
 
     pub fn ph1vid_get_voice_profile(&self, voice_profile_id: &str) -> Option<&VoiceProfileRecord> {
         self.voice_profiles.get(voice_profile_id)
+    }
+
+    pub fn ph1vid_voice_profile_rows(&self) -> Vec<&VoiceProfileRecord> {
+        self.voice_profiles.values().collect()
+    }
+
+    pub fn ph1vid_has_any_voice_profiles(&self) -> bool {
+        !self.voice_profiles.is_empty()
+    }
+
+    pub fn ph1vid_has_voice_profile_for_user(&self, user_id: &UserId) -> bool {
+        self.voice_profiles.values().any(|profile| {
+            self.devices
+                .get(&profile.device_id)
+                .map(|device| device.user_id == *user_id)
+                .unwrap_or(false)
+        })
     }
 
     // ------------------------
@@ -10802,6 +12306,138 @@ impl Ph1fStore {
             .collect()
     }
 
+    fn validate_access_capreq_tenant_id(tenant_id: &str) -> Result<(), StorageError> {
+        if tenant_id.trim().is_empty() || tenant_id.len() > 64 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1access_capreq.tenant_id",
+                    reason: "must be non-empty and <= 64 chars",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_access_capreq_idempotency(
+        field: &'static str,
+        idempotency_key: &str,
+    ) -> Result<(), StorageError> {
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_access_capreq_bounded_text(
+        field: &'static str,
+        value: &str,
+        max_len: usize,
+    ) -> Result<(), StorageError> {
+        if value.trim().is_empty() || value.len() > max_len {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and within max length",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1access_capreq_step_up_audit_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        user_id: UserId,
+        stage: String,
+        outcome: String,
+        requested_action: String,
+        challenge_method: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<AuditEventId, StorageError> {
+        Self::validate_access_capreq_tenant_id(&tenant_id)?;
+        Self::validate_access_capreq_idempotency(
+            "ph1access_capreq.idempotency_key",
+            &idempotency_key,
+        )?;
+        Self::validate_access_capreq_bounded_text("ph1access_capreq.stage", &stage, 32)?;
+        Self::validate_access_capreq_bounded_text("ph1access_capreq.outcome", &outcome, 32)?;
+        Self::validate_access_capreq_bounded_text(
+            "ph1access_capreq.requested_action",
+            &requested_action,
+            128,
+        )?;
+        Self::validate_access_capreq_bounded_text(
+            "ph1access_capreq.challenge_method",
+            &challenge_method,
+            64,
+        )?;
+        if !self.identities.contains_key(&user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "audit_events.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+
+        let payload = AuditPayloadMin::v1(BTreeMap::from([
+            (PayloadKey::new("stage")?, PayloadValue::new(stage.clone())?),
+            (PayloadKey::new("outcome")?, PayloadValue::new(outcome.clone())?),
+            (
+                PayloadKey::new("requested_action")?,
+                PayloadValue::new(requested_action)?,
+            ),
+            (
+                PayloadKey::new("challenge_method")?,
+                PayloadValue::new(challenge_method)?,
+            ),
+        ]))?;
+
+        let severity = if stage == "FINISH" && outcome == "CONTINUE" {
+            AuditSeverity::Info
+        } else {
+            AuditSeverity::Warn
+        };
+
+        let input = AuditEventInput::v1(
+            now,
+            Some(tenant_id),
+            None,
+            None,
+            Some(user_id),
+            None,
+            AuditEngine::Other("PH1.ACCESS/CAPREQ".to_string()),
+            AuditEventType::Other,
+            reason_code,
+            severity,
+            correlation_id,
+            turn_id,
+            payload,
+            None,
+            Some(idempotency_key),
+        )?;
+
+        self.append_audit_event(input)
+    }
+
+    pub fn ph1access_capreq_audit_rows(&self, correlation_id: CorrelationId) -> Vec<&AuditEvent> {
+        self.audit_events
+            .iter()
+            .filter(|e| {
+                e.correlation_id == correlation_id
+                    && matches!(&e.engine, AuditEngine::Other(name) if name == "PH1.ACCESS/CAPREQ")
+            })
+            .collect()
+    }
+
     // ------------------------
     // PH1.WRITE (Professional Writing & Formatting)
     // ------------------------
@@ -11710,6 +13346,172 @@ impl Ph1fStore {
     // ------------------------
     // PH1.FEEDBACK / PH1.LEARN / PH1.KNOW (Learning Layer)
     // ------------------------
+    const PH1_FEEDBACK_SIGNAL_BUNDLE_INGEST_SLO_MS: u32 = 2_000;
+
+    fn feedback_event_type_name(event_type: FeedbackEventType) -> &'static str {
+        match event_type {
+            FeedbackEventType::SttReject => "SttReject",
+            FeedbackEventType::SttRetry => "SttRetry",
+            FeedbackEventType::LanguageMismatch => "LanguageMismatch",
+            FeedbackEventType::UserCorrection => "UserCorrection",
+            FeedbackEventType::ClarifyLoop => "ClarifyLoop",
+            FeedbackEventType::ConfirmAbort => "ConfirmAbort",
+            FeedbackEventType::ToolFail => "ToolFail",
+            FeedbackEventType::MemoryOverride => "MemoryOverride",
+            FeedbackEventType::DeliverySwitch => "DeliverySwitch",
+            FeedbackEventType::BargeIn => "BargeIn",
+            FeedbackEventType::VoiceIdFalseReject => "VoiceIdFalseReject",
+            FeedbackEventType::VoiceIdFalseAccept => "VoiceIdFalseAccept",
+            FeedbackEventType::VoiceIdSpoofRisk => "VoiceIdSpoofRisk",
+            FeedbackEventType::VoiceIdMultiSpeaker => "VoiceIdMultiSpeaker",
+            FeedbackEventType::VoiceIdDriftAlert => "VoiceIdDriftAlert",
+            FeedbackEventType::VoiceIdReauthFriction => "VoiceIdReauthFriction",
+            FeedbackEventType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
+            FeedbackEventType::VoiceIdDrift => "VoiceIdDrift",
+            FeedbackEventType::VoiceIdLowQuality => "VoiceIdLowQuality",
+        }
+    }
+
+    fn parse_feedback_event_type_name(value: &str) -> Option<FeedbackEventType> {
+        match value {
+            "SttReject" => Some(FeedbackEventType::SttReject),
+            "SttRetry" => Some(FeedbackEventType::SttRetry),
+            "LanguageMismatch" => Some(FeedbackEventType::LanguageMismatch),
+            "UserCorrection" => Some(FeedbackEventType::UserCorrection),
+            "ClarifyLoop" => Some(FeedbackEventType::ClarifyLoop),
+            "ConfirmAbort" => Some(FeedbackEventType::ConfirmAbort),
+            "ToolFail" => Some(FeedbackEventType::ToolFail),
+            "MemoryOverride" => Some(FeedbackEventType::MemoryOverride),
+            "DeliverySwitch" => Some(FeedbackEventType::DeliverySwitch),
+            "BargeIn" => Some(FeedbackEventType::BargeIn),
+            "VoiceIdFalseReject" => Some(FeedbackEventType::VoiceIdFalseReject),
+            "VoiceIdFalseAccept" => Some(FeedbackEventType::VoiceIdFalseAccept),
+            "VoiceIdSpoofRisk" => Some(FeedbackEventType::VoiceIdSpoofRisk),
+            "VoiceIdMultiSpeaker" => Some(FeedbackEventType::VoiceIdMultiSpeaker),
+            "VoiceIdDriftAlert" => Some(FeedbackEventType::VoiceIdDriftAlert),
+            "VoiceIdReauthFriction" => Some(FeedbackEventType::VoiceIdReauthFriction),
+            "VoiceIdConfusionPair" => Some(FeedbackEventType::VoiceIdConfusionPair),
+            "VoiceIdDrift" => Some(FeedbackEventType::VoiceIdDrift),
+            "VoiceIdLowQuality" => Some(FeedbackEventType::VoiceIdLowQuality),
+            _ => None,
+        }
+    }
+
+    fn learn_signal_type_name(signal_type: LearnSignalType) -> &'static str {
+        match signal_type {
+            LearnSignalType::SttReject => "SttReject",
+            LearnSignalType::UserCorrection => "UserCorrection",
+            LearnSignalType::ClarifyLoop => "ClarifyLoop",
+            LearnSignalType::ToolFail => "ToolFail",
+            LearnSignalType::VocabularyRepeat => "VocabularyRepeat",
+            LearnSignalType::BargeIn => "BargeIn",
+            LearnSignalType::DeliverySwitch => "DeliverySwitch",
+            LearnSignalType::VoiceIdFalseReject => "VoiceIdFalseReject",
+            LearnSignalType::VoiceIdFalseAccept => "VoiceIdFalseAccept",
+            LearnSignalType::VoiceIdSpoofRisk => "VoiceIdSpoofRisk",
+            LearnSignalType::VoiceIdMultiSpeaker => "VoiceIdMultiSpeaker",
+            LearnSignalType::VoiceIdDriftAlert => "VoiceIdDriftAlert",
+            LearnSignalType::VoiceIdReauthFriction => "VoiceIdReauthFriction",
+            LearnSignalType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
+            LearnSignalType::VoiceIdDrift => "VoiceIdDrift",
+            LearnSignalType::VoiceIdLowQuality => "VoiceIdLowQuality",
+        }
+    }
+
+    fn parse_learn_signal_type_name(value: &str) -> Option<LearnSignalType> {
+        match value {
+            "SttReject" => Some(LearnSignalType::SttReject),
+            "UserCorrection" => Some(LearnSignalType::UserCorrection),
+            "ClarifyLoop" => Some(LearnSignalType::ClarifyLoop),
+            "ToolFail" => Some(LearnSignalType::ToolFail),
+            "VocabularyRepeat" => Some(LearnSignalType::VocabularyRepeat),
+            "BargeIn" => Some(LearnSignalType::BargeIn),
+            "DeliverySwitch" => Some(LearnSignalType::DeliverySwitch),
+            "VoiceIdFalseReject" => Some(LearnSignalType::VoiceIdFalseReject),
+            "VoiceIdFalseAccept" => Some(LearnSignalType::VoiceIdFalseAccept),
+            "VoiceIdSpoofRisk" => Some(LearnSignalType::VoiceIdSpoofRisk),
+            "VoiceIdMultiSpeaker" => Some(LearnSignalType::VoiceIdMultiSpeaker),
+            "VoiceIdDriftAlert" => Some(LearnSignalType::VoiceIdDriftAlert),
+            "VoiceIdReauthFriction" => Some(LearnSignalType::VoiceIdReauthFriction),
+            "VoiceIdConfusionPair" => Some(LearnSignalType::VoiceIdConfusionPair),
+            "VoiceIdDrift" => Some(LearnSignalType::VoiceIdDrift),
+            "VoiceIdLowQuality" => Some(LearnSignalType::VoiceIdLowQuality),
+            _ => None,
+        }
+    }
+
+    fn feedback_path_bucket(path: FeedbackPathType) -> &'static str {
+        match path {
+            FeedbackPathType::Defect => "PathA_Defect",
+            FeedbackPathType::Improvement => "PathB_Improvement",
+        }
+    }
+
+    fn validate_feedback_event_signal_pair(
+        event_type: FeedbackEventType,
+        signal_type: LearnSignalType,
+    ) -> Result<(), StorageError> {
+        let valid = matches!(
+            (event_type, signal_type),
+            (FeedbackEventType::SttReject, LearnSignalType::SttReject)
+                | (
+                    FeedbackEventType::UserCorrection,
+                    LearnSignalType::UserCorrection
+                )
+                | (FeedbackEventType::ClarifyLoop, LearnSignalType::ClarifyLoop)
+                | (FeedbackEventType::ToolFail, LearnSignalType::ToolFail)
+                | (
+                    FeedbackEventType::DeliverySwitch,
+                    LearnSignalType::DeliverySwitch
+                )
+                | (FeedbackEventType::BargeIn, LearnSignalType::BargeIn)
+                | (
+                    FeedbackEventType::VoiceIdFalseReject,
+                    LearnSignalType::VoiceIdFalseReject
+                )
+                | (
+                    FeedbackEventType::VoiceIdFalseAccept,
+                    LearnSignalType::VoiceIdFalseAccept
+                )
+                | (
+                    FeedbackEventType::VoiceIdSpoofRisk,
+                    LearnSignalType::VoiceIdSpoofRisk
+                )
+                | (
+                    FeedbackEventType::VoiceIdMultiSpeaker,
+                    LearnSignalType::VoiceIdMultiSpeaker
+                )
+                | (
+                    FeedbackEventType::VoiceIdDriftAlert,
+                    LearnSignalType::VoiceIdDriftAlert
+                )
+                | (
+                    FeedbackEventType::VoiceIdReauthFriction,
+                    LearnSignalType::VoiceIdReauthFriction
+                )
+                | (
+                    FeedbackEventType::VoiceIdConfusionPair,
+                    LearnSignalType::VoiceIdConfusionPair
+                )
+                | (
+                    FeedbackEventType::VoiceIdDrift,
+                    LearnSignalType::VoiceIdDrift
+                )
+                | (
+                    FeedbackEventType::VoiceIdLowQuality,
+                    LearnSignalType::VoiceIdLowQuality
+                )
+        );
+        if !valid {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1feedback.signal_bucket",
+                    reason: "must be compatible with feedback_event_type",
+                },
+            ));
+        }
+        Ok(())
+    }
 
     fn validate_ph1learn_tenant_id(tenant_id: &str) -> Result<(), StorageError> {
         if tenant_id.trim().is_empty() || tenant_id.len() > 64 {
@@ -11879,14 +13681,21 @@ impl Ph1fStore {
     fn validate_ph1learn_artifact_type(artifact_type: ArtifactType) -> Result<(), StorageError> {
         if !matches!(
             artifact_type,
-            ArtifactType::SttRoutingPolicyPack
+            ArtifactType::WakePack
+                | ArtifactType::EmoAffectPack
+                | ArtifactType::EmoPolicyPack
+                | ArtifactType::SttRoutingPolicyPack
                 | ArtifactType::SttAdaptationProfile
                 | ArtifactType::TtsRoutingPolicyPack
+                | ArtifactType::VoiceIdThresholdPack
+                | ArtifactType::VoiceIdConfusionPairPack
+                | ArtifactType::VoiceIdSpoofPolicyPack
+                | ArtifactType::VoiceIdProfileDeltaPack
         ) {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1learn.artifact_type",
-                    reason: "must be STT_ROUTING_POLICY_PACK, STT_ADAPTATION_PROFILE, or TTS_ROUTING_POLICY_PACK",
+                    reason: "must be one of WAKE/EMO/STT/TTS/VOICE_ID rollout artifact packs",
                 },
             ));
         }
@@ -11917,6 +13726,22 @@ impl Ph1fStore {
         )?;
         Self::validate_ph1learn_bounded_text("ph1feedback.signal_bucket", &signal_bucket, 32)?;
         self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+        let event_type = Self::parse_feedback_event_type_name(feedback_event_type.as_str()).ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1feedback.feedback_event_type",
+                reason: "must be a known FeedbackEventType",
+            }),
+        )?;
+        let signal_type = Self::parse_learn_signal_type_name(signal_bucket.as_str()).ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1feedback.signal_bucket",
+                reason: "must be a known LearnSignalType",
+            }),
+        )?;
+        Self::validate_feedback_event_signal_pair(event_type, signal_type)?;
+        let path_type = classify_feedback_path(event_type);
+        let feedback_event_type = Self::feedback_event_type_name(event_type).to_string();
+        let signal_bucket = Self::learn_signal_type_name(signal_type).to_string();
 
         let payload = AuditPayloadMin::v1(BTreeMap::from([
             (
@@ -11926,6 +13751,10 @@ impl Ph1fStore {
             (
                 PayloadKey::new("signal_bucket")?,
                 PayloadValue::new(signal_bucket)?,
+            ),
+            (
+                PayloadKey::new("path_type")?,
+                PayloadValue::new(Self::feedback_path_bucket(path_type))?,
             ),
         ]))?;
 
@@ -11957,6 +13786,169 @@ impl Ph1fStore {
                 e.correlation_id == correlation_id
                     && matches!(&e.engine, AuditEngine::Other(name) if name == "PH1.FEEDBACK")
             })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1feedback_learn_signal_bundle_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        feedback_event_type: String,
+        learn_signal_type: String,
+        reason_code: ReasonCodeId,
+        evidence_ref: String,
+        provenance_ref: String,
+        ingest_latency_ms: u32,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        Self::validate_ph1learn_tenant_id(&tenant_id)?;
+        Self::validate_ph1learn_idempotency(
+            "ph1feedback_learn_signal_bundle.idempotency_key",
+            &idempotency_key,
+        )?;
+        Self::validate_ph1learn_bounded_text(
+            "ph1feedback_learn_signal_bundle.feedback_event_type",
+            &feedback_event_type,
+            64,
+        )?;
+        Self::validate_ph1learn_bounded_text(
+            "ph1feedback_learn_signal_bundle.learn_signal_type",
+            &learn_signal_type,
+            32,
+        )?;
+        Self::validate_ph1learn_bounded_text(
+            "ph1feedback_learn_signal_bundle.evidence_ref",
+            &evidence_ref,
+            128,
+        )?;
+        Self::validate_ph1learn_bounded_text(
+            "ph1feedback_learn_signal_bundle.provenance_ref",
+            &provenance_ref,
+            128,
+        )?;
+        self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+        if ingest_latency_ms > Self::PH1_FEEDBACK_SIGNAL_BUNDLE_INGEST_SLO_MS {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1feedback_learn_signal_bundle.ingest_latency_ms",
+                    reason: "must be <= PH1 feedback ingestion SLO",
+                },
+            ));
+        }
+
+        let event_type = Self::parse_feedback_event_type_name(feedback_event_type.as_str()).ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1feedback_learn_signal_bundle.feedback_event_type",
+                reason: "must be a known FeedbackEventType",
+            }),
+        )?;
+        let signal_type = Self::parse_learn_signal_type_name(learn_signal_type.as_str()).ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1feedback_learn_signal_bundle.learn_signal_type",
+                reason: "must be a known LearnSignalType",
+            }),
+        )?;
+        Self::validate_feedback_event_signal_pair(event_type, signal_type)?;
+        let path_type = classify_feedback_path(event_type);
+
+        let dedupe_idx = (tenant_id.clone(), idempotency_key.clone());
+        if let Some(existing_bundle_id) = self
+            .ph1feedback_learn_signal_bundle_idempotency_index
+            .get(&dedupe_idx)
+        {
+            return Ok(*existing_bundle_id);
+        }
+
+        let bundle_id = self.next_ph1feedback_learn_signal_bundle_id;
+        self.next_ph1feedback_learn_signal_bundle_id = self
+            .next_ph1feedback_learn_signal_bundle_id
+            .saturating_add(1);
+        self.ph1feedback_learn_signal_bundles
+            .push(FeedbackLearnSignalBundleRecord {
+                schema_version: SchemaVersion(1),
+                bundle_id,
+                created_at: now,
+                tenant_id: tenant_id.clone(),
+                correlation_id,
+                turn_id,
+                user_id: user_id.clone(),
+                device_id: device_id.clone(),
+                feedback_event_type: event_type,
+                feedback_path_type: path_type,
+                learn_signal_type: signal_type,
+                reason_code,
+                evidence_ref: evidence_ref.clone(),
+                provenance_ref: provenance_ref.clone(),
+                ingest_latency_ms,
+                idempotency_key: idempotency_key.clone(),
+            });
+        self.ph1feedback_learn_signal_bundle_idempotency_index
+            .insert(dedupe_idx, bundle_id);
+
+        let payload = AuditPayloadMin::v1(BTreeMap::from([
+            (
+                PayloadKey::new("feedback_event_type")?,
+                PayloadValue::new(Self::feedback_event_type_name(event_type))?,
+            ),
+            (
+                PayloadKey::new("learn_signal_type")?,
+                PayloadValue::new(Self::learn_signal_type_name(signal_type))?,
+            ),
+            (
+                PayloadKey::new("path_type")?,
+                PayloadValue::new(Self::feedback_path_bucket(path_type))?,
+            ),
+            (
+                PayloadKey::new("evidence_ref")?,
+                PayloadValue::new(evidence_ref)?,
+            ),
+            (
+                PayloadKey::new("provenance_ref")?,
+                PayloadValue::new(provenance_ref)?,
+            ),
+            (
+                PayloadKey::new("ingest_latency_ms")?,
+                PayloadValue::new(ingest_latency_ms.to_string())?,
+            ),
+            (
+                PayloadKey::new("bundle_id")?,
+                PayloadValue::new(bundle_id.to_string())?,
+            ),
+        ]))?;
+        let learn_audit = AuditEventInput::v1(
+            now,
+            Some(tenant_id),
+            None,
+            session_id,
+            Some(user_id),
+            Some(device_id),
+            AuditEngine::Other("PH1.LEARN".to_string()),
+            AuditEventType::Other,
+            reason_code,
+            AuditSeverity::Info,
+            correlation_id,
+            turn_id,
+            payload,
+            None,
+            Some(format!("learn_bundle:{idempotency_key}")),
+        )?;
+        self.append_audit_event(learn_audit)?;
+        Ok(bundle_id)
+    }
+
+    pub fn ph1feedback_learn_signal_bundle_rows(
+        &self,
+        correlation_id: CorrelationId,
+    ) -> Vec<&FeedbackLearnSignalBundleRecord> {
+        self.ph1feedback_learn_signal_bundles
+            .iter()
+            .filter(|row| row.correlation_id == correlation_id)
             .collect()
     }
 
@@ -13425,10 +15417,12 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1f::{ConversationRole, ConversationSource, PrivacyScope};
+    use selene_kernel_contracts::ph1feedback::{FeedbackEventType, FeedbackPathType};
     use selene_kernel_contracts::ph1j::{
         AuditEngine, AuditEventType, AuditPayloadMin, AuditSeverity, DeviceId, PayloadKey,
         PayloadValue,
     };
+    use selene_kernel_contracts::ph1learn::LearnSignalType;
     use selene_kernel_contracts::ph1m::{MemoryConsent, MemoryLedgerEvent, MemoryLedgerEventKind};
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -13503,6 +15497,10 @@ mod tests {
                 pinned_selector_snapshot_ref: None,
                 required_verification_gates: Vec::new(),
                 device_fingerprint_hash: "fp_hash_1".to_string(),
+                app_platform: AppPlatform::Ios,
+                app_instance_id: "ios_instance_test".to_string(),
+                deep_link_nonce: "nonce_test".to_string(),
+                link_opened_at: MonotonicTimeNs(5),
                 status: OnboardingStatus::DraftCreated,
                 created_at: MonotonicTimeNs(5),
                 updated_at: MonotonicTimeNs(5),
@@ -13516,6 +15514,8 @@ mod tests {
                 primary_device_proof_type: None,
                 primary_device_confirmed: false,
                 access_engine_instance_id: None,
+                voice_artifact_sync_receipt_ref: None,
+                wake_artifact_sync_receipt_ref: None,
             },
         );
         onb_id
@@ -14444,8 +16444,19 @@ mod tests {
                 started.voice_enrollment_session_id.clone(),
                 "sample_ref_1".to_string(),
                 1,
-                VoiceSampleResult::Pass,
-                None,
+                1_350,
+                0.91,
+                17.0,
+                0.4,
+                0.0,
+                Some(
+                    VoiceEmbeddingCaptureRef::v1(
+                        "embed://phone/vid/at_vid_01_1".to_string(),
+                        "mobile.voiceid.v1".to_string(),
+                        256,
+                    )
+                    .unwrap(),
+                ),
                 "vid-sample-1".to_string(),
             )
             .unwrap();
@@ -14457,7 +16468,11 @@ mod tests {
                 started.voice_enrollment_session_id.clone(),
                 "sample_ref_2".to_string(),
                 2,
-                VoiceSampleResult::Pass,
+                1_340,
+                0.92,
+                17.2,
+                0.4,
+                0.0,
                 None,
                 "vid-sample-2".to_string(),
             )
@@ -14470,7 +16485,11 @@ mod tests {
                 started.voice_enrollment_session_id.clone(),
                 "sample_ref_3".to_string(),
                 3,
-                VoiceSampleResult::Pass,
+                1_360,
+                0.93,
+                17.5,
+                0.3,
+                0.0,
                 None,
                 "vid-sample-3".to_string(),
             )
@@ -14487,7 +16506,16 @@ mod tests {
             .unwrap();
         assert_eq!(completed.voice_enroll_status, VoiceEnrollStatus::Locked);
         let profile_id = completed.voice_profile_id.clone().unwrap();
-        assert!(s.ph1vid_get_voice_profile(&profile_id).is_some());
+        let profile = s
+            .ph1vid_get_voice_profile(&profile_id)
+            .expect("voice profile must exist");
+        let capture_ref = profile
+            .profile_embedding_capture_ref
+            .as_ref()
+            .expect("voice profile should keep app embedding capture ref");
+        assert_eq!(capture_ref.embedding_ref, "embed://phone/vid/at_vid_01_1");
+        assert_eq!(capture_ref.embedding_model_id, "mobile.voiceid.v1");
+        assert_eq!(capture_ref.embedding_dim, 256);
         assert_eq!(
             s.ph1vid_get_samples_for_session(&started.voice_enrollment_session_id)
                 .len(),
@@ -14526,8 +16554,12 @@ mod tests {
                 started.voice_enrollment_session_id.clone(),
                 "sample_ref_a".to_string(),
                 1,
-                VoiceSampleResult::Fail,
-                Some(ReasonCodeId(0x5649_3001)),
+                820,
+                0.55,
+                8.0,
+                4.5,
+                0.0,
+                None,
                 "vid-sample-idem".to_string(),
             )
             .unwrap();
@@ -14537,8 +16569,12 @@ mod tests {
                 started.voice_enrollment_session_id.clone(),
                 "sample_ref_a".to_string(),
                 1,
-                VoiceSampleResult::Fail,
-                Some(ReasonCodeId(0x5649_3001)),
+                820,
+                0.55,
+                8.0,
+                4.5,
+                0.0,
+                None,
                 "vid-sample-idem".to_string(),
             )
             .unwrap();
@@ -14659,6 +16695,143 @@ mod tests {
             ReasonCodeId(0x5900_0001),
         );
         assert!(matches!(res, Err(StorageError::ContractViolation(_))));
+    }
+
+    #[test]
+    fn at_fdbk_01_commit_rejects_unknown_feedback_event_type() {
+        let mut s = store_with_user_device_and_session();
+        let err = s
+            .ph1feedback_event_commit(
+                MonotonicTimeNs(10),
+                "tenant_1".to_string(),
+                CorrelationId(5101),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdArtifactSyncUnknown".to_string(),
+                "VoiceIdDriftAlert".to_string(),
+                ReasonCodeId(0xF001),
+                "idem:fdbk:unknown_event".to_string(),
+            )
+            .expect_err("unknown feedback_event_type must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_02_commit_rejects_incompatible_signal_bucket() {
+        let mut s = store_with_user_device_and_session();
+        let err = s
+            .ph1feedback_event_commit(
+                MonotonicTimeNs(10),
+                "tenant_1".to_string(),
+                CorrelationId(5102),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseAccept".to_string(),
+                ReasonCodeId(0xF002),
+                "idem:fdbk:bad_pair".to_string(),
+            )
+            .expect_err("incompatible feedback/signal pair must be rejected");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_03_signal_bundle_dedupes_and_writes_path_and_provenance() {
+        let mut s = store_with_user_device_and_session();
+        let first_bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit(
+                MonotonicTimeNs(20),
+                "tenant_1".to_string(),
+                CorrelationId(5103),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdDriftAlert".to_string(),
+                "VoiceIdDriftAlert".to_string(),
+                ReasonCodeId(0xF003),
+                "voice_feedback_evidence:user_1:5103:1:VoiceIdDriftAlert".to_string(),
+                "ph1.voice.id:feedback:VoiceIdDriftAlert:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:1".to_string(),
+            )
+            .expect("initial bundle commit must succeed");
+        let retry_bundle_id = s
+            .ph1feedback_learn_signal_bundle_commit(
+                MonotonicTimeNs(21),
+                "tenant_1".to_string(),
+                CorrelationId(5103),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdDriftAlert".to_string(),
+                "VoiceIdDriftAlert".to_string(),
+                ReasonCodeId(0xF003),
+                "voice_feedback_evidence:user_1:5103:1:VoiceIdDriftAlert".to_string(),
+                "ph1.voice.id:feedback:VoiceIdDriftAlert:v1".to_string(),
+                120,
+                "idem:fdbk:bundle:1".to_string(),
+            )
+            .expect("retry bundle commit must dedupe");
+        assert_eq!(first_bundle_id, retry_bundle_id);
+
+        let rows = s.ph1feedback_learn_signal_bundle_rows(CorrelationId(5103));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].feedback_event_type,
+            FeedbackEventType::VoiceIdDriftAlert
+        );
+        assert_eq!(rows[0].feedback_path_type, FeedbackPathType::Improvement);
+        assert_eq!(
+            rows[0].learn_signal_type,
+            LearnSignalType::VoiceIdDriftAlert
+        );
+
+        let learn_rows = s
+            .audit_events_by_correlation(CorrelationId(5103))
+            .into_iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine_id) if engine_id == "PH1.LEARN")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(learn_rows.len(), 1);
+        assert!(learn_rows[0]
+            .payload_min
+            .entries
+            .contains_key(&PayloadKey::new("provenance_ref").unwrap()));
+        assert!(learn_rows[0]
+            .payload_min
+            .entries
+            .contains_key(&PayloadKey::new("path_type").unwrap()));
+    }
+
+    #[test]
+    fn at_fdbk_04_signal_bundle_enforces_ingest_slo() {
+        let mut s = store_with_user_device_and_session();
+        let err = s
+            .ph1feedback_learn_signal_bundle_commit(
+                MonotonicTimeNs(20),
+                "tenant_1".to_string(),
+                CorrelationId(5104),
+                TurnId(1),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                "VoiceIdFalseReject".to_string(),
+                "VoiceIdFalseReject".to_string(),
+                ReasonCodeId(0xF004),
+                "voice_feedback_evidence:user_1:5104:1:VoiceIdFalseReject".to_string(),
+                "ph1.voice.id:feedback:VoiceIdFalseReject:v1".to_string(),
+                Ph1fStore::PH1_FEEDBACK_SIGNAL_BUNDLE_INGEST_SLO_MS + 1,
+                "idem:fdbk:bundle:slo".to_string(),
+            )
+            .expect_err("bundle commit over SLO must fail closed");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.

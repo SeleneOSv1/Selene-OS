@@ -5,12 +5,11 @@ use std::collections::BTreeMap;
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1builder::{
     required_approvals_for_change_class, BuilderApprovalState, BuilderApprovalStateStatus,
-    BuilderChangeClass, BuilderExpectedEffect, BuilderLearningContext, BuilderPatchProposal,
-    BuilderProposalStatus,
-    BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult, BuilderReleaseStage,
-    BuilderReleaseState, BuilderReleaseStateStatus, BuilderSignalWindow,
-    BuilderValidationGateId, BuilderValidationGateResult, BuilderValidationRun,
-    BuilderValidationRunStatus, BuilderMetricsSnapshot,
+    BuilderChangeClass, BuilderExpectedEffect, BuilderLearningContext, BuilderMetricsSnapshot,
+    BuilderPatchProposal, BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult,
+    BuilderProposalStatus, BuilderReleaseStage, BuilderReleaseState, BuilderReleaseStateStatus,
+    BuilderSignalWindow, BuilderValidationGateId, BuilderValidationGateResult,
+    BuilderValidationRun, BuilderValidationRunStatus,
 };
 use selene_kernel_contracts::ph1f::ConversationTurnInput;
 use selene_kernel_contracts::ph1j::{
@@ -26,8 +25,7 @@ use selene_kernel_contracts::ph1position::{PositionScheduleType, TenantId};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_storage::ph1f::{
     BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore,
-    SessionRecord, StorageError,
-    TenantCompanyLifecycleState, TenantCompanyRecord,
+    SessionRecord, StorageError, TenantCompanyLifecycleState, TenantCompanyRecord,
 };
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo};
 
@@ -672,8 +670,7 @@ fn at_f_db_06_builder_run_result_requires_foreign_keys_and_match() {
     );
     assert!(matches!(
         mismatched_result,
-        Err(StorageError::ForeignKeyViolation { .. })
-            | Err(StorageError::ContractViolation(_))
+        Err(StorageError::ForeignKeyViolation { .. }) | Err(StorageError::ContractViolation(_))
     ));
 }
 
@@ -681,27 +678,27 @@ fn at_f_db_06_builder_run_result_requires_foreign_keys_and_match() {
 fn at_f_db_07_builder_approval_release_append_only_with_fk_and_idempotency() {
     let mut s = store_with_identity_device_session();
 
-    let approval_without_proposal = s.append_builder_approval_state_ledger_row(
-        builder_approval_state(
+    let approval_without_proposal =
+        s.append_builder_approval_state_ledger_row(builder_approval_state(
             "approval_missing",
             "missing_proposal",
             BuilderChangeClass::ClassB,
             BuilderApprovalStateStatus::Pending,
             "builder_approval_missing",
-        ),
-    );
+        ));
     assert!(matches!(
         approval_without_proposal,
         Err(StorageError::ForeignKeyViolation { .. })
     ));
 
-    let release_without_proposal = s.append_builder_release_state_ledger_row(builder_release_state(
-        "release_missing",
-        "missing_proposal",
-        BuilderReleaseStage::Staging,
-        BuilderReleaseStateStatus::Blocked,
-        "builder_release_missing",
-    ));
+    let release_without_proposal =
+        s.append_builder_release_state_ledger_row(builder_release_state(
+            "release_missing",
+            "missing_proposal",
+            BuilderReleaseStage::Staging,
+            BuilderReleaseStateStatus::Blocked,
+            "builder_release_missing",
+        ));
     assert!(matches!(
         release_without_proposal,
         Err(StorageError::ForeignKeyViolation { .. })
@@ -768,14 +765,13 @@ fn at_f_db_07_builder_approval_release_append_only_with_fk_and_idempotency() {
 fn at_f_db_08_builder_post_deploy_judge_append_only_with_fk_and_idempotency() {
     let mut s = store_with_identity_device_session();
 
-    let judge_without_fk = s.append_builder_post_deploy_judge_result_ledger_row(
-        builder_post_deploy_result(
+    let judge_without_fk =
+        s.append_builder_post_deploy_judge_result_ledger_row(builder_post_deploy_result(
             "judge_missing",
             "missing_proposal",
             "missing_release",
             "builder_judge_missing",
-        ),
-    );
+        ));
     assert!(matches!(
         judge_without_fk,
         Err(StorageError::ForeignKeyViolation { .. })

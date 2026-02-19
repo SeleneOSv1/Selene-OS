@@ -9,6 +9,25 @@
 - `version`: `v1`
 - `status`: `PASS`
 
+## 1A) Phone-First Artifact Custody (Required Extension)
+
+Operating model lock:
+- `PH1.VOICE.ID` runtime is phone-first for identity decisions.
+- Voice-ID artifacts must exist locally on phone (`ACTIVE + N-1 rollback`) and must also be synced to Selene for continuity/recovery.
+- Engine B owns outbox/vault replay/ack mechanics; PH1.VOICE.ID owns deterministic artifact-manifest delta emission.
+
+Local artifact minimums (phone):
+- voice profile embedding package/version.
+- threshold package.
+- confusion-pair package.
+- spoof/liveness policy package.
+- active pointer + rollback pointer.
+
+Sync model (mandatory):
+- every local artifact change emits a sync delta envelope to Engine B outbox.
+- outbox is replayed until acked; deletion is ack-gated.
+- raw audio is excluded from sync by default; only bounded refs/features/manifests are allowed unless explicit policy+consent permits otherwise.
+
 ## 2) Data Owned (authoritative)
 
 ### `os_core.voice_enrollment_sessions`
@@ -97,6 +116,16 @@
   - risk signals are advisory policy inputs; no authority changes
 - why this read is required: deterministic fail-closed identity decisions under stale/rejected wake context and high-echo risk conditions
 
+### Device-local artifact pointer + sync cursor (required extension)
+- reads:
+  - local active/rollback voice artifact pointers from app runtime context.
+  - last synced cursor/receipt refs from Engine B handoff context.
+- keys/joins used: `(tenant_id, user_id, device_id, artifact_type)` deterministic key tuple.
+- scope rules:
+  - no cross-user or cross-device pointer resolution.
+  - unknown/missing pointer state fails closed to `UNKNOWN` identity mode.
+- why this read is required: deterministic phone-first runtime with continuity-safe cloud reconciliation.
+
 ## 4) Writes (outputs)
 
 ### Start enrollment session (draft)
@@ -129,6 +158,7 @@
 - required fields:
   - `voice_enrollment_session_id`, `idempotency_key`, `updated_at`
   - generated `voice_profile_id`
+  - generated `voice_artifact_sync_receipt_ref` (consumed by `ONB_COMPLETE_COMMIT` gate when voice enrollment is locked)
 - ledger event_type (if ledger): n/a (profile creation + binding current rows)
 - idempotency_key rule (exact formula):
   - dedupe key = `(voice_enrollment_session_id, idempotency_key)`
@@ -146,6 +176,21 @@
 - failure reason codes:
   - `VID_REAUTH_REQUIRED`
   - `VID_ENROLLMENT_REQUIRED`
+
+### Enqueue artifact-manifest sync delta (commit; future extension)
+- writes: Engine B outbox handoff envelope (PH1.VOICE.ID-owned payload contract)
+- required fields:
+  - `tenant_id`, `user_id`, `device_id`, `engine_id=PH1.VOICE.ID`
+  - `artifact_type`, `artifact_version`, `artifact_status`
+  - `package_hash`, `payload_ref`, `provenance_ref`
+  - `active_pointer_ref`, `rollback_pointer_ref`
+  - `consent_scope_ref`, `idempotency_key`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(tenant_id, user_id, device_id, artifact_type, artifact_version, idempotency_key)`
+- failure reason codes:
+  - `VID_SYNC_ENQUEUE_FAILED`
+  - `VID_SYNC_SCOPE_VIOLATION`
+  - `VID_SYNC_PAYLOAD_INVALID`
 
 ## 5) Relations & Keys
 
@@ -176,6 +221,7 @@ PH1.VOICE.ID enrollment writes must emit PH1.J audit events with:
   - `VOICE_ENROLL_SAMPLE_COMMIT`
   - `VOICE_ENROLL_COMPLETE_COMMIT`
   - `VOICE_ENROLL_DEFER_COMMIT`
+  - `VOICE_ARTIFACT_SYNC_ENQUEUE_COMMIT`
 - `reason_code(s)`:
   - `VID_FAIL_NO_SPEECH`
   - `VID_FAIL_LOW_CONFIDENCE`
@@ -183,6 +229,7 @@ PH1.VOICE.ID enrollment writes must emit PH1.J audit events with:
   - `VID_FAIL_PROFILE_NOT_ENROLLED`
   - `VID_ENROLLMENT_REQUIRED`
   - `VID_REAUTH_REQUIRED`
+  - `VID_SYNC_ENQUEUE_FAILED`
 - `payload_min` allowlisted keys:
   - `voice_enrollment_session_id`
   - `onboarding_session_id`
@@ -191,6 +238,10 @@ PH1.VOICE.ID enrollment writes must emit PH1.J audit events with:
   - `attempt_index`
   - `sample_result`
   - `voice_profile_id`
+  - `artifact_type`
+  - `artifact_version`
+  - `active_pointer_ref`
+  - `rollback_pointer_ref`
 - `evidence_ref` type:
   - bounded enrollment sample reference only (`audio_sample_ref` / sample seq); no raw audio blob content
 
@@ -204,6 +255,26 @@ PH1.VOICE.ID enrollment writes must emit PH1.J audit events with:
   - `at_vid_db_03_idempotency_dedupe_works`
 - `AT-VID-DB-04` current-table consistency with enrollment sample ledger
   - `at_vid_db_04_current_table_consistency_with_sample_ledger`
+- `AT-VID-DB-05` complete commit enqueues mobile sync queue row for voice profile continuity
+  - `at_vid_db_05_complete_commit_enqueues_mobile_sync_row`
+- `AT-VID-DB-06` enrollment sample grading is runtime-scored from quality metrics
+  - `at_vid_db_06_sample_grading_is_runtime_scored_from_quality_metrics`
+  - `at_vid_db_06b_enroll_start_persists_consent_scope_binding`
+  - `at_vid_db_06c_lock_criteria_enforce_min_duration_and_pending_mode_stays_limited`
+- `AT-VID-DB-07` mobile artifact sync queue supports dequeue -> replay -> ack lifecycle
+  - `at_vid_db_07_mobile_sync_queue_dequeue_replay_ack_lifecycle`
+- `AT-VID-DB-08` mobile artifact sync ack rejects worker mismatch (fail closed)
+  - `at_vid_db_08_mobile_sync_ack_rejects_worker_mismatch`
+- `AT-VID-DB-09` mobile artifact sync fail commit records deterministic error + retry window
+  - `at_vid_db_09_mobile_sync_fail_commit_records_error_and_retry_window`
+- `AT-VID-DB-10` voice artifact-manifest changes enqueue Engine B sync deltas
+  - `at_vid_db_10_voice_artifact_manifest_changes_enqueue_sync_rows`
+- `AT-VID-DB-11` non-voice artifacts do not enqueue voice manifest sync rows
+  - `at_vid_db_11_non_voice_artifact_does_not_enqueue_voice_manifest_sync`
+- `AT-VID-DB-12` wake artifact-manifest changes enqueue Engine B sync deltas
+  - `at_vid_db_12_wake_artifact_manifest_changes_enqueue_sync_rows`
+- `AT-VID-DB-13` emo artifact-manifest changes enqueue Engine B sync deltas
+  - `at_vid_db_13_emo_artifact_manifest_changes_enqueue_sync_rows`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

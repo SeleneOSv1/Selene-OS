@@ -86,7 +86,6 @@ Onboarding, Position Schema, and Governance
   - Access/approval gates (`PH1.ACCESS` + `PH1.CAPREQ` paths where applicable) must succeed before any governed commit side effects.
 
 Onboarding and Messaging Setup
-- `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
 - `MESSAGE_COMPOSE_AND_SEND` process: `docs/BLUEPRINTS/MESSAGE_COMPOSE_AND_SEND.md`
 
 Learning Adaptation

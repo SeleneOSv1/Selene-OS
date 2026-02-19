@@ -9,6 +9,22 @@
 - `version`: `v1`
 - `status`: `PASS`
 
+## 1A) Phone App Open-Activate Boundary (Required Extension)
+
+Operating model lock:
+- Invite links are expected to be opened from Selene mobile app context.
+- `LINK_INVITE_OPEN_ACTIVATE_COMMIT` must bind token activation to app-open context plus device fingerprint.
+
+Required app-open fields:
+- `app_platform` (`IOS|ANDROID`)
+- `app_instance_id`
+- `deep_link_nonce`
+- `link_opened_at`
+
+Hard rules:
+- missing/invalid app-open context fails closed to `BLOCKED`.
+- app-open context must be replay-safe and idempotent per `(token_id, idempotency_key)`.
+
 ## 2) Data Owned (authoritative)
 
 ### `onboarding_drafts`
@@ -109,6 +125,7 @@ Delivery dedupe/idempotency is owned by `LINK_DELIVER_INVITE` via `PH1.BCAST` + 
 - writes: token status transition (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED`), or deterministic terminal passthrough (`BLOCKED|EXPIRED|REVOKED|CONSUMED`), plus bound device fingerprint hash
 - required fields:
   - `token_id`, `device_fingerprint`, `idempotency_key`
+  - required extension: `app_platform`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`
 - idempotency key rule:
   - idempotent on `(token_id, idempotency_key)` with deterministic replay result
 - forwarded-link block input rule:
@@ -155,6 +172,7 @@ State/boundary constraints:
 PH1.LINK emits deterministic proof artifacts and reason-coded outcomes:
 - link draft generation outcome (`payload_hash`, `expires_at`, `status`)
 - activation/block/revoke outcomes (bounded status transitions)
+- activation payload minimum includes app-open context refs (`app_platform`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`) for ONB handoff integrity.
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
@@ -166,6 +184,10 @@ PH1.LINK emits deterministic proof artifacts and reason-coded outcomes:
   - `at_link_db_03_idempotency_dedupe_works`
 - `AT-LINK-DB-04` current-state consistency with lifecycle transitions + token/draft mapping
   - `at_link_db_04_current_table_consistency_with_lifecycle_and_proofs`
+- `AT-LINK-DB-05` open/activate requires valid app-open context
+  - `at_link_db_05_open_activate_requires_app_open_context`
+- `AT-LINK-DB-06` app-open context is replay-safe on idempotent retry
+  - `at_link_db_06_app_open_context_idempotent_replay_safe`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

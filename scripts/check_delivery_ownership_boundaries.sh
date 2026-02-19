@@ -43,10 +43,12 @@ PH1_LINK_DOC="docs/DB_WIRING/PH1_LINK.md"
 PH1_BCAST_DOC="docs/DB_WIRING/PH1_BCAST.md"
 PH1_DELIVERY_DOC="docs/DB_WIRING/PH1_DELIVERY.md"
 PH1_REM_DOC="docs/DB_WIRING/PH1_REM.md"
-PH1_ONB_SMS_DOC="docs/DB_WIRING/PH1_ONBOARDING_SMS.md"
 ENGINE_MAP="docs/06_ENGINE_MAP.md"
 KERNEL_LINK="crates/selene_kernel_contracts/src/ph1link.rs"
+KERNEL_DELIVERY="crates/selene_kernel_contracts/src/ph1delivery.rs"
 PH1_BCAST_RT="crates/selene_os/src/ph1bcast.rs"
+PH1_DELIVERY_RT="crates/selene_os/src/ph1delivery.rs"
+PH1_DELIVERY_ENGINE_RT="crates/selene_engines/src/ph1delivery.rs"
 PH1_REM_RT="crates/selene_os/src/ph1rem.rs"
 
 for legacy_sim in \
@@ -68,20 +70,28 @@ require_match "fn is_legacy_link_delivery_simulation_id" "$SIM_EXECUTOR" \
   "simulation executor must define explicit legacy LINK delivery guard"
 require_match "is_legacy_link_delivery_simulation_id\\(&req\\.simulation_id\\)" "$SIM_EXECUTOR" \
   "execute_link must call legacy LINK delivery guard"
+require_match "run_broadcast_deliver_with_delivery" "$SIM_EXECUTOR" \
+  "simulation executor must expose BCAST->DELIVERY bridge wiring"
+require_match "Ph1DeliveryRequest::send_commit_v1" "$SIM_EXECUTOR" \
+  "BCAST->DELIVERY bridge must construct PH1.DELIVERY send requests"
 require_match "LEGACY_DO_NOT_WIRE: delivery is owned by LINK_DELIVER_INVITE via PH1\\.BCAST \\+ PH1\\.DELIVERY" "$SIM_EXECUTOR" \
   "legacy LINK delivery guard must fail closed with explicit ownership reason"
 
-require_absent "pub fn execute_bcast|pub fn execute_delivery|pub fn execute_onboarding_sms" "$SIM_EXECUTOR" \
-  "SimulationExecutor must not expose direct BCAST/DELIVERY/ONBOARDING_SMS execution entrypoints"
+require_absent "pub fn execute_bcast|pub fn execute_delivery" "$SIM_EXECUTOR" \
+  "SimulationExecutor must not expose direct BCAST/DELIVERY execution entrypoints"
 
 require_match "Legacy \\(Do Not Wire\\): .*LINK_DELIVER_INVITE.*PH1\\.BCAST.*PH1\\.DELIVERY" "$PH1_LINK_DOC" \
   "PH1.LINK DB wiring must lock legacy do-not-wire delivery ownership"
+require_match "pub struct Ph1DeliveryRequest" "$KERNEL_DELIVERY" \
+  "PH1.DELIVERY kernel contract module must exist"
+require_match "pub struct Ph1DeliveryRuntime" "$PH1_DELIVERY_ENGINE_RT" \
+  "PH1.DELIVERY engine runtime module must exist"
+require_match "pub struct Ph1DeliveryWiring" "$PH1_DELIVERY_RT" \
+  "PH1.DELIVERY OS wiring module must exist"
 require_match "never calls PH1\\.DELIVERY directly" "$PH1_BCAST_DOC" \
   "PH1.BCAST DB wiring must enforce OS-only orchestration to PH1.DELIVERY"
 require_match "Outputs_to: Selene OS .* PH1\\.BCAST recipient_state" "$PH1_DELIVERY_DOC" \
   "PH1.DELIVERY DB wiring must return proofs to Selene OS for PH1.BCAST lifecycle update"
-require_match "Never sends SMS or messages \\(send path belongs to PH1\\.BCAST \\+ PH1\\.DELIVERY\\)" "$PH1_ONB_SMS_DOC" \
-  "PH1.ONBOARDING_SMS must remain setup-gate only"
 require_match "PH1\\.REM remains timing-only" "$PH1_REM_DOC" \
   "PH1.REM DB wiring must stay timing-only"
 require_match "Link generation: .*PH1\\.LINK.*link delivery: .*PH1\\.BCAST.*PH1\\.DELIVERY.*LINK_DELIVER_INVITE" "$ENGINE_MAP" \

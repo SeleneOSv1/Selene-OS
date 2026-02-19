@@ -43,27 +43,23 @@ reason_code: string
 | MSG_S02 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | recipient (if missing) | recipient | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
 | MSG_S03 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | subject_topic (if missing) | subject_topic | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
 | MSG_S04 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | body_content (if missing) | body_content | NONE | 600 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
-| MSG_S05 | PH1.ONBOARDING_SMS | SMS_SETUP_CHECK | delivery_method=sms | sms_app_setup_complete, setup_state | NONE | 250 | 1 | 100 | [SMS_SETUP_USER_SCOPE_INVALID] |
-| MSG_S06 | PH1.ONBOARDING_SMS | SMS_SETUP_PROMPT | delivery_method=sms AND sms_app_setup_complete=false | prompt_emitted | NONE | 300 | 1 | 100 | [SMS_SETUP_PROMPT_DEDUPE_SUPPRESSED] |
-| MSG_S07 | PH1.ONBOARDING_SMS | SMS_SETUP_CONFIRM | delivery_method=sms AND setup requires confirmation | sms_app_setup_complete | INTERNAL_DB_WRITE (simulation-gated) | 400 | 1 | 100 | [SMS_SETUP_SIMULATION_CONTEXT_MISSING] |
-| MSG_S08 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | classification (if missing) | classification | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
-| MSG_S09 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | receipt_mode (if missing) | receipt_mode | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
-| MSG_S10 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | confirm_send | confirm_send | NONE | 300 | 1 | 100 | [X_CONFIRM_TIMEOUT] |
-| MSG_S11 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | requester_user_id, tenant_id, requested_action=MESSAGE_SEND | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
-| MSG_S12 | PH1.BCAST | BCAST_DRAFT_CREATE | recipient, delivery_method, subject_topic, body_content, classification, receipt_mode | broadcast_id | INTERNAL_DB_WRITE | 400 | 1 | 100 | [BCAST_INPUT_SCHEMA_INVALID] |
-| MSG_S13 | PH1.BCAST | BCAST_DELIVER_COMMIT | broadcast_id, recipient, delivery_method, simulation_context | delivery_request_ref | EXTERNAL_DELIVERY_REQUEST (simulation-gated) | 500 | 2 | 200 | [BCAST_DELIVERY_PLAN_INVALID] |
-| MSG_S14 | PH1.DELIVERY | DELIVERY_SEND | delivery_request_ref, simulation_context, idempotency_key | delivery_proof_ref, delivery_status | EXTERNAL_SEND (simulation-gated) | 700 | 2 | 300 | [DELIVERY_CHANNEL_UNAVAILABLE, DELIVERY_PROVIDER_SEND_FAILED] |
-| MSG_S15 | PH1.LEARN | LEARN_SIGNAL_AGGREGATE | tenant_id, feedback_signals(optional) | selected_artifact_id | NONE | 300 | 1 | 100 | [PH1_LEARN_UPSTREAM_INPUT_MISSING] |
+| MSG_S05 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | classification (if missing) | classification | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
+| MSG_S06 | PH1.X | PH1X_CLARIFY_COMMIT_ROW | receipt_mode (if missing) | receipt_mode | NONE | 300 | 1 | 100 | [X_CLARIFY_TIMEOUT] |
+| MSG_S07 | PH1.X | PH1X_CONFIRM_COMMIT_ROW | confirm_send | confirm_send | NONE | 300 | 1 | 100 | [X_CONFIRM_TIMEOUT] |
+| MSG_S08 | PH1.ACCESS.001_PH2.ACCESS.002 | ACCESS_GATE_DECIDE_ROW | requester_user_id, tenant_id, requested_action=MESSAGE_SEND | access_decision | NONE | 250 | 1 | 100 | [ACCESS_SCOPE_VIOLATION] |
+| MSG_S09 | PH1.BCAST | BCAST_DRAFT_CREATE | recipient, delivery_method, subject_topic, body_content, classification, receipt_mode | broadcast_id | INTERNAL_DB_WRITE | 400 | 1 | 100 | [BCAST_INPUT_SCHEMA_INVALID] |
+| MSG_S10 | PH1.BCAST | BCAST_DELIVER_COMMIT | broadcast_id, recipient, delivery_method, simulation_context | delivery_request_ref | EXTERNAL_DELIVERY_REQUEST (simulation-gated) | 500 | 2 | 200 | [BCAST_DELIVERY_PLAN_INVALID] |
+| MSG_S11 | PH1.DELIVERY | DELIVERY_SEND | delivery_request_ref, simulation_context, idempotency_key | delivery_proof_ref, delivery_status | EXTERNAL_SEND (simulation-gated) | 700 | 2 | 300 | [DELIVERY_CHANNEL_UNAVAILABLE, DELIVERY_PROVIDER_SEND_FAILED] |
+| MSG_S12 | PH1.LEARN | LEARN_SIGNAL_AGGREGATE | tenant_id, feedback_signals(optional) | selected_artifact_id | NONE | 300 | 1 | 100 | [PH1_LEARN_UPSTREAM_INPUT_MISSING] |
 
 Notes:
 - Multilingual unraveling is system-wide via PH1.LANG + PH1.SRL + PH1.NLP pipeline before PH1.X decisions.
 - Never ask twice is enforced by Selene OS WorkOrder prompt/field dedupe rules.
 
 ## 6) Confirmation Points
-- MSG_S10 is mandatory final confirmation before any send commit.
+- MSG_S07 is mandatory final confirmation before any send commit.
 
 ## 7) Simulation Requirements
-- SMS_SETUP_SIM
 - BCAST_CREATE_DRAFT
 - BCAST_DELIVER_COMMIT
 - DELIVERY_SEND_COMMIT
@@ -71,7 +67,7 @@ Notes:
 ## 8) Refusal / Escalation Conditions
 - If access_decision = DENY -> refuse with reason-coded access outcome.
 - If access_decision = ESCALATE (AP approval required) -> Selene OS runs AP approval flow via PH1.BCAST and waits.
-- If delivery_method=sms and sms_app_setup_complete=false after bounded setup flow -> refuse send commit path (fail closed).
+- If delivery_method=sms and sms_app_setup_complete=false -> refuse send commit path (fail closed).
 
 ## 9) Acceptance Tests
 - AT-PBS-MESSAGE-01: SMS path requires completed SMS setup before send commit.

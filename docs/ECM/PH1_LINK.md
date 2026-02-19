@@ -9,6 +9,11 @@
 - `handoff_boundary`: PH1.LINK captures deterministic selector/prefill hints in draft payload context; PH1.ONB consumes those hints to pin schema context at onboarding session start.
 - `ownership_boundary`: PH1.LINK does not own requirements schema definitions or activation; schema ownership remains outside PH1.LINK.
 
+## Phone App Open-Activate Contract Lock
+- `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW` is phone-app-context aware.
+- Required app-open fields: `app_platform (IOS|ANDROID)`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`.
+- Missing/invalid app-open context fails closed before activation.
+
 ## Capability List
 
 ### `PH1LINK_INVITE_GENERATE_DRAFT_ROW`
@@ -41,8 +46,8 @@
 
 ### `PH1LINK_INVITE_OPEN_ACTIVATE_COMMIT_ROW`
 - `name`: Commit link open/activate with device binding
-- `input_schema`: `(token_id, device_fingerprint, idempotency_key)`
-- `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, conflict_reason?, prefilled_context_ref?), StorageError>` where `activation_status in {ACTIVATED, BLOCKED, EXPIRED, REVOKED, CONSUMED}` (`OPENED` is an internal transient transition state)
+- `input_schema`: `(token_id, device_fingerprint, app_platform, app_instance_id, deep_link_nonce, link_opened_at, idempotency_key)`
+- `output_schema`: `Result<(token_id, draft_id, activation_status, missing_required_fields[], bound_device_fingerprint_hash, app_platform, app_instance_id, deep_link_nonce, link_opened_at, conflict_reason?, prefilled_context_ref?), StorageError>` where `activation_status in {ACTIVATED, BLOCKED, EXPIRED, REVOKED, CONSUMED}` (`OPENED` is an internal transient transition state)
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `notes`: device mismatch path must execute one deterministic forward-block branch; no duplicate block write path outside this simulation branch.
@@ -73,6 +78,7 @@
   - tenant scope mismatch
   - invalid token state transition
   - forwarded-device block
+  - missing/invalid app-open context
   - activated-link revoke without AP override (fail-closed)
   - idempotency replay
 - all failure paths are fail-closed and auditable.

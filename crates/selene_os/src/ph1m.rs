@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
+use selene_kernel_contracts::ph1_voice_id::{Ph1VoiceIdResponse, UserId};
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1m::{
     MemoryConsent, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind, MemorySensitivityFlag,
-    MemoryUsePolicy,
-    Ph1mContextBundleBuildRequest, Ph1mContextBundleBuildResponse,
+    MemoryUsePolicy, Ph1mContextBundleBuildRequest, Ph1mContextBundleBuildResponse,
     Ph1mEmotionalThreadUpdateRequest, Ph1mEmotionalThreadUpdateResponse, Ph1mForgetRequest,
     Ph1mForgetResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
     Ph1mHintBundleBuildRequest, Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest,
@@ -14,7 +14,6 @@ use selene_kernel_contracts::ph1m::{
     Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse,
     Ph1mThreadDigestUpsertRequest, Ph1mThreadDigestUpsertResponse,
 };
-use selene_kernel_contracts::ph1_voice_id::{Ph1VoiceIdResponse, UserId};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{MemoryThreadEventKind, StorageError};
 use selene_storage::repo::Ph1MRepo;
@@ -296,9 +295,11 @@ fn derive_expires_at_from_ledger_event(event: &MemoryLedgerEvent) -> Option<Mono
     match event.kind {
         MemoryLedgerEventKind::Forgotten => None,
         MemoryLedgerEventKind::Stored | MemoryLedgerEventKind::Updated => match event.layer {
-            MemoryLayer::Micro => Some(MonotonicTimeNs(event.t_event.0.saturating_add(
-                DEFAULT_MICRO_TTL_MS.saturating_mul(1_000_000),
-            ))),
+            MemoryLayer::Micro => {
+                Some(MonotonicTimeNs(event.t_event.0.saturating_add(
+                    DEFAULT_MICRO_TTL_MS.saturating_mul(1_000_000),
+                )))
+            }
             MemoryLayer::Working | MemoryLayer::LongTerm => None,
         },
     }
@@ -425,10 +426,7 @@ pub fn persist_memory_forwarded_outcome<R: Ph1MRepo>(
             )?;
             Ok(true)
         }
-        (
-            MemoryOperation::RetentionModeSet(req),
-            MemoryTurnOutput::RetentionModeSet(resp),
-        ) => {
+        (MemoryOperation::RetentionModeSet(req), MemoryTurnOutput::RetentionModeSet(resp)) => {
             repo.ph1m_retention_mode_set_commit_row(
                 &user_id,
                 resp.memory_retention_mode,
@@ -438,10 +436,7 @@ pub fn persist_memory_forwarded_outcome<R: Ph1MRepo>(
             )?;
             Ok(true)
         }
-        (
-            MemoryOperation::ThreadDigestUpsert(req),
-            MemoryTurnOutput::ThreadDigestUpsert(resp),
-        ) => {
+        (MemoryOperation::ThreadDigestUpsert(req), MemoryTurnOutput::ThreadDigestUpsert(resp)) => {
             if req.thread_digest.thread_id != resp.thread_id {
                 return Err(storage_contract_error(
                     "ph1m.persistence.thread_id",
@@ -960,7 +955,9 @@ where
         repo: &mut R,
         input: &MemoryTurnInput,
     ) -> Result<MemoryWiringOutcome, StorageError> {
-        let outcome = self.run_turn(input).map_err(StorageError::ContractViolation)?;
+        let outcome = self
+            .run_turn(input)
+            .map_err(StorageError::ContractViolation)?;
         let _ = persist_memory_forwarded_outcome(repo, input, &outcome)?;
         Ok(outcome)
     }
@@ -978,13 +975,14 @@ mod tests {
         MemoryContextFact, MemoryEmotionalThreadState, MemoryKey, MemoryLayer, MemoryLedgerEvent,
         MemoryLedgerEventKind, MemoryMetricPayload, MemoryProposedItem, MemoryProvenance,
         MemoryRetentionMode, MemorySensitivityFlag, MemorySuppressionRule,
-        MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest, MemoryUsePolicy,
-        MemoryValue, Ph1mContextBundleBuildRequest, Ph1mContextBundleBuildResponse,
-        Ph1mEmotionalThreadUpdateRequest, Ph1mEmotionalThreadUpdateResponse,
-        Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse, Ph1mHintBundleBuildRequest,
-        Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest, Ph1mMetricsEmitResponse,
-        Ph1mRetentionModeSetRequest, Ph1mRetentionModeSetResponse, Ph1mSafeSummaryRequest,
-        Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest, Ph1mSuppressionSetResponse,
+        MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest,
+        MemoryUsePolicy, MemoryValue, Ph1mContextBundleBuildRequest,
+        Ph1mContextBundleBuildResponse, Ph1mEmotionalThreadUpdateRequest,
+        Ph1mEmotionalThreadUpdateResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
+        Ph1mHintBundleBuildRequest, Ph1mHintBundleBuildResponse, Ph1mMetricsEmitRequest,
+        Ph1mMetricsEmitResponse, Ph1mRetentionModeSetRequest, Ph1mRetentionModeSetResponse,
+        Ph1mSafeSummaryRequest, Ph1mSafeSummaryResponse, Ph1mSuppressionSetRequest,
+        Ph1mSuppressionSetResponse,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
     use selene_storage::ph1f::{IdentityRecord, IdentityStatus, Ph1fStore};
@@ -1749,11 +1747,9 @@ mod tests {
         let thread_persisted =
             persist_memory_forwarded_outcome(&mut store, &thread_input, &thread_outcome).unwrap();
         assert!(thread_persisted);
-        assert!(
-            store
-                .ph1m_thread_current_row(&UserId::new("user").unwrap(), "thread_japan_trip")
-                .is_some()
-        );
+        assert!(store
+            .ph1m_thread_current_row(&UserId::new("user").unwrap(), "thread_japan_trip")
+            .is_some());
 
         let retention_input = MemoryTurnInput::v1(
             CorrelationId(7922),
@@ -1762,12 +1758,9 @@ mod tests {
         )
         .unwrap();
         let retention_outcome = w.run_turn(&retention_input).unwrap();
-        let retention_persisted = persist_memory_forwarded_outcome(
-            &mut store,
-            &retention_input,
-            &retention_outcome,
-        )
-        .unwrap();
+        let retention_persisted =
+            persist_memory_forwarded_outcome(&mut store, &retention_input, &retention_outcome)
+                .unwrap();
         assert!(retention_persisted);
         assert_eq!(
             store
@@ -1815,11 +1808,9 @@ mod tests {
             },
             _ => panic!("expected forwarded outcome"),
         }
-        assert!(
-            store
-                .ph1m_thread_current_row(&UserId::new("user").unwrap(), "thread_japan_trip")
-                .is_some()
-        );
+        assert!(store
+            .ph1m_thread_current_row(&UserId::new("user").unwrap(), "thread_japan_trip")
+            .is_some());
     }
 
     #[test]
@@ -1944,7 +1935,10 @@ mod tests {
         assert_eq!(store.memory_current().len(), 1);
         let current = store
             .memory_current()
-            .get(&(UserId::new("user").unwrap(), MemoryKey::new("preferred_name").unwrap()))
+            .get(&(
+                UserId::new("user").unwrap(),
+                MemoryKey::new("preferred_name").unwrap(),
+            ))
             .expect("memory current row should exist as forgotten tombstone");
         assert!(!current.active);
         assert!(current.memory_value.is_none());

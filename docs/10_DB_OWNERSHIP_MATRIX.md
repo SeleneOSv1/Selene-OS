@@ -25,7 +25,7 @@ Detailed contracts source:
 |---|---|---|
 | PH1.F | Schema/migration/invariant management only | `docs/DB_WIRING/PH1_F.md` |
 | PH1.J | `audit_events` (append-only) | `docs/DB_WIRING/PH1_J.md` |
-| SELENE_OS_CORE_TABLES | WorkOrder/session/core orchestration tables | `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md` |
+| SELENE_OS_CORE_TABLES | WorkOrder/session/core orchestration tables, including SMS setup readiness ledger/current projections | `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md` |
 | PBS_TABLES | Blueprint registry tables | `docs/DB_WIRING/PBS_TABLES.md` |
 | SIMULATION_CATALOG_TABLES | Simulation catalog tables | `docs/DB_WIRING/SIMULATION_CATALOG_TABLES.md` |
 | ENGINE_CAPABILITY_MAPS_TABLES | ECM catalog tables | `docs/DB_WIRING/ENGINE_CAPABILITY_MAPS_TABLES.md` |
@@ -42,7 +42,6 @@ Detailed contracts source:
 | PH1.WRITE | Presentation audit writes only | `docs/DB_WIRING/PH1_WRITE.md` |
 | PH1.TTS | TTS audit/runtime rows as scoped | `docs/DB_WIRING/PH1_TTS.md` |
 | PH1.E | Tool router audit/cache rows as scoped | `docs/DB_WIRING/PH1_E.md` |
-| PH1.ONBOARDING_SMS | `comms.sms_app_setup_ledger/current` (SMS app setup lifecycle truth before SMS send) | `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` |
 | PH1.LINK | Onboarding draft/token lifecycle tables + selector-hint capture only (no schema definition ownership) | `docs/DB_WIRING/PH1_LINK.md` |
 | PH1.ONB | Onboarding session execution tables only (ask/commit/complete); reads pinned requirements schema, does not own schema definitions | `docs/DB_WIRING/PH1_ONB.md` |
 | PH1.POSITION | Position lifecycle + position requirements schema (versioned current + ledger ownership) | `docs/DB_WIRING/PH1_POSITION.md` |

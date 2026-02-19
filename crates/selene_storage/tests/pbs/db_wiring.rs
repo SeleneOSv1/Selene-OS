@@ -163,7 +163,7 @@ fn at_pbs_db_04_rebuild_current_from_ledger() {
     .unwrap();
 
     let before = s.blueprint_registry_rows().clone();
-    s.rebuild_blueprint_registry_rows();
+    s.rebuild_blueprint_registry_rows().unwrap();
     let after = s.blueprint_registry_rows().clone();
     assert_eq!(before, after);
 

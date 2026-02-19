@@ -181,7 +181,7 @@ fn at_capreq_db_04_rebuild_current_from_ledger() {
     assert!(second > first);
 
     let before = s.capreq_current_rows().clone();
-    s.rebuild_capreq_current_rows();
+    s.rebuild_capreq_current_rows().unwrap();
     let after = s.capreq_current_rows().clone();
     assert_eq!(before, after);
 

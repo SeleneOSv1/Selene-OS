@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod app_ingress;
+pub mod device_artifact_sync;
 pub mod ph1_voice_id;
 pub mod ph1bcast;
 pub mod ph1builder;
@@ -9,6 +11,7 @@ pub mod ph1capreq;
 pub mod ph1context;
 pub mod ph1cost;
 pub mod ph1d;
+pub mod ph1delivery;
 pub mod ph1diag;
 pub mod ph1doc;
 pub mod ph1e;
@@ -49,6 +52,7 @@ pub mod ph1rem;
 pub mod ph1rll;
 pub mod ph1sched;
 pub mod ph1search;
+pub mod section40_exit;
 pub mod ph1srl;
 pub mod ph1summary;
 pub mod ph1tenant;

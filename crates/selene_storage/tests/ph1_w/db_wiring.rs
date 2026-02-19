@@ -4,8 +4,8 @@ use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError, WakeEnrollStatus,
-    WakeSampleResult,
+    DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, Ph1fStore, StorageError,
+    WakeEnrollStatus, WakeSampleResult,
 };
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1wWakeRepo};
 
@@ -501,4 +501,59 @@ fn at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger() {
         4
     );
     assert_eq!(s.ph1w_runtime_event_rows().len(), 2);
+}
+
+#[test]
+fn at_w_db_05_complete_commit_enqueues_mobile_sync_row() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_sync_w");
+    let d = device("tenant_a_device_sync_w");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+
+    let started = s
+        .ph1w_enroll_start_draft_row(
+            MonotonicTimeNs(500),
+            u.clone(),
+            d.clone(),
+            None,
+            3,
+            12,
+            300_000,
+            "w-sync-start".to_string(),
+        )
+        .unwrap();
+    for i in 0..3 {
+        s.ph1w_enroll_sample_commit_row(
+            MonotonicTimeNs(501 + i),
+            started.wake_enrollment_session_id.clone(),
+            900,
+            0.93,
+            15.0,
+            0.01,
+            -18.0,
+            -43.0,
+            -4.0,
+            0.0,
+            WakeSampleResult::Pass,
+            None,
+            format!("w-sync-sample-{i}"),
+        )
+        .unwrap();
+    }
+    let completed = s
+        .ph1w_enroll_complete_commit_row(
+            MonotonicTimeNs(510),
+            started.wake_enrollment_session_id,
+            "wake_profile_sync_v1".to_string(),
+            "w-sync-complete".to_string(),
+        )
+        .unwrap();
+    let receipt = completed
+        .wake_artifact_sync_receipt_ref
+        .clone()
+        .expect("wake receipt must exist");
+    let sync_row = s
+        .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+        .expect("wake sync queue row should exist");
+    assert_eq!(sync_row.sync_kind, MobileArtifactSyncKind::WakeProfile);
 }

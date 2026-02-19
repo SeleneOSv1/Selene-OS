@@ -2,7 +2,7 @@
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
-use selene_kernel_contracts::ph1link::{InviteeType, PrefilledContext};
+use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{ProofType, SenderVerifyDecision};
 use selene_kernel_contracts::ph1position::{
     PositionLifecycleState, PositionRequirementEvidenceMode, PositionRequirementExposureRule,
@@ -580,6 +580,10 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
         MonotonicTimeNs(605),
         link_1.token_id.clone(),
         "fp_employee_1".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_pos_1".to_string(),
+        "nonce_pos_1".to_string(),
+        MonotonicTimeNs(605),
     )
     .unwrap();
 
@@ -590,6 +594,10 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
             None,
             Some("tenant_a".to_string()),
             "fp_onb_1".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_pos_1".to_string(),
+            "nonce_pos_1".to_string(),
+            MonotonicTimeNs(605),
         )
         .unwrap();
     s.ph1onb_terms_accept_commit_row(
@@ -679,6 +687,10 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
         MonotonicTimeNs(614),
         link_2.token_id.clone(),
         "fp_employee_2".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_pos_2".to_string(),
+        "nonce_pos_2".to_string(),
+        MonotonicTimeNs(614),
     )
     .unwrap();
 
@@ -689,6 +701,10 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
             None,
             Some("tenant_a".to_string()),
             "fp_onb_2".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_pos_2".to_string(),
+            "nonce_pos_2".to_string(),
+            MonotonicTimeNs(614),
         )
         .unwrap();
     s.ph1onb_terms_accept_commit_row(

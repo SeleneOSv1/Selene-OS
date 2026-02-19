@@ -12,6 +12,7 @@ pub mod ph1capreq;
 pub mod ph1context;
 pub mod ph1cost;
 pub mod ph1d;
+pub mod ph1delivery;
 pub mod ph1diag;
 pub mod ph1doc;
 pub mod ph1e;

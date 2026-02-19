@@ -34,7 +34,7 @@ use selene_kernel_contracts::ph1j::{
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
-    DraftId, DraftStatus, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
+    AppPlatform, DraftId, DraftStatus, LinkStatus, PrefilledContext, PrefilledContextRef, TokenId,
 };
 use selene_kernel_contracts::ph1m::{
     MemoryEmotionalThreadState, MemoryGraphEdgeInput, MemoryGraphNodeInput, MemoryKey,
@@ -75,19 +75,18 @@ use crate::ph1f::{
     AccessLifecycleState, AccessMode, AccessOverlayCurrentRecord, AccessOverlayRecord,
     AccessOverrideRecord, AccessOverrideType, AccessSchemaChainReadResult, AccessSchemaEventAction,
     AccessSchemaScope, AccessVerificationLevel, BuilderApprovalStateLedgerRow,
-    BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow,
-    BuilderProposalLedgerRowInput, BuilderReleaseStateLedgerRow,
-    BuilderValidationGateResultLedgerRow, BuilderValidationRunLedgerRow, DeviceRecord,
-    IdentityRecord, LinkGenerateResultParts, MemoryArchiveIndexRecord, MemoryCurrentRecord,
-    MemoryEmotionalThreadCurrentRecord, MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord,
-    MemoryGraphNodeRecord, MemoryLedgerRow, MemoryMetricLedgerRow,
-    MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord, MemoryThreadCurrentRecord,
-    MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord, OnboardingSessionRecord,
-    Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth,
-    Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord,
-    PositionLifecycleEventRecord, SessionRecord, StorageError, TenantCompanyRecord,
-    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
-    VoiceSampleResult, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
+    BuilderPostDeployJudgeResultLedgerRow, BuilderProposalLedgerRow, BuilderProposalLedgerRowInput,
+    BuilderReleaseStateLedgerRow, BuilderValidationGateResultLedgerRow,
+    BuilderValidationRunLedgerRow, DeviceRecord, IdentityRecord, LinkGenerateResultParts,
+    MemoryArchiveIndexRecord, MemoryCurrentRecord, MemoryEmotionalThreadCurrentRecord,
+    MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow,
+    MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
+    MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
+    MobileArtifactSyncQueueRecord, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
+    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SessionRecord,
+    StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
+    VoiceProfileRecord, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
     WakeRuntimeEventRecord, WakeSampleResult,
 };
 
@@ -141,7 +140,7 @@ pub trait SeleneOsWorkOrderRepo {
         tenant_id: &TenantId,
         work_order_id: &WorkOrderId,
     ) -> Option<&WorkOrderCurrentRecord>;
-    fn rebuild_work_orders_current_rows(&mut self);
+    fn rebuild_work_orders_current_rows(&mut self) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for PH1.CAPREQ persistence wiring.
@@ -159,7 +158,7 @@ pub trait Ph1CapreqRepo {
         tenant_id: &TenantId,
         capreq_id: &CapreqId,
     ) -> Option<&CapabilityRequestCurrentRecord>;
-    fn rebuild_capreq_current_rows(&mut self);
+    fn rebuild_capreq_current_rows(&mut self) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for PBS tables (`process_blueprints` + `blueprint_registry`).
@@ -176,7 +175,7 @@ pub trait PbsTablesRepo {
         tenant_id: &TenantId,
         intent_type: &IntentType,
     ) -> Option<&BlueprintRegistryRecord>;
-    fn rebuild_blueprint_registry_rows(&mut self);
+    fn rebuild_blueprint_registry_rows(&mut self) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for simulation catalog tables (`simulation_catalog` + current projection).
@@ -194,7 +193,7 @@ pub trait SimulationCatalogTablesRepo {
         tenant_id: &TenantId,
         simulation_id: &SimulationId,
     ) -> Option<&SimulationCatalogCurrentRecord>;
-    fn rebuild_simulation_catalog_current_rows(&mut self);
+    fn rebuild_simulation_catalog_current_rows(&mut self) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for engine capability map tables (`engine_capability_maps` + current projection).
@@ -213,7 +212,7 @@ pub trait EngineCapabilityMapsTablesRepo {
         engine_id: &EngineId,
         capability_id: &CapabilityId,
     ) -> Option<&EngineCapabilityMapCurrentRecord>;
-    fn rebuild_engine_capability_maps_current_rows(&mut self);
+    fn rebuild_engine_capability_maps_current_rows(&mut self) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for artifacts ledger + tool cache tables.
@@ -271,8 +270,11 @@ pub trait Ph1VidEnrollmentRepo {
         voice_enrollment_session_id: String,
         audio_sample_ref: String,
         attempt_index: u16,
-        result: VoiceSampleResult,
-        reason_code: Option<ReasonCodeId>,
+        sample_duration_ms: u16,
+        vad_coverage: f32,
+        snr_db: f32,
+        clipping_pct: f32,
+        overlap_ratio: f32,
         idempotency_key: String,
     ) -> Result<VoiceEnrollmentSessionRecord, StorageError>;
 
@@ -307,6 +309,50 @@ pub trait Ph1VidEnrollmentRepo {
         &mut self,
         voice_enrollment_session_id: &str,
         sample_seq: u16,
+    ) -> Result<(), StorageError>;
+}
+
+/// Typed repository interface for phone-local artifact sync queue lifecycle.
+pub trait Ph1MobileArtifactSyncRepo {
+    fn mobile_artifact_sync_queue_rows(&self) -> &[MobileArtifactSyncQueueRecord];
+
+    fn mobile_artifact_sync_dequeue_batch_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        max_items: u16,
+        lease_duration_ms: u32,
+        worker_id: String,
+    ) -> Result<Vec<MobileArtifactSyncQueueRecord>, StorageError>;
+
+    fn mobile_artifact_sync_ack_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+    ) -> Result<(), StorageError>;
+
+    fn mobile_artifact_sync_fail_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+        retry_after_ms: u32,
+    ) -> Result<(), StorageError>;
+
+    fn mobile_artifact_sync_replay_due_rows(
+        &self,
+        now: MonotonicTimeNs,
+    ) -> Vec<&MobileArtifactSyncQueueRecord>;
+
+    fn mobile_artifact_sync_dead_letter_rows(&self) -> Vec<&MobileArtifactSyncQueueRecord>;
+
+    fn mobile_artifact_sync_dead_letter_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
     ) -> Result<(), StorageError>;
 }
 
@@ -1232,6 +1278,10 @@ pub trait Ph1LinkRepo {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<
         (
             LinkStatus,
@@ -1239,6 +1289,10 @@ pub trait Ph1LinkRepo {
             Vec<String>,
             Option<String>,
             Option<String>,
+            Option<AppPlatform>,
+            Option<String>,
+            Option<String>,
+            Option<MonotonicTimeNs>,
             Option<PrefilledContextRef>,
         ),
         StorageError,
@@ -1249,6 +1303,10 @@ pub trait Ph1LinkRepo {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
         idempotency_key: String,
     ) -> Result<
         (
@@ -1257,6 +1315,10 @@ pub trait Ph1LinkRepo {
             Vec<String>,
             Option<String>,
             Option<String>,
+            Option<AppPlatform>,
+            Option<String>,
+            Option<String>,
+            Option<MonotonicTimeNs>,
             Option<PrefilledContextRef>,
         ),
         StorageError,
@@ -1300,6 +1362,10 @@ pub trait Ph1OnbRepo {
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<OnbSessionStartResult, StorageError>;
 
     fn ph1onb_session_row(
@@ -1361,6 +1427,8 @@ pub trait Ph1OnbRepo {
         now: MonotonicTimeNs,
         onboarding_session_id: OnboardingSessionId,
         idempotency_key: String,
+        voice_artifact_sync_receipt_ref: Option<String>,
+        wake_artifact_sync_receipt_ref: Option<String>,
     ) -> Result<OnbCompleteResult, StorageError>;
 
     #[allow(clippy::too_many_arguments)]
@@ -1652,8 +1720,10 @@ pub trait Ph1MRepo {
         thread_id: &str,
     ) -> Vec<&MemoryThreadRefRecord>;
 
-    fn ph1m_attempt_overwrite_thread_ledger_row(&mut self, event_id: u64)
-        -> Result<(), StorageError>;
+    fn ph1m_attempt_overwrite_thread_ledger_row(
+        &mut self,
+        event_id: u64,
+    ) -> Result<(), StorageError>;
 
     fn ph1m_graph_upsert_commit_row(
         &mut self,
@@ -1679,8 +1749,7 @@ pub trait Ph1MRepo {
         updated_at: MonotonicTimeNs,
     ) -> Result<(), StorageError>;
 
-    fn ph1m_archive_index_rows_for_user(&self, user_id: &UserId)
-        -> Vec<&MemoryArchiveIndexRecord>;
+    fn ph1m_archive_index_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryArchiveIndexRecord>;
 
     fn ph1m_retention_mode_set_commit_row(
         &mut self,
@@ -1793,8 +1862,8 @@ impl SeleneOsWorkOrderRepo for Ph1fStore {
         self.work_order_current(tenant_id, work_order_id)
     }
 
-    fn rebuild_work_orders_current_rows(&mut self) {
-        self.rebuild_work_orders_current_from_ledger();
+    fn rebuild_work_orders_current_rows(&mut self) -> Result<(), StorageError> {
+        self.rebuild_work_orders_current_from_ledger()
     }
 }
 
@@ -1824,8 +1893,8 @@ impl Ph1CapreqRepo for Ph1fStore {
         self.capreq_current_row(tenant_id, capreq_id)
     }
 
-    fn rebuild_capreq_current_rows(&mut self) {
-        self.rebuild_capreq_current_from_ledger();
+    fn rebuild_capreq_current_rows(&mut self) -> Result<(), StorageError> {
+        self.rebuild_capreq_current_from_ledger()
     }
 }
 
@@ -1855,8 +1924,8 @@ impl PbsTablesRepo for Ph1fStore {
         self.blueprint_registry_row(tenant_id, intent_type)
     }
 
-    fn rebuild_blueprint_registry_rows(&mut self) {
-        self.rebuild_blueprint_registry_from_process_blueprint_events();
+    fn rebuild_blueprint_registry_rows(&mut self) -> Result<(), StorageError> {
+        self.rebuild_blueprint_registry_from_process_blueprint_events()
     }
 }
 
@@ -1886,8 +1955,8 @@ impl SimulationCatalogTablesRepo for Ph1fStore {
         self.simulation_catalog_current_row(tenant_id, simulation_id)
     }
 
-    fn rebuild_simulation_catalog_current_rows(&mut self) {
-        self.rebuild_simulation_catalog_current_from_ledger();
+    fn rebuild_simulation_catalog_current_rows(&mut self) -> Result<(), StorageError> {
+        self.rebuild_simulation_catalog_current_from_ledger()
     }
 }
 
@@ -1918,8 +1987,8 @@ impl EngineCapabilityMapsTablesRepo for Ph1fStore {
         self.engine_capability_maps_current_row(tenant_id, engine_id, capability_id)
     }
 
-    fn rebuild_engine_capability_maps_current_rows(&mut self) {
-        self.rebuild_engine_capability_maps_current_from_ledger();
+    fn rebuild_engine_capability_maps_current_rows(&mut self) -> Result<(), StorageError> {
+        self.rebuild_engine_capability_maps_current_from_ledger()
     }
 }
 
@@ -2009,8 +2078,11 @@ impl Ph1VidEnrollmentRepo for Ph1fStore {
         voice_enrollment_session_id: String,
         audio_sample_ref: String,
         attempt_index: u16,
-        result: VoiceSampleResult,
-        reason_code: Option<ReasonCodeId>,
+        sample_duration_ms: u16,
+        vad_coverage: f32,
+        snr_db: f32,
+        clipping_pct: f32,
+        overlap_ratio: f32,
         idempotency_key: String,
     ) -> Result<VoiceEnrollmentSessionRecord, StorageError> {
         self.ph1vid_enroll_sample_commit(
@@ -2018,8 +2090,12 @@ impl Ph1VidEnrollmentRepo for Ph1fStore {
             voice_enrollment_session_id,
             audio_sample_ref,
             attempt_index,
-            result,
-            reason_code,
+            sample_duration_ms,
+            vad_coverage,
+            snr_db,
+            clipping_pct,
+            overlap_ratio,
+            None,
             idempotency_key,
         )
     }
@@ -2072,6 +2148,69 @@ impl Ph1VidEnrollmentRepo for Ph1fStore {
         sample_seq: u16,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_voice_enrollment_sample(voice_enrollment_session_id, sample_seq)
+    }
+}
+
+impl Ph1MobileArtifactSyncRepo for Ph1fStore {
+    fn mobile_artifact_sync_queue_rows(&self) -> &[MobileArtifactSyncQueueRecord] {
+        self.mobile_artifact_sync_queue_rows()
+    }
+
+    fn mobile_artifact_sync_dequeue_batch_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        max_items: u16,
+        lease_duration_ms: u32,
+        worker_id: String,
+    ) -> Result<Vec<MobileArtifactSyncQueueRecord>, StorageError> {
+        self.mobile_artifact_sync_dequeue_batch(now, max_items, lease_duration_ms, worker_id)
+    }
+
+    fn mobile_artifact_sync_ack_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_ack_commit(now, sync_job_id, worker_id)
+    }
+
+    fn mobile_artifact_sync_fail_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+        retry_after_ms: u32,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_fail_commit(
+            now,
+            sync_job_id,
+            worker_id,
+            last_error,
+            retry_after_ms,
+        )
+    }
+
+    fn mobile_artifact_sync_replay_due_rows(
+        &self,
+        now: MonotonicTimeNs,
+    ) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_replay_due_rows(now)
+    }
+
+    fn mobile_artifact_sync_dead_letter_rows(&self) -> Vec<&MobileArtifactSyncQueueRecord> {
+        self.mobile_artifact_sync_dead_letter_rows()
+    }
+
+    fn mobile_artifact_sync_dead_letter_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        sync_job_id: &str,
+        worker_id: Option<&str>,
+        last_error: String,
+    ) -> Result<(), StorageError> {
+        self.mobile_artifact_sync_dead_letter_commit(now, sync_job_id, worker_id, last_error)
     }
 }
 
@@ -3523,10 +3662,7 @@ impl BuilderSeleneRepo for Ph1fStore {
         self.builder_proposal_ledger_rows()
     }
 
-    fn attempt_overwrite_builder_proposal_row(
-        &mut self,
-        row_id: u64,
-    ) -> Result<(), StorageError> {
+    fn attempt_overwrite_builder_proposal_row(&mut self, row_id: u64) -> Result<(), StorageError> {
         self.attempt_overwrite_builder_proposal_ledger_row(row_id)
     }
 
@@ -3683,6 +3819,10 @@ impl Ph1LinkRepo for Ph1fStore {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<
         (
             LinkStatus,
@@ -3690,6 +3830,10 @@ impl Ph1LinkRepo for Ph1fStore {
             Vec<String>,
             Option<String>,
             Option<String>,
+            Option<AppPlatform>,
+            Option<String>,
+            Option<String>,
+            Option<MonotonicTimeNs>,
             Option<PrefilledContextRef>,
         ),
         StorageError,
@@ -3698,6 +3842,10 @@ impl Ph1LinkRepo for Ph1fStore {
             now,
             token_id,
             device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
             "default".to_string(),
         )
     }
@@ -3707,6 +3855,10 @@ impl Ph1LinkRepo for Ph1fStore {
         now: MonotonicTimeNs,
         token_id: TokenId,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
         idempotency_key: String,
     ) -> Result<
         (
@@ -3715,6 +3867,10 @@ impl Ph1LinkRepo for Ph1fStore {
             Vec<String>,
             Option<String>,
             Option<String>,
+            Option<AppPlatform>,
+            Option<String>,
+            Option<String>,
+            Option<MonotonicTimeNs>,
             Option<PrefilledContextRef>,
         ),
         StorageError,
@@ -3723,6 +3879,10 @@ impl Ph1LinkRepo for Ph1fStore {
             now,
             token_id,
             device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
             idempotency_key,
         )
     }
@@ -3770,6 +3930,10 @@ impl Ph1OnbRepo for Ph1fStore {
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<OnbSessionStartResult, StorageError> {
         self.ph1onb_session_start_draft(
             now,
@@ -3777,6 +3941,10 @@ impl Ph1OnbRepo for Ph1fStore {
             prefilled_context_ref,
             tenant_id,
             device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
         )
     }
 
@@ -3885,8 +4053,16 @@ impl Ph1OnbRepo for Ph1fStore {
         now: MonotonicTimeNs,
         onboarding_session_id: OnboardingSessionId,
         idempotency_key: String,
+        voice_artifact_sync_receipt_ref: Option<String>,
+        wake_artifact_sync_receipt_ref: Option<String>,
     ) -> Result<OnbCompleteResult, StorageError> {
-        self.ph1onb_complete_commit(now, onboarding_session_id, idempotency_key)
+        self.ph1onb_complete_commit(
+            now,
+            onboarding_session_id,
+            idempotency_key,
+            voice_artifact_sync_receipt_ref,
+            wake_artifact_sync_receipt_ref,
+        )
     }
 
     fn ph1onb_requirement_backfill_start_draft_row(
@@ -4420,10 +4596,7 @@ impl Ph1MRepo for Ph1fStore {
         )
     }
 
-    fn ph1m_archive_index_rows_for_user(
-        &self,
-        user_id: &UserId,
-    ) -> Vec<&MemoryArchiveIndexRecord> {
+    fn ph1m_archive_index_rows_for_user(&self, user_id: &UserId) -> Vec<&MemoryArchiveIndexRecord> {
         Ph1fStore::ph1m_archive_index_rows_for_user(self, user_id)
     }
 

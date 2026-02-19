@@ -113,7 +113,7 @@
   - `PH1.LINK` may not execute legacy link-delivery simulation ids (`LINK_INVITE_SEND_COMMIT`, `LINK_INVITE_RESEND_COMMIT`, `LINK_DELIVERY_FAILURE_HANDLING_COMMIT`); these are fail-closed `LEGACY_DO_NOT_WIRE`.
   - `PH1.BCAST.001` is the only lifecycle owner for outbound recipient send/resend/escalation state.
   - `PH1.DELIVERY` executes provider attempts only under Selene OS simulation orchestration and returns proofs back to `PH1.BCAST.001` state flow.
-  - `PH1.REM.001` remains timing-only; `PH1.ONBOARDING_SMS` remains setup-gate only (never send).
+  - `PH1.REM.001` remains timing-only; SMS setup remains a pre-send gate (`sms_app_setup_complete=true`) and never sends.
 - This slice does not create a second authority path; final move authority remains `OS_DECISION_COMPUTE`.
 
 ## Constraints

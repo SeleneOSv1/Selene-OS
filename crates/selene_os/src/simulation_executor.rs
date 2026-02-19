@@ -3,30 +3,38 @@
 use std::cell::RefCell;
 
 use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
-use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1_voice_id::{
-    DiarizationSegment, Ph1VoiceIdResponse, Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse,
-    SpeakerAssertionOk, SpeakerId, SpeakerLabel,
+    DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, Ph1VoiceIdSimRequest,
+    Ph1VoiceIdSimResponse, VoiceEmbeddingCaptureRef, VoiceIdSimulationRequest,
 };
+use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
 use selene_kernel_contracts::ph1bcast::{
-    BcastOutcome, BcastRecipientState, BcastRequest, BcastSimulationType,
-    BCAST_REMINDER_FIRED_COMMIT, Ph1BcastRequest, Ph1BcastResponse,
+    BcastOutcome, BcastRecipientState, BcastRequest, BcastSimulationType, Ph1BcastRequest,
+    Ph1BcastResponse, BCAST_REMINDER_FIRED_COMMIT,
 };
 use selene_kernel_contracts::ph1capreq::{
-    CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
-    Ph1CapreqResponse,
+    CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest, Ph1CapreqResponse,
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
+use selene_kernel_contracts::ph1delivery::{
+    DeliveryChannel, Ph1DeliveryRequest, Ph1DeliveryResponse,
+};
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1k::{
+    AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
+    Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+};
+use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+use selene_kernel_contracts::ph1link::{AppPlatform, Ph1LinkRequest, Ph1LinkResponse};
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryProposedItem, MemoryProvenance,
-    MemoryRetentionMode, MemorySensitivityFlag, MemoryValue, Ph1mForgetRequest,
-    Ph1mForgetResponse, Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest,
-    Ph1mRecallResponse, Ph1mThreadDigestUpsertRequest,
+    MemoryRetentionMode, MemorySensitivityFlag, MemoryValue, Ph1mForgetRequest, Ph1mForgetResponse,
+    Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest, Ph1mRecallResponse,
+    Ph1mThreadDigestUpsertRequest,
 };
-use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
-use selene_kernel_contracts::ph1link::{Ph1LinkRequest, Ph1LinkResponse};
 use selene_kernel_contracts::ph1n::{FieldKey, FieldValue, IntentDraft, IntentType};
-use selene_kernel_contracts::ph1onb::{Ph1OnbRequest, Ph1OnbResponse};
+use selene_kernel_contracts::ph1onb::{OnboardingSessionId, Ph1OnbRequest, Ph1OnbResponse};
+use selene_kernel_contracts::ph1os::{Ph1OsRequest, Ph1OsResponse};
 use selene_kernel_contracts::ph1policy::{
     Ph1PolicyRequest, Ph1PolicyResponse, PolicyPromptDecision, PolicyPromptDedupeDecideRequest,
     PolicyRequestEnvelope, PolicyRulesetGetActiveRequest,
@@ -36,26 +44,50 @@ use selene_kernel_contracts::ph1rem::{
     Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode, ReminderPriorityLevel,
     ReminderType,
 };
-use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse};
-use selene_kernel_contracts::ph1x::{DispatchRequest, Ph1xDirective, Ph1xResponse};
-use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
-use selene_storage::ph1f::{AccessDecision, AccessMode, Ph1fStore, StorageError};
+use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse, WakeRequest};
+use selene_kernel_contracts::ph1x::{
+    AccessStepUpDispatch, DispatchRequest, Ph1xDirective, Ph1xResponse, StepUpChallengeMethod,
+    StepUpOutcome, StepUpResult,
+};
+use selene_kernel_contracts::{
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
+};
+use selene_storage::ph1f::{
+    AccessDecision, AccessMode, AccessVerificationLevel, Ph1fStore, StorageError,
+};
 
+use crate::device_artifact_sync::{
+    self, DeviceArtifactSyncSenderRuntime, DeviceArtifactSyncWorkerPassMetrics,
+};
+use crate::ph1_voice_id::{
+    Ph1VoiceIdLiveConfig, Ph1VoiceIdLiveRuntime, Ph1VoiceIdRuntime, VoiceIdentityChannel,
+};
+use crate::ph1capreq::Ph1CapreqRuntime;
+use crate::ph1link::{Ph1LinkConfig, Ph1LinkRuntime};
 use crate::ph1m::{
     MemoryOperation, MemoryTurnInput, MemoryTurnOutput, MemoryWiringOutcome, Ph1mWiring,
     Ph1mWiringConfig,
 };
-use crate::ph1_voice_id::Ph1VoiceIdRuntime;
-use crate::ph1capreq::Ph1CapreqRuntime;
-use crate::ph1link::{Ph1LinkConfig, Ph1LinkRuntime};
 use crate::ph1onb::{
     OnbPositionLiveRequest, OnbPositionLiveResult, OnbVoiceEnrollLiveRequest,
     OnbVoiceEnrollLiveResult, Ph1OnbOrchRuntime,
 };
+use crate::ph1os::{
+    OsTopLevelTurnInput, OsTopLevelTurnPath, OsTopLevelWiringOutcome, OsTurnInput,
+    OsVoiceLiveTurnInput, OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger,
+    OsVoiceTurnContext, Ph1OsEngine, Ph1OsTopLevelConfig, Ph1OsTopLevelWiring,
+    Ph1OsVoiceLiveRuntime, Ph1OsWiring, Ph1OsWiringConfig,
+};
 use crate::ph1position::Ph1PositionRuntime;
 use crate::ph1rem::Ph1RemRuntime;
 use crate::ph1w::Ph1wRuntime;
+use selene_engines::ph1_voice_id::{
+    simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
+    VoiceIdObservation as EngineVoiceIdObservation,
+};
 use selene_engines::ph1bcast::Ph1BcastRuntime;
+use selene_engines::ph1delivery::Ph1DeliveryRuntime;
+use selene_engines::ph1os::{Ph1OsConfig as EngineOsConfig, Ph1OsRuntime as EngineOsRuntime};
 use selene_engines::ph1policy::{Ph1PolicyConfig, Ph1PolicyRuntime};
 
 /// Minimal Simulation Executor (v1).
@@ -69,6 +101,7 @@ use selene_engines::ph1policy::{Ph1PolicyConfig, Ph1PolicyRuntime};
 #[derive(Debug, Clone)]
 pub struct SimulationExecutor {
     bcast: Ph1BcastRuntime,
+    delivery: Ph1DeliveryRuntime,
     link: Ph1LinkRuntime,
     memory: RefCell<Ph1mWiring<Ph1mRuntime>>,
     onb: Ph1OnbOrchRuntime,
@@ -76,12 +109,30 @@ pub struct SimulationExecutor {
     rem: Ph1RemRuntime,
     policy: Ph1PolicyRuntime,
     capreq: Ph1CapreqRuntime,
+    voice_id_live: Ph1VoiceIdLiveRuntime,
     voice_id: Ph1VoiceIdRuntime,
     wake: Ph1wRuntime,
+    os_top_level: Ph1OsTopLevelWiring<EngineBackedOsRuntime>,
+    device_sync_sender: DeviceArtifactSyncSenderRuntime,
+}
+
+#[derive(Debug, Clone)]
+struct EngineBackedOsRuntime {
+    runtime: EngineOsRuntime,
+}
+
+impl Ph1OsEngine for EngineBackedOsRuntime {
+    fn run(&self, req: &Ph1OsRequest) -> Ph1OsResponse {
+        self.runtime.run(req)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SimulationDispatchOutcome {
+    BroadcastDeliverySend {
+        bcast: Ph1BcastResponse,
+        delivery: Ph1DeliveryResponse,
+    },
     BroadcastMhpHandoff {
         bcast: Ph1BcastResponse,
         reminder: Ph1RemResponse,
@@ -116,6 +167,12 @@ pub enum SimulationDispatchOutcome {
     Wake(Ph1wResponse),
     AccessGatePassed {
         requested_action: String,
+    },
+    AccessStepUp {
+        requested_action: String,
+        challenge_method: StepUpChallengeMethod,
+        outcome: StepUpOutcome,
+        reason_code: ReasonCodeId,
     },
     CapreqLifecycle {
         capreq_id: CapreqId,
@@ -159,6 +216,7 @@ impl Default for SimulationExecutor {
     fn default() -> Self {
         Self {
             bcast: Ph1BcastRuntime::default(),
+            delivery: Ph1DeliveryRuntime::default(),
             link: Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1()),
             memory: RefCell::new(new_ph1m_wiring()),
             onb: Ph1OnbOrchRuntime::default(),
@@ -166,8 +224,11 @@ impl Default for SimulationExecutor {
             rem: Ph1RemRuntime::default(),
             policy: Ph1PolicyRuntime::new(Ph1PolicyConfig::mvp_v1()),
             capreq: Ph1CapreqRuntime,
+            voice_id_live: Ph1VoiceIdLiveRuntime::default(),
             voice_id: Ph1VoiceIdRuntime,
             wake: Ph1wRuntime,
+            os_top_level: new_os_top_level_wiring(),
+            device_sync_sender: DeviceArtifactSyncSenderRuntime::from_env_or_loopback(),
         }
     }
 }
@@ -176,6 +237,7 @@ impl SimulationExecutor {
     pub fn new(link: Ph1LinkRuntime, onb: Ph1OnbOrchRuntime) -> Self {
         Self {
             bcast: Ph1BcastRuntime::default(),
+            delivery: Ph1DeliveryRuntime::default(),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -183,14 +245,18 @@ impl SimulationExecutor {
             rem: Ph1RemRuntime::default(),
             policy: Ph1PolicyRuntime::new(Ph1PolicyConfig::mvp_v1()),
             capreq: Ph1CapreqRuntime,
+            voice_id_live: Ph1VoiceIdLiveRuntime::default(),
             voice_id: Ph1VoiceIdRuntime,
             wake: Ph1wRuntime,
+            os_top_level: new_os_top_level_wiring(),
+            device_sync_sender: DeviceArtifactSyncSenderRuntime::from_env_or_loopback(),
         }
     }
 
     pub fn new_with_wake(link: Ph1LinkRuntime, onb: Ph1OnbOrchRuntime, wake: Ph1wRuntime) -> Self {
         Self {
             bcast: Ph1BcastRuntime::default(),
+            delivery: Ph1DeliveryRuntime::default(),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -198,8 +264,11 @@ impl SimulationExecutor {
             rem: Ph1RemRuntime::default(),
             policy: Ph1PolicyRuntime::new(Ph1PolicyConfig::mvp_v1()),
             capreq: Ph1CapreqRuntime,
+            voice_id_live: Ph1VoiceIdLiveRuntime::default(),
             voice_id: Ph1VoiceIdRuntime,
             wake,
+            os_top_level: new_os_top_level_wiring(),
+            device_sync_sender: DeviceArtifactSyncSenderRuntime::from_env_or_loopback(),
         }
     }
 
@@ -211,6 +280,7 @@ impl SimulationExecutor {
     ) -> Self {
         Self {
             bcast: Ph1BcastRuntime::default(),
+            delivery: Ph1DeliveryRuntime::default(),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -218,9 +288,20 @@ impl SimulationExecutor {
             rem: Ph1RemRuntime::default(),
             policy: Ph1PolicyRuntime::new(Ph1PolicyConfig::mvp_v1()),
             capreq: Ph1CapreqRuntime,
+            voice_id_live: Ph1VoiceIdLiveRuntime::default(),
             voice_id: Ph1VoiceIdRuntime,
             wake,
+            os_top_level: new_os_top_level_wiring(),
+            device_sync_sender: DeviceArtifactSyncSenderRuntime::from_env_or_loopback(),
         }
+    }
+
+    pub fn set_voice_id_live_config(&mut self, config: Ph1VoiceIdLiveConfig) {
+        self.voice_id_live = Ph1VoiceIdLiveRuntime::new(config);
+    }
+
+    pub fn set_device_sync_sender(&mut self, sender: DeviceArtifactSyncSenderRuntime) {
+        self.device_sync_sender = sender;
     }
 
     pub fn execute_link(
@@ -288,12 +369,257 @@ impl SimulationExecutor {
         self.capreq.run(store, req)
     }
 
+    fn os_voice_platform_from_app_platform(app_platform: AppPlatform) -> OsVoicePlatform {
+        match app_platform {
+            AppPlatform::Ios => OsVoicePlatform::Ios,
+            AppPlatform::Android => OsVoicePlatform::Android,
+            AppPlatform::Desktop => OsVoicePlatform::Desktop,
+        }
+    }
+
+    fn default_os_turn_input(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<OsTurnInput, StorageError> {
+        OsTurnInput::v1(
+            correlation_id,
+            turn_id,
+            true,
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .map_err(StorageError::ContractViolation)
+    }
+
+    fn expected_always_on_sequence_for_voice(trigger: OsVoiceTrigger) -> Vec<String> {
+        let mut seq = vec!["PH1.K".to_string()];
+        if trigger == OsVoiceTrigger::WakeWord {
+            seq.push("PH1.W".to_string());
+        }
+        seq.extend([
+            "PH1.VOICE.ID".to_string(),
+            "PH1.C".to_string(),
+            "PH1.SRL".to_string(),
+            "PH1.NLP".to_string(),
+            "PH1.CONTEXT".to_string(),
+            "PH1.POLICY".to_string(),
+            "PH1.X".to_string(),
+        ]);
+        seq
+    }
+
+    fn resolve_app_platform_for_onboarding_sid(
+        store: &Ph1fStore,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Option<AppPlatform> {
+        store
+            .ph1onb_session_row(onboarding_session_id)
+            .map(|session| session.app_platform)
+    }
+
+    fn resolve_voice_id_platform(
+        &self,
+        store: &Ph1fStore,
+        req: &Ph1VoiceIdSimRequest,
+    ) -> AppPlatform {
+        match &req.request {
+            VoiceIdSimulationRequest::EnrollStartDraft(r) => {
+                OnboardingSessionId::new(r.onboarding_session_id.clone())
+                    .ok()
+                    .and_then(|sid| Self::resolve_app_platform_for_onboarding_sid(store, &sid))
+                    .unwrap_or(AppPlatform::Ios)
+            }
+            VoiceIdSimulationRequest::EnrollSampleCommit(r) => store
+                .ph1vid_get_enrollment_session(r.voice_enrollment_session_id.as_str())
+                .and_then(|enroll| {
+                    Self::resolve_app_platform_for_onboarding_sid(
+                        store,
+                        &enroll.onboarding_session_id,
+                    )
+                })
+                .unwrap_or(AppPlatform::Ios),
+            VoiceIdSimulationRequest::EnrollCompleteCommit(r) => store
+                .ph1vid_get_enrollment_session(r.voice_enrollment_session_id.as_str())
+                .and_then(|enroll| {
+                    Self::resolve_app_platform_for_onboarding_sid(
+                        store,
+                        &enroll.onboarding_session_id,
+                    )
+                })
+                .unwrap_or(AppPlatform::Ios),
+            VoiceIdSimulationRequest::EnrollDeferCommit(r) => store
+                .ph1vid_get_enrollment_session(r.voice_enrollment_session_id.as_str())
+                .and_then(|enroll| {
+                    Self::resolve_app_platform_for_onboarding_sid(
+                        store,
+                        &enroll.onboarding_session_id,
+                    )
+                })
+                .unwrap_or(AppPlatform::Ios),
+        }
+    }
+
+    fn resolve_wake_platform(&self, store: &Ph1fStore, req: &Ph1wRequest) -> AppPlatform {
+        match &req.request {
+            WakeRequest::EnrollStartDraft(r) => r
+                .onboarding_session_id
+                .as_ref()
+                .and_then(|sid| OnboardingSessionId::new(sid.clone()).ok())
+                .and_then(|sid| Self::resolve_app_platform_for_onboarding_sid(store, &sid))
+                .unwrap_or(AppPlatform::Android),
+            WakeRequest::EnrollSampleCommit(r) => store
+                .ph1w_get_enrollment_session(r.wake_enrollment_session_id.as_str())
+                .and_then(|enroll| enroll.onboarding_session_id.as_ref())
+                .and_then(|sid| Self::resolve_app_platform_for_onboarding_sid(store, sid))
+                .unwrap_or(AppPlatform::Android),
+            WakeRequest::EnrollCompleteCommit(r) => store
+                .ph1w_get_enrollment_session(r.wake_enrollment_session_id.as_str())
+                .and_then(|enroll| enroll.onboarding_session_id.as_ref())
+                .and_then(|sid| Self::resolve_app_platform_for_onboarding_sid(store, sid))
+                .unwrap_or(AppPlatform::Android),
+            WakeRequest::EnrollDeferCommit(r) => store
+                .ph1w_get_enrollment_session(r.wake_enrollment_session_id.as_str())
+                .and_then(|enroll| enroll.onboarding_session_id.as_ref())
+                .and_then(|sid| Self::resolve_app_platform_for_onboarding_sid(store, sid))
+                .unwrap_or(AppPlatform::Android),
+        }
+    }
+
+    fn validate_voice_top_level_path(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        app_platform: AppPlatform,
+        trigger: OsVoiceTrigger,
+    ) -> Result<(), StorageError> {
+        let input = OsTopLevelTurnInput::v1(
+            correlation_id,
+            turn_id,
+            OsTopLevelTurnPath::Voice,
+            Some(OsVoiceTurnContext::v1(
+                Self::os_voice_platform_from_app_platform(app_platform),
+                trigger,
+            )),
+            Self::expected_always_on_sequence_for_voice(trigger),
+            Vec::new(),
+            0,
+            Self::default_os_turn_input(correlation_id, turn_id)?,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let outcome = self
+            .os_top_level
+            .run_turn(&input)
+            .map_err(StorageError::ContractViolation)?;
+        match outcome {
+            OsTopLevelWiringOutcome::Forwarded(_) => Ok(()),
+            OsTopLevelWiringOutcome::Refused(_) | OsTopLevelWiringOutcome::NotInvokedDisabled => {
+                Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_executor.voice_top_level_path",
+                        reason: "voice top-level wiring must forward for valid runtime requests",
+                    },
+                ))
+            }
+        }
+    }
+
+    fn run_device_artifact_sync_worker_pass(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<(), StorageError> {
+        let _ = self.run_device_artifact_sync_worker_pass_with_metrics(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+        )?;
+        Ok(())
+    }
+
+    fn run_device_artifact_sync_worker_pass_with_metrics(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<DeviceArtifactSyncWorkerPassMetrics, StorageError> {
+        let worker_id = format!("sim_device_sync_worker_{}_{}", correlation_id.0, turn_id.0);
+        device_artifact_sync::run_device_artifact_sync_worker_pass_with_metrics(
+            store,
+            now,
+            worker_id,
+            &self.device_sync_sender,
+        )
+    }
+
+    pub fn execute_device_artifact_sync_worker_pass(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<(), StorageError> {
+        self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)
+    }
+
+    pub fn execute_device_artifact_sync_worker_pass_with_metrics(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<DeviceArtifactSyncWorkerPassMetrics, StorageError> {
+        self.run_device_artifact_sync_worker_pass_with_metrics(store, now, correlation_id, turn_id)
+    }
+
     pub fn execute_voice_id(
         &self,
         store: &mut Ph1fStore,
         req: &Ph1VoiceIdSimRequest,
     ) -> Result<Ph1VoiceIdSimResponse, StorageError> {
-        self.voice_id.run(store, req)
+        let platform = self.resolve_voice_id_platform(store, req);
+        self.validate_voice_top_level_path(
+            req.correlation_id,
+            req.turn_id,
+            platform,
+            OsVoiceTrigger::Explicit,
+        )?;
+        let resp = self.voice_id.run(store, req)?;
+        // Always run one worker pass so replay/ack can progress continuously, not only on complete.
+        self.run_device_artifact_sync_worker_pass(store, req.now, req.correlation_id, req.turn_id)?;
+        Ok(resp)
+    }
+
+    /// Live PH1.OS voice entrypoint for app/server ingress traffic.
+    /// This runs top-level OS voice orchestration and Voice-ID signal emission in one path.
+    pub fn execute_os_voice_live_turn(
+        &self,
+        store: &mut Ph1fStore,
+        input: OsVoiceLiveTurnInput,
+    ) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
+        let runtime =
+            Ph1OsVoiceLiveRuntime::new(self.os_top_level.clone(), self.voice_id_live.clone());
+        runtime.run_turn(store, input)
     }
 
     pub fn execute_wake(
@@ -301,7 +627,122 @@ impl SimulationExecutor {
         store: &mut Ph1fStore,
         req: &Ph1wRequest,
     ) -> Result<Ph1wResponse, StorageError> {
-        self.wake.run(store, req)
+        let platform = self.resolve_wake_platform(store, req);
+        self.validate_voice_top_level_path(
+            req.correlation_id,
+            req.turn_id,
+            platform,
+            OsVoiceTrigger::WakeWord,
+        )?;
+        let resp = self.wake.run(store, req)?;
+        // Always run one worker pass so replay/ack can progress continuously, not only on complete.
+        self.run_device_artifact_sync_worker_pass(store, req.now, req.correlation_id, req.turn_id)?;
+        Ok(resp)
+    }
+
+    /// Canonical BCAST -> DELIVERY bridge for provider send attempts:
+    /// 1) PH1.BCAST validates lifecycle and emits `delivery_request_ref`.
+    /// 2) PH1.DELIVERY performs provider send under the same simulation context.
+    /// 3) Returns both responses for deterministic audit/replay and downstream state updates.
+    pub fn run_broadcast_deliver_with_delivery(
+        &self,
+        req: &Ph1BcastRequest,
+    ) -> Result<SimulationDispatchOutcome, StorageError> {
+        req.validate().map_err(StorageError::ContractViolation)?;
+
+        let deliver_req = match &req.request {
+            BcastRequest::DeliverCommit(v) => v,
+            _ => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "broadcast_delivery_bridge.request",
+                        reason: "must be BcastRequest::DeliverCommit",
+                    },
+                ))
+            }
+        };
+        if req.simulation_type != BcastSimulationType::Commit {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "broadcast_delivery_bridge.simulation_type",
+                    reason: "must be COMMIT for BCAST deliver bridge",
+                },
+            ));
+        }
+
+        let bcast_resp = self.bcast.run(req);
+        bcast_resp
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+
+        let (delivery_request_ref, broadcast_id) = match &bcast_resp {
+            Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+                BcastOutcome::DeliverCommit(v) => (
+                    v.delivery_request_ref.clone(),
+                    v.broadcast_id.as_str().to_string(),
+                ),
+                _ => {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "broadcast_delivery_bridge.bcast_outcome",
+                            reason: "must be DeliverCommit",
+                        },
+                    ))
+                }
+            },
+            Ph1BcastResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "broadcast_delivery_bridge.bcast_response",
+                        reason: "BCAST deliver commit refused",
+                    },
+                ))
+            }
+        };
+
+        let channel = match deliver_req.delivery_method {
+            selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::SeleneApp => {
+                DeliveryChannel::AppPush
+            }
+            selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::Sms => DeliveryChannel::Sms,
+            selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::Whatsapp => {
+                DeliveryChannel::Whatsapp
+            }
+            selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::Wechat => {
+                DeliveryChannel::Wechat
+            }
+            selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::Email => DeliveryChannel::Email,
+        };
+        let provider_ref =
+            Ph1DeliveryRuntime::default_provider_ref_for_channel(channel).to_string();
+
+        let delivery_req = Ph1DeliveryRequest::send_commit_v1(
+            req.correlation_id,
+            req.turn_id,
+            req.now,
+            deliver_req.tenant_id.clone(),
+            broadcast_id,
+            deliver_req.recipient_id.as_str().to_string(),
+            channel,
+            deliver_req.delivery_plan_ref.clone(),
+            provider_ref,
+            deliver_req.simulation_context.clone(),
+            format!(
+                "delivery_send:{}:{}",
+                deliver_req.idempotency_key, delivery_request_ref
+            ),
+        )
+        .map_err(StorageError::ContractViolation)?;
+
+        let delivery_resp = self.delivery.run(&delivery_req);
+        delivery_resp
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+
+        Ok(SimulationDispatchOutcome::BroadcastDeliverySend {
+            bcast: bcast_resp,
+            delivery: delivery_resp,
+        })
     }
 
     /// Canonical BCAST.MHP handoff bridge:
@@ -1081,13 +1522,132 @@ impl SimulationExecutor {
                 x.idempotency_key.as_deref(),
                 &c.intent_draft,
             ),
+            DispatchRequest::AccessStepUp(step_up) => self.execute_access_step_up_dispatch_v1(
+                store,
+                actor_user_id,
+                now,
+                CorrelationId(x.correlation_id),
+                TurnId(x.turn_id),
+                x.idempotency_key.as_deref(),
+                step_up,
+            ),
             DispatchRequest::Tool(_) => Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1x_response.directive.dispatch_request",
-                    reason: "tool dispatch must be handled by PH1.E (not SimulationExecutor)",
+                    reason:
+                        "tool dispatch must be handled by PH1.E (not SimulationExecutor step-up/sim dispatch path)",
                 },
             )),
         }
+    }
+
+    pub fn step_up_result_from_dispatch_outcome(
+        outcome: &SimulationDispatchOutcome,
+    ) -> Option<StepUpResult> {
+        match outcome {
+            SimulationDispatchOutcome::AccessStepUp {
+                challenge_method,
+                outcome,
+                reason_code,
+                ..
+            } => Some(
+                StepUpResult::v1(*outcome, *challenge_method, *reason_code)
+                    .expect("step-up dispatch outcome must map to valid StepUpResult"),
+            ),
+            _ => None,
+        }
+    }
+
+    fn execute_access_step_up_dispatch_v1(
+        &self,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        x_idempotency_key: Option<&str>,
+        dispatch: &AccessStepUpDispatch,
+    ) -> Result<SimulationDispatchOutcome, StorageError> {
+        const ACCESS_STEP_UP_START: ReasonCodeId = ReasonCodeId(0x4153_0001);
+        const ACCESS_STEP_UP_DEFER_UNVERIFIED: ReasonCodeId = ReasonCodeId(0x4153_0002);
+
+        let tenant_id = resolve_reminder_tenant_id(store, &dispatch.intent_draft, &actor_user_id)?;
+        let Some(access_instance) =
+            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), &actor_user_id)
+        else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "access_step_up_dispatch.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                },
+            ));
+        };
+        let access_instance_id = access_instance.access_instance_id.clone();
+        let access_device_trust_level = access_instance.device_trust_level;
+        let access_verification_level = access_instance.verification_level;
+
+        let audit_key_prefix = x_idempotency_key
+            .map(|k| format!("access_step_up:{k}"))
+            .unwrap_or_else(|| format!("access_step_up:{}:{}", correlation_id.0, turn_id.0));
+        store.ph1access_capreq_step_up_audit_commit(
+            now,
+            tenant_id.as_str().to_string(),
+            correlation_id,
+            turn_id,
+            actor_user_id.clone(),
+            "START".to_string(),
+            "PENDING".to_string(),
+            dispatch.requested_action.clone(),
+            dispatch.challenge_method.as_str().to_string(),
+            ACCESS_STEP_UP_START,
+            format!("{audit_key_prefix}:start"),
+        )?;
+
+        let gate = store.ph1access_gate_decide(
+            actor_user_id.clone(),
+            access_instance_id,
+            dispatch.requested_action.clone(),
+            AccessMode::A,
+            access_device_trust_level,
+            false,
+            now,
+        )?;
+
+        let (outcome, reason_code) = match gate.access_decision {
+            AccessDecision::Deny => (StepUpOutcome::Refuse, gate.reason_code),
+            AccessDecision::Escalate => (StepUpOutcome::Defer, gate.reason_code),
+            AccessDecision::Allow => {
+                if step_up_challenge_satisfied(
+                    access_verification_level,
+                    dispatch.challenge_method,
+                ) {
+                    (StepUpOutcome::Continue, gate.reason_code)
+                } else {
+                    (StepUpOutcome::Defer, ACCESS_STEP_UP_DEFER_UNVERIFIED)
+                }
+            }
+        };
+
+        store.ph1access_capreq_step_up_audit_commit(
+            now,
+            tenant_id.as_str().to_string(),
+            correlation_id,
+            turn_id,
+            actor_user_id,
+            "FINISH".to_string(),
+            outcome.as_str().to_string(),
+            dispatch.requested_action.clone(),
+            dispatch.challenge_method.as_str().to_string(),
+            reason_code,
+            format!("{audit_key_prefix}:finish"),
+        )?;
+
+        Ok(SimulationDispatchOutcome::AccessStepUp {
+            requested_action: dispatch.requested_action.clone(),
+            challenge_method: dispatch.challenge_method,
+            outcome,
+            reason_code,
+        })
     }
 
     fn execute_simulation_candidate_v1(
@@ -1147,8 +1707,19 @@ impl SimulationExecutor {
                     &subject_text,
                     256,
                 )?;
-                let speaker_assertion = synthetic_speaker_assertion(&actor_user_id)
-                    .map_err(StorageError::ContractViolation)?;
+                let resolved_voice_identity = resolve_voice_identity_assertion(
+                    &self.os_top_level,
+                    &self.voice_id_live,
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                )?;
+                let ResolvedVoiceIdentity {
+                    assertion: speaker_assertion,
+                    identity_prompt_scope_key: _identity_prompt_scope_key,
+                } = resolved_voice_identity;
                 let memory_key = derive_memory_key_from_subject(&subject_text)?;
                 let proposal = MemoryProposedItem::v1(
                     memory_key,
@@ -1200,8 +1771,19 @@ impl SimulationExecutor {
                     &subject_text,
                     256,
                 )?;
-                let speaker_assertion = synthetic_speaker_assertion(&actor_user_id)
-                    .map_err(StorageError::ContractViolation)?;
+                let resolved_voice_identity = resolve_voice_identity_assertion(
+                    &self.os_top_level,
+                    &self.voice_id_live,
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                )?;
+                let ResolvedVoiceIdentity {
+                    assertion: speaker_assertion,
+                    identity_prompt_scope_key: _identity_prompt_scope_key,
+                } = resolved_voice_identity;
                 let target_key = derive_memory_key_from_subject(&subject_text)?;
                 let req = Ph1mForgetRequest::v1(
                     now,
@@ -1210,12 +1792,9 @@ impl SimulationExecutor {
                     target_key,
                 )
                 .map_err(StorageError::ContractViolation)?;
-                let input = MemoryTurnInput::v1(
-                    correlation_id,
-                    turn_id,
-                    MemoryOperation::Forget(req),
-                )
-                .map_err(StorageError::ContractViolation)?;
+                let input =
+                    MemoryTurnInput::v1(correlation_id, turn_id, MemoryOperation::Forget(req))
+                        .map_err(StorageError::ContractViolation)?;
                 let output = self.execute_memory_turn_output(store, &input)?;
                 let MemoryTurnOutput::Forget(resp) = output else {
                     return Err(StorageError::ContractViolation(
@@ -1237,8 +1816,19 @@ impl SimulationExecutor {
                 Ok(SimulationDispatchOutcome::MemoryForget(resp))
             }
             IntentType::MemoryQuery => {
-                let speaker_assertion = synthetic_speaker_assertion(&actor_user_id)
-                    .map_err(StorageError::ContractViolation)?;
+                let resolved_voice_identity = resolve_voice_identity_assertion(
+                    &self.os_top_level,
+                    &self.voice_id_live,
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                )?;
+                let ResolvedVoiceIdentity {
+                    assertion: speaker_assertion,
+                    identity_prompt_scope_key: _identity_prompt_scope_key,
+                } = resolved_voice_identity;
                 let requested_keys = match optional_field_value(d, FieldKey::Task) {
                     Some(task) => {
                         let subject_text = field_str(task).to_string();
@@ -1557,7 +2147,10 @@ impl SimulationExecutor {
         store: &mut Ph1fStore,
         input: &MemoryTurnInput,
     ) -> Result<MemoryTurnOutput, StorageError> {
-        let outcome = self.memory.borrow_mut().run_turn_and_persist(store, input)?;
+        let outcome = self
+            .memory
+            .borrow_mut()
+            .run_turn_and_persist(store, input)?;
         match outcome {
             MemoryWiringOutcome::Forwarded(bundle) => Ok(bundle.output),
             MemoryWiringOutcome::NotInvokedDisabled => Err(StorageError::ContractViolation(
@@ -1587,8 +2180,19 @@ impl SimulationExecutor {
         d: &IntentDraft,
         x_idempotency_key: Option<&str>,
     ) {
-        let speaker_assertion = match synthetic_speaker_assertion(actor_user_id) {
-            Ok(v) => v,
+        let speaker_assertion = match resolve_voice_identity_assertion(
+            &self.os_top_level,
+            &self.voice_id_live,
+            store,
+            actor_user_id,
+            now,
+            correlation_id,
+            turn_id,
+        ) {
+            Ok(ResolvedVoiceIdentity {
+                assertion,
+                identity_prompt_scope_key: _identity_prompt_scope_key,
+            }) => assertion,
             Err(_) => return,
         };
         let policy_context_ref = PolicyContextRef::v1(false, false, SafetyTier::Standard);
@@ -1761,6 +2365,24 @@ impl SimulationExecutor {
     }
 }
 
+fn step_up_challenge_satisfied(
+    verification_level: AccessVerificationLevel,
+    challenge_method: StepUpChallengeMethod,
+) -> bool {
+    match challenge_method {
+        StepUpChallengeMethod::DeviceBiometric => matches!(
+            verification_level,
+            AccessVerificationLevel::Biometric | AccessVerificationLevel::StepUp
+        ),
+        StepUpChallengeMethod::DevicePasscode => matches!(
+            verification_level,
+            AccessVerificationLevel::PasscodeTime
+                | AccessVerificationLevel::Biometric
+                | AccessVerificationLevel::StepUp
+        ),
+    }
+}
+
 fn is_legacy_link_delivery_simulation_id(simulation_id: &str) -> bool {
     matches!(
         simulation_id,
@@ -1821,6 +2443,15 @@ fn parse_invitee_type(
 
 fn parse_tenant_id(v: &FieldValue) -> Result<TenantId, StorageError> {
     TenantId::new(field_str(v).to_string()).map_err(StorageError::ContractViolation)
+}
+
+fn infer_tenant_scope_from_user_id(actor_user_id: &UserId) -> Option<String> {
+    let (tenant_scope, _) = actor_user_id.as_str().split_once(':')?;
+    let tenant_scope = tenant_scope.trim();
+    if tenant_scope.is_empty() {
+        return None;
+    }
+    Some(tenant_scope.to_string())
 }
 
 fn resolve_reminder_tenant_id(
@@ -1899,20 +2530,253 @@ fn new_ph1m_wiring() -> Ph1mWiring<Ph1mRuntime> {
     .expect("PH1.M wiring mvp_v1 config must be valid")
 }
 
-fn synthetic_speaker_assertion(actor_user_id: &UserId) -> Result<Ph1VoiceIdResponse, ContractViolation> {
-    let speaker_id = SpeakerId::new(format!("spk_{}", short_hash_hex(&[actor_user_id.as_str()])))?;
-    let segment = DiarizationSegment::v1(
-        MonotonicTimeNs(0),
-        MonotonicTimeNs(1),
-        Some(SpeakerLabel::speaker_a()),
+fn new_os_top_level_wiring() -> Ph1OsTopLevelWiring<EngineBackedOsRuntime> {
+    let engine = EngineBackedOsRuntime {
+        runtime: EngineOsRuntime::new(EngineOsConfig::mvp_v1()),
+    };
+    let os_wiring = Ph1OsWiring::new(Ph1OsWiringConfig::mvp_v1(true), engine)
+        .expect("PH1.OS wiring mvp_v1 config must be valid");
+    Ph1OsTopLevelWiring::new(Ph1OsTopLevelConfig::mvp_v1(true), os_wiring)
+        .expect("PH1.OS top-level mvp_v1 config must be valid")
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedVoiceIdentity {
+    assertion: Ph1VoiceIdResponse,
+    identity_prompt_scope_key: Option<String>,
+}
+
+fn resolve_voice_identity_assertion(
+    os_top_level: &Ph1OsTopLevelWiring<EngineBackedOsRuntime>,
+    voice_id_live: &Ph1VoiceIdLiveRuntime,
+    store: &mut Ph1fStore,
+    actor_user_id: &UserId,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+) -> Result<ResolvedVoiceIdentity, StorageError> {
+    let mut enrolled: Vec<EngineEnrolledSpeaker> = Vec::new();
+    let mut actor_primary: Option<u64> = None;
+    let mut actor_secondary: Option<u64> = None;
+    let mut actor_primary_embedding_capture_ref: Option<(u64, VoiceEmbeddingCaptureRef)> = None;
+    let mut actor_app_platform: Option<(u64, AppPlatform)> = None;
+    let mut actor_tenant_id: Option<(u64, String)> = None;
+    let mut actor_feedback_device_id: Option<(u64, DeviceId)> = None;
+    for profile in store.ph1vid_voice_profile_rows() {
+        let Some(device) = store.get_device(&profile.device_id) else {
+            continue;
+        };
+        let profile_seed = stable_seed_u64(&[
+            profile.voice_profile_id.as_str(),
+            profile.device_id.as_str(),
+            device.user_id.as_str(),
+        ]);
+        if device.user_id == *actor_user_id {
+            if actor_primary.is_none() {
+                actor_primary = Some(profile_seed);
+            } else if actor_secondary.is_none() && actor_primary != Some(profile_seed) {
+                actor_secondary = Some(profile_seed);
+            }
+            if let Some(onboarding_session) =
+                store.ph1onb_session_row(&profile.onboarding_session_id)
+            {
+                let should_replace = actor_app_platform
+                    .as_ref()
+                    .map(|(created_at_ns, _)| profile.created_at.0 >= *created_at_ns)
+                    .unwrap_or(true);
+                if should_replace {
+                    actor_app_platform =
+                        Some((profile.created_at.0, onboarding_session.app_platform));
+                    actor_tenant_id = onboarding_session
+                        .tenant_id
+                        .as_ref()
+                        .map(|tenant_id| (profile.created_at.0, tenant_id.clone()));
+                    actor_feedback_device_id =
+                        Some((profile.created_at.0, profile.device_id.clone()));
+                    actor_primary_embedding_capture_ref = profile
+                        .profile_embedding_capture_ref
+                        .as_ref()
+                        .map(|capture_ref| (profile.created_at.0, capture_ref.clone()));
+                }
+            }
+        }
+        let speaker_id = SpeakerId::new(format!(
+            "spk_{}",
+            short_hash_hex(&[profile.voice_profile_id.as_str(), device.user_id.as_str()])
+        ))
+        .map_err(StorageError::ContractViolation)?;
+        let profile_embedding = profile
+            .profile_embedding_capture_ref
+            .as_ref()
+            .map(profile_embedding_from_capture_ref)
+            .or_else(|| Some(simulation_profile_embedding_from_seed(profile_seed)));
+        enrolled.push(EngineEnrolledSpeaker {
+            speaker_id,
+            user_id: Some(device.user_id.clone()),
+            fingerprint: profile_seed,
+            profile_embedding,
+        });
+    }
+
+    let req = build_voice_id_request_for_actor(
+        now,
+        actor_user_id,
+        actor_primary_embedding_capture_ref
+            .as_ref()
+            .map(|(_, capture_ref)| capture_ref.clone()),
     )?;
-    let ok = SpeakerAssertionOk::v1(
-        speaker_id,
+    let request_primary_embedding = req
+        .app_primary_embedding_capture_ref
+        .as_ref()
+        .map(profile_embedding_from_capture_ref);
+    let primary_fingerprint = if request_primary_embedding.is_some() {
+        None
+    } else {
+        actor_primary
+    };
+    let obs = EngineVoiceIdObservation {
+        // Fail closed: never synthesize a fingerprint from user identity alone.
+        // Runtime matching must rely on enrolled voice profiles.
+        primary_fingerprint,
+        secondary_fingerprint: actor_secondary,
+        primary_embedding: request_primary_embedding
+            .or_else(|| actor_primary.map(simulation_profile_embedding_from_seed)),
+        secondary_embedding: actor_secondary.map(simulation_profile_embedding_from_seed),
+        spoof_risk: false,
+    };
+    let channel = if req.wake_event.is_some() {
+        VoiceIdentityChannel::WakeWord
+    } else {
+        VoiceIdentityChannel::Explicit
+    };
+    let trigger = if channel == VoiceIdentityChannel::WakeWord {
+        OsVoiceTrigger::WakeWord
+    } else {
+        OsVoiceTrigger::Explicit
+    };
+    let resolved_tenant_id = actor_tenant_id
+        .as_ref()
+        .map(|(_, tenant_id)| tenant_id.clone())
+        .or_else(|| infer_tenant_scope_from_user_id(actor_user_id));
+    let app_platform = actor_app_platform
+        .as_ref()
+        .map(|(_, app_platform)| *app_platform)
+        .unwrap_or(AppPlatform::Ios);
+    let top_level_turn_input = OsTopLevelTurnInput::v1(
+        correlation_id,
+        turn_id,
+        OsTopLevelTurnPath::Voice,
+        Some(OsVoiceTurnContext::v1(
+            SimulationExecutor::os_voice_platform_from_app_platform(app_platform),
+            trigger,
+        )),
+        SimulationExecutor::expected_always_on_sequence_for_voice(trigger),
+        Vec::new(),
+        0,
+        SimulationExecutor::default_os_turn_input(correlation_id, turn_id)?,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    let live_turn_input = OsVoiceLiveTurnInput::v1(
+        top_level_turn_input,
+        req,
+        actor_user_id.clone(),
+        resolved_tenant_id,
+        actor_feedback_device_id.map(|(_, device_id)| device_id),
+        enrolled,
+        obs,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    let runtime = Ph1OsVoiceLiveRuntime::new(os_top_level.clone(), voice_id_live.clone());
+    let outcome = runtime.run_turn(store, live_turn_input)?;
+    match outcome {
+        OsVoiceLiveTurnOutcome::Forwarded(bundle) => Ok(ResolvedVoiceIdentity {
+            assertion: bundle.voice_identity_assertion,
+            identity_prompt_scope_key: bundle.identity_prompt_scope_key,
+        }),
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_executor.voice_live_runtime",
+                reason: "voice live runtime is disabled",
+            },
+        )),
+        OsVoiceLiveTurnOutcome::Refused(_) => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_executor.voice_live_runtime",
+                reason: "voice live runtime refused the request",
+            },
+        )),
+    }
+}
+
+fn build_voice_id_request_for_actor(
+    now: MonotonicTimeNs,
+    actor_user_id: &UserId,
+    app_primary_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
+) -> Result<Ph1VoiceIdRequest, StorageError> {
+    let stream_id = AudioStreamId(1);
+    let processed_stream_ref = AudioStreamRef::v1(
+        stream_id,
+        AudioStreamKind::MicProcessed,
+        AudioFormat {
+            sample_rate_hz: SampleRateHz(16_000),
+            channels: ChannelCount(1),
+            sample_format: SampleFormat::PcmS16LE,
+        },
+        FrameDurationMs::Ms20,
+    );
+    let vad_events = vec![VadEvent::v1(
+        stream_id,
+        MonotonicTimeNs(now.0.saturating_sub(2_000_000)),
+        now,
+        Confidence::new(0.95).map_err(StorageError::ContractViolation)?,
+        SpeechLikeness::new(0.95).map_err(StorageError::ContractViolation)?,
+    )];
+    let session_snapshot = SessionSnapshot {
+        schema_version: SchemaVersion(1),
+        session_state: SessionState::Active,
+        session_id: Some(SessionId(1)),
+        next_allowed_actions: NextAllowedActions {
+            may_speak: true,
+            must_wait: false,
+            must_rewake: false,
+        },
+    };
+    let device_id = AudioDeviceId::new(format!(
+        "sim_mic_{}",
+        short_hash_hex(&[actor_user_id.as_str()])
+    ))
+    .map_err(StorageError::ContractViolation)?;
+    Ph1VoiceIdRequest::v1_with_risk_signals_and_embedding_capture(
+        now,
+        processed_stream_ref,
+        vad_events,
+        device_id,
+        session_snapshot,
+        None,
+        false,
+        DeviceTrustLevel::Trusted,
         Some(actor_user_id.clone()),
-        vec![segment],
-        SpeakerLabel::speaker_a(),
-    )?;
-    Ok(Ph1VoiceIdResponse::SpeakerAssertionOk(ok))
+        vec![],
+        app_primary_embedding_capture_ref,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn profile_embedding_from_capture_ref(capture_ref: &VoiceEmbeddingCaptureRef) -> [i16; 16] {
+    let seed = stable_seed_u64(&[
+        capture_ref.embedding_ref.as_str(),
+        capture_ref.embedding_model_id.as_str(),
+        &capture_ref.embedding_dim.to_string(),
+    ]);
+    simulation_profile_embedding_from_seed(seed)
+}
+
+fn stable_seed_u64(parts: &[&str]) -> u64 {
+    let mut hex = short_hash_hex(parts);
+    if hex.len() < 16 {
+        hex.push_str("0000000000000000");
+    }
+    u64::from_str_radix(&hex[..16], 16).unwrap_or(0x9E37_79B9_7F4A_7C15)
 }
 
 fn build_memory_thread_digest(
@@ -1930,10 +2794,7 @@ fn build_memory_thread_digest(
             &turn_id.0.to_string(),
         ])
     );
-    let mut summary = vec![format!(
-        "intent: {}",
-        intent_type_token(d.intent_type)
-    )];
+    let mut summary = vec![format!("intent: {}", intent_type_token(d.intent_type))];
     for field in d.fields.iter().take(2) {
         summary.push(format!(
             "{}: {}",
@@ -2313,9 +3174,11 @@ fn short_hash_hex(parts: &[&str]) -> String {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::{
-        Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse, VoiceIdEnrollStartDraftRequest,
-        VoiceIdSimulationRequest, VoiceIdSimulationType, PH1VOICEID_SIM_CONTRACT_VERSION,
-        VOICE_ID_ENROLL_START_DRAFT,
+        Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse, VoiceEnrollmentSessionId,
+        VoiceIdEnrollCompleteCommitRequest, VoiceIdEnrollSampleCommitRequest,
+        VoiceIdEnrollStartDraftRequest, VoiceIdSimulationRequest, VoiceIdSimulationType,
+        PH1VOICEID_SIM_CONTRACT_VERSION, VOICE_ID_ENROLL_COMPLETE_COMMIT,
+        VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1bcast::{
         BcastAckCommitRequest, BcastAckStatus, BcastDeferCommitRequest, BcastDeliveryMethod,
@@ -2329,7 +3192,8 @@ mod tests {
     use selene_kernel_contracts::ph1capreq::{
         CapabilityRequestAction, CapabilityRequestStatus, CapreqId,
     };
-    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1delivery::{DeliveryOutcome, Ph1DeliveryResponse};
+    use selene_kernel_contracts::ph1j::{AuditEngine, DeviceId, PayloadKey};
     use selene_kernel_contracts::ph1link::InviteeType;
     use selene_kernel_contracts::ph1n::{IntentField, OverallConfidence, SensitivityLevel};
     use selene_kernel_contracts::ph1position::{
@@ -2343,14 +3207,14 @@ mod tests {
         PH1W_CONTRACT_VERSION, WAKE_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1x::{
-        DeliveryHint, DispatchDirective, Ph1xDirective, Ph1xResponse, ThreadState,
+        DeliveryHint, DispatchDirective, Ph1xDirective, Ph1xResponse, StepUpActionClass,
+        StepUpChallengeMethod, StepUpOutcome, ThreadState,
     };
     use selene_kernel_contracts::{ReasonCodeId, SchemaVersion};
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
         DeviceRecord, IdentityRecord, IdentityStatus, MemoryThreadEventKind,
-        TenantCompanyLifecycleState,
-        TenantCompanyRecord,
+        MobileArtifactSyncState, TenantCompanyLifecycleState, TenantCompanyRecord,
     };
 
     fn capreq_field(key: FieldKey, value: &str) -> IntentField {
@@ -2442,6 +3306,152 @@ mod tests {
             ),
             ..SimulationExecutor::default()
         }
+    }
+
+    fn seed_locked_voice_profile_for_actor(
+        store: &mut Ph1fStore,
+        exec: &SimulationExecutor,
+        actor: &UserId,
+        tenant_id: &str,
+    ) {
+        let actor_hash = short_hash_hex(&[actor.as_str()]);
+        let device_id = DeviceId::new(format!("voice-device-{actor_hash}")).unwrap();
+        let device_fp = format!("voice-device-fp-{actor_hash}");
+        let app_instance_id = "legacy_app_instance".to_string();
+        let deep_link_nonce = "legacy_nonce_4".to_string();
+        let link_opened_at = MonotonicTimeNs(4);
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(2),
+                    Some(format!("audio_prof_{actor_hash}")),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let (link_rec, _) = store
+            .ph1link_invite_generate_draft(
+                MonotonicTimeNs(3),
+                actor.clone(),
+                InviteeType::Employee,
+                Some(tenant_id.to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let _ = store
+            .ph1link_invite_open_activate_commit(
+                link_opened_at,
+                link_rec.token_id.clone(),
+                device_fp.clone(),
+            )
+            .unwrap();
+        let onb = store
+            .ph1onb_session_start_draft(
+                MonotonicTimeNs(5),
+                link_rec.token_id,
+                None,
+                Some(tenant_id.to_string()),
+                device_fp,
+                selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id,
+                deep_link_nonce,
+                link_opened_at,
+            )
+            .unwrap();
+        let start = exec
+            .execute_voice_id(
+                store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1900),
+                    turn_id: TurnId(1),
+                    now: MonotonicTimeNs(10),
+                    simulation_id: VOICE_ID_ENROLL_START_DRAFT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Draft,
+                    request: VoiceIdSimulationRequest::EnrollStartDraft(
+                        VoiceIdEnrollStartDraftRequest {
+                            onboarding_session_id: onb.onboarding_session_id.as_str().to_string(),
+                            device_id: device_id.clone(),
+                            consent_asserted: true,
+                            max_total_attempts: 8,
+                            max_session_enroll_time_ms: 120_000,
+                            lock_after_consecutive_passes: 2,
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        let voice_enrollment_session_id = match start {
+            Ph1VoiceIdSimResponse::Ok(ok) => {
+                ok.enroll_start_result
+                    .expect("voice enrollment start result must exist")
+                    .voice_enrollment_session_id
+            }
+            _ => panic!("expected voice enrollment start OK"),
+        };
+        for attempt_index in 1..=2u16 {
+            let _ = exec
+                .execute_voice_id(
+                    store,
+                    &Ph1VoiceIdSimRequest {
+                        schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                        correlation_id: CorrelationId(1900),
+                        turn_id: TurnId(1 + u64::from(attempt_index)),
+                        now: MonotonicTimeNs(10 + u64::from(attempt_index)),
+                        simulation_id: VOICE_ID_ENROLL_SAMPLE_COMMIT.to_string(),
+                        simulation_type: VoiceIdSimulationType::Commit,
+                        request: VoiceIdSimulationRequest::EnrollSampleCommit(
+                            VoiceIdEnrollSampleCommitRequest {
+                                voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                    voice_enrollment_session_id.as_str(),
+                                )
+                                .unwrap(),
+                                audio_sample_ref: format!(
+                                    "audio:seed:{actor_hash}:{attempt_index}"
+                                ),
+                                attempt_index,
+                                sample_duration_ms: 1_350,
+                                vad_coverage: 0.93,
+                                snr_db: 18.0,
+                                clipping_pct: 0.4,
+                                overlap_ratio: 0.0,
+                                app_embedding_capture_ref: None,
+                                idempotency_key: format!(
+                                    "seed-voice-sample-{actor_hash}-{attempt_index}"
+                                ),
+                            },
+                        ),
+                    },
+                )
+                .unwrap();
+        }
+        let _ = exec
+            .execute_voice_id(
+                store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1900),
+                    turn_id: TurnId(9),
+                    now: MonotonicTimeNs(20),
+                    simulation_id: VOICE_ID_ENROLL_COMPLETE_COMMIT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Commit,
+                    request: VoiceIdSimulationRequest::EnrollCompleteCommit(
+                        VoiceIdEnrollCompleteCommitRequest {
+                            voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                voice_enrollment_session_id.as_str(),
+                            )
+                            .unwrap(),
+                            idempotency_key: format!("seed-voice-complete-{actor_hash}"),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
     }
 
     fn capreq_x(turn_id: u64, draft: IntentDraft, idempotency_key: &str) -> Ph1xResponse {
@@ -2620,6 +3630,34 @@ mod tests {
         .unwrap()
     }
 
+    fn access_step_up_x(
+        turn_id: u64,
+        draft: IntentDraft,
+        requested_action: &str,
+        challenge_method: StepUpChallengeMethod,
+        idempotency_key: &str,
+    ) -> Ph1xResponse {
+        Ph1xResponse::v1(
+            10,
+            turn_id,
+            Ph1xDirective::Dispatch(
+                DispatchDirective::access_step_up_v1(
+                    draft,
+                    StepUpActionClass::AccessGovernance,
+                    requested_action.to_string(),
+                    challenge_method,
+                )
+                .unwrap(),
+            ),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some(idempotency_key.to_string()),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_sim_exec_01_ph1x_sim_candidate_create_invite_link_runs_ph1link_generate_draft() {
         let mut store = Ph1fStore::new_in_memory();
@@ -2707,6 +3745,7 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
 
         let draft = reminder_draft("file payroll", "in 5 minutes");
         let x = Ph1xResponse::v1(
@@ -2743,7 +3782,10 @@ mod tests {
         }
         let thread_rows = store.ph1m_thread_ledger_rows();
         assert_eq!(thread_rows.len(), 1);
-        assert_eq!(thread_rows[0].event_kind, MemoryThreadEventKind::ThreadDigestUpsert);
+        assert_eq!(
+            thread_rows[0].event_kind,
+            MemoryThreadEventKind::ThreadDigestUpsert
+        );
         assert!(thread_rows[0].digest.thread_title.contains("SET_REMINDER"));
     }
 
@@ -2762,6 +3804,7 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
 
         let draft = memory_draft(
             IntentType::MemoryRememberRequest,
@@ -2814,6 +3857,7 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
 
         let remember_draft = memory_draft(
             IntentType::MemoryRememberRequest,
@@ -2846,11 +3890,14 @@ mod tests {
         ));
         assert_eq!(store.memory_current().len(), 1);
 
-        let forget_draft = memory_draft(IntentType::MemoryForgetRequest, Some("Parking spot is B12"));
+        let forget_draft =
+            memory_draft(IntentType::MemoryForgetRequest, Some("Parking spot is B12"));
         let forget_x = Ph1xResponse::v1(
             11,
             2403,
-            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(forget_draft).unwrap()),
+            Ph1xDirective::Dispatch(
+                DispatchDirective::simulation_candidate_v1(forget_draft).unwrap(),
+            ),
             ThreadState::empty_v1(),
             None,
             DeliveryHint::AudibleAndText,
@@ -2896,9 +3943,12 @@ mod tests {
                 IdentityStatus::Active,
             ))
             .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
 
-        let remember_draft =
-            memory_draft(IntentType::MemoryRememberRequest, Some("Trip to Japan in March"));
+        let remember_draft = memory_draft(
+            IntentType::MemoryRememberRequest,
+            Some("Trip to Japan in March"),
+        );
         let remember_x = Ph1xResponse::v1(
             11,
             2404,
@@ -2929,7 +3979,9 @@ mod tests {
         let query_x = Ph1xResponse::v1(
             11,
             2405,
-            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(query_draft).unwrap()),
+            Ph1xDirective::Dispatch(
+                DispatchDirective::simulation_candidate_v1(query_draft).unwrap(),
+            ),
             ThreadState::empty_v1(),
             None,
             DeliveryHint::AudibleAndText,
@@ -3003,6 +4055,154 @@ mod tests {
         }
         assert!(store.memory_ledger_rows().is_empty());
         assert!(store.memory_current().is_empty());
+    }
+
+    #[test]
+    fn at_sim_exec_01k_memory_dispatch_fails_closed_without_identity_assertion() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("tenant_1:user_memory_unknown").unwrap();
+        let draft = memory_draft(
+            IntentType::MemoryRememberRequest,
+            Some("This should fail because speaker identity is unknown"),
+        );
+        let x = Ph1xResponse::v1(
+            11,
+            2407,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-memory-unknown-1".to_string()),
+        )
+        .unwrap();
+
+        let err = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(123_600_000_000),
+                &x,
+            )
+            .expect_err("memory dispatch must fail when speaker identity is unknown");
+
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "ph1m.persistence.user_id");
+                assert_eq!(reason, "speaker assertion must be OK for persistence");
+            }
+            _ => panic!("expected unknown-speaker contract violation"),
+        }
+        let feedback_rows = store.ph1feedback_audit_rows(CorrelationId(11));
+        assert_eq!(feedback_rows.len(), 1);
+        let payload_map = &feedback_rows[0].payload_min.entries;
+        assert!(payload_map.contains_key(
+            &PayloadKey::new("feedback_event_type").expect("feedback_event_type key is valid")
+        ));
+        assert!(payload_map.contains_key(
+            &PayloadKey::new("learn_signal_type").expect("learn_signal_type key is valid")
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_01k2_voice_feedback_signal_commits_scoped_feedback_and_learn_audit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let actor = UserId::new("tenant_1:voice_signal_user").unwrap();
+        let device_id = DeviceId::new("voice-signal-device-1").unwrap();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let req = build_voice_id_request_for_actor(MonotonicTimeNs(3), &actor, None)
+            .expect("voice-id request must be valid");
+        let context = crate::ph1_voice_id::VoiceIdentityRuntimeContext::from_tenant_app_platform(
+            Some("tenant_1".to_string()),
+            Some(AppPlatform::Ios),
+            VoiceIdentityChannel::Explicit,
+        );
+        let out = runtime
+            .run_identity_assertion_with_signal_emission(
+                &mut store,
+                &req,
+                context,
+                Vec::new(),
+                EngineVoiceIdObservation {
+                    primary_fingerprint: None,
+                    secondary_fingerprint: None,
+                    primary_embedding: None,
+                    secondary_embedding: None,
+                    spoof_risk: false,
+                },
+                crate::ph1_voice_id::VoiceIdentitySignalScope::v1(
+                    MonotonicTimeNs(3),
+                    CorrelationId(4401),
+                    TurnId(1),
+                    actor.clone(),
+                    Some("tenant_1".to_string()),
+                    Some(device_id),
+                ),
+            )
+            .expect("scoped feedback/learn emission must succeed");
+        assert!(matches!(
+            out,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
+        ));
+
+        let feedback_rows = store.ph1feedback_audit_rows(CorrelationId(4401));
+        assert_eq!(feedback_rows.len(), 1);
+        let feedback_payload = &feedback_rows[0].payload_min.entries;
+        assert!(feedback_payload.contains_key(
+            &PayloadKey::new("feedback_event_type").expect("feedback_event_type key is valid")
+        ));
+        assert!(feedback_payload
+            .contains_key(&PayloadKey::new("signal_bucket").expect("signal_bucket key is valid")));
+        assert!(feedback_payload
+            .contains_key(&PayloadKey::new("path_type").expect("path_type key is valid")));
+
+        let learn_bundle_rows = store.ph1feedback_learn_signal_bundle_rows(CorrelationId(4401));
+        assert_eq!(learn_bundle_rows.len(), 1);
+        assert_eq!(
+            learn_bundle_rows[0].feedback_event_type,
+            selene_kernel_contracts::ph1feedback::FeedbackEventType::VoiceIdFalseReject
+        );
+        assert_eq!(
+            learn_bundle_rows[0].learn_signal_type,
+            selene_kernel_contracts::ph1learn::LearnSignalType::VoiceIdFalseReject
+        );
+
+        let learn_rows = store
+            .audit_events_by_correlation(CorrelationId(4401))
+            .into_iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine_id) if engine_id == "PH1.LEARN")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(learn_rows.len(), 1);
+        let learn_payload = &learn_rows[0].payload_min.entries;
+        assert!(learn_payload.contains_key(
+            &PayloadKey::new("learn_signal_type").expect("learn_signal_type key is valid")
+        ));
     }
 
     #[test]
@@ -3969,6 +5169,86 @@ mod tests {
     }
 
     #[test]
+    fn at_sim_exec_01g_bcast_deliver_is_wired_to_ph1_delivery_send() {
+        let exec = SimulationExecutor::default();
+
+        let correlation_id = CorrelationId(906);
+        let now = MonotonicTimeNs(6_000_000_000_000);
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let sender = UserId::new("tenant_1:sender_g").unwrap();
+        let recipient_id = BroadcastRecipientId::new("recipient_g").unwrap();
+
+        let draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id: TurnId(80),
+            now,
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: sender.clone(),
+                audience_spec: "audience_g".to_string(),
+                classification: BroadcastClassification::Priority,
+                content_payload_ref: "payload_g".to_string(),
+                prompt_dedupe_key: Some("pd_g".to_string()),
+                idempotency_key: "idem_bcast_draft_g".to_string(),
+            }),
+        };
+
+        let broadcast_id = match exec.bcast.run(&draft_req) {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id: TurnId(81),
+            now: MonotonicTimeNs(now.0 + 1),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(
+                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                    tenant_id,
+                    sender_user_id: sender,
+                    broadcast_id,
+                    recipient_id,
+                    delivery_method: BcastDeliveryMethod::Sms,
+                    recipient_region: BcastRecipientRegion::Global,
+                    app_unavailable: true,
+                    delivery_plan_ref: "delivery_plan_g".to_string(),
+                    simulation_context: "sim_ctx_g".to_string(),
+                    idempotency_key: "idem_bcast_deliver_g".to_string(),
+                },
+            ),
+        };
+
+        let out = exec
+            .run_broadcast_deliver_with_delivery(&deliver_req)
+            .unwrap();
+        match out {
+            SimulationDispatchOutcome::BroadcastDeliverySend { bcast, delivery } => {
+                assert!(matches!(bcast, Ph1BcastResponse::Ok(_)));
+                match delivery {
+                    Ph1DeliveryResponse::Ok(ok) => match ok.outcome {
+                        DeliveryOutcome::Send(v) => {
+                            assert!(v.delivery_attempt_id.starts_with("delivery_"));
+                            assert!(v.delivery_proof_ref.contains("kms://delivery/sms/default"));
+                        }
+                        _ => panic!("expected delivery send outcome"),
+                    },
+                    _ => panic!("expected delivery ok response"),
+                }
+            }
+            _ => panic!("expected BroadcastDeliverySend outcome"),
+        }
+    }
+
+    #[test]
     fn at_sim_exec_14_link_access_deny_blocks_governed_commit() {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
@@ -4368,6 +5648,7 @@ mod tests {
                 user_id: actor,
                 device_id,
                 onboarding_session_id: None,
+                allow_ios_wake_override: false,
                 pass_target: 5,
                 max_attempts: 12,
                 enrollment_timeout_ms: 300_000,
@@ -5573,6 +6854,10 @@ mod tests {
                 None,
                 Some("tenant_1".to_string()),
                 "voice-device-fp-1".to_string(),
+                selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                "legacy_app_instance".to_string(),
+                "legacy_nonce_3".to_string(),
+                MonotonicTimeNs(3),
             )
             .unwrap();
 
@@ -5601,5 +6886,553 @@ mod tests {
             }
             Ph1VoiceIdSimResponse::Refuse(_) => panic!("expected ok"),
         }
+    }
+
+    #[test]
+    fn at_sim_exec_04b_voice_complete_runs_mobile_sync_worker_ack_path() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("voice-actor-2").unwrap();
+        let device_id = DeviceId::new("voice-device-2").unwrap();
+
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(1),
+                    Some("audio_prof_vid_2".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let (link_rec, _) = store
+            .ph1link_invite_generate_draft(
+                MonotonicTimeNs(2),
+                actor.clone(),
+                InviteeType::Employee,
+                Some("tenant_1".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let _ = store
+            .ph1link_invite_open_activate_commit(
+                MonotonicTimeNs(3),
+                link_rec.token_id.clone(),
+                "voice-device-fp-2".to_string(),
+            )
+            .unwrap();
+        let onb = store
+            .ph1onb_session_start_draft(
+                MonotonicTimeNs(4),
+                link_rec.token_id,
+                None,
+                Some("tenant_1".to_string()),
+                "voice-device-fp-2".to_string(),
+                selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                "legacy_app_instance".to_string(),
+                "legacy_nonce_3".to_string(),
+                MonotonicTimeNs(3),
+            )
+            .unwrap();
+
+        let start = exec
+            .execute_voice_id(
+                &mut store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1002),
+                    turn_id: TurnId(1),
+                    now: MonotonicTimeNs(10),
+                    simulation_id: VOICE_ID_ENROLL_START_DRAFT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Draft,
+                    request: VoiceIdSimulationRequest::EnrollStartDraft(
+                        VoiceIdEnrollStartDraftRequest {
+                            onboarding_session_id: onb.onboarding_session_id.as_str().to_string(),
+                            device_id: device_id.clone(),
+                            consent_asserted: true,
+                            max_total_attempts: 8,
+                            max_session_enroll_time_ms: 120_000,
+                            lock_after_consecutive_passes: 2,
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        let voice_enrollment_session_id = match start {
+            Ph1VoiceIdSimResponse::Ok(ok) => {
+                ok.enroll_start_result
+                    .expect("start result must exist")
+                    .voice_enrollment_session_id
+            }
+            _ => panic!("expected voice enroll start ok"),
+        };
+
+        let commit_sample = |store: &mut Ph1fStore,
+                             exec: &SimulationExecutor,
+                             attempt_index: u16,
+                             idempotency_key: &str| {
+            exec.execute_voice_id(
+                store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1002),
+                    turn_id: TurnId(2 + u64::from(attempt_index)),
+                    now: MonotonicTimeNs(10 + u64::from(attempt_index)),
+                    simulation_id: VOICE_ID_ENROLL_SAMPLE_COMMIT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Commit,
+                    request: VoiceIdSimulationRequest::EnrollSampleCommit(
+                        VoiceIdEnrollSampleCommitRequest {
+                            voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                voice_enrollment_session_id.as_str(),
+                            )
+                            .unwrap(),
+                            audio_sample_ref: format!("audio:voice:{attempt_index}"),
+                            attempt_index,
+                            sample_duration_ms: 1_350,
+                            vad_coverage: 0.93,
+                            snr_db: 18.0,
+                            clipping_pct: 0.4,
+                            overlap_ratio: 0.0,
+                            app_embedding_capture_ref: None,
+                            idempotency_key: idempotency_key.to_string(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        };
+        commit_sample(&mut store, &exec, 1, "vid-sync-worker-sample-1");
+        commit_sample(&mut store, &exec, 2, "vid-sync-worker-sample-2");
+
+        let complete = exec
+            .execute_voice_id(
+                &mut store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1002),
+                    turn_id: TurnId(9),
+                    now: MonotonicTimeNs(20),
+                    simulation_id: VOICE_ID_ENROLL_COMPLETE_COMMIT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Commit,
+                    request: VoiceIdSimulationRequest::EnrollCompleteCommit(
+                        VoiceIdEnrollCompleteCommitRequest {
+                            voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                voice_enrollment_session_id.as_str(),
+                            )
+                            .unwrap(),
+                            idempotency_key: "vid-sync-worker-complete".to_string(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+
+        let receipt = match complete {
+            Ph1VoiceIdSimResponse::Ok(ok) => ok
+                .enroll_complete_result
+                .expect("complete result must exist")
+                .voice_artifact_sync_receipt_ref
+                .expect("voice sync receipt must exist"),
+            _ => panic!("expected voice enroll complete ok"),
+        };
+
+        let row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("queue row must exist");
+        assert_eq!(row.state, MobileArtifactSyncState::Acked);
+        assert!(row.acked_at.is_some());
+    }
+
+    #[test]
+    fn at_sim_exec_04c_voice_complete_sync_failure_stays_inflight_for_retry() {
+        let mut store = Ph1fStore::new_in_memory();
+        let mut exec = SimulationExecutor::default();
+        exec.set_device_sync_sender(
+            crate::device_artifact_sync::DeviceArtifactSyncSenderRuntime::always_fail_for_tests(
+                "engine_b_unreachable",
+                5_000,
+            ),
+        );
+
+        let actor = UserId::new("voice-actor-3").unwrap();
+        let device_id = DeviceId::new("voice-device-3").unwrap();
+
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(1),
+                    Some("audio_prof_vid_3".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let (link_rec, _) = store
+            .ph1link_invite_generate_draft(
+                MonotonicTimeNs(2),
+                actor.clone(),
+                InviteeType::Employee,
+                Some("tenant_1".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        let _ = store
+            .ph1link_invite_open_activate_commit(
+                MonotonicTimeNs(3),
+                link_rec.token_id.clone(),
+                "voice-device-fp-3".to_string(),
+            )
+            .unwrap();
+        let onb = store
+            .ph1onb_session_start_draft(
+                MonotonicTimeNs(4),
+                link_rec.token_id,
+                None,
+                Some("tenant_1".to_string()),
+                "voice-device-fp-3".to_string(),
+                selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                "legacy_app_instance".to_string(),
+                "legacy_nonce_3".to_string(),
+                MonotonicTimeNs(3),
+            )
+            .unwrap();
+
+        let start = exec
+            .execute_voice_id(
+                &mut store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1003),
+                    turn_id: TurnId(1),
+                    now: MonotonicTimeNs(10),
+                    simulation_id: VOICE_ID_ENROLL_START_DRAFT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Draft,
+                    request: VoiceIdSimulationRequest::EnrollStartDraft(
+                        VoiceIdEnrollStartDraftRequest {
+                            onboarding_session_id: onb.onboarding_session_id.as_str().to_string(),
+                            device_id: device_id.clone(),
+                            consent_asserted: true,
+                            max_total_attempts: 8,
+                            max_session_enroll_time_ms: 120_000,
+                            lock_after_consecutive_passes: 2,
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        let voice_enrollment_session_id = match start {
+            Ph1VoiceIdSimResponse::Ok(ok) => {
+                ok.enroll_start_result
+                    .expect("start result must exist")
+                    .voice_enrollment_session_id
+            }
+            _ => panic!("expected voice enroll start ok"),
+        };
+
+        let commit_sample = |store: &mut Ph1fStore,
+                             exec: &SimulationExecutor,
+                             attempt_index: u16,
+                             idempotency_key: &str| {
+            exec.execute_voice_id(
+                store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1003),
+                    turn_id: TurnId(2 + u64::from(attempt_index)),
+                    now: MonotonicTimeNs(10 + u64::from(attempt_index)),
+                    simulation_id: VOICE_ID_ENROLL_SAMPLE_COMMIT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Commit,
+                    request: VoiceIdSimulationRequest::EnrollSampleCommit(
+                        VoiceIdEnrollSampleCommitRequest {
+                            voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                voice_enrollment_session_id.as_str(),
+                            )
+                            .unwrap(),
+                            audio_sample_ref: format!("audio:voice:{attempt_index}"),
+                            attempt_index,
+                            sample_duration_ms: 1_350,
+                            vad_coverage: 0.93,
+                            snr_db: 18.0,
+                            clipping_pct: 0.4,
+                            overlap_ratio: 0.0,
+                            app_embedding_capture_ref: None,
+                            idempotency_key: idempotency_key.to_string(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+        };
+        commit_sample(&mut store, &exec, 1, "vid-sync-worker-fail-sample-1");
+        commit_sample(&mut store, &exec, 2, "vid-sync-worker-fail-sample-2");
+
+        let complete = exec
+            .execute_voice_id(
+                &mut store,
+                &Ph1VoiceIdSimRequest {
+                    schema_version: PH1VOICEID_SIM_CONTRACT_VERSION,
+                    correlation_id: CorrelationId(1003),
+                    turn_id: TurnId(9),
+                    now: MonotonicTimeNs(20),
+                    simulation_id: VOICE_ID_ENROLL_COMPLETE_COMMIT.to_string(),
+                    simulation_type: VoiceIdSimulationType::Commit,
+                    request: VoiceIdSimulationRequest::EnrollCompleteCommit(
+                        VoiceIdEnrollCompleteCommitRequest {
+                            voice_enrollment_session_id: VoiceEnrollmentSessionId::new(
+                                voice_enrollment_session_id.as_str(),
+                            )
+                            .unwrap(),
+                            idempotency_key: "vid-sync-worker-fail-complete".to_string(),
+                        },
+                    ),
+                },
+            )
+            .unwrap();
+
+        let receipt = match complete {
+            Ph1VoiceIdSimResponse::Ok(ok) => ok
+                .enroll_complete_result
+                .expect("complete result must exist")
+                .voice_artifact_sync_receipt_ref
+                .expect("voice sync receipt must exist"),
+            _ => panic!("expected voice enroll complete ok"),
+        };
+
+        let row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("queue row must exist");
+        assert_eq!(row.state, MobileArtifactSyncState::InFlight);
+        assert_eq!(row.acked_at, None);
+        assert_eq!(row.last_error.as_deref(), Some("engine_b_unreachable"));
+    }
+
+    #[test]
+    fn at_sim_exec_04d_resolve_voice_identity_carries_prompt_scope_key() {
+        let mut store = Ph1fStore::new_in_memory();
+        let os_top_level = new_os_top_level_wiring();
+        let voice_id_live = Ph1VoiceIdLiveRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:voice_scope_actor").unwrap();
+
+        let first = resolve_voice_identity_assertion(
+            &os_top_level,
+            &voice_id_live,
+            &mut store,
+            &actor_user_id,
+            MonotonicTimeNs(5),
+            CorrelationId(8701),
+            TurnId(1),
+        )
+        .unwrap();
+        let second = resolve_voice_identity_assertion(
+            &os_top_level,
+            &voice_id_live,
+            &mut store,
+            &actor_user_id,
+            MonotonicTimeNs(6),
+            CorrelationId(8701),
+            TurnId(2),
+        )
+        .unwrap();
+
+        let first_key = first
+            .identity_prompt_scope_key
+            .expect("scope key must be present");
+        let second_key = second
+            .identity_prompt_scope_key
+            .expect("scope key must be present");
+        assert!(first_key.starts_with("vidscope:v1:"));
+        assert_eq!(first_key, second_key);
+    }
+
+    #[test]
+    fn at_sim_exec_14_access_step_up_returns_continue_and_emits_start_finish_audit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:stepup_actor_1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let x = access_step_up_x(
+            1,
+            access_draft(
+                IntentType::AccessSchemaManage,
+                vec![access_field(FieldKey::TenantId, "tenant_1")],
+            ),
+            "ACCESS_SCHEMA_MANAGE",
+            StepUpChallengeMethod::DevicePasscode,
+            "idem-stepup-continue",
+        );
+
+        let out =
+            exec.execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
+                .unwrap();
+        match out {
+            SimulationDispatchOutcome::AccessStepUp {
+                outcome,
+                challenge_method,
+                ..
+            } => {
+                assert_eq!(outcome, StepUpOutcome::Continue);
+                assert_eq!(challenge_method, StepUpChallengeMethod::DevicePasscode);
+            }
+            _ => panic!("expected AccessStepUp outcome"),
+        }
+
+        let audit_rows = store.ph1access_capreq_audit_rows(CorrelationId(10));
+        assert_eq!(audit_rows.len(), 2);
+    }
+
+    #[test]
+    fn at_sim_exec_15_access_step_up_returns_refuse_for_access_deny() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:stepup_actor_2").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.read_only",
+            "{\"allow\":[\"LINK_INVITE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let x = access_step_up_x(
+            2,
+            access_draft(
+                IntentType::AccessSchemaManage,
+                vec![access_field(FieldKey::TenantId, "tenant_1")],
+            ),
+            "ACCESS_SCHEMA_MANAGE",
+            StepUpChallengeMethod::DevicePasscode,
+            "idem-stepup-refuse",
+        );
+
+        let out =
+            exec.execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
+                .unwrap();
+        match out {
+            SimulationDispatchOutcome::AccessStepUp { outcome, .. } => {
+                assert_eq!(outcome, StepUpOutcome::Refuse);
+            }
+            _ => panic!("expected AccessStepUp outcome"),
+        }
+    }
+
+    #[test]
+    fn at_sim_exec_16_access_step_up_biometric_requirement_defers_and_is_replay_stable() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:stepup_actor_3").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.access_admin",
+            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let x = access_step_up_x(
+            3,
+            access_draft(
+                IntentType::AccessSchemaManage,
+                vec![access_field(FieldKey::TenantId, "tenant_1")],
+            ),
+            "ACCESS_SCHEMA_MANAGE",
+            StepUpChallengeMethod::DeviceBiometric,
+            "idem-stepup-defer",
+        );
+
+        let out1 = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(3),
+                &x,
+            )
+            .unwrap();
+        let out2 = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(3), &x)
+            .unwrap();
+        assert_eq!(out1, out2);
+
+        let step_up_result = SimulationExecutor::step_up_result_from_dispatch_outcome(&out1)
+            .expect("step-up outcome should map to step-up result");
+        assert_eq!(step_up_result.outcome, StepUpOutcome::Defer);
+        assert_eq!(
+            step_up_result.challenge_method,
+            StepUpChallengeMethod::DeviceBiometric
+        );
     }
 }

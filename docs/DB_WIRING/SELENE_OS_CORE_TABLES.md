@@ -75,7 +75,7 @@ Scope rules:
   - no repeated approval nags until approval state changes or timeout expires
 - SMS onboarding gate rule:
   - before any SMS delivery request is permitted, Selene OS must require `sms_app_setup_complete=true`
-  - if incomplete, Selene OS routes to PH1.ONBOARDING_SMS flow and blocks send path until completion
+  - if incomplete, Selene OS must fail closed on send path until setup completes
 - multilingual pre-parse rule:
   - all voice/text interaction paths apply pre-intent normalization pipeline `PH1.LANG -> PH1.SRL -> PH1.NLP`
   - broken/fragmented/code-switched utterances must be segmented and normalized before intent dispatch

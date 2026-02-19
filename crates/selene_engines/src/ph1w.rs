@@ -477,7 +477,10 @@ fn policy_disarm_reason(policy: WakePolicyContext) -> Option<ReasonCodeId> {
     if policy.explicit_trigger_only {
         return Some(reason_codes::W_SUPPRESS_EXPLICIT_TRIGGER_ONLY);
     }
-    if matches!(policy.session_state, SessionState::Closed) || policy.do_not_disturb || policy.privacy_mode {
+    if matches!(policy.session_state, SessionState::Closed)
+        || policy.do_not_disturb
+        || policy.privacy_mode
+    {
         return Some(reason_codes::W_FAIL_G5_POLICY_BLOCKED);
     }
     None
@@ -869,8 +872,14 @@ mod tests {
         rt.step(input.clone());
         assert_eq!(rt.state(), Ph1wState::Candidate);
 
-        input.policy =
-            WakePolicyContext::v1_with_media_and_trigger(SessionState::Active, false, false, false, false, true);
+        input.policy = WakePolicyContext::v1_with_media_and_trigger(
+            SessionState::Active,
+            false,
+            false,
+            false,
+            false,
+            true,
+        );
         let out = rt.step(input);
 
         assert!(out.iter().any(|e| matches!(

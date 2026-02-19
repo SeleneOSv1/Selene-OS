@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use selene_kernel_contracts::ph1c::{
-    Ph1cRequest, Ph1cResponse, RetryAdvice, TranscriptReject,
-};
+use selene_kernel_contracts::ph1c::{Ph1cRequest, Ph1cResponse, RetryAdvice, TranscriptReject};
 use selene_kernel_contracts::{ContractViolation, Validate};
 
 pub mod reason_codes {
@@ -75,7 +73,10 @@ fn validate_response(resp: &Ph1cResponse) -> Result<(), ContractViolation> {
 }
 
 fn fail_closed_reject() -> Result<TranscriptReject, ContractViolation> {
-    let reject = TranscriptReject::v1(reason_codes::PH1_C_INTERNAL_PIPELINE_ERROR, RetryAdvice::Repeat);
+    let reject = TranscriptReject::v1(
+        reason_codes::PH1_C_INTERNAL_PIPELINE_ERROR,
+        RetryAdvice::Repeat,
+    );
     reject.validate()?;
     Ok(reject)
 }
@@ -84,7 +85,7 @@ fn fail_closed_reject() -> Result<TranscriptReject, ContractViolation> {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1c::{
-        ConfidenceBucket, LanguageTag, PH1C_CONTRACT_VERSION, SessionStateRef, TranscriptOk,
+        ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk, PH1C_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1k::{
         AudioDeviceId, AudioStreamId, DeviceHealth, DeviceState, PreRollBufferId,
@@ -177,11 +178,8 @@ mod tests {
             uncertain_spans: vec![],
             audit_meta: None,
         });
-        let w = Ph1cWiring::new(
-            Ph1cWiringConfig::mvp_v1(true),
-            StubEngine { out: invalid },
-        )
-        .unwrap();
+        let w =
+            Ph1cWiring::new(Ph1cWiringConfig::mvp_v1(true), StubEngine { out: invalid }).unwrap();
         match w.run_turn(&req()).unwrap() {
             Ph1cWiringOutcome::Refused(r) => {
                 assert_eq!(r.reason_code, reason_codes::PH1_C_INTERNAL_PIPELINE_ERROR);

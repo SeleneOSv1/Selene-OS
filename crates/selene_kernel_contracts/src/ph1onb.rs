@@ -2,7 +2,7 @@
 
 use crate::ph1_voice_id::UserId;
 use crate::ph1j::{CorrelationId, DeviceId, TurnId};
-use crate::ph1link::{PrefilledContextRef, TokenId};
+use crate::ph1link::{AppPlatform, PrefilledContextRef, TokenId};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1ONB_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
@@ -209,17 +209,48 @@ fn validate_opt_id(
     Ok(())
 }
 
+fn validate_context_id(
+    field: &'static str,
+    s: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if s.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if s.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "too long",
+        });
+    }
+    if !s.is_ascii() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be ASCII",
+        });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OnbSessionStartDraftRequest {
     pub token_id: TokenId,
     pub prefilled_context_ref: Option<PrefilledContextRef>,
     pub tenant_id: Option<String>,
     pub device_fingerprint: String,
+    pub app_platform: AppPlatform,
+    pub app_instance_id: String,
+    pub deep_link_nonce: String,
+    pub link_opened_at: MonotonicTimeNs,
 }
 
 impl Validate for OnbSessionStartDraftRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.token_id.validate()?;
+        self.app_platform.validate()?;
         if let Some(r) = &self.prefilled_context_ref {
             r.validate()?;
         }
@@ -238,6 +269,22 @@ impl Validate for OnbSessionStartDraftRequest {
             return Err(ContractViolation::InvalidValue {
                 field: "onb_session_start_draft_request.device_fingerprint",
                 reason: "must be <= 256 chars",
+            });
+        }
+        validate_context_id(
+            "onb_session_start_draft_request.app_instance_id",
+            &self.app_instance_id,
+            128,
+        )?;
+        validate_context_id(
+            "onb_session_start_draft_request.deep_link_nonce",
+            &self.deep_link_nonce,
+            128,
+        )?;
+        if self.link_opened_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "onb_session_start_draft_request.link_opened_at",
+                reason: "must be > 0",
             });
         }
         Ok(())
@@ -669,6 +716,8 @@ impl Validate for OnbAccessInstanceCreateResult {
 pub struct OnbCompleteCommitRequest {
     pub onboarding_session_id: OnboardingSessionId,
     pub idempotency_key: String,
+    pub voice_artifact_sync_receipt_ref: Option<String>,
+    pub wake_artifact_sync_receipt_ref: Option<String>,
 }
 
 impl Validate for OnbCompleteCommitRequest {
@@ -678,6 +727,16 @@ impl Validate for OnbCompleteCommitRequest {
             "onb_complete_commit_request.idempotency_key",
             &self.idempotency_key,
             128,
+        )?;
+        validate_opt_id(
+            "onb_complete_commit_request.voice_artifact_sync_receipt_ref",
+            &self.voice_artifact_sync_receipt_ref,
+            192,
+        )?;
+        validate_opt_id(
+            "onb_complete_commit_request.wake_artifact_sync_receipt_ref",
+            &self.wake_artifact_sync_receipt_ref,
+            192,
         )?;
         Ok(())
     }
@@ -1021,12 +1080,20 @@ impl Ph1OnbRequest {
         prefilled_context_ref: Option<PrefilledContextRef>,
         tenant_id: Option<String>,
         device_fingerprint: String,
+        app_platform: AppPlatform,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
     ) -> Result<Self, ContractViolation> {
         let req = OnbSessionStartDraftRequest {
             token_id,
             prefilled_context_ref,
             tenant_id,
             device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
         };
         let r = Self {
             schema_version: PH1ONB_CONTRACT_VERSION,

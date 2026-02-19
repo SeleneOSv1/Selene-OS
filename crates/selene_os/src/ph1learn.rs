@@ -7,8 +7,8 @@ use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1learn::{
     LearnArtifactPackageBuildOk, LearnArtifactPackageBuildRequest, LearnArtifactTarget,
     LearnCapabilityId, LearnRefuse, LearnRequestEnvelope, LearnSignal, LearnSignalAggregateOk,
-    LearnSignalAggregateRequest, LearnTargetEngine, LearnValidationStatus, Ph1LearnRequest,
-    Ph1LearnResponse,
+    LearnSignalAggregateRequest, LearnSignalType, LearnTargetEngine, LearnValidationStatus,
+    Ph1LearnRequest, Ph1LearnResponse,
 };
 use selene_kernel_contracts::{ContractViolation, Validate};
 
@@ -17,8 +17,18 @@ pub mod reason_codes {
 
     // PH1.LEARN OS wiring reason-code namespace. Values are placeholders until registry lock.
     pub const PH1_LEARN_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x4C45_0101);
+    pub const PH1_LEARN_FROZEN_EVAL_LEAKAGE: ReasonCodeId = ReasonCodeId(0x4C45_0102);
+    pub const PH1_LEARN_CALIBRATION_MIN_SAMPLES: ReasonCodeId = ReasonCodeId(0x4C45_0103);
+    pub const PH1_LEARN_DRIFT_RATE_LIMITED: ReasonCodeId = ReasonCodeId(0x4C45_0104);
+    pub const PH1_LEARN_ROLLBACK_METADATA_MISSING: ReasonCodeId = ReasonCodeId(0x4C45_0105);
+    pub const PH1_LEARN_GOV_HANDOFF_BLOCKED: ReasonCodeId = ReasonCodeId(0x4C45_0106);
     pub const PH1_LEARN_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4C45_01F1);
 }
+
+const LEARN_VOICE_CALIBRATION_MIN_SAMPLES: u32 = 24;
+const LEARN_DRIFT_MAX_ADAPTATIONS_24H: u8 = 1;
+const LEARN_DRIFT_MAX_REENROLL_PROMPTS_72H: u8 = 1;
+const LEARN_DRIFT_MAX_BREACHES_14D: u8 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1LearnWiringConfig {
@@ -48,6 +58,9 @@ pub struct LearnTurnInput {
     pub requested_target_engines: Vec<LearnTargetEngine>,
     pub require_derived_only_global: bool,
     pub no_runtime_drift_required: bool,
+    pub recent_user_adaptations_24h: u8,
+    pub recent_user_reenroll_prompts_72h: u8,
+    pub recent_user_drift_breaches_14d: u8,
 }
 
 impl LearnTurnInput {
@@ -61,6 +74,33 @@ impl LearnTurnInput {
         require_derived_only_global: bool,
         no_runtime_drift_required: bool,
     ) -> Result<Self, ContractViolation> {
+        Self::v2(
+            correlation_id,
+            turn_id,
+            tenant_id,
+            signals,
+            requested_target_engines,
+            require_derived_only_global,
+            no_runtime_drift_required,
+            0,
+            0,
+            0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: String,
+        signals: Vec<LearnSignal>,
+        requested_target_engines: Vec<LearnTargetEngine>,
+        require_derived_only_global: bool,
+        no_runtime_drift_required: bool,
+        recent_user_adaptations_24h: u8,
+        recent_user_reenroll_prompts_72h: u8,
+        recent_user_drift_breaches_14d: u8,
+    ) -> Result<Self, ContractViolation> {
         let input = Self {
             correlation_id,
             turn_id,
@@ -69,6 +109,9 @@ impl LearnTurnInput {
             requested_target_engines,
             require_derived_only_global,
             no_runtime_drift_required,
+            recent_user_adaptations_24h,
+            recent_user_reenroll_prompts_72h,
+            recent_user_drift_breaches_14d,
         };
         input.validate()?;
         Ok(input)
@@ -101,6 +144,192 @@ impl Validate for LearnTurnInput {
                 reason: "must be <= 8",
             });
         }
+        if self.recent_user_adaptations_24h > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_turn_input.recent_user_adaptations_24h",
+                reason: "must be <= 16",
+            });
+        }
+        if self.recent_user_reenroll_prompts_72h > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_turn_input.recent_user_reenroll_prompts_72h",
+                reason: "must be <= 16",
+            });
+        }
+        if self.recent_user_drift_breaches_14d > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_turn_input.recent_user_drift_breaches_14d",
+                reason: "must be <= 32",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
+pub enum VoiceArtifactFamily {
+    ThresholdPack,
+    ConfusionPairPack,
+    SpoofPolicyPack,
+    ProfileAdaptationPack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceCalibrationSnapshot {
+    pub sample_count: u32,
+    pub tar_bp: u16,
+    pub far_bp: u16,
+    pub frr_bp: u16,
+    pub roc_auc_bp: u16,
+    pub ci_low_bp: u16,
+    pub ci_high_bp: u16,
+}
+
+impl VoiceCalibrationSnapshot {
+    pub fn v1(
+        sample_count: u32,
+        tar_bp: u16,
+        far_bp: u16,
+        frr_bp: u16,
+        roc_auc_bp: u16,
+        ci_low_bp: u16,
+        ci_high_bp: u16,
+    ) -> Result<Self, ContractViolation> {
+        let snapshot = Self {
+            sample_count,
+            tar_bp,
+            far_bp,
+            frr_bp,
+            roc_auc_bp,
+            ci_low_bp,
+            ci_high_bp,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+}
+
+impl Validate for VoiceCalibrationSnapshot {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.sample_count == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_calibration_snapshot.sample_count",
+                reason: "must be > 0",
+            });
+        }
+        if self.tar_bp > 10_000
+            || self.far_bp > 10_000
+            || self.frr_bp > 10_000
+            || self.roc_auc_bp > 10_000
+            || self.ci_low_bp > 10_000
+            || self.ci_high_bp > 10_000
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_calibration_snapshot",
+                reason: "all basis-point values must be within 0..=10000",
+            });
+        }
+        if self.ci_low_bp > self.ci_high_bp {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_calibration_snapshot.ci",
+                reason: "ci_low_bp must be <= ci_high_bp",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LearnGovArtifactProposal {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub tenant_id: String,
+    pub artifact_id: String,
+    pub artifact_family: VoiceArtifactFamily,
+    pub artifact_version: u32,
+    pub expected_effect_bp: i16,
+    pub rollback_to: String,
+    pub prior_version_compatible: bool,
+    pub no_train_eval_leakage: bool,
+    pub drift_guard_applied: bool,
+    pub calibration: VoiceCalibrationSnapshot,
+}
+
+impl LearnGovArtifactProposal {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: String,
+        artifact_id: String,
+        artifact_family: VoiceArtifactFamily,
+        artifact_version: u32,
+        expected_effect_bp: i16,
+        rollback_to: String,
+        prior_version_compatible: bool,
+        no_train_eval_leakage: bool,
+        drift_guard_applied: bool,
+        calibration: VoiceCalibrationSnapshot,
+    ) -> Result<Self, ContractViolation> {
+        let proposal = Self {
+            correlation_id,
+            turn_id,
+            tenant_id,
+            artifact_id,
+            artifact_family,
+            artifact_version,
+            expected_effect_bp,
+            rollback_to,
+            prior_version_compatible,
+            no_train_eval_leakage,
+            drift_guard_applied,
+            calibration,
+        };
+        proposal.validate()?;
+        Ok(proposal)
+    }
+}
+
+impl Validate for LearnGovArtifactProposal {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        validate_token("learn_gov_artifact_proposal.tenant_id", &self.tenant_id, 64)?;
+        validate_token(
+            "learn_gov_artifact_proposal.artifact_id",
+            &self.artifact_id,
+            128,
+        )?;
+        if self.artifact_version == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_gov_artifact_proposal.artifact_version",
+                reason: "must be > 0",
+            });
+        }
+        if self.expected_effect_bp.abs() > 20_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_gov_artifact_proposal.expected_effect_bp",
+                reason: "must be within -20000..=20000 basis points",
+            });
+        }
+        validate_token(
+            "learn_gov_artifact_proposal.rollback_to",
+            &self.rollback_to,
+            128,
+        )?;
+        if !self.prior_version_compatible {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_gov_artifact_proposal.prior_version_compatible",
+                reason: "must be true",
+            });
+        }
+        if !self.no_train_eval_leakage {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_gov_artifact_proposal.no_train_eval_leakage",
+                reason: "must be true",
+            });
+        }
+        self.calibration.validate()?;
         Ok(())
     }
 }
@@ -111,6 +340,7 @@ pub struct LearnForwardBundle {
     pub turn_id: TurnId,
     pub signal_aggregate: LearnSignalAggregateOk,
     pub artifact_package_build: LearnArtifactPackageBuildOk,
+    pub gov_artifact_proposals: Vec<LearnGovArtifactProposal>,
 }
 
 impl LearnForwardBundle {
@@ -119,12 +349,14 @@ impl LearnForwardBundle {
         turn_id: TurnId,
         signal_aggregate: LearnSignalAggregateOk,
         artifact_package_build: LearnArtifactPackageBuildOk,
+        gov_artifact_proposals: Vec<LearnGovArtifactProposal>,
     ) -> Result<Self, ContractViolation> {
         let bundle = Self {
             correlation_id,
             turn_id,
             signal_aggregate,
             artifact_package_build,
+            gov_artifact_proposals,
         };
         bundle.validate()?;
         Ok(bundle)
@@ -142,6 +374,27 @@ impl Validate for LearnForwardBundle {
                 field: "learn_forward_bundle.artifact_package_build.validation_status",
                 reason: "must be OK",
             });
+        }
+        if self.gov_artifact_proposals.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "learn_forward_bundle.gov_artifact_proposals",
+                reason: "must be <= 32",
+            });
+        }
+        for proposal in &self.gov_artifact_proposals {
+            proposal.validate()?;
+            if proposal.correlation_id != self.correlation_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "learn_forward_bundle.gov_artifact_proposals",
+                    reason: "proposal correlation_id must match bundle correlation_id",
+                });
+            }
+            if proposal.turn_id != self.turn_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "learn_forward_bundle.gov_artifact_proposals",
+                    reason: "proposal turn_id must match bundle turn_id",
+                });
+            }
         }
         Ok(())
     }
@@ -206,6 +459,13 @@ where
         }
         if input.signals.is_empty() {
             return Ok(LearnWiringOutcome::NotInvokedNoSignals);
+        }
+        if has_frozen_eval_evidence_leakage(&input.signals) {
+            return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                LearnCapabilityId::LearnSignalAggregate,
+                reason_codes::PH1_LEARN_FROZEN_EVAL_LEAKAGE,
+                "frozen-eval evidence rows must never enter learn training path".to_string(),
+            )?));
         }
 
         let envelope = LearnRequestEnvelope::v1(
@@ -278,11 +538,107 @@ where
             )?));
         }
 
+        let required_families = required_voice_artifact_families(&input.signals);
+        let voice_artifacts = aggregate_ok
+            .ordered_artifacts
+            .iter()
+            .filter(|artifact| voice_artifact_family_for_target(artifact.target).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        if !required_families.is_empty() {
+            let built_families = voice_artifacts
+                .iter()
+                .filter_map(|artifact| voice_artifact_family_for_target(artifact.target))
+                .collect::<BTreeSet<_>>();
+            if !required_families.is_subset(&built_families) {
+                return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                    LearnCapabilityId::LearnArtifactPackageBuild,
+                    reason_codes::PH1_LEARN_VALIDATION_FAILED,
+                    "missing required voice artifact family in learn package".to_string(),
+                )?));
+            }
+        }
+
+        let drift_adaptation_required =
+            required_families.contains(&VoiceArtifactFamily::ProfileAdaptationPack);
+        if drift_adaptation_required
+            && (input.recent_user_adaptations_24h >= LEARN_DRIFT_MAX_ADAPTATIONS_24H
+                || input.recent_user_reenroll_prompts_72h >= LEARN_DRIFT_MAX_REENROLL_PROMPTS_72H
+                || input.recent_user_drift_breaches_14d >= LEARN_DRIFT_MAX_BREACHES_14D)
+        {
+            return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                LearnCapabilityId::LearnArtifactPackageBuild,
+                reason_codes::PH1_LEARN_DRIFT_RATE_LIMITED,
+                "drift adaptation or re-enrollment is rate limited to prevent thrash".to_string(),
+            )?));
+        }
+
+        if voice_artifacts
+            .iter()
+            .any(|artifact| artifact.rollback_to.is_none())
+        {
+            return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                LearnCapabilityId::LearnArtifactPackageBuild,
+                reason_codes::PH1_LEARN_ROLLBACK_METADATA_MISSING,
+                "voice learn artifacts must include rollback pointer metadata".to_string(),
+            )?));
+        }
+
+        let calibration = if voice_artifacts.is_empty() {
+            None
+        } else {
+            let snapshot = voice_calibration_snapshot_from_signals(&input.signals)?;
+            if snapshot.sample_count < LEARN_VOICE_CALIBRATION_MIN_SAMPLES {
+                return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                    LearnCapabilityId::LearnArtifactPackageBuild,
+                    reason_codes::PH1_LEARN_CALIBRATION_MIN_SAMPLES,
+                    "voice calibration requires cohort sample minimum before governance handoff"
+                        .to_string(),
+                )?));
+            }
+            Some(snapshot)
+        };
+
+        let gov_artifact_proposals = if let Some(calibration_snapshot) = calibration {
+            voice_artifacts
+                .iter()
+                .filter_map(|artifact| {
+                    let family = voice_artifact_family_for_target(artifact.target)?;
+                    let rollback_to = artifact.rollback_to.as_ref()?;
+                    Some(LearnGovArtifactProposal::v1(
+                        input.correlation_id,
+                        input.turn_id,
+                        input.tenant_id.clone(),
+                        artifact.artifact_id.clone(),
+                        family,
+                        artifact.artifact_version,
+                        artifact.expected_effect_bp,
+                        rollback_to.clone(),
+                        true,
+                        true,
+                        drift_adaptation_required,
+                        calibration_snapshot.clone(),
+                    ))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+
+        if !required_families.is_empty() && gov_artifact_proposals.is_empty() {
+            return Ok(LearnWiringOutcome::Refused(LearnRefuse::v1(
+                LearnCapabilityId::LearnArtifactPackageBuild,
+                reason_codes::PH1_LEARN_GOV_HANDOFF_BLOCKED,
+                "voice learn package could not produce governance-ready proposals".to_string(),
+            )?));
+        }
+
         let bundle = LearnForwardBundle::v1(
             input.correlation_id,
             input.turn_id,
             aggregate_ok,
             package_ok,
+            gov_artifact_proposals,
         )?;
         Ok(LearnWiringOutcome::Forwarded(bundle))
     }
@@ -318,7 +674,145 @@ fn targets_for_artifact(target: LearnArtifactTarget) -> Vec<LearnTargetEngine> {
         LearnArtifactTarget::PaeRoutingWeights => vec![LearnTargetEngine::Pae],
         LearnArtifactTarget::SearchWebExtractionHints => vec![LearnTargetEngine::Search],
         LearnArtifactTarget::ListenEnvironmentProfile => vec![LearnTargetEngine::Listen],
+        LearnArtifactTarget::VoiceIdThresholdPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdConfusionPairPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdSpoofPolicyPack => vec![LearnTargetEngine::VoiceId],
+        LearnArtifactTarget::VoiceIdProfileDeltaPack => vec![LearnTargetEngine::VoiceId],
     }
+}
+
+fn has_frozen_eval_evidence_leakage(signals: &[LearnSignal]) -> bool {
+    signals.iter().any(|signal| {
+        signal.evidence_ref.starts_with("frozen_eval:")
+            || signal.evidence_ref.contains(":frozen_eval:")
+    })
+}
+
+fn is_voice_signal(signal_type: LearnSignalType) -> bool {
+    matches!(
+        signal_type,
+        LearnSignalType::VoiceIdFalseReject
+            | LearnSignalType::VoiceIdFalseAccept
+            | LearnSignalType::VoiceIdSpoofRisk
+            | LearnSignalType::VoiceIdMultiSpeaker
+            | LearnSignalType::VoiceIdDriftAlert
+            | LearnSignalType::VoiceIdReauthFriction
+            | LearnSignalType::VoiceIdConfusionPair
+            | LearnSignalType::VoiceIdDrift
+            | LearnSignalType::VoiceIdLowQuality
+    )
+}
+
+fn required_voice_artifact_families(signals: &[LearnSignal]) -> BTreeSet<VoiceArtifactFamily> {
+    let mut families = BTreeSet::new();
+    for signal in signals {
+        match signal.signal_type {
+            LearnSignalType::VoiceIdFalseReject | LearnSignalType::VoiceIdFalseAccept => {
+                families.insert(VoiceArtifactFamily::ThresholdPack);
+                families.insert(VoiceArtifactFamily::ConfusionPairPack);
+            }
+            LearnSignalType::VoiceIdSpoofRisk => {
+                families.insert(VoiceArtifactFamily::SpoofPolicyPack);
+            }
+            LearnSignalType::VoiceIdMultiSpeaker | LearnSignalType::VoiceIdConfusionPair => {
+                families.insert(VoiceArtifactFamily::ConfusionPairPack);
+            }
+            LearnSignalType::VoiceIdDriftAlert
+            | LearnSignalType::VoiceIdReauthFriction
+            | LearnSignalType::VoiceIdDrift
+            | LearnSignalType::VoiceIdLowQuality => {
+                families.insert(VoiceArtifactFamily::ProfileAdaptationPack);
+            }
+            LearnSignalType::SttReject
+            | LearnSignalType::UserCorrection
+            | LearnSignalType::ClarifyLoop
+            | LearnSignalType::ToolFail
+            | LearnSignalType::VocabularyRepeat
+            | LearnSignalType::BargeIn
+            | LearnSignalType::DeliverySwitch => {}
+        }
+    }
+    families
+}
+
+fn voice_artifact_family_for_target(target: LearnArtifactTarget) -> Option<VoiceArtifactFamily> {
+    match target {
+        LearnArtifactTarget::VoiceIdThresholdPack => Some(VoiceArtifactFamily::ThresholdPack),
+        LearnArtifactTarget::VoiceIdConfusionPairPack => {
+            Some(VoiceArtifactFamily::ConfusionPairPack)
+        }
+        LearnArtifactTarget::VoiceIdSpoofPolicyPack => Some(VoiceArtifactFamily::SpoofPolicyPack),
+        LearnArtifactTarget::VoiceIdProfileDeltaPack => {
+            Some(VoiceArtifactFamily::ProfileAdaptationPack)
+        }
+        LearnArtifactTarget::KnowTenantGlossaryPack
+        | LearnArtifactTarget::PronLexiconPack
+        | LearnArtifactTarget::CacheDecisionSkeleton
+        | LearnArtifactTarget::PruneClarificationOrdering
+        | LearnArtifactTarget::PaeRoutingWeights
+        | LearnArtifactTarget::SearchWebExtractionHints
+        | LearnArtifactTarget::ListenEnvironmentProfile => None,
+    }
+}
+
+fn voice_calibration_snapshot_from_signals(
+    signals: &[LearnSignal],
+) -> Result<VoiceCalibrationSnapshot, ContractViolation> {
+    let voice_signals = signals
+        .iter()
+        .filter(|signal| is_voice_signal(signal.signal_type))
+        .collect::<Vec<_>>();
+    if voice_signals.is_empty() {
+        return VoiceCalibrationSnapshot::v1(1, 10_000, 0, 0, 10_000, 10_000, 10_000);
+    }
+
+    let sample_count = voice_signals
+        .iter()
+        .map(|signal| signal.occurrence_count as u32)
+        .sum::<u32>();
+    let false_accept_events = voice_signals
+        .iter()
+        .filter(|signal| {
+            matches!(
+                signal.signal_type,
+                LearnSignalType::VoiceIdFalseAccept | LearnSignalType::VoiceIdSpoofRisk
+            )
+        })
+        .map(|signal| signal.occurrence_count as u32)
+        .sum::<u32>();
+    let false_reject_events = voice_signals
+        .iter()
+        .filter(|signal| {
+            matches!(
+                signal.signal_type,
+                LearnSignalType::VoiceIdFalseReject
+                    | LearnSignalType::VoiceIdMultiSpeaker
+                    | LearnSignalType::VoiceIdDriftAlert
+                    | LearnSignalType::VoiceIdReauthFriction
+                    | LearnSignalType::VoiceIdDrift
+                    | LearnSignalType::VoiceIdLowQuality
+            )
+        })
+        .map(|signal| signal.occurrence_count as u32)
+        .sum::<u32>();
+    let total = sample_count.max(1);
+    let far_bp = ((false_accept_events * 10_000) / total).min(10_000) as u16;
+    let frr_bp = ((false_reject_events * 10_000) / total).min(10_000) as u16;
+    let tar_bp = 10_000u16.saturating_sub(frr_bp);
+    let roc_auc_bp = 10_000u16.saturating_sub(((far_bp as u32 + frr_bp as u32) / 2) as u16);
+    let ci_margin_bp = ((4_000u32 / total).max(50)).min(2_000) as u16;
+    let ci_low_bp = tar_bp.saturating_sub(ci_margin_bp);
+    let ci_high_bp = tar_bp.saturating_add(ci_margin_bp).min(10_000);
+
+    VoiceCalibrationSnapshot::v1(
+        sample_count,
+        tar_bp,
+        far_bp,
+        frr_bp,
+        roc_auc_bp,
+        ci_low_bp,
+        ci_high_bp,
+    )
 }
 
 fn validate_token(
@@ -355,6 +849,7 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1learn::{
         LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnScope, LearnSignalAggregateOk,
+        LearnSignalType,
     };
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -473,6 +968,160 @@ mod tests {
         }
     }
 
+    struct DeterministicVoiceLearnEngine;
+
+    impl Ph1LearnEngine for DeterministicVoiceLearnEngine {
+        fn run(&self, req: &Ph1LearnRequest) -> Ph1LearnResponse {
+            match req {
+                Ph1LearnRequest::LearnSignalAggregate(r) => {
+                    let artifacts = vec![
+                        LearnArtifactCandidate::v1(
+                            "vid_threshold".to_string(),
+                            LearnArtifactTarget::VoiceIdThresholdPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            7,
+                            320,
+                            "vid:threshold:prov".to_string(),
+                            Some("vid_threshold.prev".to_string()),
+                            true,
+                        )
+                        .unwrap(),
+                        LearnArtifactCandidate::v1(
+                            "vid_confusion".to_string(),
+                            LearnArtifactTarget::VoiceIdConfusionPairPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            5,
+                            280,
+                            "vid:confusion:prov".to_string(),
+                            Some("vid_confusion.prev".to_string()),
+                            true,
+                        )
+                        .unwrap(),
+                        LearnArtifactCandidate::v1(
+                            "vid_spoof".to_string(),
+                            LearnArtifactTarget::VoiceIdSpoofPolicyPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            3,
+                            150,
+                            "vid:spoof:prov".to_string(),
+                            Some("vid_spoof.prev".to_string()),
+                            true,
+                        )
+                        .unwrap(),
+                        LearnArtifactCandidate::v1(
+                            "vid_profile".to_string(),
+                            LearnArtifactTarget::VoiceIdProfileDeltaPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            4,
+                            220,
+                            "vid:profile:prov".to_string(),
+                            Some("vid_profile.prev".to_string()),
+                            true,
+                        )
+                        .unwrap(),
+                    ];
+                    Ph1LearnResponse::LearnSignalAggregateOk(
+                        LearnSignalAggregateOk::v1(
+                            ReasonCodeId(721),
+                            artifacts[0].artifact_id.clone(),
+                            artifacts,
+                            true,
+                            true,
+                            true,
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
+                Ph1LearnRequest::LearnArtifactPackageBuild(r) => {
+                    Ph1LearnResponse::LearnArtifactPackageBuildOk(
+                        LearnArtifactPackageBuildOk::v1(
+                            ReasonCodeId(722),
+                            LearnValidationStatus::Ok,
+                            vec![],
+                            r.target_engines.clone(),
+                            true,
+                            true,
+                            true,
+                            true,
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
+            }
+        }
+    }
+
+    struct MissingRollbackVoiceLearnEngine;
+
+    impl Ph1LearnEngine for MissingRollbackVoiceLearnEngine {
+        fn run(&self, req: &Ph1LearnRequest) -> Ph1LearnResponse {
+            match req {
+                Ph1LearnRequest::LearnSignalAggregate(r) => {
+                    let artifact = vec![
+                        LearnArtifactCandidate::v1(
+                            "vid_threshold".to_string(),
+                            LearnArtifactTarget::VoiceIdThresholdPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            3,
+                            120,
+                            "vid:threshold:prov".to_string(),
+                            None,
+                            true,
+                        )
+                        .unwrap(),
+                        LearnArtifactCandidate::v1(
+                            "vid_confusion".to_string(),
+                            LearnArtifactTarget::VoiceIdConfusionPairPack,
+                            LearnScope::Tenant,
+                            Some(r.tenant_id.clone()),
+                            2,
+                            90,
+                            "vid:confusion:prov".to_string(),
+                            Some("vid_confusion.prev".to_string()),
+                            true,
+                        )
+                        .unwrap(),
+                    ];
+                    Ph1LearnResponse::LearnSignalAggregateOk(
+                        LearnSignalAggregateOk::v1(
+                            ReasonCodeId(731),
+                            artifact[0].artifact_id.clone(),
+                            artifact,
+                            true,
+                            true,
+                            true,
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
+                Ph1LearnRequest::LearnArtifactPackageBuild(r) => {
+                    Ph1LearnResponse::LearnArtifactPackageBuildOk(
+                        LearnArtifactPackageBuildOk::v1(
+                            ReasonCodeId(732),
+                            LearnValidationStatus::Ok,
+                            vec![],
+                            r.target_engines.clone(),
+                            true,
+                            true,
+                            true,
+                            true,
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
+            }
+        }
+    }
+
     fn signal(
         signal_id: &str,
         signal_type: selene_kernel_contracts::ph1learn::LearnSignalType,
@@ -512,6 +1161,24 @@ mod tests {
             vec![],
             true,
             true,
+        )
+        .unwrap()
+    }
+
+    fn voice_signal(signal_id: &str, signal_type: LearnSignalType, occ: u16) -> LearnSignal {
+        LearnSignal::v1(
+            signal_id.to_string(),
+            "tenant_1".to_string(),
+            signal_type,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            "voice_metric".to_string(),
+            150,
+            occ,
+            false,
+            false,
+            false,
+            format!("learn:evidence:{}", signal_id),
         )
         .unwrap()
     }
@@ -583,5 +1250,124 @@ mod tests {
 
         let outcome = wiring.run_turn(&empty_input).unwrap();
         assert_eq!(outcome, LearnWiringOutcome::NotInvokedNoSignals);
+    }
+
+    #[test]
+    fn at_learn_05_voice_artifact_handoff_includes_metrics_ci_and_rollback_metadata() {
+        let wiring = Ph1LearnWiring::new(
+            Ph1LearnWiringConfig::mvp_v1(true),
+            DeterministicVoiceLearnEngine,
+        )
+        .unwrap();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5302),
+            TurnId(502),
+            "tenant_1".to_string(),
+            vec![
+                voice_signal("v1", LearnSignalType::VoiceIdFalseReject, 8),
+                voice_signal("v2", LearnSignalType::VoiceIdFalseAccept, 8),
+                voice_signal("v3", LearnSignalType::VoiceIdSpoofRisk, 8),
+                voice_signal("v4", LearnSignalType::VoiceIdDriftAlert, 8),
+            ],
+            vec![],
+            true,
+            true,
+        )
+        .unwrap();
+
+        let outcome = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded");
+        };
+        assert_eq!(bundle.gov_artifact_proposals.len(), 4);
+        for proposal in &bundle.gov_artifact_proposals {
+            assert!(proposal.calibration.sample_count >= LEARN_VOICE_CALIBRATION_MIN_SAMPLES);
+            assert!(proposal.calibration.ci_low_bp <= proposal.calibration.ci_high_bp);
+            assert!(!proposal.rollback_to.is_empty());
+        }
+    }
+
+    #[test]
+    fn at_learn_06_frozen_eval_signal_leakage_is_refused() {
+        let wiring =
+            Ph1LearnWiring::new(Ph1LearnWiringConfig::mvp_v1(true), DeterministicLearnEngine)
+                .unwrap();
+        let mut bad = signal("sig_frozen", LearnSignalType::SttReject);
+        bad.evidence_ref = "frozen_eval:lang_en:row_11".to_string();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5303),
+            TurnId(503),
+            "tenant_1".to_string(),
+            vec![bad],
+            vec![],
+            true,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_LEARN_FROZEN_EVAL_LEAKAGE
+        );
+    }
+
+    #[test]
+    fn at_learn_07_drift_rate_limit_blocks_profile_adaptation() {
+        let wiring = Ph1LearnWiring::new(
+            Ph1LearnWiringConfig::mvp_v1(true),
+            DeterministicVoiceLearnEngine,
+        )
+        .unwrap();
+        let input = LearnTurnInput::v2(
+            CorrelationId(5304),
+            TurnId(504),
+            "tenant_1".to_string(),
+            vec![voice_signal("v5", LearnSignalType::VoiceIdDriftAlert, 25)],
+            vec![],
+            true,
+            true,
+            LEARN_DRIFT_MAX_ADAPTATIONS_24H,
+            0,
+            0,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_LEARN_DRIFT_RATE_LIMITED
+        );
+    }
+
+    #[test]
+    fn at_learn_08_missing_rollback_metadata_is_refused() {
+        let wiring = Ph1LearnWiring::new(
+            Ph1LearnWiringConfig::mvp_v1(true),
+            MissingRollbackVoiceLearnEngine,
+        )
+        .unwrap();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5305),
+            TurnId(505),
+            "tenant_1".to_string(),
+            vec![voice_signal("v6", LearnSignalType::VoiceIdFalseReject, 24)],
+            vec![],
+            true,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_LEARN_ROLLBACK_METADATA_MISSING
+        );
     }
 }

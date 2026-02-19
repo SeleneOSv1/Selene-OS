@@ -4,15 +4,16 @@ use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1f::ConversationTurnInput;
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1m::{
-    MemoryConfidence, MemoryConsent, MemoryGraphEdgeInput, MemoryGraphEdgeKind,
-    MemoryGraphNodeInput, MemoryGraphNodeKind, MemoryKey, MemoryLayer, MemoryLedgerEvent,
-    MemoryLedgerEventKind, MemoryMetricPayload, MemoryProvenance, MemoryRetentionMode,
-    MemorySensitivityFlag, MemorySuppressionRule, MemorySuppressionRuleKind,
+    MemoryConfidence, MemoryConsent, MemoryEmotionalThreadState, MemoryGraphEdgeInput,
+    MemoryGraphEdgeKind, MemoryGraphNodeInput, MemoryGraphNodeKind, MemoryKey, MemoryLayer,
+    MemoryLedgerEvent, MemoryLedgerEventKind, MemoryMetricPayload, MemoryProvenance,
+    MemoryRetentionMode, MemorySensitivityFlag, MemorySuppressionRule, MemorySuppressionRuleKind,
     MemorySuppressionTargetType, MemoryThreadDigest, MemoryUsePolicy, MemoryValue,
-    MemoryEmotionalThreadState,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
-use selene_storage::ph1f::{IdentityRecord, IdentityStatus, MemoryThreadEventKind, Ph1fStore, StorageError};
+use selene_storage::ph1f::{
+    IdentityRecord, IdentityStatus, MemoryThreadEventKind, Ph1fStore, StorageError,
+};
 use selene_storage::repo::{Ph1MRepo, Ph1fFoundationRepo};
 
 fn user(id: &str) -> UserId {
@@ -653,5 +654,8 @@ fn at_m_db_10_retention_mode_commit_idempotent() {
         .unwrap();
     assert_eq!(second_effective_at, MonotonicTimeNs(102));
     let pref_after = s.ph1m_retention_preference_row(&user_id).unwrap();
-    assert_eq!(pref_after.memory_retention_mode, MemoryRetentionMode::Default);
+    assert_eq!(
+        pref_after.memory_retention_mode,
+        MemoryRetentionMode::Default
+    );
 }

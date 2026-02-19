@@ -10,12 +10,18 @@
 - `status`: `ACTIVE`
 - `related_inputs`: Optional pronunciation-hint packs from `PH1.PRON` for wake-variant robustness only (no wake authority changes)
 
+## Phone-First Contract Lock
+- Wake runtime is phone-first; local wake artifacts are primary for latency, cloud-backed sync is mandatory for continuity.
+- Platform trigger policy is explicit: `IOS` defaults to explicit-trigger-only (`explicit_trigger_only=true`, side-button/app-open trigger), while `ANDROID` and desktop may run always-on wake when policy allows.
+- Wake artifacts must maintain `ACTIVE + N-1 rollback` pointers on phone and reconcile continuously with Selene via Engine B outbox handoff.
+- Raw wake audio remains excluded from default sync/storage paths.
+
 ## Capability List
 
 ### `PH1W_ENROLL_START_DRAFT_ROW`
 - `name`: Start wake enrollment draft session
 - `input_schema`: `(now, user_id, device_id, onboarding_session_id?, pass_target, max_attempts, enrollment_timeout_ms, idempotency_key)`
-- `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
+- `output_schema`: `Result<WakeEnrollStartResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `simulation_ids`: `[WAKE_ENROLL_START_DRAFT]`
@@ -23,15 +29,15 @@
 ### `PH1W_ENROLL_SAMPLE_COMMIT_ROW`
 - `name`: Commit one wake enrollment sample and update enrollment counters/state
 - `input_schema`: `(now, wake_enrollment_session_id, sample quality fields, result, reason_code?, idempotency_key)`
-- `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
+- `output_schema`: `Result<WakeEnrollSampleResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `simulation_ids`: `[WAKE_ENROLL_SAMPLE_COMMIT]`
 
 ### `PH1W_ENROLL_COMPLETE_COMMIT_ROW`
 - `name`: Complete wake enrollment and bind active wake profile
-- `input_schema`: `(now, wake_enrollment_session_id, wake_profile_id, artifact_version, idempotency_key)`
-- `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
+- `input_schema`: `(now, wake_enrollment_session_id, wake_profile_id, idempotency_key)`
+- `output_schema`: `Result<WakeEnrollCompleteResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `simulation_ids`: `[WAKE_ENROLL_COMPLETE_COMMIT]`
@@ -39,7 +45,7 @@
 ### `PH1W_ENROLL_DEFER_COMMIT_ROW`
 - `name`: Mark wake enrollment deferred/pending with deterministic reason code
 - `input_schema`: `(now, wake_enrollment_session_id, deferred_until?, reason_code, idempotency_key)`
-- `output_schema`: `Result<WakeEnrollmentSessionRecord, StorageError>`
+- `output_schema`: `Result<WakeEnrollDeferResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 - `simulation_ids`: `[WAKE_ENROLL_DEFER_COMMIT]`
@@ -86,15 +92,26 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
+### `PH1W_ENROLL_COMPLETE_COMMIT_ROW` sync receipt output (implemented)
+- `name`: Finalize wake profile and emit deterministic sync receipt ref
+- `input_schema`: `(wake_enrollment_session_id, wake_profile_id, idempotency_key)`
+- `output_schema`: `WakeEnrollCompleteResult{wake_profile_id, wake_artifact_sync_receipt_ref}`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `DECLARED (DB_WRITE)`
+- `note`: completion now enqueues deterministic `mobile_artifact_sync_queue` rows keyed by `wake_artifact_sync_receipt_ref` so local->cloud sync workers have concrete pending jobs.
+
 ## Failure Modes + Reason Codes
 - enrollment bound/quality validation failure: `W_ENROLL_INVALID_BOUNDS`, `W_ENROLL_SAMPLE_INVALID`
 - enrollment state/ownership violation: `W_ENROLL_ALREADY_IN_PROGRESS`, `W_ENROLL_SAMPLE_SESSION_CLOSED`, `W_ENROLL_DEVICE_OWNERSHIP_MISMATCH`
+- platform-policy refusal: wake enroll start tied to `IOS` onboarding session is refused by default under explicit-trigger-only policy
 - runtime scope validation failure: `W_RUNTIME_DEVICE_MISSING`, `W_RUNTIME_SESSION_INVALID`, `W_RUNTIME_USER_INVALID`
 - runtime state transition validation failure: `W_RUNTIME_STATE_TRANSITION_INVALID`
 - explicit-trigger-only suppression: `W_SUPPRESS_EXPLICIT_TRIGGER_ONLY`
 - start-of-utterance gate rejection: `W_FAIL_G1A_NOT_UTTERANCE_START`
 - liveness/replay rejection: `W_FAIL_G3A_REPLAY_SUSPECTED`
 - idempotency replay/no-op: `W_IDEMPOTENCY_REPLAY`
+- sync enqueue failure: `W_SYNC_ENQUEUE_FAILED`
+- sync scope violation: `W_SYNC_SCOPE_VIOLATION`
 
 ## Audit Emission Requirements Per Capability
 - Enrollment/runtime write capabilities must emit PH1.J events with deterministic reason codes:
@@ -112,6 +129,8 @@
 - Unknown `implementation_id` must fail closed at contract parse/runtime dispatch boundaries.
 - `explicit_trigger_only=true` is a suppression policy signal only; it must never execute wake capture.
 - Wake remains non-authoritative: no identity/permission/action side effects.
+- Missing local wake artifact pointer or unresolved local/cloud pointer conflict must fail closed to conservative wake posture.
+- Continuous sync failure must emit deterministic degraded-sync reason codes; no silent divergence.
 
 ## Sources
 - `crates/selene_storage/src/repo.rs` (`Ph1wWakeRepo`)

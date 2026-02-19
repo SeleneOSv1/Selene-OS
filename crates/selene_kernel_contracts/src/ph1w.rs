@@ -455,6 +455,7 @@ pub struct WakeEnrollStartDraftRequest {
     pub user_id: UserId,
     pub device_id: DeviceId,
     pub onboarding_session_id: Option<String>,
+    pub allow_ios_wake_override: bool,
     pub pass_target: u8,
     pub max_attempts: u8,
     pub enrollment_timeout_ms: u32,
@@ -793,6 +794,7 @@ pub struct WakeEnrollCompleteResult {
     pub wake_enrollment_session_id: WakeEnrollmentSessionId,
     pub wake_enroll_status: WakeEnrollStatus,
     pub wake_profile_id: String,
+    pub wake_artifact_sync_receipt_ref: Option<String>,
 }
 
 impl WakeEnrollCompleteResult {
@@ -801,11 +803,26 @@ impl WakeEnrollCompleteResult {
         wake_enroll_status: WakeEnrollStatus,
         wake_profile_id: String,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_sync_receipt(
+            wake_enrollment_session_id,
+            wake_enroll_status,
+            wake_profile_id,
+            None,
+        )
+    }
+
+    pub fn v1_with_sync_receipt(
+        wake_enrollment_session_id: WakeEnrollmentSessionId,
+        wake_enroll_status: WakeEnrollStatus,
+        wake_profile_id: String,
+        wake_artifact_sync_receipt_ref: Option<String>,
+    ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1W_CONTRACT_VERSION,
             wake_enrollment_session_id,
             wake_enroll_status,
             wake_profile_id,
+            wake_artifact_sync_receipt_ref,
         };
         r.validate()?;
         Ok(r)
@@ -826,6 +843,13 @@ impl Validate for WakeEnrollCompleteResult {
             &self.wake_profile_id,
             128,
         )?;
+        if let Some(ref receipt_ref) = self.wake_artifact_sync_receipt_ref {
+            validate_id(
+                "wake_enroll_complete_result.wake_artifact_sync_receipt_ref",
+                receipt_ref,
+                192,
+            )?;
+        }
         Ok(())
     }
 }
@@ -1097,8 +1121,14 @@ mod tests {
 
     #[test]
     fn wake_policy_context_can_enable_explicit_trigger_only() {
-        let p =
-            WakePolicyContext::v1_with_media_and_trigger(SessionState::Active, false, false, false, true, true);
+        let p = WakePolicyContext::v1_with_media_and_trigger(
+            SessionState::Active,
+            false,
+            false,
+            false,
+            true,
+            true,
+        );
         assert!(p.media_playback_active);
         assert!(p.explicit_trigger_only);
     }

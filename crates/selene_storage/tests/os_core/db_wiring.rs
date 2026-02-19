@@ -151,7 +151,7 @@ fn at_os_core_db_04_rebuild_current_from_ledger() {
     .unwrap();
 
     let before = s.work_orders_current_rows().clone();
-    s.rebuild_work_orders_current_rows();
+    s.rebuild_work_orders_current_rows().unwrap();
     let after = s.work_orders_current_rows().clone();
     assert_eq!(before, after);
 

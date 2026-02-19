@@ -185,11 +185,19 @@ impl Ph1LinkRuntime {
                     missing_required_fields,
                     bound_hash,
                     conflict_reason,
+                    app_platform,
+                    app_instance_id,
+                    deep_link_nonce,
+                    link_opened_at,
                     ctx_ref,
                 ) = store.ph1link_invite_open_activate_commit_with_idempotency(
                     req.now,
                     r.token_id.clone(),
                     r.device_fingerprint.clone(),
+                    r.app_platform,
+                    r.app_instance_id.clone(),
+                    r.deep_link_nonce.clone(),
+                    r.link_opened_at,
                     r.idempotency_key.clone(),
                 )?;
 
@@ -221,6 +229,10 @@ impl Ph1LinkRuntime {
                     missing_required_fields,
                     conflict_reason,
                     bound_hash,
+                    app_platform,
+                    app_instance_id,
+                    deep_link_nonce,
+                    link_opened_at,
                     ctx_ref,
                 )
                 .map_err(StorageError::ContractViolation)?;
@@ -371,6 +383,10 @@ impl Ph1LinkRuntime {
                     missing_required_fields,
                     conflict_reason,
                     bound,
+                    None,
+                    None,
+                    None,
+                    None,
                     None,
                 )
                 .map_err(StorageError::ContractViolation)?;
@@ -641,6 +657,10 @@ mod tests {
             now(20),
             token_id.clone(),
             "device_fp_a".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_link".to_string(),
+            "nonce_link_1".to_string(),
+            now(20),
             "idem_link_open_1".to_string(),
         )
         .unwrap();
@@ -661,6 +681,10 @@ mod tests {
             now(21),
             token_id,
             "device_fp_b".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_link".to_string(),
+            "nonce_link_2".to_string(),
+            now(21),
             "idem_link_open_2".to_string(),
         )
         .unwrap();
@@ -774,6 +798,10 @@ mod tests {
             now(11),
             token_id.clone(),
             "device_fp_a".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_link".to_string(),
+            "nonce_link_5".to_string(),
+            now(11),
             "idem_link_open_bind_5".to_string(),
         )
         .unwrap();
@@ -899,6 +927,10 @@ mod tests {
             now(20),
             token_id.clone(),
             "device_fp_a".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_link".to_string(),
+            "nonce_link_7".to_string(),
+            now(20),
             "idem_link_open_bind".to_string(),
         )
         .unwrap();

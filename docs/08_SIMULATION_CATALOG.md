@@ -32,7 +32,7 @@ Locked schema rules:
 | LINK_INVITE_GENERATE_DRAFT | DRAFT | Link | Create onboarding draft + minimal token preview (no send) | DRAFT | v1 | Write onboarding draft + token map only |
 | LINK_INVITE_DRAFT_UPDATE_COMMIT | COMMIT | Link | Update onboarding draft with creator-provided fields (deterministic) | DRAFT | v1 | Update onboarding draft record only |
 | LINK_INVITE_SEND_COMMIT | COMMIT | Link | Legacy do-not-wire send placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
-| LINK_INVITE_OPEN_ACTIVATE_COMMIT | COMMIT | Link | Validate invite link on open, bind device fingerprint, enforce idempotency key, resolve token_id->draft_id | DRAFT | v1 | Mark link OPENED/ACTIVATED; mismatch executes single forward-block branch |
+| LINK_INVITE_OPEN_ACTIVATE_COMMIT | COMMIT | Link | Validate invite link on app-open, bind device fingerprint, bind app context, enforce idempotency key, resolve token_id->draft_id | DRAFT | v1 | Mark link OPENED/ACTIVATED with app-open context; mismatch executes single forward-block branch |
 | LINK_INVITE_RESEND_COMMIT | COMMIT | Link | Legacy do-not-wire resend placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
 | LINK_INVITE_REVOKE_REVOKE | REVOKE | Link | Revoke an invite link (activated/opened links require AP override; otherwise fail-closed) | DRAFT | v1 | Mark link REVOKED (state write) |
 | LINK_INVITE_EXPIRED_RECOVERY_COMMIT | COMMIT | Link | Replace an expired invite link with a deterministic replacement preserving metadata | ACTIVE | v1 | State write only (replacement token/link_url); delivery via LINK_DELIVER_INVITE |
@@ -40,7 +40,7 @@ Locked schema rules:
 | LINK_ROLE_PROPOSE_DRAFT | DRAFT | Link | Propose a new role/position template for AP approval (sandbox) | DRAFT | v1 | Write role proposal draft only |
 | LINK_INVITE_DUAL_ROLE_CONFLICT_ESCALATE_DRAFT | DRAFT | Link | Detect dual-role conflict and open an escalation case (no execution) | DRAFT | v1 | Write escalation draft only |
 | LINK_DELIVERY_FAILURE_HANDLING_COMMIT | COMMIT | Link | Legacy do-not-wire failure placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; state handling only, delivery via LINK_DELIVER_INVITE |
-| ONB_SESSION_START_DRAFT | DRAFT | Onboarding | Create onboarding session draft after link activation | DRAFT | v1 | Write onboarding session draft only |
+| ONB_SESSION_START_DRAFT | DRAFT | Onboarding | Create onboarding session draft after link activation with app-open context handoff | DRAFT | v1 | Write onboarding session draft only |
 | ONB_BIZ_START_DRAFT | DRAFT | OnboardingBusiness | Start company/tenant prerequisite onboarding draft | DRAFT | v1 | Write business onboarding draft only |
 | ONB_BIZ_VALIDATE_COMPANY_COMMIT | COMMIT | OnboardingBusiness | Validate/create company shell prerequisites deterministically | DRAFT | v1 | Create/update tenant company shell |
 | ONB_BIZ_COMPLETE_COMMIT | COMMIT | OnboardingBusiness | Finalize business onboarding prerequisite state | DRAFT | v1 | Mark business onboarding complete |
@@ -50,7 +50,7 @@ Locked schema rules:
 | ONB_EMPLOYEE_SENDER_VERIFY_COMMIT | COMMIT | Onboarding | Commit schema-required sender confirmation decision (legacy id retained) | DRAFT | v1 | Update verification state |
 | ONB_PRIMARY_DEVICE_CONFIRM_COMMIT | COMMIT | Onboarding | Record primary device proof (biometric/passcode) | DRAFT | v1 | Write device proof record |
 | ONB_ACCESS_INSTANCE_CREATE_COMMIT | COMMIT | Onboarding | Create per-user access instance (PH2.ACCESS.002 clone) | DRAFT | v1 | Create access instance record |
-| ONB_COMPLETE_COMMIT | COMMIT | Onboarding | Atomically commit onboarding draft into real employee/user record and complete onboarding | DRAFT | v1 | Atomic commit + draft finalization + token consume + audit |
+| ONB_COMPLETE_COMMIT | COMMIT | Onboarding | Complete onboarding with required voice sync receipt refs and platform-gated wake sync receipt refs | DRAFT | v1 | Atomic commit + token consume + audit |
 | ONB_REQUIREMENT_BACKFILL_START_DRAFT | DRAFT | Onboarding | Create deterministic campaign draft for applying new requirements to current staff | ACTIVE | v1 | Write backfill campaign draft + target snapshot |
 | ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT | COMMIT | Onboarding | Notify affected current staff to provide newly required fields/proofs | ACTIVE | v1 | Write campaign progress + broadcast/reminder handoff refs |
 | ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT | COMMIT | Onboarding | Finalize backfill campaign with deterministic completion/exception counts | ACTIVE | v1 | Write campaign terminal state |
@@ -64,11 +64,11 @@ Locked schema rules:
 | POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT | COMMIT | Position | Activate a position requirements schema version | ACTIVE | v1 | Update active schema version for position |
 | VOICE_ID_ENROLL_START_DRAFT | DRAFT | VoiceIdentity | Start voice recognition enrollment loop (tight record->grade) | DRAFT | v1 | Write enrollment session state only |
 | VOICE_ID_ENROLL_SAMPLE_COMMIT | COMMIT | VoiceIdentity | Capture + grade one voice enrollment sample and update progress | DRAFT | v1 | Store derived features + update enrollment progress |
-| VOICE_ID_ENROLL_COMPLETE_COMMIT | COMMIT | VoiceIdentity | Finalize voice profile artifact after PASS target reached | DRAFT | v1 | Write voice profile artifact (derived; no raw audio) |
+| VOICE_ID_ENROLL_COMPLETE_COMMIT | COMMIT | VoiceIdentity | Finalize voice profile artifact after PASS target reached | DRAFT | v1 | Write voice profile artifact + emit voice artifact sync receipt ref |
 | VOICE_ID_ENROLL_DEFER_COMMIT | COMMIT | VoiceIdentity | Mark voice enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
 | WAKE_ENROLL_START_DRAFT | DRAFT | Wake | Start wake-word enrollment loop (tight record->grade) | DRAFT | v1 | Write enrollment session state only |
 | WAKE_ENROLL_SAMPLE_COMMIT | COMMIT | Wake | Capture + grade one wake enrollment sample and update progress | DRAFT | v1 | Store wake sample features + update enrollment progress |
-| WAKE_ENROLL_COMPLETE_COMMIT | COMMIT | Wake | Finalize wake profile artifact after PASS target reached | DRAFT | v1 | Write wake profile artifact (derived; no raw audio) |
+| WAKE_ENROLL_COMPLETE_COMMIT | COMMIT | Wake | Finalize wake profile artifact after PASS target reached | DRAFT | v1 | Write wake profile artifact + emit wake artifact sync receipt ref |
 | WAKE_ENROLL_DEFER_COMMIT | COMMIT | Wake | Mark wake enrollment as PENDING and request reminder scheduling | DRAFT | v1 | Update enrollment state only |
 | ACCESS_OVERRIDE_TEMP_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved temporary/one-shot override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 override state |
 | ACCESS_OVERRIDE_PERM_GRANT_COMMIT | COMMIT | Access | Apply an AP-approved permanent override to a user's per-user access instance | DRAFT | v1 | Update PH2.ACCESS.002 baseline/override state |
@@ -125,7 +125,6 @@ Locked schema rules:
 | BCAST_CANCEL_COMMIT | COMMIT | Broadcast | Commit broadcast cancellation by sender/policy | DRAFT | v1 | Append cancel lifecycle event + envelope close |
 | DELIVERY_SEND_COMMIT | COMMIT | Delivery | Commit provider send request for a prepared recipient payload | DRAFT | v1 | Append delivery provider attempt + proof reference |
 | DELIVERY_CANCEL_COMMIT | COMMIT | Delivery | Commit provider cancel request for an in-flight delivery attempt | DRAFT | v1 | Append provider cancel attempt + status update |
-| SMS_SETUP_SIM | COMMIT | OnboardingSms | Commit SMS app setup completion state for a user | DRAFT | v1 | Append SMS setup lifecycle event + current projection update |
 | LEARN_MODEL_UPDATE_SIM | COMMIT | Learning | Commit governed learning artifact updates from feedback/correction loops | DRAFT | v1 | Append adaptation artifact event rows |
 | MEMORY_FORGET_COMMIT | COMMIT | Memory | Commit memory forget request with deterministic bounded scope | ACTIVE | v1 | Append forget event + update memory current projection |
 | MEMORY_SUPPRESSION_SET_COMMIT | COMMIT | Memory | Commit memory suppression control update (`DO_NOT_MENTION|DO_NOT_REPEAT|DO_NOT_STORE`) | ACTIVE | v1 | Upsert suppression rule state |
@@ -168,7 +167,6 @@ Hard rules
 | Emotional | [`preferences_current`, `memory_current`] | [`preferences_ledger`, `artifacts_ledger`, `audit_events`] |
 | Broadcast | [`comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`] | [`comms.broadcast_envelopes_ledger`, `comms.broadcast_envelopes_current`, `comms.broadcast_recipients_current`, `comms.broadcast_delivery_attempts_ledger`, `comms.broadcast_ack_ledger`] |
 | Delivery | [`comms.delivery_attempts_current`, `comms.delivery_provider_health`] | [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`] |
-| OnboardingSms | [`comms.sms_app_setup_current`] | [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`] |
 | Language | [`conversation_ledger`] | [`audit_events`] |
 | Learning | [`artifacts_ledger`] | [`artifacts_ledger`] |
 | Memory | [`memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] | [`memory.memory_atoms_ledger`, `memory.memory_atoms_current`, `memory.memory_suppression_rules`, `memory.memory_threads_current`] |
@@ -366,6 +364,10 @@ status: SENT
 ```text
 token_id: string
 device_fingerprint: string
+app_platform: enum (IOS | ANDROID)
+app_instance_id: string
+deep_link_nonce: string
+link_opened_at: timestamp_ms
 idempotency_key: string
 now_ms: timestamp_ms
 ```
@@ -376,9 +378,13 @@ draft_id: string (optional)
 activation_status: enum (ACTIVATED | BLOCKED | EXPIRED | REVOKED | CONSUMED)
 bound_device_fingerprint_hash: string (optional)
 missing_required_fields: string[] (optional)
+app_platform: enum (IOS | ANDROID) (optional)
+app_instance_id: string (optional)
+deep_link_nonce: string (optional)
+link_opened_at: timestamp_ms (optional)
 ```
 - preconditions (minimum): token_id exists; token maps to draft_id; if expired -> EXPIRED; if revoked -> REVOKED; if already consumed -> CONSUMED; if binding mismatch -> execute LINK_INVITE_FORWARD_BLOCK_COMMIT branch and return BLOCKED
-- postconditions: first-open binds device fingerprint hash; onboarding handoff carries draft_id and current missing_required_fields; mismatch branch records one deterministic BLOCKED write
+- postconditions: first-open binds device fingerprint hash and app-open context; onboarding handoff carries draft_id + app-open context + current missing_required_fields; mismatch branch records one deterministic BLOCKED write
 - side_effects: State write only (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED` internal transition + bindings; terminal passthrough for CONSUMED/EXPIRED/REVOKED/BLOCKED)
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -610,6 +616,10 @@ delivery_proof_ref: string (optional)
 token_id: string
 tenant_id: string (optional; required for employee)
 device_fingerprint: string
+app_platform: enum (IOS | ANDROID)
+app_instance_id: string
+deep_link_nonce: string
+link_opened_at: timestamp_ms
 ```
 - output_schema (minimum):
 ```text
@@ -617,7 +627,7 @@ onboarding_session_id: string
 status: DRAFT_CREATED
 next_step: enum (INSTALL | TERMS | LOAD_PREFILLED | ASK_MISSING)
 ```
-- preconditions: token is ACTIVATED and not revoked
+- preconditions: token is ACTIVATED and not revoked; app-open context is present and valid
 - postconditions: onboarding session draft exists with deterministic pinned schema context snapshot
 - side_effects: Write onboarding session draft only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -822,19 +832,16 @@ access_engine_instance_id: string
 - input_schema (minimum):
 ```text
 onboarding_session_id: string
-draft_id: string
-token_id: string
 idempotency_key: string
+voice_artifact_sync_receipt_ref: string (optional)
+wake_artifact_sync_receipt_ref: string (optional)
 ```
 - output_schema (minimum):
 ```text
 onboarding_session_id: string
-entity_id: string
 onboarding_status: COMPLETE
-draft_status: COMMITTED
-token_status: CONSUMED
 ```
-- preconditions: required gates complete per blueprint; `missing_required_fields` is empty; if invitee_type=EMPLOYEE then sender verification must be CONFIRMED (or an explicitly approved alternative path exists)
+- preconditions: required gates complete per blueprint; if invitee_type=EMPLOYEE then sender verification must be CONFIRMED (or an explicitly approved alternative path exists); when locked voice enrollment exists, matching voice sync receipt ref is required; when completed wake enrollment exists on wake-required platform policy paths, matching wake sync receipt ref is required
 - postconditions: onboarding is COMPLETE; draft is COMMITTED; token is consumed/invalidated; no silent success
 - side_effects: atomic state write (entity create + draft finalize + token consume) + audit emission
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
@@ -953,11 +960,13 @@ total_target_count: integer
 onboarding_session_id: string
 device_id: string
 consent_asserted: bool
-now_ms: timestamp_ms
+max_total_attempts: number (optional; default 8, allowed 5 to 20)
+max_session_enroll_time_ms: number (optional; default 120000, allowed 60000 to 300000)
+lock_after_consecutive_passes: number (optional; default 3, allowed 2 to 5)
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 voice_enroll_status: enum (IN_PROGRESS)
 max_total_attempts: number (default 8, allowed 5 to 20)
 max_session_enroll_time_ms: number (default 120000, allowed 60000 to 300000)
@@ -983,15 +992,16 @@ lock_after_consecutive_passes: number (default 3, allowed 2 to 5)
 - required_confirmations: none (consent gate is the precondition)
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 audio_sample_ref: string (bounded)
 attempt_index: number
-now_ms: timestamp_ms
+sample_result: enum (PASS | FAIL)
+reason_code: string (optional; required on FAIL)
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 sample_result: enum (PASS | FAIL)
 reason_code: string (optional; required on FAIL)
 consecutive_passes: number
@@ -1002,7 +1012,7 @@ voice_enroll_status: enum (IN_PROGRESS | LOCKED | PENDING)
 - side_effects: Store derived voice features; update enrollment progress state
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + attempt_index + idempotency_key)
+- idempotency_key_rule: idempotent on (voice_enrollment_session_id + attempt_index + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### VOICE_ID_ENROLL_COMPLETE_COMMIT (COMMIT)
@@ -1017,21 +1027,22 @@ voice_enroll_status: enum (IN_PROGRESS | LOCKED | PENDING)
 - required_confirmations: none
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 voice_profile_id: string
+voice_artifact_sync_receipt_ref: string
 voice_enroll_status: enum (LOCKED)
 ```
 - preconditions: voice_enroll_status is LOCKED
-- postconditions: voice_profile_id exists and can be used by PH1.VOICE.ID at runtime
-- side_effects: Write voice profile artifact (derived; no raw audio by default)
+- postconditions: voice_profile_id exists and can be used by PH1.VOICE.ID at runtime; sync receipt ref is emitted for ONB completion gating
+- side_effects: Write voice profile artifact (derived; no raw audio by default) + emit sync receipt ref
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
+- idempotency_key_rule: idempotent on (voice_enrollment_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### VOICE_ID_ENROLL_DEFER_COMMIT (COMMIT)
@@ -1046,13 +1057,13 @@ voice_enroll_status: enum (LOCKED)
 - required_confirmations: none
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 reason_code: enum (USER_BUSY | ENROLL_TIMEOUT | ENROLL_MAX_ATTEMPTS | USER_DECLINED)
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+voice_enrollment_session_id: string
 voice_enroll_status: enum (PENDING)
 reason_code: string
 ```
@@ -1061,7 +1072,7 @@ reason_code: string
 - side_effects: Update enrollment state only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
+- idempotency_key_rule: idempotent on (voice_enrollment_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### WAKE_ENROLL_START_DRAFT (DRAFT)
@@ -1076,34 +1087,32 @@ reason_code: string
 - required_confirmations: none (DRAFT)
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+user_id: string
 device_id: string
+onboarding_session_id: string (optional)
 pass_target: number (optional; bounded)
 max_attempts: number (optional; bounded)
 enrollment_timeout_ms: number (optional; bounded)
-inter_attempt_pause_ms: number (optional; bounded)
-now_ms: timestamp_ms
+idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+wake_enrollment_session_id: string
 wake_enroll_status: enum (IN_PROGRESS)
 pass_target: number
 max_attempts: number
 enrollment_timeout_ms: number
-inter_attempt_pause_ms: number
 ```
 - deterministic defaults (if omitted):
   - pass_target=5 (allowed 3 to 8)
   - max_attempts=12 (allowed 8 to 20)
   - enrollment_timeout_ms=300000 (allowed 180000 to 600000)
-  - inter_attempt_pause_ms=500 (allowed 200 to 1500)
-- preconditions: onboarding_session exists; terms accepted; wake is allowed by device policy class
+- preconditions: user/device scope is valid; if `onboarding_session_id` is provided then onboarding session exists and terms are accepted; if onboarding session platform is `IOS` under explicit-trigger-only policy then start is refused by default; wake is allowed by device policy class
 - postconditions: wake enrollment loop is ready for sample capture
 - side_effects: Write enrollment session state only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + device_id)
+- idempotency_key_rule: idempotent on (user_id + device_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### WAKE_ENROLL_SAMPLE_COMMIT (COMMIT)
@@ -1118,19 +1127,25 @@ inter_attempt_pause_ms: number
 - required_confirmations: none (consent gate is the precondition)
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
-audio_sample_ref: string (bounded)
-attempt_index: number
-now_ms: timestamp_ms
+wake_enrollment_session_id: string
+sample_duration_ms: number
+vad_coverage: number
+snr_db: number
+clipping_pct: number
+rms_dbfs: number
+noise_floor_dbfs: number
+peak_dbfs: number
+overlap_ratio: number
+result: enum (PASS | FAIL)
+reason_code: string (optional; required on FAIL)
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
-sample_result: enum (PASS | FAIL)
+wake_enrollment_session_id: string
 reason_code: string (optional; required on FAIL)
 pass_count: number
-pass_target: number
+attempt_count: number
 wake_enroll_status: enum (IN_PROGRESS | COMPLETE | PENDING)
 ```
 - preconditions: wake enrollment started; sample passes deterministic quality gates (else FAIL with reason_code)
@@ -1138,7 +1153,7 @@ wake_enroll_status: enum (IN_PROGRESS | COMPLETE | PENDING)
 - side_effects: Store derived wake features/metrics; update per-device parameters within bounds; update enrollment progress
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + attempt_index + idempotency_key)
+- idempotency_key_rule: idempotent on (wake_enrollment_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### WAKE_ENROLL_COMPLETE_COMMIT (COMMIT)
@@ -1153,21 +1168,23 @@ wake_enroll_status: enum (IN_PROGRESS | COMPLETE | PENDING)
 - required_confirmations: none
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+wake_enrollment_session_id: string
+wake_profile_id: string
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+wake_enrollment_session_id: string
 wake_profile_id: string
+wake_artifact_sync_receipt_ref: string
 wake_enroll_status: enum (COMPLETE)
 ```
 - preconditions: wake_enroll_status is COMPLETE (pass_target reached)
-- postconditions: wake_profile_id exists and can be consumed by PH1.W at runtime
-- side_effects: Write wake profile artifact (derived; no raw audio by default)
+- postconditions: wake_profile_id exists and can be consumed by PH1.W at runtime; sync receipt ref is emitted for ONB completion gating
+- side_effects: Write wake profile artifact (derived; no raw audio by default) + emit sync receipt ref
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
+- idempotency_key_rule: idempotent on (wake_enrollment_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### WAKE_ENROLL_DEFER_COMMIT (COMMIT)
@@ -1182,13 +1199,14 @@ wake_enroll_status: enum (COMPLETE)
 - required_confirmations: none
 - input_schema (minimum):
 ```text
-onboarding_session_id: string
+wake_enrollment_session_id: string
+deferred_until: timestamp_ms (optional)
 reason_code: enum (USER_BUSY | ENROLL_TIMEOUT | ENROLL_MAX_ATTEMPTS | USER_DECLINED)
 idempotency_key: string
 ```
 - output_schema (minimum):
 ```text
-onboarding_session_id: string
+wake_enrollment_session_id: string
 wake_enroll_status: enum (PENDING)
 reason_code: string
 ```
@@ -1197,7 +1215,7 @@ reason_code: string
 - side_effects: Update enrollment state only
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
-- idempotency_key_rule: idempotent on (onboarding_session_id + idempotency_key)
+- idempotency_key_rule: idempotent on (wake_enrollment_session_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### ACCESS_OVERRIDE_TEMP_GRANT_COMMIT (COMMIT)
@@ -3042,40 +3060,6 @@ cancel_status: enum (CANCELED | NOT_SUPPORTED | FAILED)
 - reads_tables[]: [`comms.delivery_attempts_current`]
 - writes_tables[]: [`comms.delivery_attempts_ledger`, `comms.delivery_attempts_current`]
 - idempotency_key_rule: idempotent on (tenant_id + delivery_attempt_id + idempotency_key)
-- audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
-
-### SMS_SETUP_SIM (COMMIT)
-
-- name: SMS App Setup Commit
-- owning_domain: OnboardingSms
-- simulation_type: COMMIT
-- purpose: Commit one user SMS app setup state transition for send/receive readiness
-- triggers: MESSAGE_COMPOSE_AND_SEND and onboarding setup flows
-- required_roles: authenticated requester within tenant scope
-- required_approvals: none
-- required_confirmations: required when permissions are not yet granted
-- input_schema (minimum):
-```text
-tenant_id: string
-user_id: string
-sms_read_permission_ok: bool
-sms_send_permission_ok: bool
-setup_source: enum (ONBOARDING | FIRST_SEND_REQUEST | SETTINGS)
-idempotency_key: string
-```
-- output_schema (minimum):
-```text
-tenant_id: string
-user_id: string
-sms_app_setup_complete: bool
-setup_state: enum (IN_PROGRESS | COMPLETE | BLOCKED)
-```
-- preconditions: identity verified; user scope valid
-- postconditions: setup lifecycle event appended and current setup projection updated
-- side_effects: append setup event + update setup current state
-- reads_tables[]: [`comms.sms_app_setup_current`]
-- writes_tables[]: [`comms.sms_app_setup_ledger`, `comms.sms_app_setup_current`]
-- idempotency_key_rule: idempotent on (tenant_id + user_id + idempotency_key)
 - audit_events: [SIMULATION_STARTED, SIMULATION_FINISHED, SIMULATION_REASON_CODED]
 
 ### LEARN_MODEL_UPDATE_SIM (COMMIT)

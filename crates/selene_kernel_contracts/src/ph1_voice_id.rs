@@ -94,6 +94,124 @@ pub enum IdentityConfidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VoiceIdDecision {
+    Ok,
+    Unknown,
+}
+
+pub const DEFAULT_CONF_HIGH_BP: u16 = 9_300;
+pub const DEFAULT_CONF_MID_BP: u16 = 8_500;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdentityTierV2 {
+    Confirmed,
+    Probable,
+    Unknown,
+}
+
+pub fn map_identity_tier_v2_from_v1(
+    decision: VoiceIdDecision,
+    score_bp: u16,
+    conf_high_bp: u16,
+    conf_mid_bp: u16,
+) -> IdentityTierV2 {
+    if decision != VoiceIdDecision::Ok {
+        return IdentityTierV2::Unknown;
+    }
+    if score_bp >= conf_high_bp {
+        return IdentityTierV2::Confirmed;
+    }
+    if score_bp >= conf_mid_bp {
+        return IdentityTierV2::Probable;
+    }
+    IdentityTierV2::Unknown
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VoiceIdentityV2 {
+    pub identity_tier_v2: IdentityTierV2,
+    pub may_prompt_identity: bool,
+}
+
+impl VoiceIdentityV2 {
+    pub fn from_v1(
+        decision: VoiceIdDecision,
+        score_bp: u16,
+        conf_high_bp: u16,
+        conf_mid_bp: u16,
+    ) -> Self {
+        let identity_tier_v2 =
+            map_identity_tier_v2_from_v1(decision, score_bp, conf_high_bp, conf_mid_bp);
+        let may_prompt_identity = matches!(
+            identity_tier_v2,
+            IdentityTierV2::Probable | IdentityTierV2::Unknown
+        );
+        Self {
+            identity_tier_v2,
+            may_prompt_identity,
+        }
+    }
+
+    pub fn with_may_prompt_identity(self, may_prompt_identity: bool) -> Self {
+        Self {
+            may_prompt_identity,
+            ..self
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpoofLivenessStatus {
+    Live,
+    SuspectedSpoof,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceIdCandidate {
+    pub schema_version: SchemaVersion,
+    pub user_id: Option<UserId>,
+    pub speaker_id: Option<SpeakerId>,
+    /// Match score in basis points [0, 10000].
+    pub score_bp: u16,
+}
+
+impl VoiceIdCandidate {
+    pub fn v1(
+        user_id: Option<UserId>,
+        speaker_id: Option<SpeakerId>,
+        score_bp: u16,
+    ) -> Result<Self, ContractViolation> {
+        let s = Self {
+            schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
+            user_id,
+            speaker_id,
+            score_bp,
+        };
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+impl Validate for VoiceIdCandidate {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.user_id.is_none() && self.speaker_id.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_candidate",
+                reason: "must contain user_id or speaker_id",
+            });
+        }
+        if self.score_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_candidate.score_bp",
+                reason: "must be in [0, 10000]",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VoiceIdRiskSignal {
     MeetingMode,
     HighEchoRisk,
@@ -189,6 +307,8 @@ pub struct Ph1VoiceIdRequest {
     pub tts_playback_active: bool,
     /// Optional bounded risk hints supplied by policy/OS.
     pub risk_signals: Vec<VoiceIdRiskSignal>,
+    /// Optional app-provided primary embedding capture metadata for this turn.
+    pub app_primary_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
 }
 
 impl Ph1VoiceIdRequest {
@@ -231,6 +351,35 @@ impl Ph1VoiceIdRequest {
         device_owner_user_id: Option<UserId>,
         risk_signals: Vec<VoiceIdRiskSignal>,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_risk_signals_and_embedding_capture(
+            now,
+            processed_audio_stream_ref,
+            vad_events,
+            device_id,
+            session_state_ref,
+            wake_event,
+            tts_playback_active,
+            device_trust_level,
+            device_owner_user_id,
+            risk_signals,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_risk_signals_and_embedding_capture(
+        now: MonotonicTimeNs,
+        processed_audio_stream_ref: AudioStreamRef,
+        vad_events: Vec<VadEvent>,
+        device_id: AudioDeviceId,
+        session_state_ref: SessionSnapshot,
+        wake_event: Option<WakeDecision>,
+        tts_playback_active: bool,
+        device_trust_level: DeviceTrustLevel,
+        device_owner_user_id: Option<UserId>,
+        risk_signals: Vec<VoiceIdRiskSignal>,
+        app_primary_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
+    ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
             now,
@@ -243,6 +392,7 @@ impl Ph1VoiceIdRequest {
             wake_event,
             tts_playback_active,
             risk_signals,
+            app_primary_embedding_capture_ref,
         };
         r.validate()?;
         Ok(r)
@@ -274,6 +424,9 @@ impl Validate for Ph1VoiceIdRequest {
                 reason: "must be <= 8 entries",
             });
         }
+        if let Some(capture_ref) = &self.app_primary_embedding_capture_ref {
+            capture_ref.validate()?;
+        }
         for i in 0..self.risk_signals.len() {
             if self.risk_signals[..i].contains(&self.risk_signals[i]) {
                 return Err(ContractViolation::InvalidValue {
@@ -295,12 +448,69 @@ impl Validate for Ph1VoiceIdRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceEmbeddingCaptureRef {
+    pub embedding_ref: String,
+    pub embedding_model_id: String,
+    pub embedding_dim: u16,
+}
+
+impl VoiceEmbeddingCaptureRef {
+    pub fn v1(
+        embedding_ref: String,
+        embedding_model_id: String,
+        embedding_dim: u16,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            embedding_ref,
+            embedding_model_id,
+            embedding_dim,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for VoiceEmbeddingCaptureRef {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_id(
+            "voice_embedding_capture_ref.embedding_ref",
+            &self.embedding_ref,
+            256,
+        )?;
+        validate_id(
+            "voice_embedding_capture_ref.embedding_model_id",
+            &self.embedding_model_id,
+            96,
+        )?;
+        if !(8..=4096).contains(&self.embedding_dim) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_embedding_capture_ref.embedding_dim",
+                reason: "must be in [8, 4096]",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeakerAssertionOk {
     pub schema_version: SchemaVersion,
+    pub decision: VoiceIdDecision,
+    /// Dual-emit migration field. V1 `decision` remains authoritative while V2 tier is shadowed.
+    pub identity_v2: VoiceIdentityV2,
     pub speaker_id: SpeakerId,
     pub user_id: Option<UserId>,
     pub confidence: IdentityConfidence,
+    /// Match score in basis points [0, 10000].
+    pub score_bp: u16,
+    /// Optional top-1 vs top-2 score margin in basis points [0, 10000].
+    pub margin_to_next_bp: Option<u16>,
+    /// Optional success/trace reason code.
+    pub reason_code: Option<ReasonCodeId>,
+    pub spoof_liveness_status: SpoofLivenessStatus,
+    /// Optional ranked identity candidates used to drive deterministic reauth/claim flows.
+    pub candidate_set: Vec<VoiceIdCandidate>,
     pub diarization_segments: Vec<DiarizationSegment>,
     pub active_speaker_label: SpeakerLabel,
 }
@@ -312,11 +522,48 @@ impl SpeakerAssertionOk {
         diarization_segments: Vec<DiarizationSegment>,
         active_speaker_label: SpeakerLabel,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_metrics(
+            speaker_id,
+            user_id,
+            diarization_segments,
+            active_speaker_label,
+            9_500,
+            None,
+            None,
+            SpoofLivenessStatus::Unknown,
+            vec![],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_metrics(
+        speaker_id: SpeakerId,
+        user_id: Option<UserId>,
+        diarization_segments: Vec<DiarizationSegment>,
+        active_speaker_label: SpeakerLabel,
+        score_bp: u16,
+        margin_to_next_bp: Option<u16>,
+        reason_code: Option<ReasonCodeId>,
+        spoof_liveness_status: SpoofLivenessStatus,
+        candidate_set: Vec<VoiceIdCandidate>,
+    ) -> Result<Self, ContractViolation> {
         let s = Self {
             schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
+            decision: VoiceIdDecision::Ok,
+            identity_v2: VoiceIdentityV2::from_v1(
+                VoiceIdDecision::Ok,
+                score_bp,
+                DEFAULT_CONF_HIGH_BP,
+                DEFAULT_CONF_MID_BP,
+            ),
             speaker_id,
             user_id,
             confidence: IdentityConfidence::High,
+            score_bp,
+            margin_to_next_bp,
+            reason_code,
+            spoof_liveness_status,
+            candidate_set,
             diarization_segments,
             active_speaker_label,
         };
@@ -327,11 +574,60 @@ impl SpeakerAssertionOk {
 
 impl Validate for SpeakerAssertionOk {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.decision != VoiceIdDecision::Ok {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_ok.decision",
+                reason: "must be Ok",
+            });
+        }
         if self.confidence != IdentityConfidence::High {
             return Err(ContractViolation::InvalidValue {
                 field: "speaker_assertion_ok.confidence",
                 reason: "must be High",
             });
+        }
+        let expected_tier = map_identity_tier_v2_from_v1(
+            self.decision,
+            self.score_bp,
+            DEFAULT_CONF_HIGH_BP,
+            DEFAULT_CONF_MID_BP,
+        );
+        if self.identity_v2.identity_tier_v2 != expected_tier {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_ok.identity_v2.identity_tier_v2",
+                reason: "must match deterministic V1->V2 mapping",
+            });
+        }
+        if self.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed
+            && self.identity_v2.may_prompt_identity
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_ok.identity_v2.may_prompt_identity",
+                reason: "must be false when identity_tier_v2 is Confirmed",
+            });
+        }
+        if self.score_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_ok.score_bp",
+                reason: "must be in [0, 10000]",
+            });
+        }
+        if let Some(m) = self.margin_to_next_bp {
+            if m > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "speaker_assertion_ok.margin_to_next_bp",
+                    reason: "must be in [0, 10000]",
+                });
+            }
+        }
+        if self.candidate_set.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_ok.candidate_set",
+                reason: "must be <= 8 entries",
+            });
+        }
+        for c in &self.candidate_set {
+            c.validate()?;
         }
         self.active_speaker_label.validate()?;
         if self.diarization_segments.is_empty() {
@@ -350,8 +646,18 @@ impl Validate for SpeakerAssertionOk {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeakerAssertionUnknown {
     pub schema_version: SchemaVersion,
+    pub decision: VoiceIdDecision,
+    /// Dual-emit migration field. V1 `decision` remains authoritative while V2 tier is shadowed.
+    pub identity_v2: VoiceIdentityV2,
     pub confidence: IdentityConfidence,
     pub reason_code: ReasonCodeId,
+    /// Match score in basis points [0, 10000].
+    pub score_bp: u16,
+    /// Optional top-1 vs top-2 score margin in basis points [0, 10000].
+    pub margin_to_next_bp: Option<u16>,
+    pub spoof_liveness_status: SpoofLivenessStatus,
+    /// Optional ranked identity candidates used to drive deterministic reauth/claim flows.
+    pub candidate_set: Vec<VoiceIdCandidate>,
     pub diarization_segments: Vec<DiarizationSegment>,
     /// Optional. Used when Selene recognizes a user but is blocked by reauth or device-claim policy.
     pub candidate_user_id: Option<UserId>,
@@ -365,9 +671,43 @@ impl SpeakerAssertionUnknown {
         reason_code: ReasonCodeId,
         diarization_segments: Vec<DiarizationSegment>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_candidate(confidence, reason_code, diarization_segments, None, None)
+        Self::v1_with_metrics_and_candidate(
+            confidence,
+            reason_code,
+            diarization_segments,
+            default_unknown_score_bp(confidence),
+            None,
+            SpoofLivenessStatus::Unknown,
+            vec![],
+            None,
+            None,
+        )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_metrics(
+        confidence: IdentityConfidence,
+        reason_code: ReasonCodeId,
+        diarization_segments: Vec<DiarizationSegment>,
+        score_bp: u16,
+        margin_to_next_bp: Option<u16>,
+        spoof_liveness_status: SpoofLivenessStatus,
+        candidate_set: Vec<VoiceIdCandidate>,
+    ) -> Result<Self, ContractViolation> {
+        Self::v1_with_metrics_and_candidate(
+            confidence,
+            reason_code,
+            diarization_segments,
+            score_bp,
+            margin_to_next_bp,
+            spoof_liveness_status,
+            candidate_set,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn v1_with_candidate(
         confidence: IdentityConfidence,
         reason_code: ReasonCodeId,
@@ -375,10 +715,46 @@ impl SpeakerAssertionUnknown {
         candidate_user_id: Option<UserId>,
         device_owner_user_id: Option<UserId>,
     ) -> Result<Self, ContractViolation> {
-        let s = Self {
-            schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
+        Self::v1_with_metrics_and_candidate(
             confidence,
             reason_code,
+            diarization_segments,
+            default_unknown_score_bp(confidence),
+            None,
+            SpoofLivenessStatus::Unknown,
+            vec![],
+            candidate_user_id,
+            device_owner_user_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_metrics_and_candidate(
+        confidence: IdentityConfidence,
+        reason_code: ReasonCodeId,
+        diarization_segments: Vec<DiarizationSegment>,
+        score_bp: u16,
+        margin_to_next_bp: Option<u16>,
+        spoof_liveness_status: SpoofLivenessStatus,
+        candidate_set: Vec<VoiceIdCandidate>,
+        candidate_user_id: Option<UserId>,
+        device_owner_user_id: Option<UserId>,
+    ) -> Result<Self, ContractViolation> {
+        let s = Self {
+            schema_version: PH1_VOICE_ID_CONTRACT_VERSION,
+            decision: VoiceIdDecision::Unknown,
+            identity_v2: VoiceIdentityV2::from_v1(
+                VoiceIdDecision::Unknown,
+                score_bp,
+                DEFAULT_CONF_HIGH_BP,
+                DEFAULT_CONF_MID_BP,
+            ),
+            confidence,
+            reason_code,
+            score_bp,
+            margin_to_next_bp,
+            spoof_liveness_status,
+            candidate_set,
             diarization_segments,
             candidate_user_id,
             device_owner_user_id,
@@ -390,11 +766,58 @@ impl SpeakerAssertionUnknown {
 
 impl Validate for SpeakerAssertionUnknown {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.decision != VoiceIdDecision::Unknown {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_unknown.decision",
+                reason: "must be Unknown",
+            });
+        }
         if self.confidence == IdentityConfidence::High {
             return Err(ContractViolation::InvalidValue {
                 field: "speaker_assertion_unknown.confidence",
                 reason: "must be Medium or Low",
             });
+        }
+        let expected_tier = map_identity_tier_v2_from_v1(
+            self.decision,
+            self.score_bp,
+            DEFAULT_CONF_HIGH_BP,
+            DEFAULT_CONF_MID_BP,
+        );
+        if self.identity_v2.identity_tier_v2 != expected_tier {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_unknown.identity_v2.identity_tier_v2",
+                reason: "must match deterministic V1->V2 mapping",
+            });
+        }
+        if self.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_unknown.identity_v2.identity_tier_v2",
+                reason: "must not be Confirmed when decision is Unknown",
+            });
+        }
+        if self.score_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_unknown.score_bp",
+                reason: "must be in [0, 10000]",
+            });
+        }
+        if let Some(m) = self.margin_to_next_bp {
+            if m > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "speaker_assertion_unknown.margin_to_next_bp",
+                    reason: "must be in [0, 10000]",
+                });
+            }
+        }
+        if self.candidate_set.len() > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_assertion_unknown.candidate_set",
+                reason: "must be <= 8 entries",
+            });
+        }
+        for c in &self.candidate_set {
+            c.validate()?;
         }
         for seg in &self.diarization_segments {
             seg.validate()?;
@@ -403,10 +826,27 @@ impl Validate for SpeakerAssertionUnknown {
     }
 }
 
+fn default_unknown_score_bp(confidence: IdentityConfidence) -> u16 {
+    match confidence {
+        IdentityConfidence::High => 0,
+        IdentityConfidence::Medium => 4_500,
+        IdentityConfidence::Low => 2_000,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ph1VoiceIdResponse {
     SpeakerAssertionOk(SpeakerAssertionOk),
     SpeakerAssertionUnknown(SpeakerAssertionUnknown),
+}
+
+impl Ph1VoiceIdResponse {
+    pub fn identity_v2(&self) -> VoiceIdentityV2 {
+        match self {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => ok.identity_v2,
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u) => u.identity_v2,
+        }
+    }
 }
 
 impl Validate for Ph1VoiceIdResponse {
@@ -539,13 +979,17 @@ impl Validate for VoiceIdEnrollStartDraftRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VoiceIdEnrollSampleCommitRequest {
     pub voice_enrollment_session_id: VoiceEnrollmentSessionId,
     pub audio_sample_ref: String,
     pub attempt_index: u16,
-    pub sample_result: VoiceSampleResult,
-    pub reason_code: Option<ReasonCodeId>,
+    pub sample_duration_ms: u16,
+    pub vad_coverage: f32,
+    pub snr_db: f32,
+    pub clipping_pct: f32,
+    pub overlap_ratio: f32,
+    pub app_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
     pub idempotency_key: String,
 }
 
@@ -563,17 +1007,44 @@ impl Validate for VoiceIdEnrollSampleCommitRequest {
                 reason: "must be > 0",
             });
         }
+        if !(500..=15_000).contains(&self.sample_duration_ms) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_enroll_sample_commit_request.sample_duration_ms",
+                reason: "must be in [500, 15000]",
+            });
+        }
+        if !(0.0..=1.0).contains(&self.vad_coverage) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_enroll_sample_commit_request.vad_coverage",
+                reason: "must be in [0, 1]",
+            });
+        }
+        if !(self.snr_db.is_finite() && (-30.0..=80.0).contains(&self.snr_db)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_enroll_sample_commit_request.snr_db",
+                reason: "must be finite and in [-30, 80]",
+            });
+        }
+        if !(self.clipping_pct.is_finite() && (0.0..=100.0).contains(&self.clipping_pct)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_enroll_sample_commit_request.clipping_pct",
+                reason: "must be finite and in [0, 100]",
+            });
+        }
+        if !(self.overlap_ratio.is_finite() && (0.0..=1.0).contains(&self.overlap_ratio)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_id_enroll_sample_commit_request.overlap_ratio",
+                reason: "must be finite and in [0, 1]",
+            });
+        }
+        if let Some(capture_ref) = &self.app_embedding_capture_ref {
+            capture_ref.validate()?;
+        }
         validate_id(
             "voice_id_enroll_sample_commit_request.idempotency_key",
             &self.idempotency_key,
             128,
         )?;
-        if matches!(self.sample_result, VoiceSampleResult::Fail) && self.reason_code.is_none() {
-            return Err(ContractViolation::InvalidValue {
-                field: "voice_id_enroll_sample_commit_request.reason_code",
-                reason: "required when sample_result=Fail",
-            });
-        }
         Ok(())
     }
 }
@@ -722,6 +1193,7 @@ pub struct VoiceIdEnrollCompleteResult {
     pub voice_enrollment_session_id: VoiceEnrollmentSessionId,
     pub voice_profile_id: String,
     pub voice_enroll_status: VoiceEnrollStatus,
+    pub voice_artifact_sync_receipt_ref: Option<String>,
 }
 
 impl VoiceIdEnrollCompleteResult {
@@ -730,10 +1202,25 @@ impl VoiceIdEnrollCompleteResult {
         voice_profile_id: String,
         voice_enroll_status: VoiceEnrollStatus,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_sync_receipt(
+            voice_enrollment_session_id,
+            voice_profile_id,
+            voice_enroll_status,
+            None,
+        )
+    }
+
+    pub fn v1_with_sync_receipt(
+        voice_enrollment_session_id: VoiceEnrollmentSessionId,
+        voice_profile_id: String,
+        voice_enroll_status: VoiceEnrollStatus,
+        voice_artifact_sync_receipt_ref: Option<String>,
+    ) -> Result<Self, ContractViolation> {
         let v = Self {
             voice_enrollment_session_id,
             voice_profile_id,
             voice_enroll_status,
+            voice_artifact_sync_receipt_ref,
         };
         v.validate()?;
         Ok(v)
@@ -753,6 +1240,13 @@ impl Validate for VoiceIdEnrollCompleteResult {
                 field: "voice_id_enroll_complete_result.voice_enroll_status",
                 reason: "must be Locked",
             });
+        }
+        if let Some(ref receipt_ref) = self.voice_artifact_sync_receipt_ref {
+            validate_id(
+                "voice_id_enroll_complete_result.voice_artifact_sync_receipt_ref",
+                receipt_ref,
+                192,
+            )?;
         }
         Ok(())
     }
@@ -794,7 +1288,7 @@ impl Validate for VoiceIdEnrollDeferResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum VoiceIdSimulationRequest {
     EnrollStartDraft(VoiceIdEnrollStartDraftRequest),
     EnrollSampleCommit(VoiceIdEnrollSampleCommitRequest),
@@ -813,7 +1307,7 @@ impl Validate for VoiceIdSimulationRequest {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ph1VoiceIdSimRequest {
     pub schema_version: SchemaVersion,
     pub correlation_id: CorrelationId,
@@ -1141,6 +1635,24 @@ mod tests {
     }
 
     #[test]
+    fn ok_rejects_unknown_decision_variant() {
+        let mut ok = SpeakerAssertionOk::v1(
+            SpeakerId::new("spk").unwrap(),
+            Some(UserId::new("user").unwrap()),
+            vec![DiarizationSegment::v1(
+                MonotonicTimeNs(0),
+                MonotonicTimeNs(1),
+                Some(SpeakerLabel::speaker_a()),
+            )
+            .unwrap()],
+            SpeakerLabel::speaker_a(),
+        )
+        .unwrap();
+        ok.decision = VoiceIdDecision::Unknown;
+        assert!(ok.validate().is_err());
+    }
+
+    #[test]
     fn unknown_rejects_high_confidence() {
         let u = SpeakerAssertionUnknown::v1(
             IdentityConfidence::High,
@@ -1148,6 +1660,92 @@ mod tests {
             vec![DiarizationSegment::v1(MonotonicTimeNs(0), MonotonicTimeNs(1), None).unwrap()],
         );
         assert!(u.is_err());
+    }
+
+    #[test]
+    fn unknown_rejects_score_out_of_range() {
+        let u = SpeakerAssertionUnknown::v1_with_metrics(
+            IdentityConfidence::Medium,
+            ReasonCodeId(1),
+            vec![DiarizationSegment::v1(MonotonicTimeNs(0), MonotonicTimeNs(1), None).unwrap()],
+            10_001,
+            None,
+            SpoofLivenessStatus::Unknown,
+            vec![],
+        );
+        assert!(u.is_err());
+    }
+
+    #[test]
+    fn identity_v2_mapping_marks_high_score_ok_as_confirmed() {
+        let ok = SpeakerAssertionOk::v1_with_metrics(
+            SpeakerId::new("spk").unwrap(),
+            Some(UserId::new("user").unwrap()),
+            vec![DiarizationSegment::v1(
+                MonotonicTimeNs(0),
+                MonotonicTimeNs(1),
+                Some(SpeakerLabel::speaker_a()),
+            )
+            .unwrap()],
+            SpeakerLabel::speaker_a(),
+            DEFAULT_CONF_HIGH_BP,
+            Some(500),
+            Some(ReasonCodeId(1)),
+            SpoofLivenessStatus::Live,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(ok.identity_v2.identity_tier_v2, IdentityTierV2::Confirmed);
+        assert!(!ok.identity_v2.may_prompt_identity);
+    }
+
+    #[test]
+    fn identity_v2_mapping_marks_mid_score_ok_as_probable() {
+        let ok = SpeakerAssertionOk::v1_with_metrics(
+            SpeakerId::new("spk").unwrap(),
+            Some(UserId::new("user").unwrap()),
+            vec![DiarizationSegment::v1(
+                MonotonicTimeNs(0),
+                MonotonicTimeNs(1),
+                Some(SpeakerLabel::speaker_a()),
+            )
+            .unwrap()],
+            SpeakerLabel::speaker_a(),
+            DEFAULT_CONF_MID_BP,
+            Some(200),
+            Some(ReasonCodeId(1)),
+            SpoofLivenessStatus::Live,
+            vec![],
+        )
+        .unwrap();
+        assert_eq!(ok.identity_v2.identity_tier_v2, IdentityTierV2::Probable);
+        assert!(ok.identity_v2.may_prompt_identity);
+    }
+
+    #[test]
+    fn response_identity_v2_accessor_reflects_dual_emit_fields() {
+        let unknown = SpeakerAssertionUnknown::v1_with_metrics(
+            IdentityConfidence::Medium,
+            ReasonCodeId(1),
+            vec![DiarizationSegment::v1(MonotonicTimeNs(0), MonotonicTimeNs(1), None).unwrap()],
+            2_000,
+            None,
+            SpoofLivenessStatus::Unknown,
+            vec![],
+        )
+        .unwrap();
+        let response = Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown);
+        assert_eq!(
+            response.identity_v2().identity_tier_v2,
+            IdentityTierV2::Unknown
+        );
+        assert!(response.identity_v2().may_prompt_identity);
+    }
+
+    #[test]
+    fn candidate_requires_user_or_speaker_identifier() {
+        let candidate = VoiceIdCandidate::v1(None, None, 5_000);
+        assert!(candidate.is_err());
     }
 
     #[test]

@@ -34,6 +34,37 @@ pub enum FeedbackEventType {
     MemoryOverride,
     DeliverySwitch,
     BargeIn,
+    // Canonical Voice-ID feedback taxonomy (FDBK-01).
+    VoiceIdFalseReject,
+    VoiceIdFalseAccept,
+    VoiceIdSpoofRisk,
+    VoiceIdMultiSpeaker,
+    VoiceIdDriftAlert,
+    VoiceIdReauthFriction,
+    // Backward-compatible Voice-ID event classes kept for migration/cutover.
+    VoiceIdConfusionPair,
+    VoiceIdDrift,
+    VoiceIdLowQuality,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FeedbackPathType {
+    Defect,
+    Improvement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FeedbackGoldProvenanceMethod {
+    VerifiedHumanCorrection,
+    TrustedGroundTruth,
+    HighConfidenceConsensus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FeedbackGoldStatus {
+    NotRequired,
+    Pending,
+    Verified,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -215,6 +246,10 @@ pub struct FeedbackEventRecord {
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
     pub event_type: FeedbackEventType,
+    pub path_type: FeedbackPathType,
+    pub gold_case_id: Option<String>,
+    pub gold_provenance_method: Option<FeedbackGoldProvenanceMethod>,
+    pub gold_status: FeedbackGoldStatus,
     pub reason_code: ReasonCodeId,
     pub evidence_ref: String,
     pub idempotency_key: String,
@@ -238,6 +273,49 @@ impl FeedbackEventRecord {
         idempotency_key: String,
         metrics: FeedbackMetrics,
     ) -> Result<Self, ContractViolation> {
+        let path_type = classify_feedback_path(event_type);
+        let gold_status = default_feedback_gold_status(path_type);
+        Self::v2(
+            event_id,
+            tenant_id,
+            user_id,
+            speaker_id,
+            session_id,
+            device_id,
+            correlation_id,
+            turn_id,
+            event_type,
+            path_type,
+            None,
+            None,
+            gold_status,
+            reason_code,
+            evidence_ref,
+            idempotency_key,
+            metrics,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        event_id: String,
+        tenant_id: String,
+        user_id: String,
+        speaker_id: String,
+        session_id: String,
+        device_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        event_type: FeedbackEventType,
+        path_type: FeedbackPathType,
+        gold_case_id: Option<String>,
+        gold_provenance_method: Option<FeedbackGoldProvenanceMethod>,
+        gold_status: FeedbackGoldStatus,
+        reason_code: ReasonCodeId,
+        evidence_ref: String,
+        idempotency_key: String,
+        metrics: FeedbackMetrics,
+    ) -> Result<Self, ContractViolation> {
         let event = Self {
             schema_version: PH1FEEDBACK_CONTRACT_VERSION,
             event_id,
@@ -249,6 +327,10 @@ impl FeedbackEventRecord {
             correlation_id,
             turn_id,
             event_type,
+            path_type,
+            gold_case_id,
+            gold_provenance_method,
+            gold_status,
             reason_code,
             evidence_ref,
             idempotency_key,
@@ -275,6 +357,9 @@ impl Validate for FeedbackEventRecord {
         validate_token("feedback_event_record.device_id", &self.device_id, 96)?;
         self.correlation_id.validate()?;
         self.turn_id.validate()?;
+        if let Some(gold_case_id) = &self.gold_case_id {
+            validate_token("feedback_event_record.gold_case_id", gold_case_id, 96)?;
+        }
         validate_token(
             "feedback_event_record.evidence_ref",
             &self.evidence_ref,
@@ -286,6 +371,51 @@ impl Validate for FeedbackEventRecord {
             128,
         )?;
         self.metrics.validate()?;
+
+        match self.path_type {
+            FeedbackPathType::Defect => {
+                if self.gold_case_id.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_event_record.gold_case_id",
+                        reason: "must be absent when path_type=DEFECT",
+                    });
+                }
+                if self.gold_provenance_method.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_event_record.gold_provenance_method",
+                        reason: "must be absent when path_type=DEFECT",
+                    });
+                }
+                if self.gold_status != FeedbackGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_event_record.gold_status",
+                        reason: "must be NOT_REQUIRED when path_type=DEFECT",
+                    });
+                }
+            }
+            FeedbackPathType::Improvement => {
+                if self.gold_status == FeedbackGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_event_record.gold_status",
+                        reason: "must be PENDING or VERIFIED when path_type=IMPROVEMENT",
+                    });
+                }
+                if self.gold_status == FeedbackGoldStatus::Verified {
+                    if self.gold_case_id.is_none() {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "feedback_event_record.gold_case_id",
+                            reason: "must be present when gold_status=VERIFIED",
+                        });
+                    }
+                    if self.gold_provenance_method.is_none() {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "feedback_event_record.gold_provenance_method",
+                            reason: "must be present when gold_status=VERIFIED",
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -297,6 +427,9 @@ pub struct FeedbackSignalCandidate {
     pub event_type: FeedbackEventType,
     pub signal_key: String,
     pub target: FeedbackSignalTarget,
+    pub path_type: FeedbackPathType,
+    pub gold_case_id: Option<String>,
+    pub gold_status: FeedbackGoldStatus,
     pub signal_value_bp: i16,
     pub sample_count: u32,
     pub evidence_ref: String,
@@ -313,12 +446,42 @@ impl FeedbackSignalCandidate {
         sample_count: u32,
         evidence_ref: String,
     ) -> Result<Self, ContractViolation> {
+        Self::v2(
+            candidate_id,
+            event_type,
+            signal_key,
+            target,
+            FeedbackPathType::Defect,
+            None,
+            FeedbackGoldStatus::NotRequired,
+            signal_value_bp,
+            sample_count,
+            evidence_ref,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        candidate_id: String,
+        event_type: FeedbackEventType,
+        signal_key: String,
+        target: FeedbackSignalTarget,
+        path_type: FeedbackPathType,
+        gold_case_id: Option<String>,
+        gold_status: FeedbackGoldStatus,
+        signal_value_bp: i16,
+        sample_count: u32,
+        evidence_ref: String,
+    ) -> Result<Self, ContractViolation> {
         let candidate = Self {
             schema_version: PH1FEEDBACK_CONTRACT_VERSION,
             candidate_id,
             event_type,
             signal_key,
             target,
+            path_type,
+            gold_case_id,
+            gold_status,
             signal_value_bp,
             sample_count,
             evidence_ref,
@@ -342,6 +505,9 @@ impl Validate for FeedbackSignalCandidate {
             64,
         )?;
         validate_field_key("feedback_signal_candidate.signal_key", &self.signal_key)?;
+        if let Some(gold_case_id) = &self.gold_case_id {
+            validate_token("feedback_signal_candidate.gold_case_id", gold_case_id, 96)?;
+        }
         if self.signal_value_bp.abs() > 20_000 {
             return Err(ContractViolation::InvalidValue {
                 field: "feedback_signal_candidate.signal_value_bp",
@@ -359,6 +525,36 @@ impl Validate for FeedbackSignalCandidate {
             &self.evidence_ref,
             128,
         )?;
+        match self.path_type {
+            FeedbackPathType::Defect => {
+                if self.gold_case_id.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_signal_candidate.gold_case_id",
+                        reason: "must be absent when path_type=DEFECT",
+                    });
+                }
+                if self.gold_status != FeedbackGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_signal_candidate.gold_status",
+                        reason: "must be NOT_REQUIRED when path_type=DEFECT",
+                    });
+                }
+            }
+            FeedbackPathType::Improvement => {
+                if self.gold_status == FeedbackGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_signal_candidate.gold_status",
+                        reason: "must be PENDING or VERIFIED when path_type=IMPROVEMENT",
+                    });
+                }
+                if self.gold_status == FeedbackGoldStatus::Verified && self.gold_case_id.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "feedback_signal_candidate.gold_case_id",
+                        reason: "must be present when gold_status=VERIFIED",
+                    });
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -806,6 +1002,37 @@ fn validate_field_key(field: &'static str, value: &str) -> Result<(), ContractVi
     Ok(())
 }
 
+pub fn classify_feedback_path(event_type: FeedbackEventType) -> FeedbackPathType {
+    match event_type {
+        FeedbackEventType::UserCorrection
+        | FeedbackEventType::ClarifyLoop
+        | FeedbackEventType::MemoryOverride
+        | FeedbackEventType::DeliverySwitch
+        | FeedbackEventType::BargeIn
+        | FeedbackEventType::VoiceIdDriftAlert
+        | FeedbackEventType::VoiceIdReauthFriction
+        | FeedbackEventType::VoiceIdDrift
+        | FeedbackEventType::VoiceIdLowQuality => FeedbackPathType::Improvement,
+        FeedbackEventType::SttReject
+        | FeedbackEventType::SttRetry
+        | FeedbackEventType::LanguageMismatch
+        | FeedbackEventType::ConfirmAbort
+        | FeedbackEventType::ToolFail
+        | FeedbackEventType::VoiceIdFalseReject
+        | FeedbackEventType::VoiceIdFalseAccept
+        | FeedbackEventType::VoiceIdMultiSpeaker
+        | FeedbackEventType::VoiceIdConfusionPair
+        | FeedbackEventType::VoiceIdSpoofRisk => FeedbackPathType::Defect,
+    }
+}
+
+fn default_feedback_gold_status(path_type: FeedbackPathType) -> FeedbackGoldStatus {
+    match path_type {
+        FeedbackPathType::Defect => FeedbackGoldStatus::NotRequired,
+        FeedbackPathType::Improvement => FeedbackGoldStatus::Pending,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,5 +1124,77 @@ mod tests {
             true,
         );
         assert!(out.is_err());
+    }
+
+    #[test]
+    fn feedback_improvement_event_verified_requires_gold_refs() {
+        let out = FeedbackEventRecord::v2(
+            "event_improve_1".to_string(),
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            CorrelationId(3101),
+            TurnId(281),
+            FeedbackEventType::UserCorrection,
+            FeedbackPathType::Improvement,
+            None,
+            None,
+            FeedbackGoldStatus::Verified,
+            ReasonCodeId(7),
+            "evidence:feedback:1".to_string(),
+            "idem:feedback:improve".to_string(),
+            FeedbackMetrics::v1(
+                320,
+                1,
+                FeedbackConfidenceBucket::Low,
+                vec!["when".to_string()],
+                FeedbackToolStatus::Fail,
+            )
+            .unwrap(),
+        );
+        assert!(out.is_err());
+    }
+
+    #[test]
+    fn feedback_improvement_signal_candidate_allows_pending_gold() {
+        let out = FeedbackSignalCandidate::v2(
+            "candidate_improve_1".to_string(),
+            FeedbackEventType::UserCorrection,
+            "correction_rate_by_intent".to_string(),
+            FeedbackSignalTarget::LearnPackage,
+            FeedbackPathType::Improvement,
+            None,
+            FeedbackGoldStatus::Pending,
+            900,
+            1,
+            "evidence:feedback:1".to_string(),
+        );
+        assert!(out.is_ok());
+    }
+
+    #[test]
+    fn feedback_voice_taxonomy_classifier_is_deterministic() {
+        assert_eq!(
+            classify_feedback_path(FeedbackEventType::VoiceIdMultiSpeaker),
+            FeedbackPathType::Defect
+        );
+        assert_eq!(
+            classify_feedback_path(FeedbackEventType::VoiceIdSpoofRisk),
+            FeedbackPathType::Defect
+        );
+        assert_eq!(
+            classify_feedback_path(FeedbackEventType::VoiceIdDriftAlert),
+            FeedbackPathType::Improvement
+        );
+        assert_eq!(
+            classify_feedback_path(FeedbackEventType::VoiceIdReauthFriction),
+            FeedbackPathType::Improvement
+        );
+
+        let event = event("event_voice_taxonomy", FeedbackEventType::VoiceIdDriftAlert);
+        assert_eq!(event.path_type, FeedbackPathType::Improvement);
+        assert_eq!(event.gold_status, FeedbackGoldStatus::Pending);
     }
 }

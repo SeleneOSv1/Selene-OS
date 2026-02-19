@@ -151,7 +151,7 @@ Current notable engine groups:
 - Identity/Access: `PH1.L`, `PH1.VOICE.ID`, `PH1.ACCESS.001_PH2.ACCESS.002`, `PH1.POLICY`
 - Perception/Understanding/Control core: `PH1.K`, `PH1.W`, `PH1.C`, `PH1.NLP`, `PH1.D`, `PH1.X`
 - Output: `PH1.WRITE`, `PH1.TTS`
-- Onboarding/Delivery/Tools: `PH1.E`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.ONBOARDING_SMS`, `PH1.LINK`, `PH1.ONB`, `PH1.POSITION`, `PH1.REM`
+- Onboarding/Delivery/Tools: `PH1.E`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.LINK`, `PH1.ONB`, `PH1.POSITION`, `PH1.REM`
 - Memory/Learning: `PH1.M`, `PH1.PERSONA`, `PH1.FEEDBACK`, `PH1.LEARN`, `PH1.PAE`, `PH1.KNOW`, `PH1.LEARN_FEEDBACK_KNOW`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE`
 - Capability requests: `PH1.CAPREQ`
 - Extension assists and offline engines are also listed in registry and remain orchestrator-mediated.

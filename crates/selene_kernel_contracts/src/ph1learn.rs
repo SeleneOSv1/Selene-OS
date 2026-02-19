@@ -31,6 +31,17 @@ pub enum LearnSignalType {
     VocabularyRepeat,
     BargeIn,
     DeliverySwitch,
+    // Canonical Voice-ID learn taxonomy (FDBK-01/02).
+    VoiceIdFalseReject,
+    VoiceIdFalseAccept,
+    VoiceIdSpoofRisk,
+    VoiceIdMultiSpeaker,
+    VoiceIdDriftAlert,
+    VoiceIdReauthFriction,
+    // Backward-compatible Voice-ID learn classes kept for migration/cutover.
+    VoiceIdConfusionPair,
+    VoiceIdDrift,
+    VoiceIdLowQuality,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -42,6 +53,10 @@ pub enum LearnArtifactTarget {
     PaeRoutingWeights,
     SearchWebExtractionHints,
     ListenEnvironmentProfile,
+    VoiceIdThresholdPack,
+    VoiceIdConfusionPairPack,
+    VoiceIdSpoofPolicyPack,
+    VoiceIdProfileDeltaPack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +75,7 @@ pub enum LearnTargetEngine {
     Pae,
     Search,
     Listen,
+    VoiceId,
 }
 
 impl LearnTargetEngine {
@@ -72,6 +88,7 @@ impl LearnTargetEngine {
             LearnTargetEngine::Pae => "PH1.PAE",
             LearnTargetEngine::Search => "PH1.SEARCH",
             LearnTargetEngine::Listen => "PH1.LISTEN",
+            LearnTargetEngine::VoiceId => "PH1.VOICE.ID",
         }
     }
 }
@@ -80,6 +97,19 @@ impl LearnTargetEngine {
 pub enum LearnValidationStatus {
     Ok,
     Fail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LearnCasePath {
+    Defect,
+    Improvement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LearnGoldStatus {
+    NotRequired,
+    Pending,
+    Verified,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,6 +189,9 @@ pub struct LearnSignal {
     pub contains_sensitive_data: bool,
     pub consent_required: bool,
     pub consent_asserted: bool,
+    pub source_path: LearnCasePath,
+    pub gold_case_id: Option<String>,
+    pub gold_status: LearnGoldStatus,
     pub evidence_ref: String,
 }
 
@@ -178,6 +211,45 @@ impl LearnSignal {
         consent_asserted: bool,
         evidence_ref: String,
     ) -> Result<Self, ContractViolation> {
+        let source_path = default_learn_case_path(signal_type);
+        let gold_status = default_learn_gold_status(source_path);
+        Self::v2(
+            signal_id,
+            tenant_id,
+            signal_type,
+            scope_hint,
+            scope_ref,
+            metric_key,
+            metric_value_bp,
+            occurrence_count,
+            contains_sensitive_data,
+            consent_required,
+            consent_asserted,
+            source_path,
+            None,
+            gold_status,
+            evidence_ref,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        signal_id: String,
+        tenant_id: String,
+        signal_type: LearnSignalType,
+        scope_hint: LearnScope,
+        scope_ref: Option<String>,
+        metric_key: String,
+        metric_value_bp: i16,
+        occurrence_count: u16,
+        contains_sensitive_data: bool,
+        consent_required: bool,
+        consent_asserted: bool,
+        source_path: LearnCasePath,
+        gold_case_id: Option<String>,
+        gold_status: LearnGoldStatus,
+        evidence_ref: String,
+    ) -> Result<Self, ContractViolation> {
         let signal = Self {
             schema_version: PH1LEARN_CONTRACT_VERSION,
             signal_id,
@@ -191,6 +263,9 @@ impl LearnSignal {
             contains_sensitive_data,
             consent_required,
             consent_asserted,
+            source_path,
+            gold_case_id,
+            gold_status,
             evidence_ref,
         };
         signal.validate()?;
@@ -220,6 +295,9 @@ impl Validate for LearnSignal {
                 field: "learn_signal.occurrence_count",
                 reason: "must be > 0",
             });
+        }
+        if let Some(gold_case_id) = &self.gold_case_id {
+            validate_token("learn_signal.gold_case_id", gold_case_id, 96)?;
         }
         validate_token("learn_signal.evidence_ref", &self.evidence_ref, 128)?;
 
@@ -254,6 +332,37 @@ impl Validate for LearnSignal {
             }
         }
 
+        match self.source_path {
+            LearnCasePath::Defect => {
+                if self.gold_case_id.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_signal.gold_case_id",
+                        reason: "must be absent when source_path=DEFECT",
+                    });
+                }
+                if self.gold_status != LearnGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_signal.gold_status",
+                        reason: "must be NOT_REQUIRED when source_path=DEFECT",
+                    });
+                }
+            }
+            LearnCasePath::Improvement => {
+                if self.gold_status == LearnGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_signal.gold_status",
+                        reason: "must be PENDING or VERIFIED when source_path=IMPROVEMENT",
+                    });
+                }
+                if self.gold_status == LearnGoldStatus::Verified && self.gold_case_id.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_signal.gold_case_id",
+                        reason: "must be present when gold_status=VERIFIED",
+                    });
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -270,6 +379,9 @@ pub struct LearnArtifactCandidate {
     pub provenance_ref: String,
     pub rollback_to: Option<String>,
     pub consent_safe: bool,
+    pub source_path: LearnCasePath,
+    pub gold_case_id: Option<String>,
+    pub gold_status: LearnGoldStatus,
 }
 
 impl LearnArtifactCandidate {
@@ -285,6 +397,37 @@ impl LearnArtifactCandidate {
         rollback_to: Option<String>,
         consent_safe: bool,
     ) -> Result<Self, ContractViolation> {
+        Self::v2(
+            artifact_id,
+            target,
+            scope,
+            scope_ref,
+            artifact_version,
+            expected_effect_bp,
+            provenance_ref,
+            rollback_to,
+            consent_safe,
+            LearnCasePath::Defect,
+            None,
+            LearnGoldStatus::NotRequired,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        artifact_id: String,
+        target: LearnArtifactTarget,
+        scope: LearnScope,
+        scope_ref: Option<String>,
+        artifact_version: u32,
+        expected_effect_bp: i16,
+        provenance_ref: String,
+        rollback_to: Option<String>,
+        consent_safe: bool,
+        source_path: LearnCasePath,
+        gold_case_id: Option<String>,
+        gold_status: LearnGoldStatus,
+    ) -> Result<Self, ContractViolation> {
         let artifact = Self {
             schema_version: PH1LEARN_CONTRACT_VERSION,
             artifact_id,
@@ -296,6 +439,9 @@ impl LearnArtifactCandidate {
             provenance_ref,
             rollback_to,
             consent_safe,
+            source_path,
+            gold_case_id,
+            gold_status,
         };
         artifact.validate()?;
         Ok(artifact)
@@ -332,6 +478,9 @@ impl Validate for LearnArtifactCandidate {
             &self.provenance_ref,
             128,
         )?;
+        if let Some(gold_case_id) = &self.gold_case_id {
+            validate_token("learn_artifact_candidate.gold_case_id", gold_case_id, 96)?;
+        }
 
         match self.scope {
             LearnScope::User => {
@@ -372,6 +521,37 @@ impl Validate for LearnArtifactCandidate {
 
         if let Some(rollback_to) = &self.rollback_to {
             validate_token("learn_artifact_candidate.rollback_to", rollback_to, 128)?;
+        }
+
+        match self.source_path {
+            LearnCasePath::Defect => {
+                if self.gold_case_id.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_artifact_candidate.gold_case_id",
+                        reason: "must be absent when source_path=DEFECT",
+                    });
+                }
+                if self.gold_status != LearnGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_artifact_candidate.gold_status",
+                        reason: "must be NOT_REQUIRED when source_path=DEFECT",
+                    });
+                }
+            }
+            LearnCasePath::Improvement => {
+                if self.gold_status == LearnGoldStatus::NotRequired {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_artifact_candidate.gold_status",
+                        reason: "must be PENDING or VERIFIED when source_path=IMPROVEMENT",
+                    });
+                }
+                if self.gold_status == LearnGoldStatus::Verified && self.gold_case_id.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "learn_artifact_candidate.gold_case_id",
+                        reason: "must be present when gold_status=VERIFIED",
+                    });
+                }
+            }
         }
 
         Ok(())
@@ -985,6 +1165,34 @@ fn validate_text(
     Ok(())
 }
 
+fn default_learn_case_path(signal_type: LearnSignalType) -> LearnCasePath {
+    match signal_type {
+        LearnSignalType::UserCorrection
+        | LearnSignalType::ClarifyLoop
+        | LearnSignalType::VocabularyRepeat
+        | LearnSignalType::BargeIn
+        | LearnSignalType::DeliverySwitch
+        | LearnSignalType::VoiceIdDriftAlert
+        | LearnSignalType::VoiceIdReauthFriction
+        | LearnSignalType::VoiceIdDrift
+        | LearnSignalType::VoiceIdLowQuality => LearnCasePath::Improvement,
+        LearnSignalType::SttReject
+        | LearnSignalType::ToolFail
+        | LearnSignalType::VoiceIdFalseReject
+        | LearnSignalType::VoiceIdFalseAccept
+        | LearnSignalType::VoiceIdMultiSpeaker
+        | LearnSignalType::VoiceIdConfusionPair
+        | LearnSignalType::VoiceIdSpoofRisk => LearnCasePath::Defect,
+    }
+}
+
+fn default_learn_gold_status(path: LearnCasePath) -> LearnGoldStatus {
+    match path {
+        LearnCasePath::Defect => LearnGoldStatus::NotRequired,
+        LearnCasePath::Improvement => LearnGoldStatus::Pending,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1125,5 +1333,107 @@ mod tests {
         );
 
         assert!(out.is_err());
+    }
+
+    #[test]
+    fn at_learn_05_improvement_signal_verified_requires_gold_case() {
+        let out = LearnSignal::v2(
+            "sig_improve".to_string(),
+            "tenant_1".to_string(),
+            LearnSignalType::UserCorrection,
+            LearnScope::User,
+            Some("user_1".to_string()),
+            "correction_rate".to_string(),
+            120,
+            2,
+            false,
+            false,
+            false,
+            LearnCasePath::Improvement,
+            None,
+            LearnGoldStatus::Verified,
+            "learn:evidence:sig_improve".to_string(),
+        );
+        assert!(out.is_err());
+    }
+
+    #[test]
+    fn at_learn_06_improvement_artifact_verified_requires_gold_case() {
+        let out = LearnArtifactCandidate::v2(
+            "artifact_improve".to_string(),
+            LearnArtifactTarget::KnowTenantGlossaryPack,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            2,
+            190,
+            "learn:evidence:artifact_improve".to_string(),
+            Some("artifact_improve.prev".to_string()),
+            true,
+            LearnCasePath::Improvement,
+            None,
+            LearnGoldStatus::Verified,
+        );
+        assert!(out.is_err());
+    }
+
+    #[test]
+    fn at_learn_07_user_correction_defaults_to_improvement_pending() {
+        let signal = LearnSignal::v1(
+            "sig_default".to_string(),
+            "tenant_1".to_string(),
+            LearnSignalType::UserCorrection,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            "correction_rate".to_string(),
+            100,
+            3,
+            false,
+            false,
+            false,
+            "learn:evidence:sig_default".to_string(),
+        )
+        .unwrap();
+        assert_eq!(signal.source_path, LearnCasePath::Improvement);
+        assert_eq!(signal.gold_status, LearnGoldStatus::Pending);
+        assert!(signal.gold_case_id.is_none());
+    }
+
+    #[test]
+    fn at_learn_08_voice_taxonomy_defaults_are_stable() {
+        let defect = LearnSignal::v1(
+            "sig_voice_defect".to_string(),
+            "tenant_1".to_string(),
+            LearnSignalType::VoiceIdMultiSpeaker,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            "voice_multi_speaker_rate".to_string(),
+            180,
+            2,
+            false,
+            false,
+            false,
+            "learn:evidence:sig_voice_defect".to_string(),
+        )
+        .unwrap();
+        assert_eq!(defect.source_path, LearnCasePath::Defect);
+        assert_eq!(defect.gold_status, LearnGoldStatus::NotRequired);
+
+        let improvement = LearnSignal::v1(
+            "sig_voice_improve".to_string(),
+            "tenant_1".to_string(),
+            LearnSignalType::VoiceIdReauthFriction,
+            LearnScope::Tenant,
+            Some("tenant_1".to_string()),
+            "voice_reauth_friction_rate".to_string(),
+            90,
+            3,
+            false,
+            false,
+            false,
+            "learn:evidence:sig_voice_improve".to_string(),
+        )
+        .unwrap();
+        assert_eq!(improvement.source_path, LearnCasePath::Improvement);
+        assert_eq!(improvement.gold_status, LearnGoldStatus::Pending);
     }
 }

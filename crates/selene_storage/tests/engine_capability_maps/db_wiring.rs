@@ -173,7 +173,7 @@ fn at_ecm_db_04_rebuild_current_from_ledger() {
     .unwrap();
 
     let before = s.engine_capability_maps_current_rows().clone();
-    s.rebuild_engine_capability_maps_current_rows();
+    s.rebuild_engine_capability_maps_current_rows().unwrap();
     let after = s.engine_capability_maps_current_rows().clone();
     assert_eq!(before, after);
 

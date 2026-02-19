@@ -70,11 +70,12 @@ impl Ph1wRuntime {
                     .transpose()
                     .map_err(StorageError::ContractViolation)?;
 
-                let rec = store.ph1w_enroll_start_draft(
+                let rec = store.ph1w_enroll_start_draft_with_ios_override(
                     req.now,
                     r.user_id.clone(),
                     r.device_id.clone(),
                     onboarding_session_id,
+                    r.allow_ios_wake_override,
                     r.pass_target,
                     r.max_attempts,
                     r.enrollment_timeout_ms,
@@ -182,11 +183,12 @@ impl Ph1wRuntime {
                             },
                         ))?;
 
-                let out = WakeEnrollCompleteResult::v1(
+                let out = WakeEnrollCompleteResult::v1_with_sync_receipt(
                     WakeEnrollmentSessionId::new(rec.wake_enrollment_session_id.clone())
                         .map_err(StorageError::ContractViolation)?,
                     map_status(rec.wake_enroll_status),
                     wake_profile_id,
+                    rec.wake_artifact_sync_receipt_ref.clone(),
                 )
                 .map_err(StorageError::ContractViolation)?;
 
@@ -399,6 +401,7 @@ mod tests {
                 user_id: uid.clone(),
                 device_id: did.clone(),
                 onboarding_session_id: None,
+                allow_ios_wake_override: false,
                 pass_target: 3,
                 max_attempts: 12,
                 enrollment_timeout_ms: 300_000,
@@ -498,6 +501,7 @@ mod tests {
                 user_id: uid,
                 device_id: did,
                 onboarding_session_id: None,
+                allow_ios_wake_override: false,
                 pass_target: 5,
                 max_attempts: 12,
                 enrollment_timeout_ms: 300_000,
@@ -559,6 +563,7 @@ mod tests {
                 user_id: uid,
                 device_id: did,
                 onboarding_session_id: None,
+                allow_ios_wake_override: false,
                 pass_target: 3,
                 max_attempts: 12,
                 enrollment_timeout_ms: 300_000,

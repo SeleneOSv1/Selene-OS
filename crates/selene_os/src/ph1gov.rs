@@ -4,8 +4,8 @@ use std::cmp::min;
 
 use selene_kernel_contracts::ph1gov::{
     GovArtifactKind, GovArtifactVersion, GovCapabilityId, GovDecisionComputeOk,
-    GovDecisionComputeRequest, GovPolicyEvaluateOk, GovPolicyEvaluateRequest, GovRefuse,
-    GovRequestEnvelope, GovRequestedAction, Ph1GovRequest, Ph1GovResponse,
+    GovDecisionComputeRequest, GovDecisionStatus, GovPolicyEvaluateOk, GovPolicyEvaluateRequest,
+    GovRefuse, GovRequestEnvelope, GovRequestedAction, Ph1GovRequest, Ph1GovResponse,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1position::TenantId;
@@ -16,6 +16,11 @@ pub mod reason_codes {
 
     // PH1.GOV OS wiring reason-code namespace. Values are placeholders until registry lock.
     pub const PH1_GOV_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x474F_0101);
+    pub const PH1_GOV_POLICY_SCOPE_FAILED: ReasonCodeId = ReasonCodeId(0x474F_0102);
+    pub const PH1_GOV_COHORT_GATES_FAILED: ReasonCodeId = ReasonCodeId(0x474F_0103);
+    pub const PH1_GOV_STABILITY_WINDOW_FAILED: ReasonCodeId = ReasonCodeId(0x474F_0104);
+    pub const PH1_GOV_REVOCATION_REQUIRES_ROLLBACK: ReasonCodeId = ReasonCodeId(0x474F_0105);
+    pub const PH1_GOV_REVOCATION_SLA_BREACH: ReasonCodeId = ReasonCodeId(0x474F_0106);
     pub const PH1_GOV_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x474F_01F1);
 }
 
@@ -58,6 +63,14 @@ pub struct GovTurnInput {
     pub active_reference_ids: Vec<String>,
     pub rollback_target_version: Option<GovArtifactVersion>,
     pub current_active_version: Option<GovArtifactVersion>,
+    pub privacy_policy_passed: bool,
+    pub consent_scope_active: bool,
+    pub tenant_scope_verified: bool,
+    pub required_cohort_keys: Vec<String>,
+    pub passing_cohort_keys: Vec<String>,
+    pub stability_window_days_passed: u8,
+    pub consent_revoked: bool,
+    pub revocation_sla_met: bool,
 }
 
 impl GovTurnInput {
@@ -80,6 +93,61 @@ impl GovTurnInput {
         rollback_target_version: Option<GovArtifactVersion>,
         current_active_version: Option<GovArtifactVersion>,
     ) -> Result<Self, ContractViolation> {
+        Self::v2(
+            correlation_id,
+            turn_id,
+            tenant_id,
+            artifact_kind,
+            artifact_id,
+            artifact_version,
+            artifact_hash_sha256,
+            signature_ref,
+            requested_action,
+            requester_user_id,
+            requester_authorized,
+            existing_active_versions,
+            required_reference_ids,
+            active_reference_ids,
+            rollback_target_version,
+            current_active_version,
+            true,
+            true,
+            true,
+            Vec::new(),
+            Vec::new(),
+            7,
+            false,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: TenantId,
+        artifact_kind: GovArtifactKind,
+        artifact_id: String,
+        artifact_version: GovArtifactVersion,
+        artifact_hash_sha256: String,
+        signature_ref: Option<String>,
+        requested_action: GovRequestedAction,
+        requester_user_id: String,
+        requester_authorized: bool,
+        existing_active_versions: Vec<GovArtifactVersion>,
+        required_reference_ids: Vec<String>,
+        active_reference_ids: Vec<String>,
+        rollback_target_version: Option<GovArtifactVersion>,
+        current_active_version: Option<GovArtifactVersion>,
+        privacy_policy_passed: bool,
+        consent_scope_active: bool,
+        tenant_scope_verified: bool,
+        required_cohort_keys: Vec<String>,
+        passing_cohort_keys: Vec<String>,
+        stability_window_days_passed: u8,
+        consent_revoked: bool,
+        revocation_sla_met: bool,
+    ) -> Result<Self, ContractViolation> {
         let input = Self {
             correlation_id,
             turn_id,
@@ -97,6 +165,14 @@ impl GovTurnInput {
             active_reference_ids,
             rollback_target_version,
             current_active_version,
+            privacy_policy_passed,
+            consent_scope_active,
+            tenant_scope_verified,
+            required_cohort_keys,
+            passing_cohort_keys,
+            stability_window_days_passed,
+            consent_revoked,
+            revocation_sla_met,
         };
         input.validate()?;
         Ok(input)
@@ -165,6 +241,44 @@ impl Validate for GovTurnInput {
         if let Some(signature_ref) = &self.signature_ref {
             validate_token("gov_turn_input.signature_ref", signature_ref, 128)?;
         }
+        if self.required_cohort_keys.len() > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "gov_turn_input.required_cohort_keys",
+                reason: "must contain <= 16 entries",
+            });
+        }
+        if self.passing_cohort_keys.len() > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "gov_turn_input.passing_cohort_keys",
+                reason: "must contain <= 16 entries",
+            });
+        }
+        let mut required_cohorts = std::collections::BTreeSet::new();
+        for key in &self.required_cohort_keys {
+            validate_token("gov_turn_input.required_cohort_keys", key, 64)?;
+            if !required_cohorts.insert(key.as_str()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "gov_turn_input.required_cohort_keys",
+                    reason: "must not contain duplicates",
+                });
+            }
+        }
+        let mut passing_cohorts = std::collections::BTreeSet::new();
+        for key in &self.passing_cohort_keys {
+            validate_token("gov_turn_input.passing_cohort_keys", key, 64)?;
+            if !passing_cohorts.insert(key.as_str()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "gov_turn_input.passing_cohort_keys",
+                    reason: "must not contain duplicates",
+                });
+            }
+        }
+        if self.stability_window_days_passed > 31 {
+            return Err(ContractViolation::InvalidValue {
+                field: "gov_turn_input.stability_window_days_passed",
+                reason: "must be <= 31",
+            });
+        }
         Ok(())
     }
 }
@@ -193,6 +307,47 @@ impl GovForwardBundle {
         bundle.validate()?;
         Ok(bundle)
     }
+
+    pub fn to_builder_dispatch_ticket(
+        &self,
+    ) -> Result<GovBuilderDispatchOutcome, ContractViolation> {
+        self.validate()?;
+        if self.decision_class().class != GovDecisionClass::Allow {
+            return Ok(GovBuilderDispatchOutcome::NotDispatchedDecisionNotAllowed);
+        }
+        let active_version =
+            self.decision_compute
+                .active_version
+                .ok_or(ContractViolation::InvalidValue {
+                    field: "gov_forward_bundle.decision_compute.active_version",
+                    reason: "must be present when decision=ALLOWED for builder dispatch",
+                })?;
+        let ticket = GovBuilderDispatchTicket::v1(
+            self.correlation_id,
+            self.turn_id,
+            self.decision_compute.artifact_kind,
+            self.decision_compute.artifact_id.clone(),
+            self.decision_compute.requested_action,
+            active_version,
+        )?;
+        Ok(GovBuilderDispatchOutcome::DispatchReady(ticket))
+    }
+
+    pub fn decision_class(&self) -> GovResolvedDecision {
+        let class = match self.decision_compute.decision {
+            GovDecisionStatus::Allowed => match self.decision_compute.requested_action {
+                GovRequestedAction::Activate | GovRequestedAction::Deprecate => {
+                    GovDecisionClass::Allow
+                }
+                GovRequestedAction::Rollback => GovDecisionClass::Rollback,
+            },
+            GovDecisionStatus::Blocked => GovDecisionClass::Block,
+        };
+        GovResolvedDecision {
+            class,
+            reason_code: self.decision_compute.reason_code,
+        }
+    }
 }
 
 impl Validate for GovForwardBundle {
@@ -212,10 +367,89 @@ impl Validate for GovForwardBundle {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovBuilderDispatchTicket {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub artifact_kind: GovArtifactKind,
+    pub artifact_id: String,
+    pub requested_action: GovRequestedAction,
+    pub active_version: GovArtifactVersion,
+}
+
+impl GovBuilderDispatchTicket {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        artifact_kind: GovArtifactKind,
+        artifact_id: String,
+        requested_action: GovRequestedAction,
+        active_version: GovArtifactVersion,
+    ) -> Result<Self, ContractViolation> {
+        let ticket = Self {
+            correlation_id,
+            turn_id,
+            artifact_kind,
+            artifact_id,
+            requested_action,
+            active_version,
+        };
+        ticket.validate()?;
+        Ok(ticket)
+    }
+}
+
+impl Validate for GovBuilderDispatchTicket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        validate_token(
+            "gov_builder_dispatch_ticket.artifact_id",
+            &self.artifact_id,
+            128,
+        )?;
+        self.active_version.validate()?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GovBuilderDispatchOutcome {
+    NotDispatchedDecisionNotAllowed,
+    DispatchReady(GovBuilderDispatchTicket),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GovDecisionClass {
+    Allow,
+    Hold,
+    Block,
+    Rollback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GovResolvedDecision {
+    pub class: GovDecisionClass,
+    pub reason_code: selene_kernel_contracts::ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GovWiringOutcome {
     NotInvokedDisabled,
     Refused(GovRefuse),
     Forwarded(GovForwardBundle),
+}
+
+impl GovWiringOutcome {
+    pub fn resolved_decision(&self) -> Option<GovResolvedDecision> {
+        match self {
+            GovWiringOutcome::NotInvokedDisabled => None,
+            GovWiringOutcome::Refused(refuse) => Some(GovResolvedDecision {
+                class: GovDecisionClass::Hold,
+                reason_code: refuse.reason_code,
+            }),
+            GovWiringOutcome::Forwarded(bundle) => Some(bundle.decision_class()),
+        }
+    }
 }
 
 pub trait Ph1GovEngine {
@@ -256,6 +490,61 @@ where
 
         if !self.config.gov_enabled {
             return Ok(GovWiringOutcome::NotInvokedDisabled);
+        }
+        if !input.privacy_policy_passed
+            || !input.consent_scope_active
+            || !input.tenant_scope_verified
+        {
+            return Ok(GovWiringOutcome::Refused(GovRefuse::v1(
+                GovCapabilityId::GovPolicyEvaluate,
+                reason_codes::PH1_GOV_POLICY_SCOPE_FAILED,
+                "policy/privacy/consent/tenant-scope preflight failed".to_string(),
+            )?));
+        }
+        if input.requested_action == GovRequestedAction::Activate
+            && !(7..=14).contains(&input.stability_window_days_passed)
+        {
+            return Ok(GovWiringOutcome::Refused(GovRefuse::v1(
+                GovCapabilityId::GovPolicyEvaluate,
+                reason_codes::PH1_GOV_STABILITY_WINDOW_FAILED,
+                "stability window must be within 7..=14 days before activation".to_string(),
+            )?));
+        }
+        if !input.required_cohort_keys.is_empty() {
+            let passing = input
+                .passing_cohort_keys
+                .iter()
+                .map(|k| k.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            let missing = input
+                .required_cohort_keys
+                .iter()
+                .filter(|required| !passing.contains(required.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                return Ok(GovWiringOutcome::Refused(GovRefuse::v1(
+                    GovCapabilityId::GovPolicyEvaluate,
+                    reason_codes::PH1_GOV_COHORT_GATES_FAILED,
+                    format!("cohort gates failed for {}", missing.join(",")),
+                )?));
+            }
+        }
+        if input.consent_revoked {
+            if !input.revocation_sla_met {
+                return Ok(GovWiringOutcome::Refused(GovRefuse::v1(
+                    GovCapabilityId::GovPolicyEvaluate,
+                    reason_codes::PH1_GOV_REVOCATION_SLA_BREACH,
+                    "consent revocation rollback/freeze SLA not met".to_string(),
+                )?));
+            }
+            if input.requested_action != GovRequestedAction::Rollback {
+                return Ok(GovWiringOutcome::Refused(GovRefuse::v1(
+                    GovCapabilityId::GovPolicyEvaluate,
+                    reason_codes::PH1_GOV_REVOCATION_REQUIRES_ROLLBACK,
+                    "consent revocation requires rollback action".to_string(),
+                )?));
+            }
         }
 
         let envelope = GovRequestEnvelope::v1(
@@ -455,6 +744,36 @@ mod tests {
         .unwrap()
     }
 
+    fn decision_blocked() -> GovDecisionComputeOk {
+        GovDecisionComputeOk::v1(
+            ReasonCodeId(3),
+            GovDecisionStatus::Blocked,
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovRequestedAction::Activate,
+            Some(GovArtifactVersion(2)),
+            true,
+            true,
+            true,
+        )
+        .unwrap()
+    }
+
+    fn decision_allow_rollback() -> GovDecisionComputeOk {
+        GovDecisionComputeOk::v1(
+            ReasonCodeId(4),
+            GovDecisionStatus::Allowed,
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovRequestedAction::Rollback,
+            Some(GovArtifactVersion(2)),
+            true,
+            true,
+            true,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_gov_01_disabled_returns_not_invoked() {
         let engine = MockGovEngine {
@@ -520,6 +839,272 @@ mod tests {
         assert_eq!(
             out.reason_code,
             reason_codes::PH1_GOV_INTERNAL_PIPELINE_ERROR
+        );
+    }
+
+    #[test]
+    fn at_gov_05_builder_dispatch_ticket_emits_only_for_explicit_allow() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_ok()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let outcome = wiring.run_turn(&base_input()).unwrap();
+        let GovWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded");
+        };
+        let dispatch = bundle.to_builder_dispatch_ticket().unwrap();
+        let GovBuilderDispatchOutcome::DispatchReady(ticket) = dispatch else {
+            panic!("expected builder dispatch ticket");
+        };
+        assert_eq!(ticket.active_version, GovArtifactVersion(3));
+        assert_eq!(ticket.requested_action, GovRequestedAction::Activate);
+    }
+
+    #[test]
+    fn at_gov_06_builder_dispatch_blocks_non_allow_decisions() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_blocked()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let outcome = wiring.run_turn(&base_input()).unwrap();
+        let GovWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded");
+        };
+        let dispatch = bundle.to_builder_dispatch_ticket().unwrap();
+        assert_eq!(
+            dispatch,
+            GovBuilderDispatchOutcome::NotDispatchedDecisionNotAllowed
+        );
+    }
+
+    #[test]
+    fn at_gov_07_preflight_policy_scope_gates_fail_closed_before_engine() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_ok()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let input = GovTurnInput::v2(
+            CorrelationId(5201),
+            TurnId(5301),
+            TenantId::new("tenant_demo").unwrap(),
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovArtifactVersion(3),
+            "8f14e45fceea167a5a36dedd4bea2543fcbf13f8b8f6cbf7a22f6f7a4f6f6f61".to_string(),
+            Some("sig_valid".to_string()),
+            GovRequestedAction::Activate,
+            "admin_user".to_string(),
+            true,
+            vec![GovArtifactVersion(2)],
+            vec!["SIM_1".to_string()],
+            vec!["SIM_1".to_string()],
+            None,
+            Some(GovArtifactVersion(2)),
+            false,
+            true,
+            true,
+            Vec::new(),
+            Vec::new(),
+            7,
+            false,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let GovWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_GOV_POLICY_SCOPE_FAILED
+        );
+    }
+
+    #[test]
+    fn at_gov_08_resolved_decision_contract_maps_allow_hold_block_rollback() {
+        let hold = GovWiringOutcome::Refused(
+            GovRefuse::v1(
+                GovCapabilityId::GovPolicyEvaluate,
+                ReasonCodeId(901),
+                "hold".to_string(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            hold.resolved_decision().unwrap().class,
+            GovDecisionClass::Hold
+        );
+
+        let allow_bundle =
+            GovForwardBundle::v1(CorrelationId(1), TurnId(1), policy_ok(), decision_ok()).unwrap();
+        assert_eq!(allow_bundle.decision_class().class, GovDecisionClass::Allow);
+
+        let block_bundle =
+            GovForwardBundle::v1(CorrelationId(1), TurnId(1), policy_ok(), decision_blocked())
+                .unwrap();
+        assert_eq!(block_bundle.decision_class().class, GovDecisionClass::Block);
+
+        let rollback_bundle = GovForwardBundle::v1(
+            CorrelationId(1),
+            TurnId(1),
+            policy_ok(),
+            decision_allow_rollback(),
+        )
+        .unwrap();
+        assert_eq!(
+            rollback_bundle.decision_class().class,
+            GovDecisionClass::Rollback
+        );
+    }
+
+    #[test]
+    fn at_gov_09_cohort_safety_gates_require_all_required_cohorts_pass() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_ok()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let input = GovTurnInput::v2(
+            CorrelationId(5201),
+            TurnId(5301),
+            TenantId::new("tenant_demo").unwrap(),
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovArtifactVersion(3),
+            "8f14e45fceea167a5a36dedd4bea2543fcbf13f8b8f6cbf7a22f6f7a4f6f6f61".to_string(),
+            Some("sig_valid".to_string()),
+            GovRequestedAction::Activate,
+            "admin_user".to_string(),
+            true,
+            vec![GovArtifactVersion(2)],
+            vec!["SIM_1".to_string()],
+            vec!["SIM_1".to_string()],
+            None,
+            Some(GovArtifactVersion(2)),
+            true,
+            true,
+            true,
+            vec!["lang:en".to_string(), "noise:high".to_string()],
+            vec!["lang:en".to_string()],
+            7,
+            false,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let GovWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_GOV_COHORT_GATES_FAILED
+        );
+    }
+
+    #[test]
+    fn at_gov_10_stability_window_requires_7_to_14_days_before_activate() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_ok()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let input = GovTurnInput::v2(
+            CorrelationId(5201),
+            TurnId(5301),
+            TenantId::new("tenant_demo").unwrap(),
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovArtifactVersion(3),
+            "8f14e45fceea167a5a36dedd4bea2543fcbf13f8b8f6cbf7a22f6f7a4f6f6f61".to_string(),
+            Some("sig_valid".to_string()),
+            GovRequestedAction::Activate,
+            "admin_user".to_string(),
+            true,
+            vec![GovArtifactVersion(2)],
+            vec!["SIM_1".to_string()],
+            vec!["SIM_1".to_string()],
+            None,
+            Some(GovArtifactVersion(2)),
+            true,
+            true,
+            true,
+            Vec::new(),
+            Vec::new(),
+            3,
+            false,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let GovWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_GOV_STABILITY_WINDOW_FAILED
+        );
+    }
+
+    #[test]
+    fn at_gov_11_consent_revoke_forces_rollback_within_sla() {
+        let engine = MockGovEngine {
+            policy_response: Ph1GovResponse::GovPolicyEvaluateOk(policy_ok()),
+            decision_response: Ph1GovResponse::GovDecisionComputeOk(decision_ok()),
+        };
+        let wiring = Ph1GovWiring::new(Ph1GovWiringConfig::mvp_v1(true), engine).unwrap();
+        let input = GovTurnInput::v2(
+            CorrelationId(5201),
+            TurnId(5301),
+            TenantId::new("tenant_demo").unwrap(),
+            GovArtifactKind::Blueprint,
+            "bp_payroll".to_string(),
+            GovArtifactVersion(3),
+            "8f14e45fceea167a5a36dedd4bea2543fcbf13f8b8f6cbf7a22f6f7a4f6f6f61".to_string(),
+            Some("sig_valid".to_string()),
+            GovRequestedAction::Activate,
+            "admin_user".to_string(),
+            true,
+            vec![GovArtifactVersion(2)],
+            vec!["SIM_1".to_string()],
+            vec!["SIM_1".to_string()],
+            None,
+            Some(GovArtifactVersion(2)),
+            true,
+            true,
+            true,
+            Vec::new(),
+            Vec::new(),
+            7,
+            true,
+            true,
+        )
+        .unwrap();
+        let outcome = wiring.run_turn(&input).unwrap();
+        let GovWiringOutcome::Refused(refuse) = outcome else {
+            panic!("expected refuse");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_GOV_REVOCATION_REQUIRES_ROLLBACK
+        );
+    }
+
+    #[test]
+    fn at_gov_12_builder_dispatch_blocks_allowed_rollback_path() {
+        let bundle = GovForwardBundle::v1(
+            CorrelationId(1),
+            TurnId(1),
+            policy_ok(),
+            decision_allow_rollback(),
+        )
+        .unwrap();
+        let dispatch = bundle.to_builder_dispatch_ticket().unwrap();
+        assert_eq!(
+            dispatch,
+            GovBuilderDispatchOutcome::NotDispatchedDecisionNotAllowed
         );
     }
 }

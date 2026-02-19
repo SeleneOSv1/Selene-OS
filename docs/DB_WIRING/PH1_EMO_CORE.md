@@ -18,6 +18,12 @@
   - NONE directly in PH1.EMO.CORE runtime wiring.
   - Audit persistence remains owned by PH1.J/PH1.F; this module emits deterministic audit-event result packets only.
 
+## B1) Phone-First Artifact Custody (Required Extension)
+- `PH1.EMO.CORE` must run phone-first when emotional runtime is enabled.
+- Emotional artifacts must be stored locally on phone (`ACTIVE + N-1 rollback`) and continuously synced to Selene for continuity/recovery.
+- Engine B owns outbox/vault replay/ack semantics; PH1.EMO.CORE owns deterministic emotional artifact-manifest delta emission contract.
+- Raw audio is excluded from default emotional sync payloads; only bounded emotional profile refs/metrics/manifests may sync.
+
 ## C) Hard Boundaries
 - PH1.EMO.CORE is advisory only; it must never grant authority, execute tools, or trigger side effects directly.
 - Tone-only boundary is mandatory: outputs may shape delivery style/pacing only; meaning must not drift.
@@ -35,6 +41,7 @@
 - Outputs_to:
   - Selene OS tone planning handoff to PH1.X/PH1.TTS (advisory only, after validation).
   - PH1.PERSONA as bounded optional context (reference-only).
+  - Engine B outbox handoff for emotional artifact-manifest deltas (required extension; no direct PH1.EMO.CORE storage writes).
 - Deterministic capability set:
   - `PH1EMO_CLASSIFY_PROFILE_COMMIT_ROW` (`EMO_SIM_001`)
   - `PH1EMO_REEVALUATE_PROFILE_COMMIT_ROW` (`EMO_SIM_002`)
@@ -58,6 +65,8 @@
 - AT-EMO-CORE-06: snapshot capture returns deterministic `snapshot_ref` on complete path.
 - AT-EMO-CORE-07: audit event commit emits deterministic `event_id` for identical inputs.
 - AT-EMO-CORE-08: simulation/capability drift is refused by OS wiring.
+- AT-EMO-CORE-09: phone-local emotional artifact pointer and cloud sync cursor reconcile deterministically.
+- AT-EMO-CORE-10: emotional artifact sync enqueue is idempotent and ack-gated.
 
 ## G) Implementation References
 - Kernel contracts: `crates/selene_kernel_contracts/src/ph1emocore.rs`

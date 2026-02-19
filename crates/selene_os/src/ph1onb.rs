@@ -3,12 +3,11 @@
 use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::{
-    Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse, VoiceEnrollmentSessionId,
-    VoiceIdEnrollCompleteCommitRequest, VoiceIdEnrollCompleteResult,
+    Ph1VoiceIdSimRequest, Ph1VoiceIdSimResponse, VoiceEmbeddingCaptureRef,
+    VoiceEnrollmentSessionId, VoiceIdEnrollCompleteCommitRequest, VoiceIdEnrollCompleteResult,
     VoiceIdEnrollDeferCommitRequest, VoiceIdEnrollDeferResult, VoiceIdEnrollSampleCommitRequest,
     VoiceIdEnrollSampleResult, VoiceIdEnrollStartDraftRequest, VoiceIdEnrollStartResult,
-    VoiceIdSimulationRequest, VoiceIdSimulationType,
-    VoiceSampleResult as VoiceEnrollSampleResultType, PH1VOICEID_SIM_CONTRACT_VERSION,
+    VoiceIdSimulationRequest, VoiceIdSimulationType, PH1VOICEID_SIM_CONTRACT_VERSION,
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_DEFER_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
     VOICE_ID_ENROLL_START_DRAFT,
 };
@@ -17,10 +16,12 @@ use selene_kernel_contracts::ph1j::{
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
 use selene_kernel_contracts::ph1onb::{
-    OnbRequest, OnboardingSessionId, Ph1OnbOk, Ph1OnbRequest, Ph1OnbResponse, SimulationType,
+    OnbRequest, OnbSessionStartResult, OnboardingSessionId, Ph1OnbOk, Ph1OnbRequest,
+    Ph1OnbResponse, SimulationType,
     ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT, ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
     ONB_REQUIREMENT_BACKFILL_START_DRAFT,
 };
+use selene_kernel_contracts::ph1link::{LinkActivationResult, LinkStatus};
 use selene_kernel_contracts::ph1position::{
     Ph1PositionRequest, PositionBandPolicyCheckRequest, PositionBandPolicyCheckResult,
     PositionCreateDraftRequest, PositionCreateDraftResult, PositionId, PositionLifecycleResult,
@@ -34,6 +35,7 @@ use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, 
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 use selene_storage::ph1j::Ph1jRuntime;
 
+use crate::device_artifact_sync::{self, DeviceArtifactSyncSenderRuntime};
 use crate::ph1_voice_id::Ph1VoiceIdRuntime;
 use crate::ph1position::Ph1PositionRuntime;
 
@@ -59,8 +61,12 @@ pub mod reason_codes {
 pub struct OnbVoiceEnrollSampleStep {
     pub audio_sample_ref: String,
     pub attempt_index: u16,
-    pub sample_result: VoiceEnrollSampleResultType,
-    pub reason_code: Option<ReasonCodeId>,
+    pub sample_duration_ms: u16,
+    pub vad_coverage: f32,
+    pub snr_db: f32,
+    pub clipping_pct: f32,
+    pub overlap_ratio: f32,
+    pub app_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
     pub idempotency_key: String,
 }
 
@@ -130,13 +136,29 @@ pub struct OnbPositionLiveResult {
     pub activation_skipped_reason: Option<ReasonCodeId>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Ph1OnbOrchRuntime {
     voice_id_runtime: Ph1VoiceIdRuntime,
     position_runtime: Ph1PositionRuntime,
+    device_sync_sender: DeviceArtifactSyncSenderRuntime,
+}
+
+impl Default for Ph1OnbOrchRuntime {
+    fn default() -> Self {
+        Self {
+            voice_id_runtime: Ph1VoiceIdRuntime::default(),
+            position_runtime: Ph1PositionRuntime,
+            device_sync_sender: DeviceArtifactSyncSenderRuntime::from_env_or_loopback(),
+        }
+    }
 }
 
 impl Ph1OnbOrchRuntime {
+    pub fn with_device_sync_sender(mut self, sender: DeviceArtifactSyncSenderRuntime) -> Self {
+        self.device_sync_sender = sender;
+        self
+    }
+
     pub fn run(
         &self,
         store: &mut Ph1fStore,
@@ -157,6 +179,10 @@ impl Ph1OnbOrchRuntime {
                     r.prefilled_context_ref.clone(),
                     r.tenant_id.clone(),
                     r.device_fingerprint.clone(),
+                    r.app_platform,
+                    r.app_instance_id.clone(),
+                    r.deep_link_nonce.clone(),
+                    r.link_opened_at,
                 )?;
 
                 self.audit_transition(
@@ -419,6 +445,16 @@ impl Ph1OnbOrchRuntime {
                     req.now,
                     r.onboarding_session_id.clone(),
                     r.idempotency_key.clone(),
+                    r.voice_artifact_sync_receipt_ref.clone(),
+                    r.wake_artifact_sync_receipt_ref.clone(),
+                )?;
+                // Continuous device artifact continuity: run one worker pass per turn so
+                // queued sync rows are acked/replayed in runtime, not only tests.
+                self.run_device_artifact_sync_worker_pass(
+                    store,
+                    req.now,
+                    req.correlation_id,
+                    req.turn_id,
                 )?;
 
                 self.audit_transition(
@@ -576,6 +612,67 @@ impl Ph1OnbOrchRuntime {
         }
     }
 
+    /// Deterministic LINK -> ONB handoff bridge.
+    /// Uses the activated LINK app-open context as the authoritative onboarding session-start context.
+    pub fn start_session_from_link_activation(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        activation: &LinkActivationResult,
+        tenant_id: Option<String>,
+        device_fingerprint: String,
+    ) -> Result<OnbSessionStartResult, StorageError> {
+        activation.validate().map_err(StorageError::ContractViolation)?;
+        if activation.activation_status != LinkStatus::Activated {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_start_from_link_activation.activation_status",
+                    reason: "must be ACTIVATED",
+                },
+            ));
+        }
+
+        let app_platform =
+            activation
+                .app_platform
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_start_from_link_activation.app_platform",
+                        reason: "must be present for ACTIVATED handoff",
+                    },
+                ))?;
+        let app_instance_id = activation.app_instance_id.clone().ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1onb_start_from_link_activation.app_instance_id",
+                reason: "must be present for ACTIVATED handoff",
+            }),
+        )?;
+        let deep_link_nonce = activation.deep_link_nonce.clone().ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1onb_start_from_link_activation.deep_link_nonce",
+                reason: "must be present for ACTIVATED handoff",
+            }),
+        )?;
+        let link_opened_at = activation.link_opened_at.ok_or(
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1onb_start_from_link_activation.link_opened_at",
+                reason: "must be present for ACTIVATED handoff",
+            }),
+        )?;
+
+        store.ph1onb_session_start_draft(
+            now,
+            activation.token_id.clone(),
+            activation.prefilled_context_ref.clone(),
+            tenant_id,
+            device_fingerprint,
+            app_platform,
+            app_instance_id,
+            deep_link_nonce,
+            link_opened_at,
+        )
+    }
+
     /// Live onboarding sequence slice: route voice enrollment through PH1.VOICE.ID simulations.
     ///
     /// This keeps PH1.ONB.ORCH as the coordinator and preserves simulation-gated behavior.
@@ -605,6 +702,12 @@ impl Ph1OnbOrchRuntime {
         };
 
         let start_resp = self.voice_id_runtime.run(store, &start_req)?;
+        self.run_device_artifact_sync_worker_pass(
+            store,
+            start_req.now,
+            start_req.correlation_id,
+            start_req.turn_id,
+        )?;
         let start_result = match start_resp {
             Ph1VoiceIdSimResponse::Ok(ok) => {
                 ok.enroll_start_result
@@ -643,14 +746,24 @@ impl Ph1OnbOrchRuntime {
                         voice_enrollment_session_id: voice_enrollment_session_id.clone(),
                         audio_sample_ref: s.audio_sample_ref.clone(),
                         attempt_index: s.attempt_index,
-                        sample_result: s.sample_result,
-                        reason_code: s.reason_code,
+                        sample_duration_ms: s.sample_duration_ms,
+                        vad_coverage: s.vad_coverage,
+                        snr_db: s.snr_db,
+                        clipping_pct: s.clipping_pct,
+                        overlap_ratio: s.overlap_ratio,
+                        app_embedding_capture_ref: s.app_embedding_capture_ref.clone(),
                         idempotency_key: s.idempotency_key.clone(),
                     },
                 ),
             };
 
             let sample_resp = self.voice_id_runtime.run(store, &sample_req)?;
+            self.run_device_artifact_sync_worker_pass(
+                store,
+                sample_req.now,
+                sample_req.correlation_id,
+                sample_req.turn_id,
+            )?;
             let sample_result = match sample_resp {
                 Ph1VoiceIdSimResponse::Ok(ok) => {
                     ok.enroll_sample_result
@@ -694,6 +807,12 @@ impl Ph1OnbOrchRuntime {
                         ),
                     };
                     let resp = self.voice_id_runtime.run(store, &complete_req)?;
+                    self.run_device_artifact_sync_worker_pass(
+                        store,
+                        complete_req.now,
+                        complete_req.correlation_id,
+                        complete_req.turn_id,
+                    )?;
                     match resp {
                         Ph1VoiceIdSimResponse::Ok(ok) => (
                             Some(ok.enroll_complete_result.ok_or(
@@ -734,6 +853,12 @@ impl Ph1OnbOrchRuntime {
                         ),
                     };
                     let resp = self.voice_id_runtime.run(store, &defer_req)?;
+                    self.run_device_artifact_sync_worker_pass(
+                        store,
+                        defer_req.now,
+                        defer_req.correlation_id,
+                        defer_req.turn_id,
+                    )?;
                     match resp {
                         Ph1VoiceIdSimResponse::Ok(ok) => (
                             None,
@@ -766,6 +891,22 @@ impl Ph1OnbOrchRuntime {
             complete_result,
             defer_result,
         })
+    }
+
+    fn run_device_artifact_sync_worker_pass(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<(), StorageError> {
+        let worker_id = format!("onb_device_sync_worker_{}_{}", correlation_id.0, turn_id.0);
+        device_artifact_sync::run_device_artifact_sync_worker_pass(
+            store,
+            now,
+            worker_id,
+            &self.device_sync_sender,
+        )
     }
 
     /// Live onboarding position sequence: route employee role setup through PH1.POSITION simulations.
@@ -1048,7 +1189,6 @@ impl OnbIdempotencyKey for Ph1OnbRequest {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::UserId;
-    use selene_kernel_contracts::ph1_voice_id::VoiceSampleResult as ContractVoiceSampleResult;
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
     use selene_kernel_contracts::ph1link::{InviteeType, Ph1LinkRequest, PrefilledContext};
     use selene_kernel_contracts::ph1onb::{
@@ -1068,8 +1208,8 @@ mod tests {
         PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, TenantId,
     };
     use selene_storage::ph1f::{
-        DeviceRecord, IdentityRecord, IdentityStatus, TenantCompanyLifecycleState,
-        TenantCompanyRecord,
+        DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncState,
+        TenantCompanyLifecycleState, TenantCompanyRecord,
     };
 
     fn now() -> MonotonicTimeNs {
@@ -1103,6 +1243,21 @@ mod tests {
         ))
         .unwrap();
         s
+    }
+
+    fn insert_inviter_device(store: &mut Ph1fStore, id: &str) {
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device(id),
+                    user("inviter"),
+                    "phone".to_string(),
+                    MonotonicTimeNs(now().0 + 1),
+                    Some("audio_profile_voice".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
     }
 
     fn upsert_active_company(store: &mut Ph1fStore) {
@@ -1146,14 +1301,83 @@ mod tests {
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
             corr(),
             turn(),
-            MonotonicTimeNs(now().0 + 1),
+            MonotonicTimeNs(now().0 + 5),
             token_id.clone(),
             "device_fp_1".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_onb".to_string(),
+            "nonce_onb".to_string(),
+            MonotonicTimeNs(now().0 + 5),
             "idem_onb_open_1".to_string(),
         )
         .unwrap();
         let _ = link_rt.run(store, &open).unwrap();
         token_id
+    }
+
+    fn lock_voice_enrollment_and_get_receipt(
+        rt: &Ph1OnbOrchRuntime,
+        store: &mut Ph1fStore,
+        onboarding_session_id: OnboardingSessionId,
+        device_id: DeviceId,
+        turn_id_start: u64,
+        seed: &str,
+    ) -> String {
+        let live_req = OnbVoiceEnrollLiveRequest {
+            correlation_id: corr(),
+            turn_id_start: TurnId(turn_id_start),
+            now: MonotonicTimeNs(now().0 + 40),
+            onboarding_session_id,
+            device_id,
+            consent_asserted: true,
+            max_total_attempts: 8,
+            max_session_enroll_time_ms: 120_000,
+            lock_after_consecutive_passes: 3,
+            samples: vec![
+                OnbVoiceEnrollSampleStep {
+                    audio_sample_ref: format!("audio:{seed}:1"),
+                    attempt_index: 1,
+                    sample_duration_ms: 1_400,
+                    vad_coverage: 0.93,
+                    snr_db: 18.0,
+                    clipping_pct: 0.4,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
+                    idempotency_key: format!("{seed}-sample-1"),
+                },
+                OnbVoiceEnrollSampleStep {
+                    audio_sample_ref: format!("audio:{seed}:2"),
+                    attempt_index: 2,
+                    sample_duration_ms: 1_360,
+                    vad_coverage: 0.91,
+                    snr_db: 17.6,
+                    clipping_pct: 0.5,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
+                    idempotency_key: format!("{seed}-sample-2"),
+                },
+                OnbVoiceEnrollSampleStep {
+                    audio_sample_ref: format!("audio:{seed}:3"),
+                    attempt_index: 3,
+                    sample_duration_ms: 1_420,
+                    vad_coverage: 0.94,
+                    snr_db: 18.4,
+                    clipping_pct: 0.3,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
+                    idempotency_key: format!("{seed}-sample-3"),
+                },
+            ],
+            finalize: OnbVoiceEnrollFinalize::Complete {
+                idempotency_key: format!("{seed}-complete"),
+            },
+        };
+        let out = rt
+            .run_voice_enrollment_live_sequence(store, &live_req)
+            .unwrap();
+        out.complete_result
+            .and_then(|r| r.voice_artifact_sync_receipt_ref)
+            .expect("voice enrollment complete must return sync receipt")
     }
 
     fn selector_snapshot() -> PositionSchemaSelectorSnapshot {
@@ -1320,6 +1544,10 @@ mod tests {
             MonotonicTimeNs(now().0 + 5),
             token_id.clone(),
             "device_fp_required_verify".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_onb".to_string(),
+            "nonce_onb".to_string(),
+            MonotonicTimeNs(now().0 + 5),
             "idem_onb_open_required_verify".to_string(),
         )
         .unwrap();
@@ -1346,6 +1574,10 @@ mod tests {
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
             }),
         };
         let out = rt.run(&mut store, &start).unwrap();
@@ -1367,6 +1599,7 @@ mod tests {
             .unwrap_or("")
             .starts_with("position:"));
         let session_id = session_start.onboarding_session_id;
+        insert_inviter_device(&mut store, "device_1");
 
         // Terms accept.
         let terms = Ph1OnbRequest {
@@ -1500,6 +1733,15 @@ mod tests {
             _ => panic!("expected ok"),
         }
 
+        let voice_receipt = lock_voice_enrollment_and_get_receipt(
+            &rt,
+            &mut store,
+            session_id.clone(),
+            device("device_1"),
+            700,
+            "happy",
+        );
+
         // Complete.
         let complete = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
@@ -1511,6 +1753,8 @@ mod tests {
             request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
                 onboarding_session_id: session_id,
                 idempotency_key: "k6".to_string(),
+                voice_artifact_sync_receipt_ref: Some(voice_receipt),
+                wake_artifact_sync_receipt_ref: None,
             }),
         };
         let out = rt.run(&mut store, &complete).unwrap();
@@ -1541,12 +1785,17 @@ mod tests {
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
             }),
         };
         let session_id = match rt.run(&mut store, &start).unwrap() {
             Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap().onboarding_session_id,
             _ => panic!("expected ok"),
         };
+        insert_inviter_device(&mut store, "device_no_sender_verify");
 
         let terms = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
@@ -1600,6 +1849,15 @@ mod tests {
         };
         let _ = rt.run(&mut store, &access).unwrap();
 
+        let voice_receipt = lock_voice_enrollment_and_get_receipt(
+            &rt,
+            &mut store,
+            session_id.clone(),
+            device("device_no_sender_verify"),
+            800,
+            "schema-optional",
+        );
+
         let complete = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
             correlation_id: corr(),
@@ -1610,6 +1868,8 @@ mod tests {
             request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
                 onboarding_session_id: session_id,
                 idempotency_key: "schema-gate-complete".to_string(),
+                voice_artifact_sync_receipt_ref: Some(voice_receipt),
+                wake_artifact_sync_receipt_ref: None,
             }),
         };
         let out = rt.run(&mut store, &complete).unwrap();
@@ -1872,6 +2132,10 @@ mod tests {
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_gate_fail_closed".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
             }),
         };
         let session_id = match rt.run(&mut store, &start).unwrap() {
@@ -1945,6 +2209,8 @@ mod tests {
             request: OnbRequest::CompleteCommit(OnbCompleteCommitRequest {
                 onboarding_session_id: session_id,
                 idempotency_key: "gate-fail-complete".to_string(),
+                voice_artifact_sync_receipt_ref: None,
+                wake_artifact_sync_receipt_ref: None,
             }),
         };
         let complete_out = rt.run(&mut store, &complete);
@@ -1973,6 +2239,10 @@ mod tests {
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
             }),
         };
         let session_id = match rt.run(&mut store, &start).unwrap() {
@@ -2026,22 +2296,41 @@ mod tests {
                 OnbVoiceEnrollSampleStep {
                     audio_sample_ref: "audio:voice:1".to_string(),
                     attempt_index: 1,
-                    sample_result: ContractVoiceSampleResult::Pass,
-                    reason_code: None,
+                    sample_duration_ms: 1_400,
+                    vad_coverage: 0.93,
+                    snr_db: 18.0,
+                    clipping_pct: 0.4,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: Some(
+                        VoiceEmbeddingCaptureRef::v1(
+                            "embed://ios/voice/onb/1".to_string(),
+                            "ios.voiceid.v1".to_string(),
+                            256,
+                        )
+                        .unwrap(),
+                    ),
                     idempotency_key: "voice-sample-1".to_string(),
                 },
                 OnbVoiceEnrollSampleStep {
                     audio_sample_ref: "audio:voice:2".to_string(),
                     attempt_index: 2,
-                    sample_result: ContractVoiceSampleResult::Pass,
-                    reason_code: None,
+                    sample_duration_ms: 1_380,
+                    vad_coverage: 0.91,
+                    snr_db: 17.5,
+                    clipping_pct: 0.3,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
                     idempotency_key: "voice-sample-2".to_string(),
                 },
                 OnbVoiceEnrollSampleStep {
                     audio_sample_ref: "audio:voice:3".to_string(),
                     attempt_index: 3,
-                    sample_result: ContractVoiceSampleResult::Pass,
-                    reason_code: None,
+                    sample_duration_ms: 1_420,
+                    vad_coverage: 0.92,
+                    snr_db: 18.2,
+                    clipping_pct: 0.5,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
                     idempotency_key: "voice-sample-3".to_string(),
                 },
             ],
@@ -2056,8 +2345,142 @@ mod tests {
         assert_eq!(out.sample_results.len(), 3);
         assert!(out.defer_result.is_none());
         assert!(out.complete_result.is_some());
-        let profile_id = out.complete_result.unwrap().voice_profile_id;
-        assert!(store.ph1vid_get_voice_profile(&profile_id).is_some());
+        let complete = out.complete_result.unwrap();
+        let profile_id = complete.voice_profile_id.clone();
+        let profile = store
+            .ph1vid_get_voice_profile(&profile_id)
+            .expect("voice profile must exist");
+        let capture_ref = profile
+            .profile_embedding_capture_ref
+            .as_ref()
+            .expect("voice profile must keep app embedding capture ref");
+        assert_eq!(capture_ref.embedding_ref, "embed://ios/voice/onb/1");
+        assert_eq!(capture_ref.embedding_model_id, "ios.voiceid.v1");
+        assert_eq!(capture_ref.embedding_dim, 256);
+        let receipt = complete.voice_artifact_sync_receipt_ref.unwrap();
+        let queue_row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("voice sync queue row must exist");
+        assert_eq!(queue_row.state, MobileArtifactSyncState::Acked);
+        assert!(queue_row.acked_at.is_some());
+    }
+
+    #[test]
+    fn onb_live_sequence_sync_failure_keeps_queue_row_inflight_for_retry() {
+        let rt = Ph1OnbOrchRuntime::default().with_device_sync_sender(
+            crate::device_artifact_sync::DeviceArtifactSyncSenderRuntime::always_fail_for_tests(
+                "engine_b_down",
+                5_000,
+            ),
+        );
+        let mut store = store_with_inviter();
+        let token_id = make_activated_link(&mut store);
+
+        let start = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 2),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT.to_string(),
+            simulation_type: SimulationType::Draft,
+            request: OnbRequest::SessionStartDraft(OnbSessionStartDraftRequest {
+                token_id,
+                prefilled_context_ref: None,
+                tenant_id: Some("tenant_1".to_string()),
+                device_fingerprint: "device_fp_1".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
+            }),
+        };
+        let session_id = match rt.run(&mut store, &start).unwrap() {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.unwrap().onboarding_session_id,
+            _ => panic!("expected ok"),
+        };
+
+        let terms = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id: corr(),
+            turn_id: turn(),
+            now: MonotonicTimeNs(now().0 + 3),
+            simulation_id: selene_kernel_contracts::ph1onb::ONB_TERMS_ACCEPT_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::TermsAcceptCommit(OnbTermsAcceptCommitRequest {
+                onboarding_session_id: session_id.clone(),
+                terms_version_id: "terms_v1".to_string(),
+                accepted: true,
+                idempotency_key: "idem_terms".to_string(),
+            }),
+        };
+        let _ = rt.run(&mut store, &terms).unwrap();
+
+        let device_id = device("voice_device_onb_fail");
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user("inviter"),
+                    "phone".to_string(),
+                    MonotonicTimeNs(now().0 + 3),
+                    Some("audio_profile_voice".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let live_req = OnbVoiceEnrollLiveRequest {
+            correlation_id: corr(),
+            turn_id_start: TurnId(10),
+            now: MonotonicTimeNs(now().0 + 10),
+            onboarding_session_id: session_id,
+            device_id,
+            consent_asserted: true,
+            max_total_attempts: 8,
+            max_session_enroll_time_ms: 120_000,
+            lock_after_consecutive_passes: 2,
+            samples: vec![
+                OnbVoiceEnrollSampleStep {
+                    audio_sample_ref: "audio:voice:f1".to_string(),
+                    attempt_index: 1,
+                    sample_duration_ms: 1_350,
+                    vad_coverage: 0.93,
+                    snr_db: 18.0,
+                    clipping_pct: 0.4,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
+                    idempotency_key: "voice-fail-sample-1".to_string(),
+                },
+                OnbVoiceEnrollSampleStep {
+                    audio_sample_ref: "audio:voice:f2".to_string(),
+                    attempt_index: 2,
+                    sample_duration_ms: 1_360,
+                    vad_coverage: 0.92,
+                    snr_db: 17.8,
+                    clipping_pct: 0.3,
+                    overlap_ratio: 0.0,
+                    app_embedding_capture_ref: None,
+                    idempotency_key: "voice-fail-sample-2".to_string(),
+                },
+            ],
+            finalize: OnbVoiceEnrollFinalize::Complete {
+                idempotency_key: "voice-fail-complete".to_string(),
+            },
+        };
+
+        let out = rt
+            .run_voice_enrollment_live_sequence(&mut store, &live_req)
+            .unwrap();
+        let complete = out.complete_result.expect("complete result must exist");
+        let receipt = complete
+            .voice_artifact_sync_receipt_ref
+            .expect("voice sync receipt must exist");
+        let queue_row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("voice sync queue row must exist");
+        assert_eq!(queue_row.state, MobileArtifactSyncState::InFlight);
+        assert_eq!(queue_row.acked_at, None);
+        assert_eq!(queue_row.last_error.as_deref(), Some("engine_b_down"));
     }
 
     #[test]
@@ -2078,6 +2501,10 @@ mod tests {
                 prefilled_context_ref: None,
                 tenant_id: Some("tenant_1".to_string()),
                 device_fingerprint: "device_fp_1".to_string(),
+                app_platform: selene_kernel_contracts::ph1link::AppPlatform::Ios,
+                app_instance_id: "ios_instance_onb".to_string(),
+                deep_link_nonce: "nonce_onb".to_string(),
+                link_opened_at: MonotonicTimeNs(now().0 + 5),
             }),
         };
         let session_id = match rt.run(&mut store, &start).unwrap() {
@@ -2226,5 +2653,120 @@ mod tests {
         );
         assert!(out.activate_result.is_none());
         assert!(out.activation_skipped_reason.is_some());
+    }
+
+    #[test]
+    fn onb_link_activation_handoff_starts_session_with_link_app_context() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        let link_rt = crate::ph1link::Ph1LinkRuntime::new(crate::ph1link::Ph1LinkConfig::mvp_v1());
+
+        let draft = Ph1LinkRequest::invite_generate_draft_v1(
+            corr(),
+            turn(),
+            now(),
+            user("inviter"),
+            InviteeType::Employee,
+            Some("tenant_1".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let token_id = match link_rt.run(&mut store, &draft).unwrap() {
+            selene_kernel_contracts::ph1link::Ph1LinkResponse::Ok(ok) => {
+                ok.link_generate_result.unwrap().token_id
+            }
+            _ => panic!("expected LINK generate ok"),
+        };
+
+        let open = Ph1LinkRequest::invite_open_activate_commit_v1(
+            corr(),
+            TurnId(turn().0 + 1),
+            MonotonicTimeNs(now().0 + 5),
+            token_id,
+            "device_fp_link_handoff".to_string(),
+            selene_kernel_contracts::ph1link::AppPlatform::Ios,
+            "ios_instance_link_handoff".to_string(),
+            "nonce_link_handoff".to_string(),
+            MonotonicTimeNs(now().0 + 5),
+            "idem_link_handoff_open".to_string(),
+        )
+        .unwrap();
+        let activation = match link_rt.run(&mut store, &open).unwrap() {
+            selene_kernel_contracts::ph1link::Ph1LinkResponse::Ok(ok) => {
+                ok.link_activation_result.unwrap()
+            }
+            _ => panic!("expected LINK open activate ok"),
+        };
+
+        let started = rt
+            .start_session_from_link_activation(
+                &mut store,
+                MonotonicTimeNs(now().0 + 6),
+                &activation,
+                Some("tenant_1".to_string()),
+                "device_fp_link_handoff".to_string(),
+            )
+            .unwrap();
+        assert_eq!(started.status, selene_kernel_contracts::ph1onb::OnboardingStatus::DraftCreated);
+        let row = store
+            .ph1onb_session_row(&started.onboarding_session_id)
+            .expect("onboarding session row should exist");
+        assert_eq!(
+            row.app_instance_id.as_str(),
+            "ios_instance_link_handoff"
+        );
+        assert_eq!(row.deep_link_nonce.as_str(), "nonce_link_handoff");
+        assert_eq!(row.link_opened_at, MonotonicTimeNs(now().0 + 5));
+    }
+
+    #[test]
+    fn onb_link_activation_handoff_refuses_non_activated_status() {
+        let rt = Ph1OnbOrchRuntime::default();
+        let mut store = store_with_inviter();
+        let link_rt = crate::ph1link::Ph1LinkRuntime::new(crate::ph1link::Ph1LinkConfig::mvp_v1());
+
+        let draft = Ph1LinkRequest::invite_generate_draft_v1(
+            corr(),
+            turn(),
+            now(),
+            user("inviter"),
+            InviteeType::Employee,
+            Some("tenant_1".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let generated = match link_rt.run(&mut store, &draft).unwrap() {
+            selene_kernel_contracts::ph1link::Ph1LinkResponse::Ok(ok) => {
+                ok.link_generate_result.unwrap()
+            }
+            _ => panic!("expected LINK generate ok"),
+        };
+
+        let blocked_activation = selene_kernel_contracts::ph1link::LinkActivationResult::v1(
+            generated.token_id,
+            generated.draft_id,
+            selene_kernel_contracts::ph1link::LinkStatus::Blocked,
+            Vec::new(),
+            Some("FORWARDED_LINK_DEVICE_MISMATCH".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out = rt.start_session_from_link_activation(
+            &mut store,
+            MonotonicTimeNs(now().0 + 6),
+            &blocked_activation,
+            Some("tenant_1".to_string()),
+            "device_fp_link_handoff".to_string(),
+        );
+        assert!(matches!(out, Err(StorageError::ContractViolation(_))));
     }
 }

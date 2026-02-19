@@ -158,7 +158,7 @@ fn at_simcat_db_04_rebuild_current_from_ledger() {
     .unwrap();
 
     let before = s.simulation_catalog_current_rows().clone();
-    s.rebuild_simulation_catalog_current_rows();
+    s.rebuild_simulation_catalog_current_rows().unwrap();
     let after = s.simulation_catalog_current_rows().clone();
     assert_eq!(before, after);
 

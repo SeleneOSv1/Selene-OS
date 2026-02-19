@@ -102,8 +102,8 @@ mod tests {
         ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk,
     };
     use selene_kernel_contracts::ph1n::{
-        Chat, Clarify, IntentDraft, IntentType, OverallConfidence, PH1N_CONTRACT_VERSION,
-        UncertainSpan, UncertainSpanKind,
+        Chat, Clarify, IntentDraft, IntentType, OverallConfidence, UncertainSpan,
+        UncertainSpanKind, PH1N_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1w::SessionState;
     use selene_kernel_contracts::{ReasonCodeId, SchemaVersion};

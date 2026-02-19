@@ -63,6 +63,24 @@ Deterministic boundary rules:
 - ONB requirement prompts are schema-driven from pinned field specs only; no hardcoded ONB-only requirement branch is allowed.
 - never ask twice: if a value exists in pinned payload context or resolved fields, PH1.ONB must not ask that field again.
 
+## 2B) Phone-First Onboarding Boundary (Required Extension)
+
+Operating model lock:
+- Onboarding is phone-first for production users (`IOS` primary, `ANDROID` supported).
+- ONB start requires activated link context plus app-open context from mobile runtime.
+- Web fallback is not primary and must not bypass mobile app context checks.
+
+Required app-open context at ONB start:
+- `app_platform` (`IOS|ANDROID`)
+- `app_instance_id`
+- `deep_link_nonce`
+- `link_opened_at`
+- `device_fingerprint_hash`
+
+Hard rules:
+- missing/invalid app-open context fails closed before ONB session start.
+- ONB completion requires proof that voice enrollment lock + sync proof were produced; wake proof is required only on wake-required platform profiles (`ANDROID` default, `IOS` optional/feature-flagged).
+
 ## 3) Reads (dependencies)
 
 ### Link lifecycle prerequisites (from row 20 lock)
@@ -72,6 +90,9 @@ Deterministic boundary rules:
 - required conditions:
   - `token_id` exists
   - `token_id` is in `ACTIVATED` state
+  - `app_platform` is present and valid (`IOS|ANDROID`)
+  - `app_instance_id` and `deep_link_nonce` are present
+  - `device_fingerprint_hash` from activation context matches ONB start context
   - if request tenant scope + prefilled tenant scope are both present, they must match
 
 ### Position/company prereq checks (employee path)
@@ -114,6 +135,7 @@ Deterministic boundary rules:
 - writes: `onboarding_sessions` (create or deterministic reuse by activated token)
 - required fields:
   - `token_id`, `device_fingerprint`, optional `prefilled_context_ref`, optional `tenant_id`
+  - phone-first context fields (required extension): `app_platform`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`
   - pinned schema context: `pinned_schema_id`, `pinned_schema_version`, `pinned_overlay_set_id`, `pinned_selector_snapshot`
   - `required_verification_gates[]` derived from pinned schema
 - idempotency rule:
@@ -150,6 +172,11 @@ Deterministic boundary rules:
 
 ### `ONB_COMPLETE_COMMIT`
 - writes: final onboarding status in `onboarding_sessions`
+- completion preconditions (required extension):
+  - voice enrollment status is `LOCKED`.
+  - wake enrollment status is `COMPLETE` only when wake-required platform policy is active.
+  - voice artifact sync receipt is required when locked voice enrollment exists.
+  - wake artifact sync receipt is required when completed wake enrollment exists on wake-required platform profiles.
 - idempotency rule:
   - dedupe by `(onboarding_session_id, idempotency_key)`
 
@@ -204,6 +231,12 @@ Append-only audit envelope discipline remains enforced through PH1.J (`audit_eve
   - `at_onb_db_03_idempotency_dedupe_works`
 - `AT-ONB-DB-04` current table consistency (no ONB-owned ledger rebuild in this row)
   - `at_onb_db_04_current_table_no_ledger_rebuild_required`
+- `AT-ONB-DB-05` onboarding session start fails closed without app-open context
+  - `at_onb_db_05_phone_app_open_context_required`
+- `AT-ONB-DB-06` link->app->onb handoff device integrity is enforced
+  - `at_onb_db_06_link_app_onb_device_integrity_enforced`
+- `AT-ONB-DB-07` onboarding complete requires enrollment lock plus sync receipts
+  - `at_onb_db_07_complete_requires_enrollment_lock_and_sync_receipts`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

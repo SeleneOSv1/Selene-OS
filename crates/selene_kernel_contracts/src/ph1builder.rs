@@ -153,8 +153,14 @@ impl Validate for BuilderExpectedEffect {
             "builder_expected_effect.latency_p99_delta_bp",
             self.latency_p99_delta_bp,
         )?;
-        validate_bp("builder_expected_effect.quality_delta_bp", self.quality_delta_bp)?;
-        validate_bp("builder_expected_effect.safety_delta_bp", self.safety_delta_bp)?;
+        validate_bp(
+            "builder_expected_effect.quality_delta_bp",
+            self.quality_delta_bp,
+        )?;
+        validate_bp(
+            "builder_expected_effect.safety_delta_bp",
+            self.safety_delta_bp,
+        )?;
         Ok(())
     }
 }
@@ -231,11 +237,7 @@ impl Validate for BuilderLearningContext {
         }
         let mut evidence_set = BTreeSet::new();
         for evidence_ref in &self.evidence_refs {
-            validate_ascii_text(
-                "builder_learning_context.evidence_refs",
-                evidence_ref,
-                256,
-            )?;
+            validate_ascii_text("builder_learning_context.evidence_refs", evidence_ref, 256)?;
             evidence_set.insert(evidence_ref);
         }
         if evidence_set.len() != self.evidence_refs.len() {
@@ -537,11 +539,7 @@ impl Validate for BuilderValidationGateResult {
                 reason: "must be non-zero",
             });
         }
-        validate_ascii_text(
-            "builder_validation_gate_result.detail",
-            &self.detail,
-            1024,
-        )?;
+        validate_ascii_text("builder_validation_gate_result.detail", &self.detail, 1024)?;
         if let Some(idempotency_key) = &self.idempotency_key {
             validate_token(
                 "builder_validation_gate_result.idempotency_key",
@@ -634,7 +632,8 @@ impl Validate for BuilderApprovalState {
                 reason: "must match class-based approval requirement",
             });
         }
-        let derived_granted = (u8::from(self.tech_approved)) + (u8::from(self.product_security_approved));
+        let derived_granted =
+            (u8::from(self.tech_approved)) + (u8::from(self.product_security_approved));
         if self.approvals_granted != derived_granted {
             return Err(ContractViolation::InvalidValue {
                 field: "builder_approval_state.approvals_granted",
@@ -1068,7 +1067,11 @@ pub fn rollout_pct_for_stage(stage: BuilderReleaseStage) -> u8 {
     }
 }
 
-fn validate_token(field: &'static str, value: &str, max_len: usize) -> Result<(), ContractViolation> {
+fn validate_token(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
     if value.trim().is_empty() {
         return Err(ContractViolation::InvalidValue {
             field,
@@ -1093,7 +1096,11 @@ fn validate_token(field: &'static str, value: &str, max_len: usize) -> Result<()
     Ok(())
 }
 
-fn validate_path(field: &'static str, value: &str, max_len: usize) -> Result<(), ContractViolation> {
+fn validate_path(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
     if value.trim().is_empty() {
         return Err(ContractViolation::InvalidValue {
             field,
@@ -1106,10 +1113,9 @@ fn validate_path(field: &'static str, value: &str, max_len: usize) -> Result<(),
             reason: "exceeds max length",
         });
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/' || c == '.')
-    {
+    if !value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/' || c == '.'
+    }) {
         return Err(ContractViolation::InvalidValue {
             field,
             reason: "must be ASCII path-safe",

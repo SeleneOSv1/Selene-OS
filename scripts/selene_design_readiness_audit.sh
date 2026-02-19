@@ -16,6 +16,20 @@ fi
 
 cd "$(git rev-parse --show-toplevel)"
 
+AUDIT_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/selene_design_readiness_audit.XXXXXXXXXXXX")"
+cleanup_audit_tmp_dir() {
+  rm -rf "${AUDIT_TMP_DIR}"
+}
+trap cleanup_audit_tmp_dir EXIT
+
+ACTIVE_BLUEPRINTS_TXT="${AUDIT_TMP_DIR}/active_blueprints.txt"
+ACTIVE_CAPS_TXT="${AUDIT_TMP_DIR}/active_caps.txt"
+ACTIVE_CAPS_UNIQUE_TXT="${AUDIT_TMP_DIR}/active_caps_unique.txt"
+ECM_CAPS_EXACT_TXT="${AUDIT_TMP_DIR}/ecm_caps_exact.txt"
+SIM_IDS_TXT="${AUDIT_TMP_DIR}/sim_ids.txt"
+ACTIVE_SIMREQ_IDS_TXT="${AUDIT_TMP_DIR}/active_simreq_ids.txt"
+ACTIVE_SIMREQ_IDS_UNIQUE_TXT="${AUDIT_TMP_DIR}/active_simreq_ids_unique.txt"
+
 echo "=================================================="
 echo "0) REPO STATE (MUST BE REPORTED EXACTLY)"
 echo "=================================================="
@@ -61,6 +75,12 @@ echo "=================================================="
 echo "1B) ENGINE TRACKER DUPLICATION GUARDRAIL"
 echo "=================================================="
 ./scripts/check_engine_tracker_duplicates.sh
+
+echo
+echo "=================================================="
+echo "1B2) RETIRED ENGINE MERGE RESIDUE GUARDRAIL"
+echo "=================================================="
+./scripts/check_retired_engine_merge_residue.sh
 
 echo
 echo "=================================================="
@@ -388,34 +408,34 @@ awk -F'|' '
       print path
     }
   }
-' docs/09_BLUEPRINT_REGISTRY.md > /tmp/active_blueprints.txt
-cat /tmp/active_blueprints.txt
+' docs/09_BLUEPRINT_REGISTRY.md > "${ACTIVE_BLUEPRINTS_TXT}"
+cat "${ACTIVE_BLUEPRINTS_TXT}"
 
 echo
 echo "--- 3C) Extract capability_ids used by ACTIVE blueprints ---"
-: > /tmp/active_caps.txt
+: > "${ACTIVE_CAPS_TXT}"
 while read -r f; do
   awk -F'|' '
     /^\| / && $0 !~ /^\|---/ {
       cap=$4; gsub(/^ +| +$/, "", cap);
       if(cap!="capability_id" && cap!=""){print cap}
     }
-  ' "$f" >> /tmp/active_caps.txt
-done < /tmp/active_blueprints.txt
-sort -u /tmp/active_caps.txt > /tmp/active_caps_unique.txt
-echo "ACTIVE CAPABILITIES (unique):"; wc -l /tmp/active_caps_unique.txt
+  ' "$f" >> "${ACTIVE_CAPS_TXT}"
+done < "${ACTIVE_BLUEPRINTS_TXT}"
+sort -u "${ACTIVE_CAPS_TXT}" > "${ACTIVE_CAPS_UNIQUE_TXT}"
+echo "ACTIVE CAPABILITIES (unique):"; wc -l "${ACTIVE_CAPS_UNIQUE_TXT}"
 
 echo
 echo "--- 3D) Build ECM capability set (exact tokens) ---"
 {
   rg -n '^### capability_id: ' docs/ECM/*.md -S | awk -F'capability_id: ' '{print $2}' | awk '{print $1}';
   rg -n '^#+ `[^`]+`$' docs/ECM/*.md -S | awk -F'`' '{if(NF>=3) print $2}';
-} | sort -u > /tmp/ecm_caps_exact.txt
-echo "ECM CAPABILITIES (unique):"; wc -l /tmp/ecm_caps_exact.txt
+} | sort -u > "${ECM_CAPS_EXACT_TXT}"
+echo "ECM CAPABILITIES (unique):"; wc -l "${ECM_CAPS_EXACT_TXT}"
 
 echo
 echo "--- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---"
-comm -23 /tmp/active_caps_unique.txt /tmp/ecm_caps_exact.txt | sed 's/^/MISSING_CAPABILITY_ID: /' || true
+comm -23 "${ACTIVE_CAPS_UNIQUE_TXT}" "${ECM_CAPS_EXACT_TXT}" | sed 's/^/MISSING_CAPABILITY_ID: /' || true
 
 echo
 echo "--- 3F) ACTIVE blueprints: side_effects!=NONE must not have Simulation Requirements: none ---"
@@ -427,14 +447,14 @@ while read -r f; do
     echo "BAD_ACTIVE_SIMREQ_NONE: $f"
     bad=1
   fi
-done < /tmp/active_blueprints.txt
+done < "${ACTIVE_BLUEPRINTS_TXT}"
 echo "BAD_ACTIVE_SIMREQ_NONE_FOUND:$bad"
 
 echo
 echo "--- 3G) Simulation IDs listed by ACTIVE blueprints must exist in sim catalog ---"
-rg -n "^### [A-Z0-9_]+ \(" docs/08_SIMULATION_CATALOG.md | sed 's/^.*### //;s/ (.*$//' | sort -u > /tmp/sim_ids.txt
+rg -n "^### [A-Z0-9_]+ \(" docs/08_SIMULATION_CATALOG.md | sed 's/^.*### //;s/ (.*$//' | sort -u > "${SIM_IDS_TXT}"
 
-: > /tmp/active_simreq_ids.txt
+: > "${ACTIVE_SIMREQ_IDS_TXT}"
 while read -r f; do
   awk '
     BEGIN{in_sec=0}
@@ -449,14 +469,14 @@ while read -r f; do
         }
       }
     }
-  ' "$f" >> /tmp/active_simreq_ids.txt
-done < /tmp/active_blueprints.txt
+  ' "$f" >> "${ACTIVE_SIMREQ_IDS_TXT}"
+done < "${ACTIVE_BLUEPRINTS_TXT}"
 
 echo "NON_SIM_TEXT_LINES (if any):"
-rg -n "^NON_SIM_TEXT:" /tmp/active_simreq_ids.txt || true
+rg -n "^NON_SIM_TEXT:" "${ACTIVE_SIMREQ_IDS_TXT}" || true
 
-grep -v '^NON_SIM_TEXT:' /tmp/active_simreq_ids.txt | sort -u > /tmp/active_simreq_ids_unique.txt
-comm -23 /tmp/active_simreq_ids_unique.txt /tmp/sim_ids.txt | sed 's/^/MISSING_SIM_ID: /' || true
+grep -v '^NON_SIM_TEXT:' "${ACTIVE_SIMREQ_IDS_TXT}" | sort -u > "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}"
+comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" | sed 's/^/MISSING_SIM_ID: /' || true
 
 echo
 echo "=================================================="
@@ -485,7 +505,7 @@ echo "=================================================="
 echo "5) DRIFT/BANNED LEGACY TOKENS SWEEP (CASE-INSENSITIVE)"
 echo "   (Report any hit with file:line)"
 echo "=================================================="
-rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S || true
+rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S --glob '!docs/archive/**' || true
 
 echo
 echo "=================================================="

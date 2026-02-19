@@ -7,7 +7,7 @@ use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
-use selene_kernel_contracts::ph1link::{InviteeType, LinkStatus, PrefilledContext};
+use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, LinkStatus, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{
     BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus, OnboardingStatus, ProofType,
     TermsStatus, VerificationStatus,
@@ -20,10 +20,11 @@ use selene_kernel_contracts::ph1position::{
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
-    TenantCompanyLifecycleState, TenantCompanyRecord,
+    TenantCompanyLifecycleState, TenantCompanyRecord, WakeSampleResult,
 };
 use selene_storage::repo::{
-    Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1fFoundationRepo, Ph1jAuditRepo,
+    Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1VidEnrollmentRepo, Ph1fFoundationRepo,
+    Ph1jAuditRepo, Ph1wWakeRepo,
 };
 
 fn user(id: &str) -> UserId {
@@ -80,6 +81,29 @@ fn seed_activated_link(
     tenant_id: Option<String>,
     prefilled_context: Option<PrefilledContext>,
 ) -> selene_kernel_contracts::ph1link::TokenId {
+    seed_activated_link_with_platform(
+        store,
+        now,
+        inviter_user_id,
+        invitee_type,
+        tenant_id,
+        prefilled_context,
+        AppPlatform::Ios,
+        "ios_instance_onb_test",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn seed_activated_link_with_platform(
+    store: &mut Ph1fStore,
+    now: u64,
+    inviter_user_id: UserId,
+    invitee_type: InviteeType,
+    tenant_id: Option<String>,
+    prefilled_context: Option<PrefilledContext>,
+    app_platform: AppPlatform,
+    app_instance_id: &str,
+) -> selene_kernel_contracts::ph1link::TokenId {
     let (link, _) = store
         .ph1link_invite_generate_draft_row(
             MonotonicTimeNs(now),
@@ -97,10 +121,72 @@ fn seed_activated_link(
             MonotonicTimeNs(now + 1),
             link.token_id.clone(),
             format!("fp_{now}"),
+            app_platform,
+            app_instance_id.to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
 
     link.token_id
+}
+
+fn complete_locked_voice_enrollment(
+    store: &mut Ph1fStore,
+    onboarding_session_id: selene_kernel_contracts::ph1onb::OnboardingSessionId,
+    device_id: DeviceId,
+    now_base: u64,
+    id_prefix: &str,
+) -> String {
+    let started = store
+        .ph1vid_enroll_start_draft_row(
+            MonotonicTimeNs(now_base),
+            onboarding_session_id,
+            device_id,
+            true,
+            8,
+            120_000,
+            2,
+        )
+        .unwrap();
+    store
+        .ph1vid_enroll_sample_commit_row(
+            MonotonicTimeNs(now_base + 1),
+            started.voice_enrollment_session_id.clone(),
+            format!("audio:{id_prefix}:voice:1"),
+            1,
+            1_420,
+            0.93,
+            18.2,
+            0.4,
+            0.0,
+            format!("{id_prefix}-voice-sample-1"),
+        )
+        .unwrap();
+    store
+        .ph1vid_enroll_sample_commit_row(
+            MonotonicTimeNs(now_base + 2),
+            started.voice_enrollment_session_id.clone(),
+            format!("audio:{id_prefix}:voice:2"),
+            2,
+            1_390,
+            0.92,
+            17.9,
+            0.3,
+            0.0,
+            format!("{id_prefix}-voice-sample-2"),
+        )
+        .unwrap();
+    let completed = store
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(now_base + 3),
+            started.voice_enrollment_session_id,
+            format!("{id_prefix}-voice-complete"),
+        )
+        .unwrap();
+    completed
+        .voice_artifact_sync_receipt_ref
+        .expect("voice sync receipt should exist after complete")
 }
 
 fn seed_company(store: &mut Ph1fStore, tenant_id: &TenantId, company_id: &str) {
@@ -271,6 +357,10 @@ fn at_onb_db_01_tenant_isolation_enforced() {
         None,
         Some("tenant_a".to_string()),
         "fp_onb_a".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_onb_test".to_string(),
+        "nonce_onb_test".to_string(),
+        MonotonicTimeNs(1),
     )
     .unwrap();
     s.ph1onb_session_start_draft_row(
@@ -279,6 +369,10 @@ fn at_onb_db_01_tenant_isolation_enforced() {
         None,
         Some("tenant_b".to_string()),
         "fp_onb_b".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_onb_test".to_string(),
+        "nonce_onb_test".to_string(),
+        MonotonicTimeNs(1),
     )
     .unwrap();
 
@@ -288,9 +382,108 @@ fn at_onb_db_01_tenant_isolation_enforced() {
         None,
         Some("tenant_b".to_string()),
         "fp_onb_mismatch".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_onb_test".to_string(),
+        "nonce_onb_test".to_string(),
+        MonotonicTimeNs(1),
     );
     assert!(matches!(mismatch, Err(StorageError::ContractViolation(_))));
     assert_eq!(s.ph1onb_session_rows().len(), 2);
+}
+
+#[test]
+fn at_onb_db_01b_phone_first_start_requires_exact_link_open_activate_handoff_context() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_handoff_lock");
+    let inviter_device = device("tenant_a_device_handoff_lock");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        260,
+        inviter,
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_handoff",
+    );
+
+    let wrong_instance = s.ph1onb_session_start_draft_row(
+        MonotonicTimeNs(261),
+        token_id.clone(),
+        None,
+        Some("tenant_a".to_string()),
+        "fp_handoff_lock".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_other".to_string(),
+        "nonce_onb_test".to_string(),
+        MonotonicTimeNs(1),
+    );
+    assert!(matches!(
+        wrong_instance,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let wrong_nonce = s.ph1onb_session_start_draft_row(
+        MonotonicTimeNs(262),
+        token_id.clone(),
+        None,
+        Some("tenant_a".to_string()),
+        "fp_handoff_lock".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_handoff".to_string(),
+        "nonce_other".to_string(),
+        MonotonicTimeNs(1),
+    );
+    assert!(matches!(
+        wrong_nonce,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let wrong_link_opened_at = s.ph1onb_session_start_draft_row(
+        MonotonicTimeNs(263),
+        token_id.clone(),
+        None,
+        Some("tenant_a".to_string()),
+        "fp_handoff_lock".to_string(),
+        AppPlatform::Ios,
+        "ios_instance_handoff".to_string(),
+        "nonce_onb_test".to_string(),
+        MonotonicTimeNs(2),
+    );
+    assert!(matches!(
+        wrong_link_opened_at,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(264),
+            token_id.clone(),
+            None,
+            Some("tenant_a".to_string()),
+            "fp_handoff_lock".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_handoff".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+    let replay = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(265),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_handoff_lock_replay".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_handoff".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+    assert_eq!(replay.onboarding_session_id, started.onboarding_session_id);
 }
 
 #[test]
@@ -364,6 +557,10 @@ fn at_onb_db_03_idempotency_dedupe_works() {
             None,
             Some("tenant_a".to_string()),
             "fp_onb_idem".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
 
@@ -442,6 +639,10 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
             None,
             Some("tenant_a".to_string()),
             "fp_onb_flow".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
 
@@ -457,7 +658,7 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
     s.ph1onb_primary_device_confirm_commit_row(
         MonotonicTimeNs(605),
         started.onboarding_session_id.clone(),
-        d,
+        d.clone(),
         ProofType::Passcode,
         true,
         "onb-flow-device".to_string(),
@@ -475,11 +676,21 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         )
         .unwrap();
 
+    let voice_receipt = complete_locked_voice_enrollment(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        d,
+        607,
+        "onb-flow",
+    );
+
     let completed = s
         .ph1onb_complete_commit_row(
-            MonotonicTimeNs(607),
+            MonotonicTimeNs(611),
             started.onboarding_session_id.clone(),
             "onb-flow-complete".to_string(),
+            Some(voice_receipt),
+            None,
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
@@ -538,6 +749,10 @@ fn at_onb_db_05_session_start_pins_schema_context_and_required_gates() {
             None,
             Some(tenant_id.clone()),
             "fp_onb_schema_gated".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
     let expected_schema_id = format!("position:{position_id}");
@@ -571,6 +786,10 @@ fn at_onb_db_05_session_start_pins_schema_context_and_required_gates() {
             None,
             Some(tenant_id.clone()),
             "fp_onb_schema_gated_replay".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
     assert_eq!(replay.onboarding_session_id, started.onboarding_session_id);
@@ -640,6 +859,10 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
             None,
             Some(tenant_id.clone()),
             "fp_onb_required_verify".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
 
@@ -654,7 +877,7 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
     s.ph1onb_primary_device_confirm_commit_row(
         MonotonicTimeNs(903),
         started.onboarding_session_id.clone(),
-        inviter_device,
+        inviter_device.clone(),
         ProofType::Passcode,
         true,
         "onb-required-device".to_string(),
@@ -678,6 +901,8 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
         MonotonicTimeNs(905),
         started.onboarding_session_id.clone(),
         "onb-required-complete-blocked".to_string(),
+        None,
+        None,
     );
     assert!(matches!(
         complete_blocked,
@@ -710,11 +935,20 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
         "onb-required-access-ok".to_string(),
     )
     .unwrap();
+    let voice_receipt = complete_locked_voice_enrollment(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        inviter_device,
+        909,
+        "onb-required",
+    );
     let completed = s
         .ph1onb_complete_commit_row(
-            MonotonicTimeNs(909),
+            MonotonicTimeNs(913),
             started.onboarding_session_id,
             "onb-required-complete-ok".to_string(),
+            Some(voice_receipt),
+            None,
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
@@ -757,6 +991,10 @@ fn at_onb_db_12_required_verification_commit_idempotency_replays_deterministical
             None,
             Some(tenant_id.clone()),
             "fp_onb_required_verify_idem".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
 
@@ -859,6 +1097,10 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
             None,
             Some("tenant_a".to_string()),
             "fp_onb_no_required_verify".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
         )
         .unwrap();
     assert!(started.required_verification_gates.is_empty());
@@ -899,7 +1141,7 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
     s.ph1onb_primary_device_confirm_commit_row(
         MonotonicTimeNs(1005),
         started.onboarding_session_id.clone(),
-        inviter_device,
+        inviter_device.clone(),
         ProofType::Passcode,
         true,
         "onb-no-required-device".to_string(),
@@ -914,14 +1156,648 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
         "onb-no-required-access".to_string(),
     )
     .unwrap();
+    let voice_receipt = complete_locked_voice_enrollment(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        inviter_device,
+        1007,
+        "onb-no-required",
+    );
     let completed = s
         .ph1onb_complete_commit_row(
-            MonotonicTimeNs(1007),
+            MonotonicTimeNs(1011),
             started.onboarding_session_id,
             "onb-no-required-complete".to_string(),
+            Some(voice_receipt),
+            None,
         )
         .unwrap();
     assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+}
+
+#[test]
+fn at_onb_db_13_ios_complete_allows_missing_wake_receipt_when_voice_locked() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter_ios");
+    let inviter_device = device("tenant_a_device_inviter_ios");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device.clone());
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1010,
+        inviter.clone(),
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_onb_test",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1011),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_ios_no_wake".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(1012),
+        started.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-ios-terms".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_primary_device_confirm_commit_row(
+        MonotonicTimeNs(1013),
+        started.onboarding_session_id.clone(),
+        inviter_device.clone(),
+        ProofType::Passcode,
+        true,
+        "onb-ios-device".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(1014),
+        started.onboarding_session_id.clone(),
+        user("tenant_a:invitee_ios_no_wake"),
+        Some("tenant_a".to_string()),
+        "family_member".to_string(),
+        "onb-ios-access".to_string(),
+    )
+    .unwrap();
+
+    let voice_started = s
+        .ph1vid_enroll_start_draft_row(
+            MonotonicTimeNs(1015),
+            started.onboarding_session_id.clone(),
+            inviter_device,
+            true,
+            8,
+            120_000,
+            2,
+        )
+        .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1016),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:ios:voice:1".to_string(),
+        1,
+        1_420,
+        0.93,
+        18.4,
+        0.5,
+        0.0,
+        "onb-ios-voice-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1017),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:ios:voice:2".to_string(),
+        2,
+        1_390,
+        0.92,
+        18.0,
+        0.4,
+        0.0,
+        "onb-ios-voice-sample-2".to_string(),
+    )
+    .unwrap();
+    let voice_completed = s
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(1018),
+            voice_started.voice_enrollment_session_id,
+            "onb-ios-voice-complete".to_string(),
+        )
+        .unwrap();
+    let voice_receipt = voice_completed
+        .voice_artifact_sync_receipt_ref
+        .clone()
+        .expect("voice sync receipt should exist");
+
+    let completed = s
+        .ph1onb_complete_commit_row(
+            MonotonicTimeNs(1019),
+            started.onboarding_session_id.clone(),
+            "onb-ios-complete".to_string(),
+            Some(voice_receipt),
+            None,
+        )
+        .unwrap();
+    assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+
+    let current = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .unwrap();
+    assert_eq!(current.status, OnboardingStatus::Complete);
+    assert!(current.wake_artifact_sync_receipt_ref.is_none());
+}
+
+#[test]
+fn at_onb_db_14_android_complete_requires_wake_receipt_when_wake_is_complete() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter_android");
+    let inviter_device = device("tenant_a_device_inviter_android");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device.clone());
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1020,
+        inviter.clone(),
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Android,
+        "android_instance_onb_test",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1021),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_android_wake".to_string(),
+            AppPlatform::Android,
+            "android_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(1022),
+        started.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-android-terms".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_primary_device_confirm_commit_row(
+        MonotonicTimeNs(1023),
+        started.onboarding_session_id.clone(),
+        inviter_device.clone(),
+        ProofType::Passcode,
+        true,
+        "onb-android-device".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(1024),
+        started.onboarding_session_id.clone(),
+        user("tenant_a:invitee_android_wake"),
+        Some("tenant_a".to_string()),
+        "family_member".to_string(),
+        "onb-android-access".to_string(),
+    )
+    .unwrap();
+
+    let voice_started = s
+        .ph1vid_enroll_start_draft_row(
+            MonotonicTimeNs(1025),
+            started.onboarding_session_id.clone(),
+            inviter_device.clone(),
+            true,
+            8,
+            120_000,
+            2,
+        )
+        .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1026),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:android:voice:1".to_string(),
+        1,
+        1_410,
+        0.92,
+        17.8,
+        0.5,
+        0.0,
+        "onb-android-voice-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1027),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:android:voice:2".to_string(),
+        2,
+        1_380,
+        0.91,
+        17.6,
+        0.4,
+        0.0,
+        "onb-android-voice-sample-2".to_string(),
+    )
+    .unwrap();
+    let voice_completed = s
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(1028),
+            voice_started.voice_enrollment_session_id,
+            "onb-android-voice-complete".to_string(),
+        )
+        .unwrap();
+    let voice_receipt = voice_completed
+        .voice_artifact_sync_receipt_ref
+        .clone()
+        .expect("voice sync receipt should exist");
+
+    let wake_started = s
+        .ph1w_enroll_start_draft_row(
+            MonotonicTimeNs(1029),
+            inviter.clone(),
+            inviter_device.clone(),
+            Some(started.onboarding_session_id.clone()),
+            3,
+            12,
+            300_000,
+            "onb-android-wake-start".to_string(),
+        )
+        .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1030),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-android-wake-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1031),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-android-wake-sample-2".to_string(),
+    )
+    .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1032),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-android-wake-sample-3".to_string(),
+    )
+    .unwrap();
+    let wake_completed = s
+        .ph1w_enroll_complete_commit_row(
+            MonotonicTimeNs(1033),
+            wake_started.wake_enrollment_session_id,
+            "wake_profile_android_v1".to_string(),
+            "onb-android-wake-complete".to_string(),
+        )
+        .unwrap();
+    let wake_receipt = wake_completed
+        .wake_artifact_sync_receipt_ref
+        .clone()
+        .expect("wake sync receipt should exist");
+
+    let missing_wake_receipt = s.ph1onb_complete_commit_row(
+        MonotonicTimeNs(1034),
+        started.onboarding_session_id.clone(),
+        "onb-android-complete-missing-wake".to_string(),
+        Some(voice_receipt.clone()),
+        None,
+    );
+    assert!(matches!(
+        missing_wake_receipt,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let completed = s
+        .ph1onb_complete_commit_row(
+            MonotonicTimeNs(1035),
+            started.onboarding_session_id,
+            "onb-android-complete-with-wake".to_string(),
+            Some(voice_receipt),
+            Some(wake_receipt),
+        )
+        .unwrap();
+    assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+}
+
+#[test]
+fn at_onb_db_14b_desktop_complete_requires_wake_receipt_when_wake_is_complete() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter_desktop");
+    let inviter_device = device("tenant_a_device_inviter_desktop");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device.clone());
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1060,
+        inviter.clone(),
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Desktop,
+        "desktop_instance_onb_test",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1061),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_desktop_wake".to_string(),
+            AppPlatform::Desktop,
+            "desktop_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    s.ph1onb_terms_accept_commit_row(
+        MonotonicTimeNs(1062),
+        started.onboarding_session_id.clone(),
+        "terms_v1".to_string(),
+        true,
+        "onb-desktop-terms".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_primary_device_confirm_commit_row(
+        MonotonicTimeNs(1063),
+        started.onboarding_session_id.clone(),
+        inviter_device.clone(),
+        ProofType::Passcode,
+        true,
+        "onb-desktop-device".to_string(),
+    )
+    .unwrap();
+    s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(1064),
+        started.onboarding_session_id.clone(),
+        user("tenant_a:invitee_desktop_wake"),
+        Some("tenant_a".to_string()),
+        "family_member".to_string(),
+        "onb-desktop-access".to_string(),
+    )
+    .unwrap();
+
+    let voice_started = s
+        .ph1vid_enroll_start_draft_row(
+            MonotonicTimeNs(1065),
+            started.onboarding_session_id.clone(),
+            inviter_device.clone(),
+            true,
+            8,
+            120_000,
+            2,
+        )
+        .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1066),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:desktop:voice:1".to_string(),
+        1,
+        1_410,
+        0.92,
+        17.8,
+        0.5,
+        0.0,
+        "onb-desktop-voice-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1067),
+        voice_started.voice_enrollment_session_id.clone(),
+        "audio:desktop:voice:2".to_string(),
+        2,
+        1_380,
+        0.90,
+        16.9,
+        0.6,
+        0.0,
+        "onb-desktop-voice-sample-2".to_string(),
+    )
+    .unwrap();
+    let voice_completed = s
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(1068),
+            voice_started.voice_enrollment_session_id,
+            "onb-desktop-voice-complete".to_string(),
+        )
+        .unwrap();
+    let voice_receipt = voice_completed
+        .voice_artifact_sync_receipt_ref
+        .clone()
+        .expect("voice sync receipt should exist");
+
+    let wake_started = s
+        .ph1w_enroll_start_draft_row(
+            MonotonicTimeNs(1069),
+            inviter,
+            inviter_device,
+            Some(started.onboarding_session_id.clone()),
+            3,
+            12,
+            300_000,
+            "onb-desktop-wake-start".to_string(),
+        )
+        .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1070),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-desktop-wake-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1071),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-desktop-wake-sample-2".to_string(),
+    )
+    .unwrap();
+    s.ph1w_enroll_sample_commit_row(
+        MonotonicTimeNs(1072),
+        wake_started.wake_enrollment_session_id.clone(),
+        900,
+        0.92,
+        15.0,
+        0.01,
+        -18.0,
+        -43.0,
+        -4.0,
+        0.0,
+        WakeSampleResult::Pass,
+        None,
+        "onb-desktop-wake-sample-3".to_string(),
+    )
+    .unwrap();
+    let wake_completed = s
+        .ph1w_enroll_complete_commit_row(
+            MonotonicTimeNs(1073),
+            wake_started.wake_enrollment_session_id,
+            "wake_profile_desktop_v1".to_string(),
+            "onb-desktop-wake-complete".to_string(),
+        )
+        .unwrap();
+    let wake_receipt = wake_completed
+        .wake_artifact_sync_receipt_ref
+        .clone()
+        .expect("wake sync receipt should exist");
+
+    let missing_wake_receipt = s.ph1onb_complete_commit_row(
+        MonotonicTimeNs(1074),
+        started.onboarding_session_id.clone(),
+        "onb-desktop-complete-missing-wake".to_string(),
+        Some(voice_receipt.clone()),
+        None,
+    );
+    assert!(matches!(
+        missing_wake_receipt,
+        Err(StorageError::ContractViolation(_))
+    ));
+
+    let completed = s
+        .ph1onb_complete_commit_row(
+            MonotonicTimeNs(1075),
+            started.onboarding_session_id,
+            "onb-desktop-complete-with-wake".to_string(),
+            Some(voice_receipt),
+            Some(wake_receipt),
+        )
+        .unwrap();
+    assert_eq!(completed.onboarding_status, OnboardingStatus::Complete);
+}
+
+#[test]
+fn at_onb_db_15_wake_start_refused_for_ios_onboarding_session_default_policy() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter_ios_wake");
+    let inviter_device = device("tenant_a_device_inviter_ios_wake");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device.clone());
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1040,
+        inviter.clone(),
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_onb_test",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1041),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_ios_wake_refuse".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let wake_start = s.ph1w_enroll_start_draft_row(
+        MonotonicTimeNs(1042),
+        inviter,
+        inviter_device,
+        Some(started.onboarding_session_id),
+        3,
+        12,
+        300_000,
+        "onb-ios-wake-start-should-refuse".to_string(),
+    );
+    assert!(matches!(
+        wake_start,
+        Err(StorageError::ContractViolation(_))
+    ));
+}
+
+#[test]
+fn at_onb_db_16_wake_start_allows_ios_override_flag() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_inviter_ios_wake_override");
+    let inviter_device = device("tenant_a_device_inviter_ios_wake_override");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device.clone());
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1050,
+        inviter.clone(),
+        InviteeType::FamilyMember,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_onb_test",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1051),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_ios_wake_refuse".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let wake_start = s.ph1w_enroll_start_draft_with_ios_override(
+        MonotonicTimeNs(1052),
+        inviter,
+        inviter_device,
+        Some(started.onboarding_session_id),
+        true,
+        3,
+        12,
+        300_000,
+        "onb-ios-wake-start-allow-override".to_string(),
+    );
+    assert!(wake_start.is_ok());
 }
 
 #[test]

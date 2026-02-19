@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, Ph1VoiceIdResponse, VoiceIdentityV2};
 use selene_kernel_contracts::ph1e::{
     StrictBudget, StructuredAmbiguity, ToolName, ToolRequest, ToolRequestOrigin, ToolResponse,
     ToolResult, ToolStatus,
@@ -13,8 +14,9 @@ use selene_kernel_contracts::ph1n::{
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
-    PendingState, Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer, ThreadState,
-    WaitDirective,
+    IdentityPromptState, PendingState, Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer,
+    StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod, StepUpOutcome, StepUpResult,
+    ThreadState, WaitDirective,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -46,7 +48,15 @@ pub mod reason_codes {
     pub const X_MEMORY_PERMISSION_NO: ReasonCodeId = ReasonCodeId(0x5800_0014);
     pub const X_CONTINUITY_SPEAKER_MISMATCH: ReasonCodeId = ReasonCodeId(0x5800_0015);
     pub const X_CONTINUITY_SUBJECT_MISMATCH: ReasonCodeId = ReasonCodeId(0x5800_0016);
+    pub const X_STEPUP_REQUIRED_DISPATCH: ReasonCodeId = ReasonCodeId(0x5800_0017);
+    pub const X_STEPUP_CONTINUE_DISPATCH: ReasonCodeId = ReasonCodeId(0x5800_0018);
+    pub const X_STEPUP_REFUSED: ReasonCodeId = ReasonCodeId(0x5800_0019);
+    pub const X_STEPUP_DEFERRED: ReasonCodeId = ReasonCodeId(0x5800_001A);
+    pub const X_STEPUP_CHALLENGE_UNAVAILABLE: ReasonCodeId = ReasonCodeId(0x5800_001B);
 }
+
+const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
+const IDENTITY_PROMPT_RETRY_BUDGET: u8 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1xConfig {
@@ -213,6 +223,15 @@ impl Ph1xRuntime {
             return self.decide_from_confirm_answer(req, ans, base_thread_state, delivery_base);
         }
 
+        if let Some(step_up_result) = req.step_up_result.as_ref() {
+            return self.decide_from_step_up_result(
+                req,
+                step_up_result,
+                base_thread_state,
+                delivery_base,
+            );
+        }
+
         if let Some(rc) = req.last_failure_reason_code {
             return self.out_respond(
                 req,
@@ -258,7 +277,10 @@ impl Ph1xRuntime {
                 )
             }
             Ph1nResponse::Chat(ch) => {
-                let allow_personalization = identity_allows_personalization(&req.identity_context);
+                let identity_v2 = identity_v2_for_context(&req.identity_context);
+                let may_prompt_identity = identity_may_prompt(req, &base_thread_state, identity_v2);
+                let allow_personalization =
+                    identity_allows_personalization(&req.identity_context, identity_v2);
                 let safe_memory = if allow_personalization {
                     filter_fresh_low_risk_candidates(&req.memory_candidates, req.now)
                 } else {
@@ -271,6 +293,18 @@ impl Ph1xRuntime {
                     if is_greeting_text(&text) {
                         text = format!("Hello, {name}.");
                     }
+                }
+
+                let mut next_thread_state = clear_pending(base_thread_state.clone());
+                if may_prompt_identity {
+                    if let Some(prompt) = identity_confirmation_prompt(&req.identity_context) {
+                        text = append_identity_prompt(text, &prompt);
+                    }
+                    next_thread_state = mark_identity_prompted(
+                        next_thread_state,
+                        req.now,
+                        req.identity_prompt_scope_key.as_deref(),
+                    );
                 }
 
                 // Sensitive memory requires permission before it is used or cited.
@@ -299,7 +333,7 @@ impl Ph1xRuntime {
 
                 self.out_respond(
                     req,
-                    clear_pending(base_thread_state),
+                    next_thread_state,
                     reason_codes::X_NLP_CHAT,
                     text,
                     delivery_base,
@@ -484,6 +518,48 @@ impl Ph1xRuntime {
         match pending {
             Some(PendingState::Confirm { intent_draft, attempts }) => match ans {
                 selene_kernel_contracts::ph1x::ConfirmAnswer::Yes => {
+                    if let Some((action_class, requested_action)) =
+                        high_stakes_policy_binding(&intent_draft)
+                    {
+                        let challenge_method = select_step_up_challenge(
+                            req.step_up_capabilities
+                                .unwrap_or(StepUpCapabilities::v1(false, true)),
+                        );
+                        if let Some(challenge_method) = challenge_method {
+                            let step_up_snapshot = confirm_snapshot_intent_draft(&intent_draft);
+                            let next_attempts = bump_attempts(
+                                &base_thread_state.pending,
+                                PendingKind::StepUp(requested_action),
+                            );
+                            let next_state = ThreadState::v1(
+                                Some(PendingState::StepUp {
+                                    intent_draft: step_up_snapshot.clone(),
+                                    requested_action: requested_action.to_string(),
+                                    challenge_method,
+                                    attempts: next_attempts,
+                                }),
+                                base_thread_state.resume_buffer.clone(),
+                            );
+                            return self.out_dispatch_access_step_up(
+                                req,
+                                next_state,
+                                reason_codes::X_STEPUP_REQUIRED_DISPATCH,
+                                step_up_snapshot,
+                                action_class,
+                                requested_action.to_string(),
+                                challenge_method,
+                                delivery_base,
+                            );
+                        }
+                        return self.out_wait(
+                            req,
+                            clear_pending(base_thread_state),
+                            reason_codes::X_STEPUP_CHALLENGE_UNAVAILABLE,
+                            Some("step_up_challenge_unavailable".to_string()),
+                            None,
+                        );
+                    }
+
                     let next_state = clear_pending(base_thread_state);
                     self.out_dispatch_simulation_candidate(
                         req,
@@ -598,6 +674,45 @@ impl Ph1xRuntime {
         }
     }
 
+    fn decide_from_step_up_result(
+        &self,
+        req: &Ph1xRequest,
+        result: &StepUpResult,
+        base_thread_state: ThreadState,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let pending = base_thread_state.pending.clone();
+        match pending {
+            Some(PendingState::StepUp { intent_draft, .. }) => match result.outcome {
+                StepUpOutcome::Continue => self.out_dispatch_simulation_candidate(
+                    req,
+                    clear_pending(base_thread_state),
+                    reason_codes::X_STEPUP_CONTINUE_DISPATCH,
+                    intent_draft,
+                    delivery_base,
+                ),
+                StepUpOutcome::Refuse => self.out_respond(
+                    req,
+                    clear_pending(base_thread_state),
+                    reason_codes::X_STEPUP_REFUSED,
+                    "I can’t continue with that action without verification.".to_string(),
+                    delivery_base,
+                ),
+                StepUpOutcome::Defer => self.out_wait(
+                    req,
+                    clear_pending(base_thread_state),
+                    reason_codes::X_STEPUP_DEFERRED,
+                    Some("step_up_deferred".to_string()),
+                    None,
+                ),
+            },
+            _ => Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.step_up_result",
+                reason: "step_up_result is only valid when thread_state.pending is StepUp",
+            }),
+        }
+    }
+
     fn tool_request(
         &self,
         req: &Ph1xRequest,
@@ -709,6 +824,34 @@ impl Ph1xRuntime {
     ) -> Result<Ph1xResponse, ContractViolation> {
         let directive =
             Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(intent_draft)?);
+        self.out(
+            req,
+            directive,
+            thread_state,
+            None,
+            delivery_base,
+            reason_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn out_dispatch_access_step_up(
+        &self,
+        req: &Ph1xRequest,
+        thread_state: ThreadState,
+        reason_code: ReasonCodeId,
+        intent_draft: IntentDraft,
+        action_class: StepUpActionClass,
+        requested_action: String,
+        challenge_method: StepUpChallengeMethod,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let directive = Ph1xDirective::Dispatch(DispatchDirective::access_step_up_v1(
+            intent_draft,
+            action_class,
+            requested_action,
+            challenge_method,
+        )?);
         self.out(
             req,
             directive,
@@ -861,6 +1004,7 @@ enum PendingKind {
     Clarify(FieldKey),
     Confirm(IntentType),
     MemoryPermission,
+    StepUp(&'static str),
     Tool(selene_kernel_contracts::ph1e::ToolRequestId),
 }
 
@@ -883,6 +1027,14 @@ fn bump_attempts(prev: &Option<PendingState>, next: PendingKind) -> u8 {
         (Some(PendingState::MemoryPermission { attempts, .. }), PendingKind::MemoryPermission) => {
             attempts.saturating_add(1).min(10)
         }
+        (
+            Some(PendingState::StepUp {
+                requested_action,
+                attempts,
+                ..
+            }),
+            PendingKind::StepUp(next_action),
+        ) if requested_action == next_action => attempts.saturating_add(1).min(10),
         (
             Some(PendingState::Tool {
                 request_id,
@@ -908,14 +1060,151 @@ fn clear_expired_resume_buffer(mut s: ThreadState, now: MonotonicTimeNs) -> Thre
     s
 }
 
-fn identity_allows_personalization(id: &IdentityContext) -> bool {
+fn identity_allows_personalization(id: &IdentityContext, identity_v2: VoiceIdentityV2) -> bool {
     match id {
         IdentityContext::TextUserId(_) => true,
-        IdentityContext::Voice(v) => matches!(
-            v,
-            selene_kernel_contracts::ph1_voice_id::Ph1VoiceIdResponse::SpeakerAssertionOk(_)
-        ),
+        IdentityContext::Voice(_) => identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed,
     }
+}
+
+fn identity_v2_for_context(id: &IdentityContext) -> VoiceIdentityV2 {
+    match id {
+        IdentityContext::TextUserId(_) => VoiceIdentityV2 {
+            identity_tier_v2: IdentityTierV2::Confirmed,
+            may_prompt_identity: false,
+        },
+        IdentityContext::Voice(v) => v.identity_v2(),
+    }
+}
+
+fn identity_may_prompt(
+    req: &Ph1xRequest,
+    base_thread_state: &ThreadState,
+    identity_v2: VoiceIdentityV2,
+) -> bool {
+    if !matches!(req.identity_context, IdentityContext::Voice(_)) {
+        return false;
+    }
+    if !identity_v2.may_prompt_identity {
+        return false;
+    }
+    if identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed {
+        return false;
+    }
+    if matches!(base_thread_state.pending, Some(PendingState::StepUp { .. })) {
+        return false;
+    }
+    if let Some(prompt_state) = base_thread_state.identity_prompt_state.as_ref() {
+        let scope_matches = identity_prompt_scope_matches(
+            prompt_state.prompt_scope_key.as_deref(),
+            req.identity_prompt_scope_key.as_deref(),
+        );
+        if scope_matches {
+            if let Some(last_prompt_at) = prompt_state.last_prompt_at {
+                let cooldown_until = last_prompt_at.0.saturating_add(IDENTITY_PROMPT_COOLDOWN_NS);
+                if req.now.0 < cooldown_until {
+                    if prompt_state.prompted_in_session {
+                        return false;
+                    }
+                    if prompt_state.prompts_in_scope >= IDENTITY_PROMPT_RETRY_BUDGET {
+                        return false;
+                    }
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn mark_identity_prompted(
+    mut thread_state: ThreadState,
+    now: MonotonicTimeNs,
+    scope_key: Option<&str>,
+) -> ThreadState {
+    let scope_key = scope_key.map(str::to_string);
+    let mut prompts_in_scope = 1u8;
+    if let Some(prev) = thread_state.identity_prompt_state.clone() {
+        let scope_matches =
+            identity_prompt_scope_matches(prev.prompt_scope_key.as_deref(), scope_key.as_deref());
+        let cooldown_active = prev
+            .last_prompt_at
+            .map(|last| now.0 < last.0.saturating_add(IDENTITY_PROMPT_COOLDOWN_NS))
+            .unwrap_or(false);
+        if scope_matches && cooldown_active {
+            prompts_in_scope = prev.prompts_in_scope.saturating_add(1);
+        }
+    }
+    if let Ok(state) =
+        IdentityPromptState::v1_with_scope(true, Some(now), scope_key, prompts_in_scope)
+    {
+        thread_state.identity_prompt_state = Some(state);
+    }
+    thread_state
+}
+
+fn identity_prompt_scope_matches(previous: Option<&str>, current: Option<&str>) -> bool {
+    match (previous, current) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn identity_confirmation_prompt(id: &IdentityContext) -> Option<String> {
+    match id {
+        IdentityContext::TextUserId(_) => None,
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionOk(ok)) => ok
+            .user_id
+            .as_ref()
+            .map(|u| format!("Quick check: is this {}?", u.as_str()))
+            .or_else(|| Some("Quick check: can you confirm this is you?".to_string())),
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionUnknown(u)) => u
+            .candidate_user_id
+            .as_ref()
+            .map(|cand| format!("Quick check: is this {}?", cand.as_str()))
+            .or_else(|| Some("Quick check: can you confirm this is you?".to_string())),
+    }
+}
+
+fn append_identity_prompt(text: String, prompt: &str) -> String {
+    if text.trim().is_empty() {
+        return prompt.to_string();
+    }
+    if text.len().saturating_add(prompt.len()).saturating_add(1) > 32_768 {
+        return text;
+    }
+    format!("{text} {prompt}")
+}
+
+fn high_stakes_policy_binding(intent_draft: &IntentDraft) -> Option<(StepUpActionClass, &'static str)> {
+    match intent_draft.intent_type {
+        IntentType::SendMoney => Some((StepUpActionClass::Payments, "PAYMENT_EXECUTE")),
+        IntentType::CapreqManage => {
+            Some((StepUpActionClass::CapabilityGovernance, "CAPREQ_MANAGE"))
+        }
+        IntentType::AccessSchemaManage => {
+            Some((StepUpActionClass::AccessGovernance, "ACCESS_SCHEMA_MANAGE"))
+        }
+        IntentType::AccessEscalationVote => {
+            Some((StepUpActionClass::AccessGovernance, "ACCESS_ESCALATION_VOTE"))
+        }
+        IntentType::AccessInstanceCompileRefresh => Some((
+            StepUpActionClass::AccessGovernance,
+            "ACCESS_INSTANCE_COMPILE_REFRESH",
+        )),
+        _ => None,
+    }
+}
+
+fn select_step_up_challenge(capabilities: StepUpCapabilities) -> Option<StepUpChallengeMethod> {
+    if capabilities.supports_biometric {
+        return Some(StepUpChallengeMethod::DeviceBiometric);
+    }
+    if capabilities.supports_passcode {
+        return Some(StepUpChallengeMethod::DevicePasscode);
+    }
+    None
 }
 
 fn candidate_is_fresh(c: &MemoryCandidate, now: MonotonicTimeNs) -> bool {
@@ -1437,7 +1726,7 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::{
         DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
-        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
+        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel, DEFAULT_CONF_MID_BP,
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
@@ -1456,8 +1745,10 @@ mod tests {
         SensitivityLevel, TranscriptHash,
     };
     use selene_kernel_contracts::ph1tts::AnswerId;
-    use selene_kernel_contracts::ph1x::{ConfirmAnswer, DispatchRequest, TtsResumeSnapshot};
-    use selene_kernel_contracts::ph1x::{IdentityContext, ResumeBuffer, ThreadState};
+    use selene_kernel_contracts::ph1x::{
+        ConfirmAnswer, DispatchRequest, IdentityContext, IdentityPromptState, ResumeBuffer,
+        ThreadState, TtsResumeSnapshot,
+    };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 
     fn policy_ok() -> PolicyContextRef {
@@ -1508,6 +1799,22 @@ mod tests {
         )
         .unwrap();
         IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionUnknown(u))
+    }
+
+    fn id_voice_probable() -> IdentityContext {
+        let ok = SpeakerAssertionOk::v1_with_metrics(
+            SpeakerId::new("spk-probable").unwrap(),
+            Some(selene_kernel_contracts::ph1_voice_id::UserId::new("jd").unwrap()),
+            vec![DiarizationSegment::v1(now(0), now(1), Some(SpeakerLabel::speaker_a())).unwrap()],
+            SpeakerLabel::speaker_a(),
+            DEFAULT_CONF_MID_BP,
+            Some(150),
+            Some(ReasonCodeId(1)),
+            selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::Unknown,
+            vec![],
+        )
+        .unwrap();
+        IdentityContext::Voice(Ph1VoiceIdResponse::SpeakerAssertionOk(ok))
     }
 
     fn mem_preferred_name(name: &str) -> MemoryCandidate {
@@ -1645,6 +1952,7 @@ mod tests {
                 match d.dispatch_request {
                     DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::Time),
                     DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
                 }
             }
             _ => panic!("expected Dispatch directive"),
@@ -1765,6 +2073,7 @@ mod tests {
             Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
                 DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
                 DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
             },
             _ => panic!("expected Dispatch"),
         };
@@ -1884,9 +2193,13 @@ mod tests {
         match out.directive {
             Ph1xDirective::Dispatch(d) => match d.dispatch_request {
                 DispatchRequest::SimulationCandidate(c) => {
-                    assert_eq!(c.intent_draft.intent_type, IntentType::MemoryRememberRequest);
+                    assert_eq!(
+                        c.intent_draft.intent_type,
+                        IntentType::MemoryRememberRequest
+                    );
                 }
                 DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
             },
             _ => panic!("expected Dispatch directive"),
         }
@@ -1923,6 +2236,7 @@ mod tests {
                     assert_eq!(c.intent_draft.intent_type, IntentType::MemoryQuery);
                 }
                 DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
             },
             _ => panic!("expected Dispatch directive"),
         }
@@ -1961,7 +2275,7 @@ mod tests {
     }
 
     #[test]
-    fn at_x_confirm_yes_dispatches_simulation_candidate_and_clears_pending() {
+    fn at_x_confirm_yes_dispatches_step_up_for_high_stakes_intent() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
         let mut d = intent_draft(IntentType::SendMoney);
@@ -2024,15 +2338,23 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Dispatch(d) => match d.dispatch_request {
-                DispatchRequest::SimulationCandidate(c) => {
+                DispatchRequest::AccessStepUp(c) => {
                     assert_eq!(c.intent_draft.intent_type, IntentType::SendMoney);
                     assert!(c.intent_draft.required_fields_missing.is_empty());
+                    assert_eq!(c.action_class, StepUpActionClass::Payments);
+                    assert_eq!(c.challenge_method, StepUpChallengeMethod::DevicePasscode);
                 }
-                DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::Tool(_) => panic!("expected AccessStepUp dispatch"),
+                DispatchRequest::SimulationCandidate(_) => {
+                    panic!("expected AccessStepUp dispatch")
+                }
             },
             _ => panic!("expected Dispatch directive"),
         }
-        assert!(out2.thread_state.pending.is_none());
+        assert!(matches!(
+            out2.thread_state.pending,
+            Some(PendingState::StepUp { .. })
+        ));
         assert!(out2.idempotency_key.is_some());
     }
 
@@ -2087,6 +2409,148 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_step_up_continue_dispatches_simulation_candidate() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let pending = ThreadState::v1(
+            Some(PendingState::StepUp {
+                intent_draft: confirm_snapshot_intent_draft(&intent_draft(IntentType::SendMoney)),
+                requested_action: "PAYMENT_EXECUTE".to_string(),
+                challenge_method: StepUpChallengeMethod::DevicePasscode,
+                attempts: 1,
+            }),
+            None,
+        );
+
+        let req = Ph1xRequest::v1(
+            55,
+            2,
+            now(5),
+            pending,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_step_up_result(Some(
+            StepUpResult::v1(
+                StepUpOutcome::Continue,
+                StepUpChallengeMethod::DevicePasscode,
+                ReasonCodeId(91),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::SimulationCandidate(c) => {
+                    assert_eq!(c.intent_draft.intent_type, IntentType::SendMoney);
+                }
+                _ => panic!("expected SimulationCandidate dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.thread_state.pending.is_none());
+    }
+
+    #[test]
+    fn at_x_step_up_prefers_biometric_when_supported() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::AccessSchemaManage);
+        d.fields = vec![
+            IntentField {
+                key: FieldKey::ApAction,
+                value: FieldValue::verbatim("ACTIVATE".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessProfileId,
+                value: FieldValue::verbatim("AP_TEST".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::SchemaVersionId,
+                value: FieldValue::verbatim("v1".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::TenantId,
+                value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessReviewChannel,
+                value: FieldValue::verbatim("PHONE_DESKTOP".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::AccessRuleAction,
+                value: FieldValue::verbatim("AGREE".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+        ];
+
+        let first = Ph1xRequest::v1(
+            56,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out1 = rt.decide(&first).unwrap();
+        assert!(matches!(out1.directive, Ph1xDirective::Confirm(_)));
+
+        let second = Ph1xRequest::v1(
+            56,
+            2,
+            now(2),
+            out1.thread_state,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_step_up_capabilities(Some(StepUpCapabilities::v1(true, true)))
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::AccessStepUp(c) => {
+                    assert_eq!(c.challenge_method, StepUpChallengeMethod::DeviceBiometric);
+                }
+                _ => panic!("expected AccessStepUp dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
     }
 
     #[test]
@@ -2633,7 +3097,10 @@ mod tests {
 
         let out = rt.decide(&req).unwrap();
         match out.directive {
-            Ph1xDirective::Respond(r) => assert_eq!(r.response_text, "Hello."),
+            Ph1xDirective::Respond(r) => assert_eq!(
+                r.response_text,
+                "Hello. Quick check: can you confirm this is you?"
+            ),
             _ => panic!("expected Respond"),
         }
     }
@@ -2821,8 +3288,169 @@ mod tests {
 
         let out = rt.decide(&req).unwrap();
         match out.directive {
+            Ph1xDirective::Respond(r) => assert_eq!(
+                r.response_text,
+                "Hello. Quick check: can you confirm this is you?"
+            ),
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_13_probable_identity_asks_once_and_blocks_personalization() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let first = Ph1xRequest::v1(
+            12,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_voice_probable(),
+            policy_ok(),
+            vec![mem_preferred_name("John")],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        match out1.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "Hello. Quick check: is this jd?");
+            }
+            _ => panic!("expected Respond"),
+        }
+        assert_eq!(
+            out1.thread_state
+                .identity_prompt_state
+                .as_ref()
+                .map(|s| s.prompted_in_session),
+            Some(true)
+        );
+
+        let second = Ph1xRequest::v1(
+            12,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_voice_probable(),
+            policy_ok(),
+            vec![mem_preferred_name("John")],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "Hello.");
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_14_same_scope_cooldown_blocks_identity_prompt() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let scope = "tenant_1:user_jd:device_a:voice_explicit";
+        let mut thread = base_thread();
+        thread.identity_prompt_state = Some(
+            IdentityPromptState::v1_with_scope(false, Some(now(10)), Some(scope.to_string()), 1)
+                .unwrap(),
+        );
+        let req = Ph1xRequest::v1(
+            20,
+            1,
+            now(11),
+            thread,
+            SessionState::Active,
+            id_voice_probable(),
+            policy_ok(),
+            vec![mem_preferred_name("John")],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_identity_prompt_scope_key(Some(scope.to_string()))
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
             Ph1xDirective::Respond(r) => assert_eq!(r.response_text, "Hello."),
             _ => panic!("expected Respond"),
         }
+    }
+
+    #[test]
+    fn at_x_15_different_scope_allows_identity_prompt() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let prior_scope = "tenant_1:user_jd:device_a:voice_explicit";
+        let new_scope = "tenant_1:user_jd:device_b:voice_explicit";
+        let mut thread = base_thread();
+        thread.identity_prompt_state = Some(
+            IdentityPromptState::v1_with_scope(
+                false,
+                Some(now(10)),
+                Some(prior_scope.to_string()),
+                1,
+            )
+            .unwrap(),
+        );
+        let req = Ph1xRequest::v1(
+            21,
+            1,
+            now(11),
+            thread,
+            SessionState::Active,
+            id_voice_probable(),
+            policy_ok(),
+            vec![mem_preferred_name("John")],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("Hello.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_identity_prompt_scope_key(Some(new_scope.to_string()))
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, "Hello. Quick check: is this jd?");
+            }
+            _ => panic!("expected Respond"),
+        }
+        assert_eq!(
+            out.thread_state
+                .identity_prompt_state
+                .as_ref()
+                .and_then(|s| s.prompt_scope_key.as_deref()),
+            Some(new_scope)
+        );
     }
 }

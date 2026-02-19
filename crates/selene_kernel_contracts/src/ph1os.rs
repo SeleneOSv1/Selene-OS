@@ -1303,7 +1303,11 @@ impl Validate for OsDecisionComputeRequest {
             });
         }
         if let Some(owner) = &self.clarify_owner_engine_id {
-            validate_token_ascii("os_decision_compute_request.clarify_owner_engine_id", owner, 64)?;
+            validate_token_ascii(
+                "os_decision_compute_request.clarify_owner_engine_id",
+                owner,
+                64,
+            )?;
         }
         if self.clarify_required {
             if self.clarify_owner_engine_id.as_deref() != Some(OS_CLARIFY_OWNER_ENGINE_ID) {

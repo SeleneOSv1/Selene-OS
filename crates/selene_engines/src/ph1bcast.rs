@@ -10,9 +10,8 @@ use selene_kernel_contracts::ph1bcast::{
     BcastEscalateCommitRequest, BcastEscalateCommitResult, BcastExpireCommitRequest,
     BcastExpireCommitResult, BcastOutcome, BcastRecipientRegion, BcastRecipientState,
     BcastReminderFiredCommitRequest, BcastReminderFiredCommitResult, BcastRequest,
-    BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS,
     BroadcastClassification, BroadcastId, BroadcastRecipientId, Ph1BcastOk, Ph1BcastRefuse,
-    Ph1BcastRequest, Ph1BcastResponse,
+    Ph1BcastRequest, Ph1BcastResponse, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
 
@@ -124,7 +123,10 @@ impl Ph1BcastRuntime {
         req: &Ph1BcastRequest,
         r: &BcastDraftCreateRequest,
     ) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         let draft_idx = (
             r.tenant_id.as_str().to_string(),
             r.sender_user_id.as_str().to_string(),
@@ -195,7 +197,10 @@ impl Ph1BcastRuntime {
             );
         }
 
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         let classification = match state.broadcasts.get(&r.broadcast_id) {
             Some(row) => row.classification,
             None => {
@@ -328,7 +333,10 @@ impl Ph1BcastRuntime {
     }
 
     fn run_defer(&self, req: &Ph1BcastRequest, r: &BcastDeferCommitRequest) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         if !state.broadcasts.contains_key(&r.broadcast_id) {
             return refuse(
                 req.request.capability_id(),
@@ -427,7 +435,10 @@ impl Ph1BcastRuntime {
         req: &Ph1BcastRequest,
         r: &BcastReminderFiredCommitRequest,
     ) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         if !state.broadcasts.contains_key(&r.broadcast_id) {
             return refuse(
                 req.request.capability_id(),
@@ -508,7 +519,10 @@ impl Ph1BcastRuntime {
     }
 
     fn run_ack(&self, req: &Ph1BcastRequest, r: &BcastAckCommitRequest) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         if !state.broadcasts.contains_key(&r.broadcast_id) {
             return refuse(
                 req.request.capability_id(),
@@ -566,7 +580,10 @@ impl Ph1BcastRuntime {
         req: &Ph1BcastRequest,
         r: &BcastEscalateCommitRequest,
     ) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         if !state.broadcasts.contains_key(&r.broadcast_id) {
             return refuse(
                 req.request.capability_id(),
@@ -641,7 +658,10 @@ impl Ph1BcastRuntime {
     }
 
     fn run_expire(&self, req: &Ph1BcastRequest, r: &BcastExpireCommitRequest) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         let row = match state.broadcasts.get_mut(&r.broadcast_id) {
             Some(v) => v,
             None => {
@@ -674,7 +694,10 @@ impl Ph1BcastRuntime {
     }
 
     fn run_cancel(&self, req: &Ph1BcastRequest, r: &BcastCancelCommitRequest) -> Ph1BcastResponse {
-        let mut state = self.lock_state();
+        let mut state = match self.lock_state_or_refuse(req) {
+            Ok(state) => state,
+            Err(out) => return out,
+        };
         let row = match state.broadcasts.get_mut(&r.broadcast_id) {
             Some(v) => v,
             None => {
@@ -706,10 +729,24 @@ impl Ph1BcastRuntime {
         )
     }
 
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, Ph1BcastState> {
-        self.state
-            .lock()
-            .expect("ph1bcast state mutex poisoned: deterministic runtime cannot proceed")
+    fn lock_state_or_refuse(
+        &self,
+        req: &Ph1BcastRequest,
+    ) -> Result<std::sync::MutexGuard<'_, Ph1BcastState>, Ph1BcastResponse> {
+        match self.state.lock() {
+            Ok(guard) => Ok(guard),
+            Err(poisoned) => {
+                let recovered = poisoned.into_inner();
+                drop(recovered);
+                self.state.clear_poison();
+                Err(refuse(
+                    req.request.capability_id(),
+                    req.simulation_id.clone(),
+                    reason_codes::BCAST_FAIL_INTERNAL,
+                    "bcast runtime state lock poisoned",
+                ))
+            }
+        }
     }
 }
 
@@ -724,7 +761,9 @@ fn validate_fallback_transition(
             return Err("app_unavailable must be false for SeleneApp delivery");
         }
         if existing
-            .map(|r| r.last_delivery_method != BcastDeliveryMethod::SeleneApp && r.fallback_step > 0)
+            .map(|r| {
+                r.last_delivery_method != BcastDeliveryMethod::SeleneApp && r.fallback_step > 0
+            })
             .unwrap_or(false)
         {
             return Err("cannot return to SeleneApp delivery after fallback path started");
@@ -738,7 +777,9 @@ fn validate_fallback_transition(
 
     let step = match fallback_step_for_method(requested_method, requested_region) {
         Some(v) => v,
-        None => return Err("requested fallback delivery method is not allowed for recipient region"),
+        None => {
+            return Err("requested fallback delivery method is not allowed for recipient region")
+        }
     };
 
     let previous_step = existing.map(|r| r.fallback_step).unwrap_or(0);
@@ -803,13 +844,8 @@ fn refuse(
     message: impl Into<String>,
 ) -> Ph1BcastResponse {
     Ph1BcastResponse::Refuse(
-        Ph1BcastRefuse::v1(
-            capability_id,
-            simulation_id,
-            reason_code,
-            message.into(),
-        )
-        .expect("ph1bcast refuse output must validate"),
+        Ph1BcastRefuse::v1(capability_id, simulation_id, reason_code, message.into())
+            .expect("ph1bcast refuse output must validate"),
     )
 }
 
@@ -1317,7 +1353,10 @@ mod tests {
             false,
         ));
         assert!(invalid_no_unavailable.validate().is_ok());
-        assert!(matches!(invalid_no_unavailable, Ph1BcastResponse::Refuse(_)));
+        assert!(matches!(
+            invalid_no_unavailable,
+            Ph1BcastResponse::Refuse(_)
+        ));
 
         let sms_ok = rt.run(&deliver_req_with_options(
             broadcast_id.clone(),
@@ -1363,5 +1402,28 @@ mod tests {
         ));
         assert!(email_ok.validate().is_ok());
         assert!(matches!(email_ok, Ph1BcastResponse::Ok(_)));
+    }
+
+    #[test]
+    fn at_bcast_10_mutex_poison_fails_closed_without_panic() {
+        let rt = Ph1BcastRuntime::default();
+        let poisoned_state = rt.state.clone();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = poisoned_state.lock().unwrap();
+            panic!("intentional poison");
+        }));
+
+        let out = rt.run(&draft_req("idem_poison_10"));
+        assert!(out.validate().is_ok());
+        match out {
+            Ph1BcastResponse::Refuse(r) => {
+                assert_eq!(r.reason_code, reason_codes::BCAST_FAIL_INTERNAL);
+            }
+            _ => panic!("expected internal refuse on poisoned lock"),
+        }
+
+        let recovered = rt.run(&draft_req("idem_poison_10_recovered"));
+        assert!(recovered.validate().is_ok());
+        assert!(matches!(recovered, Ph1BcastResponse::Ok(_)));
     }
 }

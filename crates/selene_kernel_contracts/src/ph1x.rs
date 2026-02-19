@@ -29,6 +29,125 @@ pub enum ConfirmAnswer {
     No,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StepUpActionClass {
+    Payments,
+    CapabilityGovernance,
+    AccessGovernance,
+}
+
+impl StepUpActionClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            StepUpActionClass::Payments => "PAYMENTS",
+            StepUpActionClass::CapabilityGovernance => "CAPABILITY_GOVERNANCE",
+            StepUpActionClass::AccessGovernance => "ACCESS_GOVERNANCE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StepUpChallengeMethod {
+    DeviceBiometric,
+    DevicePasscode,
+}
+
+impl StepUpChallengeMethod {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            StepUpChallengeMethod::DeviceBiometric => "DEVICE_BIOMETRIC",
+            StepUpChallengeMethod::DevicePasscode => "DEVICE_PASSCODE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StepUpOutcome {
+    Continue,
+    Refuse,
+    Defer,
+}
+
+impl StepUpOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            StepUpOutcome::Continue => "CONTINUE",
+            StepUpOutcome::Refuse => "REFUSE",
+            StepUpOutcome::Defer => "DEFER",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StepUpCapabilities {
+    pub supports_biometric: bool,
+    pub supports_passcode: bool,
+}
+
+impl StepUpCapabilities {
+    pub const fn v1(supports_biometric: bool, supports_passcode: bool) -> Self {
+        Self {
+            supports_biometric,
+            supports_passcode,
+        }
+    }
+}
+
+impl Validate for StepUpCapabilities {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if !self.supports_biometric && !self.supports_passcode {
+            return Err(ContractViolation::InvalidValue {
+                field: "step_up_capabilities",
+                reason: "must support at least one challenge method",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepUpResult {
+    pub schema_version: SchemaVersion,
+    pub outcome: StepUpOutcome,
+    pub challenge_method: StepUpChallengeMethod,
+    pub reason_code: ReasonCodeId,
+}
+
+impl StepUpResult {
+    pub fn v1(
+        outcome: StepUpOutcome,
+        challenge_method: StepUpChallengeMethod,
+        reason_code: ReasonCodeId,
+    ) -> Result<Self, ContractViolation> {
+        let v = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            outcome,
+            challenge_method,
+            reason_code,
+        };
+        v.validate()?;
+        Ok(v)
+    }
+}
+
+impl Validate for StepUpResult {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "step_up_result.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "step_up_result.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentityContext {
     /// Voice modality: identity and diarization-lite results from PH1.VOICE.ID.
@@ -162,6 +281,13 @@ pub enum PendingState {
         deferred_response_text: String,
         attempts: u8,
     },
+    /// Deterministic step-up challenge handoff for high-stakes intents.
+    StepUp {
+        intent_draft: IntentDraft,
+        requested_action: String,
+        challenge_method: StepUpChallengeMethod,
+        attempts: u8,
+    },
     Tool {
         request_id: ToolRequestId,
         attempts: u8,
@@ -174,6 +300,7 @@ impl Validate for PendingState {
             PendingState::Clarify { attempts, .. }
             | PendingState::Confirm { attempts, .. }
             | PendingState::MemoryPermission { attempts, .. }
+            | PendingState::StepUp { attempts, .. }
             | PendingState::Tool { attempts, .. } => {
                 if *attempts == 0 {
                     return Err(ContractViolation::InvalidValue {
@@ -211,6 +338,45 @@ impl Validate for PendingState {
                 });
             }
         }
+        if let PendingState::StepUp {
+            intent_draft,
+            requested_action,
+            ..
+        } = self
+        {
+            intent_draft.validate()?;
+            if intent_draft.overall_confidence != OverallConfidence::High {
+                return Err(ContractViolation::InvalidValue {
+                    field: "pending_state.step_up.intent_draft.overall_confidence",
+                    reason: "must be High for step-up snapshot",
+                });
+            }
+            if !intent_draft.required_fields_missing.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "pending_state.step_up.intent_draft.required_fields_missing",
+                    reason: "must be empty for step-up snapshot",
+                });
+            }
+            // Keep thread_state lightweight and deterministic.
+            if !intent_draft.evidence_spans.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "pending_state.step_up.intent_draft.evidence_spans",
+                    reason: "must be empty for step-up snapshot",
+                });
+            }
+            if requested_action.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "pending_state.step_up.requested_action",
+                    reason: "must not be empty",
+                });
+            }
+            if requested_action.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "pending_state.step_up.requested_action",
+                    reason: "must be <= 128 chars",
+                });
+            }
+        }
         if let PendingState::MemoryPermission {
             deferred_response_text,
             ..
@@ -238,6 +404,8 @@ pub struct ThreadState {
     pub schema_version: SchemaVersion,
     pub pending: Option<PendingState>,
     pub resume_buffer: Option<ResumeBuffer>,
+    /// Deterministic ask-once identity prompt tracking for voice confidence ladders.
+    pub identity_prompt_state: Option<IdentityPromptState>,
     /// Optional continuity topic carried across turns in one correlation chain.
     pub active_subject_ref: Option<String>,
     /// Optional active speaker user identity carried across turns.
@@ -250,6 +418,7 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending: None,
             resume_buffer: None,
+            identity_prompt_state: None,
             active_subject_ref: None,
             active_speaker_user_id: None,
         }
@@ -260,6 +429,7 @@ impl ThreadState {
             schema_version: PH1X_CONTRACT_VERSION,
             pending,
             resume_buffer,
+            identity_prompt_state: None,
             active_subject_ref: None,
             active_speaker_user_id: None,
         }
@@ -291,6 +461,9 @@ impl Validate for ThreadState {
         if let Some(b) = &self.resume_buffer {
             b.validate()?;
         }
+        if let Some(p) = &self.identity_prompt_state {
+            p.validate()?;
+        }
         if let Some(subject_ref) = &self.active_subject_ref {
             if subject_ref.trim().is_empty() {
                 return Err(ContractViolation::InvalidValue {
@@ -316,6 +489,102 @@ impl Validate for ThreadState {
                 return Err(ContractViolation::InvalidValue {
                     field: "thread_state.active_speaker_user_id",
                     reason: "must be <= 128 chars",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IdentityPromptState {
+    pub schema_version: SchemaVersion,
+    pub prompted_in_session: bool,
+    pub last_prompt_at: Option<MonotonicTimeNs>,
+    /// Deterministic identity prompt scope key (tenant/user/device/voice-branch lineage).
+    /// Optional for backward compatibility; when missing, scope is treated as global.
+    pub prompt_scope_key: Option<String>,
+    /// Prompt attempts observed in the current cooldown window for `prompt_scope_key`.
+    pub prompts_in_scope: u8,
+}
+
+impl IdentityPromptState {
+    pub fn v1(
+        prompted_in_session: bool,
+        last_prompt_at: Option<MonotonicTimeNs>,
+    ) -> Result<Self, ContractViolation> {
+        let default_prompts_in_scope = if prompted_in_session { 1 } else { 0 };
+        Self::v1_with_scope(
+            prompted_in_session,
+            last_prompt_at,
+            None,
+            default_prompts_in_scope,
+        )
+    }
+
+    pub fn v1_with_scope(
+        prompted_in_session: bool,
+        last_prompt_at: Option<MonotonicTimeNs>,
+        prompt_scope_key: Option<String>,
+        prompts_in_scope: u8,
+    ) -> Result<Self, ContractViolation> {
+        let s = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            prompted_in_session,
+            last_prompt_at,
+            prompt_scope_key,
+            prompts_in_scope,
+        };
+        s.validate()?;
+        Ok(s)
+    }
+}
+
+impl Validate for IdentityPromptState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "identity_prompt_state.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        if self.prompted_in_session && self.last_prompt_at.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "identity_prompt_state.last_prompt_at",
+                reason: "must be Some(...) when prompted_in_session=true",
+            });
+        }
+        if let Some(t) = self.last_prompt_at {
+            if t.0 == 0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "identity_prompt_state.last_prompt_at",
+                    reason: "must be > 0 when provided",
+                });
+            }
+        }
+        if self.prompts_in_scope > 8 {
+            return Err(ContractViolation::InvalidValue {
+                field: "identity_prompt_state.prompts_in_scope",
+                reason: "must be <= 8",
+            });
+        }
+        if self.prompts_in_scope > 0 && self.last_prompt_at.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "identity_prompt_state.last_prompt_at",
+                reason: "must be Some(...) when prompts_in_scope > 0",
+            });
+        }
+        if let Some(scope_key) = &self.prompt_scope_key {
+            if scope_key.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "identity_prompt_state.prompt_scope_key",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if scope_key.len() > 192 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "identity_prompt_state.prompt_scope_key",
+                    reason: "must be <= 192 chars",
                 });
             }
         }
@@ -421,6 +690,11 @@ pub struct Ph1xRequest {
     pub subject_ref: String,
     /// Active speaker user identity for this turn ("unknown" when not user-bound).
     pub active_speaker_user_id: String,
+    /// Optional deterministic scope key for ask-once/cooldown identity prompts.
+    pub identity_prompt_scope_key: Option<String>,
+    /// Device-supported step-up methods. Selection is deterministic:
+    /// biometric first, passcode fallback.
+    pub step_up_capabilities: Option<StepUpCapabilities>,
     pub policy_context_ref: PolicyContextRef,
     /// Optional memory candidates proposed/returned by PH1.M (bounded, evidence-backed).
     /// PH1.X decides whether to use silently, ask permission, or ignore.
@@ -435,6 +709,8 @@ pub struct Ph1xRequest {
     pub interruption: Option<InterruptCandidate>,
     /// Optional active TTS snapshot used to build Resume Buffer when barge-in cancels speech.
     pub tts_resume_snapshot: Option<TtsResumeSnapshot>,
+    /// Optional deterministic step-up outcome from PH1.ACCESS/CAPREQ.
+    pub step_up_result: Option<StepUpResult>,
     pub locale: Option<String>,
     pub last_failure_reason_code: Option<ReasonCodeId>,
 }
@@ -476,6 +752,8 @@ impl Ph1xRequest {
             identity_context,
             subject_ref,
             active_speaker_user_id,
+            identity_prompt_scope_key: None,
+            step_up_capabilities: Some(StepUpCapabilities::v1(false, true)),
             policy_context_ref,
             memory_candidates,
             confirm_answer,
@@ -483,6 +761,7 @@ impl Ph1xRequest {
             tool_response,
             interruption,
             tts_resume_snapshot: None,
+            step_up_result: None,
             locale,
             last_failure_reason_code,
         };
@@ -506,6 +785,33 @@ impl Ph1xRequest {
         tts_resume_snapshot: Option<TtsResumeSnapshot>,
     ) -> Result<Self, ContractViolation> {
         self.tts_resume_snapshot = tts_resume_snapshot;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_identity_prompt_scope_key(
+        mut self,
+        identity_prompt_scope_key: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.identity_prompt_scope_key = identity_prompt_scope_key;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_step_up_capabilities(
+        mut self,
+        step_up_capabilities: Option<StepUpCapabilities>,
+    ) -> Result<Self, ContractViolation> {
+        self.step_up_capabilities = step_up_capabilities;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_step_up_result(
+        mut self,
+        step_up_result: Option<StepUpResult>,
+    ) -> Result<Self, ContractViolation> {
+        self.step_up_result = step_up_result;
         self.validate()?;
         Ok(self)
     }
@@ -557,6 +863,23 @@ impl Validate for Ph1xRequest {
                 reason: "must be <= 128 chars",
             });
         }
+        if let Some(scope_key) = &self.identity_prompt_scope_key {
+            if scope_key.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.identity_prompt_scope_key",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if scope_key.len() > 192 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.identity_prompt_scope_key",
+                    reason: "must be <= 192 chars",
+                });
+            }
+        }
+        if let Some(capabilities) = &self.step_up_capabilities {
+            capabilities.validate()?;
+        }
         validate_active_speaker_matches_identity(
             &self.identity_context,
             &self.active_speaker_user_id,
@@ -584,21 +907,45 @@ impl Validate for Ph1xRequest {
                 }
             }
         }
+        if let Some(step_up_result) = &self.step_up_result {
+            step_up_result.validate()?;
+            match &self.thread_state.pending {
+                Some(PendingState::StepUp { .. }) => {}
+                _ => {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1x_request.step_up_result",
+                        reason: "step_up_result is only valid when thread_state.pending is StepUp",
+                    });
+                }
+            }
+            if self.confirm_answer.is_some() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request",
+                    reason: "confirm_answer and step_up_result cannot be present together",
+                });
+            }
+        }
 
-        // At least one signal must be provided.
-        if self.nlp_output.is_none()
-            && self.tool_response.is_none()
-            && self.interruption.is_none()
-            && self.confirm_answer.is_none()
-            && self.last_failure_reason_code.is_none()
+        // At least one signal must be provided, except transient StepUp pending state
+        // where a caller may construct then attach `step_up_result` via builder.
+        let has_signal = self.nlp_output.is_some()
+            || self.tool_response.is_some()
+            || self.interruption.is_some()
+            || self.confirm_answer.is_some()
+            || self.step_up_result.is_some()
+            || self.last_failure_reason_code.is_some();
+        if !has_signal
+            && !matches!(
+                self.thread_state.pending,
+                Some(PendingState::StepUp { .. })
+            )
         {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1x_request",
                 reason:
-                    "must include nlp_output, tool_response, interruption, confirm_answer, or last_failure_reason_code",
+                    "must include nlp_output, tool_response, interruption, confirm_answer, step_up_result, or last_failure_reason_code",
             });
         }
-
         if let Some(out) = &self.nlp_output {
             match out {
                 Ph1nResponse::IntentDraft(d) => d.validate()?,
@@ -1032,9 +1379,82 @@ impl Validate for SimulationCandidateDispatch {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct AccessStepUpDispatch {
+    pub schema_version: SchemaVersion,
+    pub intent_draft: IntentDraft,
+    pub action_class: StepUpActionClass,
+    pub requested_action: String,
+    pub challenge_method: StepUpChallengeMethod,
+}
+
+impl AccessStepUpDispatch {
+    pub fn v1(
+        intent_draft: IntentDraft,
+        action_class: StepUpActionClass,
+        requested_action: String,
+        challenge_method: StepUpChallengeMethod,
+    ) -> Result<Self, ContractViolation> {
+        let v = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            intent_draft,
+            action_class,
+            requested_action,
+            challenge_method,
+        };
+        v.validate()?;
+        Ok(v)
+    }
+}
+
+impl Validate for AccessStepUpDispatch {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        self.intent_draft.validate()?;
+        if self.intent_draft.overall_confidence != OverallConfidence::High {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.intent_draft.overall_confidence",
+                reason: "must be High",
+            });
+        }
+        if !self.intent_draft.required_fields_missing.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.intent_draft.required_fields_missing",
+                reason: "must be empty",
+            });
+        }
+        // Keep thread payload deterministic and bounded.
+        if !self.intent_draft.evidence_spans.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.intent_draft.evidence_spans",
+                reason: "must be empty",
+            });
+        }
+        if self.requested_action.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.requested_action",
+                reason: "must not be empty",
+            });
+        }
+        if self.requested_action.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "access_step_up_dispatch.requested_action",
+                reason: "must be <= 128 chars",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum DispatchRequest {
     Tool(ToolRequest),
     SimulationCandidate(SimulationCandidateDispatch),
+    AccessStepUp(AccessStepUpDispatch),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1062,6 +1482,26 @@ impl DispatchDirective {
         d.validate()?;
         Ok(d)
     }
+
+    pub fn access_step_up_v1(
+        intent_draft: IntentDraft,
+        action_class: StepUpActionClass,
+        requested_action: String,
+        challenge_method: StepUpChallengeMethod,
+    ) -> Result<Self, ContractViolation> {
+        let dispatch = AccessStepUpDispatch::v1(
+            intent_draft,
+            action_class,
+            requested_action,
+            challenge_method,
+        )?;
+        let d = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            dispatch_request: DispatchRequest::AccessStepUp(dispatch),
+        };
+        d.validate()?;
+        Ok(d)
+    }
 }
 
 impl Validate for DispatchDirective {
@@ -1075,6 +1515,7 @@ impl Validate for DispatchDirective {
         match &self.dispatch_request {
             DispatchRequest::Tool(t) => t.validate(),
             DispatchRequest::SimulationCandidate(c) => c.validate(),
+            DispatchRequest::AccessStepUp(c) => c.validate(),
         }
     }
 }
@@ -1536,6 +1977,84 @@ mod tests {
             }
             _ => panic!("expected InvalidValue for confirm evidence_spans"),
         }
+    }
+
+    #[test]
+    fn step_up_result_requires_pending_step_up() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                crate::ph1n::Chat::v1("hello".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_step_up_result(Some(
+            StepUpResult::v1(
+                StepUpOutcome::Continue,
+                StepUpChallengeMethod::DevicePasscode,
+                ReasonCodeId(1),
+            )
+            .unwrap(),
+        ))
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.step_up_result");
+            }
+            _ => panic!("expected InvalidValue for step_up_result"),
+        }
+    }
+
+    #[test]
+    fn step_up_result_allows_pending_step_up() {
+        let thread = ThreadState::v1(
+            Some(PendingState::StepUp {
+                intent_draft: intent_draft_snapshot(),
+                requested_action: "CAPREQ_MANAGE".to_string(),
+                challenge_method: StepUpChallengeMethod::DevicePasscode,
+                attempts: 1,
+            }),
+            None,
+        );
+        let req = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_step_up_result(Some(
+            StepUpResult::v1(
+                StepUpOutcome::Continue,
+                StepUpChallengeMethod::DevicePasscode,
+                ReasonCodeId(1),
+            )
+            .unwrap(),
+        ));
+        assert!(req.is_ok());
     }
 
     #[test]

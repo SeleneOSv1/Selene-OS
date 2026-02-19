@@ -29,7 +29,7 @@
   - `PH1.BCAST.001` owns send/resend/escalation recipient lifecycle state.
   - `PH1.DELIVERY` owns provider-attempt execution/proof only.
   - `PH1.REM.001` owns timing mechanics only.
-  - `PH1.ONBOARDING_SMS` is setup-gate only (never sends).
+  - SMS setup remains a pre-send gate (`sms_app_setup_complete=true`) and never grants send authority by itself.
   - Legacy LINK delivery simulation ids (`LINK_INVITE_SEND_COMMIT`, `LINK_INVITE_RESEND_COMMIT`, `LINK_DELIVERY_FAILURE_HANDLING_COMMIT`) must fail closed as `LEGACY_DO_NOT_WIRE`.
 
 ## D) Wiring
@@ -119,6 +119,6 @@
 - AT-OS-13: runtime leak attempt with OFFLINE_ONLY engine id (`PH1.PATTERN` or `PH1.RLL`) in turn orchestration input is rejected fail-closed.
 - AT-OS-14: runtime leak attempt with control-plane engine id (`PH1.GOV` or `PH1.EXPORT` or `PH1.KMS`) in turn orchestration input is rejected fail-closed.
 - AT-OS-15: legacy LINK delivery simulation ids are rejected fail-closed in runtime (`LEGACY_DO_NOT_WIRE`) and cannot execute through `PH1.LINK`.
-- AT-OS-16: delivery ownership drift fails guardrails (`PH1.BCAST.001` lifecycle owner, `PH1.DELIVERY` provider attempts, `PH1.REM.001` timing-only, `PH1.ONBOARDING_SMS` gate-only).
+- AT-OS-16: delivery ownership drift fails guardrails (`PH1.BCAST.001` lifecycle owner, `PH1.DELIVERY` provider attempts, `PH1.REM.001` timing-only, SMS setup pre-send gate enforced).
 - AT-OS-17: clarify owner precedence is fail-closed (`clarify_required=true` requires `clarify_owner_engine_id=PH1.NLP`).
 - AT-OS-18: optional understanding-assist policy blocks invalid clarify-loop requests (`PH1.PRUNE`/`PH1.DIAG`) when required posture flags are missing.

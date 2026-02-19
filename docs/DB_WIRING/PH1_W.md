@@ -9,6 +9,25 @@
 - `version`: `v1`
 - `status`: `PASS`
 
+## 1A) Phone-First Artifact Custody (Required Extension)
+
+Operating model lock:
+- `PH1.W` wake runtime is phone-first for low-latency wake detection.
+- Platform trigger policy is explicit: `IOS` defaults to explicit-trigger-only (`explicit_trigger_only=true`, side-button/app-open trigger), while `ANDROID` and desktop may run always-on wake when policy allows.
+- Wake artifacts must be stored locally on phone (`ACTIVE + N-1 rollback`) and continuously synced to Selene for continuity/recovery.
+- Engine B owns outbox/vault replay and ack semantics; PH1.W owns deterministic wake artifact-manifest delta emission.
+
+Local artifact minimums (phone):
+- wake phrase set/version package.
+- wake threshold/cooldown package.
+- per-device calibration package.
+- active wake profile pointer + rollback pointer.
+
+Sync model (mandatory):
+- every local wake artifact change emits a sync delta envelope.
+- outbox replay continues until ack; deletion is ack-gated.
+- raw wake audio remains excluded from default persistence/sync path.
+
 ## 2) Data Owned (authoritative)
 
 ### `os_core.wake_enrollment_sessions`
@@ -105,6 +124,16 @@
 - scope rules: no cross-user wake profile lookups
 - why this read is required: deterministic dedupe, enrollment progression, and active profile retrieval
 
+### Device-local wake artifact pointer + sync cursor (required extension)
+- reads:
+  - local active/rollback wake artifact pointers from app runtime context.
+  - last synced cursor/receipt refs from Engine B handoff context.
+- keys/joins used: `(tenant_id, user_id, device_id, artifact_type)` deterministic key tuple.
+- scope rules:
+  - no cross-user/cross-device wake pointer reads.
+  - unresolved pointer conflict fails closed to conservative wake policy.
+- why this read is required: deterministic phone-first wake with recovery-safe cloud continuity.
+
 ### Pronunciation robustness hints (related engine boundary)
 - reads: bounded pronunciation lexicon hints supplied by Selene OS from `PH1.PRON` (optional)
 - keys/joins used: `pack_id` + tenant/user scope checks in OS context
@@ -120,6 +149,8 @@
 - required fields:
   - `wake_enrollment_session_id`, `user_id`, `device_id`, `wake_enroll_status`, `pass_target`,
     `pass_count`, `attempt_count`, `max_attempts`, `enrollment_timeout_ms`, `created_at`, `updated_at`
+- platform gate:
+  - if `onboarding_session_id` resolves to `app_platform=IOS`, start must fail closed by default (explicit-trigger-only policy).
 - idempotency_key rule (exact formula):
   - dedupe key = `(user_id, device_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -142,6 +173,7 @@
 - writes: `wake_enrollment_sessions` + `wake_profile_bindings`
 - required fields:
   - `wake_enrollment_session_id`, `wake_profile_id`, `updated_at`, `completed_at`, `idempotency_key`
+  - generated `wake_artifact_sync_receipt_ref` (consumed by `ONB_COMPLETE_COMMIT` gate when wake enrollment is complete)
 - idempotency_key rule (exact formula):
   - dedupe key = `(wake_enrollment_session_id, idempotency_key)`
 - failure reason codes (minimum examples):
@@ -166,6 +198,21 @@
   - `W_RUNTIME_DEVICE_MISSING`
   - `W_RUNTIME_SESSION_INVALID`
   - `W_RUNTIME_USER_INVALID`
+
+### Enqueue wake artifact-manifest sync delta (commit; future extension)
+- writes: Engine B outbox handoff envelope (PH1.W-owned payload contract)
+- required fields:
+  - `tenant_id`, `user_id`, `device_id`, `engine_id=PH1.W`
+  - `artifact_type`, `artifact_version`, `artifact_status`
+  - `package_hash`, `payload_ref`, `provenance_ref`
+  - `active_pointer_ref`, `rollback_pointer_ref`
+  - `consent_scope_ref`, `idempotency_key`
+- idempotency_key rule (exact formula):
+  - dedupe key = `(tenant_id, user_id, device_id, artifact_type, artifact_version, idempotency_key)`
+- failure reason codes (minimum examples):
+  - `W_SYNC_ENQUEUE_FAILED`
+  - `W_SYNC_SCOPE_VIOLATION`
+  - `W_SYNC_PAYLOAD_INVALID`
 
 ## 5) Relations & Keys
 
@@ -210,6 +257,7 @@ PH1.W writes must emit PH1.J audit events with:
   - `WAKE_ENROLL_COMPLETE_COMMIT`
   - `WAKE_ENROLL_DEFER_COMMIT`
   - `WAKE_RUNTIME_EVENT_COMMIT`
+  - `WAKE_ARTIFACT_SYNC_ENQUEUE_COMMIT`
 - `reason_code(s)`:
   - `FAIL_G0_DEVICE_UNHEALTHY`
   - `FAIL_G1A_NOT_UTTERANCE_START`
@@ -218,6 +266,7 @@ PH1.W writes must emit PH1.J audit events with:
   - `SUPPRESS_EXPLICIT_TRIGGER_ONLY`
   - `SUPPRESS_COOLDOWN`
   - `SUPPRESS_POLICY_SUSPENDED`
+  - `W_SYNC_ENQUEUE_FAILED`
 - `payload_min` allowlisted keys:
   - `wake_enrollment_session_id`
   - `wake_event_id`
@@ -229,6 +278,10 @@ PH1.W writes must emit PH1.J audit events with:
   - `wake_profile_id`
   - `accepted`
   - `suppression_reason_code`
+  - `artifact_type`
+  - `artifact_version`
+  - `active_pointer_ref`
+  - `rollback_pointer_ref`
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
@@ -240,6 +293,10 @@ PH1.W writes must emit PH1.J audit events with:
   - `at_w_db_03_idempotency_dedupe_works`
 - `AT-W-04` current-state consistency with enrollment/runtime ledgers
   - `at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger`
+- `AT-W-05` phone-local wake pointer + cloud sync cursor reconciliation is deterministic
+  - `at_w_db_05_phone_local_pointer_sync_cursor_reconcile`
+- `AT-W-06` wake artifact sync enqueue is idempotent and ack-gated
+  - `at_w_db_06_artifact_sync_enqueue_idempotent_ack_gated`
 
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`

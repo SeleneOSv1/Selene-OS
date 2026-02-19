@@ -9,14 +9,16 @@ use selene_kernel_contracts::ph1builder::{
     required_approvals_for_change_class, rollout_pct_for_stage, BuilderApprovalState,
     BuilderApprovalStateStatus, BuilderChangeClass, BuilderExpectedEffect, BuilderLearningContext,
     BuilderMetricsSnapshot, BuilderPatchProposal, BuilderPostDeployDecisionAction,
-    BuilderPostDeployJudgeResult,
-    BuilderProposalStatus, BuilderReleaseStage, BuilderReleaseState, BuilderReleaseStateStatus,
-    BuilderSignalWindow, BuilderValidationGateId, BuilderValidationGateResult,
-    BuilderValidationRun, BuilderValidationRunStatus,
+    BuilderPostDeployJudgeResult, BuilderProposalStatus, BuilderReleaseStage, BuilderReleaseState,
+    BuilderReleaseStateStatus, BuilderSignalWindow, BuilderValidationGateId,
+    BuilderValidationGateResult, BuilderValidationRun, BuilderValidationRunStatus,
 };
+use selene_kernel_contracts::ph1gov::{GovArtifactKind, GovArtifactVersion, GovRequestedAction};
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
-use selene_kernel_contracts::ph1pattern::{PatternProposalItem, PatternProposalTarget, PatternSignal};
+use selene_kernel_contracts::ph1pattern::{
+    PatternProposalItem, PatternProposalTarget, PatternSignal,
+};
 use selene_kernel_contracts::ph1rll::{
     RllArtifactCandidate, RllOptimizationTarget, RllRecommendationItem,
 };
@@ -56,15 +58,25 @@ pub mod reason_codes {
         ReasonCodeId(0xB13D_000F);
     pub const PH1_BUILDER_LEARNING_REPORT_WRITE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0010);
     pub const PH1_BUILDER_CHANGE_BRIEF_WRITE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0011);
-    pub const PH1_BUILDER_PERMISSION_PACKET_WRITE_FAILED: ReasonCodeId =
-        ReasonCodeId(0xB13D_0012);
+    pub const PH1_BUILDER_PERMISSION_PACKET_WRITE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0012);
     pub const PH1_BUILDER_DECISION_SEED_WRITE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0013);
+    pub const PH1_BUILDER_GOV_INGEST_NOT_ALLOWED: ReasonCodeId = ReasonCodeId(0xB13D_0014);
+    pub const PH1_BUILDER_GOV_INGEST_VERIFICATION_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0015);
+    pub const PH1_BUILDER_ROLLOUT_STAGE_GATE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0016);
+    pub const PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED: ReasonCodeId =
+        ReasonCodeId(0xB13D_0017);
+    pub const PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_PUBLISHED: ReasonCodeId =
+        ReasonCodeId(0xB13D_0018);
+    pub const PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD: ReasonCodeId =
+        ReasonCodeId(0xB13D_0019);
+    pub const PH1_BUILDER_PROMOTION_REPORT_GENERATED: ReasonCodeId = ReasonCodeId(0xB13D_001A);
 }
 
 const DEFAULT_LEARNING_REPORT_OUTPUT_PATH: &str = ".dev/builder_learning_report.md";
 const DEFAULT_CHANGE_BRIEF_OUTPUT_PATH: &str = ".dev/builder_change_brief.md";
 const DEFAULT_PERMISSION_PACKET_OUTPUT_PATH: &str = ".dev/builder_permission_packet.md";
-const LEARNING_BRIDGE_SOURCE_ENGINES: [&str; 3] = ["PH1.FEEDBACK", "PH1.LEARN", "PH1.KNOW"];
+const LEARNING_BRIDGE_SOURCE_ENGINES: [&str; 4] =
+    ["PH1.FEEDBACK", "PH1.LEARN", "PH1.KNOW", "PH1.VOICE.ID"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1BuilderConfig {
@@ -285,11 +297,7 @@ impl Validate for BuilderOfflineInput {
             )?;
         }
         if let Some(path) = &self.change_brief_output_path {
-            validate_path_ascii(
-                "builder_offline_input.change_brief_output_path",
-                path,
-                512,
-            )?;
+            validate_path_ascii("builder_offline_input.change_brief_output_path", path, 512)?;
         }
         if let Some(path) = &self.permission_packet_output_path {
             validate_path_ascii(
@@ -458,6 +466,709 @@ pub struct BuilderRefusal {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuilderVerificationSuite {
+    pub contract_tests_passed: bool,
+    pub replay_tests_passed: bool,
+    pub calibration_checks_passed: bool,
+    pub conflict_state_tests_passed: bool,
+}
+
+impl BuilderVerificationSuite {
+    pub fn v1(
+        contract_tests_passed: bool,
+        replay_tests_passed: bool,
+        calibration_checks_passed: bool,
+        conflict_state_tests_passed: bool,
+    ) -> Self {
+        Self {
+            contract_tests_passed,
+            replay_tests_passed,
+            calibration_checks_passed,
+            conflict_state_tests_passed,
+        }
+    }
+
+    pub fn all_passed(&self) -> bool {
+        self.contract_tests_passed
+            && self.replay_tests_passed
+            && self.calibration_checks_passed
+            && self.conflict_state_tests_passed
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderGovernedIngestInput {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub artifact_kind: GovArtifactKind,
+    pub artifact_id: String,
+    pub artifact_version: GovArtifactVersion,
+    pub requested_action: GovRequestedAction,
+    pub gov_reason_code: ReasonCodeId,
+    pub verification_suite: BuilderVerificationSuite,
+    pub now: MonotonicTimeNs,
+}
+
+impl BuilderGovernedIngestInput {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        artifact_kind: GovArtifactKind,
+        artifact_id: String,
+        artifact_version: GovArtifactVersion,
+        requested_action: GovRequestedAction,
+        gov_reason_code: ReasonCodeId,
+        verification_suite: BuilderVerificationSuite,
+        now: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
+        let input = Self {
+            correlation_id,
+            turn_id,
+            artifact_kind,
+            artifact_id,
+            artifact_version,
+            requested_action,
+            gov_reason_code,
+            verification_suite,
+            now,
+        };
+        input.validate()?;
+        Ok(input)
+    }
+}
+
+impl Validate for BuilderGovernedIngestInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        validate_token_ascii(
+            "builder_governed_ingest_input.artifact_id",
+            &self.artifact_id,
+            128,
+        )?;
+        self.artifact_version.validate()?;
+        if self.gov_reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_governed_ingest_input.gov_reason_code",
+                reason: "must be non-zero",
+            });
+        }
+        if self.now.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_governed_ingest_input.now",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderGovernedReleaseBinding {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub proposal_id: String,
+    pub release_candidate_id: String,
+    pub artifact_kind: GovArtifactKind,
+    pub artifact_id: String,
+    pub artifact_version: GovArtifactVersion,
+    pub requested_action: GovRequestedAction,
+    pub gov_reason_code: ReasonCodeId,
+    pub verification_suite: BuilderVerificationSuite,
+    pub bound_at: MonotonicTimeNs,
+}
+
+impl BuilderGovernedReleaseBinding {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        proposal_id: String,
+        release_candidate_id: String,
+        artifact_kind: GovArtifactKind,
+        artifact_id: String,
+        artifact_version: GovArtifactVersion,
+        requested_action: GovRequestedAction,
+        gov_reason_code: ReasonCodeId,
+        verification_suite: BuilderVerificationSuite,
+        bound_at: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
+        let binding = Self {
+            correlation_id,
+            turn_id,
+            proposal_id,
+            release_candidate_id,
+            artifact_kind,
+            artifact_id,
+            artifact_version,
+            requested_action,
+            gov_reason_code,
+            verification_suite,
+            bound_at,
+        };
+        binding.validate()?;
+        Ok(binding)
+    }
+}
+
+impl Validate for BuilderGovernedReleaseBinding {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        validate_token_ascii(
+            "builder_governed_release_binding.proposal_id",
+            &self.proposal_id,
+            96,
+        )?;
+        validate_token_ascii(
+            "builder_governed_release_binding.release_candidate_id",
+            &self.release_candidate_id,
+            96,
+        )?;
+        validate_token_ascii(
+            "builder_governed_release_binding.artifact_id",
+            &self.artifact_id,
+            128,
+        )?;
+        self.artifact_version.validate()?;
+        if self.gov_reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_governed_release_binding.gov_reason_code",
+                reason: "must be non-zero",
+            });
+        }
+        if self.bound_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_governed_release_binding.bound_at",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+pub fn bind_governed_artifact_to_release_candidate(
+    proposal: &BuilderPatchProposal,
+    ingest: &BuilderGovernedIngestInput,
+) -> Result<BuilderGovernedReleaseBinding, BuilderRefusal> {
+    if ingest.requested_action != GovRequestedAction::Activate {
+        return Err(BuilderRefusal {
+            stage: "GOV_INGEST",
+            reason_code: reason_codes::PH1_BUILDER_GOV_INGEST_NOT_ALLOWED,
+            message: "builder rollout ingest requires explicit GOV ALLOW/ACTIVATE".to_string(),
+        });
+    }
+    if !ingest.verification_suite.all_passed() {
+        return Err(BuilderRefusal {
+            stage: "GOV_VERIFY",
+            reason_code: reason_codes::PH1_BUILDER_GOV_INGEST_VERIFICATION_FAILED,
+            message: "verification suite must pass contract/replay/calibration/conflict checks"
+                .to_string(),
+        });
+    }
+    let release_candidate_id = deterministic_release_candidate_id(
+        &proposal.proposal_id,
+        &ingest.artifact_id,
+        ingest.artifact_version,
+    );
+    BuilderGovernedReleaseBinding::v1(
+        ingest.correlation_id,
+        ingest.turn_id,
+        proposal.proposal_id.clone(),
+        release_candidate_id,
+        ingest.artifact_kind,
+        ingest.artifact_id.clone(),
+        ingest.artifact_version,
+        ingest.requested_action,
+        ingest.gov_reason_code,
+        ingest.verification_suite,
+        ingest.now,
+    )
+    .map_err(|_| BuilderRefusal {
+        stage: "GOV_INGEST",
+        reason_code: reason_codes::PH1_BUILDER_GOV_INGEST_NOT_ALLOWED,
+        message: "governed ingest binding failed schema validation".to_string(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuilderRolloutJudgeGates {
+    pub shadow_passed: bool,
+    pub canary1_passed: bool,
+    pub canary2_passed: bool,
+    pub full_passed: bool,
+}
+
+impl BuilderRolloutJudgeGates {
+    pub fn v1(
+        shadow_passed: bool,
+        canary1_passed: bool,
+        canary2_passed: bool,
+        full_passed: bool,
+    ) -> Self {
+        Self {
+            shadow_passed,
+            canary1_passed,
+            canary2_passed,
+            full_passed,
+        }
+    }
+
+    pub fn passed_for_stage(&self, stage: BuilderReleaseStage) -> bool {
+        match stage {
+            BuilderReleaseStage::Staging => self.shadow_passed,
+            BuilderReleaseStage::Canary => self.canary1_passed,
+            BuilderReleaseStage::Ramp25 => self.canary2_passed,
+            BuilderReleaseStage::Ramp50 | BuilderReleaseStage::Production => self.full_passed,
+            BuilderReleaseStage::RolledBack => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuilderPromptRateKpis {
+    pub prompts_per_session_x100: u16,
+    pub repeat_prompt_violations: u16,
+    pub prompt_confirm_success_bp: u16,
+    pub observation_sessions: u32,
+}
+
+impl BuilderPromptRateKpis {
+    pub fn v1(
+        prompts_per_session_x100: u16,
+        repeat_prompt_violations: u16,
+        prompt_confirm_success_bp: u16,
+        observation_sessions: u32,
+    ) -> Result<Self, ContractViolation> {
+        let kpis = Self {
+            prompts_per_session_x100,
+            repeat_prompt_violations,
+            prompt_confirm_success_bp,
+            observation_sessions,
+        };
+        kpis.validate()?;
+        Ok(kpis)
+    }
+
+    pub fn passes_gate(&self) -> bool {
+        self.prompts_per_session_x100 <= 100
+            && self.repeat_prompt_violations == 0
+            && self.prompt_confirm_success_bp >= 7000
+            && self.observation_sessions >= 50
+    }
+}
+
+impl Validate for BuilderPromptRateKpis {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.prompts_per_session_x100 > 2_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_prompt_rate_kpis.prompts_per_session_x100",
+                reason: "must be <= 2000",
+            });
+        }
+        if self.prompt_confirm_success_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_prompt_rate_kpis.prompt_confirm_success_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if self.observation_sessions == 0 || self.observation_sessions > 1_000_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_prompt_rate_kpis.observation_sessions",
+                reason: "must be within 1..=1000000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderRolloutCohortDelta {
+    pub cohort_key: String,
+    pub tar_delta_bp: i16,
+    pub far_delta_bp: i16,
+    pub frr_delta_bp: i16,
+    pub latency_p95_delta_bp: i16,
+}
+
+impl BuilderRolloutCohortDelta {
+    pub fn v1(
+        cohort_key: String,
+        tar_delta_bp: i16,
+        far_delta_bp: i16,
+        frr_delta_bp: i16,
+        latency_p95_delta_bp: i16,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            cohort_key,
+            tar_delta_bp,
+            far_delta_bp,
+            frr_delta_bp,
+            latency_p95_delta_bp,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for BuilderRolloutCohortDelta {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token_ascii(
+            "builder_rollout_cohort_delta.cohort_key",
+            &self.cohort_key,
+            64,
+        )?;
+        for (field, value) in [
+            (
+                "builder_rollout_cohort_delta.tar_delta_bp",
+                self.tar_delta_bp,
+            ),
+            (
+                "builder_rollout_cohort_delta.far_delta_bp",
+                self.far_delta_bp,
+            ),
+            (
+                "builder_rollout_cohort_delta.frr_delta_bp",
+                self.frr_delta_bp,
+            ),
+            (
+                "builder_rollout_cohort_delta.latency_p95_delta_bp",
+                self.latency_p95_delta_bp,
+            ),
+        ] {
+            if !(-10_000..=10_000).contains(&value) {
+                return Err(ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be within -10000..=10000",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuilderPromotionDecision {
+    Promote,
+    Hold,
+    Rollback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderPromotionReport {
+    pub report_id: String,
+    pub proposal_id: String,
+    pub from_stage: BuilderReleaseStage,
+    pub to_stage: BuilderReleaseStage,
+    pub decision: BuilderPromotionDecision,
+    pub reason_code: ReasonCodeId,
+    pub generated_at: MonotonicTimeNs,
+    pub gate_evidence_refs: Vec<String>,
+    pub cohort_deltas: Vec<BuilderRolloutCohortDelta>,
+    pub prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+}
+
+impl BuilderPromotionReport {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        proposal_id: String,
+        from_stage: BuilderReleaseStage,
+        to_stage: BuilderReleaseStage,
+        decision: BuilderPromotionDecision,
+        reason_code: ReasonCodeId,
+        generated_at: MonotonicTimeNs,
+        gate_evidence_refs: Vec<String>,
+        mut cohort_deltas: Vec<BuilderRolloutCohortDelta>,
+        prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    ) -> Result<Self, ContractViolation> {
+        cohort_deltas.sort_by(|a, b| a.cohort_key.cmp(&b.cohort_key));
+        let mut refs_sorted = gate_evidence_refs;
+        refs_sorted.sort();
+        refs_sorted.dedup();
+        let report = Self {
+            report_id: deterministic_promotion_report_id(
+                &proposal_id,
+                from_stage,
+                to_stage,
+                generated_at,
+            ),
+            proposal_id,
+            from_stage,
+            to_stage,
+            decision,
+            reason_code,
+            generated_at,
+            gate_evidence_refs: refs_sorted,
+            cohort_deltas,
+            prompt_rate_kpis,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+}
+
+impl Validate for BuilderPromotionReport {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token_ascii("builder_promotion_report.report_id", &self.report_id, 96)?;
+        validate_token_ascii(
+            "builder_promotion_report.proposal_id",
+            &self.proposal_id,
+            96,
+        )?;
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_promotion_report.reason_code",
+                reason: "must be non-zero",
+            });
+        }
+        if self.generated_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_promotion_report.generated_at",
+                reason: "must be > 0",
+            });
+        }
+        if self.gate_evidence_refs.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_promotion_report.gate_evidence_refs",
+                reason: "must be <= 64",
+            });
+        }
+        for evidence_ref in &self.gate_evidence_refs {
+            validate_ascii_text(
+                "builder_promotion_report.gate_evidence_refs[]",
+                evidence_ref,
+                256,
+            )?;
+        }
+        if self.cohort_deltas.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_promotion_report.cohort_deltas",
+                reason: "must be <= 64",
+            });
+        }
+        for delta in &self.cohort_deltas {
+            delta.validate()?;
+        }
+        if let Some(kpis) = self.prompt_rate_kpis {
+            kpis.validate()?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderRuntimeActivationHandoff {
+    pub proposal_id: String,
+    pub active_pointer_ref: Option<String>,
+    pub rollback_pointer_ref: String,
+    pub release_stage: BuilderReleaseStage,
+    pub activation_published: bool,
+    pub reason_code: ReasonCodeId,
+    pub published_at: MonotonicTimeNs,
+}
+
+impl BuilderRuntimeActivationHandoff {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        proposal_id: String,
+        active_pointer_ref: Option<String>,
+        rollback_pointer_ref: String,
+        release_stage: BuilderReleaseStage,
+        activation_published: bool,
+        reason_code: ReasonCodeId,
+        published_at: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
+        let handoff = Self {
+            proposal_id,
+            active_pointer_ref,
+            rollback_pointer_ref,
+            release_stage,
+            activation_published,
+            reason_code,
+            published_at,
+        };
+        handoff.validate()?;
+        Ok(handoff)
+    }
+}
+
+impl Validate for BuilderRuntimeActivationHandoff {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token_ascii(
+            "builder_runtime_activation_handoff.proposal_id",
+            &self.proposal_id,
+            96,
+        )?;
+        if let Some(ptr) = self.active_pointer_ref.as_ref() {
+            validate_path_ascii(
+                "builder_runtime_activation_handoff.active_pointer_ref",
+                ptr,
+                256,
+            )?;
+        }
+        validate_path_ascii(
+            "builder_runtime_activation_handoff.rollback_pointer_ref",
+            &self.rollback_pointer_ref,
+            256,
+        )?;
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_runtime_activation_handoff.reason_code",
+                reason: "must be non-zero",
+            });
+        }
+        if self.published_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_runtime_activation_handoff.published_at",
+                reason: "must be > 0",
+            });
+        }
+        if self.activation_published && self.active_pointer_ref.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_runtime_activation_handoff.active_pointer_ref",
+                reason: "must be present when activation_published is true",
+            });
+        }
+        if !self.activation_published && self.active_pointer_ref.is_some() {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_runtime_activation_handoff.active_pointer_ref",
+                reason: "must be absent when activation_published is false",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BuilderAutoRollbackOutcome {
+    Unchanged(BuilderReleaseState),
+    RolledBack(BuilderReleaseState),
+}
+
+pub fn promote_with_judge_gates(
+    controller: &BuilderReleaseController,
+    current: &BuilderReleaseState,
+    approval: &BuilderApprovalState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+    idempotency_key: Option<String>,
+) -> Result<BuilderReleaseState, BuilderRefusal> {
+    if !judge_gates.passed_for_stage(current.stage) {
+        return Err(BuilderRefusal {
+            stage: "ROLLOUT_GATE",
+            reason_code: reason_codes::PH1_BUILDER_ROLLOUT_STAGE_GATE_FAILED,
+            message: format!(
+                "rollout gate failed for stage {}",
+                rollout_stage_label(current.stage)
+            ),
+        });
+    }
+    if current.stage == BuilderReleaseStage::Ramp50 {
+        let kpis = prompt_rate_kpis.ok_or_else(|| BuilderRefusal {
+            stage: "PROMPT_RATE",
+            reason_code: reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+            message: "prompt-rate KPI snapshot is required before production promotion"
+                .to_string(),
+        })?;
+        if !kpis.passes_gate() {
+            return Err(BuilderRefusal {
+                stage: "PROMPT_RATE",
+                reason_code: reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+                message: "prompt-rate KPI gate failed".to_string(),
+            });
+        }
+    }
+    controller.promote(current, approval, now, idempotency_key)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn auto_rollback_on_safety_or_kpi_breach(
+    controller: &BuilderReleaseController,
+    current: &BuilderReleaseState,
+    gate_results: &[BuilderValidationGateResult],
+    before_metrics: &BuilderMetricsSnapshot,
+    after_metrics: &BuilderMetricsSnapshot,
+    authority_or_gate_order_violation: bool,
+    duplicate_side_effect_event_detected: bool,
+    now: MonotonicTimeNs,
+    idempotency_key: Option<String>,
+) -> Result<BuilderAutoRollbackOutcome, ContractViolation> {
+    let any_failed_gate = gate_results.iter().any(|gate| !gate.passed);
+    let should_rollback = any_failed_gate
+        || should_trigger_post_deploy_rollback(
+            before_metrics,
+            after_metrics,
+            authority_or_gate_order_violation,
+            duplicate_side_effect_event_detected,
+        );
+    if !should_rollback {
+        return Ok(BuilderAutoRollbackOutcome::Unchanged(current.clone()));
+    }
+    let rolled_back = controller.rollback(current, now, idempotency_key)?;
+    Ok(BuilderAutoRollbackOutcome::RolledBack(rolled_back))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_promotion_report(
+    proposal_id: String,
+    from_stage: BuilderReleaseStage,
+    to_stage: BuilderReleaseStage,
+    decision: BuilderPromotionDecision,
+    reason_code: ReasonCodeId,
+    generated_at: MonotonicTimeNs,
+    gate_evidence_refs: Vec<String>,
+    cohort_deltas: Vec<BuilderRolloutCohortDelta>,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+) -> Result<BuilderPromotionReport, ContractViolation> {
+    BuilderPromotionReport::v1(
+        proposal_id,
+        from_stage,
+        to_stage,
+        decision,
+        reason_code,
+        generated_at,
+        gate_evidence_refs,
+        cohort_deltas,
+        prompt_rate_kpis,
+    )
+}
+
+pub fn publish_runtime_activation_handoff(
+    binding: &BuilderGovernedReleaseBinding,
+    release: &BuilderReleaseState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+) -> Result<BuilderRuntimeActivationHandoff, ContractViolation> {
+    let prompt_pass = prompt_rate_kpis.map(|k| k.passes_gate()).unwrap_or(false);
+    let activation_published = release.stage == BuilderReleaseStage::Production
+        && release.status == BuilderReleaseStateStatus::Completed
+        && judge_gates.full_passed
+        && prompt_pass;
+    let active_pointer_ref = if activation_published {
+        Some(deterministic_runtime_activation_pointer_ref(binding))
+    } else {
+        None
+    };
+    let reason_code = if activation_published {
+        reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_PUBLISHED
+    } else {
+        reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD
+    };
+    BuilderRuntimeActivationHandoff::v1(
+        release.proposal_id.clone(),
+        active_pointer_ref,
+        release.rollback_hook.clone(),
+        release.stage,
+        activation_published,
+        reason_code,
+        now,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuilderCompletedBundle {
     pub proposal: BuilderPatchProposal,
@@ -616,8 +1327,11 @@ pub fn advance_approval_state(
                 });
             }
             tech_approved = true;
-            if transition_has_all_required_approvals(current.change_class, tech_approved, product_security_approved)
-            {
+            if transition_has_all_required_approvals(
+                current.change_class,
+                tech_approved,
+                product_security_approved,
+            ) {
                 BuilderApprovalStateStatus::Approved
             } else {
                 BuilderApprovalStateStatus::Pending
@@ -631,8 +1345,11 @@ pub fn advance_approval_state(
                 });
             }
             product_security_approved = true;
-            if transition_has_all_required_approvals(current.change_class, tech_approved, product_security_approved)
-            {
+            if transition_has_all_required_approvals(
+                current.change_class,
+                tech_approved,
+                product_security_approved,
+            ) {
                 BuilderApprovalStateStatus::Approved
             } else {
                 BuilderApprovalStateStatus::Pending
@@ -728,7 +1445,8 @@ impl BuilderReleaseController {
             return Err(BuilderRefusal {
                 stage: "RELEASE",
                 reason_code: reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
-                message: "production rollout blocked because approval class is unresolved".to_string(),
+                message: "production rollout blocked because approval class is unresolved"
+                    .to_string(),
             });
         }
         let next_status = if next_stage == BuilderReleaseStage::Production {
@@ -1095,7 +1813,8 @@ where
                     gate.gate_id.as_str().replace('-', "_")
                 )),
             )?;
-            let gate_row_id = store.append_builder_validation_gate_result_row(gate_result.clone())?;
+            let gate_row_id =
+                store.append_builder_validation_gate_result_row(gate_result.clone())?;
             gate_results.push(gate_result);
             gate_result_row_ids.push(gate_row_id);
         }
@@ -1114,40 +1833,42 @@ where
         )?;
         let release_row_id = store.append_builder_release_state_row(release_state.clone())?;
 
-        Ok(BuilderOrchestrationOutcome::Completed(BuilderCompletedBundle {
-            proposal: final_proposal,
-            validation_run: run,
-            gate_results,
-            approval_state,
-            release_state,
-            proposal_row_id,
-            run_row_id,
-            gate_result_row_ids,
-            approval_row_id,
-            release_row_id,
-            learning_report_id: learning_auto_report
-                .as_ref()
-                .map(|report| report.learning_report_id.clone()),
-            learning_source_engines: learning_auto_report
-                .as_ref()
-                .map(|report| report.source_engines.clone())
-                .unwrap_or_default(),
-            learning_signal_count: learning_auto_report
-                .as_ref()
-                .map(|report| report.learning_signal_count)
-                .unwrap_or(0),
-            learning_evidence_refs: learning_auto_report
-                .as_ref()
-                .map(|report| report.evidence_refs.clone())
-                .unwrap_or_default(),
-            learning_report_path: learning_auto_report
-                .as_ref()
-                .map(|report| report.report_path.clone()),
-            change_brief_path: Some(change_brief_path),
-            permission_packet_path: Some(permission_packet_path),
-            code_decision_file_path: Some(decision_seed_files.code_file_path),
-            launch_decision_file_path: Some(decision_seed_files.launch_file_path),
-        }))
+        Ok(BuilderOrchestrationOutcome::Completed(
+            BuilderCompletedBundle {
+                proposal: final_proposal,
+                validation_run: run,
+                gate_results,
+                approval_state,
+                release_state,
+                proposal_row_id,
+                run_row_id,
+                gate_result_row_ids,
+                approval_row_id,
+                release_row_id,
+                learning_report_id: learning_auto_report
+                    .as_ref()
+                    .map(|report| report.learning_report_id.clone()),
+                learning_source_engines: learning_auto_report
+                    .as_ref()
+                    .map(|report| report.source_engines.clone())
+                    .unwrap_or_default(),
+                learning_signal_count: learning_auto_report
+                    .as_ref()
+                    .map(|report| report.learning_signal_count)
+                    .unwrap_or(0),
+                learning_evidence_refs: learning_auto_report
+                    .as_ref()
+                    .map(|report| report.evidence_refs.clone())
+                    .unwrap_or_default(),
+                learning_report_path: learning_auto_report
+                    .as_ref()
+                    .map(|report| report.report_path.clone()),
+                change_brief_path: Some(change_brief_path),
+                permission_packet_path: Some(permission_packet_path),
+                code_decision_file_path: Some(decision_seed_files.code_file_path),
+                launch_decision_file_path: Some(decision_seed_files.launch_file_path),
+            },
+        ))
     }
 
     pub fn run_post_deploy_judge<S>(
@@ -1212,7 +1933,8 @@ where
             input.now,
             input.idempotency_key.clone(),
         )?;
-        let judge_row_id = store.append_builder_post_deploy_judge_result_row(judge_result.clone())?;
+        let judge_row_id =
+            store.append_builder_post_deploy_judge_result_row(judge_result.clone())?;
 
         let release_state = if action == BuilderPostDeployDecisionAction::Revert {
             let controller = BuilderReleaseController;
@@ -1286,11 +2008,7 @@ fn maybe_generate_learning_auto_report(
         .learning_report_output_path
         .clone()
         .unwrap_or_else(|| DEFAULT_LEARNING_REPORT_OUTPUT_PATH.to_string());
-    validate_path_ascii(
-        "builder_learning_report.report_path",
-        &report_path,
-        512,
-    )?;
+    validate_path_ascii("builder_learning_report.report_path", &report_path, 512)?;
 
     let report = render_learning_report_markdown(
         outcome_entries,
@@ -1605,11 +2323,7 @@ fn generate_decision_seed_files(
         .display()
         .to_string();
 
-    validate_path_ascii(
-        "builder_decision_seed.code_file_path",
-        &code_file_path,
-        512,
-    )?;
+    validate_path_ascii("builder_decision_seed.code_file_path", &code_file_path, 512)?;
     validate_path_ascii(
         "builder_decision_seed.launch_file_path",
         &launch_file_path,
@@ -1619,18 +2333,10 @@ fn generate_decision_seed_files(
     let code_permission_ref = deterministic_permission_ref("code", proposal_id);
     let launch_permission_ref = deterministic_permission_ref("launch", proposal_id);
 
-    let code_content = render_decision_seed_file(
-        "code",
-        "approve",
-        &code_permission_ref,
-        proposal_id,
-    );
-    let launch_content = render_decision_seed_file(
-        "launch",
-        "approve",
-        &launch_permission_ref,
-        proposal_id,
-    );
+    let code_content =
+        render_decision_seed_file("code", "approve", &code_permission_ref, proposal_id);
+    let launch_content =
+        render_decision_seed_file("launch", "approve", &launch_permission_ref, proposal_id);
 
     write_decision_seed_file(&code_file_path, &code_content)?;
     write_decision_seed_file(&launch_file_path, &launch_content)?;
@@ -1730,10 +2436,7 @@ fn render_permission_packet_markdown(
     )
 }
 
-fn write_permission_packet_to_path(
-    path: &str,
-    content: &str,
-) -> Result<(), BuilderPipelineError> {
+fn write_permission_packet_to_path(path: &str, content: &str) -> Result<(), BuilderPipelineError> {
     let target = Path::new(path);
     if let Some(parent) = target.parent() {
         if !parent.as_os_str().is_empty() {
@@ -1799,8 +2502,8 @@ fn cluster_outcomes_to_pattern_signals(
         .map(|(key, acc)| {
             let drop_rate_bp = (acc.drop_count as i32 * 10_000) / acc.count as i32;
             let decision_rate_bp = (acc.decision_delta_count as i32 * 10_000) / acc.count as i32;
-            let metric_value_bp = (drop_rate_bp - (decision_rate_bp / 2))
-                .clamp(-20_000, 20_000) as i16;
+            let metric_value_bp =
+                (drop_rate_bp - (decision_rate_bp / 2)).clamp(-20_000, 20_000) as i16;
             let avg_latency = (acc.latency_sum / acc.count as u64) as i32;
             let severity = drop_rate_bp + avg_latency * 12;
             (key, acc, metric_value_bp, severity)
@@ -1815,7 +2518,11 @@ fn cluster_outcomes_to_pattern_signals(
         }
         let engine_id = key.split('|').next().unwrap_or("PH1.OS").to_string();
         let signal = PatternSignal::v1(
-            format!("sig_{}_{}", idx + 1, sanitize_token_component(&engine_id, 24)),
+            format!(
+                "sig_{}_{}",
+                idx + 1,
+                sanitize_token_component(&engine_id, 24)
+            ),
             engine_id,
             acc.metric_key,
             metric_value_bp,
@@ -1988,7 +2695,8 @@ fn initial_approval_state(
     idempotency_key: Option<String>,
 ) -> Result<BuilderApprovalState, ContractViolation> {
     let required_approvals_total = required_approvals_for_change_class(proposal.change_class);
-    let is_auto_resolved = proposal.status == BuilderProposalStatus::Validated && required_approvals_total == 0;
+    let is_auto_resolved =
+        proposal.status == BuilderProposalStatus::Validated && required_approvals_total == 0;
     let status = if is_auto_resolved {
         BuilderApprovalStateStatus::Approved
     } else {
@@ -2029,6 +2737,72 @@ fn deterministic_run_id(proposal_id: &str) -> String {
     truncate_token(format!("builder_run_{}", proposal_id), 96)
 }
 
+fn deterministic_release_candidate_id(
+    proposal_id: &str,
+    artifact_id: &str,
+    artifact_version: GovArtifactVersion,
+) -> String {
+    let artifact = sanitize_token_component(artifact_id, 24);
+    truncate_token(
+        format!(
+            "builder_rc_{}_{}_v{}",
+            sanitize_token_component(proposal_id, 32),
+            artifact,
+            artifact_version.0
+        ),
+        96,
+    )
+}
+
+fn rollout_stage_label(stage: BuilderReleaseStage) -> &'static str {
+    match stage {
+        BuilderReleaseStage::Staging => "shadow",
+        BuilderReleaseStage::Canary => "canary1",
+        BuilderReleaseStage::Ramp25 => "canary2",
+        BuilderReleaseStage::Ramp50 => "full",
+        BuilderReleaseStage::Production => "production",
+        BuilderReleaseStage::RolledBack => "rolled_back",
+    }
+}
+
+fn deterministic_promotion_report_id(
+    proposal_id: &str,
+    from_stage: BuilderReleaseStage,
+    to_stage: BuilderReleaseStage,
+    generated_at: MonotonicTimeNs,
+) -> String {
+    truncate_token(
+        format!(
+            "builder_report_{}_{}_{}_{}",
+            sanitize_token_component(proposal_id, 24),
+            rollout_stage_label(from_stage),
+            rollout_stage_label(to_stage),
+            generated_at.0
+        ),
+        96,
+    )
+}
+
+fn gov_artifact_kind_label(kind: GovArtifactKind) -> &'static str {
+    match kind {
+        GovArtifactKind::Blueprint => "blueprint",
+        GovArtifactKind::Simulation => "simulation",
+        GovArtifactKind::CapabilityMap => "capability_map",
+    }
+}
+
+fn deterministic_runtime_activation_pointer_ref(binding: &BuilderGovernedReleaseBinding) -> String {
+    truncate_token(
+        format!(
+            "runtime/{}/{}/v{}",
+            gov_artifact_kind_label(binding.artifact_kind),
+            sanitize_token_component(&binding.artifact_id, 48),
+            binding.artifact_version.0
+        ),
+        256,
+    )
+}
+
 fn deterministic_post_deploy_judge_result_id(
     proposal_id: &str,
     action: BuilderPostDeployDecisionAction,
@@ -2037,7 +2811,10 @@ fn deterministic_post_deploy_judge_result_id(
         BuilderPostDeployDecisionAction::Accept => "accept",
         BuilderPostDeployDecisionAction::Revert => "revert",
     };
-    truncate_token(format!("builder_judge_{}_{}", proposal_id, action_suffix), 96)
+    truncate_token(
+        format!("builder_judge_{}_{}", proposal_id, action_suffix),
+        96,
+    )
 }
 
 fn deterministic_approval_state_id(proposal_id: &str) -> String {
@@ -2298,10 +3075,9 @@ fn validate_path_ascii(
             reason: "exceeds max length",
         });
     }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/' || c == '.')
-    {
+    if !value.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '/' || c == '.'
+    }) {
         return Err(ContractViolation::InvalidValue {
             field,
             reason: "must be ASCII path-safe",
@@ -2473,18 +3249,16 @@ mod tests {
                         .unwrap(),
                     )
                 }
-                Ph1RllRequest::RllArtifactRecommend(_r) => {
-                    Ph1RllResponse::RllArtifactRecommendOk(
-                        RllArtifactRecommendOk::v1(
-                            ReasonCodeId(0x5200_0002),
-                            RllValidationStatus::Ok,
-                            vec![],
-                            true,
-                            true,
-                        )
-                        .unwrap(),
+                Ph1RllRequest::RllArtifactRecommend(_r) => Ph1RllResponse::RllArtifactRecommendOk(
+                    RllArtifactRecommendOk::v1(
+                        ReasonCodeId(0x5200_0002),
+                        RllValidationStatus::Ok,
+                        vec![],
+                        true,
+                        true,
                     )
-                }
+                    .unwrap(),
+                ),
             }
         }
     }
@@ -2589,7 +3363,10 @@ mod tests {
         let out = orchestrator.run_offline(&mut store, &input()).unwrap();
         match out {
             BuilderOrchestrationOutcome::Completed(bundle) => {
-                assert_eq!(bundle.validation_run.status, BuilderValidationRunStatus::Passed);
+                assert_eq!(
+                    bundle.validation_run.status,
+                    BuilderValidationRunStatus::Passed
+                );
                 assert_eq!(bundle.proposal.status, BuilderProposalStatus::Validated);
                 assert_eq!(bundle.gate_results.len(), 10);
                 assert_eq!(store.builder_proposal_rows().len(), 1);
@@ -2720,10 +3497,16 @@ mod tests {
         match out {
             BuilderOrchestrationOutcome::Completed(bundle) => {
                 assert_eq!(bundle.proposal.change_class, BuilderChangeClass::ClassB);
-                assert_eq!(bundle.approval_state.status, BuilderApprovalStateStatus::Pending);
+                assert_eq!(
+                    bundle.approval_state.status,
+                    BuilderApprovalStateStatus::Pending
+                );
                 assert_eq!(bundle.approval_state.required_approvals_total, 1);
                 assert_eq!(bundle.release_state.stage, BuilderReleaseStage::Staging);
-                assert_eq!(bundle.release_state.status, BuilderReleaseStateStatus::Blocked);
+                assert_eq!(
+                    bundle.release_state.status,
+                    BuilderReleaseStateStatus::Blocked
+                );
                 assert_eq!(
                     bundle.release_state.reason_code,
                     reason_codes::PH1_BUILDER_RELEASE_BLOCKED_APPROVAL
@@ -2905,9 +3688,18 @@ mod tests {
             .unwrap();
         match out {
             BuilderPostDeployJudgeOutcome::Completed(decision) => {
-                assert_eq!(decision.judge_result.action, BuilderPostDeployDecisionAction::Revert);
-                assert_eq!(decision.release_state.stage, BuilderReleaseStage::RolledBack);
-                assert_eq!(decision.release_state.status, BuilderReleaseStateStatus::Reverted);
+                assert_eq!(
+                    decision.judge_result.action,
+                    BuilderPostDeployDecisionAction::Revert
+                );
+                assert_eq!(
+                    decision.release_state.stage,
+                    BuilderReleaseStage::RolledBack
+                );
+                assert_eq!(
+                    decision.release_state.status,
+                    BuilderReleaseStateStatus::Reverted
+                );
                 assert_eq!(
                     decision.judge_result.reason_code,
                     reason_codes::PH1_BUILDER_POST_DEPLOY_REVERTED
@@ -2915,7 +3707,10 @@ mod tests {
             }
             _ => panic!("expected Completed"),
         }
-        assert_eq!(store.builder_post_deploy_judge_result_ledger_rows().len(), 1);
+        assert_eq!(
+            store.builder_post_deploy_judge_result_ledger_rows().len(),
+            1
+        );
     }
 
     #[test]
@@ -3196,7 +3991,9 @@ mod tests {
         let _ = std::fs::remove_file(&report_path);
         builder_input.learning_report_output_path = Some(report_path.clone());
 
-        let out = orchestrator.run_offline(&mut store, &builder_input).unwrap();
+        let out = orchestrator
+            .run_offline(&mut store, &builder_input)
+            .unwrap();
         let bundle = match out {
             BuilderOrchestrationOutcome::Completed(bundle) => bundle,
             _ => panic!("expected Completed"),
@@ -3266,7 +4063,9 @@ mod tests {
         ];
         builder_input.learning_report_output_path = Some(report_path.clone());
 
-        let out = orchestrator.run_offline(&mut store, &builder_input).unwrap();
+        let out = orchestrator
+            .run_offline(&mut store, &builder_input)
+            .unwrap();
         let bundle = match out {
             BuilderOrchestrationOutcome::Completed(bundle) => bundle,
             _ => panic!("expected Completed"),
@@ -3298,7 +4097,9 @@ mod tests {
         let _ = std::fs::remove_file(&brief_path);
         builder_input.change_brief_output_path = Some(brief_path.clone());
 
-        let out = orchestrator.run_offline(&mut store, &builder_input).unwrap();
+        let out = orchestrator
+            .run_offline(&mut store, &builder_input)
+            .unwrap();
         let bundle = match out {
             BuilderOrchestrationOutcome::Completed(bundle) => bundle,
             _ => panic!("expected Completed"),
@@ -3331,7 +4132,9 @@ mod tests {
         let _ = std::fs::remove_file(&packet_path);
         builder_input.permission_packet_output_path = Some(packet_path.clone());
 
-        let out = orchestrator.run_offline(&mut store, &builder_input).unwrap();
+        let out = orchestrator
+            .run_offline(&mut store, &builder_input)
+            .unwrap();
         let bundle = match out {
             BuilderOrchestrationOutcome::Completed(bundle) => bundle,
             _ => panic!("expected Completed"),
@@ -3362,5 +4165,350 @@ mod tests {
         assert!(launch_decision_content.contains("PHASE=launch"));
         assert!(launch_decision_content.contains("DECISION=approve"));
         assert!(launch_decision_content.contains("PERMISSION_REF=perm_launch_"));
+    }
+
+    #[test]
+    fn at_builder_os_16_governed_ingest_binds_release_candidate_metadata() {
+        let mut store = Ph1fStore::new_in_memory();
+        let orchestrator = Ph1BuilderOrchestrator::new(
+            Ph1BuilderConfig::mvp_v1(true),
+            DeterministicPatternEngine,
+            DeterministicRllEngine,
+            DeterministicBuilderSandboxValidator,
+        )
+        .unwrap();
+        let out = orchestrator.run_offline(&mut store, &input()).unwrap();
+        let proposal = match out {
+            BuilderOrchestrationOutcome::Completed(bundle) => bundle.proposal,
+            _ => panic!("expected Completed"),
+        };
+
+        let ingest = BuilderGovernedIngestInput::v1(
+            CorrelationId(7301),
+            TurnId(7302),
+            GovArtifactKind::Blueprint,
+            "voice_threshold_pack".to_string(),
+            GovArtifactVersion(7),
+            GovRequestedAction::Activate,
+            ReasonCodeId(0x4700_0001),
+            BuilderVerificationSuite::v1(true, true, true, true),
+            MonotonicTimeNs(7_300_000),
+        )
+        .unwrap();
+        let binding = bind_governed_artifact_to_release_candidate(&proposal, &ingest).unwrap();
+        assert!(binding.validate().is_ok());
+        assert_eq!(binding.proposal_id, proposal.proposal_id);
+        assert_eq!(binding.requested_action, GovRequestedAction::Activate);
+        assert_eq!(binding.artifact_version, GovArtifactVersion(7));
+    }
+
+    #[test]
+    fn at_builder_os_17_governed_ingest_refuses_when_verification_suite_fails() {
+        let mut store = Ph1fStore::new_in_memory();
+        let orchestrator = Ph1BuilderOrchestrator::new(
+            Ph1BuilderConfig::mvp_v1(true),
+            DeterministicPatternEngine,
+            DeterministicRllEngine,
+            DeterministicBuilderSandboxValidator,
+        )
+        .unwrap();
+        let out = orchestrator.run_offline(&mut store, &input()).unwrap();
+        let proposal = match out {
+            BuilderOrchestrationOutcome::Completed(bundle) => bundle.proposal,
+            _ => panic!("expected Completed"),
+        };
+
+        let ingest = BuilderGovernedIngestInput::v1(
+            CorrelationId(7301),
+            TurnId(7303),
+            GovArtifactKind::Blueprint,
+            "voice_threshold_pack".to_string(),
+            GovArtifactVersion(8),
+            GovRequestedAction::Activate,
+            ReasonCodeId(0x4700_0002),
+            BuilderVerificationSuite::v1(true, true, false, true),
+            MonotonicTimeNs(7_300_001),
+        )
+        .unwrap();
+        let refusal = bind_governed_artifact_to_release_candidate(&proposal, &ingest).unwrap_err();
+        assert_eq!(
+            refusal.reason_code,
+            reason_codes::PH1_BUILDER_GOV_INGEST_VERIFICATION_FAILED
+        );
+    }
+
+    fn approved_state_for(proposal_id: &str, now: u64) -> BuilderApprovalState {
+        BuilderApprovalState::v1(
+            format!("approval_{proposal_id}"),
+            proposal_id.to_string(),
+            BuilderChangeClass::ClassB,
+            required_approvals_for_change_class(BuilderChangeClass::ClassB),
+            1,
+            true,
+            false,
+            BuilderApprovalStateStatus::Approved,
+            reason_codes::PH1_BUILDER_APPROVAL_AUTO_RESOLVED,
+            MonotonicTimeNs(now),
+            Some(MonotonicTimeNs(now + 1)),
+            Some(format!("approval_idem_{proposal_id}")),
+        )
+        .unwrap()
+    }
+
+    fn active_release_for(
+        proposal_id: &str,
+        stage: BuilderReleaseStage,
+        now: u64,
+    ) -> BuilderReleaseState {
+        BuilderReleaseState::v1(
+            format!("release_{proposal_id}_{stage:?}"),
+            proposal_id.to_string(),
+            stage,
+            rollout_pct_for_stage(stage),
+            BuilderReleaseStateStatus::Active,
+            "rollback:hook".to_string(),
+            true,
+            reason_codes::PH1_BUILDER_RELEASE_STAGE_ACTIVE,
+            MonotonicTimeNs(now),
+            Some(format!("release_idem_{proposal_id}_{stage:?}")),
+        )
+        .unwrap()
+    }
+
+    fn production_release_for(proposal_id: &str, now: u64) -> BuilderReleaseState {
+        BuilderReleaseState::v1(
+            format!("release_{proposal_id}_production"),
+            proposal_id.to_string(),
+            BuilderReleaseStage::Production,
+            rollout_pct_for_stage(BuilderReleaseStage::Production),
+            BuilderReleaseStateStatus::Completed,
+            "rollback:hook".to_string(),
+            true,
+            reason_codes::PH1_BUILDER_RELEASE_STAGE_ACTIVE,
+            MonotonicTimeNs(now),
+            Some(format!("release_idem_{proposal_id}_production")),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn at_builder_os_18_staged_rollout_enforces_shadow_canary1_canary2_full_progression() {
+        let controller = BuilderReleaseController;
+        let approval = approved_state_for("p18", 800);
+        let gates = BuilderRolloutJudgeGates::v1(true, true, true, true);
+        let prompt_ok = BuilderPromptRateKpis::v1(90, 0, 8_200, 120).unwrap();
+
+        let shadow = active_release_for("p18", BuilderReleaseStage::Staging, 801);
+        let canary1 = promote_with_judge_gates(
+            &controller,
+            &shadow,
+            &approval,
+            gates,
+            Some(prompt_ok),
+            MonotonicTimeNs(802),
+            Some("p18_shadow".to_string()),
+        )
+        .unwrap();
+        assert_eq!(canary1.stage, BuilderReleaseStage::Canary);
+
+        let canary2 = promote_with_judge_gates(
+            &controller,
+            &canary1,
+            &approval,
+            gates,
+            Some(prompt_ok),
+            MonotonicTimeNs(803),
+            Some("p18_canary1".to_string()),
+        )
+        .unwrap();
+        assert_eq!(canary2.stage, BuilderReleaseStage::Ramp25);
+
+        let full = promote_with_judge_gates(
+            &controller,
+            &canary2,
+            &approval,
+            gates,
+            Some(prompt_ok),
+            MonotonicTimeNs(804),
+            Some("p18_canary2".to_string()),
+        )
+        .unwrap();
+        assert_eq!(full.stage, BuilderReleaseStage::Ramp50);
+
+        let production = promote_with_judge_gates(
+            &controller,
+            &full,
+            &approval,
+            gates,
+            Some(prompt_ok),
+            MonotonicTimeNs(805),
+            Some("p18_full".to_string()),
+        )
+        .unwrap();
+        assert_eq!(production.stage, BuilderReleaseStage::Production);
+        assert_eq!(production.status, BuilderReleaseStateStatus::Completed);
+    }
+
+    #[test]
+    fn at_builder_os_19_prompt_rate_gate_blocks_production_promotion() {
+        let controller = BuilderReleaseController;
+        let approval = approved_state_for("p19", 900);
+        let full = active_release_for("p19", BuilderReleaseStage::Ramp50, 901);
+        let gates = BuilderRolloutJudgeGates::v1(true, true, true, true);
+        let prompt_bad = BuilderPromptRateKpis::v1(150, 1, 4_000, 90).unwrap();
+
+        let refusal = promote_with_judge_gates(
+            &controller,
+            &full,
+            &approval,
+            gates,
+            Some(prompt_bad),
+            MonotonicTimeNs(902),
+            Some("p19_full".to_string()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            refusal.reason_code,
+            reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED
+        );
+    }
+
+    #[test]
+    fn at_builder_os_20_auto_rollback_triggers_immediately_on_gate_or_kpi_breach() {
+        let controller = BuilderReleaseController;
+        let production = production_release_for("p20", 1_000);
+        let failed_gate = BuilderValidationGateResult::v1(
+            "run_p20".to_string(),
+            "p20".to_string(),
+            BuilderValidationGateId::BldG4,
+            false,
+            MonotonicTimeNs(1_001),
+            ReasonCodeId(0xB13D_1001),
+            "gate failed".to_string(),
+            Some("gate_idem_p20".to_string()),
+        )
+        .unwrap();
+
+        let out = auto_rollback_on_safety_or_kpi_breach(
+            &controller,
+            &production,
+            &[failed_gate],
+            &BuilderMetricsSnapshot::v1(200, 300, 40, 0, 30).unwrap(),
+            &BuilderMetricsSnapshot::v1(210, 330, 45, 0, 30).unwrap(),
+            false,
+            false,
+            MonotonicTimeNs(1_002),
+            Some("rollback_p20".to_string()),
+        )
+        .unwrap();
+        match out {
+            BuilderAutoRollbackOutcome::RolledBack(state) => {
+                assert_eq!(state.stage, BuilderReleaseStage::RolledBack);
+                assert_eq!(state.status, BuilderReleaseStateStatus::Reverted);
+            }
+            _ => panic!("expected RolledBack"),
+        }
+    }
+
+    #[test]
+    fn at_builder_os_21_promotion_report_is_deterministic_and_sorted() {
+        let report = build_promotion_report(
+            "proposal_p21".to_string(),
+            BuilderReleaseStage::Canary,
+            BuilderReleaseStage::Ramp25,
+            BuilderPromotionDecision::Promote,
+            reason_codes::PH1_BUILDER_PROMOTION_REPORT_GENERATED,
+            MonotonicTimeNs(1_100),
+            vec![
+                "gate_ref_z".to_string(),
+                "gate_ref_a".to_string(),
+                "gate_ref_a".to_string(),
+            ],
+            vec![
+                BuilderRolloutCohortDelta::v1("noise_high".to_string(), 110, -20, -35, -90)
+                    .unwrap(),
+                BuilderRolloutCohortDelta::v1("accent_en_us".to_string(), 140, -10, -30, -120)
+                    .unwrap(),
+            ],
+            Some(BuilderPromptRateKpis::v1(90, 0, 8_500, 200).unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(report.gate_evidence_refs, vec!["gate_ref_a", "gate_ref_z"]);
+        assert_eq!(
+            report
+                .cohort_deltas
+                .iter()
+                .map(|d| d.cohort_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["accent_en_us", "noise_high"]
+        );
+        assert!(report.report_id.starts_with("builder_report_"));
+    }
+
+    #[test]
+    fn at_builder_os_22_runtime_activation_pointer_publishes_only_after_gate_pass() {
+        let handoff = publish_runtime_activation_handoff(
+            &BuilderGovernedReleaseBinding::v1(
+                CorrelationId(7_301),
+                TurnId(7_302),
+                "proposal_p22".to_string(),
+                "rc_p22".to_string(),
+                GovArtifactKind::Blueprint,
+                "voice_threshold_pack".to_string(),
+                GovArtifactVersion(9),
+                GovRequestedAction::Activate,
+                ReasonCodeId(0x4700_2201),
+                BuilderVerificationSuite::v1(true, true, true, true),
+                MonotonicTimeNs(1_200),
+            )
+            .unwrap(),
+            &production_release_for("proposal_p22", 1_201),
+            BuilderRolloutJudgeGates::v1(true, true, true, true),
+            Some(BuilderPromptRateKpis::v1(80, 0, 9_000, 300).unwrap()),
+            MonotonicTimeNs(1_202),
+        )
+        .unwrap();
+
+        assert!(handoff.activation_published);
+        assert!(handoff.active_pointer_ref.is_some());
+        assert_eq!(handoff.rollback_pointer_ref, "rollback:hook");
+        assert_eq!(
+            handoff.reason_code,
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_PUBLISHED
+        );
+    }
+
+    #[test]
+    fn at_builder_os_23_runtime_activation_pointer_withheld_keeps_rollback_live() {
+        let handoff = publish_runtime_activation_handoff(
+            &BuilderGovernedReleaseBinding::v1(
+                CorrelationId(7_401),
+                TurnId(7_402),
+                "proposal_p23".to_string(),
+                "rc_p23".to_string(),
+                GovArtifactKind::Simulation,
+                "voice_profile_delta_pack".to_string(),
+                GovArtifactVersion(2),
+                GovRequestedAction::Activate,
+                ReasonCodeId(0x4700_2301),
+                BuilderVerificationSuite::v1(true, true, true, true),
+                MonotonicTimeNs(1_300),
+            )
+            .unwrap(),
+            &active_release_for("proposal_p23", BuilderReleaseStage::Ramp50, 1_301),
+            BuilderRolloutJudgeGates::v1(true, true, true, false),
+            Some(BuilderPromptRateKpis::v1(120, 2, 4_100, 90).unwrap()),
+            MonotonicTimeNs(1_302),
+        )
+        .unwrap();
+
+        assert!(!handoff.activation_published);
+        assert!(handoff.active_pointer_ref.is_none());
+        assert_eq!(handoff.rollback_pointer_ref, "rollback:hook");
+        assert_eq!(
+            handoff.reason_code,
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD
+        );
     }
 }

@@ -5,9 +5,9 @@ use std::collections::BTreeSet;
 
 use selene_kernel_contracts::ph1feedback::{
     FeedbackCapabilityId, FeedbackEventCollectOk, FeedbackEventCollectRequest, FeedbackEventRecord,
-    FeedbackEventType, FeedbackRefuse, FeedbackSignalCandidate, FeedbackSignalEmitOk,
-    FeedbackSignalEmitRequest, FeedbackSignalTarget, FeedbackValidationStatus, Ph1FeedbackRequest,
-    Ph1FeedbackResponse,
+    FeedbackEventType, FeedbackGoldStatus, FeedbackPathType, FeedbackRefuse,
+    FeedbackSignalCandidate, FeedbackSignalEmitOk, FeedbackSignalEmitRequest, FeedbackSignalTarget,
+    FeedbackValidationStatus, Ph1FeedbackRequest, Ph1FeedbackResponse,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
@@ -269,6 +269,15 @@ fn build_candidate_from_event(
         FeedbackEventType::MemoryOverride => "memory_override_rate",
         FeedbackEventType::DeliverySwitch => "text_only_rate_in_meetings",
         FeedbackEventType::BargeIn => "barge_in_rate",
+        FeedbackEventType::VoiceIdFalseReject => "voice_id_false_reject_rate",
+        FeedbackEventType::VoiceIdFalseAccept => "voice_id_false_accept_rate",
+        FeedbackEventType::VoiceIdMultiSpeaker => "voice_id_multi_speaker_rate",
+        FeedbackEventType::VoiceIdDriftAlert => "voice_id_drift_alert_rate",
+        FeedbackEventType::VoiceIdReauthFriction => "voice_id_reauth_friction_rate",
+        FeedbackEventType::VoiceIdSpoofRisk => "voice_id_spoof_risk_rate",
+        FeedbackEventType::VoiceIdConfusionPair => "voice_id_confusion_pair_rate",
+        FeedbackEventType::VoiceIdDrift => "voice_id_drift_rate",
+        FeedbackEventType::VoiceIdLowQuality => "voice_id_low_quality_rate",
     };
     let target = match event.event_type {
         FeedbackEventType::SttReject
@@ -280,11 +289,14 @@ fn build_candidate_from_event(
     let signal_value_bp = score_event(event);
     let sample_count = max(event.metrics.retries as u32, 1);
 
-    FeedbackSignalCandidate::v1(
+    FeedbackSignalCandidate::v2(
         format!("signal_{}", event.event_id),
         event.event_type,
         signal_key.to_string(),
         target,
+        event.path_type,
+        event.gold_case_id.clone(),
+        event.gold_status,
         signal_value_bp,
         sample_count,
         event.evidence_ref.clone(),
@@ -303,11 +315,34 @@ fn score_event(event: &FeedbackEventRecord) -> i16 {
         FeedbackEventType::MemoryOverride => 700,
         FeedbackEventType::DeliverySwitch => 580,
         FeedbackEventType::BargeIn => 640,
+        FeedbackEventType::VoiceIdFalseReject => 930,
+        FeedbackEventType::VoiceIdFalseAccept => 980,
+        FeedbackEventType::VoiceIdMultiSpeaker => 940,
+        FeedbackEventType::VoiceIdDriftAlert => 760,
+        FeedbackEventType::VoiceIdReauthFriction => 710,
+        FeedbackEventType::VoiceIdSpoofRisk => 990,
+        FeedbackEventType::VoiceIdConfusionPair => 910,
+        FeedbackEventType::VoiceIdDrift => 700,
+        FeedbackEventType::VoiceIdLowQuality => 680,
     };
     let latency_component = (event.metrics.latency_ms as i32 / 20).min(600);
     let retries_component = (event.metrics.retries as i32) * 40;
     let missing_fields_component = (event.metrics.missing_fields.len() as i32) * 35;
-    let total = event_weight + latency_component + retries_component + missing_fields_component;
+    let path_component = match event.path_type {
+        FeedbackPathType::Defect => 180,
+        FeedbackPathType::Improvement => 0,
+    };
+    let gold_component = match event.gold_status {
+        FeedbackGoldStatus::Verified => 120,
+        FeedbackGoldStatus::Pending => 40,
+        FeedbackGoldStatus::NotRequired => 0,
+    };
+    let total = event_weight
+        + latency_component
+        + retries_component
+        + missing_fields_component
+        + path_component
+        + gold_component;
     total.clamp(-20_000, 20_000) as i16
 }
 
@@ -315,7 +350,8 @@ fn score_event(event: &FeedbackEventRecord) -> i16 {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1feedback::{
-        FeedbackConfidenceBucket, FeedbackEventCollectRequest, FeedbackEventType, FeedbackMetrics,
+        FeedbackConfidenceBucket, FeedbackEventCollectRequest, FeedbackEventType,
+        FeedbackGoldProvenanceMethod, FeedbackGoldStatus, FeedbackMetrics, FeedbackPathType,
         FeedbackRequestEnvelope, FeedbackSignalEmitRequest, FeedbackToolStatus,
     };
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
@@ -451,6 +487,75 @@ mod tests {
                 assert_eq!(ok.validation_status, FeedbackValidationStatus::Fail)
             }
             _ => panic!("expected FeedbackSignalEmitOk"),
+        }
+    }
+
+    #[test]
+    fn at_feedback_05_defect_path_is_prioritized_over_improvement() {
+        let defect = FeedbackEventRecord::v2(
+            "event_defect".to_string(),
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            CorrelationId(3201),
+            TurnId(291),
+            FeedbackEventType::UserCorrection,
+            FeedbackPathType::Defect,
+            None,
+            None,
+            FeedbackGoldStatus::NotRequired,
+            ReasonCodeId(9),
+            "evidence:feedback:defect".to_string(),
+            "idem:feedback:defect".to_string(),
+            FeedbackMetrics::v1(
+                420,
+                1,
+                FeedbackConfidenceBucket::Low,
+                vec!["when".to_string()],
+                FeedbackToolStatus::Fail,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let improvement = FeedbackEventRecord::v2(
+            "event_improvement".to_string(),
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            CorrelationId(3201),
+            TurnId(291),
+            FeedbackEventType::UserCorrection,
+            FeedbackPathType::Improvement,
+            Some("gold_case_1".to_string()),
+            Some(FeedbackGoldProvenanceMethod::VerifiedHumanCorrection),
+            FeedbackGoldStatus::Verified,
+            ReasonCodeId(9),
+            "evidence:feedback:improvement".to_string(),
+            "idem:feedback:improvement".to_string(),
+            FeedbackMetrics::v1(
+                420,
+                1,
+                FeedbackConfidenceBucket::Low,
+                vec!["when".to_string()],
+                FeedbackToolStatus::Fail,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let req = Ph1FeedbackRequest::FeedbackEventCollect(
+            FeedbackEventCollectRequest::v1(envelope(8, 4), vec![improvement, defect]).unwrap(),
+        );
+        let out = runtime().run(&req);
+        match out {
+            Ph1FeedbackResponse::FeedbackEventCollectOk(ok) => {
+                assert_eq!(ok.selected_candidate_id, "signal_event_defect".to_string());
+            }
+            _ => panic!("expected FeedbackEventCollectOk"),
         }
     }
 }

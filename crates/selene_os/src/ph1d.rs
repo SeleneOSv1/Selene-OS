@@ -181,17 +181,11 @@ mod tests {
             accepted_answer_formats: vec!["Tomorrow".to_string(), "Friday".to_string()],
             reason_code: ReasonCodeId(1),
         }));
-        let w = Ph1dWiring::new(
-            Ph1dWiringConfig::mvp_v1(true),
-            StubEngine { out: invalid },
-        )
-        .unwrap();
+        let w =
+            Ph1dWiring::new(Ph1dWiringConfig::mvp_v1(true), StubEngine { out: invalid }).unwrap();
         match w.run_turn(&req("hello")).unwrap() {
             Ph1dWiringOutcome::Refused(f) => {
-                assert_eq!(
-                    f.reason_code,
-                    reason_codes::PH1_D_INTERNAL_PIPELINE_ERROR
-                );
+                assert_eq!(f.reason_code, reason_codes::PH1_D_INTERNAL_PIPELINE_ERROR);
                 assert_eq!(f.kind, Ph1dFailureKind::InvalidSchema);
             }
             other => panic!("expected refused output, got: {other:?}"),
@@ -217,10 +211,7 @@ mod tests {
         let w = Ph1dWiring::new(
             Ph1dWiringConfig::mvp_v1(true),
             StubEngine {
-                out: Ph1dResponse::Fail(Ph1dFail::v1(
-                    ReasonCodeId(1),
-                    Ph1dFailureKind::Timeout,
-                )),
+                out: Ph1dResponse::Fail(Ph1dFail::v1(ReasonCodeId(1), Ph1dFailureKind::Timeout)),
             },
         )
         .unwrap();

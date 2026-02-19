@@ -10,3 +10,6 @@ path = "src/lib.rs"
 selene_kernel_contracts = { path = "../selene_kernel_contracts" }
 selene_engines = { path = "../selene_engines" }
 selene_storage = { path = "../selene_storage" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "2"

@@ -37,7 +37,6 @@ This file is non-canonical by design.
 
 ## Phase E Navigation (Onboarding/Delivery Controls)
 
-- `PH1.ONBOARDING_SMS`: `docs/DB_WIRING/PH1_ONBOARDING_SMS.md` + `docs/ECM/PH1_ONBOARDING_SMS.md`
 - `PH1.BCAST`: `docs/DB_WIRING/PH1_BCAST.md` + `docs/ECM/PH1_BCAST.md` (active implementation ids: `PH1.BCAST.001`)
 - `PH1.DELIVERY`: `docs/DB_WIRING/PH1_DELIVERY.md` + `docs/ECM/PH1_DELIVERY.md`
 - `PH1.LINK`: `docs/DB_WIRING/PH1_LINK.md` + `docs/ECM/PH1_LINK.md`
@@ -79,6 +78,7 @@ This file is non-canonical by design.
 - `PH1.WORK`: `docs/DB_WIRING/PH1_WORK.md` + `docs/ECM/PH1_WORK.md`
 - `PH1.LEASE`: `docs/DB_WIRING/PH1_LEASE.md` + `docs/ECM/PH1_LEASE.md`
 - `PH1.OS`: `docs/DB_WIRING/PH1_OS.md` + `docs/ECM/PH1_OS.md`
+- `PH1.HEALTH`: `docs/DB_WIRING/PH1_HEALTH.md` + `docs/ECM/PH1_HEALTH.md` (display-only health reporting dashboard)
 - `PH1.SCHED`: `docs/DB_WIRING/PH1_SCHED.md` + `docs/ECM/PH1_SCHED.md`
 - `PH1.EXPORT`: `docs/DB_WIRING/PH1_EXPORT.md` + `docs/ECM/PH1_EXPORT.md`
 - `PH1.KMS`: `docs/DB_WIRING/PH1_KMS.md` + `docs/ECM/PH1_KMS.md`
@@ -115,10 +115,10 @@ Assists (called by Selene OS, never engine-to-engine):
 - PH1.ENDPOINT assists capture boundaries (inputs from PH1.K/PH1.C; outputs one selected endpoint hint + ordered boundary hints to Selene OS, which passes bounded metadata to PH1.C/PH1.K only after validation).
 - PH1.LANG assists PH1.C/PH1.SRL/PH1.NLP.
 - PH1.SRL executes `SRL_FRAME_BUILD -> SRL_ARGUMENT_NORMALIZE`; only `validation_status=OK` SRL bundles may be forwarded by Selene OS to PH1.NLP.
-- Non-linear/tangled utterance unraveling is handled inside PH1.NLP deterministic parsing/clarify flow (no standalone PH1.PUZZLE runtime identity).
+- Non-linear/tangled utterance unraveling is handled inside PH1.NLP deterministic parsing/clarify flow.
 - Clarify owner lock: only `PH1.NLP` may own clarify decisions (`clarify_owner_engine_id=PH1.NLP` when `clarify_required=true`); no assist engine may become clarify owner.
 - PH1.PRON builds tenant/user pronunciation packs for PH1.TTS and robustness hints for PH1.VOICE.ID/PH1.W; user-scoped packs require explicit consent.
-- Salience/focus ranking is handled inside PH1.NLP/PH1.CONTEXT deterministic assist flow (no standalone PH1.ATTN runtime identity).
+- Salience/focus ranking is handled inside PH1.NLP/PH1.CONTEXT deterministic assist flow.
 - PH1.PRUNE assists PH1.X when multiple missing fields exist by selecting exactly one deterministic clarify target from PH1.NLP `required_fields_missing` and failing closed on order drift.
 - PH1.DIAG runs before PH1.X finalizes a move; it validates intent/field/confirmation/privacy/memory consistency and may only block/clarify (never execute).
 - Optional-assist policy bounds (fail-closed):
@@ -153,7 +153,7 @@ Assists (called by Selene OS, never engine-to-engine):
 Broadcast/delivery side-effect wiring (Selene OS orchestrated):
 - Link generation: `PH1.LINK`; link delivery: `PH1.BCAST` + `PH1.DELIVERY` (`LINK_DELIVER_INVITE`).
 - Access gate returns `ALLOW | DENY | ESCALATE` before any delivery commit path.
-- If delivery method is SMS and `sms_app_setup_complete=false`, Selene OS routes to `PH1.ONBOARDING_SMS` before continuing.
+- If delivery method is SMS and `sms_app_setup_complete=false`, Selene OS refuses the send path with setup-required reason-codes until setup is complete.
 - For approved delivery paths: Selene OS runs simulation commit steps, then calls PH1.BCAST lifecycle capabilities.
 - For per-recipient provider sends: Selene OS calls PH1.DELIVERY inside COMMIT simulation context and feeds resulting proof/status back into PH1.BCAST lifecycle state.
 - PH1.BCAST uses BCAST.MHP phone-first lifecycle for single-recipient messages; follow-ups occur only after WAITING timeout or URGENT classification.
@@ -194,14 +194,15 @@ Enterprise support wiring (OS-internal):
 - PH1.OS also runs machine-only optional utility scoring (`GATE-U4/GATE-U5`) from outcome-utilization entries, with deterministic actions (`KEEP | DEGRADE | DISABLE_CANDIDATE`) and optional-engine tier grouping (`STRICT | BALANCED | RICH`).
 - PH1.OS enforces runtime-boundary guardrails: OFFLINE_ONLY engines (`PH1.PATTERN`, `PH1.RLL`) and control-plane engines (`PH1.GOV`, `PH1.EXPORT`, `PH1.KMS`) are rejected fail-closed if they appear in live turn runtime paths.
 - PH1.SCHED executes `SCHED_POLICY_EVALUATE -> SCHED_DECISION_COMPUTE`; Selene OS consumes only deterministic `RETRY_AT | FAIL | WAIT` decisions, and `WAIT` must not advance attempt index.
+- PH1.HEALTH executes display-only read capabilities (`HEALTH_SNAPSHOT_READ`, `HEALTH_ISSUE_TIMELINE_READ`, `HEALTH_UNRESOLVED_SUMMARY_READ`) to project issue history and unresolved/escalated visibility for app UI; no remediation execution and no authority mutation.
 - PH1.KMS executes `KMS_ACCESS_EVALUATE -> KMS_MATERIAL_ISSUE`; only `validation_status=OK` material bundles may be consumed by Selene OS, and all outputs remain opaque refs (no secret values).
 - PH1.EXPORT executes `EXPORT_ACCESS_EVALUATE -> EXPORT_ARTIFACT_BUILD`; only `status=OK` export bundles may be consumed by Selene OS, with deterministic redaction + tamper-evident hash output and raw-audio exclusion by default.
 
 Wiring class declaration:
 - ALWAYS_ON: `PH1.K`, `PH1.W`, `PH1.VOICE.ID`, `PH1.C`, `PH1.SRL`, `PH1.NLP`, `PH1.CONTEXT`, `PH1.POLICY`, `PH1.X`
-- TURN_OPTIONAL: `PH1.ENDPOINT`, `PH1.LANG`, `PH1.PRON`, `PH1.DOC`, `PH1.SUMMARY`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.COST`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE`, `PH1.PERSONA`, `PH1.FEEDBACK`, `PH1.LEARN`, `PH1.PAE`, `PH1.CACHE`, `PH1.KNOW`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`, `PH1.ONBOARDING_SMS`
+- TURN_OPTIONAL: `PH1.ENDPOINT`, `PH1.LANG`, `PH1.PRON`, `PH1.DOC`, `PH1.SUMMARY`, `PH1.VISION`, `PH1.PRUNE`, `PH1.DIAG`, `PH1.SEARCH`, `PH1.COST`, `PH1.PREFETCH`, `PH1.EXPLAIN`, `PH1.LISTEN`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE`, `PH1.PERSONA`, `PH1.FEEDBACK`, `PH1.LEARN`, `PH1.PAE`, `PH1.CACHE`, `PH1.KNOW`, `PH1.MULTI`, `PH1.KG`, `PH1.BCAST`, `PH1.DELIVERY`
 - OFFLINE_ONLY: `PH1.PATTERN`, `PH1.RLL`
-- ENTERPRISE_SUPPORT: `PH1.TENANT`, `PH1.GOV`, `PH1.QUOTA`, `PH1.WORK`, `PH1.LEASE`, `PH1.OS`, `PH1.SCHED`, `PH1.KMS`, `PH1.EXPORT`
+- ENTERPRISE_SUPPORT: `PH1.TENANT`, `PH1.GOV`, `PH1.QUOTA`, `PH1.WORK`, `PH1.LEASE`, `PH1.OS`, `PH1.HEALTH`, `PH1.SCHED`, `PH1.KMS`, `PH1.EXPORT`
 
 ## Design Hygiene
 

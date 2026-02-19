@@ -95,8 +95,8 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1emocore::{
-        EmoAuditEventResult, EmoAuditEventStatus, EmoCoreCapabilityId, EmoCoreOutcome, EmoCoreRequest,
-        EmoCoreSimulationType, EMO_SIM_006, PH1EMOCORE_CONTRACT_VERSION,
+        EmoAuditEventResult, EmoAuditEventStatus, EmoCoreCapabilityId, EmoCoreOutcome,
+        EmoCoreRequest, EmoCoreSimulationType, EMO_SIM_006, PH1EMOCORE_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::MonotonicTimeNs;

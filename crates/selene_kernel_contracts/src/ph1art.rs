@@ -56,11 +56,17 @@ pub enum ArtifactScopeType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ArtifactType {
     WakePack,
+    EmoAffectPack,
+    EmoPolicyPack,
     SttVocabPack,
     SttRoutingPolicyPack,
     SttAdaptationProfile,
     TtsPronunciationPack,
     TtsRoutingPolicyPack,
+    VoiceIdThresholdPack,
+    VoiceIdConfusionPairPack,
+    VoiceIdSpoofPolicyPack,
+    VoiceIdProfileDeltaPack,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

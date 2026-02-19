@@ -341,7 +341,11 @@ fn normalize_memory_remember(req: &Ph1nRequest) -> Result<Ph1nResponse, Contract
     let t = &req.transcript_ok.transcript_text;
     let lower = t.to_ascii_lowercase();
 
-    let subject = extract_memory_subject(&lower, t, &["remember this ", "remember that ", "remember "]);
+    let subject = extract_memory_subject(
+        &lower,
+        t,
+        &["remember this ", "remember that ", "remember "],
+    );
     let mut fields = Vec::new();
     let mut evidence = Vec::new();
     let mut missing = Vec::new();
@@ -389,7 +393,13 @@ fn normalize_memory_forget(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractVi
     let subject = extract_memory_subject(
         &lower,
         t,
-        &["forget this ", "forget that ", "forget ", "delete memory ", "remove memory "],
+        &[
+            "forget this ",
+            "forget that ",
+            "forget ",
+            "delete memory ",
+            "remove memory ",
+        ],
     );
     let mut fields = Vec::new();
     let mut evidence = Vec::new();

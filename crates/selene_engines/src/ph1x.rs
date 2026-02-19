@@ -1645,6 +1645,7 @@ mod tests {
                 match d.dispatch_request {
                     DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::Time),
                     DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
                 }
             }
             _ => panic!("expected Dispatch directive"),
@@ -1765,6 +1766,7 @@ mod tests {
             Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
                 DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
                 DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
             },
             _ => panic!("expected Dispatch"),
         };
@@ -1884,9 +1886,13 @@ mod tests {
         match out.directive {
             Ph1xDirective::Dispatch(d) => match d.dispatch_request {
                 DispatchRequest::SimulationCandidate(c) => {
-                    assert_eq!(c.intent_draft.intent_type, IntentType::MemoryRememberRequest);
+                    assert_eq!(
+                        c.intent_draft.intent_type,
+                        IntentType::MemoryRememberRequest
+                    );
                 }
                 DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
             },
             _ => panic!("expected Dispatch directive"),
         }
@@ -1923,6 +1929,7 @@ mod tests {
                     assert_eq!(c.intent_draft.intent_type, IntentType::MemoryQuery);
                 }
                 DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
             },
             _ => panic!("expected Dispatch directive"),
         }
@@ -2029,6 +2036,7 @@ mod tests {
                     assert!(c.intent_draft.required_fields_missing.is_empty());
                 }
                 DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
             },
             _ => panic!("expected Dispatch directive"),
         }

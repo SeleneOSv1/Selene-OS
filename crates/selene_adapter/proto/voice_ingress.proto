@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package selene.adapter.v1;
+
+service VoiceIngress {
+  rpc RunVoiceTurn(RunVoiceTurnRequest) returns (RunVoiceTurnResponse);
+}
+
+message RunVoiceTurnRequest {
+  uint64 correlation_id = 1;
+  uint64 turn_id = 2;
+  string app_platform = 3;
+  string trigger = 4;
+  string actor_user_id = 5;
+  string tenant_id = 6;
+  string device_id = 7;
+  uint64 now_ns = 8;
+}
+
+message RunVoiceTurnResponse {
+  string status = 1;
+  string outcome = 2;
+  string reason = 3;
+}

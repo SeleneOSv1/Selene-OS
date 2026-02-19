@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
-use selene_kernel_contracts::ph1link::{DraftStatus, InviteeType, LinkStatus, PrefilledContext};
+use selene_kernel_contracts::ph1link::{
+    AppPlatform, DraftStatus, InviteeType, LinkStatus, PrefilledContext,
+};
 use selene_kernel_contracts::ph1position::{
     PositionRequirementEvidenceMode, PositionRequirementExposureRule, PositionRequirementFieldSpec,
     PositionRequirementFieldType, PositionRequirementRuleType, PositionRequirementSensitivity,
@@ -157,11 +159,15 @@ fn at_link_db_02_append_only_enforced() {
         )
         .unwrap();
 
-    let (status, _, _, _, _, _) = s
+    let (status, _, _, _, _, _, _, _, _, _) = s
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(201),
             link.token_id,
             "append_fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_append".to_string(),
+            "nonce_append_201".to_string(),
+            MonotonicTimeNs(201),
         )
         .unwrap();
     assert_eq!(status, LinkStatus::Activated);
@@ -232,11 +238,15 @@ fn at_link_db_04_current_table_consistency_with_lifecycle_and_proofs() {
         LinkStatus::Sent
     );
 
-    let (activated_status, _, _, _, _, _) = s
+    let (activated_status, _, _, _, _, _, _, _, _, _) = s
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(401),
             link.token_id.clone(),
             "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_401".to_string(),
+            "nonce_401".to_string(),
+            MonotonicTimeNs(401),
         )
         .unwrap();
     assert_eq!(activated_status, LinkStatus::Activated);
@@ -374,11 +384,15 @@ fn at_link_db_07_revoke_refused_for_activated_without_ap_override() {
         )
         .unwrap();
 
-    let (status, _, _, _, _, _) = s
+    let (status, _, _, _, _, _, _, _, _, _) = s
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(541),
             link.token_id.clone(),
             "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_1".to_string(),
+            "nonce_541".to_string(),
+            MonotonicTimeNs(541),
             "open-idem-1".to_string(),
         )
         .unwrap();
@@ -441,6 +455,10 @@ fn at_link_db_09_open_activate_idempotency_replay_behavior() {
             MonotonicTimeNs(581),
             link.token_id.clone(),
             "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_2".to_string(),
+            "nonce_581".to_string(),
+            MonotonicTimeNs(581),
             "open-idem-replay".to_string(),
         )
         .unwrap();
@@ -452,6 +470,10 @@ fn at_link_db_09_open_activate_idempotency_replay_behavior() {
             MonotonicTimeNs(582),
             link.token_id.clone(),
             "fp_other".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_2".to_string(),
+            "nonce_581".to_string(),
+            MonotonicTimeNs(581),
             "open-idem-replay".to_string(),
         )
         .unwrap();
@@ -483,6 +505,10 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
             MonotonicTimeNs(601),
             link.token_id.clone(),
             "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_3".to_string(),
+            "nonce_601".to_string(),
+            MonotonicTimeNs(601),
             "open-bind".to_string(),
         )
         .unwrap();
@@ -493,6 +519,10 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
             MonotonicTimeNs(602),
             link.token_id.clone(),
             "fp_other".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_4".to_string(),
+            "nonce_602".to_string(),
+            MonotonicTimeNs(602),
             "open-mismatch".to_string(),
         )
         .unwrap();
@@ -504,6 +534,10 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
             MonotonicTimeNs(603),
             link.token_id.clone(),
             "fp_other".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_4".to_string(),
+            "nonce_602".to_string(),
+            MonotonicTimeNs(602),
             "open-mismatch".to_string(),
         )
         .unwrap();
@@ -705,6 +739,10 @@ fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
             MonotonicTimeNs(721),
             link.token_id.clone(),
             "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_721".to_string(),
+            "nonce_721".to_string(),
+            MonotonicTimeNs(721),
             "row-open-idem-1".to_string(),
         )
         .unwrap();
@@ -716,6 +754,10 @@ fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
             MonotonicTimeNs(722),
             link.token_id.clone(),
             "fp_other".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_721".to_string(),
+            "nonce_721".to_string(),
+            MonotonicTimeNs(721),
             "row-open-idem-1".to_string(),
         )
         .unwrap();

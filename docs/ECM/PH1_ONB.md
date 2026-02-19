@@ -9,6 +9,11 @@
 - `ownership_boundary`: PH1.ONB executes pinned requirements schema only; schema definition/activation ownership remains outside PH1.ONB (position-linked schema ownership is PH1.POSITION).
 - `prompt_boundary`: ONB required-question prompting is derived from pinned schema field specs and required gates only; no hardcoded ONB-only requirement branch.
 
+## Phone-First Onboarding Contract Lock
+- ONB session start is phone-first and must receive app-open context from `LINK_OPEN_ACTIVATE`.
+- Required app-open fields: `app_platform (IOS|ANDROID)`, `app_instance_id`, `deep_link_nonce`, `link_opened_at`.
+- Missing/invalid app-open context fails closed before onboarding session creation.
+
 Canonical naming note:
 - `PH1.ONB` is the only wired onboarding engine id in this repo.
 - `PH1.ONB.CORE.001`, `PH1.ONB.ORCH`, `PH1.ONB.ORCH.001`, and `PH1.ONB.BIZ.001` are legacy/spec aliases and do not map to separate runtime modules.
@@ -17,7 +22,7 @@ Canonical naming note:
 
 ### `PH1ONB_SESSION_START_DRAFT_ROW`
 - `name`: Start onboarding session from `LINK_OPEN_ACTIVATE` handoff
-- `input_schema`: `(token_id, prefilled_context_ref?, tenant_id?, device_fingerprint)`
+- `input_schema`: `(token_id, prefilled_context_ref?, tenant_id?, device_fingerprint, app_platform, app_instance_id, deep_link_nonce, link_opened_at)`
 - `output_schema`: `Result<OnbSessionStartResult{onboarding_session_id,status,next_step,pinned_schema_id,pinned_schema_version,pinned_overlay_set_id,pinned_selector_snapshot,required_verification_gates[]}, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
@@ -76,10 +81,11 @@ Canonical naming note:
 
 ### `PH1ONB_COMPLETE_COMMIT_ROW`
 - `name`: Commit onboarding completion
-- `input_schema`: `(now, onboarding_session_id, idempotency_key)`
+- `input_schema`: `(now, onboarding_session_id, idempotency_key, voice_artifact_sync_receipt_ref?, wake_artifact_sync_receipt_ref?)`
 - `output_schema`: `Result<OnbCompleteResult, StorageError>`
 - `allowed_callers`: `SELENE_OS_ONLY` (simulation-gated)
 - `side_effects`: `DECLARED (DB_WRITE)`
+- `platform_gate_note`: voice sync receipt is required when locked voice enrollment exists; wake sync receipt is required only on wake-required platform profiles when completed wake enrollment exists.
 
 ### `PH1ONB_BACKFILL_START_DRAFT_ROW`
 - `name`: Start deterministic onboarding requirement backfill campaign
@@ -112,6 +118,9 @@ Canonical naming note:
 - required verification gates are schema-derived from pinned schema context; no hardcoded field alias fallback.
 - blocked completion when schema-required sender confirmation is not satisfied
   - idempotency replay/no-op
+- missing app-open context at session start
+- completion gate missing required voice sync receipt refs (when locked voice enrollment exists)
+- completion gate missing required wake sync receipt refs on wake-required platform profiles
 - all failures are fail-closed and reason-coded.
 
 ## Audit Emission Requirements Per Capability
