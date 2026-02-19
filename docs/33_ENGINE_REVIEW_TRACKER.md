@@ -1,7 +1,7 @@
 # Engine Review Tracker (From `32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE`)
 
 Execution plan pointer:
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md`
 
 Purpose:
 - Lock the full engine inventory from `docs/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE.md`.

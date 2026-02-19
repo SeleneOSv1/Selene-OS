@@ -15,8 +15,9 @@
 12. [02_BUILD_PLAN](02_BUILD_PLAN.md) (roadmap)
 13. [03_BUILD_LEDGER](03_BUILD_LEDGER.md) (append-only evidence log)
 14. [33_ENGINE_REVIEW_TRACKER](33_ENGINE_REVIEW_TRACKER.md) (engine-by-engine review tracker)
-15. [archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19](archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19.md) (frozen archive pointer; non-canonical)
-16. [36_HEALTH_ENGINE_DISPLAY_PLAN](36_HEALTH_ENGINE_DISPLAY_PLAN.md) (app health dashboard, display-only reporting + escalation visibility)
+15. [archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19](archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md) (frozen archive pointer; non-canonical)
+16. [archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19](archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19.md) (frozen archive pointer; non-canonical)
+17. [36_HEALTH_ENGINE_DISPLAY_PLAN](36_HEALTH_ENGINE_DISPLAY_PLAN.md) (app health dashboard, display-only reporting + escalation visibility)
 
 ## Quick links
 - [01_ARCHITECTURE.md](01_ARCHITECTURE.md)
@@ -34,6 +35,7 @@
 - [32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE.md](32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE.md) (legacy pointer; non-canonical)
 - [archive/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE_LEGACY_2026-02-18.md](archive/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE_LEGACY_2026-02-18.md) (raw legacy snapshot; non-canonical)
 - [33_ENGINE_REVIEW_TRACKER.md](33_ENGINE_REVIEW_TRACKER.md)
+- [archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md](archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md) (frozen archive pointer; non-canonical)
 - [archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19.md](archive/35_END_TO_END_LEARNING_PLAN_ARCHIVE_2026-02-19.md) (frozen archive pointer; non-canonical)
 - [36_HEALTH_ENGINE_DISPLAY_PLAN.md](36_HEALTH_ENGINE_DISPLAY_PLAN.md)
 - [COVERAGE_MATRIX.md](COVERAGE_MATRIX.md)

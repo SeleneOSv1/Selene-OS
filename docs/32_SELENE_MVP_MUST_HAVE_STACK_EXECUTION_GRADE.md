@@ -13,7 +13,7 @@ Use these canonical sources for active design and implementation truth:
 - `docs/06_ENGINE_MAP.md`
 - `docs/COVERAGE_MATRIX.md`
 - `docs/33_ENGINE_REVIEW_TRACKER.md`
-- `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+- `docs/archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md`
 
 ## Archive Location
 - raw legacy snapshot: `docs/archive/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE_LEGACY_2026-02-18.md`
