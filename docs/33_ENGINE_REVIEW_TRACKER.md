@@ -45,6 +45,8 @@ Tracker normalization notes:
 - Row 43 (`PH1.ACCESS`) is removed from active review scope; canonical access tracking is normalized to one merged row:
   - `PH1.ACCESS.001_PH2.ACCESS.002` (row 63, canonical)
   - `PH1.ACCESS.001` and `PH2.ACCESS.002` are kept as source-history rows merged into row 63.
+- Row 64 (`PH1.ACCESS.001`) is merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`).
+- Row 76 (`PH2.ACCESS.002`) is merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`).
 - Row 42 (`PH1.EMO`) is removed from active review scope to keep only concrete emotional engines:
   - `PH1.EMO.GUIDE`
   - `PH1.EMO.CORE`

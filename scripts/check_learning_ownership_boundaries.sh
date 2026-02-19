@@ -81,8 +81,8 @@ require_match 'runtime callable contracts live in `PH1\.FEEDBACK`, `PH1\.LEARN`,
 
 require_match "fn validate_ph1learn_artifact_type" "$STORAGE_FILE" \
   "storage layer must enforce PH1.LEARN artifact ownership type boundary"
-require_match "must be STT_ROUTING_POLICY_PACK, STT_ADAPTATION_PROFILE, or TTS_ROUTING_POLICY_PACK" "$STORAGE_FILE" \
-  "PH1.LEARN artifact ownership boundary message must be explicit"
+require_match "must be one of WAKE/EMO/STT/TTS/VOICE_ID rollout artifact packs" "$STORAGE_FILE" \
+  "PH1.LEARN artifact ownership boundary message must be explicit for WAKE/EMO/STT/TTS/VOICE_ID packs"
 require_match "must be STT_VOCAB_PACK or TTS_PRONUNCIATION_PACK" "$STORAGE_FILE" \
   "PH1.KNOW artifact ownership boundary message must remain explicit"
 
