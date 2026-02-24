@@ -40,13 +40,32 @@ fi
 mkdir -p "$(dirname "${OUTPUT_CSV}")"
 
 run_psql() {
-  "${PSQL_BIN}" \
+  local out_file
+  local err_file
+  local status
+  out_file="$(mktemp /tmp/selene_stage3_psql_out_XXXXXX)"
+  err_file="$(mktemp /tmp/selene_stage3_psql_err_XXXXXX)"
+
+  if ! "${PSQL_BIN}" \
     -h "${PGHOST}" \
     -p "${PGPORT}" \
     -U "${PGUSER}" \
     -d "${PGDATABASE}" \
     -v ON_ERROR_STOP=1 \
-    "$@"
+    "$@" >"${out_file}" 2>"${err_file}"; then
+    status=$?
+    if grep -Eiq "connection refused|could not connect|no route to host|timeout expired|timed out" "${err_file}"; then
+      echo "NO_CANARY_TELEMETRY: postgres_unreachable host=${PGHOST} port=${PGPORT}" >&2
+      rm -f "${out_file}" "${err_file}"
+      exit 1
+    fi
+    cat "${err_file}" >&2
+    rm -f "${out_file}" "${err_file}"
+    return "${status}"
+  fi
+
+  cat "${out_file}"
+  rm -f "${out_file}" "${err_file}"
 }
 
 sql_quote() {
