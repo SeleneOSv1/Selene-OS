@@ -150,6 +150,12 @@ body {
   font-size: 14px;
 }
 
+.detail-meta {
+  margin: -4px 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .checks-list {
   display: grid;
   gap: 8px;

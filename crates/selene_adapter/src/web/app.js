@@ -271,16 +271,18 @@ function renderIssues() {
 function renderTimeline() {
   const list = document.getElementById("timeline-list");
   const header = document.getElementById("detail-header");
+  const detailMeta = document.getElementById("detail-meta");
   const empty = document.getElementById("timeline-empty");
   const meta = document.getElementById("timeline-meta");
   const loadMoreButton = document.getElementById("timeline-load-more");
-  if (!list || !header || !empty || !meta || !loadMoreButton) return;
+  if (!list || !header || !detailMeta || !empty || !meta || !loadMoreButton) return;
 
   list.innerHTML = "";
   const detail = state.detail;
   if (!detail) {
     empty.classList.remove("hidden");
     meta.textContent = "Showing 0 of 0 events";
+    detailMeta.textContent = "Blocker: - | Deadline: -";
     loadMoreButton.classList.add("hidden");
     return;
   }
@@ -292,6 +294,7 @@ function renderTimeline() {
     null;
   if (!issue) {
     header.textContent = "Select an issue from the center table.";
+    detailMeta.textContent = "Blocker: - | Deadline: -";
     empty.classList.remove("hidden");
     meta.textContent = "Showing 0 of 0 events";
     loadMoreButton.classList.add("hidden");
@@ -300,6 +303,8 @@ function renderTimeline() {
 
   state.selectedIssueId = issue.issue_id;
   header.textContent = `${issue.issue_id} - ${issue.issue_type} (${issue.severity})`;
+  detailMeta.textContent =
+    `Blocker: ${issue.blocker ?? "-"} | Deadline: ${formatTimestampNs(issue.unresolved_deadline_at_ns)}`;
   const entries = detail.timeline ?? [];
   if (entries.length === 0) {
     empty.classList.remove("hidden");
@@ -312,6 +317,9 @@ function renderTimeline() {
   for (const entry of entries) {
     const node = document.createElement("li");
     node.className = "timeline-item";
+    const evidence = entry.evidence_ref ?? "-";
+    const blocker = entry.blocker ?? "-";
+    const deadline = formatTimestampNs(entry.unresolved_deadline_at_ns);
     node.innerHTML = `
       <div class="timeline-top">
         <strong>${entry.action_id}</strong>
@@ -319,6 +327,9 @@ function renderTimeline() {
       </div>
       <div class="timeline-result">Result: ${entry.result}</div>
       <div class="timeline-result">Reason: ${entry.reason_code}</div>
+      <div class="timeline-result">Evidence: ${evidence}</div>
+      <div class="timeline-result">Blocker: ${blocker}</div>
+      <div class="timeline-result">Deadline: ${deadline}</div>
     `;
     list.appendChild(node);
   }

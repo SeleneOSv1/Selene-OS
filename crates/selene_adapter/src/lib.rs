@@ -190,6 +190,8 @@ pub struct UiHealthIssueRow {
     pub last_update_at_ns: Option<u64>,
     pub status: String,
     pub resolution_state: String,
+    pub blocker: Option<String>,
+    pub unresolved_deadline_at_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -199,6 +201,9 @@ pub struct UiHealthTimelineEntry {
     pub action_id: String,
     pub result: String,
     pub reason_code: String,
+    pub evidence_ref: Option<String>,
+    pub blocker: Option<String>,
+    pub unresolved_deadline_at_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -2842,6 +2847,8 @@ fn build_sync_detail(
             last_update_at_ns: at_ns,
             status: "OPEN".to_string(),
             resolution_state: "UNRESOLVED".to_string(),
+            blocker: Some("Retry queue backlog not drained.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
         timeline.push(UiHealthTimelineEntry {
             issue_id: "sync_retry_backlog".to_string(),
@@ -2849,6 +2856,9 @@ fn build_sync_detail(
             action_id: "SYNC_WORKER_RETRY_PASS".to_string(),
             result: format!("retry_pending={}", health.sync.queue.retry_pending_count),
             reason_code: reason_codes::ADAPTER_SYNC_RETRY.0.to_string(),
+            evidence_ref: Some("sync.queue.retry_pending_count".to_string()),
+            blocker: Some("Retry queue backlog not drained.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
     }
     if health.sync.queue.dead_letter_count > 0 {
@@ -2861,6 +2871,8 @@ fn build_sync_detail(
             last_update_at_ns: at_ns,
             status: "ESCALATED".to_string(),
             resolution_state: "UNRESOLVED".to_string(),
+            blocker: Some("Dead-letter queue is non-zero.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
         timeline.push(UiHealthTimelineEntry {
             issue_id: "sync_dead_letter".to_string(),
@@ -2868,6 +2880,9 @@ fn build_sync_detail(
             action_id: "SYNC_WORKER_DEADLETTER".to_string(),
             result: format!("dead_lettered={}", health.sync.queue.dead_letter_count),
             reason_code: reason_codes::ADAPTER_SYNC_DEADLETTER.0.to_string(),
+            evidence_ref: Some("sync.queue.dead_letter_count".to_string()),
+            blocker: Some("Dead-letter queue is non-zero.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
     }
     if health.sync.queue.replay_due_count > 0 {
@@ -2880,6 +2895,8 @@ fn build_sync_detail(
             last_update_at_ns: at_ns,
             status: "OPEN".to_string(),
             resolution_state: "UNRESOLVED".to_string(),
+            blocker: Some("Replay-due queue exceeds threshold.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
         timeline.push(UiHealthTimelineEntry {
             issue_id: "sync_replay_due".to_string(),
@@ -2887,6 +2904,9 @@ fn build_sync_detail(
             action_id: "SYNC_WORKER_REPLAY_DUE_SCAN".to_string(),
             result: format!("replay_due={}", health.sync.queue.replay_due_count),
             reason_code: reason_codes::ADAPTER_SYNC_REPLAY_DUE.0.to_string(),
+            evidence_ref: Some("sync.queue.replay_due_count".to_string()),
+            blocker: Some("Replay-due queue exceeds threshold.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
     }
 
@@ -2897,6 +2917,9 @@ fn build_sync_detail(
             action_id: "SYNC_WORKER_PASS".to_string(),
             result: "NO_OPEN_ISSUES".to_string(),
             reason_code: "0".to_string(),
+            evidence_ref: Some("sync.worker.last_pass_at_ns".to_string()),
+            blocker: None,
+            unresolved_deadline_at_ns: None,
         });
     }
 
@@ -2946,6 +2969,8 @@ fn build_builder_detail(
             last_update_at_ns: at_ns,
             status: "OPEN".to_string(),
             resolution_state: "UNRESOLVED".to_string(),
+            blocker: Some("Builder status is outside healthy range.".to_string()),
+            unresolved_deadline_at_ns: at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000)),
         });
     }
 
@@ -2955,6 +2980,17 @@ fn build_builder_detail(
         action_id: "BUILDER_STATUS_TRACK".to_string(),
         result: builder_status,
         reason_code: "0".to_string(),
+        evidence_ref: Some("sync.improvement.last_builder_status".to_string()),
+        blocker: if status == "HEALTHY" {
+            None
+        } else {
+            Some("Builder status is outside healthy range.".to_string())
+        },
+        unresolved_deadline_at_ns: if status == "HEALTHY" {
+            None
+        } else {
+            at_ns.map(|v| v.saturating_add(15 * 60 * 1_000_000_000))
+        },
     });
     let summary = UiHealthSummary {
         open_issues: issues.len() as u32,
@@ -3015,6 +3051,37 @@ mod tests {
             page_cursor: None,
             report_context_id: None,
             page_size: Some(20),
+        }
+    }
+
+    fn synthetic_health_for_detail_tests() -> AdapterHealthResponse {
+        AdapterHealthResponse {
+            status: "ok".to_string(),
+            outcome: "AT_RISK".to_string(),
+            reason: None,
+            sync: AdapterSyncHealth {
+                worker: AdapterSyncWorkerCounters {
+                    pass_count: 3,
+                    dequeued_total: 7,
+                    acked_total: 2,
+                    retry_scheduled_total: 2,
+                    dead_lettered_total: 1,
+                    last_pass_at_ns: Some(500),
+                    last_dequeued_count: 2,
+                    last_acked_count: 1,
+                    last_retry_scheduled_count: 1,
+                    last_dead_lettered_count: 1,
+                },
+                queue: AdapterSyncQueueCounters {
+                    queued_count: 4,
+                    in_flight_count: 1,
+                    acked_count: 2,
+                    dead_letter_count: 1,
+                    replay_due_count: 1,
+                    retry_pending_count: 2,
+                },
+                improvement: AdapterImprovementCounters::default(),
+            },
         }
     }
 
@@ -3375,6 +3442,8 @@ mod tests {
                 last_update_at_ns: Some(200),
                 status: "OPEN".to_string(),
                 resolution_state: "UNRESOLVED".to_string(),
+                blocker: Some("Retry queue backlog not drained.".to_string()),
+                unresolved_deadline_at_ns: Some(500),
             },
             UiHealthIssueRow {
                 issue_id: "sync_dead_letter".to_string(),
@@ -3385,6 +3454,8 @@ mod tests {
                 last_update_at_ns: Some(201),
                 status: "ESCALATED".to_string(),
                 resolution_state: "UNRESOLVED".to_string(),
+                blocker: Some("Dead-letter queue is non-zero.".to_string()),
+                unresolved_deadline_at_ns: Some(501),
             },
             UiHealthIssueRow {
                 issue_id: "sync_replay_due".to_string(),
@@ -3395,6 +3466,8 @@ mod tests {
                 last_update_at_ns: Some(202),
                 status: "OPEN".to_string(),
                 resolution_state: "UNRESOLVED".to_string(),
+                blocker: Some("Replay-due queue exceeds threshold.".to_string()),
+                unresolved_deadline_at_ns: Some(502),
             },
         ]
     }
@@ -3407,6 +3480,9 @@ mod tests {
                 action_id: "A4".to_string(),
                 result: "r4".to_string(),
                 reason_code: "4".to_string(),
+                evidence_ref: Some("sync.queue.dead_letter_count".to_string()),
+                blocker: Some("Dead-letter queue is non-zero.".to_string()),
+                unresolved_deadline_at_ns: Some(540),
             },
             UiHealthTimelineEntry {
                 issue_id: "sync_dead_letter".to_string(),
@@ -3414,6 +3490,9 @@ mod tests {
                 action_id: "A3".to_string(),
                 result: "r3".to_string(),
                 reason_code: "3".to_string(),
+                evidence_ref: Some("sync.queue.dead_letter_count".to_string()),
+                blocker: Some("Dead-letter queue is non-zero.".to_string()),
+                unresolved_deadline_at_ns: Some(530),
             },
             UiHealthTimelineEntry {
                 issue_id: "sync_dead_letter".to_string(),
@@ -3421,6 +3500,9 @@ mod tests {
                 action_id: "A2".to_string(),
                 result: "r2".to_string(),
                 reason_code: "2".to_string(),
+                evidence_ref: Some("sync.queue.dead_letter_count".to_string()),
+                blocker: Some("Dead-letter queue is non-zero.".to_string()),
+                unresolved_deadline_at_ns: Some(520),
             },
             UiHealthTimelineEntry {
                 issue_id: "sync_dead_letter".to_string(),
@@ -3428,6 +3510,9 @@ mod tests {
                 action_id: "A1".to_string(),
                 result: "r1".to_string(),
                 reason_code: "1".to_string(),
+                evidence_ref: Some("sync.queue.dead_letter_count".to_string()),
+                blocker: Some("Dead-letter queue is non-zero.".to_string()),
+                unresolved_deadline_at_ns: Some(510),
             },
         ]
     }
@@ -3620,5 +3705,129 @@ mod tests {
         assert!(app_ui_assets::APP_HTML.contains("voice-wave-state"));
         assert!(app_ui_assets::APP_CSS.contains(".voice-wave.wave-degraded"));
         assert!(app_ui_assets::APP_JS.contains("degraded (transcript sync failed)"));
+    }
+
+    #[test]
+    fn at_adapter_23_hui01_shell_nav_health_first_with_mobile_hooks() {
+        let html = app_ui_assets::APP_HTML;
+        let health_idx = html
+            .find("data-section=\"health\"")
+            .expect("health nav item must exist");
+        let inbox_idx = html
+            .find("data-section=\"inbox\"")
+            .expect("inbox nav item must exist");
+        assert!(health_idx < inbox_idx);
+        assert!(html.contains("class=\"app-shell\""));
+        assert!(html.contains("class=\"sidebar\""));
+        assert!(app_ui_assets::APP_CSS.contains("@media (max-width: 900px)"));
+        assert!(app_ui_assets::APP_CSS.contains(".app-shell"));
+    }
+
+    #[test]
+    fn at_adapter_24_hui02_health_landing_uses_check_row_selector() {
+        assert!(app_ui_assets::APP_HTML.contains("id=\"checks-list\""));
+        assert!(app_ui_assets::APP_JS.contains("selectedSection: \"health\""));
+        assert!(app_ui_assets::APP_JS.contains("renderChecks()"));
+        let runtime = AdapterRuntime::default();
+        let checks = runtime
+            .ui_health_checks_report(Some(200))
+            .expect("health checks should succeed");
+        assert_eq!(checks.status, "ok");
+        assert!(!checks.checks.is_empty());
+    }
+
+    #[test]
+    fn at_adapter_25_hui03_health_cards_show_status_counts_and_last_event() {
+        let runtime = AdapterRuntime::default();
+        runtime
+            .run_device_artifact_sync_worker_pass(Some(777))
+            .expect("sync pass should succeed");
+        let checks = runtime
+            .ui_health_checks_report(Some(777))
+            .expect("health checks should succeed");
+        let sync = checks
+            .checks
+            .iter()
+            .find(|row| row.check_id == "SYNC")
+            .expect("SYNC row must exist");
+        assert!(!sync.label.trim().is_empty());
+        assert!(!sync.status.trim().is_empty());
+        assert!(sync.last_event_at_ns.is_some());
+    }
+
+    #[test]
+    fn at_adapter_26_hui04_summary_strip_maps_runtime_summary_fields() {
+        let detail =
+            build_ui_health_detail_response(&synthetic_health_for_detail_tests(), "SYNC", 900)
+                .expect("detail build should succeed");
+        assert_eq!(detail.summary.open_issues, 3);
+        assert_eq!(detail.summary.critical_open_count, 2);
+        assert_eq!(detail.summary.escalated_24h_count, 1);
+        let html = app_ui_assets::APP_HTML;
+        assert!(html.contains("id=\"summary-open\""));
+        assert!(html.contains("id=\"summary-critical\""));
+        assert!(html.contains("id=\"summary-auto-resolved\""));
+        assert!(html.contains("id=\"summary-escalated\""));
+        assert!(html.contains("id=\"summary-mttr\""));
+    }
+
+    #[test]
+    fn at_adapter_27_hui05_primary_queue_table_columns_and_projection_locked() {
+        let detail =
+            build_ui_health_detail_response(&synthetic_health_for_detail_tests(), "SYNC", 901)
+                .expect("detail build should succeed");
+        assert!(detail.issues.iter().any(|issue| {
+            !issue.severity.is_empty()
+                && !issue.issue_type.is_empty()
+                && !issue.engine_owner.is_empty()
+                && !issue.status.is_empty()
+                && !issue.resolution_state.is_empty()
+        }));
+        let html = app_ui_assets::APP_HTML;
+        for header in [
+            "Severity",
+            "Type",
+            "Engine",
+            "First Seen",
+            "Last Update",
+            "Status",
+            "Resolution",
+        ] {
+            assert!(html.contains(header), "missing queue header: {header}");
+        }
+    }
+
+    #[test]
+    fn at_adapter_28_hui06_detail_timeline_shows_reason_evidence_blocker_deadline() {
+        let detail =
+            build_ui_health_detail_response(&synthetic_health_for_detail_tests(), "SYNC", 902)
+                .expect("detail build should succeed");
+        assert!(detail.timeline.iter().any(|entry| {
+            !entry.reason_code.is_empty()
+                && entry.evidence_ref.is_some()
+                && entry.blocker.is_some()
+                && entry.unresolved_deadline_at_ns.is_some()
+        }));
+        assert!(detail
+            .issues
+            .iter()
+            .any(|issue| issue.blocker.is_some() && issue.unresolved_deadline_at_ns.is_some()));
+        assert!(app_ui_assets::APP_HTML.contains("id=\"detail-meta\""));
+        assert!(app_ui_assets::APP_JS.contains("Evidence:"));
+        assert!(app_ui_assets::APP_JS.contains("Blocker:"));
+        assert!(app_ui_assets::APP_JS.contains("Deadline:"));
+    }
+
+    #[test]
+    fn at_adapter_29_hui13_chat_shell_transcript_and_wave_layout_present() {
+        let html = app_ui_assets::APP_HTML;
+        let wave_idx = html.find("id=\"voice-wave\"").expect("voice wave must exist");
+        let input_idx = html.find("id=\"chat-input\"").expect("chat input must exist");
+        assert!(wave_idx < input_idx);
+        assert!(html.contains("id=\"section-selene\""));
+        assert!(html.contains("id=\"transcript-list\""));
+        assert!(html.contains("id=\"chat-send-btn\""));
+        assert!(app_ui_assets::APP_CSS.contains("#section-selene"));
+        assert!(app_ui_assets::APP_CSS.contains("@media (max-width: 900px)"));
     }
 }
