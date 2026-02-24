@@ -1,6 +1,14 @@
 "use strict";
 
 const CHECK_ORDER = ["VOICE", "WAKE", "SYNC", "STT", "TTS", "DELIVERY", "BUILDER", "MEMORY"];
+const UI_STATE_CLASSES = [
+  "state-unknown",
+  "state-loading",
+  "state-ok",
+  "state-empty",
+  "state-error",
+  "state-degraded",
+];
 const SECTION_TITLE = {
   selene: "Selene Conversation",
   health: "Health Status",
@@ -24,13 +32,59 @@ const state = {
   reportNextCursor: null,
   reportPrevCursor: null,
   lastSeleneWaveTimestamp: 0,
+  healthViewState: "unknown",
+  reportViewState: "unknown",
+  voiceWaveState: "unknown",
 };
 
 let waveTimer = null;
+let waveSyncWatchdogTimer = null;
+let waveExpectedUntilMs = 0;
 let detailFilterDebounce = null;
 
 function hasElement(id) {
   return Boolean(document.getElementById(id));
+}
+
+function applyUiStateClass(node, stateName) {
+  if (!node) return;
+  for (const klass of UI_STATE_CLASSES) {
+    node.classList.remove(klass);
+  }
+  node.classList.add(`state-${stateName}`);
+}
+
+function setHealthViewState(stateName, message) {
+  state.healthViewState = stateName;
+  const banner = document.getElementById("health-state-banner");
+  if (!banner) return;
+  applyUiStateClass(banner, stateName);
+  banner.textContent = `Health view status: ${message}`;
+}
+
+function setReportViewState(stateName, message) {
+  state.reportViewState = stateName;
+  const chip = document.getElementById("report-state-chip");
+  if (!chip) return;
+  applyUiStateClass(chip, stateName);
+  chip.textContent = `report: ${message}`;
+}
+
+function setVoiceWaveState(stateName, message, degraded = false) {
+  state.voiceWaveState = stateName;
+  const label = document.getElementById("voice-wave-state");
+  if (label) {
+    applyUiStateClass(label, stateName);
+    label.textContent = `Wave sync: ${message}`;
+  }
+  const wave = document.getElementById("voice-wave");
+  if (wave) {
+    wave.classList.toggle("wave-degraded", degraded);
+  }
+}
+
+function statusIsError(value) {
+  return typeof value === "string" && value.toLowerCase().startsWith("error");
 }
 
 function formatTimestampNs(ns) {
@@ -161,6 +215,14 @@ function scheduleDetailRefresh() {
 
 function renderSummary(summary) {
   if (!hasElement("summary-open")) return;
+  if (!summary || statusIsError(state.detail?.status)) {
+    document.getElementById("summary-open").textContent = "-";
+    document.getElementById("summary-critical").textContent = "-";
+    document.getElementById("summary-auto-resolved").textContent = "-";
+    document.getElementById("summary-escalated").textContent = "-";
+    document.getElementById("summary-mttr").textContent = "-";
+    return;
+  }
   document.getElementById("summary-open").textContent = String(summary.open_issues ?? 0);
   document.getElementById("summary-critical").textContent = String(summary.critical_open_count ?? 0);
   document.getElementById("summary-auto-resolved").textContent = String(summary.auto_resolved_24h_count ?? 0);
@@ -277,9 +339,22 @@ function startVoiceWave(durationMs) {
   const wave = document.getElementById("voice-wave");
   if (!wave) return;
   const bars = wave.querySelectorAll(".wave-bar");
+  if (bars.length === 0) {
+    setVoiceWaveState("degraded", "degraded (no bars)", true);
+    return;
+  }
+
   wave.classList.add("wave-active");
+  setVoiceWaveState("loading", "live", false);
   if (waveTimer) clearInterval(waveTimer);
+  if (waveSyncWatchdogTimer) clearInterval(waveSyncWatchdogTimer);
   const stopAt = Date.now() + durationMs;
+  waveExpectedUntilMs = stopAt;
+  waveSyncWatchdogTimer = setInterval(() => {
+    if (Date.now() < waveExpectedUntilMs && !wave.classList.contains("wave-active")) {
+      setVoiceWaveState("degraded", "degraded (sync lost)", true);
+    }
+  }, 220);
   waveTimer = setInterval(() => {
     const now = Date.now();
     for (const bar of bars) {
@@ -290,9 +365,15 @@ function startVoiceWave(durationMs) {
       clearInterval(waveTimer);
       waveTimer = null;
       wave.classList.remove("wave-active");
+      if (waveSyncWatchdogTimer) {
+        clearInterval(waveSyncWatchdogTimer);
+        waveSyncWatchdogTimer = null;
+      }
+      waveExpectedUntilMs = 0;
       for (const bar of bars) {
         bar.style.height = "6px";
       }
+      setVoiceWaveState("ok", "idle", false);
     }
   }, 85);
 }
@@ -304,6 +385,9 @@ function renderTranscript(response) {
   list.innerHTML = "";
   if (!response || !Array.isArray(response.messages) || response.messages.length === 0) {
     empty.classList.remove("hidden");
+    if (state.voiceWaveState !== "loading") {
+      setVoiceWaveState("unknown", "unknown", false);
+    }
     return;
   }
   empty.classList.add("hidden");
@@ -331,17 +415,31 @@ function renderTranscript(response) {
 }
 
 async function loadChecks() {
+  setHealthViewState("loading", "loading checks...");
   const response = await fetch("/v1/ui/health/checks", { cache: "no-store" });
   if (!response.ok) throw new Error(`failed to load checks: ${response.status}`);
   const payload = await response.json();
+  if (statusIsError(payload.status)) {
+    state.checks = [];
+    renderChecks();
+    setHealthViewState("error", payload.status);
+    setLastRefreshedLabel("error");
+    return;
+  }
   state.checks = payload.checks ?? [];
   renderChecks();
+  if (state.checks.length === 0) {
+    setHealthViewState("empty", "no checks available");
+  }
   setLastRefreshedLabel(formatTimestampNs(payload.generated_at_ns));
 }
 
 async function selectCheck(checkId, options = {}) {
   const { timelineCursor = null } = options;
   state.selectedCheckId = checkId;
+  if (!timelineCursor) {
+    setHealthViewState("loading", `loading ${checkId} detail...`);
+  }
   renderChecks();
   const query = buildDetailQuery(timelineCursor);
   const response = await fetch(
@@ -350,6 +448,15 @@ async function selectCheck(checkId, options = {}) {
   );
   if (!response.ok) throw new Error(`failed to load detail: ${response.status}`);
   const payload = await response.json();
+  if (statusIsError(payload.status)) {
+    state.detail = payload;
+    state.selectedIssueId = null;
+    state.timelineNextCursor = null;
+    state.timelineHasNext = false;
+    renderDetail();
+    setHealthViewState("error", payload.status);
+    return;
+  }
   if (timelineCursor && state.detail && state.detail.selected_check_id === payload.selected_check_id) {
     const seen = new Set();
     const merged = [];
@@ -371,6 +478,13 @@ async function selectCheck(checkId, options = {}) {
   state.timelineNextCursor = payload.timeline_paging?.next_cursor ?? null;
   state.timelineHasNext = Boolean(payload.timeline_paging?.has_next);
   renderDetail();
+  if ((payload.issues ?? []).length === 0) {
+    setHealthViewState("empty", `${checkId} has no issues`);
+  } else if (state.timelineHasNext) {
+    setHealthViewState("degraded", `${checkId} loaded (more history available)`);
+  } else {
+    setHealthViewState("ok", `${checkId} loaded`);
+  }
 }
 
 async function loadTranscript() {
@@ -466,20 +580,46 @@ function renderReport(response) {
   } else if (response.remembered_display_target && hasElement("report-display-target")) {
     document.getElementById("report-display-target").value = response.remembered_display_target;
   }
+
+  if (statusIsError(response.status)) {
+    setReportViewState("error", response.reason_code ?? "error");
+  } else if (response.requires_clarification) {
+    setReportViewState("degraded", "clarify required");
+  } else if (!Array.isArray(response.rows) || response.rows.length === 0) {
+    setReportViewState("empty", "no rows");
+  } else if (response.paging?.has_next) {
+    setReportViewState("degraded", "partial page loaded");
+  } else {
+    setReportViewState("ok", "ready");
+  }
 }
 
 async function queryReport(pageAction, pageCursor) {
-  const status = document.getElementById("report-status");
-  if (status) status.textContent = "Status: loading...";
-  const requestBody = reportRequest(pageAction, pageCursor);
-  const response = await fetch("/v1/ui/health/report/query", {
-    method: "POST",
-    cache: "no-store",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(requestBody),
-  });
-  const payload = await response.json();
-  renderReport(payload);
+  try {
+    const status = document.getElementById("report-status");
+    if (status) status.textContent = "Status: loading...";
+    setReportViewState("loading", "loading...");
+    const requestBody = reportRequest(pageAction, pageCursor);
+    const response = await fetch("/v1/ui/health/report/query", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) {
+      const payload = await response.json();
+      renderReport(payload);
+      return;
+    }
+    const payload = await response.json();
+    renderReport(payload);
+  } catch (error) {
+    const status = document.getElementById("report-status");
+    if (status) {
+      status.textContent = `Status: error (${error.message})`;
+    }
+    setReportViewState("error", "request failed");
+  }
 }
 
 function bindFilterHandlers() {
@@ -567,19 +707,29 @@ function bindFilterHandlers() {
 }
 
 async function refreshAll() {
-  try {
-    if (hasElement("checks-list")) {
+  if (hasElement("checks-list")) {
+    try {
       await loadChecks();
-      await selectCheck(state.selectedCheckId || "SYNC");
+      if (state.checks.length > 0) {
+        await selectCheck(state.selectedCheckId || "SYNC");
+      }
+    } catch (error) {
+      console.error(error);
+      setHealthViewState("error", error.message);
+      setLastRefreshedLabel(`error (${error.message})`);
     }
-    if (hasElement("transcript-list")) {
-      await loadTranscript();
-    }
-    setLastRefreshedLabel(new Date().toLocaleString());
-  } catch (error) {
-    console.error(error);
-    setLastRefreshedLabel(`error (${error.message})`);
   }
+  if (hasElement("transcript-list")) {
+    try {
+      await loadTranscript();
+    } catch (error) {
+      console.error(error);
+      if (state.voiceWaveState === "loading") {
+        setVoiceWaveState("degraded", "degraded (transcript sync failed)", true);
+      }
+    }
+  }
+  setLastRefreshedLabel(new Date().toLocaleString());
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -587,6 +737,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     bindNavigationHandlers();
     renderNavigationAndSections();
   }
+  setHealthViewState("unknown", "unknown");
+  setReportViewState("unknown", "unknown");
+  setVoiceWaveState("unknown", "unknown", false);
   if (hasElement("issue-search")) {
     bindFilterHandlers();
   }

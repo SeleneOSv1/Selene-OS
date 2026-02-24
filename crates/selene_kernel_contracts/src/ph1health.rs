@@ -417,8 +417,73 @@ impl Validate for HealthIssueEvent {
                 });
             }
         }
-        if let Some(summary) = &self.impact_summary {
+        let escalation_dispatched = self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
+        if escalation_dispatched {
+            if self.bcast_id.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.bcast_id",
+                    reason: "must be present when escalation is dispatched",
+                });
+            }
+            let Some(summary) = &self.impact_summary else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.impact_summary",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
             validate_text("health_issue_event.impact_summary", summary, 512)?;
+            let Some(evidence) = &self.current_monitoring_evidence else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.current_monitoring_evidence",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
+            validate_text(
+                "health_issue_event.current_monitoring_evidence",
+                evidence,
+                512,
+            )?;
+            let Some(reason) = &self.unresolved_reason_exact else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.unresolved_reason_exact",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
+            validate_text("health_issue_event.unresolved_reason_exact", reason, 512)?;
+            if self.attempted_fix_actions.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.attempted_fix_actions",
+                    reason: "must include at least one attempted fix when escalation is dispatched",
+                });
+            }
+        } else if let Some(summary) = &self.impact_summary {
+            validate_text("health_issue_event.impact_summary", summary, 512)?;
+        }
+        if self.recurrence_observed.unwrap_or(false) {
+            if !self.status.unresolved() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.status",
+                    reason: "must remain unresolved when recurrence_observed is true",
+                });
+            }
+            if self.issue_fingerprint.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.issue_fingerprint",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
+            if self.current_monitoring_evidence.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.current_monitoring_evidence",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
+            if self.unresolved_reason_exact.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.unresolved_reason_exact",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
         }
         if self.attempted_fix_actions.len() > 32 {
             return Err(ContractViolation::InvalidValue {
@@ -429,15 +494,19 @@ impl Validate for HealthIssueEvent {
         for action in &self.attempted_fix_actions {
             validate_text("health_issue_event.attempted_fix_actions[]", action, 160)?;
         }
-        if let Some(evidence) = &self.current_monitoring_evidence {
-            validate_text(
-                "health_issue_event.current_monitoring_evidence",
-                evidence,
-                512,
-            )?;
+        if !escalation_dispatched {
+            if let Some(evidence) = &self.current_monitoring_evidence {
+                validate_text(
+                    "health_issue_event.current_monitoring_evidence",
+                    evidence,
+                    512,
+                )?;
+            }
         }
-        if let Some(reason) = &self.unresolved_reason_exact {
-            validate_text("health_issue_event.unresolved_reason_exact", reason, 512)?;
+        if !escalation_dispatched {
+            if let Some(reason) = &self.unresolved_reason_exact {
+                validate_text("health_issue_event.unresolved_reason_exact", reason, 512)?;
+            }
         }
         Ok(())
     }
@@ -921,8 +990,73 @@ impl Validate for HealthReportQueryRow {
                 });
             }
         }
-        if let Some(summary) = &self.impact_summary {
+        let escalation_dispatched = self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
+        if escalation_dispatched {
+            if self.bcast_id.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.bcast_id",
+                    reason: "must be present when escalation is dispatched",
+                });
+            }
+            let Some(summary) = &self.impact_summary else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.impact_summary",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
             validate_text("health_report_query_row.impact_summary", summary, 512)?;
+            let Some(evidence) = &self.current_monitoring_evidence else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.current_monitoring_evidence",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
+            validate_text(
+                "health_report_query_row.current_monitoring_evidence",
+                evidence,
+                512,
+            )?;
+            let Some(reason) = &self.unresolved_reason_exact else {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.unresolved_reason_exact",
+                    reason: "must be present when escalation is dispatched",
+                });
+            };
+            validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+            if self.attempted_fix_actions.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.attempted_fix_actions",
+                    reason: "must include at least one attempted fix when escalation is dispatched",
+                });
+            }
+        } else if let Some(summary) = &self.impact_summary {
+            validate_text("health_report_query_row.impact_summary", summary, 512)?;
+        }
+        if self.recurrence_observed {
+            if !self.status.unresolved() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.status",
+                    reason: "must remain unresolved when recurrence_observed is true",
+                });
+            }
+            if self.issue_fingerprint.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.issue_fingerprint",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
+            if self.current_monitoring_evidence.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.current_monitoring_evidence",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
+            if self.unresolved_reason_exact.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.unresolved_reason_exact",
+                    reason: "must be present when recurrence_observed is true",
+                });
+            }
         }
         if self.attempted_fix_actions.len() > 32 {
             return Err(ContractViolation::InvalidValue {
@@ -933,15 +1067,17 @@ impl Validate for HealthReportQueryRow {
         for action in &self.attempted_fix_actions {
             validate_text("health_report_query_row.attempted_fix_actions[]", action, 160)?;
         }
-        if let Some(evidence) = &self.current_monitoring_evidence {
-            validate_text(
-                "health_report_query_row.current_monitoring_evidence",
-                evidence,
-                512,
-            )?;
-        }
-        if let Some(reason) = &self.unresolved_reason_exact {
-            validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+        if !escalation_dispatched {
+            if let Some(evidence) = &self.current_monitoring_evidence {
+                validate_text(
+                    "health_report_query_row.current_monitoring_evidence",
+                    evidence,
+                    512,
+                )?;
+            }
+            if let Some(reason) = &self.unresolved_reason_exact {
+                validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+            }
         }
         Ok(())
     }
@@ -1860,12 +1996,12 @@ mod tests {
 
     #[test]
     fn at_health_contract_07_issue_event_supports_escalation_payload_fields() {
-        let event = HealthIssueEvent::v1(
+        let mut event = HealthIssueEvent::v1(
             tenant("tenant_a"),
             "issue_901".to_string(),
             "PH1.C".to_string(),
             HealthSeverity::Critical,
-            HealthIssueStatus::Escalated,
+            HealthIssueStatus::Open,
             "ACTION_ESCALATE".to_string(),
             HealthActionResult::Retry,
             3,
@@ -1873,8 +2009,19 @@ mod tests {
             MonotonicTimeNs(100),
             None,
             Some(MonotonicTimeNs(120)),
-            Some("bcast_901".to_string()),
-            Some(HealthAckState::Waiting),
+            None,
+            None,
+        )
+        .unwrap();
+        event.status = HealthIssueStatus::Escalated;
+        event.bcast_id = Some("bcast_901".to_string());
+        event.ack_state = Some(HealthAckState::Waiting);
+        let event = event
+            .with_escalation_payload(
+            Some("critical stt misses for payroll intake".to_string()),
+            vec!["restarted stt route".to_string(), "rotated decoder".to_string()],
+            Some("same fingerprint detected in live stream".to_string()),
+            Some("recurrence still observed".to_string()),
         )
         .unwrap()
         .with_resolution_proof(
@@ -1883,14 +2030,97 @@ mod tests {
             Some(MonotonicTimeNs(130)),
             Some(true),
         )
-        .unwrap()
-        .with_escalation_payload(
-            Some("critical stt misses for payroll intake".to_string()),
-            vec!["restarted stt route".to_string(), "rotated decoder".to_string()],
-            Some("same fingerprint detected in live stream".to_string()),
-            Some("recurrence still observed".to_string()),
-        )
         .unwrap();
         assert!(event.validate().is_ok());
+    }
+
+    #[test]
+    fn at_health_contract_08_recurrence_true_cannot_be_marked_resolved() {
+        let mut event = HealthIssueEvent::v1(
+            tenant("tenant_a"),
+            "issue_902".to_string(),
+            "PH1.C".to_string(),
+            HealthSeverity::Warn,
+            HealthIssueStatus::Resolved,
+            "ACTION_VERIFY".to_string(),
+            HealthActionResult::Pass,
+            2,
+            ReasonCodeId(1902),
+            MonotonicTimeNs(200),
+            Some(MonotonicTimeNs(210)),
+            None,
+            None,
+            Some(HealthAckState::Acknowledged),
+        )
+        .unwrap();
+        event.issue_fingerprint = Some("stt_missing_phrase".to_string());
+        event.verification_window_start_at = Some(MonotonicTimeNs(200));
+        event.verification_window_end_at = Some(MonotonicTimeNs(260));
+        event.recurrence_observed = Some(true);
+        event.current_monitoring_evidence =
+            Some("same fingerprint detected after deployment".to_string());
+        event.unresolved_reason_exact =
+            Some("recurrence observed in live verification window".to_string());
+        assert!(event.validate().is_err());
+    }
+
+    #[test]
+    fn at_health_contract_09_escalated_event_requires_minimum_payload_fields() {
+        let mut missing_payload = HealthIssueEvent::v1(
+            tenant("tenant_a"),
+            "issue_903".to_string(),
+            "PH1.C".to_string(),
+            HealthSeverity::Critical,
+            HealthIssueStatus::Open,
+            "ACTION_ESCALATE".to_string(),
+            HealthActionResult::Retry,
+            3,
+            ReasonCodeId(1903),
+            MonotonicTimeNs(300),
+            None,
+            Some(MonotonicTimeNs(360)),
+            None,
+            None,
+        )
+        .unwrap();
+        missing_payload.status = HealthIssueStatus::Escalated;
+        missing_payload.bcast_id = Some("bcast_903".to_string());
+        missing_payload.ack_state = Some(HealthAckState::Waiting);
+        assert!(missing_payload.validate().is_err());
+
+        let complete_payload = missing_payload
+            .with_escalation_payload(
+                Some("critical customer impact".to_string()),
+                vec!["restart route".to_string()],
+                Some("fingerprint still detected in live stream".to_string()),
+                Some("cannot prove fix in production yet".to_string()),
+            )
+            .unwrap();
+        assert!(complete_payload.validate().is_ok());
+    }
+
+    #[test]
+    fn at_health_contract_10_escalated_report_row_requires_minimum_payload_fields() {
+        let row = HealthReportQueryRow {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            tenant_id: tenant("tenant_a"),
+            issue_id: "issue_904".to_string(),
+            owner_engine_id: "PH1.C".to_string(),
+            severity: HealthSeverity::Critical,
+            status: HealthIssueStatus::Escalated,
+            latest_reason_code: ReasonCodeId(1904),
+            last_seen_at: MonotonicTimeNs(400),
+            bcast_id: Some("bcast_904".to_string()),
+            ack_state: Some(HealthAckState::Waiting),
+            issue_fingerprint: Some("sync_dead_letter_fingerprint".to_string()),
+            verification_window_start_at: Some(MonotonicTimeNs(380)),
+            verification_window_end_at: Some(MonotonicTimeNs(400)),
+            recurrence_observed: true,
+            impact_summary: None,
+            attempted_fix_actions: Vec::new(),
+            current_monitoring_evidence: None,
+            unresolved_reason_exact: None,
+        };
+        assert!(row.validate().is_err());
     }
 }

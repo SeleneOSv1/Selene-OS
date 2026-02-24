@@ -846,12 +846,17 @@ mod tests {
         bcast_id: Option<&str>,
         ack_state: Option<HealthAckState>,
     ) -> HealthIssueEvent {
-        HealthIssueEvent::v1(
+        let seed_status = if status == HealthIssueStatus::Escalated {
+            HealthIssueStatus::Open
+        } else {
+            status
+        };
+        let mut base = HealthIssueEvent::v1(
             tenant(tenant_id),
             issue_id.to_string(),
             owner_engine_id.to_string(),
             severity,
-            status,
+            seed_status,
             action_id.to_string(),
             action_result,
             attempt_no,
@@ -859,10 +864,24 @@ mod tests {
             MonotonicTimeNs(started_at),
             completed_at.map(MonotonicTimeNs),
             unresolved_deadline_at.map(MonotonicTimeNs),
-            bcast_id.map(|v| v.to_string()),
-            ack_state,
+            None,
+            None,
         )
-        .unwrap()
+        .unwrap();
+        base.status = status;
+        base.bcast_id = bcast_id.map(|v| v.to_string());
+        base.ack_state = ack_state;
+        if status == HealthIssueStatus::Escalated || bcast_id.is_some() {
+            base.with_escalation_payload(
+                Some(format!("{issue_id} impact summary")),
+                vec![format!("{issue_id} attempted fix")],
+                Some(format!("{issue_id} monitoring evidence")),
+                Some(format!("{issue_id} unresolved reason")),
+            )
+            .unwrap()
+        } else {
+            base
+        }
     }
 
     fn sample_events() -> Vec<HealthIssueEvent> {
@@ -1276,6 +1295,121 @@ mod tests {
                 assert_eq!(ok.report_context_id, context_id);
             }
             _ => panic!("expected follow-up report query read ok"),
+        }
+    }
+
+    #[test]
+    fn at_health_09_recurrence_true_post_fix_keeps_issue_unresolved() {
+        let runtime = Ph1HealthRuntime::new(Ph1HealthConfig::mvp_v1());
+        let mut req = HealthReportQueryReadRequest::v1(
+            envelope(140),
+            tenant("tenant_a"),
+            "viewer_01".to_string(),
+            HealthReportKind::UnresolvedEscalated,
+            HealthReportTimeRange::v1(MonotonicTimeNs(1), MonotonicTimeNs(200)).unwrap(),
+            None,
+            HealthCompanyScope::TenantOnly,
+            vec![],
+            vec![],
+            false,
+            false,
+            Some(HealthDisplayTarget::Desktop),
+            HealthPageAction::First,
+            None,
+            None,
+            25,
+            sample_events(),
+        )
+        .unwrap();
+        let mut invalid_event = event(
+            "tenant_a",
+            "issue_recurring",
+            "PH1.STT",
+            HealthSeverity::Warn,
+            HealthIssueStatus::Resolved,
+            "R1",
+            HealthActionResult::Pass,
+            1,
+            2601,
+            150,
+            Some(160),
+            None,
+            None,
+            None,
+        );
+        invalid_event.issue_fingerprint = Some("stt_recurring_fingerprint".to_string());
+        invalid_event.verification_window_start_at = Some(MonotonicTimeNs(140));
+        invalid_event.verification_window_end_at = Some(MonotonicTimeNs(150));
+        invalid_event.recurrence_observed = Some(true);
+        invalid_event.current_monitoring_evidence =
+            Some("same fingerprint still emitted post-fix".to_string());
+        invalid_event.unresolved_reason_exact =
+            Some("recurrence still present after deployment".to_string());
+        req.issue_events = vec![invalid_event];
+
+        let out = runtime.run(&Ph1HealthRequest::HealthReportQueryRead(req));
+        match out {
+            Ph1HealthResponse::Refuse(refuse) => {
+                assert_eq!(refuse.reason_code, reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID);
+            }
+            _ => panic!("expected fail-closed refuse for recurring resolved issue"),
+        }
+    }
+
+    #[test]
+    fn at_health_10_escalated_issue_requires_minimum_payload() {
+        let runtime = Ph1HealthRuntime::new(Ph1HealthConfig::mvp_v1());
+        let mut req = HealthReportQueryReadRequest::v1(
+            envelope(150),
+            tenant("tenant_a"),
+            "viewer_01".to_string(),
+            HealthReportKind::UnresolvedEscalated,
+            HealthReportTimeRange::v1(MonotonicTimeNs(1), MonotonicTimeNs(200)).unwrap(),
+            None,
+            HealthCompanyScope::TenantOnly,
+            vec![],
+            vec![],
+            true,
+            true,
+            Some(HealthDisplayTarget::Desktop),
+            HealthPageAction::First,
+            None,
+            None,
+            25,
+            sample_events(),
+        )
+        .unwrap();
+        let mut invalid_event = event(
+            "tenant_a",
+            "issue_missing_payload",
+            "PH1.STT",
+            HealthSeverity::Critical,
+            HealthIssueStatus::Open,
+            "E1",
+            HealthActionResult::Retry,
+            2,
+            2602,
+            170,
+            None,
+            Some(200),
+            None,
+            None,
+        );
+        invalid_event.status = HealthIssueStatus::Escalated;
+        invalid_event.bcast_id = Some("bcast_missing_payload".to_string());
+        invalid_event.ack_state = Some(HealthAckState::Waiting);
+        invalid_event.impact_summary = None;
+        invalid_event.attempted_fix_actions = Vec::new();
+        invalid_event.current_monitoring_evidence = None;
+        invalid_event.unresolved_reason_exact = None;
+        req.issue_events = vec![invalid_event];
+
+        let out = runtime.run(&Ph1HealthRequest::HealthReportQueryRead(req));
+        match out {
+            Ph1HealthResponse::Refuse(refuse) => {
+                assert_eq!(refuse.reason_code, reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID);
+            }
+            _ => panic!("expected fail-closed refuse for incomplete escalation payload"),
         }
     }
 }

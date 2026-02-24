@@ -187,16 +187,17 @@ mod tests {
     }
 
     fn event(issue: &str, attempt: u16, started: u64, bcast: Option<&str>) -> HealthIssueEvent {
-        HealthIssueEvent::v1(
+        let status = if bcast.is_some() {
+            HealthIssueStatus::Escalated
+        } else {
+            HealthIssueStatus::Open
+        };
+        let mut base = HealthIssueEvent::v1(
             tenant("tenant_a"),
             issue.to_string(),
             "PH1.C".to_string(),
             HealthSeverity::Warn,
-            if bcast.is_some() {
-                HealthIssueStatus::Escalated
-            } else {
-                HealthIssueStatus::Open
-            },
+            HealthIssueStatus::Open,
             format!("ACT_{attempt}"),
             HealthActionResult::Fail,
             attempt,
@@ -204,10 +205,24 @@ mod tests {
             MonotonicTimeNs(started),
             None,
             Some(MonotonicTimeNs(120)),
-            bcast.map(|v| v.to_string()),
-            Some(HealthAckState::Waiting),
+            None,
+            None,
         )
-        .unwrap()
+        .unwrap();
+        base.status = status;
+        base.bcast_id = bcast.map(|v| v.to_string());
+        base.ack_state = Some(HealthAckState::Waiting);
+        if status == HealthIssueStatus::Escalated {
+            base.with_escalation_payload(
+                Some(format!("{issue} impact summary")),
+                vec![format!("{issue} attempted fix")],
+                Some(format!("{issue} monitoring evidence")),
+                Some(format!("{issue} unresolved reason")),
+            )
+            .unwrap()
+        } else {
+            base
+        }
     }
 
     struct DeterministicHealthEngine;

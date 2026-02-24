@@ -32,6 +32,9 @@
       </header>
 
       <section id="section-health" class="section">
+        <div id="health-state-banner" class="state-banner state-unknown" role="status" aria-live="polite">
+          Health view status: unknown.
+        </div>
         <div class="health-grid">
           <aside class="checks-column" aria-label="Health checks">
             <h2>Health Checks</h2>
@@ -105,6 +108,7 @@
                 <span id="report-status">Status: idle</span>
                 <span id="report-context">Context: -</span>
                 <span id="report-normalized">Query: -</span>
+                <span id="report-state-chip" class="report-state-chip state-unknown">report: unknown</span>
               </div>
               <div class="report-table-wrap">
                 <table class="report-table" aria-label="Report rows">
@@ -158,6 +162,7 @@
             <span class="wave-bar"></span>
             <span class="wave-bar"></span>
           </div>
+          <div id="voice-wave-state" class="wave-state">Wave sync: unknown</div>
           <div class="composer-row">
             <textarea id="chat-input" rows="2" placeholder="Type a message"></textarea>
             <button id="chat-send-btn" type="button">Send</button>

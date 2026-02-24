@@ -2379,12 +2379,17 @@ fn synth_health_issue_events(
         issue_fingerprint: Option<String>,
         recurrence_observed: Option<bool>,
     ) {
+        let seed_status = if status == HealthIssueStatus::Escalated {
+            HealthIssueStatus::Open
+        } else {
+            status
+        };
         let base = HealthIssueEvent::v1(
             tenant.clone(),
             issue_id.to_string(),
             engine_owner_id.to_string(),
             severity,
-            status,
+            seed_status,
             format!("ACTION_{}", issue_id.to_ascii_uppercase()),
             if status == HealthIssueStatus::Resolved {
                 HealthActionResult::Pass
@@ -2400,22 +2405,16 @@ fn synth_health_issue_events(
                 None
             },
             Some(MonotonicTimeNs(now_ns.saturating_add(15 * 60 * 1_000_000_000))),
-            bcast_id,
-            ack_state,
+            None,
+            None,
         );
-        let Ok(base) = base else {
+        let Ok(mut base) = base else {
             return;
         };
-        let with_proof = base
-            .clone()
-            .with_resolution_proof(
-                issue_fingerprint,
-                Some(MonotonicTimeNs(now_ns.saturating_sub(5 * 60 * 1_000_000_000))),
-                Some(MonotonicTimeNs(now_ns)),
-                recurrence_observed,
-            )
-            .unwrap_or(base);
-        let full = with_proof
+        base.status = status;
+        base.bcast_id = bcast_id;
+        base.ack_state = ack_state;
+        let with_payload = base
             .clone()
             .with_escalation_payload(
                 impact_summary,
@@ -2423,7 +2422,16 @@ fn synth_health_issue_events(
                 current_monitoring_evidence,
                 unresolved_reason_exact,
             )
-            .unwrap_or(with_proof);
+            .unwrap_or(base);
+        let full = with_payload
+            .clone()
+            .with_resolution_proof(
+                issue_fingerprint,
+                Some(MonotonicTimeNs(now_ns.saturating_sub(5 * 60 * 1_000_000_000))),
+                Some(MonotonicTimeNs(now_ns)),
+                recurrence_observed,
+            )
+            .unwrap_or(with_payload);
         out.push(full);
     }
 
@@ -3471,5 +3479,146 @@ mod tests {
             .ui_health_detail_report_filtered("SYNC", filter, Some(100))
             .expect_err("invalid date range must fail");
         assert!(err.contains("invalid health detail date range"));
+    }
+
+    #[test]
+    fn at_adapter_20_fail_closed_ui_state_markers_are_present() {
+        assert!(app_ui_assets::APP_HTML.contains("health-state-banner"));
+        assert!(app_ui_assets::APP_HTML.contains("report-state-chip"));
+        assert!(app_ui_assets::APP_HTML.contains("voice-wave-state"));
+        assert!(app_ui_assets::APP_CSS.contains(".state-error"));
+        assert!(app_ui_assets::APP_CSS.contains(".voice-wave.wave-degraded"));
+        assert!(app_ui_assets::APP_JS.contains("setHealthViewState(\"error\""));
+        assert!(app_ui_assets::APP_JS.contains("setReportViewState(\"error\""));
+        assert!(app_ui_assets::APP_JS.contains("setVoiceWaveState(\"degraded\""));
+    }
+
+    #[test]
+    fn at_adapter_21_ios_android_desktop_contract_parity_is_locked() {
+        let runtime = AdapterRuntime::default();
+        let mut expected_outcome: Option<String> = None;
+        for (idx, platform, trigger, device_id) in [
+            (1_u64, "IOS", "WAKE_WORD", "ios_1"),
+            (2_u64, "ANDROID", "WAKE_WORD", "android_1"),
+            (3_u64, "DESKTOP", "EXPLICIT", "desktop_1"),
+        ] {
+            let mut req = base_request();
+            req.turn_id = 20_100 + idx;
+            req.now_ns = Some(10_000 + idx);
+            req.app_platform = platform.to_string();
+            req.trigger = trigger.to_string();
+            req.device_id = Some(device_id.to_string());
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("platform turn should succeed");
+            assert_eq!(out.status, "ok");
+            if let Some(expected) = &expected_outcome {
+                assert_eq!(&out.outcome, expected);
+            } else {
+                expected_outcome = Some(out.outcome.clone());
+            }
+        }
+
+        let checks = runtime
+            .ui_health_checks_report(Some(10_100))
+            .expect("health checks should succeed");
+        let order = checks
+            .checks
+            .iter()
+            .map(|row| row.check_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            vec!["VOICE", "WAKE", "SYNC", "STT", "TTS", "DELIVERY", "BUILDER", "MEMORY"]
+        );
+        assert!(checks
+            .checks
+            .iter()
+            .all(|row| !row.label.trim().is_empty() && !row.status.trim().is_empty()));
+    }
+
+    #[test]
+    fn at_adapter_22_voice_text_bidirectional_transcript_parity_is_locked() {
+        let runtime = AdapterRuntime::default();
+
+        let mut voice_turn = base_request();
+        voice_turn.turn_id = 30_001;
+        voice_turn.now_ns = Some(20_001);
+        voice_turn.trigger = "WAKE_WORD".to_string();
+        voice_turn.user_text_final = Some("show missed stt report for june".to_string());
+        voice_turn.selene_text_final = Some("Opening the report on desktop.".to_string());
+        runtime
+            .run_voice_turn(voice_turn)
+            .expect("voice turn should succeed");
+
+        let mut text_turn = base_request();
+        text_turn.turn_id = 30_002;
+        text_turn.now_ns = Some(20_002);
+        text_turn.trigger = "EXPLICIT".to_string();
+        text_turn.app_platform = "DESKTOP".to_string();
+        text_turn.user_text_final = Some("same report for all customers in china".to_string());
+        text_turn.selene_text_final = Some("Updated report now shown for China scope.".to_string());
+        runtime
+            .run_voice_turn(text_turn)
+            .expect("text turn should succeed");
+
+        let transcript = runtime.ui_chat_transcript_report(Some(20_003));
+        assert_eq!(transcript.status, "ok");
+        let user_final_count = transcript
+            .messages
+            .iter()
+            .filter(|message| {
+                message.role == "USER" && message.source == "PH1.C" && message.finalized
+            })
+            .count();
+        let selene_final_count = transcript
+            .messages
+            .iter()
+            .filter(|message| {
+                message.role == "SELENE" && message.source == "PH1.WRITE" && message.finalized
+            })
+            .count();
+        assert!(user_final_count >= 2);
+        assert!(selene_final_count >= 2);
+    }
+
+    #[test]
+    fn at_health_10_display_target_clarify_then_memory_reuse() {
+        at_adapter_15_report_query_clarify_then_remember_display_target();
+    }
+
+    #[test]
+    fn at_health_11_follow_up_report_patch_reuses_context() {
+        let runtime = AdapterRuntime::default();
+        let mut first_req = base_report_query_request();
+        first_req.from_utc_ns = Some(8_000_000_000);
+        first_req.to_utc_ns = Some(9_000_000_200);
+        let first = runtime.ui_health_report_query(first_req, Some(9_000_000_100));
+        assert_eq!(first.status, "ok");
+        let first_context = first
+            .report_context_id
+            .clone()
+            .expect("first context id must be present");
+        let first_revision = first.report_revision;
+        let first_rows = first.rows;
+        assert!(!first_rows.is_empty());
+
+        let mut follow_up = base_report_query_request();
+        follow_up.from_utc_ns = Some(8_000_000_000);
+        follow_up.to_utc_ns = Some(9_000_000_200);
+        follow_up.report_context_id = Some(first_context.clone());
+        follow_up.country_codes = Some(vec!["CN".to_string()]);
+        let second = runtime.ui_health_report_query(follow_up, Some(9_000_000_101));
+        assert_eq!(second.status, "ok");
+        assert_eq!(second.report_context_id.as_deref(), Some(first_context.as_str()));
+        assert_ne!(second.report_revision, first_revision);
+        assert_ne!(second.rows, first_rows);
+    }
+
+    #[test]
+    fn at_health_12_voice_wave_degraded_marker_is_wired() {
+        assert!(app_ui_assets::APP_HTML.contains("voice-wave-state"));
+        assert!(app_ui_assets::APP_CSS.contains(".voice-wave.wave-degraded"));
+        assert!(app_ui_assets::APP_JS.contains("degraded (transcript sync failed)"));
     }
 }

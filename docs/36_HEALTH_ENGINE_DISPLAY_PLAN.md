@@ -350,14 +350,14 @@ Update rule:
 | HUI-07 | Unresolved/escalated visibility with BCAST proof (`bcast_id`, ack/reminder state) | `HEALTH_UNRESOLVED_SUMMARY_READ` + `HEALTH_REPORT_QUERY_READ` + `PH1.BCAST` refs | DONE | `cargo test -p selene_engines ph1health::tests::at_health_03_issue_timeline_exposes_bcast_reference_when_escalated -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
 | HUI-08 | Filters and search (`open`, `critical`, `engine`, `escalated`, date range, presets 24h/7d/30d/custom) | query params + snapshot/timeline reads | DONE | `cargo test -p selene_adapter at_adapter_17_health_detail_filters_open_critical_escalated -- --nocapture ; cargo test -p selene_adapter at_adapter_19_health_detail_filter_rejects_invalid_date_range -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
 | HUI-09 | Infinite scroll / pagination for recent events feed | timeline paging | DONE | `cargo test -p selene_adapter at_adapter_18_health_detail_timeline_cursor_paging_is_deterministic -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
-| HUI-10 | Unknown/error/empty/loading states with fail-closed messaging (no fake green) | UI state management | TODO | |
-| HUI-11 | iOS/Android/Desktop view parity checks for same fields/order/contracts | QA parity checks | TODO | |
-| HUI-12 | Final acceptance sweep (`AT-HEALTH-01..07`) | runtime + UI integration | TODO | |
+| HUI-10 | Unknown/error/empty/loading states with fail-closed messaging (no fake green) | UI state management | DONE | `cargo test -p selene_adapter at_adapter_20_fail_closed_ui_state_markers_are_present -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| HUI-11 | iOS/Android/Desktop view parity checks for same fields/order/contracts | QA parity checks | DONE | `cargo test -p selene_adapter at_adapter_21_ios_android_desktop_contract_parity_is_locked -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| HUI-12 | Final acceptance sweep (`AT-HEALTH-01..07`) | runtime + UI integration | DONE | `cargo test -p selene_kernel_contracts ph1health -- --nocapture ; cargo test -p selene_engines ph1health -- --nocapture ; cargo test -p selene_os ph1health -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
 | HUI-13 | ChatGPT-style conversation timeline shell for normal Selene chat (desktop + mobile parity) | app shell + transcript renderer | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
 | HUI-14 | User voice-in -> transcript row mapping (`PH1.C` finalized text) | STT final transcript contract | DONE | `cargo test -p selene_adapter at_adapter_12_ui_chat_transcript_maps_user_and_selene_final_rows -- --nocapture` |
 | HUI-15 | Selene voice-out -> transcript row mapping (`PH1.WRITE` text + `PH1.TTS` playback parity) | WRITE/TTS parity lock | DONE | `cargo test -p selene_adapter at_adapter_12_ui_chat_transcript_maps_user_and_selene_final_rows -- --nocapture` |
 | HUI-16 | Partial->final transcript replacement logic (no duplicate ghost lines) | streaming/finalization state | DONE | `cargo test -p selene_adapter at_adapter_13_partial_replaced_by_final_without_ghost_line -- --nocapture` |
-| HUI-17 | Voice/text parity acceptance checks for both directions | end-to-end chat turn tests | TODO | |
+| HUI-17 | Voice/text parity acceptance checks for both directions | end-to-end chat turn tests | DONE | `cargo test -p selene_adapter at_adapter_22_voice_text_bidirectional_transcript_parity_is_locked -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
 
 ## 14) Strict Build Order (Do Not Reorder)
 
@@ -499,7 +499,7 @@ Status legend:
 | RPT-03 | Clarify + remembered display target (`desktop|phone`) | PH1.X + Adapter | DONE | `cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter at_adapter_15_report_query_clarify_then_remember_display_target -- --nocapture` |
 | RPT-04 | API transport wiring (HTTP/gRPC + adapter models) | Adapter | DONE | `cargo test -p selene_adapter -- --nocapture` |
 | RPT-05 | UI report rendering + paging controls (desktop/phone auto-fit) | App UI | DONE | `cargo test -p selene_adapter -- --nocapture` |
-| RPT-06 | Acceptance + ledger + HUI status closure (`HUI-07/08/09`) | QA + Runtime | DONE | `cargo test -p selene_kernel_contracts ph1health -- --nocapture ; cargo test -p selene_engines ph1health -- --nocapture ; cargo test -p selene_os ph1health -- --nocapture ; cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| RPT-06 | Acceptance + ledger + HUI status closure (`HUI-07/08/09`) | QA + Runtime | DONE | `cargo test -p selene_kernel_contracts ph1health -- --nocapture ; cargo test -p selene_engines ph1health -- --nocapture ; cargo test -p selene_os ph1health -- --nocapture ; cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter at_health_10_display_target_clarify_then_memory_reuse -- --nocapture ; cargo test -p selene_adapter at_health_11_follow_up_report_patch_reuses_context -- --nocapture ; cargo test -p selene_adapter at_health_12_voice_wave_degraded_marker_is_wired -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
 
 ## 17) Live Resolution Proof + Voice-First UX Lock (Locked 2026-02-24)
 
@@ -585,6 +585,7 @@ Rapid switching:
 
 - Section 17 is mandatory input to `RPT-01..RPT-05` implementation.
 - Do not close `RPT-06` until Section 17 acceptance checks are added and passing.
+- `RPT-06` closure gate is satisfied (2026-02-24) with `AT-HEALTH-08..12` added and passing.
 
 ### 17H) Added Acceptance Checks (Section 17)
 
@@ -593,3 +594,10 @@ Rapid switching:
 - `AT-HEALTH-10`: missing display target triggers one clarify question, then remembered default is reused.
 - `AT-HEALTH-11`: report follow-up patch (`same report but ...`) reuses context and replaces current report view.
 - `AT-HEALTH-12`: voice wave animates during Selene speech and enters degraded marker on sync failure.
+
+Proof mapping:
+- `AT-HEALTH-08`: `cargo test -p selene_engines ph1health::tests::at_health_09_recurrence_true_post_fix_keeps_issue_unresolved -- --nocapture`
+- `AT-HEALTH-09`: `cargo test -p selene_engines ph1health::tests::at_health_10_escalated_issue_requires_minimum_payload -- --nocapture ; cargo test -p selene_kernel_contracts ph1health::tests::at_health_contract_09_escalated_event_requires_minimum_payload_fields -- --nocapture`
+- `AT-HEALTH-10`: `cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter at_health_10_display_target_clarify_then_memory_reuse -- --nocapture`
+- `AT-HEALTH-11`: `cargo test -p selene_adapter at_health_11_follow_up_report_patch_reuses_context -- --nocapture`
+- `AT-HEALTH-12`: `cargo test -p selene_adapter at_health_12_voice_wave_degraded_marker_is_wired -- --nocapture`
