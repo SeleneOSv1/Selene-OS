@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use selene_kernel_contracts::ph1delivery::{Ph1DeliveryRefuse, Ph1DeliveryRequest, Ph1DeliveryResponse};
+use selene_kernel_contracts::ph1delivery::{
+    Ph1DeliveryRefuse, Ph1DeliveryRequest, Ph1DeliveryResponse,
+};
 use selene_kernel_contracts::{ContractViolation, Validate};
 
 pub mod reason_codes {
@@ -98,8 +100,9 @@ where
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1delivery::{
-        DeliveryCapabilityId, DeliveryChannel, DeliveryOutcome, DeliverySimulationType, DeliveryStatus,
-        DeliveryStatusResult, Ph1DeliveryOk, DELIVERY_SEND_COMMIT, PH1DELIVERY_CONTRACT_VERSION,
+        DeliveryCapabilityId, DeliveryChannel, DeliveryOutcome, DeliverySimulationType,
+        DeliveryStatus, DeliveryStatusResult, Ph1DeliveryOk, DELIVERY_SEND_COMMIT,
+        PH1DELIVERY_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::ph1position::TenantId;

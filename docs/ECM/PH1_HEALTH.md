@@ -54,6 +54,61 @@
   - PH1_HEALTH_OK_UNRESOLVED_SUMMARY_READ
   - PH1_HEALTH_INPUT_SCHEMA_INVALID
 
+### capability_id: HEALTH_REPORT_QUERY_READ
+- input_schema:
+  - `tenant_id`
+  - `viewer_user_id`
+  - `report_kind`
+  - `time_range` (`from_utc`, `to_utc`)
+  - optional `engine_owner_filter`
+  - `company_scope` (`TENANT_ONLY | CROSS_TENANT_TENANT_ROWS`)
+  - optional `company_ids[]`
+  - optional `country_codes[]`
+  - optional `escalated_only`
+  - optional `unresolved_only`
+  - optional `display_target` (`DESKTOP | PHONE`)
+  - `page_action` (`FIRST | NEXT | PREV | REFRESH`)
+  - optional `page_cursor`
+  - optional `report_context_id`
+- output_schema:
+  - `report_context_id`
+  - `report_revision`
+  - `normalized_query`
+  - tenant-row report rows with unresolved/escalation proof fields
+  - paging object (`has_next`, `has_prev`, `next_cursor`, `prev_cursor`)
+  - `display_target_applied`
+  - optional `requires_clarification`
+- side_effects: NONE
+- failure_modes:
+  - INPUT_SCHEMA_INVALID
+  - DISPLAY_TARGET_REQUIRED
+  - DATE_RANGE_INVALID
+  - COUNTRY_FILTER_INVALID
+  - CROSS_TENANT_UNAUTHORIZED
+  - REPORT_CONTEXT_NOT_FOUND
+  - PAGE_CURSOR_INVALID
+- reason_codes:
+  - PH1_HEALTH_OK_REPORT_QUERY_READ
+  - PH1_HEALTH_DISPLAY_TARGET_REQUIRED
+  - PH1_HEALTH_DATE_RANGE_INVALID
+  - PH1_HEALTH_COUNTRY_FILTER_INVALID
+  - PH1_HEALTH_CROSS_TENANT_UNAUTHORIZED
+  - PH1_HEALTH_REPORT_CONTEXT_NOT_FOUND
+  - PH1_HEALTH_PAGE_CURSOR_INVALID
+
+## Resolution-Proof and Escalation Payload Requirements
+- Resolved status must be evidence-backed:
+  - `issue_fingerprint`
+  - `verification_window` metadata
+  - `recurrence_observed` boolean
+  - recurrence evidence refs when recurrence is present
+- Escalated/unresolved rows must expose:
+  - `impact_summary`
+  - `attempted_fix_actions[]`
+  - `current_monitoring_evidence`
+  - `unresolved_reason_exact`
+  - `bcast_id`/`ack_state` when escalated
+
 ## Hard Rules
 - Display-only engine in v1.
 - No remediation execution.

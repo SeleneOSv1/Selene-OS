@@ -4,6 +4,7 @@ package selene.adapter.v1;
 
 service VoiceIngress {
   rpc RunVoiceTurn(RunVoiceTurnRequest) returns (RunVoiceTurnResponse);
+  rpc UiHealthReportQuery(UiHealthReportQueryRequest) returns (UiHealthReportQueryResponse);
 }
 
 message RunVoiceTurnRequest {
@@ -21,4 +22,64 @@ message RunVoiceTurnResponse {
   string status = 1;
   string outcome = 2;
   string reason = 3;
+}
+
+message UiHealthReportQueryRequest {
+  uint64 correlation_id = 1;
+  uint64 turn_id = 2;
+  string tenant_id = 3;
+  string viewer_user_id = 4;
+  string report_kind = 5;
+  uint64 from_utc_ns = 6;
+  uint64 to_utc_ns = 7;
+  string engine_owner_filter = 8;
+  string company_scope = 9;
+  repeated string company_ids = 10;
+  repeated string country_codes = 11;
+  bool escalated_only = 12;
+  bool unresolved_only = 13;
+  string display_target = 14;
+  string page_action = 15;
+  string page_cursor = 16;
+  string report_context_id = 17;
+  uint32 page_size = 18;
+}
+
+message UiHealthReportRow {
+  string tenant_id = 1;
+  string issue_id = 2;
+  string owner_engine_id = 3;
+  string severity = 4;
+  string status = 5;
+  string latest_reason_code = 6;
+  uint64 last_seen_at_ns = 7;
+  string bcast_id = 8;
+  string ack_state = 9;
+  string issue_fingerprint = 10;
+  bool recurrence_observed = 11;
+  string impact_summary = 12;
+  repeated string attempted_fix_actions = 13;
+  string current_monitoring_evidence = 14;
+  string unresolved_reason_exact = 15;
+}
+
+message UiHealthReportPaging {
+  bool has_next = 1;
+  bool has_prev = 2;
+  string next_cursor = 3;
+  string prev_cursor = 4;
+}
+
+message UiHealthReportQueryResponse {
+  string status = 1;
+  uint64 generated_at_ns = 2;
+  string reason_code = 3;
+  string report_context_id = 4;
+  uint64 report_revision = 5;
+  string normalized_query = 6;
+  repeated UiHealthReportRow rows = 7;
+  UiHealthReportPaging paging = 8;
+  string display_target_applied = 9;
+  string remembered_display_target = 10;
+  string requires_clarification = 11;
 }

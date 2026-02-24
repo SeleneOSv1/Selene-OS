@@ -1617,10 +1617,8 @@ impl SimulationExecutor {
             AccessDecision::Deny => (StepUpOutcome::Refuse, gate.reason_code),
             AccessDecision::Escalate => (StepUpOutcome::Defer, gate.reason_code),
             AccessDecision::Allow => {
-                if step_up_challenge_satisfied(
-                    access_verification_level,
-                    dispatch.challenge_method,
-                ) {
+                if step_up_challenge_satisfied(access_verification_level, dispatch.challenge_method)
+                {
                     (StepUpOutcome::Continue, gate.reason_code)
                 } else {
                     (StepUpOutcome::Defer, ACCESS_STEP_UP_DEFER_UNVERIFIED)
@@ -7310,9 +7308,9 @@ mod tests {
             "idem-stepup-continue",
         );
 
-        let out =
-            exec.execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
-                .unwrap();
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
+            .unwrap();
         match out {
             SimulationDispatchOutcome::AccessStepUp {
                 outcome,
@@ -7366,9 +7364,9 @@ mod tests {
             "idem-stepup-refuse",
         );
 
-        let out =
-            exec.execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
-                .unwrap();
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
+            .unwrap();
         match out {
             SimulationDispatchOutcome::AccessStepUp { outcome, .. } => {
                 assert_eq!(outcome, StepUpOutcome::Refuse);

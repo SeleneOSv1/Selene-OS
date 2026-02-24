@@ -292,7 +292,9 @@ pub fn evaluate_section40_audit_chain(
     }
 
     Section40AuditChainGateReport {
-        passed: missing.is_empty() && event_ids_monotonic && duplicate_engine_idempotency.is_empty(),
+        passed: missing.is_empty()
+            && event_ids_monotonic
+            && duplicate_engine_idempotency.is_empty(),
         missing_engines: missing,
         duplicate_engine_idempotency,
         event_ids_monotonic,
@@ -313,7 +315,9 @@ pub struct LadderCutoverGateReport {
     pub findings: Vec<String>,
 }
 
-pub fn evaluate_ladder_cutover_and_prompt_gate(input: LadderCutoverGateInput) -> LadderCutoverGateReport {
+pub fn evaluate_ladder_cutover_and_prompt_gate(
+    input: LadderCutoverGateInput,
+) -> LadderCutoverGateReport {
     let mut findings = Vec::new();
 
     if input.migration_stage != VoiceIdContractMigrationStage::M3 {
@@ -356,9 +360,7 @@ mod tests {
         simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
         VoiceIdObservation as EngineVoiceIdObservation,
     };
-    use selene_kernel_contracts::ph1_voice_id::{
-        DeviceTrustLevel, Ph1VoiceIdRequest, UserId,
-    };
+    use selene_kernel_contracts::ph1_voice_id::{DeviceTrustLevel, Ph1VoiceIdRequest, UserId};
     use selene_kernel_contracts::ph1j::{
         AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
         CorrelationId, DeviceId, PayloadKey, PayloadValue, TurnId,
@@ -449,12 +451,10 @@ mod tests {
         ];
         let fail_report = evaluate_section40_owner_matrix(&ambiguous);
         assert!(!fail_report.passed);
-        assert!(
-            fail_report
-                .findings
-                .iter()
-                .any(|f| f.contains("multiple owner declarations"))
-        );
+        assert!(fail_report
+            .findings
+            .iter()
+            .any(|f| f.contains("multiple owner declarations")));
     }
 
     #[test]

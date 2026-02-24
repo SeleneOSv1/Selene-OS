@@ -44,7 +44,11 @@ fn validate_opt_ascii_token(
     Ok(())
 }
 
-fn validate_text(field: &'static str, value: &str, max_len: usize) -> Result<(), ContractViolation> {
+fn validate_text(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
     if value.trim().is_empty() {
         return Err(ContractViolation::InvalidValue {
             field,
@@ -71,6 +75,7 @@ pub enum HealthCapabilityId {
     HealthSnapshotRead,
     HealthIssueTimelineRead,
     HealthUnresolvedSummaryRead,
+    HealthReportQueryRead,
 }
 
 impl HealthCapabilityId {
@@ -79,6 +84,7 @@ impl HealthCapabilityId {
             HealthCapabilityId::HealthSnapshotRead => "HEALTH_SNAPSHOT_READ",
             HealthCapabilityId::HealthIssueTimelineRead => "HEALTH_ISSUE_TIMELINE_READ",
             HealthCapabilityId::HealthUnresolvedSummaryRead => "HEALTH_UNRESOLVED_SUMMARY_READ",
+            HealthCapabilityId::HealthReportQueryRead => "HEALTH_REPORT_QUERY_READ",
         }
     }
 }
@@ -116,6 +122,82 @@ pub enum HealthAckState {
     Waiting,
     Acknowledged,
     FollowupPending,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HealthReportKind {
+    MissedStt,
+    UnresolvedEscalated,
+    IssueStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HealthCompanyScope {
+    TenantOnly,
+    CrossTenantTenantRows,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HealthDisplayTarget {
+    Desktop,
+    Phone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HealthPageAction {
+    First,
+    Next,
+    Prev,
+    Refresh,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReportTimeRange {
+    pub schema_version: SchemaVersion,
+    pub from_utc: MonotonicTimeNs,
+    pub to_utc: MonotonicTimeNs,
+}
+
+impl HealthReportTimeRange {
+    pub fn v1(from_utc: MonotonicTimeNs, to_utc: MonotonicTimeNs) -> Result<Self, ContractViolation> {
+        let range = Self {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            from_utc,
+            to_utc,
+        };
+        range.validate()?;
+        Ok(range)
+    }
+}
+
+impl Validate for HealthReportTimeRange {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1HEALTH_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_time_range.schema_version",
+                reason: "must match PH1HEALTH_CONTRACT_VERSION",
+            });
+        }
+        if self.from_utc.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_time_range.from_utc",
+                reason: "must be > 0",
+            });
+        }
+        if self.to_utc.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_time_range.to_utc",
+                reason: "must be > 0",
+            });
+        }
+        if self.from_utc.0 > self.to_utc.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_time_range",
+                reason: "from_utc must be <= to_utc",
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +262,14 @@ pub struct HealthIssueEvent {
     pub unresolved_deadline_at: Option<MonotonicTimeNs>,
     pub bcast_id: Option<String>,
     pub ack_state: Option<HealthAckState>,
+    pub issue_fingerprint: Option<String>,
+    pub verification_window_start_at: Option<MonotonicTimeNs>,
+    pub verification_window_end_at: Option<MonotonicTimeNs>,
+    pub recurrence_observed: Option<bool>,
+    pub impact_summary: Option<String>,
+    pub attempted_fix_actions: Vec<String>,
+    pub current_monitoring_evidence: Option<String>,
+    pub unresolved_reason_exact: Option<String>,
 }
 
 impl HealthIssueEvent {
@@ -216,9 +306,47 @@ impl HealthIssueEvent {
             unresolved_deadline_at,
             bcast_id,
             ack_state,
+            issue_fingerprint: None,
+            verification_window_start_at: None,
+            verification_window_end_at: None,
+            recurrence_observed: None,
+            impact_summary: None,
+            attempted_fix_actions: Vec::new(),
+            current_monitoring_evidence: None,
+            unresolved_reason_exact: None,
         };
         ev.validate()?;
         Ok(ev)
+    }
+
+    pub fn with_resolution_proof(
+        mut self,
+        issue_fingerprint: Option<String>,
+        verification_window_start_at: Option<MonotonicTimeNs>,
+        verification_window_end_at: Option<MonotonicTimeNs>,
+        recurrence_observed: Option<bool>,
+    ) -> Result<Self, ContractViolation> {
+        self.issue_fingerprint = issue_fingerprint;
+        self.verification_window_start_at = verification_window_start_at;
+        self.verification_window_end_at = verification_window_end_at;
+        self.recurrence_observed = recurrence_observed;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_escalation_payload(
+        mut self,
+        impact_summary: Option<String>,
+        attempted_fix_actions: Vec<String>,
+        current_monitoring_evidence: Option<String>,
+        unresolved_reason_exact: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.impact_summary = impact_summary;
+        self.attempted_fix_actions = attempted_fix_actions;
+        self.current_monitoring_evidence = current_monitoring_evidence;
+        self.unresolved_reason_exact = unresolved_reason_exact;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -273,6 +401,198 @@ impl Validate for HealthIssueEvent {
             }
         }
         validate_opt_ascii_token("health_issue_event.bcast_id", &self.bcast_id, 128)?;
+        validate_opt_ascii_token(
+            "health_issue_event.issue_fingerprint",
+            &self.issue_fingerprint,
+            128,
+        )?;
+        if let (Some(start), Some(end)) = (
+            self.verification_window_start_at,
+            self.verification_window_end_at,
+        ) {
+            if end.0 < start.0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_issue_event.verification_window",
+                    reason: "verification_window_end_at must be >= verification_window_start_at",
+                });
+            }
+        }
+        if let Some(summary) = &self.impact_summary {
+            validate_text("health_issue_event.impact_summary", summary, 512)?;
+        }
+        if self.attempted_fix_actions.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_issue_event.attempted_fix_actions",
+                reason: "must be <= 32 entries",
+            });
+        }
+        for action in &self.attempted_fix_actions {
+            validate_text("health_issue_event.attempted_fix_actions[]", action, 160)?;
+        }
+        if let Some(evidence) = &self.current_monitoring_evidence {
+            validate_text(
+                "health_issue_event.current_monitoring_evidence",
+                evidence,
+                512,
+            )?;
+        }
+        if let Some(reason) = &self.unresolved_reason_exact {
+            validate_text("health_issue_event.unresolved_reason_exact", reason, 512)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReportQueryReadRequest {
+    pub schema_version: SchemaVersion,
+    pub envelope: HealthReadEnvelope,
+    pub tenant_id: TenantId,
+    pub viewer_user_id: String,
+    pub report_kind: HealthReportKind,
+    pub time_range: HealthReportTimeRange,
+    pub engine_owner_filter: Option<String>,
+    pub company_scope: HealthCompanyScope,
+    pub company_ids: Vec<TenantId>,
+    pub country_codes: Vec<String>,
+    pub escalated_only: bool,
+    pub unresolved_only: bool,
+    pub display_target: Option<HealthDisplayTarget>,
+    pub page_action: HealthPageAction,
+    pub page_cursor: Option<String>,
+    pub report_context_id: Option<String>,
+    pub page_size: u16,
+    pub issue_events: Vec<HealthIssueEvent>,
+}
+
+impl HealthReportQueryReadRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        envelope: HealthReadEnvelope,
+        tenant_id: TenantId,
+        viewer_user_id: String,
+        report_kind: HealthReportKind,
+        time_range: HealthReportTimeRange,
+        engine_owner_filter: Option<String>,
+        company_scope: HealthCompanyScope,
+        company_ids: Vec<TenantId>,
+        country_codes: Vec<String>,
+        escalated_only: bool,
+        unresolved_only: bool,
+        display_target: Option<HealthDisplayTarget>,
+        page_action: HealthPageAction,
+        page_cursor: Option<String>,
+        report_context_id: Option<String>,
+        page_size: u16,
+        issue_events: Vec<HealthIssueEvent>,
+    ) -> Result<Self, ContractViolation> {
+        let req = Self {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            envelope,
+            tenant_id,
+            viewer_user_id,
+            report_kind,
+            time_range,
+            engine_owner_filter,
+            company_scope,
+            company_ids,
+            country_codes,
+            escalated_only,
+            unresolved_only,
+            display_target,
+            page_action,
+            page_cursor,
+            report_context_id,
+            page_size,
+            issue_events,
+        };
+        req.validate()?;
+        Ok(req)
+    }
+}
+
+impl Validate for HealthReportQueryReadRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1HEALTH_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.schema_version",
+                reason: "must match PH1HEALTH_CONTRACT_VERSION",
+            });
+        }
+        self.envelope.validate()?;
+        self.tenant_id.validate()?;
+        self.time_range.validate()?;
+        validate_ascii_token(
+            "health_report_query_read_request.viewer_user_id",
+            &self.viewer_user_id,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "health_report_query_read_request.engine_owner_filter",
+            &self.engine_owner_filter,
+            64,
+        )?;
+        if self.company_ids.len() > 256 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.company_ids",
+                reason: "must be <= 256",
+            });
+        }
+        for company_id in &self.company_ids {
+            company_id.validate()?;
+        }
+        if self.company_scope == HealthCompanyScope::TenantOnly
+            && self.company_ids.iter().any(|id| id.as_str() != self.tenant_id.as_str())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.company_scope",
+                reason: "TENANT_ONLY cannot include foreign tenant ids",
+            });
+        }
+        if self.country_codes.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.country_codes",
+                reason: "must be <= 32",
+            });
+        }
+        for code in &self.country_codes {
+            validate_ascii_token(
+                "health_report_query_read_request.country_codes[]",
+                code,
+                3,
+            )?;
+            if !code.chars().all(|c| c.is_ascii_uppercase()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_read_request.country_codes[]",
+                    reason: "must be uppercase ASCII country code",
+                });
+            }
+        }
+        validate_opt_ascii_token(
+            "health_report_query_read_request.page_cursor",
+            &self.page_cursor,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "health_report_query_read_request.report_context_id",
+            &self.report_context_id,
+            128,
+        )?;
+        if self.page_size == 0 || self.page_size > 512 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.page_size",
+                reason: "must be within 1..=512",
+            });
+        }
+        if self.issue_events.len() > 4096 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_request.issue_events",
+                reason: "must be <= 4096",
+            });
+        }
+        for event in &self.issue_events {
+            event.validate()?;
+        }
         Ok(())
     }
 }
@@ -506,6 +826,7 @@ pub enum Ph1HealthRequest {
     HealthSnapshotRead(HealthSnapshotReadRequest),
     HealthIssueTimelineRead(HealthIssueTimelineReadRequest),
     HealthUnresolvedSummaryRead(HealthUnresolvedSummaryReadRequest),
+    HealthReportQueryRead(HealthReportQueryReadRequest),
 }
 
 impl Ph1HealthRequest {
@@ -518,6 +839,7 @@ impl Ph1HealthRequest {
             Ph1HealthRequest::HealthUnresolvedSummaryRead(_) => {
                 HealthCapabilityId::HealthUnresolvedSummaryRead
             }
+            Ph1HealthRequest::HealthReportQueryRead(_) => HealthCapabilityId::HealthReportQueryRead,
         }
     }
 }
@@ -528,7 +850,249 @@ impl Validate for Ph1HealthRequest {
             Ph1HealthRequest::HealthSnapshotRead(req) => req.validate(),
             Ph1HealthRequest::HealthIssueTimelineRead(req) => req.validate(),
             Ph1HealthRequest::HealthUnresolvedSummaryRead(req) => req.validate(),
+            Ph1HealthRequest::HealthReportQueryRead(req) => req.validate(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReportQueryRow {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: TenantId,
+    pub issue_id: String,
+    pub owner_engine_id: String,
+    pub severity: HealthSeverity,
+    pub status: HealthIssueStatus,
+    pub latest_reason_code: ReasonCodeId,
+    pub last_seen_at: MonotonicTimeNs,
+    pub bcast_id: Option<String>,
+    pub ack_state: Option<HealthAckState>,
+    pub issue_fingerprint: Option<String>,
+    pub verification_window_start_at: Option<MonotonicTimeNs>,
+    pub verification_window_end_at: Option<MonotonicTimeNs>,
+    pub recurrence_observed: bool,
+    pub impact_summary: Option<String>,
+    pub attempted_fix_actions: Vec<String>,
+    pub current_monitoring_evidence: Option<String>,
+    pub unresolved_reason_exact: Option<String>,
+}
+
+impl Validate for HealthReportQueryRow {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1HEALTH_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_row.schema_version",
+                reason: "must match PH1HEALTH_CONTRACT_VERSION",
+            });
+        }
+        self.tenant_id.validate()?;
+        validate_ascii_token("health_report_query_row.issue_id", &self.issue_id, 128)?;
+        validate_ascii_token(
+            "health_report_query_row.owner_engine_id",
+            &self.owner_engine_id,
+            64,
+        )?;
+        if self.latest_reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_row.latest_reason_code",
+                reason: "must be > 0",
+            });
+        }
+        if self.last_seen_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_row.last_seen_at",
+                reason: "must be > 0",
+            });
+        }
+        validate_opt_ascii_token("health_report_query_row.bcast_id", &self.bcast_id, 128)?;
+        validate_opt_ascii_token(
+            "health_report_query_row.issue_fingerprint",
+            &self.issue_fingerprint,
+            128,
+        )?;
+        if let (Some(start), Some(end)) = (
+            self.verification_window_start_at,
+            self.verification_window_end_at,
+        ) {
+            if end.0 < start.0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "health_report_query_row.verification_window",
+                    reason: "verification window end must be >= start",
+                });
+            }
+        }
+        if let Some(summary) = &self.impact_summary {
+            validate_text("health_report_query_row.impact_summary", summary, 512)?;
+        }
+        if self.attempted_fix_actions.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_row.attempted_fix_actions",
+                reason: "must be <= 32 entries",
+            });
+        }
+        for action in &self.attempted_fix_actions {
+            validate_text("health_report_query_row.attempted_fix_actions[]", action, 160)?;
+        }
+        if let Some(evidence) = &self.current_monitoring_evidence {
+            validate_text(
+                "health_report_query_row.current_monitoring_evidence",
+                evidence,
+                512,
+            )?;
+        }
+        if let Some(reason) = &self.unresolved_reason_exact {
+            validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReportQueryPaging {
+    pub schema_version: SchemaVersion,
+    pub has_next: bool,
+    pub has_prev: bool,
+    pub next_cursor: Option<String>,
+    pub prev_cursor: Option<String>,
+}
+
+impl HealthReportQueryPaging {
+    pub fn v1(
+        has_next: bool,
+        has_prev: bool,
+        next_cursor: Option<String>,
+        prev_cursor: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let paging = Self {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            has_next,
+            has_prev,
+            next_cursor,
+            prev_cursor,
+        };
+        paging.validate()?;
+        Ok(paging)
+    }
+}
+
+impl Validate for HealthReportQueryPaging {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1HEALTH_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_paging.schema_version",
+                reason: "must match PH1HEALTH_CONTRACT_VERSION",
+            });
+        }
+        validate_opt_ascii_token(
+            "health_report_query_paging.next_cursor",
+            &self.next_cursor,
+            128,
+        )?;
+        validate_opt_ascii_token(
+            "health_report_query_paging.prev_cursor",
+            &self.prev_cursor,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthReportQueryReadOk {
+    pub schema_version: SchemaVersion,
+    pub capability_id: HealthCapabilityId,
+    pub reason_code: ReasonCodeId,
+    pub report_context_id: String,
+    pub report_revision: u64,
+    pub normalized_query: String,
+    pub rows: Vec<HealthReportQueryRow>,
+    pub paging: HealthReportQueryPaging,
+    pub display_target_applied: Option<HealthDisplayTarget>,
+    pub requires_clarification: Option<String>,
+    pub no_authority_mutation: bool,
+}
+
+impl HealthReportQueryReadOk {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        reason_code: ReasonCodeId,
+        report_context_id: String,
+        report_revision: u64,
+        normalized_query: String,
+        rows: Vec<HealthReportQueryRow>,
+        paging: HealthReportQueryPaging,
+        display_target_applied: Option<HealthDisplayTarget>,
+        requires_clarification: Option<String>,
+        no_authority_mutation: bool,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            capability_id: HealthCapabilityId::HealthReportQueryRead,
+            reason_code,
+            report_context_id,
+            report_revision,
+            normalized_query,
+            rows,
+            paging,
+            display_target_applied,
+            requires_clarification,
+            no_authority_mutation,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for HealthReportQueryReadOk {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1HEALTH_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_ok.schema_version",
+                reason: "must match PH1HEALTH_CONTRACT_VERSION",
+            });
+        }
+        if self.capability_id != HealthCapabilityId::HealthReportQueryRead {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_ok.capability_id",
+                reason: "must be HEALTH_REPORT_QUERY_READ",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_ok.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        validate_ascii_token(
+            "health_report_query_read_ok.report_context_id",
+            &self.report_context_id,
+            128,
+        )?;
+        validate_text(
+            "health_report_query_read_ok.normalized_query",
+            &self.normalized_query,
+            512,
+        )?;
+        if self.rows.len() > 1024 {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_ok.rows",
+                reason: "must be <= 1024",
+            });
+        }
+        for row in &self.rows {
+            row.validate()?;
+        }
+        self.paging.validate()?;
+        if let Some(clarify) = &self.requires_clarification {
+            validate_text("health_report_query_read_ok.requires_clarification", clarify, 240)?;
+        }
+        if !self.no_authority_mutation {
+            return Err(ContractViolation::InvalidValue {
+                field: "health_report_query_read_ok.no_authority_mutation",
+                reason: "must remain true for display-only engine",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1119,6 +1683,7 @@ pub enum Ph1HealthResponse {
     HealthSnapshotReadOk(HealthSnapshotReadOk),
     HealthIssueTimelineReadOk(HealthIssueTimelineReadOk),
     HealthUnresolvedSummaryReadOk(HealthUnresolvedSummaryReadOk),
+    HealthReportQueryReadOk(HealthReportQueryReadOk),
     Refuse(HealthRefuse),
 }
 
@@ -1128,6 +1693,7 @@ impl Validate for Ph1HealthResponse {
             Ph1HealthResponse::HealthSnapshotReadOk(out) => out.validate(),
             Ph1HealthResponse::HealthIssueTimelineReadOk(out) => out.validate(),
             Ph1HealthResponse::HealthUnresolvedSummaryReadOk(out) => out.validate(),
+            Ph1HealthResponse::HealthReportQueryReadOk(out) => out.validate(),
             Ph1HealthResponse::Refuse(out) => out.validate(),
         }
     }
@@ -1239,10 +1805,92 @@ mod tests {
 
     #[test]
     fn at_health_contract_04_refuse_is_schema_valid() {
-        let refuse =
-            HealthRefuse::v1(HealthCapabilityId::HealthSnapshotRead, ReasonCodeId(1099),
-                "input invalid".to_string())
-                .unwrap();
+        let refuse = HealthRefuse::v1(
+            HealthCapabilityId::HealthSnapshotRead,
+            ReasonCodeId(1099),
+            "input invalid".to_string(),
+        )
+        .unwrap();
         assert!(refuse.validate().is_ok());
+    }
+
+    #[test]
+    fn at_health_contract_05_report_query_request_rejects_backwards_date_range() {
+        let bad_range = HealthReportTimeRange::v1(MonotonicTimeNs(200), MonotonicTimeNs(100));
+        assert!(bad_range.is_err());
+    }
+
+    #[test]
+    fn at_health_contract_06_report_query_response_requires_matching_capability_id() {
+        let row = HealthReportQueryRow {
+            schema_version: PH1HEALTH_CONTRACT_VERSION,
+            tenant_id: tenant("tenant_a"),
+            issue_id: "issue_001".to_string(),
+            owner_engine_id: "PH1.C".to_string(),
+            severity: HealthSeverity::Warn,
+            status: HealthIssueStatus::Open,
+            latest_reason_code: ReasonCodeId(1001),
+            last_seen_at: MonotonicTimeNs(100),
+            bcast_id: None,
+            ack_state: None,
+            issue_fingerprint: Some("stt_missed_phrase".to_string()),
+            verification_window_start_at: Some(MonotonicTimeNs(80)),
+            verification_window_end_at: Some(MonotonicTimeNs(100)),
+            recurrence_observed: true,
+            impact_summary: Some("missed STT outputs in payroll queue".to_string()),
+            attempted_fix_actions: vec!["restart stt route".to_string()],
+            current_monitoring_evidence: Some("same fingerprint seen in last 5m".to_string()),
+            unresolved_reason_exact: Some("fingerprint recurrence still present".to_string()),
+        };
+        let mut out = HealthReportQueryReadOk::v1(
+            ReasonCodeId(1201),
+            "ctx_001".to_string(),
+            1,
+            "missed stt june by tenant".to_string(),
+            vec![row],
+            HealthReportQueryPaging::v1(false, false, None, None).unwrap(),
+            Some(HealthDisplayTarget::Desktop),
+            None,
+            true,
+        )
+        .unwrap();
+        out.capability_id = HealthCapabilityId::HealthSnapshotRead;
+        assert!(out.validate().is_err());
+    }
+
+    #[test]
+    fn at_health_contract_07_issue_event_supports_escalation_payload_fields() {
+        let event = HealthIssueEvent::v1(
+            tenant("tenant_a"),
+            "issue_901".to_string(),
+            "PH1.C".to_string(),
+            HealthSeverity::Critical,
+            HealthIssueStatus::Escalated,
+            "ACTION_ESCALATE".to_string(),
+            HealthActionResult::Retry,
+            3,
+            ReasonCodeId(1901),
+            MonotonicTimeNs(100),
+            None,
+            Some(MonotonicTimeNs(120)),
+            Some("bcast_901".to_string()),
+            Some(HealthAckState::Waiting),
+        )
+        .unwrap()
+        .with_resolution_proof(
+            Some("stt_missing_token_june".to_string()),
+            Some(MonotonicTimeNs(100)),
+            Some(MonotonicTimeNs(130)),
+            Some(true),
+        )
+        .unwrap()
+        .with_escalation_payload(
+            Some("critical stt misses for payroll intake".to_string()),
+            vec!["restarted stt route".to_string(), "rotated decoder".to_string()],
+            Some("same fingerprint detected in live stream".to_string()),
+            Some("recurrence still observed".to_string()),
+        )
+        .unwrap();
+        assert!(event.validate().is_ok());
     }
 }

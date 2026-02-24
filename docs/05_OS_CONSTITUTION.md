@@ -52,6 +52,18 @@ Section 1: Constitutional Laws (High-Level)
 - Selene fix flows are Rust-first and shell-native; Python-based write flows are prohibited for production fix tasks.
 - In restricted environments, partial git recovery operations are prohibited; use direct file edits plus explicit proof checks until full git write access is available.
 
+12) Live Resolution Proof Law
+- An issue may be marked resolved only when live production verification proves recurrence has stopped for that issue fingerprint.
+- "Fix deployed" alone is insufficient for closure.
+
+13) Unverified-Fix Escalation Law
+- If resolution cannot be proven via live verification, Selene must escalate immediately using deterministic, reason-coded evidence.
+- Escalation payload must include issue id, impact, attempted actions, monitoring evidence, and exact unresolved reason.
+
+14) Natural Language Delivery Law
+- Selene response wording is generated dynamically (NLP+LLM) and must sound natural rather than fixed robotic templates.
+- Fixed wording is reserved for compliance-critical confirmations/refusals/policy text.
+
 Section 2: Canonical Pointer Map (Authoritative References)
 
 Memory

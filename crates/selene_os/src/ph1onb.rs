@@ -15,13 +15,12 @@ use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
+use selene_kernel_contracts::ph1link::{LinkActivationResult, LinkStatus};
 use selene_kernel_contracts::ph1onb::{
     OnbRequest, OnbSessionStartResult, OnboardingSessionId, Ph1OnbOk, Ph1OnbRequest,
-    Ph1OnbResponse, SimulationType,
-    ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT, ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT,
-    ONB_REQUIREMENT_BACKFILL_START_DRAFT,
+    Ph1OnbResponse, SimulationType, ONB_REQUIREMENT_BACKFILL_COMPLETE_COMMIT,
+    ONB_REQUIREMENT_BACKFILL_NOTIFY_COMMIT, ONB_REQUIREMENT_BACKFILL_START_DRAFT,
 };
-use selene_kernel_contracts::ph1link::{LinkActivationResult, LinkStatus};
 use selene_kernel_contracts::ph1position::{
     Ph1PositionRequest, PositionBandPolicyCheckRequest, PositionBandPolicyCheckResult,
     PositionCreateDraftRequest, PositionCreateDraftResult, PositionId, PositionLifecycleResult,
@@ -622,7 +621,9 @@ impl Ph1OnbOrchRuntime {
         tenant_id: Option<String>,
         device_fingerprint: String,
     ) -> Result<OnbSessionStartResult, StorageError> {
-        activation.validate().map_err(StorageError::ContractViolation)?;
+        activation
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         if activation.activation_status != LinkStatus::Activated {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -632,33 +633,42 @@ impl Ph1OnbOrchRuntime {
             ));
         }
 
-        let app_platform =
+        let app_platform = activation
+            .app_platform
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_start_from_link_activation.app_platform",
+                    reason: "must be present for ACTIVATED handoff",
+                },
+            ))?;
+        let app_instance_id =
             activation
-                .app_platform
+                .app_instance_id
+                .clone()
                 .ok_or(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
-                        field: "ph1onb_start_from_link_activation.app_platform",
+                        field: "ph1onb_start_from_link_activation.app_instance_id",
                         reason: "must be present for ACTIVATED handoff",
                     },
                 ))?;
-        let app_instance_id = activation.app_instance_id.clone().ok_or(
-            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1onb_start_from_link_activation.app_instance_id",
-                reason: "must be present for ACTIVATED handoff",
-            }),
-        )?;
-        let deep_link_nonce = activation.deep_link_nonce.clone().ok_or(
-            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1onb_start_from_link_activation.deep_link_nonce",
-                reason: "must be present for ACTIVATED handoff",
-            }),
-        )?;
-        let link_opened_at = activation.link_opened_at.ok_or(
-            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "ph1onb_start_from_link_activation.link_opened_at",
-                reason: "must be present for ACTIVATED handoff",
-            }),
-        )?;
+        let deep_link_nonce =
+            activation
+                .deep_link_nonce
+                .clone()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_start_from_link_activation.deep_link_nonce",
+                        reason: "must be present for ACTIVATED handoff",
+                    },
+                ))?;
+        let link_opened_at = activation
+            .link_opened_at
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_start_from_link_activation.link_opened_at",
+                    reason: "must be present for ACTIVATED handoff",
+                },
+            ))?;
 
         store.ph1onb_session_start_draft(
             now,
@@ -2709,14 +2719,14 @@ mod tests {
                 "device_fp_link_handoff".to_string(),
             )
             .unwrap();
-        assert_eq!(started.status, selene_kernel_contracts::ph1onb::OnboardingStatus::DraftCreated);
+        assert_eq!(
+            started.status,
+            selene_kernel_contracts::ph1onb::OnboardingStatus::DraftCreated
+        );
         let row = store
             .ph1onb_session_row(&started.onboarding_session_id)
             .expect("onboarding session row should exist");
-        assert_eq!(
-            row.app_instance_id.as_str(),
-            "ios_instance_link_handoff"
-        );
+        assert_eq!(row.app_instance_id.as_str(), "ios_instance_link_handoff");
         assert_eq!(row.deep_link_nonce.as_str(), "nonce_link_handoff");
         assert_eq!(row.link_opened_at, MonotonicTimeNs(now().0 + 5));
     }

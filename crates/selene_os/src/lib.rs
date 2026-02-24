@@ -53,7 +53,6 @@ pub mod ph1rem;
 pub mod ph1rll;
 pub mod ph1sched;
 pub mod ph1search;
-pub mod section40_exit;
 pub mod ph1srl;
 pub mod ph1summary;
 pub mod ph1tenant;
@@ -63,6 +62,7 @@ pub mod ph1w;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
+pub mod section40_exit;
 pub mod simulation_executor;
 
 pub fn hello_compile() -> &'static str {

@@ -153,15 +153,15 @@ impl AppServerIngressRuntime {
         let outcome = self.run_voice_turn(store, request)?;
 
         let ph1x_request = match &outcome {
-            OsVoiceLiveTurnOutcome::Forwarded(forwarded) => Some(
-                build_ph1x_request_from_voice_forward(
+            OsVoiceLiveTurnOutcome::Forwarded(forwarded) => {
+                Some(build_ph1x_request_from_voice_forward(
                     correlation_id,
                     turn_id,
                     app_platform,
                     forwarded,
                     x_build,
-                )?,
-            ),
+                )?)
+            }
             OsVoiceLiveTurnOutcome::NotInvokedDisabled | OsVoiceLiveTurnOutcome::Refused(_) => None,
         };
 

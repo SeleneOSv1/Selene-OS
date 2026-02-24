@@ -10,13 +10,26 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+use selene_engines::ph1health::{
+    reason_codes as health_reason_codes, Ph1HealthConfig as EngineHealthConfig,
+    Ph1HealthRuntime as EngineHealthRuntime,
+};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
+use selene_kernel_contracts::ph1health::{
+    HealthAckState, HealthActionResult, HealthCompanyScope, HealthDisplayTarget,
+    HealthIssueEvent, HealthIssueStatus, HealthPageAction, HealthReadEnvelope, HealthReportKind,
+    HealthReportQueryReadRequest, HealthReportQueryReadOk, HealthReportTimeRange, Ph1HealthRequest,
+    Ph1HealthResponse, HealthSeverity,
+};
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
 };
 use selene_kernel_contracts::ph1art::{
     ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
+};
+use selene_kernel_contracts::ph1f::{
+    ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
@@ -25,10 +38,11 @@ use selene_kernel_contracts::ph1k::{
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
 use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
-use selene_kernel_contracts::{MonotonicTimeNs, SchemaVersion, SessionState};
+use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_os::app_ingress::{AppServerIngressRuntime, AppVoiceIngressRequest};
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -40,6 +54,7 @@ use selene_os::ph1builder::{
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
 use selene_os::ph1os::{OsVoiceLiveTurnOutcome, OsVoiceTrigger};
+use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
 use selene_os::simulation_executor::SimulationExecutor;
@@ -50,6 +65,12 @@ use selene_storage::ph1f::{
 
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
+}
+
+pub mod app_ui_assets {
+    pub const APP_HTML: &str = include_str!("web/app.html");
+    pub const APP_CSS: &str = include_str!("web/app.css");
+    pub const APP_JS: &str = include_str!("web/app.js");
 }
 
 pub mod reason_codes {
@@ -70,6 +91,10 @@ pub struct VoiceTurnAdapterRequest {
     pub tenant_id: Option<String>,
     pub device_id: Option<String>,
     pub now_ns: Option<u64>,
+    pub user_text_partial: Option<String>,
+    pub user_text_final: Option<String>,
+    pub selene_text_partial: Option<String>,
+    pub selene_text_final: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -130,12 +155,176 @@ pub struct AdapterHealthResponse {
     pub sync: AdapterSyncHealth,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthCheckRow {
+    pub check_id: String,
+    pub label: String,
+    pub status: String,
+    pub open_issue_count: u32,
+    pub last_event_at_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthChecksResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub checks: Vec<UiHealthCheckRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthSummary {
+    pub open_issues: u32,
+    pub critical_open_count: u32,
+    pub auto_resolved_24h_count: u32,
+    pub escalated_24h_count: u32,
+    pub mttr_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthIssueRow {
+    pub issue_id: String,
+    pub severity: String,
+    pub issue_type: String,
+    pub engine_owner: String,
+    pub first_seen_at_ns: Option<u64>,
+    pub last_update_at_ns: Option<u64>,
+    pub status: String,
+    pub resolution_state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthTimelineEntry {
+    pub issue_id: String,
+    pub at_ns: Option<u64>,
+    pub action_id: String,
+    pub result: String,
+    pub reason_code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub struct UiHealthDetailFilter {
+    pub issue_query: Option<String>,
+    pub engine_owner: Option<String>,
+    pub open_only: bool,
+    pub critical_only: bool,
+    pub escalated_only: bool,
+    pub from_utc_ns: Option<u64>,
+    pub to_utc_ns: Option<u64>,
+    pub selected_issue_id: Option<String>,
+    pub timeline_page_size: Option<u16>,
+    pub timeline_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthTimelinePaging {
+    pub has_next: bool,
+    pub next_cursor: Option<String>,
+    pub total_entries: u32,
+    pub visible_entries: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthDetailResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub selected_check_id: String,
+    pub selected_check_label: String,
+    pub summary: UiHealthSummary,
+    pub issues: Vec<UiHealthIssueRow>,
+    pub active_issue_id: Option<String>,
+    pub timeline: Vec<UiHealthTimelineEntry>,
+    pub timeline_paging: UiHealthTimelinePaging,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthReportQueryRequest {
+    pub correlation_id: Option<u64>,
+    pub turn_id: Option<u64>,
+    pub tenant_id: Option<String>,
+    pub viewer_user_id: Option<String>,
+    pub report_kind: Option<String>,
+    pub from_utc_ns: Option<u64>,
+    pub to_utc_ns: Option<u64>,
+    pub engine_owner_filter: Option<String>,
+    pub company_scope: Option<String>,
+    pub company_ids: Option<Vec<String>>,
+    pub country_codes: Option<Vec<String>>,
+    pub escalated_only: Option<bool>,
+    pub unresolved_only: Option<bool>,
+    pub display_target: Option<String>,
+    pub page_action: Option<String>,
+    pub page_cursor: Option<String>,
+    pub report_context_id: Option<String>,
+    pub page_size: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthReportRow {
+    pub tenant_id: String,
+    pub issue_id: String,
+    pub owner_engine_id: String,
+    pub severity: String,
+    pub status: String,
+    pub latest_reason_code: String,
+    pub last_seen_at_ns: u64,
+    pub bcast_id: Option<String>,
+    pub ack_state: Option<String>,
+    pub issue_fingerprint: Option<String>,
+    pub recurrence_observed: bool,
+    pub impact_summary: Option<String>,
+    pub attempted_fix_actions: Vec<String>,
+    pub current_monitoring_evidence: Option<String>,
+    pub unresolved_reason_exact: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthReportPaging {
+    pub has_next: bool,
+    pub has_prev: bool,
+    pub next_cursor: Option<String>,
+    pub prev_cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiHealthReportQueryResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub reason_code: String,
+    pub report_context_id: Option<String>,
+    pub report_revision: Option<u64>,
+    pub normalized_query: Option<String>,
+    pub rows: Vec<UiHealthReportRow>,
+    pub paging: UiHealthReportPaging,
+    pub display_target_applied: Option<String>,
+    pub remembered_display_target: Option<String>,
+    pub requires_clarification: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiTranscriptMessage {
+    pub role: String,
+    pub source: String,
+    pub finalized: bool,
+    pub text: String,
+    pub timestamp_ns: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiChatTranscriptResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub note: Option<String>,
+    pub messages: Vec<UiTranscriptMessage>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
     store: Arc<Mutex<Ph1fStore>>,
     sync_worker_counters: Arc<Mutex<AdapterSyncWorkerCounters>>,
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
+    transcript_state: Arc<Mutex<AdapterTranscriptState>>,
+    report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
     auto_builder_enabled: bool,
     persistence: Option<AdapterPersistenceConfig>,
 }
@@ -156,6 +345,84 @@ impl AdapterJournalEntry {
         Self {
             schema_version: 1,
             request,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AdapterTranscriptRole {
+    User,
+    Selene,
+}
+
+impl AdapterTranscriptRole {
+    fn as_str(self) -> &'static str {
+        match self {
+            AdapterTranscriptRole::User => "USER",
+            AdapterTranscriptRole::Selene => "SELENE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum AdapterTranscriptSource {
+    Ph1C,
+    Ph1Write,
+    UiText,
+}
+
+impl AdapterTranscriptSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            AdapterTranscriptSource::Ph1C => "PH1.C",
+            AdapterTranscriptSource::Ph1Write => "PH1.WRITE",
+            AdapterTranscriptSource::UiText => "UI.TEXT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdapterTranscriptEvent {
+    seq: u64,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    role: AdapterTranscriptRole,
+    source: AdapterTranscriptSource,
+    finalized: bool,
+    text: String,
+    timestamp_ns: u64,
+}
+
+impl AdapterTranscriptEvent {
+    fn key(&self) -> AdapterTranscriptKey {
+        AdapterTranscriptKey {
+            correlation_id: self.correlation_id.0,
+            turn_id: self.turn_id.0,
+            role: self.role,
+            source: self.source,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AdapterTranscriptKey {
+    correlation_id: u128,
+    turn_id: u64,
+    role: AdapterTranscriptRole,
+    source: AdapterTranscriptSource,
+}
+
+#[derive(Debug, Clone)]
+struct AdapterTranscriptState {
+    next_seq: u64,
+    events: Vec<AdapterTranscriptEvent>,
+}
+
+impl Default for AdapterTranscriptState {
+    fn default() -> Self {
+        Self {
+            next_seq: 1,
+            events: Vec::new(),
         }
     }
 }
@@ -239,6 +506,8 @@ impl Default for AdapterRuntime {
             store: Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
+            transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             persistence: None,
         }
@@ -252,6 +521,8 @@ impl AdapterRuntime {
             store,
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
+            transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
             persistence: None,
         }
@@ -268,6 +539,8 @@ impl AdapterRuntime {
             store,
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
+            transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
+            report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled,
             persistence: Some(AdapterPersistenceConfig { journal_path }),
         };
@@ -319,6 +592,556 @@ impl AdapterRuntime {
                 improvement,
             },
         })
+    }
+
+    pub fn ui_health_checks_report(
+        &self,
+        now_ns: Option<u64>,
+    ) -> Result<UiHealthChecksResponse, String> {
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let health = self.health_report(Some(now_ns))?;
+        Ok(build_ui_health_checks_response(&health, now_ns))
+    }
+
+    pub fn ui_health_detail_report(
+        &self,
+        check_id: &str,
+        now_ns: Option<u64>,
+    ) -> Result<UiHealthDetailResponse, String> {
+        self.ui_health_detail_report_filtered(check_id, UiHealthDetailFilter::default(), now_ns)
+    }
+
+    pub fn ui_health_detail_report_filtered(
+        &self,
+        check_id: &str,
+        filter: UiHealthDetailFilter,
+        now_ns: Option<u64>,
+    ) -> Result<UiHealthDetailResponse, String> {
+        if let (Some(from), Some(to)) = (filter.from_utc_ns, filter.to_utc_ns) {
+            if from > to {
+                return Err("invalid health detail date range: from_utc_ns is after to_utc_ns".to_string());
+            }
+        }
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let health = self.health_report(Some(now_ns))?;
+        let mut detail = build_ui_health_detail_response(&health, check_id, now_ns)?;
+        detail.issues = filter_health_issues(&detail.issues, &filter);
+        detail.active_issue_id = select_active_issue_id(&detail.issues, filter.selected_issue_id.as_deref());
+        let active_issue = detail.active_issue_id.as_deref();
+        let filtered_timeline = filter_timeline_for_issue(&detail.timeline, active_issue, &filter);
+        let (timeline, timeline_paging) = page_timeline_entries(
+            filtered_timeline,
+            filter.timeline_page_size.unwrap_or(20),
+            filter.timeline_cursor.as_deref(),
+        )?;
+        detail.timeline = timeline;
+        detail.timeline_paging = timeline_paging;
+        Ok(detail)
+    }
+
+    pub fn ui_chat_transcript_report(&self, now_ns: Option<u64>) -> UiChatTranscriptResponse {
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let final_events = match self.store.lock() {
+            Ok(store) => store
+                .conversation_ledger()
+                .iter()
+                .filter_map(adapter_transcript_event_from_record)
+                .collect::<Vec<_>>(),
+            Err(_) => {
+                return UiChatTranscriptResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    note: Some("adapter store lock poisoned".to_string()),
+                    messages: Vec::new(),
+                };
+            }
+        };
+        let partial_events = match self.transcript_state.lock() {
+            Ok(state) => state.events.clone(),
+            Err(_) => {
+                return UiChatTranscriptResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    note: Some("adapter transcript lock poisoned".to_string()),
+                    messages: Vec::new(),
+                };
+            }
+        };
+
+        let mut final_by_key: BTreeMap<AdapterTranscriptKey, AdapterTranscriptEvent> =
+            BTreeMap::new();
+        for event in final_events {
+            let key = event.key();
+            if let Some(existing) = final_by_key.get(&key) {
+                if existing.timestamp_ns >= event.timestamp_ns {
+                    continue;
+                }
+            }
+            final_by_key.insert(key, event);
+        }
+
+        let mut partial_by_key: BTreeMap<AdapterTranscriptKey, AdapterTranscriptEvent> =
+            BTreeMap::new();
+        for event in partial_events {
+            if event.finalized {
+                continue;
+            }
+            let key = event.key();
+            if final_by_key.contains_key(&key) {
+                continue;
+            }
+            if let Some(existing) = partial_by_key.get(&key) {
+                if existing.seq >= event.seq {
+                    continue;
+                }
+            }
+            partial_by_key.insert(key, event);
+        }
+
+        let mut ordered = Vec::new();
+        for (_, event) in final_by_key {
+            ordered.push((
+                event.timestamp_ns,
+                event.correlation_id.0,
+                event.turn_id.0,
+                event.role,
+                UiTranscriptMessage {
+                    role: event.role.as_str().to_string(),
+                    source: event.source.as_str().to_string(),
+                    finalized: true,
+                    text: event.text,
+                    timestamp_ns: event.timestamp_ns,
+                },
+            ));
+        }
+        for (_, event) in partial_by_key {
+            ordered.push((
+                event.timestamp_ns,
+                event.correlation_id.0,
+                event.turn_id.0,
+                event.role,
+                UiTranscriptMessage {
+                    role: event.role.as_str().to_string(),
+                    source: event.source.as_str().to_string(),
+                    finalized: false,
+                    text: event.text,
+                    timestamp_ns: event.timestamp_ns,
+                },
+            ));
+        }
+
+        ordered.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.cmp(&right.1))
+                .then_with(|| left.2.cmp(&right.2))
+                .then_with(|| left.3.cmp(&right.3))
+        });
+        let messages = ordered
+            .into_iter()
+            .map(|(_, _, _, _, msg)| msg)
+            .collect::<Vec<_>>();
+        let note = if messages.is_empty() {
+            Some("No transcript messages yet.".to_string())
+        } else {
+            None
+        };
+
+        UiChatTranscriptResponse {
+            status: "ok".to_string(),
+            generated_at_ns: now_ns,
+            note,
+            messages,
+        }
+    }
+
+    pub fn ui_health_report_query(
+        &self,
+        request: UiHealthReportQueryRequest,
+        now_ns: Option<u64>,
+    ) -> UiHealthReportQueryResponse {
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let viewer_user_id = request
+            .viewer_user_id
+            .clone()
+            .unwrap_or_else(|| "viewer_01".to_string());
+
+        let remembered_target = self
+            .report_display_target_defaults
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&viewer_user_id).cloned());
+
+        let display_resolution =
+            resolve_report_display_target(request.display_target.as_deref(), remembered_target.as_deref());
+        let display_target_applied = match display_resolution {
+            ReportDisplayResolution::Resolved(target) => target.as_str().to_string(),
+            ReportDisplayResolution::Clarify(question) => {
+                return UiHealthReportQueryResponse {
+                    status: "ok".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_DISPLAY_TARGET_REQUIRED
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: None,
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some(question),
+                };
+            }
+        };
+
+        if let Ok(mut remembered) = self.report_display_target_defaults.lock() {
+            remembered.insert(viewer_user_id, display_target_applied.clone());
+        }
+
+        let health = match self.health_report(Some(now_ns)) {
+            Ok(v) => v,
+            Err(err) => {
+                return UiHealthReportQueryResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_INTERNAL_PIPELINE_ERROR
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: Some(display_target_applied),
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some(err),
+                };
+            }
+        };
+
+        let tenant_id = match parse_tenant_id(request.tenant_id.as_deref()) {
+            Ok(v) => v,
+            Err(reason) => {
+                return UiHealthReportQueryResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: Some(display_target_applied),
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some(reason),
+                };
+            }
+        };
+
+        let from_ns = request
+            .from_utc_ns
+            .unwrap_or(now_ns.saturating_sub(30 * 24 * 60 * 60 * 1_000_000_000));
+        let to_ns = request.to_utc_ns.unwrap_or(now_ns);
+        let time_range = match HealthReportTimeRange::v1(MonotonicTimeNs(from_ns), MonotonicTimeNs(to_ns)) {
+            Ok(v) => v,
+            Err(_) => {
+                return UiHealthReportQueryResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_DATE_RANGE_INVALID
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: Some(display_target_applied),
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some("Invalid date range.".to_string()),
+                };
+            }
+        };
+
+        let envelope = match HealthReadEnvelope::v1(
+            CorrelationId(request.correlation_id.unwrap_or(now_ns) as u128),
+            TurnId(request.turn_id.unwrap_or(1)),
+            MonotonicTimeNs(now_ns),
+        ) {
+            Ok(v) => v,
+            Err(_) => {
+                return UiHealthReportQueryResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: Some(display_target_applied),
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some("Invalid report envelope.".to_string()),
+                };
+            }
+        };
+
+        let issue_events = synth_health_issue_events(&health, &tenant_id, now_ns);
+        let report_request = HealthReportQueryReadRequest::v1(
+            envelope,
+            tenant_id,
+            request
+                .viewer_user_id
+                .clone()
+                .unwrap_or_else(|| "viewer_01".to_string()),
+            parse_report_kind(request.report_kind.as_deref()),
+            time_range,
+            request.engine_owner_filter.clone(),
+            parse_company_scope(request.company_scope.as_deref()),
+            parse_company_ids(request.company_ids.as_ref()),
+            parse_country_codes(request.country_codes.as_ref()),
+            request.escalated_only.unwrap_or(false),
+            request.unresolved_only.unwrap_or(false),
+            Some(parse_health_display_target(&display_target_applied)),
+            parse_page_action(request.page_action.as_deref()),
+            request.page_cursor.clone(),
+            request.report_context_id.clone(),
+            request.page_size.unwrap_or(25),
+            issue_events,
+        );
+
+        let report_request = match report_request {
+            Ok(v) => v,
+            Err(err) => {
+                return UiHealthReportQueryResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    reason_code: health_reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID
+                        .0
+                        .to_string(),
+                    report_context_id: None,
+                    report_revision: None,
+                    normalized_query: None,
+                    rows: Vec::new(),
+                    paging: UiHealthReportPaging {
+                        has_next: false,
+                        has_prev: false,
+                        next_cursor: None,
+                        prev_cursor: None,
+                    },
+                    display_target_applied: Some(display_target_applied),
+                    remembered_display_target: remembered_target,
+                    requires_clarification: Some(format!("Invalid report request: {err:?}")),
+                };
+            }
+        };
+
+        let engine = EngineHealthRuntime::new(EngineHealthConfig::mvp_v1());
+        let outcome = engine.run(&Ph1HealthRequest::HealthReportQueryRead(report_request));
+        match outcome {
+            Ph1HealthResponse::HealthReportQueryReadOk(ok) => {
+                map_health_report_ok(ok, now_ns, remembered_target)
+            }
+            Ph1HealthResponse::Refuse(refuse) => UiHealthReportQueryResponse {
+                status: "error".to_string(),
+                generated_at_ns: now_ns,
+                reason_code: refuse.reason_code.0.to_string(),
+                report_context_id: None,
+                report_revision: None,
+                normalized_query: None,
+                rows: Vec::new(),
+                paging: UiHealthReportPaging {
+                    has_next: false,
+                    has_prev: false,
+                    next_cursor: None,
+                    prev_cursor: None,
+                },
+                display_target_applied: Some(display_target_applied),
+                remembered_display_target: remembered_target,
+                requires_clarification: Some(refuse.message),
+            },
+            _ => UiHealthReportQueryResponse {
+                status: "error".to_string(),
+                generated_at_ns: now_ns,
+                reason_code: health_reason_codes::PH1_HEALTH_INTERNAL_PIPELINE_ERROR
+                    .0
+                    .to_string(),
+                report_context_id: None,
+                report_revision: None,
+                normalized_query: None,
+                rows: Vec::new(),
+                paging: UiHealthReportPaging {
+                    has_next: false,
+                    has_prev: false,
+                    next_cursor: None,
+                    prev_cursor: None,
+                },
+                display_target_applied: Some(display_target_applied),
+                remembered_display_target: remembered_target,
+                requires_clarification: Some("Unexpected health report response.".to_string()),
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_transcript_updates(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        device_id: Option<&DeviceId>,
+        user_text_partial: Option<String>,
+        user_text_final: Option<String>,
+        selene_text_partial: Option<String>,
+        selene_text_final: Option<String>,
+    ) -> Result<(), String> {
+        if let Some(text) = user_text_partial {
+            self.push_transcript_partial_event(
+                correlation_id,
+                turn_id,
+                AdapterTranscriptRole::User,
+                AdapterTranscriptSource::Ph1C,
+                text,
+                now.0,
+            )?;
+        }
+        if let Some(text) = selene_text_partial {
+            self.push_transcript_partial_event(
+                correlation_id,
+                turn_id,
+                AdapterTranscriptRole::Selene,
+                AdapterTranscriptSource::Ph1Write,
+                text,
+                now.0,
+            )?;
+        }
+        if let Some(text) = user_text_final {
+            append_transcript_final_conversation_turn(
+                store,
+                now,
+                correlation_id,
+                turn_id,
+                actor_user_id,
+                device_id,
+                ConversationRole::User,
+                ConversationSource::VoiceTranscript,
+                &text,
+            )?;
+            self.clear_transcript_partials_for_key(
+                correlation_id,
+                turn_id,
+                AdapterTranscriptRole::User,
+                AdapterTranscriptSource::Ph1C,
+            )?;
+        }
+        if let Some(text) = selene_text_final {
+            append_transcript_final_conversation_turn(
+                store,
+                now,
+                correlation_id,
+                turn_id,
+                actor_user_id,
+                device_id,
+                ConversationRole::Selene,
+                ConversationSource::SeleneOutput,
+                &text,
+            )?;
+            self.clear_transcript_partials_for_key(
+                correlation_id,
+                turn_id,
+                AdapterTranscriptRole::Selene,
+                AdapterTranscriptSource::Ph1Write,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn push_transcript_partial_event(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        role: AdapterTranscriptRole,
+        source: AdapterTranscriptSource,
+        text: String,
+        timestamp_ns: u64,
+    ) -> Result<(), String> {
+        let mut state = self
+            .transcript_state
+            .lock()
+            .map_err(|_| "adapter transcript lock poisoned".to_string())?;
+        let seq = state.next_seq;
+        state.next_seq = state.next_seq.saturating_add(1);
+        state.events.push(AdapterTranscriptEvent {
+            seq,
+            correlation_id,
+            turn_id,
+            role,
+            source,
+            finalized: false,
+            text,
+            timestamp_ns,
+        });
+        const MAX_TRANSCRIPT_EVENTS: usize = 4096;
+        if state.events.len() > MAX_TRANSCRIPT_EVENTS {
+            let drop_count = state.events.len().saturating_sub(MAX_TRANSCRIPT_EVENTS);
+            state.events.drain(0..drop_count);
+        }
+        Ok(())
+    }
+
+    fn clear_transcript_partials_for_key(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        role: AdapterTranscriptRole,
+        source: AdapterTranscriptSource,
+    ) -> Result<(), String> {
+        let key = AdapterTranscriptKey {
+            correlation_id: correlation_id.0,
+            turn_id: turn_id.0,
+            role,
+            source,
+        };
+        let mut state = self
+            .transcript_state
+            .lock()
+            .map_err(|_| "adapter transcript lock poisoned".to_string())?;
+        state
+            .events
+            .retain(|event| event.finalized || event.key() != key);
+        Ok(())
     }
 
     fn run_device_artifact_sync_worker_pass_internal(
@@ -728,6 +1551,11 @@ impl AdapterRuntime {
         persist_on_success: bool,
     ) -> Result<VoiceTurnAdapterResponse, String> {
         let request_for_journal = request.clone();
+        let user_text_partial = sanitize_transcript_text_option(request.user_text_partial.clone());
+        let user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
+        let selene_text_partial =
+            sanitize_transcript_text_option(request.selene_text_partial.clone());
+        let selene_text_final = sanitize_transcript_text_option(request.selene_text_final.clone());
         let app_platform = parse_app_platform(&request.app_platform)?;
         let trigger = parse_trigger(&request.trigger)?;
         let actor_user_id = UserId::new(request.actor_user_id.clone())
@@ -763,9 +1591,9 @@ impl AdapterRuntime {
             app_platform,
             trigger,
             voice_id_request,
-            actor_user_id,
-            request.tenant_id,
-            device_id,
+            actor_user_id.clone(),
+            request.tenant_id.clone(),
+            device_id.clone(),
             Vec::new(),
             empty_observation(),
         )
@@ -774,6 +1602,18 @@ impl AdapterRuntime {
             .ingress
             .run_voice_turn(&mut store, ingress_request)
             .map_err(storage_error_to_string)?;
+        self.record_transcript_updates(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            device_id.as_ref(),
+            user_text_partial,
+            user_text_final,
+            selene_text_partial,
+            selene_text_final,
+        )?;
         let response = outcome_to_adapter_response(outcome);
         if persist_on_success {
             self.append_journal_entry(request_for_journal)?;
@@ -802,7 +1642,7 @@ impl AdapterRuntime {
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(".selene/adapter/voice_turns.jsonl"));
+            .unwrap_or_else(default_adapter_store_path);
         let auto_builder_enabled = parse_auto_builder_enabled_from_env();
 
         Self::new_with_persistence(ingress, store, journal_path, auto_builder_enabled)
@@ -1130,6 +1970,100 @@ fn outcome_to_adapter_response(outcome: OsVoiceLiveTurnOutcome) -> VoiceTurnAdap
     }
 }
 
+fn sanitize_transcript_text_option(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| truncate_ascii(v.trim(), 8192))
+        .filter(|v| !v.trim().is_empty())
+}
+
+fn adapter_transcript_role_from_storage(role: ConversationRole) -> AdapterTranscriptRole {
+    match role {
+        ConversationRole::User => AdapterTranscriptRole::User,
+        ConversationRole::Selene => AdapterTranscriptRole::Selene,
+    }
+}
+
+fn adapter_transcript_source_from_storage(
+    source: ConversationSource,
+) -> Option<AdapterTranscriptSource> {
+    match source {
+        ConversationSource::VoiceTranscript => Some(AdapterTranscriptSource::Ph1C),
+        ConversationSource::SeleneOutput => Some(AdapterTranscriptSource::Ph1Write),
+        ConversationSource::TypedText => Some(AdapterTranscriptSource::UiText),
+        ConversationSource::Tombstone => None,
+    }
+}
+
+fn adapter_transcript_event_from_record(
+    record: &selene_kernel_contracts::ph1f::ConversationTurnRecord,
+) -> Option<AdapterTranscriptEvent> {
+    let source = adapter_transcript_source_from_storage(record.source)?;
+    Some(AdapterTranscriptEvent {
+        seq: record.conversation_turn_id.0,
+        correlation_id: record.correlation_id,
+        turn_id: record.turn_id,
+        role: adapter_transcript_role_from_storage(record.role),
+        source,
+        finalized: true,
+        text: record.text.clone(),
+        timestamp_ns: record.created_at.0,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_transcript_final_conversation_turn(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: Option<&DeviceId>,
+    role: ConversationRole,
+    source: ConversationSource,
+    text: &str,
+) -> Result<(), String> {
+    let text = truncate_ascii(text.trim(), 8192);
+    if text.is_empty() {
+        return Ok(());
+    }
+    let idempotency_key = sanitize_idempotency_token(&format!(
+        "adapter_transcript:{}:{}:{}:{}",
+        correlation_id.0,
+        turn_id.0,
+        match role {
+            ConversationRole::User => "USER",
+            ConversationRole::Selene => "SELENE",
+        },
+        match source {
+            ConversationSource::VoiceTranscript => "PH1.C",
+            ConversationSource::TypedText => "UI.TEXT",
+            ConversationSource::SeleneOutput => "PH1.WRITE",
+            ConversationSource::Tombstone => "TOMBSTONE",
+        }
+    ));
+    let input = ConversationTurnInput::v1(
+        now,
+        correlation_id,
+        turn_id,
+        None,
+        actor_user_id.clone(),
+        device_id.cloned(),
+        role,
+        source,
+        text.clone(),
+        stable_hash_hex_16(&text),
+        PrivacyScope::PublicChat,
+        Some(idempotency_key),
+        None,
+        None,
+    )
+    .map_err(|err| format!("invalid transcript conversation input: {err:?}"))?;
+    let _ = store
+        .append_conversation_turn(input)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
 fn storage_error_to_string(err: StorageError) -> String {
     format!("{err:?}")
 }
@@ -1289,6 +2223,748 @@ fn system_time_now_ns() -> u64 {
     }
 }
 
+fn default_adapter_store_path() -> PathBuf {
+    if let Ok(home) = env::var("HOME") {
+        let home = home.trim();
+        if !home.is_empty() {
+            return PathBuf::from(home).join(".selene/adapter/voice_turns.jsonl");
+        }
+    }
+    PathBuf::from(".selene/adapter/voice_turns.jsonl")
+}
+
+fn parse_tenant_id(raw: Option<&str>) -> Result<TenantId, String> {
+    let tenant = raw.unwrap_or("tenant_a").trim();
+    TenantId::new(tenant.to_string()).map_err(|err| format!("invalid tenant_id: {err:?}"))
+}
+
+fn parse_report_kind(raw: Option<&str>) -> HealthReportKind {
+    match raw.unwrap_or("UNRESOLVED_ESCALATED").trim().to_ascii_uppercase().as_str() {
+        "MISSED_STT" => HealthReportKind::MissedStt,
+        "ISSUE_STATUS" => HealthReportKind::IssueStatus,
+        _ => HealthReportKind::UnresolvedEscalated,
+    }
+}
+
+fn parse_company_scope(raw: Option<&str>) -> HealthCompanyScope {
+    match raw
+        .unwrap_or("TENANT_ONLY")
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
+        "CROSS_TENANT_TENANT_ROWS" => HealthCompanyScope::CrossTenantTenantRows,
+        _ => HealthCompanyScope::TenantOnly,
+    }
+}
+
+fn parse_page_action(raw: Option<&str>) -> HealthPageAction {
+    match raw.unwrap_or("FIRST").trim().to_ascii_uppercase().as_str() {
+        "NEXT" => HealthPageAction::Next,
+        "PREV" => HealthPageAction::Prev,
+        "REFRESH" => HealthPageAction::Refresh,
+        _ => HealthPageAction::First,
+    }
+}
+
+fn parse_health_display_target(raw: &str) -> HealthDisplayTarget {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "phone" => HealthDisplayTarget::Phone,
+        _ => HealthDisplayTarget::Desktop,
+    }
+}
+
+fn parse_company_ids(raw: Option<&Vec<String>>) -> Vec<TenantId> {
+    let Some(values) = raw else {
+        return Vec::new();
+    };
+    values
+        .iter()
+        .filter_map(|tenant| TenantId::new(tenant.trim().to_string()).ok())
+        .collect()
+}
+
+fn parse_country_codes(raw: Option<&Vec<String>>) -> Vec<String> {
+    let Some(values) = raw else {
+        return Vec::new();
+    };
+    values
+        .iter()
+        .map(|code| code.trim().to_ascii_uppercase())
+        .filter(|code| !code.is_empty())
+        .collect()
+}
+
+fn ack_state_label(state: Option<HealthAckState>) -> Option<String> {
+    state.map(|value| match value {
+        HealthAckState::Waiting => "WAITING".to_string(),
+        HealthAckState::Acknowledged => "ACKNOWLEDGED".to_string(),
+        HealthAckState::FollowupPending => "FOLLOWUP_PENDING".to_string(),
+    })
+}
+
+fn map_health_report_ok(
+    ok: HealthReportQueryReadOk,
+    generated_at_ns: u64,
+    remembered_display_target: Option<String>,
+) -> UiHealthReportQueryResponse {
+    let rows = ok
+        .rows
+        .into_iter()
+        .map(|row| UiHealthReportRow {
+            tenant_id: row.tenant_id.as_str().to_string(),
+            issue_id: row.issue_id,
+            owner_engine_id: row.owner_engine_id,
+            severity: format!("{:?}", row.severity).to_ascii_uppercase(),
+            status: format!("{:?}", row.status).to_ascii_uppercase(),
+            latest_reason_code: row.latest_reason_code.0.to_string(),
+            last_seen_at_ns: row.last_seen_at.0,
+            bcast_id: row.bcast_id,
+            ack_state: ack_state_label(row.ack_state),
+            issue_fingerprint: row.issue_fingerprint,
+            recurrence_observed: row.recurrence_observed,
+            impact_summary: row.impact_summary,
+            attempted_fix_actions: row.attempted_fix_actions,
+            current_monitoring_evidence: row.current_monitoring_evidence,
+            unresolved_reason_exact: row.unresolved_reason_exact,
+        })
+        .collect::<Vec<_>>();
+    let display_target_applied = ok.display_target_applied.map(|target| match target {
+        HealthDisplayTarget::Desktop => "desktop".to_string(),
+        HealthDisplayTarget::Phone => "phone".to_string(),
+    });
+
+    UiHealthReportQueryResponse {
+        status: "ok".to_string(),
+        generated_at_ns,
+        reason_code: ok.reason_code.0.to_string(),
+        report_context_id: Some(ok.report_context_id),
+        report_revision: Some(ok.report_revision),
+        normalized_query: Some(ok.normalized_query),
+        rows,
+        paging: UiHealthReportPaging {
+            has_next: ok.paging.has_next,
+            has_prev: ok.paging.has_prev,
+            next_cursor: ok.paging.next_cursor,
+            prev_cursor: ok.paging.prev_cursor,
+        },
+        display_target_applied,
+        remembered_display_target,
+        requires_clarification: ok.requires_clarification,
+    }
+}
+
+fn synth_health_issue_events(
+    health: &AdapterHealthResponse,
+    tenant: &TenantId,
+    now_ns: u64,
+) -> Vec<HealthIssueEvent> {
+    let mut out = Vec::new();
+
+    fn add_event(
+        out: &mut Vec<HealthIssueEvent>,
+        tenant: &TenantId,
+        now_ns: u64,
+        issue_id: &str,
+        engine_owner_id: &str,
+        severity: HealthSeverity,
+        status: HealthIssueStatus,
+        reason_code: ReasonCodeId,
+        bcast_id: Option<String>,
+        ack_state: Option<HealthAckState>,
+        impact_summary: Option<String>,
+        attempted_fix_actions: Vec<String>,
+        current_monitoring_evidence: Option<String>,
+        unresolved_reason_exact: Option<String>,
+        issue_fingerprint: Option<String>,
+        recurrence_observed: Option<bool>,
+    ) {
+        let base = HealthIssueEvent::v1(
+            tenant.clone(),
+            issue_id.to_string(),
+            engine_owner_id.to_string(),
+            severity,
+            status,
+            format!("ACTION_{}", issue_id.to_ascii_uppercase()),
+            if status == HealthIssueStatus::Resolved {
+                HealthActionResult::Pass
+            } else {
+                HealthActionResult::Retry
+            },
+            1,
+            reason_code,
+            MonotonicTimeNs(now_ns.saturating_sub(1_000_000_000)),
+            if status == HealthIssueStatus::Resolved {
+                Some(MonotonicTimeNs(now_ns))
+            } else {
+                None
+            },
+            Some(MonotonicTimeNs(now_ns.saturating_add(15 * 60 * 1_000_000_000))),
+            bcast_id,
+            ack_state,
+        );
+        let Ok(base) = base else {
+            return;
+        };
+        let with_proof = base
+            .clone()
+            .with_resolution_proof(
+                issue_fingerprint,
+                Some(MonotonicTimeNs(now_ns.saturating_sub(5 * 60 * 1_000_000_000))),
+                Some(MonotonicTimeNs(now_ns)),
+                recurrence_observed,
+            )
+            .unwrap_or(base);
+        let full = with_proof
+            .clone()
+            .with_escalation_payload(
+                impact_summary,
+                attempted_fix_actions,
+                current_monitoring_evidence,
+                unresolved_reason_exact,
+            )
+            .unwrap_or(with_proof);
+        out.push(full);
+    }
+
+    if health.sync.queue.dead_letter_count > 0 {
+        add_event(
+            &mut out,
+            tenant,
+            now_ns,
+            "sync_dead_letter",
+            "PH1.OS",
+            HealthSeverity::Critical,
+            HealthIssueStatus::Escalated,
+            reason_codes::ADAPTER_SYNC_DEADLETTER,
+            Some("bcast_sync_dead_letter".to_string()),
+            Some(HealthAckState::Waiting),
+            Some("Critical sync dead letters are blocking artifact continuity.".to_string()),
+            vec!["retry queued artifacts".to_string()],
+            Some(format!(
+                "dead_letter_count={} replay_due_count={}",
+                health.sync.queue.dead_letter_count, health.sync.queue.replay_due_count
+            )),
+            Some("dead letters remain after retry budget".to_string()),
+            Some("sync_dead_letter_fingerprint".to_string()),
+            Some(true),
+        );
+    }
+
+    if health.sync.queue.retry_pending_count > 0 {
+        add_event(
+            &mut out,
+            tenant,
+            now_ns,
+            "sync_retry_backlog",
+            "PH1.OS",
+            HealthSeverity::Warn,
+            HealthIssueStatus::Open,
+            reason_codes::ADAPTER_SYNC_RETRY,
+            None,
+            None,
+            Some("Retry queue backlog is above zero.".to_string()),
+            vec!["retry worker pass".to_string()],
+            Some(format!("retry_pending_count={}", health.sync.queue.retry_pending_count)),
+            Some("retry queue has not drained yet".to_string()),
+            Some("sync_retry_fingerprint".to_string()),
+            Some(true),
+        );
+    }
+
+    if health.sync.queue.replay_due_count > 0 {
+        add_event(
+            &mut out,
+            tenant,
+            now_ns,
+            "sync_replay_due",
+            "PH1.OS",
+            HealthSeverity::Critical,
+            HealthIssueStatus::Open,
+            reason_codes::ADAPTER_SYNC_REPLAY_DUE,
+            None,
+            None,
+            Some("Replay-due jobs exceeded threshold.".to_string()),
+            vec!["replay scan".to_string()],
+            Some(format!("replay_due_count={}", health.sync.queue.replay_due_count)),
+            Some("replay-due jobs remain unresolved".to_string()),
+            Some("sync_replay_due_fingerprint".to_string()),
+            Some(true),
+        );
+    }
+
+    if out.is_empty() {
+        add_event(
+            &mut out,
+            tenant,
+            now_ns,
+            "health_nominal",
+            "PH1.HEALTH",
+            HealthSeverity::Info,
+            HealthIssueStatus::Resolved,
+            ReasonCodeId(health_reason_codes::PH1_HEALTH_OK_REPORT_QUERY_READ.0),
+            None,
+            Some(HealthAckState::Acknowledged),
+            Some("No active unresolved health issues.".to_string()),
+            vec!["daily health scan".to_string()],
+            Some("no recurrence detected".to_string()),
+            Some("resolved by live verification".to_string()),
+            Some("health_nominal_fingerprint".to_string()),
+            Some(false),
+        );
+    }
+
+    out
+}
+
+const UI_HEALTH_CHECKS: [(&str, &str); 8] = [
+    ("VOICE", "Voice"),
+    ("WAKE", "Wake"),
+    ("SYNC", "Sync"),
+    ("STT", "STT"),
+    ("TTS", "TTS"),
+    ("DELIVERY", "Delivery"),
+    ("BUILDER", "Builder"),
+    ("MEMORY", "Memory"),
+];
+
+fn build_ui_health_checks_response(
+    health: &AdapterHealthResponse,
+    generated_at_ns: u64,
+) -> UiHealthChecksResponse {
+    let sync_open = health
+        .sync
+        .queue
+        .retry_pending_count
+        .saturating_add(health.sync.queue.dead_letter_count)
+        .saturating_add(health.sync.queue.replay_due_count);
+    let sync_status =
+        if health.sync.queue.dead_letter_count > 0 || health.sync.queue.replay_due_count > 0 {
+            "CRITICAL"
+        } else if sync_open > 0
+            || health.sync.queue.in_flight_count > 0
+            || health.sync.queue.queued_count > 0
+        {
+            "AT_RISK"
+        } else {
+            "HEALTHY"
+        };
+    let builder_status = builder_health_status(health);
+    let builder_open = if builder_status == "HEALTHY" { 0 } else { 1 };
+
+    let checks = UI_HEALTH_CHECKS
+        .iter()
+        .map(|(check_id, label)| {
+            let (status, open_issue_count, last_event_at_ns) = match *check_id {
+                "SYNC" => (
+                    sync_status.to_string(),
+                    sync_open,
+                    health.sync.worker.last_pass_at_ns,
+                ),
+                "BUILDER" => (
+                    builder_status.to_string(),
+                    builder_open,
+                    health.sync.worker.last_pass_at_ns,
+                ),
+                _ => ("HEALTHY".to_string(), 0, health.sync.worker.last_pass_at_ns),
+            };
+            UiHealthCheckRow {
+                check_id: (*check_id).to_string(),
+                label: (*label).to_string(),
+                status,
+                open_issue_count,
+                last_event_at_ns,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    UiHealthChecksResponse {
+        status: "ok".to_string(),
+        generated_at_ns,
+        checks,
+    }
+}
+
+fn build_ui_health_detail_response(
+    health: &AdapterHealthResponse,
+    check_id: &str,
+    generated_at_ns: u64,
+) -> Result<UiHealthDetailResponse, String> {
+    let Some((normalized, label)) = normalize_ui_health_check_id(check_id) else {
+        return Err(format!(
+            "invalid health check id '{}'; expected one of VOICE|WAKE|SYNC|STT|TTS|DELIVERY|BUILDER|MEMORY",
+            check_id
+        ));
+    };
+    let (summary, issues, timeline) = match normalized {
+        "SYNC" => build_sync_detail(health),
+        "BUILDER" => build_builder_detail(health),
+        _ => (
+            UiHealthSummary {
+                open_issues: 0,
+                critical_open_count: 0,
+                auto_resolved_24h_count: 0,
+                escalated_24h_count: 0,
+                mttr_ms: None,
+            },
+            Vec::new(),
+            Vec::new(),
+        ),
+    };
+
+    let active_issue_id = issues.first().map(|issue| issue.issue_id.clone());
+    let timeline_count = timeline.len().min(u32::MAX as usize) as u32;
+    Ok(UiHealthDetailResponse {
+        status: "ok".to_string(),
+        generated_at_ns,
+        selected_check_id: normalized.to_string(),
+        selected_check_label: label.to_string(),
+        summary,
+        issues,
+        active_issue_id,
+        timeline,
+        timeline_paging: UiHealthTimelinePaging {
+            has_next: false,
+            next_cursor: None,
+            total_entries: timeline_count,
+            visible_entries: timeline_count,
+        },
+    })
+}
+
+fn filter_health_issues(issues: &[UiHealthIssueRow], filter: &UiHealthDetailFilter) -> Vec<UiHealthIssueRow> {
+    let query = filter
+        .issue_query
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let owner = filter
+        .engine_owner
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+
+    issues
+        .iter()
+        .filter(|issue| {
+            if filter.open_only {
+                let is_open = issue.status == "OPEN"
+                    || issue.status == "ESCALATED"
+                    || issue.resolution_state == "UNRESOLVED";
+                if !is_open {
+                    return false;
+                }
+            }
+            if filter.critical_only && issue.severity != "CRITICAL" {
+                return false;
+            }
+            if filter.escalated_only && issue.status != "ESCALATED" {
+                return false;
+            }
+            if let Some(owner_filter) = owner.as_deref() {
+                if !issue.engine_owner.to_ascii_lowercase().contains(owner_filter) {
+                    return false;
+                }
+            }
+            if let Some(query_filter) = query.as_deref() {
+                let haystack = format!(
+                    "{} {} {}",
+                    issue.issue_id, issue.issue_type, issue.engine_owner
+                )
+                .to_ascii_lowercase();
+                if !haystack.contains(query_filter) {
+                    return false;
+                }
+            }
+            let issue_time = issue.last_update_at_ns.unwrap_or(0);
+            if let Some(from) = filter.from_utc_ns {
+                if issue_time < from {
+                    return false;
+                }
+            }
+            if let Some(to) = filter.to_utc_ns {
+                if issue_time > to {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect::<Vec<_>>()
+}
+
+fn select_active_issue_id(
+    issues: &[UiHealthIssueRow],
+    requested_issue_id: Option<&str>,
+) -> Option<String> {
+    if let Some(requested) = requested_issue_id {
+        if issues.iter().any(|issue| issue.issue_id == requested) {
+            return Some(requested.to_string());
+        }
+    }
+    issues.first().map(|issue| issue.issue_id.clone())
+}
+
+fn filter_timeline_for_issue(
+    timeline: &[UiHealthTimelineEntry],
+    active_issue_id: Option<&str>,
+    filter: &UiHealthDetailFilter,
+) -> Vec<UiHealthTimelineEntry> {
+    let mut out = timeline
+        .iter()
+        .filter(|entry| {
+            if let Some(issue_id) = active_issue_id {
+                if entry.issue_id != issue_id {
+                    return false;
+                }
+            }
+            let at_ns = entry.at_ns.unwrap_or(0);
+            if let Some(from) = filter.from_utc_ns {
+                if at_ns < from {
+                    return false;
+                }
+            }
+            if let Some(to) = filter.to_utc_ns {
+                if at_ns > to {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    out.sort_by(|left, right| {
+        right
+            .at_ns
+            .unwrap_or(0)
+            .cmp(&left.at_ns.unwrap_or(0))
+            .then_with(|| left.issue_id.cmp(&right.issue_id))
+            .then_with(|| left.action_id.cmp(&right.action_id))
+    });
+    out
+}
+
+fn parse_timeline_cursor(cursor: Option<&str>) -> Result<usize, String> {
+    let Some(cursor) = cursor else {
+        return Ok(0);
+    };
+    let (prefix, value) = cursor
+        .split_once(':')
+        .ok_or_else(|| "invalid health detail timeline cursor format".to_string())?;
+    if prefix != "idx" {
+        return Err("invalid health detail timeline cursor prefix".to_string());
+    }
+    value
+        .parse::<usize>()
+        .map_err(|_| "invalid health detail timeline cursor value".to_string())
+}
+
+fn page_timeline_entries(
+    timeline: Vec<UiHealthTimelineEntry>,
+    page_size: u16,
+    cursor: Option<&str>,
+) -> Result<(Vec<UiHealthTimelineEntry>, UiHealthTimelinePaging), String> {
+    let total = timeline.len();
+    let page_size = page_size.clamp(1, 200) as usize;
+    let start = parse_timeline_cursor(cursor)?;
+    let start = start.min(total);
+    let end = start.saturating_add(page_size).min(total);
+    let slice = timeline[start..end].to_vec();
+    let has_next = end < total;
+    let next_cursor = if has_next {
+        Some(format!("idx:{end}"))
+    } else {
+        None
+    };
+    Ok((
+        slice,
+        UiHealthTimelinePaging {
+            has_next,
+            next_cursor,
+            total_entries: total.min(u32::MAX as usize) as u32,
+            visible_entries: end.saturating_sub(start).min(u32::MAX as usize) as u32,
+        },
+    ))
+}
+
+fn normalize_ui_health_check_id(raw: &str) -> Option<(&'static str, &'static str)> {
+    let normalized = raw.trim().to_ascii_uppercase();
+    UI_HEALTH_CHECKS
+        .iter()
+        .find(|(check_id, _)| *check_id == normalized)
+        .copied()
+}
+
+fn builder_health_status(health: &AdapterHealthResponse) -> &'static str {
+    let last = health
+        .sync
+        .improvement
+        .last_builder_status
+        .as_deref()
+        .unwrap_or("");
+    if last.starts_with("ERROR") {
+        "CRITICAL"
+    } else if last.starts_with("REFUSED") {
+        "AT_RISK"
+    } else {
+        "HEALTHY"
+    }
+}
+
+fn build_sync_detail(
+    health: &AdapterHealthResponse,
+) -> (
+    UiHealthSummary,
+    Vec<UiHealthIssueRow>,
+    Vec<UiHealthTimelineEntry>,
+) {
+    let mut issues = Vec::new();
+    let mut timeline = Vec::new();
+    let at_ns = health.sync.worker.last_pass_at_ns;
+
+    if health.sync.queue.retry_pending_count > 0 {
+        issues.push(UiHealthIssueRow {
+            issue_id: "sync_retry_backlog".to_string(),
+            severity: "MEDIUM".to_string(),
+            issue_type: "SYNC_RETRY_BACKLOG".to_string(),
+            engine_owner: "PH1.OS".to_string(),
+            first_seen_at_ns: at_ns,
+            last_update_at_ns: at_ns,
+            status: "OPEN".to_string(),
+            resolution_state: "UNRESOLVED".to_string(),
+        });
+        timeline.push(UiHealthTimelineEntry {
+            issue_id: "sync_retry_backlog".to_string(),
+            at_ns,
+            action_id: "SYNC_WORKER_RETRY_PASS".to_string(),
+            result: format!("retry_pending={}", health.sync.queue.retry_pending_count),
+            reason_code: reason_codes::ADAPTER_SYNC_RETRY.0.to_string(),
+        });
+    }
+    if health.sync.queue.dead_letter_count > 0 {
+        issues.push(UiHealthIssueRow {
+            issue_id: "sync_dead_letter".to_string(),
+            severity: "CRITICAL".to_string(),
+            issue_type: "SYNC_DEAD_LETTER".to_string(),
+            engine_owner: "PH1.OS".to_string(),
+            first_seen_at_ns: at_ns,
+            last_update_at_ns: at_ns,
+            status: "ESCALATED".to_string(),
+            resolution_state: "UNRESOLVED".to_string(),
+        });
+        timeline.push(UiHealthTimelineEntry {
+            issue_id: "sync_dead_letter".to_string(),
+            at_ns,
+            action_id: "SYNC_WORKER_DEADLETTER".to_string(),
+            result: format!("dead_lettered={}", health.sync.queue.dead_letter_count),
+            reason_code: reason_codes::ADAPTER_SYNC_DEADLETTER.0.to_string(),
+        });
+    }
+    if health.sync.queue.replay_due_count > 0 {
+        issues.push(UiHealthIssueRow {
+            issue_id: "sync_replay_due".to_string(),
+            severity: "CRITICAL".to_string(),
+            issue_type: "SYNC_REPLAY_DUE".to_string(),
+            engine_owner: "PH1.OS".to_string(),
+            first_seen_at_ns: at_ns,
+            last_update_at_ns: at_ns,
+            status: "OPEN".to_string(),
+            resolution_state: "UNRESOLVED".to_string(),
+        });
+        timeline.push(UiHealthTimelineEntry {
+            issue_id: "sync_replay_due".to_string(),
+            at_ns,
+            action_id: "SYNC_WORKER_REPLAY_DUE_SCAN".to_string(),
+            result: format!("replay_due={}", health.sync.queue.replay_due_count),
+            reason_code: reason_codes::ADAPTER_SYNC_REPLAY_DUE.0.to_string(),
+        });
+    }
+
+    if timeline.is_empty() {
+        timeline.push(UiHealthTimelineEntry {
+            issue_id: "sync_nominal".to_string(),
+            at_ns,
+            action_id: "SYNC_WORKER_PASS".to_string(),
+            result: "NO_OPEN_ISSUES".to_string(),
+            reason_code: "0".to_string(),
+        });
+    }
+
+    let critical_open = issues
+        .iter()
+        .filter(|issue| issue.severity == "CRITICAL")
+        .count() as u32;
+    let summary = UiHealthSummary {
+        open_issues: issues.len() as u32,
+        critical_open_count: critical_open,
+        auto_resolved_24h_count: health.sync.worker.acked_total.min(u16::MAX as u64) as u32,
+        escalated_24h_count: health.sync.queue.dead_letter_count,
+        mttr_ms: None,
+    };
+    (summary, issues, timeline)
+}
+
+fn build_builder_detail(
+    health: &AdapterHealthResponse,
+) -> (
+    UiHealthSummary,
+    Vec<UiHealthIssueRow>,
+    Vec<UiHealthTimelineEntry>,
+) {
+    let at_ns = health.sync.worker.last_pass_at_ns;
+    let mut issues = Vec::new();
+    let mut timeline = Vec::new();
+    let builder_status = health
+        .sync
+        .improvement
+        .last_builder_status
+        .clone()
+        .unwrap_or_else(|| "NO_BUILDER_ACTIVITY".to_string());
+    let status = builder_health_status(health);
+
+    if status != "HEALTHY" {
+        issues.push(UiHealthIssueRow {
+            issue_id: "builder_health".to_string(),
+            severity: if status == "CRITICAL" {
+                "CRITICAL".to_string()
+            } else {
+                "HIGH".to_string()
+            },
+            issue_type: "BUILDER_STATUS".to_string(),
+            engine_owner: "PH1.BUILDER".to_string(),
+            first_seen_at_ns: at_ns,
+            last_update_at_ns: at_ns,
+            status: "OPEN".to_string(),
+            resolution_state: "UNRESOLVED".to_string(),
+        });
+    }
+
+    timeline.push(UiHealthTimelineEntry {
+        issue_id: "builder_health".to_string(),
+        at_ns,
+        action_id: "BUILDER_STATUS_TRACK".to_string(),
+        result: builder_status,
+        reason_code: "0".to_string(),
+    });
+    let summary = UiHealthSummary {
+        open_issues: issues.len() as u32,
+        critical_open_count: issues
+            .iter()
+            .filter(|issue| issue.severity == "CRITICAL")
+            .count() as u32,
+        auto_resolved_24h_count: health
+            .sync
+            .improvement
+            .builder_completed_total
+            .min(u16::MAX as u64) as u32,
+        escalated_24h_count: 0,
+        mttr_ms: None,
+    };
+    (summary, issues, timeline)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1304,6 +2980,33 @@ mod tests {
             tenant_id: Some("tenant_a".to_string()),
             device_id: Some("adapter_device_1".to_string()),
             now_ns: Some(3),
+            user_text_partial: None,
+            user_text_final: None,
+            selene_text_partial: None,
+            selene_text_final: None,
+        }
+    }
+
+    fn base_report_query_request() -> UiHealthReportQueryRequest {
+        UiHealthReportQueryRequest {
+            correlation_id: Some(10_001),
+            turn_id: Some(20_001),
+            tenant_id: Some("tenant_a".to_string()),
+            viewer_user_id: Some("viewer_01".to_string()),
+            report_kind: Some("UNRESOLVED_ESCALATED".to_string()),
+            from_utc_ns: Some(1),
+            to_utc_ns: Some(5_000_000_000),
+            engine_owner_filter: None,
+            company_scope: Some("TENANT_ONLY".to_string()),
+            company_ids: None,
+            country_codes: None,
+            escalated_only: Some(false),
+            unresolved_only: Some(false),
+            display_target: Some("desktop".to_string()),
+            page_action: Some("FIRST".to_string()),
+            page_cursor: None,
+            report_context_id: None,
+            page_size: Some(20),
         }
     }
 
@@ -1499,5 +3202,274 @@ mod tests {
         assert_eq!(health.outcome, "HEALTHY");
         assert!(health.sync.worker.pass_count >= 1);
         assert!(health.sync.worker.last_pass_at_ns.is_some());
+    }
+
+    #[test]
+    fn at_adapter_10_ui_health_checks_order_is_locked() {
+        let runtime = AdapterRuntime::default();
+        let response = runtime
+            .ui_health_checks_report(Some(111))
+            .expect("ui health checks should succeed");
+        let order = response
+            .checks
+            .iter()
+            .map(|check| check.check_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            order,
+            vec!["VOICE", "WAKE", "SYNC", "STT", "TTS", "DELIVERY", "BUILDER", "MEMORY"]
+        );
+    }
+
+    #[test]
+    fn at_adapter_11_ui_health_detail_rejects_unknown_check() {
+        let runtime = AdapterRuntime::default();
+        let err = runtime
+            .ui_health_detail_report("NOT_A_CHECK", Some(111))
+            .expect_err("unknown check id must fail");
+        assert!(err.contains("invalid health check id"));
+    }
+
+    #[test]
+    fn at_adapter_12_ui_chat_transcript_maps_user_and_selene_final_rows() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.user_text_final = Some("book payroll for Friday".to_string());
+        req.selene_text_final = Some("Done. Payroll reminder is prepared.".to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("voice turn with transcript finals must succeed");
+        let response = runtime.ui_chat_transcript_report(Some(222));
+        assert_eq!(response.status, "ok");
+        assert!(response.note.is_none());
+        assert!(response.messages.iter().any(|message| {
+            message.role == "USER"
+                && message.source == "PH1.C"
+                && message.finalized
+                && message.text == "book payroll for Friday"
+        }));
+        assert!(response.messages.iter().any(|message| {
+            message.role == "SELENE"
+                && message.source == "PH1.WRITE"
+                && message.finalized
+                && message.text == "Done. Payroll reminder is prepared."
+        }));
+    }
+
+    #[test]
+    fn at_adapter_13_partial_replaced_by_final_without_ghost_line() {
+        let runtime = AdapterRuntime::default();
+        let mut req_partial = base_request();
+        req_partial.user_text_partial = Some("book pay".to_string());
+        runtime
+            .run_voice_turn(req_partial)
+            .expect("partial transcript turn must succeed");
+        let before = runtime.ui_chat_transcript_report(Some(333));
+        assert!(before
+            .messages
+            .iter()
+            .any(|message| !message.finalized && message.text == "book pay"));
+
+        let mut req_final = base_request();
+        req_final.user_text_final = Some("book payroll for Friday".to_string());
+        req_final.now_ns = Some(4);
+        runtime
+            .run_voice_turn(req_final)
+            .expect("final transcript turn must succeed");
+        let after = runtime.ui_chat_transcript_report(Some(444));
+        assert!(after.messages.iter().any(|message| {
+            message.finalized && message.text == "book payroll for Friday" && message.role == "USER"
+        }));
+        assert!(!after
+            .messages
+            .iter()
+            .any(|message| !message.finalized && message.text == "book pay"));
+    }
+
+    #[test]
+    fn at_adapter_14_partial_rows_visible_when_final_not_present() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.user_text_partial = Some("checking".to_string());
+        req.selene_text_partial = Some("working on it".to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("partial-only turn must succeed");
+        let response = runtime.ui_chat_transcript_report(Some(555));
+        assert!(response.messages.iter().any(|message| {
+            !message.finalized
+                && message.role == "USER"
+                && message.source == "PH1.C"
+                && message.text == "checking"
+        }));
+        assert!(response.messages.iter().any(|message| {
+            !message.finalized
+                && message.role == "SELENE"
+                && message.source == "PH1.WRITE"
+                && message.text == "working on it"
+        }));
+    }
+
+    #[test]
+    fn at_adapter_15_report_query_clarify_then_remember_display_target() {
+        let runtime = AdapterRuntime::default();
+        let mut clarify_req = base_report_query_request();
+        clarify_req.display_target = None;
+        let clarify = runtime.ui_health_report_query(clarify_req, Some(5_000_000_000));
+        assert_eq!(
+            clarify.reason_code,
+            health_reason_codes::PH1_HEALTH_DISPLAY_TARGET_REQUIRED
+                .0
+                .to_string()
+        );
+        assert!(clarify.requires_clarification.is_some());
+        assert!(clarify.display_target_applied.is_none());
+
+        let set_target = runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_001));
+        assert_eq!(set_target.status, "ok");
+        assert_eq!(set_target.display_target_applied.as_deref(), Some("desktop"));
+        assert!(set_target.requires_clarification.is_none());
+
+        let mut remembered_req = base_report_query_request();
+        remembered_req.display_target = None;
+        let remembered = runtime.ui_health_report_query(remembered_req, Some(5_000_000_002));
+        assert_eq!(remembered.status, "ok");
+        assert_eq!(remembered.display_target_applied.as_deref(), Some("desktop"));
+        assert!(remembered.requires_clarification.is_none());
+    }
+
+    #[test]
+    fn at_adapter_16_report_query_context_supports_follow_up_patch() {
+        let runtime = AdapterRuntime::default();
+        let first = runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_100));
+        assert_eq!(first.status, "ok");
+        let context_id = first
+            .report_context_id
+            .clone()
+            .expect("report context id should be present");
+
+        let mut follow_up = base_report_query_request();
+        follow_up.report_context_id = Some(context_id.clone());
+        follow_up.country_codes = Some(vec!["CN".to_string()]);
+        let second = runtime.ui_health_report_query(follow_up, Some(5_000_000_101));
+        assert_eq!(second.status, "ok");
+        assert_eq!(second.report_context_id.as_deref(), Some(context_id.as_str()));
+    }
+
+    fn sample_health_issues_for_filters() -> Vec<UiHealthIssueRow> {
+        vec![
+            UiHealthIssueRow {
+                issue_id: "sync_retry_backlog".to_string(),
+                severity: "MEDIUM".to_string(),
+                issue_type: "SYNC_RETRY_BACKLOG".to_string(),
+                engine_owner: "PH1.OS".to_string(),
+                first_seen_at_ns: Some(100),
+                last_update_at_ns: Some(200),
+                status: "OPEN".to_string(),
+                resolution_state: "UNRESOLVED".to_string(),
+            },
+            UiHealthIssueRow {
+                issue_id: "sync_dead_letter".to_string(),
+                severity: "CRITICAL".to_string(),
+                issue_type: "SYNC_DEAD_LETTER".to_string(),
+                engine_owner: "PH1.OS".to_string(),
+                first_seen_at_ns: Some(101),
+                last_update_at_ns: Some(201),
+                status: "ESCALATED".to_string(),
+                resolution_state: "UNRESOLVED".to_string(),
+            },
+            UiHealthIssueRow {
+                issue_id: "sync_replay_due".to_string(),
+                severity: "CRITICAL".to_string(),
+                issue_type: "SYNC_REPLAY_DUE".to_string(),
+                engine_owner: "PH1.OS".to_string(),
+                first_seen_at_ns: Some(102),
+                last_update_at_ns: Some(202),
+                status: "OPEN".to_string(),
+                resolution_state: "UNRESOLVED".to_string(),
+            },
+        ]
+    }
+
+    fn sample_timeline_for_filters() -> Vec<UiHealthTimelineEntry> {
+        vec![
+            UiHealthTimelineEntry {
+                issue_id: "sync_dead_letter".to_string(),
+                at_ns: Some(400),
+                action_id: "A4".to_string(),
+                result: "r4".to_string(),
+                reason_code: "4".to_string(),
+            },
+            UiHealthTimelineEntry {
+                issue_id: "sync_dead_letter".to_string(),
+                at_ns: Some(300),
+                action_id: "A3".to_string(),
+                result: "r3".to_string(),
+                reason_code: "3".to_string(),
+            },
+            UiHealthTimelineEntry {
+                issue_id: "sync_dead_letter".to_string(),
+                at_ns: Some(200),
+                action_id: "A2".to_string(),
+                result: "r2".to_string(),
+                reason_code: "2".to_string(),
+            },
+            UiHealthTimelineEntry {
+                issue_id: "sync_dead_letter".to_string(),
+                at_ns: Some(100),
+                action_id: "A1".to_string(),
+                result: "r1".to_string(),
+                reason_code: "1".to_string(),
+            },
+        ]
+    }
+
+    #[test]
+    fn at_adapter_17_health_detail_filters_open_critical_escalated() {
+        let issues = sample_health_issues_for_filters();
+        let filter = UiHealthDetailFilter {
+            open_only: true,
+            critical_only: true,
+            escalated_only: true,
+            ..UiHealthDetailFilter::default()
+        };
+        let filtered = filter_health_issues(&issues, &filter);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].issue_id, "sync_dead_letter");
+    }
+
+    #[test]
+    fn at_adapter_18_health_detail_timeline_cursor_paging_is_deterministic() {
+        let timeline = sample_timeline_for_filters();
+        let filter = UiHealthDetailFilter {
+            selected_issue_id: Some("sync_dead_letter".to_string()),
+            ..UiHealthDetailFilter::default()
+        };
+        let filtered = filter_timeline_for_issue(&timeline, Some("sync_dead_letter"), &filter);
+        let (page_one, paging_one) = page_timeline_entries(filtered.clone(), 2, None).unwrap();
+        assert_eq!(page_one.len(), 2);
+        assert_eq!(page_one[0].action_id, "A4");
+        assert!(paging_one.has_next);
+        assert_eq!(paging_one.next_cursor.as_deref(), Some("idx:2"));
+
+        let (page_two, paging_two) =
+            page_timeline_entries(filtered, 2, paging_one.next_cursor.as_deref()).unwrap();
+        assert_eq!(page_two.len(), 2);
+        assert_eq!(page_two[0].action_id, "A2");
+        assert!(!paging_two.has_next);
+    }
+
+    #[test]
+    fn at_adapter_19_health_detail_filter_rejects_invalid_date_range() {
+        let runtime = AdapterRuntime::default();
+        let filter = UiHealthDetailFilter {
+            from_utc_ns: Some(20),
+            to_utc_ns: Some(10),
+            ..UiHealthDetailFilter::default()
+        };
+        let err = runtime
+            .ui_health_detail_report_filtered("SYNC", filter, Some(100))
+            .expect_err("invalid date range must fail");
+        assert!(err.contains("invalid health detail date range"));
     }
 }

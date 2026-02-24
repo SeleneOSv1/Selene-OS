@@ -65,6 +65,30 @@ Mobile structure:
 - same content and order, stacked.
 - issue detail opens as full-screen panel.
 
+### 3A) Shared Chat Surface Contract (Voice + Text, ChatGPT-Style)
+
+This app must also support a ChatGPT-style conversation timeline for normal Selene chat, in the same visual language as desktop/mobile shell.
+
+Hard behavior:
+- when user speaks, Selene writes what user said into the transcript.
+- when Selene speaks, Selene also writes the same reply text into the transcript.
+- voice and text must stay in one timeline (no separate hidden voice-only stream).
+
+Turn display contract:
+- user spoken turn appears as `USER` message with timestamp and final transcript text.
+- Selene spoken turn appears as `SELENE` message with timestamp and final reply text.
+- partial transcripts may be shown during capture/playback, but final text must replace partial text deterministically.
+
+Source-of-truth lock:
+- displayed Selene text must come from canonical `PH1.WRITE` output.
+- spoken Selene audio (`PH1.TTS`) must match the same `PH1.WRITE` text to prevent drift.
+- user speech transcript (`PH1.C`) must be the displayed user text after finalization.
+
+Fail-closed UX:
+- if user speech is low confidence, show uncertain state and ask for clarification.
+- do not silently invent words.
+- if TTS plays but text cannot render, mark turn degraded and retry text render path.
+
 ### A) Health Checks List (first view after click on Health)
 - list items are selectable rows, not top chips.
 - minimum list entries:
@@ -302,3 +326,270 @@ Do not include in V1:
 - `AT-HEALTH-05`: escalated issue shows `bcast_id` and reminder cadence.
 - `AT-HEALTH-06`: resolved issue is removed from open queue and kept in history.
 - `AT-HEALTH-07`: critical unresolved blocks "all green" status.
+
+## 13) UI Execution Tracker (Build Control)
+
+Status legend:
+- `TODO`: not started
+- `IN_PROGRESS`: active build
+- `DONE`: completed + verified
+- `BLOCKED`: waiting on dependency
+
+Update rule:
+- Every `DONE` item must include commit id and test/proof command.
+- Every `DONE` item must also be logged in `docs/03_BUILD_LEDGER.md`.
+
+| UI ID | Build Item | Runtime/Contract Dependency | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| HUI-01 | App shell with ChatGPT-style layout, left menu, `Health` first, desktop+mobile parity | app shell + nav | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-02 | `Health` first-click opens `Health Checks` list (row selector, not top chips) | `PH1.HEALTH` display model | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-03 | Health checks row cards (`Voice`, `Wake`, `Sync`, `STT`, `TTS`, `Delivery`, `Builder`, `Memory`) with status + counts + last event | `HEALTH_SNAPSHOT_READ` | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-04 | Selected health check summary strip (`Open`, `Critical`, `Auto-Resolved 24h`, `Escalated 24h`, `MTTR`) | `HEALTH_SNAPSHOT_READ` | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-05 | Primary queue table with severity/type/owner/timestamps/status/resolution state | `HEALTH_SNAPSHOT_READ` + table projection | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-06 | Issue detail panel timeline with reason codes + evidence refs + attempt history + blocker + deadline | `HEALTH_ISSUE_TIMELINE_READ` | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-07 | Unresolved/escalated visibility with BCAST proof (`bcast_id`, ack/reminder state) | `HEALTH_UNRESOLVED_SUMMARY_READ` + `HEALTH_REPORT_QUERY_READ` + `PH1.BCAST` refs | DONE | `cargo test -p selene_engines ph1health::tests::at_health_03_issue_timeline_exposes_bcast_reference_when_escalated -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| HUI-08 | Filters and search (`open`, `critical`, `engine`, `escalated`, date range, presets 24h/7d/30d/custom) | query params + snapshot/timeline reads | DONE | `cargo test -p selene_adapter at_adapter_17_health_detail_filters_open_critical_escalated -- --nocapture ; cargo test -p selene_adapter at_adapter_19_health_detail_filter_rejects_invalid_date_range -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| HUI-09 | Infinite scroll / pagination for recent events feed | timeline paging | DONE | `cargo test -p selene_adapter at_adapter_18_health_detail_timeline_cursor_paging_is_deterministic -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+| HUI-10 | Unknown/error/empty/loading states with fail-closed messaging (no fake green) | UI state management | TODO | |
+| HUI-11 | iOS/Android/Desktop view parity checks for same fields/order/contracts | QA parity checks | TODO | |
+| HUI-12 | Final acceptance sweep (`AT-HEALTH-01..07`) | runtime + UI integration | TODO | |
+| HUI-13 | ChatGPT-style conversation timeline shell for normal Selene chat (desktop + mobile parity) | app shell + transcript renderer | IN_PROGRESS | `cargo test -p selene_adapter -- --nocapture` |
+| HUI-14 | User voice-in -> transcript row mapping (`PH1.C` finalized text) | STT final transcript contract | DONE | `cargo test -p selene_adapter at_adapter_12_ui_chat_transcript_maps_user_and_selene_final_rows -- --nocapture` |
+| HUI-15 | Selene voice-out -> transcript row mapping (`PH1.WRITE` text + `PH1.TTS` playback parity) | WRITE/TTS parity lock | DONE | `cargo test -p selene_adapter at_adapter_12_ui_chat_transcript_maps_user_and_selene_final_rows -- --nocapture` |
+| HUI-16 | Partial->final transcript replacement logic (no duplicate ghost lines) | streaming/finalization state | DONE | `cargo test -p selene_adapter at_adapter_13_partial_replaced_by_final_without_ghost_line -- --nocapture` |
+| HUI-17 | Voice/text parity acceptance checks for both directions | end-to-end chat turn tests | TODO | |
+
+## 14) Strict Build Order (Do Not Reorder)
+
+1. `HUI-01`: shell + left nav.
+2. `HUI-02`: health checks first-click list behavior.
+3. `HUI-03` + `HUI-04`: snapshot cards + summary strip.
+4. `HUI-05`: primary queue table.
+5. `HUI-06`: issue detail panel timeline.
+6. `HUI-07`: unresolved/escalated + BCAST proof.
+7. `HUI-08` + `HUI-09`: filters/search/date range + scroll/paging.
+8. `HUI-10` + `HUI-11`: robustness states + platform parity.
+9. `HUI-12`: acceptance sweep and ledger evidence.
+10. `HUI-13`: ChatGPT-style chat timeline shell.
+11. `HUI-14` + `HUI-15`: voice-in/out transcript wiring.
+12. `HUI-16`: partial-to-final replacement behavior.
+13. `HUI-17`: voice/text parity acceptance sweep.
+
+## 15) Reporting Format Per Completed UI Item
+
+For each completed item (`HUI-xx`), record:
+- `status`: `DONE`
+- `commit`: short sha
+- `files`: touched UI/runtime paths
+- `proof`: command(s) run
+- `result`: `PASS|FAIL`
+- `notes`: any follow-up work
+
+## 16) Health Report Query Expansion (Locked 2026-02-23)
+
+Purpose:
+- Add deterministic report-query behavior so voice/text commands can request configurable Health reports and display them on desktop/phone with paging continuity.
+
+Locked user decisions:
+- Multi-company output format: `tenant-by-tenant rows` (not one collapsed aggregate row).
+- Display target memory: once the user explicitly chooses `desktop` or `phone`, remember it as per-user default until changed.
+- Page size policy: no fixed global page size; use auto-fit based on active screen/form factor.
+
+Execution insertion rule:
+- This expansion is mandatory before closing `HUI-07`, `HUI-08`, and `HUI-09`.
+- Do not mark those UI items `DONE` until this section is complete.
+
+### 16A) Contract Change Set (Must Land Before UI Closure)
+
+1. Kernel contracts (`crates/selene_kernel_contracts/src/ph1health.rs`)
+- Add deterministic report-query request/response contracts:
+  - `HealthReportQueryRequest`
+  - `HealthReportQueryResponse`
+- Add request fields:
+  - `report_kind`
+  - `time_range` (`from_utc`, `to_utc`)
+  - `engine_owner_filter`
+  - `company_scope` (`TENANT_ONLY | CROSS_TENANT_TENANT_ROWS`)
+  - `company_ids` (optional)
+  - `country_codes` (optional)
+  - `escalated_only`
+  - `unresolved_only`
+  - `display_target` (`DESKTOP | PHONE`, optional to allow one clarify)
+  - `page_action` (`FIRST | NEXT | PREV | REFRESH`)
+  - `page_cursor` (optional)
+  - `report_context_id` (for "same report but ...")
+- Add response fields:
+  - `report_context_id`
+  - `report_revision`
+  - `normalized_query`
+  - `rows` (tenant-row scoped)
+  - `paging` (`has_next`, `has_prev`, `next_cursor`, `prev_cursor`)
+  - `display_target_applied`
+  - `requires_clarification` (nullable)
+- Add fail-closed reason codes:
+  - `PH1_HEALTH_DISPLAY_TARGET_REQUIRED`
+  - `PH1_HEALTH_DATE_RANGE_INVALID`
+  - `PH1_HEALTH_COUNTRY_FILTER_INVALID`
+  - `PH1_HEALTH_CROSS_TENANT_UNAUTHORIZED`
+  - `PH1_HEALTH_REPORT_CONTEXT_NOT_FOUND`
+  - `PH1_HEALTH_PAGE_CURSOR_INVALID`
+
+2. Engine runtime (`crates/selene_engines/src/ph1health.rs`)
+- Add deterministic query projection and filtering for:
+  - time range
+  - engine owner
+  - escalated/unresolved
+  - country code
+  - tenant-by-tenant row shaping
+- Add cursor-based paging that remains deterministic under same input snapshot.
+
+3. OS orchestration clarification behavior (`crates/selene_os/src/ph1x.rs` + ingress wiring)
+- If `display_target` is missing, ask exactly one clarify question:
+  - "Where do you want this report displayed: desktop or phone?"
+- Persist chosen display target in per-user profile/defaults and reuse on later report requests.
+
+4. Adapter/API wiring (`crates/selene_adapter/src/lib.rs`, `crates/selene_adapter/src/bin/http_adapter.rs`, `crates/selene_adapter/src/bin/grpc_adapter.rs`)
+- Add request/response transport fields for report query, pagination, display target, and report-context continuation.
+- Support follow-up query patch behavior (for "same report for ...").
+
+5. ECM + DB wiring docs
+- `docs/ECM/PH1_HEALTH.md`:
+  - add capability `HEALTH_REPORT_QUERY_READ`
+  - encode cross-tenant permission gate and tenant-row output shape.
+- `docs/DB_WIRING/PH1_HEALTH.md`:
+  - keep `display-only` + `writes: NONE`
+  - add report-query read projection inputs and cursor semantics.
+
+6. Health UI plan alignment
+- `docs/36_HEALTH_ENGINE_DISPLAY_PLAN.md`:
+  - keep HUI order unchanged
+  - ensure `HUI-07/08/09` closure evidence references new report-query contract tests.
+
+### 16B) Strict Implementation Checklist (Do Not Reorder)
+
+1. Lock policy decision in docs: cross-tenant output is `tenant-by-tenant rows`.
+2. Add kernel contract types + validators + reason codes for report query.
+3. Add kernel contract tests for date-range, cursor, country filter, unauthorized cross-tenant cases.
+4. Add engine runtime report-query path (filtering + tenant-row output + deterministic paging).
+5. Add engine runtime tests for:
+- missed STT report in date range,
+- unresolved/escalated with `bcast_id`,
+- "same report but country=CN",
+- next/prev paging continuity.
+6. Add OS clarify flow for missing display target (one question only).
+7. Add per-user display-target memory behavior.
+8. Add adapter/http/grpc request-response wiring for report query + paging + report context.
+9. Add UI bindings for desktop/phone target presentation and scroll/page controls.
+10. Run acceptance suite for `HUI-07`, `HUI-08`, `HUI-09` + report query e2e.
+11. Update `docs/03_BUILD_LEDGER.md` with proof entries for each closed step.
+12. Mark `HUI-07`, `HUI-08`, `HUI-09` as `DONE` only after all above pass.
+
+### 16C) Execution Tracker (Report Query Expansion)
+
+Status legend:
+- `TODO`
+- `IN_PROGRESS`
+- `DONE`
+- `BLOCKED`
+
+| RPT ID | Work Item | Owner | Status | Evidence |
+| --- | --- | --- | --- | --- |
+| RPT-01 | Contract add: request/response/query enums + reason codes | Contracts | DONE | `cargo test -p selene_kernel_contracts ph1health -- --nocapture` |
+| RPT-02 | Runtime add: deterministic filters + tenant-row output + cursor paging | PH1.HEALTH Runtime | DONE | `cargo test -p selene_engines ph1health -- --nocapture` |
+| RPT-03 | Clarify + remembered display target (`desktop|phone`) | PH1.X + Adapter | DONE | `cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter at_adapter_15_report_query_clarify_then_remember_display_target -- --nocapture` |
+| RPT-04 | API transport wiring (HTTP/gRPC + adapter models) | Adapter | DONE | `cargo test -p selene_adapter -- --nocapture` |
+| RPT-05 | UI report rendering + paging controls (desktop/phone auto-fit) | App UI | DONE | `cargo test -p selene_adapter -- --nocapture` |
+| RPT-06 | Acceptance + ledger + HUI status closure (`HUI-07/08/09`) | QA + Runtime | DONE | `cargo test -p selene_kernel_contracts ph1health -- --nocapture ; cargo test -p selene_engines ph1health -- --nocapture ; cargo test -p selene_os ph1health -- --nocapture ; cargo test -p selene_os ph1x::tests::at_x_report_display_target_uses_explicit_then_memory_then_clarify -- --nocapture ; cargo test -p selene_adapter -- --nocapture` |
+
+## 17) Live Resolution Proof + Voice-First UX Lock (Locked 2026-02-24)
+
+This section locks the new product requirements in one place before code execution.
+
+### 17A) "100% Resolved" Acceptance Rule
+
+Core rule:
+- An issue is `100% RESOLVED` only when live production evidence proves the same issue is no longer recurring.
+
+Continuous verification:
+- After any fix is deployed, Selene must keep monitoring the same issue fingerprint used to detect the issue.
+- Fingerprint examples: event signature, error code pattern, anomaly marker set, deterministic reason-code cluster.
+
+Acceptance gate:
+- If follow-up monitoring still matches the same fingerprint, the issue remains open.
+- A fix may not be accepted while recurrence evidence exists.
+
+Closure gate:
+- Selene may close only when verification evidence shows the fix held and recurrence stopped for the defined verification window.
+
+### 17B) Failure-to-Fix Escalation Rule
+
+Escalation trigger:
+- If Selene cannot fix the issue, or cannot prove fix success through live verification, escalate immediately.
+
+Minimum escalation payload (required fields):
+- `issue_id`
+- `impact_summary`
+- `attempted_fix_actions[]`
+- `current_monitoring_evidence`
+- `unresolved_reason_exact`
+- `bcast_id` when escalation is dispatched
+
+### 17C) Primary Screen Experience (Voice-First)
+
+Landing behavior:
+- On open, Selene enters listen-ready mode and prompts for user intent.
+- Prompt wording is not fixed text. Selene must generate natural wording (NLP+LLM), not robotic static phrasing.
+
+Rule for docs and build specs:
+- This natural-language behavior is global OS policy; it does not need to be repeated in every feature section.
+- Only compliance-critical wording (for example legal/policy refusal text) may be fixed.
+
+Voice-driven report retrieval:
+- User can request any supported report by voice or text.
+- Selene must resolve query deterministically and present report without manual navigation.
+
+### 17D) Report Presentation + Rapid Switching
+
+Professional output standard:
+- Every report must render with professional structure:
+  - clear title/header
+  - clearly labeled filters
+  - deterministic column/field order
+  - clean spacing and bullet grouping for summary blocks
+
+Rapid switching:
+- "give me another report" must replace the current report view with the new report in the same display target.
+- No manual close/back clicks required.
+- Follow-up commands like "same report for all customers in China" must reuse `report_context_id` and patch only changed filters.
+
+### 17E) Voice-Wave UI Requirement
+
+- While Selene is speaking, the UI must show real-time animated voice waves.
+- Wave amplitude and cadence must track voice playback state in real time.
+- If audio is active but wave sync fails, UI must show degraded state (never fake inactive).
+
+### 17F) ChatGPT-Parity Shell Requirement
+
+- App layout must stay ChatGPT-style:
+  - side menu with traditional navigation items,
+  - center conversation/report surface,
+  - input box in center area,
+  - Selene voice waves displayed above input area.
+
+- Report view behavior:
+  - user can scroll report,
+  - user can request paging by command (example: "next page"),
+  - page size follows active screen auto-fit rules.
+
+### 17G) Execution Order Impact
+
+- Section 17 is mandatory input to `RPT-01..RPT-05` implementation.
+- Do not close `RPT-06` until Section 17 acceptance checks are added and passing.
+
+### 17H) Added Acceptance Checks (Section 17)
+
+- `AT-HEALTH-08`: issue is not closed when recurrence fingerprint still appears post-fix.
+- `AT-HEALTH-09`: unresolved/unverified issue escalation payload includes all minimum required fields.
+- `AT-HEALTH-10`: missing display target triggers one clarify question, then remembered default is reused.
+- `AT-HEALTH-11`: report follow-up patch (`same report but ...`) reuses context and replaces current report view.
+- `AT-HEALTH-12`: voice wave animates during Selene speech and enters degraded marker on sync failure.

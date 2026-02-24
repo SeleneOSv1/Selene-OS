@@ -6,9 +6,13 @@ use std::time::Duration;
 
 use selene_adapter::grpc_api::{
     voice_ingress_server::{VoiceIngress, VoiceIngressServer},
-    RunVoiceTurnRequest, RunVoiceTurnResponse,
+    RunVoiceTurnRequest, RunVoiceTurnResponse, UiHealthReportPaging, UiHealthReportQueryRequest,
+    UiHealthReportQueryResponse, UiHealthReportRow,
 };
-use selene_adapter::{AdapterRuntime, VoiceTurnAdapterRequest};
+use selene_adapter::{
+    AdapterRuntime, UiHealthReportQueryRequest as AdapterUiHealthReportQueryRequest,
+    UiHealthReportQueryResponse as AdapterUiHealthReportQueryResponse, VoiceTurnAdapterRequest,
+};
 use tonic::{transport::Server, Request, Response, Status};
 
 #[derive(Clone)]
@@ -44,6 +48,10 @@ impl VoiceIngress for GrpcVoiceIngress {
             } else {
                 Some(req.now_ns)
             },
+            user_text_partial: None,
+            user_text_final: None,
+            selene_text_partial: None,
+            selene_text_final: None,
         };
 
         let runtime = self
@@ -58,6 +66,54 @@ impl VoiceIngress for GrpcVoiceIngress {
             })),
             Err(reason) => Err(Status::invalid_argument(reason)),
         }
+    }
+
+    async fn ui_health_report_query(
+        &self,
+        request: Request<UiHealthReportQueryRequest>,
+    ) -> Result<Response<UiHealthReportQueryResponse>, Status> {
+        let req = request.into_inner();
+        let company_ids = if req.company_ids.is_empty() {
+            None
+        } else {
+            Some(req.company_ids)
+        };
+        let country_codes = if req.country_codes.is_empty() {
+            None
+        } else {
+            Some(req.country_codes)
+        };
+        let adapter_request = AdapterUiHealthReportQueryRequest {
+            correlation_id: non_zero_u64(req.correlation_id),
+            turn_id: non_zero_u64(req.turn_id),
+            tenant_id: optional_string(req.tenant_id),
+            viewer_user_id: optional_string(req.viewer_user_id),
+            report_kind: optional_string(req.report_kind),
+            from_utc_ns: non_zero_u64(req.from_utc_ns),
+            to_utc_ns: non_zero_u64(req.to_utc_ns),
+            engine_owner_filter: optional_string(req.engine_owner_filter),
+            company_scope: optional_string(req.company_scope),
+            company_ids,
+            country_codes,
+            escalated_only: Some(req.escalated_only),
+            unresolved_only: Some(req.unresolved_only),
+            display_target: optional_string(req.display_target),
+            page_action: optional_string(req.page_action),
+            page_cursor: optional_string(req.page_cursor),
+            report_context_id: optional_string(req.report_context_id),
+            page_size: if req.page_size == 0 {
+                None
+            } else {
+                Some(req.page_size.min(u16::MAX as u32) as u16)
+            },
+        };
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| Status::internal("adapter runtime lock poisoned"))?;
+        let out = runtime.ui_health_report_query(adapter_request, None);
+        Ok(Response::new(map_ui_health_report_query_response(out)))
     }
 }
 
@@ -113,4 +169,63 @@ fn parse_sync_worker_interval_ms_from_env() -> u64 {
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|v| (100..=60_000).contains(v))
         .unwrap_or(1_000)
+}
+
+fn optional_string(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn non_zero_u64(value: u64) -> Option<u64> {
+    if value == 0 {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn map_ui_health_report_query_response(
+    response: AdapterUiHealthReportQueryResponse,
+) -> UiHealthReportQueryResponse {
+    UiHealthReportQueryResponse {
+        status: response.status,
+        generated_at_ns: response.generated_at_ns,
+        reason_code: response.reason_code,
+        report_context_id: response.report_context_id.unwrap_or_default(),
+        report_revision: response.report_revision.unwrap_or_default(),
+        normalized_query: response.normalized_query.unwrap_or_default(),
+        rows: response
+            .rows
+            .into_iter()
+            .map(|row| UiHealthReportRow {
+                tenant_id: row.tenant_id,
+                issue_id: row.issue_id,
+                owner_engine_id: row.owner_engine_id,
+                severity: row.severity,
+                status: row.status,
+                latest_reason_code: row.latest_reason_code,
+                last_seen_at_ns: row.last_seen_at_ns,
+                bcast_id: row.bcast_id.unwrap_or_default(),
+                ack_state: row.ack_state.unwrap_or_default(),
+                issue_fingerprint: row.issue_fingerprint.unwrap_or_default(),
+                recurrence_observed: row.recurrence_observed,
+                impact_summary: row.impact_summary.unwrap_or_default(),
+                attempted_fix_actions: row.attempted_fix_actions,
+                current_monitoring_evidence: row.current_monitoring_evidence.unwrap_or_default(),
+                unresolved_reason_exact: row.unresolved_reason_exact.unwrap_or_default(),
+            })
+            .collect(),
+        paging: Some(UiHealthReportPaging {
+            has_next: response.paging.has_next,
+            has_prev: response.paging.has_prev,
+            next_cursor: response.paging.next_cursor.unwrap_or_default(),
+            prev_cursor: response.paging.prev_cursor.unwrap_or_default(),
+        }),
+        display_target_applied: response.display_target_applied.unwrap_or_default(),
+        remembered_display_target: response.remembered_display_target.unwrap_or_default(),
+        requires_clarification: response.requires_clarification.unwrap_or_default(),
+    }
 }

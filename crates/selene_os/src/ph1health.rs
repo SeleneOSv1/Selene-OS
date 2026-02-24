@@ -3,8 +3,9 @@
 use std::cmp::min;
 
 use selene_kernel_contracts::ph1health::{
-    HealthCapabilityId, HealthIssueTimelineReadRequest, HealthRefuse, HealthSnapshotReadRequest,
-    HealthUnresolvedSummaryReadRequest, Ph1HealthRequest, Ph1HealthResponse,
+    HealthIssueTimelineReadRequest, HealthRefuse, HealthReportQueryReadRequest,
+    HealthSnapshotReadRequest, HealthUnresolvedSummaryReadRequest, Ph1HealthRequest,
+    Ph1HealthResponse,
 };
 use selene_kernel_contracts::{ContractViolation, Validate};
 
@@ -74,7 +75,10 @@ where
         Ok(Self { config, engine })
     }
 
-    pub fn run_read(&self, req: &Ph1HealthRequest) -> Result<HealthWiringOutcome, ContractViolation> {
+    pub fn run_read(
+        &self,
+        req: &Ph1HealthRequest,
+    ) -> Result<HealthWiringOutcome, ContractViolation> {
         if !self.config.health_enabled {
             return Ok(HealthWiringOutcome::NotInvokedDisabled);
         }
@@ -129,6 +133,11 @@ where
                 bounded.max_issue_rows = min(bounded.max_issue_rows, self.config.max_issue_rows);
                 Ph1HealthRequest::HealthUnresolvedSummaryRead(bounded)
             }
+            Ph1HealthRequest::HealthReportQueryRead(report_query) => {
+                let mut bounded: HealthReportQueryReadRequest = report_query.clone();
+                bounded.page_size = min(bounded.page_size, self.config.max_issue_rows);
+                Ph1HealthRequest::HealthReportQueryRead(bounded)
+            }
         }
     }
 }
@@ -146,6 +155,10 @@ fn response_matches_request(req: &Ph1HealthRequest, response: &Ph1HealthResponse
             Ph1HealthRequest::HealthUnresolvedSummaryRead(_),
             Ph1HealthResponse::HealthUnresolvedSummaryReadOk(_),
         ) => true,
+        (
+            Ph1HealthRequest::HealthReportQueryRead(_),
+            Ph1HealthResponse::HealthReportQueryReadOk(_),
+        ) => true,
         (_, Ph1HealthResponse::Refuse(refuse)) => refuse.capability_id == req.capability_id(),
         _ => false,
     }
@@ -155,10 +168,11 @@ fn response_matches_request(req: &Ph1HealthRequest, response: &Ph1HealthResponse
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1health::{
-        HealthAckState, HealthActionResult, HealthIssueEvent, HealthIssueStatus,
-        HealthIssueTimelineEntry, HealthIssueTimelineMetadata, HealthIssueTimelineReadOk,
-        HealthIssueTimelineReadRequest, HealthReadEnvelope, HealthSeverity, HealthSnapshotReadOk,
-        HealthSnapshotReadRequest, HealthUnresolvedSummaryReadRequest,
+        HealthAckState, HealthActionResult, HealthCapabilityId, HealthIssueEvent,
+        HealthIssueStatus, HealthIssueTimelineEntry, HealthIssueTimelineMetadata,
+        HealthIssueTimelineReadOk, HealthIssueTimelineReadRequest, HealthReadEnvelope,
+        HealthSeverity, HealthSnapshotReadOk, HealthSnapshotReadRequest,
+        HealthUnresolvedSummaryReadRequest,
     };
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::ph1position::TenantId;
@@ -203,17 +217,8 @@ mod tests {
             match req {
                 Ph1HealthRequest::HealthSnapshotRead(_r) => {
                     Ph1HealthResponse::HealthSnapshotReadOk(
-                        HealthSnapshotReadOk::v1(
-                            ReasonCodeId(8101),
-                            1,
-                            0,
-                            0,
-                            0,
-                            0,
-                            vec![],
-                            true,
-                        )
-                        .unwrap(),
+                        HealthSnapshotReadOk::v1(ReasonCodeId(8101), 1, 0, 0, 0, 0, vec![], true)
+                            .unwrap(),
                     )
                 }
                 Ph1HealthRequest::HealthIssueTimelineRead(r) => {
@@ -274,6 +279,28 @@ mod tests {
                         .unwrap(),
                     )
                 }
+                Ph1HealthRequest::HealthReportQueryRead(_r) => {
+                    Ph1HealthResponse::HealthReportQueryReadOk(
+                        selene_kernel_contracts::ph1health::HealthReportQueryReadOk::v1(
+                            ReasonCodeId(8104),
+                            "ctx_os_health".to_string(),
+                            1,
+                            "report query".to_string(),
+                            vec![],
+                            selene_kernel_contracts::ph1health::HealthReportQueryPaging::v1(
+                                false, false, None, None,
+                            )
+                            .unwrap(),
+                            None,
+                            Some(
+                                "Where do you want this report displayed: desktop or phone?"
+                                    .to_string(),
+                            ),
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
             }
         }
     }
@@ -296,17 +323,15 @@ mod tests {
                         None,
                     )
                     .unwrap(),
-                    vec![
-                        HealthIssueTimelineEntry::v1(
-                            1,
-                            "ACT_1".to_string(),
-                            HealthActionResult::Fail,
-                            ReasonCodeId(8201),
-                            MonotonicTimeNs(10),
-                            None,
-                        )
-                        .unwrap(),
-                    ],
+                    vec![HealthIssueTimelineEntry::v1(
+                        1,
+                        "ACT_1".to_string(),
+                        HealthActionResult::Fail,
+                        ReasonCodeId(8201),
+                        MonotonicTimeNs(10),
+                        None,
+                    )
+                    .unwrap()],
                     true,
                 )
                 .unwrap(),
@@ -385,9 +410,11 @@ mod tests {
 
     #[test]
     fn at_health_03_os_not_invoked_when_disabled() {
-        let wiring =
-            Ph1HealthWiring::new(Ph1HealthWiringConfig::mvp_v1(false), DeterministicHealthEngine)
-                .unwrap();
+        let wiring = Ph1HealthWiring::new(
+            Ph1HealthWiringConfig::mvp_v1(false),
+            DeterministicHealthEngine,
+        )
+        .unwrap();
 
         let req = Ph1HealthRequest::HealthUnresolvedSummaryRead(
             HealthUnresolvedSummaryReadRequest::v1(

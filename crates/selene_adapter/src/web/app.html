@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Selene App</title>
+  <link rel="stylesheet" href="/app.css?v=20260224_health_report_shell">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">A Digital Girl that talks</div>
+      </div>
+      <nav class="sidebar-nav">
+        <button class="nav-item nav-item-active" data-section="health">Health</button>
+        <button class="nav-item" data-section="inbox">Inbox</button>
+        <button class="nav-item" data-section="work-orders">Work Orders</button>
+        <button class="nav-item" data-section="learning">Learning</button>
+        <button class="nav-item" data-section="governance">Governance</button>
+        <button class="nav-item" data-section="settings">Settings</button>
+      </nav>
+    </aside>
+
+    <main class="main-pane">
+      <header class="main-header">
+        <h1 id="main-title">Health Status</h1>
+        <div class="header-meta">
+          <span id="last-refreshed">Last refreshed: -</span>
+          <button id="refresh-btn" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <section id="section-health" class="section">
+        <div class="health-grid">
+          <aside class="checks-column" aria-label="Health checks">
+            <h2>Health Checks</h2>
+            <div id="checks-list" class="checks-list"></div>
+          </aside>
+
+          <section class="center-column" aria-label="Health details and report">
+            <div class="summary-strip">
+              <div class="summary-card"><span>Open</span><strong id="summary-open">-</strong></div>
+              <div class="summary-card"><span>Critical</span><strong id="summary-critical">-</strong></div>
+              <div class="summary-card"><span>Auto-Resolved 24h</span><strong id="summary-auto-resolved">-</strong></div>
+              <div class="summary-card"><span>Escalated 24h</span><strong id="summary-escalated">-</strong></div>
+              <div class="summary-card"><span>MTTR</span><strong id="summary-mttr">-</strong></div>
+            </div>
+
+            <div class="filters-row">
+              <input id="issue-search" type="search" placeholder="Search issue type or engine owner">
+              <input id="issue-engine" type="text" placeholder="Engine owner (example: PH1.OS)">
+              <input id="date-from" type="datetime-local" aria-label="From date">
+              <input id="date-to" type="datetime-local" aria-label="To date">
+              <div class="filter-toggles" role="group" aria-label="Issue filters">
+                <label class="filter-toggle"><input id="filter-open-only" type="checkbox">Open only</label>
+                <label class="filter-toggle"><input id="filter-critical-only" type="checkbox">Critical only</label>
+                <label class="filter-toggle"><input id="filter-escalated-only" type="checkbox">Escalated only</label>
+              </div>
+              <div class="preset-group">
+                <button type="button" data-preset="24h">24h</button>
+                <button type="button" data-preset="7d">7d</button>
+                <button type="button" data-preset="30d">30d</button>
+              </div>
+            </div>
+
+            <div class="issues-table-wrap">
+              <table class="issues-table" aria-label="Issue queue">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Type</th>
+                    <th>Engine</th>
+                    <th>First Seen</th>
+                    <th>Last Update</th>
+                    <th>Status</th>
+                    <th>Resolution</th>
+                  </tr>
+                </thead>
+                <tbody id="issues-body"></tbody>
+              </table>
+              <p id="issues-empty" class="empty-note hidden">No issues match the current filters.</p>
+            </div>
+
+            <section class="report-query-panel" aria-label="Report query">
+              <h3>Report Query</h3>
+              <div class="report-controls">
+                <input id="report-kind" type="text" value="UNRESOLVED_ESCALATED" aria-label="Report kind">
+                <input id="report-from" type="datetime-local" aria-label="Report from date">
+                <input id="report-to" type="datetime-local" aria-label="Report to date">
+                <input id="report-owner" type="text" placeholder="Engine owner filter" aria-label="Engine owner filter">
+                <input id="report-company-ids" type="text" placeholder="Tenant IDs (comma-separated)" aria-label="Tenant IDs">
+                <input id="report-country-codes" type="text" placeholder="Country codes (comma-separated)" aria-label="Country codes">
+                <select id="report-display-target" aria-label="Display target">
+                  <option value="">Ask me</option>
+                  <option value="desktop">Desktop</option>
+                  <option value="phone">Phone</option>
+                </select>
+                <input id="report-page-size" type="number" min="1" max="200" value="20" aria-label="Page size">
+                <label><input id="report-escalated-only" type="checkbox"> Escalated only</label>
+                <label><input id="report-unresolved-only" type="checkbox"> Unresolved only</label>
+                <button id="report-run-btn" type="button">Run report</button>
+              </div>
+              <div class="report-meta">
+                <span id="report-status">Status: idle</span>
+                <span id="report-context">Context: -</span>
+                <span id="report-normalized">Query: -</span>
+              </div>
+              <div class="report-table-wrap">
+                <table class="report-table" aria-label="Report rows">
+                  <thead>
+                    <tr>
+                      <th>Tenant</th>
+                      <th>Issue</th>
+                      <th>Engine</th>
+                      <th>Severity</th>
+                      <th>Status</th>
+                      <th>Reason</th>
+                      <th>BCAST</th>
+                      <th>Ack</th>
+                      <th>Impact</th>
+                    </tr>
+                  </thead>
+                  <tbody id="report-rows"></tbody>
+                </table>
+                <p id="report-empty" class="empty-note hidden">No report rows.</p>
+              </div>
+              <div class="report-paging">
+                <button id="report-prev" type="button" disabled>Previous</button>
+                <button id="report-next" type="button" disabled>Next</button>
+              </div>
+            </section>
+          </section>
+
+          <aside class="detail-column" aria-label="Issue timeline">
+            <h2 id="detail-header">Select an issue from the center table.</h2>
+            <div class="timeline-toolbar">
+              <span id="timeline-meta">Showing 0 of 0 events</span>
+              <button id="timeline-load-more" type="button" class="hidden">Load older events</button>
+            </div>
+            <ul id="timeline-list" class="timeline-list"></ul>
+            <p id="timeline-empty" class="empty-note">No timeline entries for this issue.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="section-selene" class="section hidden" aria-label="Selene conversation">
+        <div class="chat-timeline">
+          <ul id="transcript-list" class="transcript-list"></ul>
+          <p id="transcript-empty" class="empty-note">No transcript messages yet.</p>
+        </div>
+        <div class="chat-composer">
+          <div id="voice-wave" class="voice-wave" aria-label="Selene voice waves" aria-live="polite">
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+            <span class="wave-bar"></span>
+          </div>
+          <div class="composer-row">
+            <textarea id="chat-input" rows="2" placeholder="Type a message"></textarea>
+            <button id="chat-send-btn" type="button">Send</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js?v=20260224_health_report_shell"></script>
+</body>
+</html>

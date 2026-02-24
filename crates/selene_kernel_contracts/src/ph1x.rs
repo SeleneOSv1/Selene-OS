@@ -934,12 +934,7 @@ impl Validate for Ph1xRequest {
             || self.confirm_answer.is_some()
             || self.step_up_result.is_some()
             || self.last_failure_reason_code.is_some();
-        if !has_signal
-            && !matches!(
-                self.thread_state.pending,
-                Some(PendingState::StepUp { .. })
-            )
-        {
+        if !has_signal && !matches!(self.thread_state.pending, Some(PendingState::StepUp { .. })) {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1x_request",
                 reason:

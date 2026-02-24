@@ -63,8 +63,7 @@ pub mod reason_codes {
     pub const PH1_BUILDER_GOV_INGEST_NOT_ALLOWED: ReasonCodeId = ReasonCodeId(0xB13D_0014);
     pub const PH1_BUILDER_GOV_INGEST_VERIFICATION_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0015);
     pub const PH1_BUILDER_ROLLOUT_STAGE_GATE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0016);
-    pub const PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED: ReasonCodeId =
-        ReasonCodeId(0xB13D_0017);
+    pub const PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED: ReasonCodeId = ReasonCodeId(0xB13D_0017);
     pub const PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_PUBLISHED: ReasonCodeId =
         ReasonCodeId(0xB13D_0018);
     pub const PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD: ReasonCodeId =
@@ -1070,8 +1069,7 @@ pub fn promote_with_judge_gates(
         let kpis = prompt_rate_kpis.ok_or_else(|| BuilderRefusal {
             stage: "PROMPT_RATE",
             reason_code: reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
-            message: "prompt-rate KPI snapshot is required before production promotion"
-                .to_string(),
+            message: "prompt-rate KPI snapshot is required before production promotion".to_string(),
         })?;
         if !kpis.passes_gate() {
             return Err(BuilderRefusal {

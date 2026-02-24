@@ -7417,10 +7417,14 @@ impl Ph1fStore {
             ArtifactType::VoiceIdThresholdPack
             | ArtifactType::VoiceIdConfusionPairPack
             | ArtifactType::VoiceIdSpoofPolicyPack
-            | ArtifactType::VoiceIdProfileDeltaPack => {
-                (MobileArtifactSyncKind::VoiceArtifactManifest, "voice_manifest")
-            }
-            ArtifactType::WakePack => (MobileArtifactSyncKind::WakeArtifactManifest, "wake_manifest"),
+            | ArtifactType::VoiceIdProfileDeltaPack => (
+                MobileArtifactSyncKind::VoiceArtifactManifest,
+                "voice_manifest",
+            ),
+            ArtifactType::WakePack => (
+                MobileArtifactSyncKind::WakeArtifactManifest,
+                "wake_manifest",
+            ),
             ArtifactType::EmoAffectPack | ArtifactType::EmoPolicyPack => {
                 (MobileArtifactSyncKind::EmoArtifactManifest, "emo_manifest")
             }
@@ -12390,7 +12394,10 @@ impl Ph1fStore {
 
         let payload = AuditPayloadMin::v1(BTreeMap::from([
             (PayloadKey::new("stage")?, PayloadValue::new(stage.clone())?),
-            (PayloadKey::new("outcome")?, PayloadValue::new(outcome.clone())?),
+            (
+                PayloadKey::new("outcome")?,
+                PayloadValue::new(outcome.clone())?,
+            ),
             (
                 PayloadKey::new("requested_action")?,
                 PayloadValue::new(requested_action)?,

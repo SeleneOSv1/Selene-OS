@@ -1177,7 +1177,9 @@ fn append_identity_prompt(text: String, prompt: &str) -> String {
     format!("{text} {prompt}")
 }
 
-fn high_stakes_policy_binding(intent_draft: &IntentDraft) -> Option<(StepUpActionClass, &'static str)> {
+fn high_stakes_policy_binding(
+    intent_draft: &IntentDraft,
+) -> Option<(StepUpActionClass, &'static str)> {
     match intent_draft.intent_type {
         IntentType::SendMoney => Some((StepUpActionClass::Payments, "PAYMENT_EXECUTE")),
         IntentType::CapreqManage => {
@@ -1186,9 +1188,10 @@ fn high_stakes_policy_binding(intent_draft: &IntentDraft) -> Option<(StepUpActio
         IntentType::AccessSchemaManage => {
             Some((StepUpActionClass::AccessGovernance, "ACCESS_SCHEMA_MANAGE"))
         }
-        IntentType::AccessEscalationVote => {
-            Some((StepUpActionClass::AccessGovernance, "ACCESS_ESCALATION_VOTE"))
-        }
+        IntentType::AccessEscalationVote => Some((
+            StepUpActionClass::AccessGovernance,
+            "ACCESS_ESCALATION_VOTE",
+        )),
         IntentType::AccessInstanceCompileRefresh => Some((
             StepUpActionClass::AccessGovernance,
             "ACCESS_INSTANCE_COMPILE_REFRESH",
@@ -1719,6 +1722,54 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
         }
     }
     missing.first().copied().unwrap_or(FieldKey::Task)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportDisplayTarget {
+    Desktop,
+    Phone,
+}
+
+impl ReportDisplayTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReportDisplayTarget::Desktop => "desktop",
+            ReportDisplayTarget::Phone => "phone",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "desktop" => Some(Self::Desktop),
+            "phone" => Some(Self::Phone),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReportDisplayResolution {
+    Resolved(ReportDisplayTarget),
+    Clarify(String),
+}
+
+pub fn resolve_report_display_target(
+    explicit_target: Option<&str>,
+    remembered_default: Option<&str>,
+) -> ReportDisplayResolution {
+    if let Some(explicit) = explicit_target {
+        if let Some(target) = ReportDisplayTarget::parse(explicit) {
+            return ReportDisplayResolution::Resolved(target);
+        }
+    }
+    if let Some(remembered) = remembered_default {
+        if let Some(target) = ReportDisplayTarget::parse(remembered) {
+            return ReportDisplayResolution::Resolved(target);
+        }
+    }
+    ReportDisplayResolution::Clarify(
+        "Where do you want this report displayed: desktop or phone?".to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -2700,6 +2751,26 @@ mod tests {
                 assert!(c.text.contains("Please confirm."));
             }
             _ => panic!("expected Confirm directive"),
+        }
+    }
+
+    #[test]
+    fn at_x_report_display_target_uses_explicit_then_memory_then_clarify() {
+        assert_eq!(
+            resolve_report_display_target(Some("desktop"), Some("phone")),
+            ReportDisplayResolution::Resolved(ReportDisplayTarget::Desktop)
+        );
+        assert_eq!(
+            resolve_report_display_target(None, Some("phone")),
+            ReportDisplayResolution::Resolved(ReportDisplayTarget::Phone)
+        );
+        match resolve_report_display_target(None, None) {
+            ReportDisplayResolution::Clarify(question) => {
+                let q = question.to_ascii_lowercase();
+                assert!(q.contains("desktop"));
+                assert!(q.contains("phone"));
+            }
+            _ => panic!("expected clarify when display target is missing"),
         }
     }
 
