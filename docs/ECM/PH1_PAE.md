@@ -65,3 +65,8 @@
 - PH1.LEARN package outputs must be validated (`LEARN_ARTIFACT_PACKAGE_BUILD=OK`) before PAE consumption.
 - PH1.RLL artifacts are OFFLINE_ONLY; PAE may consume them only after governance activation.
 - PH1.CACHE/PH1.MULTI/PH1.C/PH1.TTS consume PAE output as bounded advisory hints only.
+
+## FDX Design Lock (Section 5F)
+- PH1.PAE must govern duplex adaptation promotion ladder (`SHADOW -> ASSIST -> LEAD`) with one-step transitions only.
+- PH1.PAE must enforce rollback/demotion when FDX gates regress (false interrupt, missed interrupt, latency, or quality).
+- PH1.PAE outputs remain bounded adaptation hints only; no execution authority is introduced.

@@ -15,6 +15,17 @@
   - Access/Authority gate enforced by `PH1.ACCESS.001 -> PH2.ACCESS.002`
   - Engines never call engines directly; Selene OS orchestrates.
 
+## 1A) Current Cycle Lock (Second-Round Engine Finalization)
+- Current active cycle is the second round per engine.
+- This round must finalize engines one-by-one before production hardening starts.
+- An engine cannot be marked `READY_FOR_PRODUCTION_HARDENING` until all actionable engine rows in `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md` complete this second-round finalization (`EXEMPT`/`MERGED` excluded).
+- Production hardening work is blocked until this gate is satisfied.
+- Locked priority start queue for this round:
+  - `PH1.VISION` (completed)
+  - `PH1.K` (completed)
+  - `PH1.C` (next)
+  - `PH1.D`
+
 ## 2) Canonical Control Files
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/07_ENGINE_REGISTRY.md`
@@ -56,7 +67,7 @@
 9. Audit envelope integrity present for governed actions.
 10. SLO/telemetry hooks present where engine has latency contract.
 
-## 5) Three Production Rounds
+## 5) Four Program Rounds
 
 ### Round 1: Closure Round (Contract + Wiring Closure)
 Goal:
@@ -74,7 +85,799 @@ Exit criteria:
 - No unresolved relationship-check items.
 - Workspace compiles and targeted engine suites pass.
 
-### Round 2: Hardening Round (Cross-Engine Reliability Closure)
+### Round 2: Finalization Round (Engine-By-Engine Closeout, Current)
+Goal:
+- Re-open each actionable engine one-by-one for final changes and close remaining functionality gaps before hardening.
+
+Scope:
+- Per-engine final pass with strict one-engine-at-a-time execution and proof updates.
+
+Mandatory checks:
+1. Reconfirm contracts + runtime behavior against current production target requirements.
+2. Apply any last functional deltas with fail-closed behavior preserved.
+3. Run targeted tests for that engine and impacted relationships.
+4. Update tracker finalization status and ledger proof before moving to next engine.
+
+Exit criteria:
+- Every actionable runtime engine row is finalized in this round (`EXEMPT`/`MERGED` excluded).
+- No open per-engine finalization blockers remain.
+
+### 5A) PH1.K Round-2 Strict Implementation Checklist (Step 1..19)
+Purpose:
+- Execute PH1.K finalization as a strict, auditable sequence aimed at global-grade voice-runtime quality.
+- Keep PH1.K boundary unchanged: substrate owner only, no intent/authority/execution decisions.
+
+Pre-coding lock:
+- This checklist is locked before code changes.
+- Code implementation begins only after this checklist is accepted as the active PH1.K runbook.
+
+Step 1. Baseline snapshot and freeze
+- Capture current PH1.K baseline from tests and runtime telemetry:
+  - interrupt false-positive/false-negative rates
+  - VAD boundary latency
+  - device failover recovery latency
+  - degradation incidence (`aec_unstable`, `stream_gap_detected`, `device_changed`)
+- Record baseline in build ledger as PH1.K round-2 start proof.
+- Execution status (`2026-02-25`):
+  - Step 1: COMPLETE (frozen baseline snapshot recorded from current PH1.K tests + runtime telemetry snapshot with derived interrupt miss/false rates, VAD boundary latency, failover recovery latency, and degradation incidence counts).
+  - Baseline artifact:
+    - `docs/fixtures/ph1k_round2_baseline_snapshot.csv`
+  - Baseline validator:
+    - `scripts/check_ph1k_round2_baseline_snapshot.sh`
+  - Proof lock:
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_os ph1k -- --nocapture`
+    - `bash scripts/check_ph1k_round2_baseline_snapshot.sh docs/fixtures/ph1k_round2_baseline_snapshot.csv`
+
+Step 2. Contract/docs lock for expanded PH1.K surface
+- Update PH1.K docs/contracts to declare new required surfaces before runtime coding:
+  - richer audio quality metrics
+  - confidence bands (`HIGH | MEDIUM | LOW`)
+  - multilingual/Unicode-safe interrupt phrase handling
+  - adaptive-threshold policy inputs
+- Files: `docs/DB_WIRING/PH1_K.md`, `docs/ECM/PH1_K.md`, `crates/selene_kernel_contracts/src/ph1k.rs`.
+
+Step 3. Kernel contract expansion (typed, bounded, validated)
+- Add typed structures and validators for:
+  - advanced quality metrics (`snr_db`, `clipping_ratio`, `echo_delay_ms`, `packet_loss_pct`, `double_talk_score`, `erle_db`)
+  - interrupt + VAD decision confidence bands
+  - locale-tagged interrupt phrase normalization (Unicode-safe)
+  - device reliability score inputs
+- Keep fail-closed validation on all unknown/invalid fields.
+
+Step 4. Interrupt candidate pipeline v2 (hybrid detector)
+- Replace phrase-only interrupt decision path with hybrid gating:
+  - lexical phrase signal
+  - acoustic signal
+  - prosody/timing signal
+- Preserve PH1.K boundary: output candidate only; PH1.X remains cancellation/action owner.
+
+Step 5. Unicode + multilingual normalization
+- Replace ASCII-only interrupt normalization with Unicode-safe normalization and locale-aware matching.
+- Keep bounded phrase length and strict canonical form in persisted rows.
+
+Step 6. Adaptive threshold policy (deterministic + bounded)
+- Add deterministic threshold profile selection by:
+  - device route
+  - noise/degradation state
+  - tenant-approved policy profile
+- Add dynamic jitter/clock recovery policy with bounded latency budgets per profile.
+- All policy profile IDs must be validated; unknown profiles fail closed.
+- Execution status (`2026-02-25`):
+  - Step 2: COMPLETE (`PH1.K` docs/contracts lock updated to declare expanded surface: advanced quality metrics, VAD+interrupt confidence bands, Unicode locale-tagged phrase normalization, and adaptive-threshold inputs in `docs/DB_WIRING/PH1_K.md`, `docs/ECM/PH1_K.md`, and `crates/selene_kernel_contracts/src/ph1k.rs`).
+  - Step 3: COMPLETE (kernel contract expansion added typed+bounded validators for `AdvancedAudioQualityMetrics`, `DeviceReliabilityScoreInput`, `AdaptiveThresholdPolicyInput`, `JitterClockRecoveryPolicy`, and `VadDecisionConfidenceBand`, with fail-closed range checks and locale-aware normalization helpers).
+  - Step 4: COMPLETE (`PH1.K` interrupt pipeline now enforces hybrid lexical + acoustic + prosody gating in runtime decision path while keeping candidate-only boundary to `PH1.X`).
+  - Step 5: COMPLETE (`PH1.K` matcher/candidate normalization is Unicode-safe and locale-aware, with multilingual built-in phrase sets and canonical normalized persistence form).
+  - Step 6: COMPLETE (deterministic adaptive threshold selection by `device_route + noise/degradation + tenant policy binding`, plus bounded jitter/clock recovery budgets and fail-closed unknown-profile behavior).
+  - Proof lock:
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_os ph1k -- --nocapture`
+
+Step 7. Device reliability and failover policy upgrade
+- Add device reliability scoring from historical failures/recoveries.
+- Use reliability score in selection/failover path while preserving deterministic tie-break rules.
+- Add continuous calibration loop for mic/speaker pairs (safe auto-tune with bounded adjustments and fail-closed rollback).
+- Execution status (`2026-02-25`):
+  - Step 7: COMPLETE (`PH1.K` runtime now applies reliability-ranked device fallback in selection/failover paths with deterministic tie-break behavior, and runs bounded calibration auto-tune/rollback loop on AEC degradation events).
+  - Added acceptance coverage:
+    - `device_policy_fallback_prefers_highest_reliability_then_lexical_tiebreak`
+    - `runtime_failover_uses_reliability_ranked_selection_with_reason_code`
+    - `runtime_aec_autotune_applies_then_rolls_back_within_safe_bounds`
+  - Proof lock:
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_os ph1k -- --nocapture`
+    - `cargo test -p selene_storage ph1_k::db_wiring -- --nocapture`
+    - `cargo test --workspace -- --nocapture`
+
+Step 8. Degradation model expansion
+- Expand degradation truth from basic flags to richer state:
+  - capture quality class
+  - echo-risk class
+  - network/stream stability class
+  - recoverability class
+- Keep current-table derivability from append-only ledger.
+- Execution status (`2026-02-25`):
+  - Step 8: COMPLETE (`PH1.K` runtime now emits typed degradation state envelopes (`flags + class bundle`) instead of flags-only output, and class bundles are deterministically derived from flags via `DegradationClassBundle::from_flags(...)` to preserve append-only replay derivability.)
+  - Added acceptance coverage:
+    - `runtime_degradation_state_class_bundle_is_rebuildable_from_flags`
+    - `runtime_degradation_state_returns_to_clear_bundle_after_recovery_window`
+  - Proof lock:
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_os ph1k -- --nocapture`
+    - `cargo test -p selene_storage ph1_k::db_wiring -- --nocapture`
+    - `cargo test --workspace -- --nocapture`
+
+Step 9. Handoff contract to PH1.C (STT strategy alignment)
+- Add explicit PH1.K -> PH1.C handoff fields for:
+  - confidence band
+  - quality metrics summary
+  - degradation class
+- Require PH1.C to choose bounded STT strategy based on these fields.
+- Execution status (`2026-02-25`):
+  - Step 9: COMPLETE (added deterministic PH1.K handoff builder `build_ph1k_to_ph1c_handoff(...)` that produces typed PH1.C handoff payload from live PH1.K interrupt signals with fail-closed bounded defaults when no candidate exists; PH1.C runtime strategy routing is now acceptance-locked across all bounded branches `STANDARD | NOISE_ROBUST | CLOUD_ASSIST | CLARIFY_ONLY`.)
+  - Added acceptance coverage:
+    - `ph1k_to_ph1c_handoff_uses_candidate_band_when_interrupt_candidate_exists`
+    - `ph1k_to_ph1c_handoff_derives_fallback_bands_without_candidate`
+    - `ph1k_handoff_standard_strategy_prefers_primary_when_quality_is_clean`
+    - `ph1k_handoff_cloud_assist_strategy_prefers_tertiary_when_confidence_is_low`
+    - `ph1k_handoff_noise_robust_strategy_prefers_secondary_under_budget`
+    - `ph1k_handoff_critical_degradation_forces_clarify_only`
+  - Proof lock:
+    - `cargo test -p selene_kernel_contracts ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_os ph1c -- --nocapture`
+    - `cargo test -p selene_storage ph1_c::db_wiring -- --nocapture`
+    - `cargo test --workspace -- --nocapture`
+
+Step 10. Handoff contract to PH1.X (interrupt risk context)
+- Extend candidate envelope to PH1.X with:
+  - confidence band
+  - gate confidences
+  - degradation context
+  - risk/context class
+- PH1.X decision remains authoritative; PH1.K remains advisory for interruption action.
+- Execution status (`2026-02-25`):
+  - Step 10: COMPLETE (added typed PH1.K -> PH1.X handoff contract `Ph1kToPh1xInterruptHandoff` for candidate confidence band, gate confidences, degradation context, and risk context class; PH1.K runtime now emits deterministic handoff projection via `build_ph1k_to_ph1x_handoff(...)` while PH1.X remains interruption-action authority.)
+  - Added acceptance coverage:
+    - `ph1k_to_ph1x_interrupt_handoff_maps_required_risk_context_fields`
+    - `ph1k_to_ph1x_interrupt_handoff_rejects_low_risk_when_degraded`
+    - `ph1k_to_ph1x_handoff_projects_interrupt_risk_context_when_candidate_exists`
+    - `ph1k_to_ph1x_handoff_returns_none_without_interrupt_candidate`
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1x.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+    - `docs/DB_WIRING/PH1_X.md`
+    - `docs/ECM/PH1_X.md`
+    - `cargo test -p selene_kernel_contracts ph1x -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_os ph1x -- --nocapture`
+
+Step 11. Storage/migration extension (append-only preserved)
+- Add new PH1.K event fields/tables/migration entries for expanded metrics and confidence bands.
+- Preserve idempotency, tenant isolation, append-only invariants, and deterministic rebuild.
+- Execution status (`2026-02-25`):
+  - Step 11: COMPLETE (added PH1.K storage/migration extension for expanded interrupt candidate metrics/confidence fields with append-only preservation: new migration `0023_ph1k_interrupt_extended_fields.sql`, typed extended commit surface in `Ph1fStore`/`Ph1kVoiceRuntimeRepo`, strict fail-closed validators for extended payload bounds, and deterministic projection/rebuild updates in `audio_runtime_current`.)
+  - Added acceptance coverage:
+    - `at_k_db_05_interrupt_extended_fields_persist_and_project`
+    - `at_k_db_06_interrupt_extended_fields_fail_closed`
+  - Proof lock:
+    - `crates/selene_storage/src/ph1f.rs`
+    - `crates/selene_storage/src/repo.rs`
+    - `crates/selene_storage/migrations/0023_ph1k_interrupt_extended_fields.sql`
+    - `crates/selene_storage/tests/ph1_k/db_wiring.rs`
+    - `cargo test -p selene_storage --test db_wiring_ph1k_tables -- --nocapture`
+    - `cargo test -p selene_storage -- --nocapture`
+
+Step 12. Audit expansion (PH1.J)
+- Add new reason codes and payload allowlist keys for expanded PH1.K decisions.
+- Ensure every new commit path has auditable reason-coded emission.
+- Execution status (`2026-02-25`):
+  - Step 12: COMPLETE (PH1.J contract now enforces `PerceptionSignalEmitted` payload allowlist keys for PH1.K runtime audit emissions; PH1.K storage commit paths now append reason-coded PH1.J rows for every runtime event kind with deterministic event naming and bounded payload fields for expanded interrupt metrics/confidence context.)
+  - Added acceptance coverage:
+    - `perception_signal_payload_rejects_unknown_key`
+    - `perception_signal_payload_accepts_ph1k_allowlist_keys`
+    - `at_k_db_07_runtime_commits_emit_reason_coded_ph1j_rows`
+    - `at_k_db_08_interrupt_extended_audit_payload_includes_step12_keys`
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1j.rs`
+    - `crates/selene_storage/src/ph1f.rs`
+    - `crates/selene_storage/tests/ph1_k/db_wiring.rs`
+    - `cargo test -p selene_kernel_contracts ph1j -- --nocapture`
+    - `cargo test -p selene_storage --test db_wiring_ph1k_tables -- --nocapture`
+    - `cargo test -p selene_storage -- --nocapture`
+
+Step 13. Feedback capture wiring (PH1.FEEDBACK)
+- Emit structured feedback events for:
+  - false interrupt
+  - missed interrupt
+  - wrong degradation classification
+  - bad failover selection
+- Include fingerprint fields for clustering.
+- Execution status (`2026-02-25`):
+  - Step 13: COMPLETE (added typed PH1.K feedback capture commit path in storage/repo that emits deterministic PH1.FEEDBACK events for all four interruption failure classes, with fail-closed validation and idempotent append-only capture rows carrying clustering fingerprints.)
+  - Added acceptance coverage:
+    - `at_k_db_09_feedback_capture_wires_issue_kinds_and_fingerprints`
+    - `at_k_db_10_feedback_capture_bad_failover_requires_device_pair`
+  - Proof lock:
+    - `crates/selene_storage/src/ph1f.rs`
+    - `crates/selene_storage/src/repo.rs`
+    - `crates/selene_storage/tests/ph1_k/db_wiring.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+    - `cargo test -p selene_storage --test db_wiring_ph1k_tables -- --nocapture`
+    - `cargo test -p selene_storage -- --nocapture`
+
+Step 14. Learning + promotion wiring (PH1.LEARN + PH1.PAE)
+- Route PH1.K feedback artifacts into learning pipeline.
+- Promote policy/model updates using governed ladder only:
+  - `SHADOW -> ASSIST -> LEAD`
+- Auto-demote on regression.
+- Enforce strict rollback triggers when quality or false-interrupt metrics regress beyond release-gate limits.
+- Execution status (`2026-02-25`):
+  - Step 14: COMPLETE (PH1.K feedback capture commit path now emits deterministic PH1.LEARN signal bundles and governed PH1.PAE ladder decisions in the same append-only flow; ladder transitions are one-step only (`SHADOW -> ASSIST -> LEAD`), regression paths auto-demote, and rollback triggers fire fail-closed when quality flags or false-interrupt rate breach Step-18 limits.)
+  - Added acceptance coverage:
+    - `at_k_db_11_feedback_capture_routes_to_learn_and_governed_pae_ladder`
+  - Proof lock:
+    - `crates/selene_storage/src/ph1f.rs`
+    - `crates/selene_storage/tests/ph1_k/db_wiring.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+    - `cargo test -p selene_storage --test db_wiring_ph1k_tables -- --nocapture`
+    - `cargo test -p selene_storage -- --nocapture`
+
+Step 15. Unit/contract test expansion
+- Add/extend tests for:
+  - validation/fail-closed behavior
+  - Unicode normalization correctness
+  - confidence-band mapping correctness
+  - deterministic policy profile selection
+- Execution status (`2026-02-25`):
+  - Step 15: COMPLETE (expanded PH1.K kernel + runtime test locks for fail-closed normalization, confidence-band/reason-code boundary mapping, and deterministic adaptive-threshold profile selection with unknown-tenant fail-closed behavior.)
+  - Added acceptance coverage:
+    - `normalize_interrupt_phrase_strips_controls_and_collapses_whitespace`
+    - `normalize_interrupt_phrase_rejects_control_only_input_fail_closed`
+    - `at_k_interrupt_13_confidence_band_and_reason_code_mapping_boundaries_are_locked`
+    - `at_k_interrupt_14_threshold_profile_selection_is_deterministic_by_route_and_noise`
+    - `at_k_interrupt_15_threshold_profile_selection_fails_closed_on_unknown_tenant_profile`
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1k.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+
+Step 16. Runtime/replay/integration tests
+- Add/extend tests for:
+  - noisy environment recovery
+  - interruption under overlap speech
+  - failover determinism and cooldown/stability windows
+  - PH1.K -> PH1.C and PH1.K -> PH1.X envelope compatibility
+- Execution status (`2026-02-25`):
+  - Step 16: COMPLETE (added runtime/replay/integration coverage for noisy-recovery replay determinism, overlap-speech interruption determinism, failover cooldown/stability-window determinism, and cross-engine PH1.K handoff envelope compatibility with PH1.C/PH1.X.)
+  - Added acceptance coverage:
+    - `at_k_runtime_16_noisy_environment_recovery_replay_is_deterministic`
+    - `at_k_runtime_17_overlap_speech_interrupt_decision_is_replay_deterministic`
+    - `at_k_runtime_18_failover_cooldown_stability_windows_are_deterministic`
+    - `at_k_runtime_19_ph1c_and_ph1x_handoff_envelopes_are_compatible`
+  - Proof lock:
+    - `crates/selene_engines/src/ph1k.rs`
+    - `cargo test -p selene_engines ph1k::tests::at_k_runtime_ -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+
+Step 17. Benchmark/eval harness (release-gate source of truth)
+- Produce PH1.K eval snapshot datasets across:
+  - language/locale
+  - device route type
+  - noise class
+  - overlap speech scenarios
+- Persist results for gate checks and trend comparison.
+- Execution status (`2026-02-25`):
+  - Step 17: COMPLETE (added PH1.K benchmark/eval harness script and persisted round-2 eval snapshot dataset with required coverage across locale, device route, noise class, and overlap speech scenarios; harness now emits row-level, summary, worst-case, and trend outputs as release-gate source inputs.)
+  - Coverage lock:
+    - required locale coverage: `en-US`, `es-ES`, `zh-CN`, `tr-TR`
+    - required device-route coverage: `BUILT_IN`, `BLUETOOTH`, `USB`, `VIRTUAL`
+    - required noise coverage: `CLEAN`, `ELEVATED`, `SEVERE`
+    - required overlap coverage: both `overlap_speech=0` and `overlap_speech=1`
+  - Proof lock:
+    - `scripts/check_ph1k_round2_eval_snapshot.sh`
+    - `docs/fixtures/ph1k_round2_eval_snapshot.csv`
+    - `scripts/selene_design_readiness_audit.sh` (section `1C5`)
+    - `bash scripts/check_ph1k_round2_eval_snapshot.sh docs/fixtures/ph1k_round2_eval_snapshot.csv`
+
+Step 18. PH1.K global-standard release gate (must pass)
+- False interrupt rate <= `0.3/hour` active session.
+- Missed interrupt rate <= `2%`.
+- End-of-speech boundary p95 <= `180ms`.
+- PH1.K -> PH1.C handoff p95 <= `120ms`.
+- Device failover recovery p95 <= `1.5s`.
+- Degradation auto-recovery success >= `97%`.
+- Multilingual interrupt recall >= `95%` across supported locales.
+- Audit completeness = `100%`.
+- Tenant isolation = `100%`.
+- Execution status (`2026-02-25`):
+  - Step 18: COMPLETE (added strict PH1.K release-gate checker that fails closed unless every Step-18 threshold passes against the canonical Step-17 eval snapshot, and wired it into readiness audit execution path as section `1C6`.)
+  - Proof lock:
+    - `scripts/check_ph1k_release_gate.sh`
+    - `docs/fixtures/ph1k_round2_eval_snapshot.csv`
+    - `scripts/selene_design_readiness_audit.sh` (section `1C6`)
+    - `bash scripts/check_ph1k_release_gate.sh docs/fixtures/ph1k_round2_eval_snapshot.csv`
+
+Step 19. Closure and tracker update
+- Append PH1.K round-2 completion proof to build ledger.
+- Update tracker row/status for PH1.K round-2 finalization completion.
+- Move queue to next locked engine (`PH1.C`) only after Step 18 gate pass.
+- Execution status (`2026-02-25`):
+  - Step 19: COMPLETE (recorded PH1.K round-2 closure proof, updated round-2 queue/tracker state to mark `PH1.K` done, and advanced the locked next engine to `PH1.C`.)
+  - Proof lock:
+    - `docs/03_BUILD_LEDGER.md`
+    - `docs/33_ENGINE_REVIEW_TRACKER.md`
+    - `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+    - `bash scripts/check_ph1k_release_gate.sh docs/fixtures/ph1k_round2_eval_snapshot.csv`
+
+### 5B) PH1.K Benchmark Ownership + Closed-Loop Reporting
+Purpose:
+- Place each PH1.K benchmark in the correct engine ownership path.
+- Force continuous reporting into learning and builder remediation loops.
+
+PH1.K benchmark ownership matrix:
+
+| benchmark | primary owner engine | measurement sources | release-gate owner | learning/fix sinks |
+|---|---|---|---|---|
+| False interrupt rate <= `0.3/hour` | `PH1.K` | PH1.K interrupt candidates + PH1.X interruption outcomes + PH1.FEEDBACK correction labels | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER` |
+| Missed interrupt rate <= `2%` | `PH1.K` | PH1.K candidate windows + user correction outcomes + PH1.FEEDBACK labels | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER` |
+| End-of-speech boundary p95 <= `180ms` | `PH1.K` | PH1.K VAD/endpointer timing + PH1.C turn-finalization timestamps | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE` |
+| Capture -> PH1.C handoff p95 <= `120ms` | `PH1.OS` (handoff path owner) | PH1.K capture timestamp + PH1.C receive/finalize timestamp | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.BUILDER` |
+| Device failover recovery p95 <= `1.5s` | `PH1.K` | PH1.K device-state transitions + degradation/recovery events | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER` |
+| Noisy-condition auto-recovery >= `97%` | `PH1.K` | PH1.K degradation episodes + successful recovery counts by noise class | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER` |
+| Multilingual interrupt recall >= `95%` | `PH1.K` | PH1.K interrupt detections + locale labels + correction outcomes | `PH1.OS` | `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE` |
+| Audit completeness = `100%` | `PH1.J` | commit-path audit event coverage vs expected event map | `PH1.OS` | `PH1.HEALTH` + `PH1.BUILDER` issue pipeline |
+| Tenant isolation = `100%` | `PH1.TENANT` + `PH1.F` | cross-tenant guard checks + data-scope invariant tests | `PH1.OS` | `PH1.HEALTH` + `PH1.BUILDER` issue pipeline |
+
+Closed-loop reporting and improvement flow (mandatory):
+1. Owner engines emit benchmark telemetry and reason-coded failures to append-only records.
+2. `PH1.OS` computes rolling benchmark windows and checks gate thresholds.
+3. Any breach emits structured `FailureEvent` + `ProblemCard` and opens unresolved status.
+4. `PH1.HEALTH` displays by engine, tenant, severity, and unresolved/escalated state.
+5. `PH1.FEEDBACK` records correction evidence and false/miss labels.
+6. `PH1.LEARN` clusters recurring fingerprints and creates governed improvement artifacts.
+7. `PH1.PAE` promotes/demotes policy/model routes (`SHADOW -> ASSIST -> LEAD`) and auto-demotes on regression.
+8. Repeated unresolved fingerprints generate builder remediation candidates (`FixCard`) for `PH1.BUILDER`.
+9. `PH1.BUILDER` may propose fixes, but code/launch still follows mandatory human approval gates before apply.
+10. Post-deploy recurrence verification is mandatory; if recurrence persists, issue remains open and is escalated.
+
+### 5C) Global Engine Monitoring Contract (All Engines, Not PH1.K Only)
+Rule:
+- Every runtime engine must have a benchmark card with:
+  - quality metrics
+  - latency metrics
+  - safety/isolation metrics
+  - audit completeness target
+  - rollback trigger thresholds
+  - owner engine + gate owner + learning sinks
+- Missing benchmark card blocks that engine from `READY_FOR_PRODUCTION_HARDENING`.
+
+Per-engine minimum reporting contract:
+1. Emit reason-coded success/failure telemetry for each critical capability.
+2. Emit structured failure records (`FailureEvent`/`ProblemCard`) on threshold breach.
+3. Surface unresolved/escalated state in `PH1.HEALTH`.
+4. Feed correction and outcome signals into `PH1.FEEDBACK`.
+5. Feed governed artifact generation into `PH1.LEARN` and routing/policy decisions into `PH1.PAE`.
+6. Route repeated unresolved failures to `PH1.BUILDER` remediation queue with human approval gates preserved.
+
+### 5D) PH1.X Follow-On Checklist (Interrupt Continuity Behavior Lock, Step 1..14)
+Purpose:
+- Lock the exact post-interrupt conversation behavior before coding.
+- Ensure Selene handles interruption with topic continuity and deterministic branch decisions.
+
+Pre-coding lock:
+- This section is design-lock only; no runtime code changes begin until this checklist is accepted.
+- Execution order: complete PH1.X design lock first, then apply PH1.K delta checklist in Section 5E.
+
+Step 1. Interrupt behavior contract lock
+- Define PH1.X interrupt behavior contract with two explicit outcomes:
+  - `SAME_SUBJECT_APPEND`
+  - `SWITCH_TOPIC_THEN_RETURN_CHECK`
+- Keep fail-closed fallback: one clarify if branch confidence is not sufficient.
+
+Step 2. Immediate interruption response lock
+- On interruption candidate acceptance:
+  - cancel TTS immediately,
+  - keep spoken prefix + unsaid remainder in resume buffer,
+  - switch to listening posture.
+- Preserve existing PH1.X wait/cancel behavior as deterministic base.
+
+Step 3. Subject relation decision input lock
+- Require PH1.X request envelope to include subject relation input from understanding path:
+  - `subject_relation = SAME | SWITCH | UNCERTAIN`
+  - `subject_relation_confidence`
+- If missing/invalid, PH1.X must fail closed into one clarify.
+
+Execution status (`2026-02-25`):
+- Step 1: COMPLETE (contract/docs lock for interruption continuity outcome + subject relation fields).
+- Step 2: COMPLETE (immediate cancel + resume-buffer preservation + listening path retained).
+- Step 3: COMPLETE (runtime fail-closed clarify for missing/uncertain/low-confidence relation implemented and mirrored in PH1.K runtime layer).
+- Step 4: COMPLETE (SAME-subject merge branch implemented for resume-buffer + chat path with explicit continuity outcome in PH1.OS + PH1.K engine mirror).
+- Step 5: COMPLETE (SWITCH-subject branch implemented for new-topic-first response + return-check question with resume-buffer retention).
+- Step 6: COMPLETE (UNCERTAIN/low-confidence branch is clarify-only fail-closed across chat and intent paths with resume-buffer preservation).
+- Step 7: COMPLETE (thread continuity state extension wired in contracts/runtime: `interrupted_subject_ref`, `return_check_pending`, `return_check_expires_at`, plus deterministic expiry handling in PH1.OS + PH1.K engine mirror).
+- Step 8: COMPLETE (resume policy lock implemented in contracts/runtime/tests: explicit `RESUME_NOW | RESUME_LATER | DISCARD`, with `DISCARD` allowed only from explicit user `confirm_answer=No` on return-check path).
+- Step 9: COMPLETE (clarify-language lock enforced in contract: clarify question must be short single-line text; options are bounded to 2-3 entries deterministically).
+- Step 10: COMPLETE (audit/reporting lock complete: interruption branch reason-codes are persisted in PH1.X audit rows and PH1.HEALTH report query surfaces outcomes by `owner_engine_id` + topic fingerprint).
+- Step 11: COMPLETE (acceptance-test lock complete across PH1.OS + PH1.K mirror runtimes, including deterministic no-loss replay continuity proof).
+- Step 12: COMPLETE (PH1.X interrupt continuity benchmark gate added with enforced thresholds and deterministic pass/fail output).
+- Step 13: COMPLETE (PH1.X release-gate hook added; readiness audit now enforces PH1.X Step-12 metric gate before hardening progression).
+- Step 14: COMPLETE (closure/handoff completed; build ledger proof appended and 5D is now fully closed for transition to 5E Step 1).
+
+Step 4. SAME-subject merge branch
+- If `subject_relation=SAME` with sufficient confidence:
+  - merge unsaid remainder + new user content into one coherent response plan.
+  - emit one response that addresses both parts as one thread.
+- Do not lose pre-interrupt context.
+
+Step 5. SWITCH-subject branch
+- If `subject_relation=SWITCH` with sufficient confidence:
+  - answer the new topic first.
+  - then ask one short return-check question:
+    - "Do you still want to continue the previous topic?"
+- Keep previous topic in resumable state until user decides.
+
+Step 6. UNCERTAIN branch
+- If subject relation is uncertain:
+  - ask one bounded clarify question (no multi-question fan-out).
+  - block dispatch/action until clarified.
+
+Step 7. Continuity state contract extension
+- Extend PH1.X thread continuity state with deterministic fields:
+  - `active_subject_ref`
+  - `interrupted_subject_ref`
+  - `resume_buffer`
+  - `return_check_pending` (bool)
+  - `return_check_expires_at`
+- Expiry and replay behavior must stay deterministic.
+
+Step 8. Resume policy lock
+- Define deterministic resume policies:
+  - `RESUME_NOW` (same subject)
+  - `RESUME_LATER` (switch topic with pending return check)
+  - `DISCARD` (explicit user choice only)
+- No silent discard of unresolved interrupted topic.
+- Runtime mapping lock:
+  - same-subject merge emits `interrupt_resume_policy=RESUME_NOW`.
+  - switch-topic return-check emits `interrupt_resume_policy=RESUME_LATER`.
+  - return-check `confirm_answer=Yes` emits `RESUME_NOW`.
+  - return-check `confirm_answer=No` emits `DISCARD`.
+
+Step 9. Clarify language policy
+- Clarify text must stay natural-language and short.
+- Options must be bounded to 2-3 choices for deterministic handling.
+- Contract lock:
+  - `ClarifyDirective.question` must be single-line and `<= 240` chars.
+  - `ClarifyDirective.accepted_answer_formats` must contain exactly `2..=3` non-empty entries.
+
+Step 10. PH1.X audit/reporting lock
+- Add reason-coded outputs for branches:
+  - `X_INTERRUPT_SAME_SUBJECT_APPEND`
+  - `X_INTERRUPT_RETURN_CHECK_ASKED`
+  - `X_INTERRUPT_RESUME_NOW`
+  - `X_INTERRUPT_DISCARD`
+  - `X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY`
+- Ensure PH1.HEALTH can display interruption branch outcomes by engine/topic.
+- Proof lock:
+  - PH1.X storage audit rows preserve interruption branch reason codes in `audit_events.reason_code`.
+  - PH1.X branch labels are persisted as bounded payload kinds (`response_kind` / `wait_kind`).
+  - PH1.HEALTH report query exposes branch outcome rows by `owner_engine_id=PH1.X` and `issue_fingerprint` topic marker.
+
+Step 11. PH1.X acceptance tests (required)
+- Add tests for:
+  - interrupt cancel + resume buffer write
+  - same-subject merge response behavior
+  - switch-topic response + return-check prompt
+  - uncertain-relation clarify-only fail-closed behavior
+  - no-loss continuity across replay
+- Proof lock:
+  - `cargo test -p selene_os ph1x::tests::at_x_ -- --nocapture`
+  - `cargo test -p selene_engines ph1x::tests::at_x_ -- --nocapture`
+
+Step 12. PH1.X benchmarks (interrupt continuity quality)
+- Define and enforce:
+  - same-subject merge correctness >= `98.00%` (`>=9800 bp`)
+  - switch-topic return-check correctness >= `98.00%` (`>=9800 bp`)
+  - resume-buffer retention correctness >= `99.50%` (`>=9950 bp`)
+  - interruption branch decision latency `p95 <= 120ms`
+  - audit completeness = `100%` (`10000 bp`)
+- Gate implementation:
+  - `scripts/check_ph1x_interrupt_continuity_benchmarks.sh`
+  - input snapshot header:
+    - `window_min,same_subject_total,same_subject_correct,switch_topic_total,switch_topic_correct,resume_buffer_total,resume_buffer_retained,branch_decision_latency_p95_ms,audit_completeness_bp`
+- Proof lock:
+  - `bash scripts/check_ph1x_interrupt_continuity_benchmarks.sh docs/fixtures/ph1x_interrupt_continuity_snapshot.csv`
+
+Step 13. PH1.X release-gate hook
+- PH1.X release gate must include Step 12 metrics.
+- Failure blocks PH1.X round-2 closure and blocks downstream hardening.
+- Gate implementation:
+  - `scripts/check_ph1x_release_gate.sh`
+  - readiness hook: `scripts/selene_design_readiness_audit.sh` section `1C2`
+- Proof lock:
+  - `bash scripts/check_ph1x_release_gate.sh docs/fixtures/ph1x_interrupt_continuity_snapshot.csv`
+
+Step 14. Closure and handoff
+- Append PH1.X interrupt continuity proof to build ledger.
+- Mark PH1.X follow-on interrupt checklist as complete.
+- Only then execute PH1.K delta implementation checklist in Section 5E.
+- Proof lock:
+  - `docs/03_BUILD_LEDGER.md` entry: `2026-02-25 | PH1X_5D_STEP14_CLOSURE_HANDOFF_COMPLETE | ...`
+  - `cargo test -p selene_os ph1x::tests::at_x_ -- --nocapture`
+  - `cargo test -p selene_engines ph1x::tests::at_x_ -- --nocapture`
+  - `bash scripts/check_ph1x_release_gate.sh docs/fixtures/ph1x_interrupt_continuity_snapshot.csv`
+- Handoff status:
+  - `5D` checklist state is `COMPLETE`.
+  - `5E Step 1` is complete.
+  - `5E Step 2` is complete.
+  - `5E Step 3` is complete.
+  - `5E Step 4` is complete.
+  - `5E Step 5` is complete.
+  - `5E Step 6` is complete.
+  - `5E Step 7` is complete.
+  - `5E Step 8` is complete.
+  - `5E Step 9` is complete.
+  - `5E Step 10` is complete.
+  - Next strict item is `5A Step 7` (`PH1.K` device reliability and failover policy upgrade).
+
+### 5E) PH1.K Updates Required By PH1.X Interrupt Behavior (Step 1..10)
+Purpose:
+- Apply PH1.K changes required to support the PH1.X interruption branches locked in Section 5D.
+
+Step 1. Interrupt lexicon policy surface
+- Keep lexical trigger policy explicit and governed:
+  - approved interruption words/phrases
+  - locale-tagged sets
+  - tenant policy profile binding
+- Unknown policy profile must fail closed.
+- Execution status (`2026-02-25`):
+  - Step 1: COMPLETE (typed `InterruptLexiconPolicyBinding` contract added; PH1.K matcher now enforces locale-tagged approved phrase sets under tenant/profile binding; unknown policy profile fails closed).
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1k.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+
+Step 2. Candidate payload extension for PH1.X
+- Extend PH1.K interrupt candidate envelope with fields PH1.X needs:
+  - `trigger_phrase_id`
+  - `trigger_locale`
+  - `candidate_confidence_band`
+  - `risk_context_class`
+  - `degradation_context`
+- Execution status (`2026-02-25`):
+  - Step 2: COMPLETE (PH1.K interrupt candidate contract/runtime extended with typed trigger locale/phrase fields, confidence band, risk context class, and degradation context; PH1.X validation + docs updated to require the payload surface).
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1k.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `crates/selene_kernel_contracts/src/ph1x.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+    - `docs/DB_WIRING/PH1_X.md`
+    - `docs/ECM/PH1_X.md`
+
+Step 3. Noise-safe lexical gating
+- Keep phrase-based trigger as required signal.
+- Keep acoustic/prosody/degradation gates as mandatory anti-noise safeguards.
+- No interrupt candidate from noise-only signals.
+- Execution status (`2026-02-25`):
+  - Step 3: COMPLETE (PH1.K interrupt path now uses explicit thresholded lexical + acoustic/prosody/degradation gating with dedicated fail-closed tests proving no noise-only candidate emission).
+  - Proof lock:
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+
+Step 4. Subject-handoff support fields
+- Emit bounded hints for subject relation decision path:
+  - interruption timing markers
+  - speech window metrics
+  - confidence bundle for downstream relation decision.
+- Execution status (`2026-02-25`):
+  - Step 4: COMPLETE (PH1.K candidate envelope now emits `timing_markers`, `speech_window_metrics`, and `subject_relation_confidence_bundle`; PH1.X contract validation enforces deterministic handoff integrity.)
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1k.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `crates/selene_kernel_contracts/src/ph1x.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+    - `docs/DB_WIRING/PH1_X.md`
+    - `docs/ECM/PH1_X.md`
+
+Step 5. Resume snapshot integrity contract
+- Ensure PH1.K/OS handoff preserves accurate `spoken_cursor` and bounded snapshot references.
+- Fail closed on invalid cursor/snapshot mismatch.
+- Execution status (`2026-02-25`):
+  - Step 5: COMPLETE (PH1.X contract now fails closed on stale interruption snapshot references, cursor-without-remainder snapshots, and timing-window mismatches between interruption and snapshot handoff.)
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1x.rs`
+    - `crates/selene_engines/src/ph1x.rs`
+    - `crates/selene_os/src/ph1x.rs`
+    - `docs/DB_WIRING/PH1_X.md`
+    - `docs/ECM/PH1_X.md`
+
+Step 6. Unicode + locale trigger normalization
+- Replace ASCII-only phrase normalization in PH1.K path with Unicode-safe normalization and locale tagging.
+- Keep bounded storage payload policy.
+- Execution status (`2026-02-25`):
+  - Step 6: COMPLETE (PH1.K phrase normalization is Unicode-safe and locale-tagged across contract + runtime matcher path; storage payload remains bounded to normalized phrase strings.)
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1k.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+
+Step 7. Audit expansion
+- Add reason-coded PH1.K audit rows for:
+  - lexical trigger accepted/rejected
+  - noise gate rejection
+  - candidate emitted with confidence band
+- Ensure PH1.J and PH1.HEALTH visibility compatibility.
+- Execution status (`2026-02-25`):
+  - Step 7: COMPLETE (PH1.K interrupt decision trace now emits deterministic reason codes for lexical rejection, noise-gate rejection, and confidence-band candidate emission; downstream PH1.X/PH1.HEALTH consumers preserve reason-code visibility.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+
+Step 8. Feedback/learning wiring
+- Emit PH1.FEEDBACK events for:
+  - false lexical trigger
+  - missed lexical trigger
+  - wrong confidence band
+- Route to PH1.LEARN/PH1.PAE for threshold/route tuning.
+- Execution status (`2026-02-25`):
+  - Step 8: COMPLETE (PH1.K now exposes deterministic feedback event mapper `build_interrupt_feedback_signal(...)` with reason-coded outputs for false/missed/wrong-band signals and fixed routing targets to LEARN/PAE sinks.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1k.rs`
+    - `docs/DB_WIRING/PH1_K.md`
+    - `docs/ECM/PH1_K.md`
+
+Step 9. PH1.K compatibility test pack
+- Add compatibility tests proving PH1.K candidate envelope satisfies PH1.X 5D inputs.
+- Add fail-closed tests for missing locale/trigger/payload invariants.
+- Execution status (`2026-02-25`):
+  - Step 9: COMPLETE (added compatibility/fail-closed tests across kernel contracts and PH1.K runtime for timing-window integrity, subject-bundle parity, stale snapshot refusal, and deterministic interrupt reason-code behavior.)
+  - Proof lock:
+    - `crates/selene_kernel_contracts/src/ph1x.rs`
+    - `crates/selene_engines/src/ph1k.rs`
+    - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
+    - `cargo test -p selene_kernel_contracts ph1x -- --nocapture`
+    - `cargo test -p selene_engines ph1k -- --nocapture`
+    - `cargo test -p selene_engines ph1x -- --nocapture`
+    - `cargo test -p selene_os ph1x -- --nocapture`
+    - `cargo test -p selene_os ph1k -- --nocapture`
+
+Step 10. PH1.K pre-implementation readiness gate
+- PH1.K runtime coding starts only when:
+  - Section 5D PH1.X behavior lock is complete,
+  - Section 5E contract/docs updates are merged,
+  - benchmark/reporting sinks are wired (`PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER`).
+- Execution status (`2026-02-25`):
+  - Step 10: COMPLETE (added strict gate script `scripts/check_ph1k_5e_readiness_gate.sh` and wired it into `scripts/selene_design_readiness_audit.sh` section `1C3` to enforce 5D closure + 5E Step1-10 completion + sink-chain wiring before further PH1.K hardening execution.)
+  - Proof lock:
+    - `scripts/check_ph1k_5e_readiness_gate.sh`
+    - `scripts/selene_design_readiness_audit.sh`
+    - `bash scripts/check_ph1k_5e_readiness_gate.sh`
+
+### 5F) Selene FDX Duplex System Lock (Full-Duplex + Barge-In + Incremental Planning)
+Purpose:
+- Lock a world-class duplex voice design so Selene can listen while speaking, accept interruption naturally, and prepare responses before the user finishes speaking.
+- Keep strict safety boundaries: no speculative side effects and no authority drift.
+
+Design lock status:
+- This section is a pre-coding architecture lock.
+- Implementation starts in the upcoming `PH1.C` round-2 runbook and must follow this section in order.
+
+Core behavior definition:
+1. Selene listens while talking (full-duplex).
+2. User can interrupt at any time (barge-in) using approved words/phrases only.
+3. Selene starts understanding/planning on partial speech (incremental ASR + speculative planning).
+4. Only finalized, validated turn decisions can execute actions.
+
+Core runtime loop (always active in voice session):
+1. `PH1.K` captures mic audio continuously and receives TTS playback state reference.
+2. `PH1.K` runs echo/noise suppression and lexical barge-in detection every frame.
+3. If interruption confidence is high enough, `PH1.K` emits `InterruptCandidate` immediately.
+4. `PH1.X` receives candidate and decides: cancel TTS, continue, clarify, or ignore.
+5. In parallel, `PH1.C` streams partial transcript chunks from live speech.
+6. `PH1.NLP` builds incremental intent hypotheses from partial text.
+7. `PH1.X` creates speculative response drafts while the user is still speaking.
+8. When end-of-speech is detected, `PH1.X` commits final branch and responds fast.
+9. While Selene speaks, step 1 never stops.
+
+Owner split (single authority per layer):
+- `PH1.K`: real-time voice substrate, interruption candidate detection while TTS is active.
+- `PH1.C`: incremental transcript quality gate (partials + final pass/reject).
+- `PH1.NLP`: incremental intent hypotheses (advisory only).
+- `PH1.X`: authoritative interruption branch + continuity + turn commit decision.
+- `PH1.TTS`: chunked playback control + immediate cancel support.
+- `PH1.OS`: orchestration, safety gating, sequencing, and fail-closed enforcement.
+- `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER`: closed-loop improvement sinks.
+
+Required runtime contract surfaces (to lock before coding):
+- `DuplexFrame`: bounded audio/timing envelope with TTS-active marker.
+- `InterruptCandidate`: bounded PH1.K candidate envelope (already candidate-only boundary).
+- `PartialTranscript`: ordered partial STT units with confidence + stability flag.
+- `IntentHypothesis`: ranked incremental intent hypotheses with bounded confidence.
+- `SpeculativePlan`: non-authoritative draft response plan (`execute_allowed=false`).
+- `TurnCommitDecision`: final authoritative branch/response/action decision with reason code.
+
+Hard safety laws:
+1. `PH1.K` remains candidate-only; no interruption action authority.
+2. `PH1.X` is the only interruption-action owner (`cancel/clarify/respond/wait/dispatch`).
+3. Barge-in trigger source is lexical only: approved words/phrases are mandatory.
+4. Non-lexical-only triggers are forbidden (`noise-only`, `acoustic-only`, `prosody-only` cannot trigger interruption).
+5. No action execution from speculative drafts.
+6. Low-confidence interruption/transcript/intent paths must fail closed to one clarify.
+7. Every branch/decision must emit reason-coded audit rows.
+8. Tenant isolation and audit completeness remain mandatory hard gates.
+
+Global-grade duplex release targets (must pass):
+- barge-in detect -> TTS cancel `p95 <= 120ms`
+- false interrupt rate `<= 0.3/hour active session`
+- missed interrupt rate `<= 2%`
+- non-lexical trigger acceptance rate `= 0.0%`
+- end-of-speech -> first response token `p95 <= 300ms`
+- capture -> PH1.C partial handoff `p95 <= 120ms`
+- partial transcript first chunk latency `p95 <= 250ms`
+- audit completeness `= 100%`
+- tenant isolation `= 100%`
+
+High-level build order lock:
+1. `PH1.K` true duplex loop + interrupt candidate stream.
+2. `PH1.C` partial transcript streaming contract.
+3. `PH1.NLP` incremental hypothesis contract.
+4. `PH1.X` speculative planner + commit gate.
+5. End-to-end eval harness + hard release gate.
+
+Strict implementation order for this lock:
+Step 1. PH1.C round-2 baseline capture
+- Add baseline snapshot for duplex metrics: interrupt timing, partial-STT latency, first-token latency, false/missed interrupts.
+
+Step 2. PH1.K duplex detection path lock
+- Keep continuous interruption detection when `tts_playback_active=true`.
+- Require lexical match against approved phrase set as a hard precondition for barge-in.
+- Keep acoustic/prosody/noise features as rejection safeguards only (never as trigger source).
+- Emit deterministic decision traces for accepted/rejected candidates.
+
+Step 3. PH1.C partial transcript contract lock
+- Add bounded incremental transcript chunk surface and deterministic finalization handoff.
+
+Step 4. PH1.NLP incremental hypothesis lock
+- Add advisory intent hypothesis stream from partial transcripts (no execution authority).
+
+Step 5. PH1.X speculative planning + commit gate
+- Build speculative response drafts during active speech.
+- Commit only after final confidence + policy gates pass.
+
+Step 6. PH1.TTS cancel/resume lock
+- Enforce immediate cancel path + deterministic resume snapshot semantics for interruption continuity.
+
+Step 7. PH1.OS full-duplex orchestration lock
+- Enforce strict order: capture -> detect -> partial STT -> hypothesis -> commit decision -> speak.
+- Enforce fail-closed on missing/invalid upstream signals.
+
+Step 8. FEEDBACK/LEARN/PAE/BUILDER wiring
+- Capture all duplex misses/false interrupts/late cancels/clarify fallbacks as learning signals.
+
+Step 9. Benchmark + release-gate harness
+- Add canonical duplex snapshot + strict gate script and wire into readiness audit.
+
+Step 10. Closure + queue progression
+- Round-2 closure for duplex-in-scope engines only after Step-9 gate pass and ledger proof append.
+
+### Round 3: Hardening Round (Cross-Engine Reliability Closure)
 Goal:
 - Prove deterministic safety and orchestration behavior end-to-end.
 
@@ -93,7 +896,7 @@ Exit criteria:
 - Integration matrix passes with no critical open defects.
 - No regression in previously closed engine acceptance tests.
 
-### Round 3: Production Readiness Round (Operational Release Closure)
+### Round 4: Production Readiness Round (Operational Release Closure)
 Goal:
 - Validate runtime operations under production-like conditions.
 
@@ -123,8 +926,9 @@ Checkpoint cadence:
 
 ## 7) Definition of Done (Program-Level)
 - Engine closure complete (Round 1).
-- Hardening complete (Round 2).
-- Operational readiness complete (Round 3).
+- Engine finalization complete (Round 2).
+- Hardening complete (Round 3).
+- Operational readiness complete (Round 4).
 - No unresolved critical blockers in tracker/build ledger.
 
 ## 8) Change Control Rule

@@ -488,6 +488,40 @@ fn allowed_payload_keys_for_event(event_type: AuditEventType) -> Option<&'static
         AuditEventType::TranscriptOk | AuditEventType::TranscriptReject => {
             Some(&["transcript_hash"])
         }
+        AuditEventType::PerceptionSignalEmitted => Some(&[
+            "decision",
+            "event_kind",
+            "event_name",
+            "ph1k_event_id",
+            "processed_stream_id",
+            "raw_stream_id",
+            "pre_roll_buffer_id",
+            "selected_mic",
+            "selected_speaker",
+            "device_health",
+            "jitter_ms",
+            "drift_ppm",
+            "buffer_depth_ms",
+            "underruns",
+            "overruns",
+            "tts_playback_active",
+            "capture_degraded",
+            "aec_unstable",
+            "device_changed",
+            "stream_gap_detected",
+            "phrase_id",
+            "trigger_phrase_id",
+            "trigger_locale",
+            "candidate_confidence_band",
+            "vad_decision_confidence_band",
+            "risk_context_class",
+            "degradation_context",
+            "quality_metrics",
+            "timing_markers",
+            "subject_relation_confidence_bundle",
+            "interrupt_profile_refs",
+            "adaptive_profile",
+        ]),
         _ => None,
     }
 }
@@ -772,5 +806,98 @@ mod tests {
             }
             _ => panic!("expected InvalidValue"),
         }
+    }
+
+    #[test]
+    fn perception_signal_payload_rejects_unknown_key() {
+        let mut payload = BTreeMap::new();
+        payload.insert(
+            PayloadKey::new("decision").unwrap(),
+            PayloadValue::new("K_RUNTIME_EVENT_COMMIT").unwrap(),
+        );
+        payload.insert(
+            PayloadKey::new("unexpected_key").unwrap(),
+            PayloadValue::new("x").unwrap(),
+        );
+        let payload = AuditPayloadMin::v1(payload).unwrap();
+        let err = AuditEventInput::v1(
+            MonotonicTimeNs(10),
+            Some("tenant_a".to_string()),
+            None,
+            None,
+            None,
+            Some(DeviceId::new("dev_1").unwrap()),
+            AuditEngine::Ph1K,
+            AuditEventType::PerceptionSignalEmitted,
+            ReasonCodeId(0x4B00_1001),
+            AuditSeverity::Info,
+            CorrelationId(1),
+            TurnId(1),
+            payload,
+            None,
+            Some("idem_audit_1".to_string()),
+        )
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "audit_event_input.payload_min.entries");
+                assert_eq!(reason, "contains unapproved key for this event_type");
+            }
+            _ => panic!("expected InvalidValue"),
+        }
+    }
+
+    #[test]
+    fn perception_signal_payload_accepts_ph1k_allowlist_keys() {
+        let payload = AuditPayloadMin::v1(BTreeMap::from([
+            (
+                PayloadKey::new("decision").unwrap(),
+                PayloadValue::new("K_RUNTIME_EVENT_COMMIT").unwrap(),
+            ),
+            (
+                PayloadKey::new("event_kind").unwrap(),
+                PayloadValue::new("INTERRUPT_CANDIDATE").unwrap(),
+            ),
+            (
+                PayloadKey::new("event_name").unwrap(),
+                PayloadValue::new("K_INTERRUPT_CANDIDATE_COMMIT").unwrap(),
+            ),
+            (
+                PayloadKey::new("ph1k_event_id").unwrap(),
+                PayloadValue::new("12").unwrap(),
+            ),
+            (
+                PayloadKey::new("candidate_confidence_band").unwrap(),
+                PayloadValue::new("HIGH").unwrap(),
+            ),
+            (
+                PayloadKey::new("risk_context_class").unwrap(),
+                PayloadValue::new("GUARDED").unwrap(),
+            ),
+            (
+                PayloadKey::new("adaptive_profile").unwrap(),
+                PayloadValue::new("BUILTIN|ELEVATED|110|4.000|2.000|0.930").unwrap(),
+            ),
+        ]))
+        .unwrap();
+        let ev = AuditEventInput::v1(
+            MonotonicTimeNs(11),
+            Some("tenant_a".to_string()),
+            None,
+            None,
+            None,
+            Some(DeviceId::new("dev_1").unwrap()),
+            AuditEngine::Ph1K,
+            AuditEventType::PerceptionSignalEmitted,
+            ReasonCodeId(0x4B00_1005),
+            AuditSeverity::Info,
+            CorrelationId(2),
+            TurnId(2),
+            payload,
+            None,
+            Some("idem_audit_2".to_string()),
+        )
+        .expect("allowlisted payload must validate");
+        assert_eq!(ev.event_type, AuditEventType::PerceptionSignalEmitted);
     }
 }

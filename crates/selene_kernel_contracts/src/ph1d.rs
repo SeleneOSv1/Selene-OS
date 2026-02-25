@@ -74,6 +74,432 @@ impl Validate for PolicyContextRef {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1dProviderTask {
+    OcrTextExtract,
+}
+
+impl Ph1dProviderTask {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dProviderTask::OcrTextExtract => "OCR_TEXT_EXTRACT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1dProviderRouteClass {
+    Primary,
+    Secondary,
+    Tertiary,
+}
+
+impl Ph1dProviderRouteClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dProviderRouteClass::Primary => "PRIMARY",
+            Ph1dProviderRouteClass::Secondary => "SECONDARY",
+            Ph1dProviderRouteClass::Tertiary => "TERTIARY",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1dProviderInputPayloadKind {
+    Image,
+    Document,
+}
+
+impl Ph1dProviderInputPayloadKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dProviderInputPayloadKind::Image => "IMAGE",
+            Ph1dProviderInputPayloadKind::Document => "DOCUMENT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1dProviderStatus {
+    Ok,
+    Error,
+}
+
+impl Ph1dProviderStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dProviderStatus::Ok => "OK",
+            Ph1dProviderStatus::Error => "ERROR",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1dProviderValidationStatus {
+    SchemaOk,
+    SchemaFail,
+}
+
+impl Ph1dProviderValidationStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dProviderValidationStatus::SchemaOk => "SCHEMA_OK",
+            Ph1dProviderValidationStatus::SchemaFail => "SCHEMA_FAIL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dProviderCallRequest {
+    pub schema_version: SchemaVersion,
+    pub correlation_id: u64,
+    pub turn_id: u64,
+    pub tenant_id: String,
+    pub request_id: RequestId,
+    pub idempotency_key: String,
+    pub provider_task: Ph1dProviderTask,
+    pub provider_route_class: Ph1dProviderRouteClass,
+    pub provider_id: String,
+    pub model_id: String,
+    pub timeout_ms: u32,
+    pub retry_budget: u8,
+    pub prompt_template_ref: Option<String>,
+    pub transcript_ref: Option<String>,
+    pub output_schema_version: SchemaVersion,
+    pub output_schema_hash: SchemaHash,
+    pub tool_catalog_hash: SchemaHash,
+    pub policy_context_hash: SchemaHash,
+    pub transcript_hash: Option<TranscriptHash>,
+    pub input_payload_ref: String,
+    pub input_payload_kind: Ph1dProviderInputPayloadKind,
+    pub input_payload_hash: SchemaHash,
+    pub input_payload_inline: Option<String>,
+    pub input_content_type: Option<String>,
+    pub safety_tier: SafetyTier,
+    pub privacy_mode: bool,
+    pub do_not_disturb: bool,
+}
+
+impl Ph1dProviderCallRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: u64,
+        turn_id: u64,
+        tenant_id: String,
+        request_id: RequestId,
+        idempotency_key: String,
+        provider_task: Ph1dProviderTask,
+        provider_route_class: Ph1dProviderRouteClass,
+        provider_id: String,
+        model_id: String,
+        timeout_ms: u32,
+        retry_budget: u8,
+        prompt_template_ref: Option<String>,
+        transcript_ref: Option<String>,
+        output_schema_version: SchemaVersion,
+        output_schema_hash: SchemaHash,
+        tool_catalog_hash: SchemaHash,
+        policy_context_hash: SchemaHash,
+        transcript_hash: Option<TranscriptHash>,
+        input_payload_ref: String,
+        input_payload_kind: Ph1dProviderInputPayloadKind,
+        input_payload_hash: SchemaHash,
+        input_payload_inline: Option<String>,
+        input_content_type: Option<String>,
+        safety_tier: SafetyTier,
+        privacy_mode: bool,
+        do_not_disturb: bool,
+    ) -> Result<Self, ContractViolation> {
+        let v = Self {
+            schema_version: PH1D_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            tenant_id,
+            request_id,
+            idempotency_key,
+            provider_task,
+            provider_route_class,
+            provider_id,
+            model_id,
+            timeout_ms,
+            retry_budget,
+            prompt_template_ref,
+            transcript_ref,
+            output_schema_version,
+            output_schema_hash,
+            tool_catalog_hash,
+            policy_context_hash,
+            transcript_hash,
+            input_payload_ref,
+            input_payload_kind,
+            input_payload_hash,
+            input_payload_inline,
+            input_content_type,
+            safety_tier,
+            privacy_mode,
+            do_not_disturb,
+        };
+        v.validate()?;
+        Ok(v)
+    }
+}
+
+impl Validate for Ph1dProviderCallRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
+        if self.correlation_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.correlation_id",
+                reason: "must be > 0",
+            });
+        }
+        if self.turn_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.turn_id",
+                reason: "must be > 0",
+            });
+        }
+        self.request_id.validate()?;
+        validate_provider_token("ph1d_provider_call_request.tenant_id", &self.tenant_id, 128)?;
+        validate_provider_token(
+            "ph1d_provider_call_request.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        validate_provider_token(
+            "ph1d_provider_call_request.provider_id",
+            &self.provider_id,
+            64,
+        )?;
+        validate_provider_token("ph1d_provider_call_request.model_id", &self.model_id, 128)?;
+        validate_opt_provider_token(
+            "ph1d_provider_call_request.prompt_template_ref",
+            &self.prompt_template_ref,
+            128,
+        )?;
+        validate_opt_provider_token(
+            "ph1d_provider_call_request.transcript_ref",
+            &self.transcript_ref,
+            128,
+        )?;
+        validate_provider_token(
+            "ph1d_provider_call_request.input_payload_ref",
+            &self.input_payload_ref,
+            256,
+        )?;
+        validate_opt_provider_token(
+            "ph1d_provider_call_request.input_content_type",
+            &self.input_content_type,
+            64,
+        )?;
+        if !(100..=120_000).contains(&self.timeout_ms) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.timeout_ms",
+                reason: "must be within 100..=120000",
+            });
+        }
+        if self.retry_budget > 10 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.retry_budget",
+                reason: "must be <= 10",
+            });
+        }
+        if self.output_schema_version.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_request.output_schema_version",
+                reason: "must be > 0",
+            });
+        }
+        self.output_schema_hash.validate()?;
+        self.tool_catalog_hash.validate()?;
+        self.policy_context_hash.validate()?;
+        self.input_payload_hash.validate()?;
+        if let Some(input_payload_inline) = &self.input_payload_inline {
+            if input_payload_inline.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_request.input_payload_inline",
+                    reason: "must not be empty when present",
+                });
+            }
+            if input_payload_inline.len() > 262_144 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_request.input_payload_inline",
+                    reason: "must be <= 262144 chars",
+                });
+            }
+            if self.input_content_type.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_request.input_content_type",
+                    reason: "must be Some(...) when input_payload_inline is present",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dProviderCallResponse {
+    pub schema_version: SchemaVersion,
+    pub correlation_id: u64,
+    pub turn_id: u64,
+    pub request_id: RequestId,
+    pub idempotency_key: String,
+    pub provider_call_id: Option<String>,
+    pub provider_id: String,
+    pub provider_task: Ph1dProviderTask,
+    pub model_id: String,
+    pub provider_status: Ph1dProviderStatus,
+    pub provider_latency_ms: u32,
+    pub provider_cost_microunits: u64,
+    pub provider_confidence_bp: Option<u16>,
+    pub normalized_output_schema_hash: Option<SchemaHash>,
+    pub normalized_output_json: Option<String>,
+    pub validation_status: Ph1dProviderValidationStatus,
+    pub reason_code: ReasonCodeId,
+}
+
+impl Ph1dProviderCallResponse {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: u64,
+        turn_id: u64,
+        request_id: RequestId,
+        idempotency_key: String,
+        provider_call_id: Option<String>,
+        provider_id: String,
+        provider_task: Ph1dProviderTask,
+        model_id: String,
+        provider_status: Ph1dProviderStatus,
+        provider_latency_ms: u32,
+        provider_cost_microunits: u64,
+        provider_confidence_bp: Option<u16>,
+        normalized_output_schema_hash: Option<SchemaHash>,
+        normalized_output_json: Option<String>,
+        validation_status: Ph1dProviderValidationStatus,
+        reason_code: ReasonCodeId,
+    ) -> Result<Self, ContractViolation> {
+        let v = Self {
+            schema_version: PH1D_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            request_id,
+            idempotency_key,
+            provider_call_id,
+            provider_id,
+            provider_task,
+            model_id,
+            provider_status,
+            provider_latency_ms,
+            provider_cost_microunits,
+            provider_confidence_bp,
+            normalized_output_schema_hash,
+            normalized_output_json,
+            validation_status,
+            reason_code,
+        };
+        v.validate()?;
+        Ok(v)
+    }
+}
+
+impl Validate for Ph1dProviderCallResponse {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_response.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
+        if self.correlation_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_response.correlation_id",
+                reason: "must be > 0",
+            });
+        }
+        if self.turn_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_response.turn_id",
+                reason: "must be > 0",
+            });
+        }
+        self.request_id.validate()?;
+        validate_provider_token(
+            "ph1d_provider_call_response.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        validate_opt_provider_token(
+            "ph1d_provider_call_response.provider_call_id",
+            &self.provider_call_id,
+            128,
+        )?;
+        validate_provider_token(
+            "ph1d_provider_call_response.provider_id",
+            &self.provider_id,
+            64,
+        )?;
+        validate_provider_token("ph1d_provider_call_response.model_id", &self.model_id, 128)?;
+        if self.provider_latency_ms > 120_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_response.provider_latency_ms",
+                reason: "must be <= 120000",
+            });
+        }
+        if let Some(provider_confidence_bp) = self.provider_confidence_bp {
+            if provider_confidence_bp > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.provider_confidence_bp",
+                    reason: "must be <= 10000",
+                });
+            }
+        }
+        if let Some(normalized_output_schema_hash) = self.normalized_output_schema_hash {
+            normalized_output_schema_hash.validate()?;
+        }
+        if let Some(normalized_output_json) = &self.normalized_output_json {
+            if normalized_output_json.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.normalized_output_json",
+                    reason: "must not be empty when present",
+                });
+            }
+            if normalized_output_json.len() > 262_144 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.normalized_output_json",
+                    reason: "must be <= 262144 chars",
+                });
+            }
+        }
+        if self.validation_status == Ph1dProviderValidationStatus::SchemaOk {
+            if self.normalized_output_schema_hash.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.normalized_output_schema_hash",
+                    reason: "must be Some(...) when validation_status=SCHEMA_OK",
+                });
+            }
+            if self.normalized_output_json.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.normalized_output_json",
+                    reason: "must be Some(...) when validation_status=SCHEMA_OK",
+                });
+            }
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_call_response.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1dRequest {
     pub schema_version: SchemaVersion,
@@ -230,6 +656,46 @@ fn nonzero_u64(h: u64) -> u64 {
     } else {
         h
     }
+}
+
+fn validate_provider_token(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max length",
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/'))
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "contains unsupported characters",
+        });
+    }
+    Ok(())
+}
+
+fn validate_opt_provider_token(
+    field: &'static str,
+    value: &Option<String>,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if let Some(v) = value {
+        validate_provider_token(field, v, max_len)?;
+    }
+    Ok(())
 }
 
 fn tool_catalog_bytes(c: &ToolCatalogRef) -> Vec<u8> {

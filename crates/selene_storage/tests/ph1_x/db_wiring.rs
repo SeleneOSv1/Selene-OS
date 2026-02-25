@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{
+    AuditEngine, AuditEventType, CorrelationId, DeviceId, PayloadKey, TurnId,
+};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo, Ph1xConversationRepo};
@@ -252,4 +254,92 @@ fn at_x_db_04_no_current_table_rebuild_required() {
 
     // Row 16 is ledger-only on `audit_events`; no PH1.X-owned current table exists.
     assert_eq!(s.ph1x_audit_rows(corr).len(), 5);
+}
+
+#[test]
+fn at_x_db_05_interrupt_branch_reason_codes_are_auditable() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+
+    let corr = CorrelationId(27001);
+    s.ph1x_respond_commit_row(
+        MonotonicTimeNs(500),
+        "tenant_a".to_string(),
+        corr,
+        TurnId(1),
+        None,
+        u.clone(),
+        d.clone(),
+        "INTERRUPT_SAME_SUBJECT_APPEND".to_string(),
+        ReasonCodeId(0x5800_001D),
+        "x-interrupt-respond".to_string(),
+    )
+    .unwrap();
+    s.ph1x_wait_commit_row(
+        MonotonicTimeNs(501),
+        "tenant_a".to_string(),
+        corr,
+        TurnId(2),
+        None,
+        u,
+        d,
+        "INTERRUPT_RELATION_UNCERTAIN_CLARIFY".to_string(),
+        ReasonCodeId(0x5800_001C),
+        "x-interrupt-wait".to_string(),
+    )
+    .unwrap();
+
+    let rows = s.ph1x_audit_rows(corr);
+    assert_eq!(rows.len(), 2);
+
+    let respond = rows
+        .iter()
+        .find(|row| row.reason_code == ReasonCodeId(0x5800_001D))
+        .expect("respond interruption branch audit row must exist");
+    assert_eq!(respond.engine, AuditEngine::Ph1X);
+    assert_eq!(respond.event_type, AuditEventType::Other);
+    assert_eq!(
+        respond
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("directive").unwrap())
+            .expect("directive payload key must exist")
+            .as_str(),
+        "respond"
+    );
+    assert_eq!(
+        respond
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("response_kind").unwrap())
+            .expect("response_kind payload key must exist")
+            .as_str(),
+        "INTERRUPT_SAME_SUBJECT_APPEND"
+    );
+
+    let wait = rows
+        .iter()
+        .find(|row| row.reason_code == ReasonCodeId(0x5800_001C))
+        .expect("wait interruption branch audit row must exist");
+    assert_eq!(wait.engine, AuditEngine::Ph1X);
+    assert_eq!(wait.event_type, AuditEventType::Other);
+    assert_eq!(
+        wait.payload_min
+            .entries
+            .get(&PayloadKey::new("directive").unwrap())
+            .expect("directive payload key must exist")
+            .as_str(),
+        "wait"
+    );
+    assert_eq!(
+        wait.payload_min
+            .entries
+            .get(&PayloadKey::new("wait_kind").unwrap())
+            .expect("wait_kind payload key must exist")
+            .as_str(),
+        "INTERRUPT_RELATION_UNCERTAIN_CLARIFY"
+    );
 }

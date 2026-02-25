@@ -84,3 +84,10 @@
 - PH1.NLP may consume Selene OS-curated PH1.KNOW dictionary hints as advisory metadata only.
 - PH1.NLP remains deterministic owner of final intent/clarify/chat outputs and must not treat PH1.KNOW hints as transcript evidence replacement.
 - PH1.KNOW-derived hints must remain tenant-scoped and authorized-only in PH1.NLP capability execution.
+
+## FDX Design Lock (Section 5F)
+- PH1.NLP owns incremental intent hypothesis generation over partial transcript streams.
+- PH1.NLP must emit bounded `IntentHypothesis` candidates (`intent`, `score`, `required_slots`, `ambiguity_flags`) as advisory output only.
+- PH1.NLP must not execute actions or finalize interruption branches.
+- When intent confidence is below threshold, PH1.NLP must preserve clarify-first posture and explicit missing-field outputs.
+- PH1.NLP must keep no-guess behavior during duplex partials and finalization handoff.

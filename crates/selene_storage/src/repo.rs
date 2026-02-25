@@ -84,7 +84,8 @@ use crate::ph1f::{
     MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
     MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
     MobileArtifactSyncQueueRecord, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
-    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord,
+    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
+    Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord,
     Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
     SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
     SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
@@ -604,6 +605,51 @@ pub trait Ph1kVoiceRuntimeRepo {
         idempotency_key: String,
     ) -> Result<Ph1kRuntimeEventRecord, StorageError>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn ph1k_runtime_event_commit_row_extended(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        device_id: DeviceId,
+        session_id: Option<SessionId>,
+        event_kind: Ph1kRuntimeEventKind,
+        processed_stream_id: Option<u128>,
+        raw_stream_id: Option<u128>,
+        pre_roll_buffer_id: Option<u64>,
+        selected_mic: Option<String>,
+        selected_speaker: Option<String>,
+        device_health: Option<Ph1kDeviceHealth>,
+        jitter_ms: Option<f32>,
+        drift_ppm: Option<f32>,
+        buffer_depth_ms: Option<f32>,
+        underruns: Option<u64>,
+        overruns: Option<u64>,
+        phrase_id: Option<u32>,
+        phrase_text: Option<String>,
+        reason_code: Option<ReasonCodeId>,
+        interrupt_extended: Option<Ph1kInterruptCandidateExtendedFields>,
+        tts_playback_active: Option<bool>,
+        capture_degraded: Option<bool>,
+        aec_unstable: Option<bool>,
+        device_changed: Option<bool>,
+        stream_gap_detected: Option<bool>,
+        idempotency_key: String,
+    ) -> Result<Ph1kRuntimeEventRecord, StorageError>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1k_feedback_capture_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        capture_input: Ph1kFeedbackCaptureInput,
+        idempotency_key: String,
+    ) -> Result<Ph1kFeedbackCaptureRecord, StorageError>;
+
     fn ph1k_runtime_event_rows(&self) -> &[Ph1kRuntimeEventRecord];
 
     fn ph1k_runtime_current_rows(&self) -> &BTreeMap<(String, DeviceId), Ph1kRuntimeCurrentRecord>;
@@ -620,6 +666,8 @@ pub trait Ph1kVoiceRuntimeRepo {
         &mut self,
         event_id: u64,
     ) -> Result<(), StorageError>;
+
+    fn ph1k_feedback_capture_rows(&self) -> &[Ph1kFeedbackCaptureRecord];
 }
 
 /// Typed repository interface for PH1.W wake enrollment/runtime persistence.
@@ -2700,6 +2748,90 @@ impl Ph1kVoiceRuntimeRepo for Ph1fStore {
         )
     }
 
+    fn ph1k_runtime_event_commit_row_extended(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        device_id: DeviceId,
+        session_id: Option<SessionId>,
+        event_kind: Ph1kRuntimeEventKind,
+        processed_stream_id: Option<u128>,
+        raw_stream_id: Option<u128>,
+        pre_roll_buffer_id: Option<u64>,
+        selected_mic: Option<String>,
+        selected_speaker: Option<String>,
+        device_health: Option<Ph1kDeviceHealth>,
+        jitter_ms: Option<f32>,
+        drift_ppm: Option<f32>,
+        buffer_depth_ms: Option<f32>,
+        underruns: Option<u64>,
+        overruns: Option<u64>,
+        phrase_id: Option<u32>,
+        phrase_text: Option<String>,
+        reason_code: Option<ReasonCodeId>,
+        interrupt_extended: Option<Ph1kInterruptCandidateExtendedFields>,
+        tts_playback_active: Option<bool>,
+        capture_degraded: Option<bool>,
+        aec_unstable: Option<bool>,
+        device_changed: Option<bool>,
+        stream_gap_detected: Option<bool>,
+        idempotency_key: String,
+    ) -> Result<Ph1kRuntimeEventRecord, StorageError> {
+        self.ph1k_runtime_event_commit_extended(
+            now,
+            tenant_id,
+            device_id,
+            session_id,
+            event_kind,
+            processed_stream_id,
+            raw_stream_id,
+            pre_roll_buffer_id,
+            selected_mic,
+            selected_speaker,
+            device_health,
+            jitter_ms,
+            drift_ppm,
+            buffer_depth_ms,
+            underruns,
+            overruns,
+            phrase_id,
+            phrase_text,
+            reason_code,
+            interrupt_extended,
+            tts_playback_active,
+            capture_degraded,
+            aec_unstable,
+            device_changed,
+            stream_gap_detected,
+            idempotency_key,
+        )
+    }
+
+    fn ph1k_feedback_capture_commit_row(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        capture_input: Ph1kFeedbackCaptureInput,
+        idempotency_key: String,
+    ) -> Result<Ph1kFeedbackCaptureRecord, StorageError> {
+        self.ph1k_feedback_capture_commit(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            capture_input,
+            idempotency_key,
+        )
+    }
+
     fn ph1k_runtime_event_rows(&self) -> &[Ph1kRuntimeEventRecord] {
         Ph1fStore::ph1k_runtime_event_rows(self)
     }
@@ -2725,6 +2857,10 @@ impl Ph1kVoiceRuntimeRepo for Ph1fStore {
         event_id: u64,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_ph1k_runtime_event(event_id)
+    }
+
+    fn ph1k_feedback_capture_rows(&self) -> &[Ph1kFeedbackCaptureRecord] {
+        Ph1fStore::ph1k_feedback_capture_rows(self)
     }
 }
 

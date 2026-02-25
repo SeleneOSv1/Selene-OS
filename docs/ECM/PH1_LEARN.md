@@ -65,3 +65,8 @@
 - PH1.PERSONA/PH1.PAE/PH1.KNOW/PH1.CACHE/PH1.PRUNE/PH1.SEARCH may consume LEARN outputs only after Selene OS validation (`LEARN_ARTIFACT_PACKAGE_BUILD=OK`).
 - PH1.PAE link is runtime-ordered: LEARN signals can influence `PAE_POLICY_SCORE_BUILD`; `PAE_ADAPTATION_HINT_EMIT` remains downstream validation/handoff only.
 - PH1.PATTERN/PH1.RLL remain offline-only engines; PH1.LEARN consumes governed artifact outputs only, never direct runtime calls.
+
+## FDX Design Lock (Section 5F)
+- PH1.LEARN must aggregate duplex feedback into versioned, rollbackable artifacts.
+- FDX learning outputs may target threshold/routing/question-order improvements for PH1.K/PH1.C/PH1.NLP/PH1.X/PH1.TTS only as advisory artifacts.
+- PH1.LEARN must not directly activate runtime behavior changes; activation remains governance/promotion controlled.

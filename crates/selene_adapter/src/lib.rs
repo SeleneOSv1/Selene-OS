@@ -16,12 +16,6 @@ use selene_engines::ph1health::{
 };
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
-use selene_kernel_contracts::ph1health::{
-    HealthAckState, HealthActionResult, HealthCompanyScope, HealthDisplayTarget,
-    HealthIssueEvent, HealthIssueStatus, HealthPageAction, HealthReadEnvelope, HealthReportKind,
-    HealthReportQueryReadRequest, HealthReportQueryReadOk, HealthReportTimeRange, Ph1HealthRequest,
-    Ph1HealthResponse, HealthSeverity,
-};
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
 };
@@ -31,6 +25,12 @@ use selene_kernel_contracts::ph1art::{
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
+use selene_kernel_contracts::ph1health::{
+    HealthAckState, HealthActionResult, HealthCompanyScope, HealthDisplayTarget, HealthIssueEvent,
+    HealthIssueStatus, HealthPageAction, HealthReadEnvelope, HealthReportKind,
+    HealthReportQueryReadOk, HealthReportQueryReadRequest, HealthReportTimeRange, HealthSeverity,
+    Ph1HealthRequest, Ph1HealthResponse,
+};
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
     AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
@@ -38,9 +38,9 @@ use selene_kernel_contracts::ph1k::{
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
 use selene_kernel_contracts::ph1link::AppPlatform;
-use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
+use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_os::app_ingress::{AppServerIngressRuntime, AppVoiceIngressRequest};
@@ -54,9 +54,9 @@ use selene_os::ph1builder::{
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
 use selene_os::ph1os::{OsVoiceLiveTurnOutcome, OsVoiceTrigger};
-use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
+use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
 use selene_os::simulation_executor::SimulationExecutor;
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
@@ -624,14 +624,17 @@ impl AdapterRuntime {
     ) -> Result<UiHealthDetailResponse, String> {
         if let (Some(from), Some(to)) = (filter.from_utc_ns, filter.to_utc_ns) {
             if from > to {
-                return Err("invalid health detail date range: from_utc_ns is after to_utc_ns".to_string());
+                return Err(
+                    "invalid health detail date range: from_utc_ns is after to_utc_ns".to_string(),
+                );
             }
         }
         let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
         let health = self.health_report(Some(now_ns))?;
         let mut detail = build_ui_health_detail_response(&health, check_id, now_ns)?;
         detail.issues = filter_health_issues(&detail.issues, &filter);
-        detail.active_issue_id = select_active_issue_id(&detail.issues, filter.selected_issue_id.as_deref());
+        detail.active_issue_id =
+            select_active_issue_id(&detail.issues, filter.selected_issue_id.as_deref());
         let active_issue = detail.active_issue_id.as_deref();
         let filtered_timeline = filter_timeline_for_issue(&detail.timeline, active_issue, &filter);
         let (timeline, timeline_paging) = page_timeline_entries(
@@ -777,8 +780,10 @@ impl AdapterRuntime {
             .ok()
             .and_then(|m| m.get(&viewer_user_id).cloned());
 
-        let display_resolution =
-            resolve_report_display_target(request.display_target.as_deref(), remembered_target.as_deref());
+        let display_resolution = resolve_report_display_target(
+            request.display_target.as_deref(),
+            remembered_target.as_deref(),
+        );
         let display_target_applied = match display_resolution {
             ReportDisplayResolution::Resolved(target) => target.as_str().to_string(),
             ReportDisplayResolution::Clarify(question) => {
@@ -865,31 +870,32 @@ impl AdapterRuntime {
             .from_utc_ns
             .unwrap_or(now_ns.saturating_sub(30 * 24 * 60 * 60 * 1_000_000_000));
         let to_ns = request.to_utc_ns.unwrap_or(now_ns);
-        let time_range = match HealthReportTimeRange::v1(MonotonicTimeNs(from_ns), MonotonicTimeNs(to_ns)) {
-            Ok(v) => v,
-            Err(_) => {
-                return UiHealthReportQueryResponse {
-                    status: "error".to_string(),
-                    generated_at_ns: now_ns,
-                    reason_code: health_reason_codes::PH1_HEALTH_DATE_RANGE_INVALID
-                        .0
-                        .to_string(),
-                    report_context_id: None,
-                    report_revision: None,
-                    normalized_query: None,
-                    rows: Vec::new(),
-                    paging: UiHealthReportPaging {
-                        has_next: false,
-                        has_prev: false,
-                        next_cursor: None,
-                        prev_cursor: None,
-                    },
-                    display_target_applied: Some(display_target_applied),
-                    remembered_display_target: remembered_target,
-                    requires_clarification: Some("Invalid date range.".to_string()),
-                };
-            }
-        };
+        let time_range =
+            match HealthReportTimeRange::v1(MonotonicTimeNs(from_ns), MonotonicTimeNs(to_ns)) {
+                Ok(v) => v,
+                Err(_) => {
+                    return UiHealthReportQueryResponse {
+                        status: "error".to_string(),
+                        generated_at_ns: now_ns,
+                        reason_code: health_reason_codes::PH1_HEALTH_DATE_RANGE_INVALID
+                            .0
+                            .to_string(),
+                        report_context_id: None,
+                        report_revision: None,
+                        normalized_query: None,
+                        rows: Vec::new(),
+                        paging: UiHealthReportPaging {
+                            has_next: false,
+                            has_prev: false,
+                            next_cursor: None,
+                            prev_cursor: None,
+                        },
+                        display_target_applied: Some(display_target_applied),
+                        remembered_display_target: remembered_target,
+                        requires_clarification: Some("Invalid date range.".to_string()),
+                    };
+                }
+            };
 
         let envelope = match HealthReadEnvelope::v1(
             CorrelationId(request.correlation_id.unwrap_or(now_ns) as u128),
@@ -2244,7 +2250,12 @@ fn parse_tenant_id(raw: Option<&str>) -> Result<TenantId, String> {
 }
 
 fn parse_report_kind(raw: Option<&str>) -> HealthReportKind {
-    match raw.unwrap_or("UNRESOLVED_ESCALATED").trim().to_ascii_uppercase().as_str() {
+    match raw
+        .unwrap_or("UNRESOLVED_ESCALATED")
+        .trim()
+        .to_ascii_uppercase()
+        .as_str()
+    {
         "MISSED_STT" => HealthReportKind::MissedStt,
         "ISSUE_STATUS" => HealthReportKind::IssueStatus,
         _ => HealthReportKind::UnresolvedEscalated,
@@ -2409,7 +2420,9 @@ fn synth_health_issue_events(
             } else {
                 None
             },
-            Some(MonotonicTimeNs(now_ns.saturating_add(15 * 60 * 1_000_000_000))),
+            Some(MonotonicTimeNs(
+                now_ns.saturating_add(15 * 60 * 1_000_000_000),
+            )),
             None,
             None,
         );
@@ -2432,7 +2445,9 @@ fn synth_health_issue_events(
             .clone()
             .with_resolution_proof(
                 issue_fingerprint,
-                Some(MonotonicTimeNs(now_ns.saturating_sub(5 * 60 * 1_000_000_000))),
+                Some(MonotonicTimeNs(
+                    now_ns.saturating_sub(5 * 60 * 1_000_000_000),
+                )),
                 Some(MonotonicTimeNs(now_ns)),
                 recurrence_observed,
             )
@@ -2478,7 +2493,10 @@ fn synth_health_issue_events(
             None,
             Some("Retry queue backlog is above zero.".to_string()),
             vec!["retry worker pass".to_string()],
-            Some(format!("retry_pending_count={}", health.sync.queue.retry_pending_count)),
+            Some(format!(
+                "retry_pending_count={}",
+                health.sync.queue.retry_pending_count
+            )),
             Some("retry queue has not drained yet".to_string()),
             Some("sync_retry_fingerprint".to_string()),
             Some(true),
@@ -2499,7 +2517,10 @@ fn synth_health_issue_events(
             None,
             Some("Replay-due jobs exceeded threshold.".to_string()),
             vec!["replay scan".to_string()],
-            Some(format!("replay_due_count={}", health.sync.queue.replay_due_count)),
+            Some(format!(
+                "replay_due_count={}",
+                health.sync.queue.replay_due_count
+            )),
             Some("replay-due jobs remain unresolved".to_string()),
             Some("sync_replay_due_fingerprint".to_string()),
             Some(true),
@@ -2645,7 +2666,10 @@ fn build_ui_health_detail_response(
     })
 }
 
-fn filter_health_issues(issues: &[UiHealthIssueRow], filter: &UiHealthDetailFilter) -> Vec<UiHealthIssueRow> {
+fn filter_health_issues(
+    issues: &[UiHealthIssueRow],
+    filter: &UiHealthDetailFilter,
+) -> Vec<UiHealthIssueRow> {
     let query = filter
         .issue_query
         .as_deref()
@@ -2677,7 +2701,11 @@ fn filter_health_issues(issues: &[UiHealthIssueRow], filter: &UiHealthDetailFilt
                 return false;
             }
             if let Some(owner_filter) = owner.as_deref() {
-                if !issue.engine_owner.to_ascii_lowercase().contains(owner_filter) {
+                if !issue
+                    .engine_owner
+                    .to_ascii_lowercase()
+                    .contains(owner_filter)
+                {
                     return false;
                 }
             }
@@ -3400,23 +3428,31 @@ mod tests {
         assert!(clarify.requires_clarification.is_some());
         assert!(clarify.display_target_applied.is_none());
 
-        let set_target = runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_001));
+        let set_target =
+            runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_001));
         assert_eq!(set_target.status, "ok");
-        assert_eq!(set_target.display_target_applied.as_deref(), Some("desktop"));
+        assert_eq!(
+            set_target.display_target_applied.as_deref(),
+            Some("desktop")
+        );
         assert!(set_target.requires_clarification.is_none());
 
         let mut remembered_req = base_report_query_request();
         remembered_req.display_target = None;
         let remembered = runtime.ui_health_report_query(remembered_req, Some(5_000_000_002));
         assert_eq!(remembered.status, "ok");
-        assert_eq!(remembered.display_target_applied.as_deref(), Some("desktop"));
+        assert_eq!(
+            remembered.display_target_applied.as_deref(),
+            Some("desktop")
+        );
         assert!(remembered.requires_clarification.is_none());
     }
 
     #[test]
     fn at_adapter_16_report_query_context_supports_follow_up_patch() {
         let runtime = AdapterRuntime::default();
-        let first = runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_100));
+        let first =
+            runtime.ui_health_report_query(base_report_query_request(), Some(5_000_000_100));
         assert_eq!(first.status, "ok");
         let context_id = first
             .report_context_id
@@ -3428,7 +3464,10 @@ mod tests {
         follow_up.country_codes = Some(vec!["CN".to_string()]);
         let second = runtime.ui_health_report_query(follow_up, Some(5_000_000_101));
         assert_eq!(second.status, "ok");
-        assert_eq!(second.report_context_id.as_deref(), Some(context_id.as_str()));
+        assert_eq!(
+            second.report_context_id.as_deref(),
+            Some(context_id.as_str())
+        );
     }
 
     fn sample_health_issues_for_filters() -> Vec<UiHealthIssueRow> {
@@ -3695,7 +3734,10 @@ mod tests {
         follow_up.country_codes = Some(vec!["CN".to_string()]);
         let second = runtime.ui_health_report_query(follow_up, Some(9_000_000_101));
         assert_eq!(second.status, "ok");
-        assert_eq!(second.report_context_id.as_deref(), Some(first_context.as_str()));
+        assert_eq!(
+            second.report_context_id.as_deref(),
+            Some(first_context.as_str())
+        );
         assert_ne!(second.report_revision, first_revision);
         assert_ne!(second.rows, first_rows);
     }
@@ -3821,8 +3863,12 @@ mod tests {
     #[test]
     fn at_adapter_29_hui13_chat_shell_transcript_and_wave_layout_present() {
         let html = app_ui_assets::APP_HTML;
-        let wave_idx = html.find("id=\"voice-wave\"").expect("voice wave must exist");
-        let input_idx = html.find("id=\"chat-input\"").expect("chat input must exist");
+        let wave_idx = html
+            .find("id=\"voice-wave\"")
+            .expect("voice wave must exist");
+        let input_idx = html
+            .find("id=\"chat-input\"")
+            .expect("chat input must exist");
         assert!(wave_idx < input_idx);
         assert!(html.contains("id=\"section-selene\""));
         assert!(html.contains("id=\"transcript-list\""));

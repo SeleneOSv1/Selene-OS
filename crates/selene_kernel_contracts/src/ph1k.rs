@@ -571,11 +571,360 @@ impl Validate for TimingStats {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdvancedAudioQualityMetrics {
+    pub snr_db: f32,
+    pub clipping_ratio: f32,
+    pub echo_delay_ms: f32,
+    pub packet_loss_pct: f32,
+    pub double_talk_score: f32,
+    pub erle_db: f32,
+}
+
+impl AdvancedAudioQualityMetrics {
+    pub fn v1(
+        snr_db: f32,
+        clipping_ratio: f32,
+        echo_delay_ms: f32,
+        packet_loss_pct: f32,
+        double_talk_score: f32,
+        erle_db: f32,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            snr_db,
+            clipping_ratio,
+            echo_delay_ms,
+            packet_loss_pct,
+            double_talk_score,
+            erle_db,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for AdvancedAudioQualityMetrics {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            ("advanced_audio_quality_metrics.snr_db", self.snr_db),
+            (
+                "advanced_audio_quality_metrics.clipping_ratio",
+                self.clipping_ratio,
+            ),
+            (
+                "advanced_audio_quality_metrics.echo_delay_ms",
+                self.echo_delay_ms,
+            ),
+            (
+                "advanced_audio_quality_metrics.packet_loss_pct",
+                self.packet_loss_pct,
+            ),
+            (
+                "advanced_audio_quality_metrics.double_talk_score",
+                self.double_talk_score,
+            ),
+            ("advanced_audio_quality_metrics.erle_db", self.erle_db),
+        ] {
+            if !value.is_finite() {
+                return Err(ContractViolation::NotFinite { field });
+            }
+        }
+        if !(-20.0..=80.0).contains(&self.snr_db) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.snr_db",
+                min: -20.0,
+                max: 80.0,
+                got: self.snr_db as f64,
+            });
+        }
+        if !(0.0..=1.0).contains(&self.clipping_ratio) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.clipping_ratio",
+                min: 0.0,
+                max: 1.0,
+                got: self.clipping_ratio as f64,
+            });
+        }
+        if !(0.0..=2_000.0).contains(&self.echo_delay_ms) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.echo_delay_ms",
+                min: 0.0,
+                max: 2_000.0,
+                got: self.echo_delay_ms as f64,
+            });
+        }
+        if !(0.0..=100.0).contains(&self.packet_loss_pct) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.packet_loss_pct",
+                min: 0.0,
+                max: 100.0,
+                got: self.packet_loss_pct as f64,
+            });
+        }
+        if !(0.0..=1.0).contains(&self.double_talk_score) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.double_talk_score",
+                min: 0.0,
+                max: 1.0,
+                got: self.double_talk_score as f64,
+            });
+        }
+        if !(0.0..=80.0).contains(&self.erle_db) {
+            return Err(ContractViolation::InvalidRange {
+                field: "advanced_audio_quality_metrics.erle_db",
+                min: 0.0,
+                max: 80.0,
+                got: self.erle_db as f64,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeviceReliabilityScoreInput {
+    pub failures_24h: u32,
+    pub recoveries_24h: u32,
+    pub mean_recovery_ms: u32,
+    pub reliability_score: Confidence,
+}
+
+impl DeviceReliabilityScoreInput {
+    pub fn v1(
+        failures_24h: u32,
+        recoveries_24h: u32,
+        mean_recovery_ms: u32,
+        reliability_score: Confidence,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            failures_24h,
+            recoveries_24h,
+            mean_recovery_ms,
+            reliability_score,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for DeviceReliabilityScoreInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.failures_24h > 1_000_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "device_reliability_score_input.failures_24h",
+                reason: "must be <= 1_000_000",
+            });
+        }
+        if self.recoveries_24h > 1_000_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "device_reliability_score_input.recoveries_24h",
+                reason: "must be <= 1_000_000",
+            });
+        }
+        if self.mean_recovery_ms > 300_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "device_reliability_score_input.mean_recovery_ms",
+                reason: "must be <= 300000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VadDecisionConfidenceBand {
+    High,
+    Medium,
+    Low,
+}
+
+pub fn classify_vad_decision_confidence_band(
+    vad_confidence: Confidence,
+    speech_likeness: SpeechLikeness,
+) -> VadDecisionConfidenceBand {
+    if vad_confidence.0 >= 0.90 && speech_likeness.0 >= 0.85 {
+        VadDecisionConfidenceBand::High
+    } else if vad_confidence.0 >= 0.75 && speech_likeness.0 >= 0.65 {
+        VadDecisionConfidenceBand::Medium
+    } else {
+        VadDecisionConfidenceBand::Low
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JitterClockRecoveryPolicy {
+    pub max_jitter_ms: f32,
+    pub max_abs_drift_ppm: f32,
+    pub max_handoff_latency_ms: u32,
+}
+
+impl JitterClockRecoveryPolicy {
+    pub fn v1(
+        max_jitter_ms: f32,
+        max_abs_drift_ppm: f32,
+        max_handoff_latency_ms: u32,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            max_jitter_ms,
+            max_abs_drift_ppm,
+            max_handoff_latency_ms,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for JitterClockRecoveryPolicy {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            (
+                "jitter_clock_recovery_policy.max_jitter_ms",
+                self.max_jitter_ms,
+            ),
+            (
+                "jitter_clock_recovery_policy.max_abs_drift_ppm",
+                self.max_abs_drift_ppm,
+            ),
+        ] {
+            if !value.is_finite() {
+                return Err(ContractViolation::NotFinite { field });
+            }
+            if value <= 0.0 {
+                return Err(ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be > 0",
+                });
+            }
+        }
+        if self.max_handoff_latency_ms == 0 || self.max_handoff_latency_ms > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "jitter_clock_recovery_policy.max_handoff_latency_ms",
+                reason: "must be in 1..=10000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdaptiveThresholdPolicyInput {
+    pub device_route: DeviceRoute,
+    pub quality_metrics: AdvancedAudioQualityMetrics,
+    pub device_reliability: DeviceReliabilityScoreInput,
+    pub timing_stats: TimingStats,
+    pub capture_to_handoff_latency_ms: u32,
+}
+
+impl Validate for AdaptiveThresholdPolicyInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.quality_metrics.validate()?;
+        self.device_reliability.validate()?;
+        self.timing_stats.validate()?;
+        if self.capture_to_handoff_latency_ms == 0 || self.capture_to_handoff_latency_ms > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "adaptive_threshold_policy_input.capture_to_handoff_latency_ms",
+                reason: "must be in 1..=10000",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterruptPhraseId(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterruptPhraseSetVersion(pub u32);
+
+pub const PH1K_INTERRUPT_POLICY_PROFILE_ID_DEFAULT: &str = "interrupt_policy_default";
+pub const PH1K_INTERRUPT_TENANT_PROFILE_ID_DEFAULT: &str = "tenant_interrupt_default";
+pub const PH1K_INTERRUPT_LOCALE_TAG_DEFAULT: &str = "en-US";
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InterruptPolicyProfileId(String);
+
+impl InterruptPolicyProfileId {
+    pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
+        let id = id.into();
+        validate_interrupt_profile_id("interrupt_policy_profile_id", &id)?;
+        Ok(Self(id))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InterruptTenantProfileId(String);
+
+impl InterruptTenantProfileId {
+    pub fn new(id: impl Into<String>) -> Result<Self, ContractViolation> {
+        let id = id.into();
+        validate_interrupt_profile_id("interrupt_tenant_profile_id", &id)?;
+        Ok(Self(id))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InterruptLocaleTag(String);
+
+impl InterruptLocaleTag {
+    pub fn new(locale_tag: impl Into<String>) -> Result<Self, ContractViolation> {
+        let locale_tag = locale_tag.into();
+        validate_interrupt_locale_tag("interrupt_locale_tag", &locale_tag)?;
+        Ok(Self(locale_tag))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct InterruptLexiconPolicyBinding {
+    pub policy_profile_id: InterruptPolicyProfileId,
+    pub tenant_profile_id: InterruptTenantProfileId,
+    pub locale_tag: InterruptLocaleTag,
+}
+
+impl InterruptLexiconPolicyBinding {
+    pub fn v1(
+        policy_profile_id: InterruptPolicyProfileId,
+        tenant_profile_id: InterruptTenantProfileId,
+        locale_tag: InterruptLocaleTag,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            policy_profile_id,
+            tenant_profile_id,
+            locale_tag,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for InterruptLexiconPolicyBinding {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_interrupt_profile_id(
+            "interrupt_lexicon_policy_binding.policy_profile_id",
+            self.policy_profile_id.as_str(),
+        )?;
+        validate_interrupt_profile_id(
+            "interrupt_lexicon_policy_binding.tenant_profile_id",
+            self.tenant_profile_id.as_str(),
+        )?;
+        validate_interrupt_locale_tag(
+            "interrupt_lexicon_policy_binding.locale_tag",
+            self.locale_tag.as_str(),
+        )?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InterruptGates {
@@ -594,13 +943,181 @@ pub struct InterruptGateConfidences {
     pub nearfield_confidence: Option<Confidence>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptCandidateConfidenceBand {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CaptureQualityClass {
+    Clear,
+    Guarded,
+    Degraded,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EchoRiskClass {
+    Low,
+    Elevated,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NetworkStabilityClass {
+    Stable,
+    Flaky,
+    Unstable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RecoverabilityClass {
+    Fast,
+    Guarded,
+    Slow,
+    FailoverRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DegradationClassBundle {
+    pub capture_quality_class: CaptureQualityClass,
+    pub echo_risk_class: EchoRiskClass,
+    pub network_stability_class: NetworkStabilityClass,
+    pub recoverability_class: RecoverabilityClass,
+}
+
+impl DegradationClassBundle {
+    pub fn from_flags(
+        capture_degraded: bool,
+        aec_unstable: bool,
+        device_changed: bool,
+        stream_gap_detected: bool,
+    ) -> Self {
+        let capture_quality_class = if capture_degraded {
+            if stream_gap_detected {
+                CaptureQualityClass::Critical
+            } else {
+                CaptureQualityClass::Degraded
+            }
+        } else if aec_unstable {
+            CaptureQualityClass::Guarded
+        } else {
+            CaptureQualityClass::Clear
+        };
+        let echo_risk_class = if aec_unstable {
+            EchoRiskClass::High
+        } else if capture_degraded {
+            EchoRiskClass::Elevated
+        } else {
+            EchoRiskClass::Low
+        };
+        let network_stability_class = if stream_gap_detected {
+            NetworkStabilityClass::Unstable
+        } else if device_changed {
+            NetworkStabilityClass::Flaky
+        } else {
+            NetworkStabilityClass::Stable
+        };
+        let recoverability_class = if stream_gap_detected || device_changed {
+            RecoverabilityClass::FailoverRequired
+        } else if capture_degraded || aec_unstable {
+            RecoverabilityClass::Slow
+        } else {
+            RecoverabilityClass::Fast
+        };
+        Self {
+            capture_quality_class,
+            echo_risk_class,
+            network_stability_class,
+            recoverability_class,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptRiskContextClass {
+    Low,
+    Guarded,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InterruptDegradationContext {
+    pub capture_degraded: bool,
+    pub aec_unstable: bool,
+    pub device_changed: bool,
+    pub stream_gap_detected: bool,
+    pub class_bundle: DegradationClassBundle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InterruptTimingMarkers {
+    pub window_start: MonotonicTimeNs,
+    pub window_end: MonotonicTimeNs,
+}
+
+impl Validate for InterruptTimingMarkers {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.window_end.0 < self.window_start.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_timing_markers.window_end",
+                reason: "must be >= window_start",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InterruptSpeechWindowMetrics {
+    pub voiced_window_ms: u32,
+}
+
+impl Validate for InterruptSpeechWindowMetrics {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.voiced_window_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_speech_window_metrics.voiced_window_ms",
+                reason: "must be > 0",
+            });
+        }
+        if self.voiced_window_ms > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_speech_window_metrics.voiced_window_ms",
+                reason: "must be <= 10000ms",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InterruptSubjectRelationConfidenceBundle {
+    pub lexical_confidence: Confidence,
+    pub vad_confidence: Confidence,
+    pub speech_likeness: SpeechLikeness,
+    pub echo_safe_confidence: Confidence,
+    pub nearfield_confidence: Option<Confidence>,
+    pub combined_confidence: Confidence,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterruptCandidate {
     pub schema_version: SchemaVersion,
     pub phrase_set_version: InterruptPhraseSetVersion,
     pub phrase_id: InterruptPhraseId,
+    pub trigger_phrase_id: InterruptPhraseId,
+    pub trigger_locale: InterruptLocaleTag,
     pub phrase_text: String,
     pub phrase_confidence: Confidence,
+    pub candidate_confidence_band: InterruptCandidateConfidenceBand,
+    pub risk_context_class: InterruptRiskContextClass,
+    pub degradation_context: InterruptDegradationContext,
+    pub timing_markers: InterruptTimingMarkers,
+    pub speech_window_metrics: InterruptSpeechWindowMetrics,
+    pub subject_relation_confidence_bundle: InterruptSubjectRelationConfidenceBundle,
     pub gates: InterruptGates,
     pub gate_confidences: InterruptGateConfidences,
     pub t_event: MonotonicTimeNs,
@@ -611,8 +1128,16 @@ impl InterruptCandidate {
     pub fn v1(
         phrase_set_version: InterruptPhraseSetVersion,
         phrase_id: InterruptPhraseId,
+        trigger_phrase_id: InterruptPhraseId,
+        trigger_locale: InterruptLocaleTag,
         phrase_text: String,
         phrase_confidence: Confidence,
+        candidate_confidence_band: InterruptCandidateConfidenceBand,
+        risk_context_class: InterruptRiskContextClass,
+        degradation_context: InterruptDegradationContext,
+        timing_markers: InterruptTimingMarkers,
+        speech_window_metrics: InterruptSpeechWindowMetrics,
+        subject_relation_confidence_bundle: InterruptSubjectRelationConfidenceBundle,
         gates: InterruptGates,
         gate_confidences: InterruptGateConfidences,
         t_event: MonotonicTimeNs,
@@ -624,17 +1149,15 @@ impl InterruptCandidate {
                 reason: "must be > 0",
             });
         }
-        let normalized = normalize_ascii_phrase(&phrase_text);
+        let normalized = normalize_interrupt_phrase_with_field(
+            "interrupt_candidate.phrase_text",
+            &trigger_locale,
+            &phrase_text,
+        )?;
         if normalized.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "interrupt_candidate.phrase_text",
                 reason: "must not be empty",
-            });
-        }
-        if !normalized.is_ascii() {
-            return Err(ContractViolation::InvalidValue {
-                field: "interrupt_candidate.phrase_text",
-                reason: "must be ASCII normalized text",
             });
         }
         if normalized.len() > 128 {
@@ -643,12 +1166,95 @@ impl InterruptCandidate {
                 reason: "must be <= 128 chars",
             });
         }
+        if phrase_id.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.phrase_id",
+                reason: "must be > 0",
+            });
+        }
+        if trigger_phrase_id.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.trigger_phrase_id",
+                reason: "must be > 0",
+            });
+        }
+        if phrase_id != trigger_phrase_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.trigger_phrase_id",
+                reason: "must match phrase_id",
+            });
+        }
+        validate_interrupt_locale_tag(
+            "interrupt_candidate.trigger_locale",
+            trigger_locale.as_str(),
+        )?;
+        timing_markers.validate()?;
+        speech_window_metrics.validate()?;
+        if timing_markers.window_end.0 != t_event.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.timing_markers.window_end",
+                reason: "must match t_event",
+            });
+        }
+        let duration_ns = timing_markers
+            .window_end
+            .0
+            .saturating_sub(timing_markers.window_start.0);
+        let max_duration_ns =
+            u64::from(speech_window_metrics.voiced_window_ms).saturating_mul(1_000_000);
+        if duration_ns > max_duration_ns {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.timing_markers",
+                reason: "window duration must be <= voiced_window_ms",
+            });
+        }
+        if degradation_context.capture_degraded
+            && matches!(
+                degradation_context.class_bundle.capture_quality_class,
+                CaptureQualityClass::Clear
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.degradation_context.class_bundle.capture_quality_class",
+                reason: "must not be CLEAR when capture_degraded=true",
+            });
+        }
+        if degradation_context.aec_unstable
+            && matches!(
+                degradation_context.class_bundle.echo_risk_class,
+                EchoRiskClass::Low
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.degradation_context.class_bundle.echo_risk_class",
+                reason: "must not be LOW when aec_unstable=true",
+            });
+        }
+        if degradation_context.stream_gap_detected
+            && matches!(
+                degradation_context.class_bundle.network_stability_class,
+                NetworkStabilityClass::Stable
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.degradation_context.class_bundle.network_stability_class",
+                reason: "must not be STABLE when stream_gap_detected=true",
+            });
+        }
         Ok(Self {
             schema_version: PH1K_CONTRACT_VERSION,
             phrase_set_version,
             phrase_id,
+            trigger_phrase_id,
+            trigger_locale,
             phrase_text: normalized,
             phrase_confidence,
+            candidate_confidence_band,
+            risk_context_class,
+            degradation_context,
+            timing_markers,
+            speech_window_metrics,
+            subject_relation_confidence_bundle,
             gates,
             gate_confidences,
             t_event,
@@ -657,11 +1263,114 @@ impl InterruptCandidate {
     }
 }
 
-fn normalize_ascii_phrase(s: &str) -> String {
-    s.split_whitespace()
-        .map(|part| part.to_ascii_lowercase())
+fn normalize_interrupt_phrase_with_field(
+    field: &'static str,
+    locale_tag: &InterruptLocaleTag,
+    s: &str,
+) -> Result<String, ContractViolation> {
+    validate_interrupt_locale_tag("interrupt_phrase.locale_tag", locale_tag.as_str())?;
+    let locale = locale_tag.as_str().to_ascii_lowercase();
+    let locale_adjusted = if locale.starts_with("tr") || locale.starts_with("az") {
+        // Turkish/Azeri dotted-I handling before lowercasing to keep canonical form stable.
+        s.chars()
+            .map(|ch| match ch {
+                'I' => 'ı',
+                'İ' => 'i',
+                _ => ch,
+            })
+            .collect::<String>()
+    } else {
+        s.to_string()
+    };
+    let no_controls = locale_adjusted
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect::<String>();
+    let normalized = no_controls
+        .split_whitespace()
+        .map(|part| {
+            part.chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        })
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    if normalized.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if normalized.len() > 128 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 128 chars",
+        });
+    }
+    Ok(normalized)
+}
+
+pub fn normalize_interrupt_phrase_for_locale(
+    locale_tag: &InterruptLocaleTag,
+    phrase_text: &str,
+) -> Result<String, ContractViolation> {
+    normalize_interrupt_phrase_with_field("interrupt_phrase.text", locale_tag, phrase_text)
+}
+
+fn validate_interrupt_profile_id(
+    field: &'static str,
+    value: &str,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > 64 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 64 chars",
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must use [A-Za-z0-9_.-]",
+        });
+    }
+    Ok(())
+}
+
+fn validate_interrupt_locale_tag(
+    field: &'static str,
+    value: &str,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > 32 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 32 chars",
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must use [A-Za-z0-9_-]",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -780,6 +1489,380 @@ mod tests {
             Err(ContractViolation::InvalidValue {
                 field: "ph1_k.implementation_id",
                 reason: "unknown implementation_id",
+            })
+        ));
+    }
+
+    #[test]
+    fn interrupt_lexicon_policy_binding_accepts_valid_values() {
+        let binding = InterruptLexiconPolicyBinding::v1(
+            InterruptPolicyProfileId::new(PH1K_INTERRUPT_POLICY_PROFILE_ID_DEFAULT).unwrap(),
+            InterruptTenantProfileId::new(PH1K_INTERRUPT_TENANT_PROFILE_ID_DEFAULT).unwrap(),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            binding.policy_profile_id.as_str(),
+            PH1K_INTERRUPT_POLICY_PROFILE_ID_DEFAULT
+        );
+        assert_eq!(
+            binding.tenant_profile_id.as_str(),
+            PH1K_INTERRUPT_TENANT_PROFILE_ID_DEFAULT
+        );
+        assert_eq!(
+            binding.locale_tag.as_str(),
+            PH1K_INTERRUPT_LOCALE_TAG_DEFAULT
+        );
+    }
+
+    #[test]
+    fn interrupt_lexicon_policy_binding_rejects_invalid_profile_id() {
+        assert!(matches!(
+            InterruptPolicyProfileId::new(""),
+            Err(ContractViolation::InvalidValue {
+                field: "interrupt_policy_profile_id",
+                reason: "must not be empty",
+            })
+        ));
+        assert!(InterruptTenantProfileId::new("tenant*bad").is_err());
+    }
+
+    #[test]
+    fn interrupt_lexicon_policy_binding_rejects_invalid_locale_tag() {
+        assert!(matches!(
+            InterruptLocaleTag::new("en US"),
+            Err(ContractViolation::InvalidValue {
+                field: "interrupt_locale_tag",
+                reason: "must use [A-Za-z0-9_-]",
+            })
+        ));
+    }
+
+    #[test]
+    fn interrupt_candidate_step2_payload_accepts_valid_values() {
+        let candidate = InterruptCandidate::v1(
+            InterruptPhraseSetVersion(1),
+            InterruptPhraseId(3),
+            InterruptPhraseId(3),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+            "wait".to_string(),
+            Confidence::new(0.95).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: false,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(false, false, false, false),
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(0),
+                window_end: MonotonicTimeNs(1),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 1,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.95).unwrap(),
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.92).unwrap(),
+            },
+            InterruptGates {
+                vad_ok: true,
+                echo_safe_ok: true,
+                phrase_ok: true,
+                nearfield_ok: true,
+            },
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                phrase_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            MonotonicTimeNs(1),
+            ReasonCodeId(1),
+        )
+        .unwrap();
+        assert_eq!(candidate.trigger_phrase_id.0, 3);
+        assert_eq!(
+            candidate.trigger_locale.as_str(),
+            PH1K_INTERRUPT_LOCALE_TAG_DEFAULT
+        );
+        assert_eq!(
+            candidate.candidate_confidence_band,
+            InterruptCandidateConfidenceBand::High
+        );
+    }
+
+    #[test]
+    fn interrupt_candidate_rejects_trigger_phrase_id_mismatch() {
+        let out = InterruptCandidate::v1(
+            InterruptPhraseSetVersion(1),
+            InterruptPhraseId(3),
+            InterruptPhraseId(2),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+            "wait".to_string(),
+            Confidence::new(0.95).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: false,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(false, false, false, false),
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(0),
+                window_end: MonotonicTimeNs(1),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 1,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.95).unwrap(),
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.92).unwrap(),
+            },
+            InterruptGates {
+                vad_ok: true,
+                echo_safe_ok: true,
+                phrase_ok: true,
+                nearfield_ok: true,
+            },
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                phrase_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            MonotonicTimeNs(1),
+            ReasonCodeId(1),
+        );
+        assert!(matches!(
+            out,
+            Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.trigger_phrase_id",
+                reason: "must match phrase_id",
+            })
+        ));
+    }
+
+    #[test]
+    fn interrupt_candidate_accepts_and_normalizes_unicode_phrase() {
+        let candidate = InterruptCandidate::v1(
+            InterruptPhraseSetVersion(1),
+            InterruptPhraseId(3),
+            InterruptPhraseId(3),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+            "ÉCHO STOP".to_string(),
+            Confidence::new(0.95).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: false,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(false, false, false, false),
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(0),
+                window_end: MonotonicTimeNs(1),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 1,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.95).unwrap(),
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.92).unwrap(),
+            },
+            InterruptGates {
+                vad_ok: true,
+                echo_safe_ok: true,
+                phrase_ok: true,
+                nearfield_ok: true,
+            },
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                phrase_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            MonotonicTimeNs(1),
+            ReasonCodeId(1),
+        )
+        .unwrap();
+
+        assert_eq!(candidate.phrase_text, "écho stop");
+    }
+
+    #[test]
+    fn advanced_audio_quality_metrics_rejects_out_of_range_values() {
+        assert!(AdvancedAudioQualityMetrics::v1(-30.0, 0.0, 10.0, 0.0, 0.2, 10.0).is_err());
+        assert!(AdvancedAudioQualityMetrics::v1(20.0, 1.1, 10.0, 0.0, 0.2, 10.0).is_err());
+        assert!(AdvancedAudioQualityMetrics::v1(20.0, 0.1, 10.0, 5.0, 0.2, 10.0).is_ok());
+    }
+
+    #[test]
+    fn device_reliability_score_input_rejects_invalid_recovery_window() {
+        let bad = DeviceReliabilityScoreInput::v1(10, 9, 300_001, Confidence::new(0.8).unwrap());
+        assert!(bad.is_err());
+        assert!(
+            DeviceReliabilityScoreInput::v1(10, 9, 1200, Confidence::new(0.8).unwrap()).is_ok()
+        );
+    }
+
+    #[test]
+    fn classify_vad_decision_confidence_band_is_deterministic() {
+        assert_eq!(
+            classify_vad_decision_confidence_band(
+                Confidence::new(0.95).unwrap(),
+                SpeechLikeness::new(0.90).unwrap()
+            ),
+            VadDecisionConfidenceBand::High
+        );
+        assert_eq!(
+            classify_vad_decision_confidence_band(
+                Confidence::new(0.80).unwrap(),
+                SpeechLikeness::new(0.70).unwrap()
+            ),
+            VadDecisionConfidenceBand::Medium
+        );
+        assert_eq!(
+            classify_vad_decision_confidence_band(
+                Confidence::new(0.60).unwrap(),
+                SpeechLikeness::new(0.40).unwrap()
+            ),
+            VadDecisionConfidenceBand::Low
+        );
+    }
+
+    #[test]
+    fn locale_aware_normalization_handles_turkish_i() {
+        let tr = InterruptLocaleTag::new("tr-TR").unwrap();
+        let norm = normalize_interrupt_phrase_for_locale(&tr, "I İSTANBUL   DUR").unwrap();
+        assert_eq!(norm, "ı istanbul dur");
+    }
+
+    #[test]
+    fn normalize_interrupt_phrase_strips_controls_and_collapses_whitespace() {
+        let en = InterruptLocaleTag::new("en-US").unwrap();
+        let norm = normalize_interrupt_phrase_for_locale(&en, "  ÉCHO\u{0000}\n\t STOP   ").unwrap();
+        assert_eq!(norm, "écho stop");
+    }
+
+    #[test]
+    fn normalize_interrupt_phrase_rejects_control_only_input_fail_closed() {
+        let en = InterruptLocaleTag::new("en-US").unwrap();
+        let err = normalize_interrupt_phrase_for_locale(&en, "\u{0000}\u{0007}\n\t")
+            .expect_err("control-only interrupt phrase must fail closed");
+        assert!(matches!(
+            err,
+            ContractViolation::InvalidValue {
+                field: "interrupt_phrase.text",
+                reason: "must not be empty",
+            }
+        ));
+    }
+
+    #[test]
+    fn degradation_class_bundle_from_flags_is_deterministic() {
+        let clean = DegradationClassBundle::from_flags(false, false, false, false);
+        assert_eq!(clean.capture_quality_class, CaptureQualityClass::Clear);
+        assert_eq!(clean.echo_risk_class, EchoRiskClass::Low);
+        assert_eq!(
+            clean.network_stability_class,
+            NetworkStabilityClass::Stable
+        );
+        assert_eq!(clean.recoverability_class, RecoverabilityClass::Fast);
+
+        let severe = DegradationClassBundle::from_flags(true, true, true, true);
+        assert_eq!(severe.capture_quality_class, CaptureQualityClass::Critical);
+        assert_eq!(severe.echo_risk_class, EchoRiskClass::High);
+        assert_eq!(
+            severe.network_stability_class,
+            NetworkStabilityClass::Unstable
+        );
+        assert_eq!(
+            severe.recoverability_class,
+            RecoverabilityClass::FailoverRequired
+        );
+    }
+
+    #[test]
+    fn interrupt_candidate_rejects_inconsistent_degradation_class_bundle() {
+        let out = InterruptCandidate::v1(
+            InterruptPhraseSetVersion(1),
+            InterruptPhraseId(3),
+            InterruptPhraseId(3),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+            "wait".to_string(),
+            Confidence::new(0.95).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: true,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle {
+                    capture_quality_class: CaptureQualityClass::Clear,
+                    echo_risk_class: EchoRiskClass::Low,
+                    network_stability_class: NetworkStabilityClass::Stable,
+                    recoverability_class: RecoverabilityClass::Fast,
+                },
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(0),
+                window_end: MonotonicTimeNs(1),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 1,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.95).unwrap(),
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.92).unwrap(),
+            },
+            InterruptGates {
+                vad_ok: true,
+                echo_safe_ok: true,
+                phrase_ok: true,
+                nearfield_ok: true,
+            },
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.90).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.90).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                phrase_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            MonotonicTimeNs(1),
+            ReasonCodeId(1),
+        );
+        assert!(matches!(
+            out,
+            Err(ContractViolation::InvalidValue {
+                field: "interrupt_candidate.degradation_context.class_bundle.capture_quality_class",
+                ..
             })
         ));
     }

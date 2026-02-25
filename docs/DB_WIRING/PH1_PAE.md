@@ -61,3 +61,8 @@
 - AT-PAE-02: Candidate score ordering is bounded and deterministic for identical inputs.
 - AT-PAE-03: Promotion to `LEAD` requires governed artifact + rollback discipline; otherwise fail closed/demote.
 - AT-PAE-04: Hint-emit validation drift fails closed before PH1.C/PH1.TTS/PH1.CACHE/PH1.MULTI handoff.
+
+## G) FDX Wiring Lock (Section 5F)
+- PH1.PAE wiring must govern FDX adaptation promotion/demotion under one-step ladder constraints.
+- Promotion to `LEAD` requires governed artifact lineage + rollback readiness proof.
+- FDX regression (quality/latency/false-or-missed interrupt gates) must trigger deterministic demotion/rollback posture.

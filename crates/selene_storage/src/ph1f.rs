@@ -37,8 +37,15 @@ use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin,
     AuditSeverity, CorrelationId, DeviceId, PayloadKey, PayloadValue, TurnId,
 };
+use selene_kernel_contracts::ph1k::{
+    AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
+    InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
+    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
+    InterruptTimingMarkers, VadDecisionConfidenceBand,
+};
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1learn::LearnSignalType;
+use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1link::{
     deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
     DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
@@ -876,6 +883,12 @@ pub struct Ph1fStore {
     // Idempotency: (tenant_id, device_id, event_kind, idempotency_key) -> event_id
     ph1k_runtime_event_idempotency_index:
         BTreeMap<(String, DeviceId, Ph1kRuntimeEventKind, String), u64>,
+    // PH1.K interruption-failure captures routed into PH1.FEEDBACK.
+    ph1k_feedback_captures: Vec<Ph1kFeedbackCaptureRecord>,
+    // Idempotency: (tenant_id, idempotency_key) -> capture_id
+    ph1k_feedback_capture_idempotency_index: BTreeMap<(String, String), u64>,
+    // Governed PH1.PAE ladder state (`SHADOW -> ASSIST -> LEAD`) for PH1.K feedback routing.
+    ph1k_feedback_pae_mode_by_tenant: BTreeMap<String, PaeMode>,
     // Deterministic isolation guard: one tenant binding per device in PH1.K runtime rows.
     ph1k_device_tenant_bindings: BTreeMap<DeviceId, String>,
     // Deterministic isolation guard: one tenant binding per device in PH1.C transcript rows.
@@ -1081,6 +1094,7 @@ pub struct Ph1fStore {
     next_capreq_event_id: u64,
     next_ph1feedback_learn_signal_bundle_id: u64,
     next_ph1k_runtime_event_id: u64,
+    next_ph1k_feedback_capture_id: u64,
     next_position_requirements_schema_event_id: u64,
     next_onb_requirement_backfill_target_row_id: u64,
     next_access_schema_event_id: u64,
@@ -1509,6 +1523,30 @@ pub enum Ph1kDeviceHealth {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Ph1kInterruptCandidateExtendedFields {
+    pub trigger_phrase_id: u32,
+    pub trigger_locale: String,
+    pub candidate_confidence_band: InterruptCandidateConfidenceBand,
+    pub vad_decision_confidence_band: VadDecisionConfidenceBand,
+    pub risk_context_class: InterruptRiskContextClass,
+    pub gate_confidences: InterruptGateConfidences,
+    pub degradation_context: InterruptDegradationContext,
+    pub quality_metrics: AdvancedAudioQualityMetrics,
+    pub timing_markers: InterruptTimingMarkers,
+    pub speech_window_metrics: InterruptSpeechWindowMetrics,
+    pub subject_relation_confidence_bundle: InterruptSubjectRelationConfidenceBundle,
+    pub interrupt_policy_profile_id: String,
+    pub interrupt_tenant_profile_id: String,
+    pub interrupt_locale_tag: String,
+    pub adaptive_device_route: DeviceRoute,
+    pub adaptive_noise_class: String,
+    pub adaptive_capture_to_handoff_latency_ms: u32,
+    pub adaptive_timing_jitter_ms: f32,
+    pub adaptive_timing_drift_ppm: f32,
+    pub adaptive_device_reliability_score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ph1kRuntimeEventRecord {
     pub schema_version: SchemaVersion,
     pub event_id: u64,
@@ -1530,6 +1568,7 @@ pub struct Ph1kRuntimeEventRecord {
     pub phrase_id: Option<u32>,
     pub phrase_text: Option<String>,
     pub reason_code: Option<ReasonCodeId>,
+    pub interrupt_extended: Option<Ph1kInterruptCandidateExtendedFields>,
     pub tts_playback_active: Option<bool>,
     pub capture_degraded: Option<bool>,
     pub aec_unstable: Option<bool>,
@@ -1563,8 +1602,88 @@ pub struct Ph1kRuntimeCurrentRecord {
     pub stream_gap_detected: bool,
     pub last_interrupt_phrase: Option<String>,
     pub last_interrupt_reason_code: Option<ReasonCodeId>,
+    pub last_interrupt_trigger_phrase_id: Option<u32>,
+    pub last_interrupt_trigger_locale: Option<String>,
+    pub last_interrupt_candidate_confidence_band: Option<InterruptCandidateConfidenceBand>,
+    pub last_interrupt_vad_decision_confidence_band: Option<VadDecisionConfidenceBand>,
+    pub last_interrupt_risk_context_class: Option<InterruptRiskContextClass>,
+    pub last_interrupt_policy_profile_id: Option<String>,
+    pub last_interrupt_tenant_profile_id: Option<String>,
+    pub last_interrupt_locale_tag: Option<String>,
+    pub last_interrupt_adaptive_device_route: Option<DeviceRoute>,
+    pub last_interrupt_adaptive_noise_class: Option<String>,
+    pub last_interrupt_adaptive_capture_to_handoff_latency_ms: Option<u32>,
+    pub last_interrupt_snr_db_milli: Option<i64>,
+    pub last_interrupt_clipping_ratio_milli: Option<i64>,
+    pub last_interrupt_echo_delay_ms_milli: Option<i64>,
+    pub last_interrupt_packet_loss_pct_milli: Option<i64>,
+    pub last_interrupt_double_talk_score_milli: Option<i64>,
+    pub last_interrupt_erle_db_milli: Option<i64>,
     pub last_event_id: u64,
     pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Ph1kFeedbackIssueKind {
+    FalseInterrupt,
+    MissedInterrupt,
+    WrongDegradationClassification,
+    BadFailoverSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1kFeedbackCaptureInput {
+    pub issue_kind: Ph1kFeedbackIssueKind,
+    pub candidate_confidence_band: Option<InterruptCandidateConfidenceBand>,
+    pub risk_context_class: Option<InterruptRiskContextClass>,
+    pub adaptive_device_route: Option<DeviceRoute>,
+    pub adaptive_noise_class: Option<String>,
+    pub capture_degraded: Option<bool>,
+    pub aec_unstable: Option<bool>,
+    pub device_changed: Option<bool>,
+    pub stream_gap_detected: Option<bool>,
+    pub failover_from_device: Option<String>,
+    pub failover_to_device: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1kFeedbackCaptureRecord {
+    pub schema_version: SchemaVersion,
+    pub capture_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub tenant_id: String,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub session_id: Option<SessionId>,
+    pub user_id: UserId,
+    pub device_id: DeviceId,
+    pub issue_kind: Ph1kFeedbackIssueKind,
+    pub feedback_event_type: FeedbackEventType,
+    pub signal_bucket: LearnSignalType,
+    pub reason_code: ReasonCodeId,
+    pub primary_fingerprint: String,
+    pub secondary_fingerprint: String,
+    pub candidate_confidence_band: Option<InterruptCandidateConfidenceBand>,
+    pub risk_context_class: Option<InterruptRiskContextClass>,
+    pub adaptive_device_route: Option<DeviceRoute>,
+    pub adaptive_noise_class: Option<String>,
+    pub capture_degraded: bool,
+    pub aec_unstable: bool,
+    pub device_changed: bool,
+    pub stream_gap_detected: bool,
+    pub failover_from_device: Option<String>,
+    pub failover_to_device: Option<String>,
+    pub feedback_audit_event_id: AuditEventId,
+    pub learn_bundle_id: u64,
+    pub pae_audit_event_id: AuditEventId,
+    pub pae_mode_from: PaeMode,
+    pub pae_mode_to: PaeMode,
+    pub pae_decision_action: String,
+    pub pae_rollback_triggered: bool,
+    pub pae_quality_regression_triggered: bool,
+    pub pae_false_interrupt_regression_triggered: bool,
+    pub false_interrupt_rate_milli_per_hour: u32,
+    pub idempotency_key: String,
 }
 
 // PH1.ACCESS.001 + PH2.ACCESS.002 deterministic reason-code constants.
@@ -1576,6 +1695,20 @@ const ACCESS_REASON_SCOPE_MISMATCH: ReasonCodeId = ReasonCodeId(0x4143_0005);
 const ACCESS_REASON_AP_REQUIRED: ReasonCodeId = ReasonCodeId(0x4143_0006);
 const ACCESS_REASON_SENSITIVE_DENY: ReasonCodeId = ReasonCodeId(0x4143_0008);
 const ACCESS_REASON_DEVICE_UNTRUSTED: ReasonCodeId = ReasonCodeId(0x4143_0009);
+const PH1K_AUDIT_STREAM_REFS_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1001);
+const PH1K_AUDIT_VAD_EVENT_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1002);
+const PH1K_AUDIT_DEVICE_STATE_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1003);
+const PH1K_AUDIT_TIMING_STATS_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1004);
+const PH1K_AUDIT_INTERRUPT_CANDIDATE_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1005);
+const PH1K_AUDIT_DEGRADATION_FLAGS_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1006);
+const PH1K_AUDIT_TTS_PLAYBACK_ACTIVE_COMMIT: ReasonCodeId = ReasonCodeId(0x4B00_1007);
+const PH1K_FEEDBACK_FALSE_INTERRUPT: ReasonCodeId = ReasonCodeId(0x4B00_0013);
+const PH1K_FEEDBACK_MISSED_INTERRUPT: ReasonCodeId = ReasonCodeId(0x4B00_0014);
+const PH1K_FEEDBACK_WRONG_DEGRADATION_CLASSIFICATION: ReasonCodeId = ReasonCodeId(0x4B00_001B);
+const PH1K_FEEDBACK_BAD_FAILOVER_SELECTION: ReasonCodeId = ReasonCodeId(0x4B00_001C);
+const PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR: u32 = 300;
+const PH1K_STEP14_ROLLING_WINDOW_NS: u64 = 3_600_000_000_000;
+const PH1K_PAE_PROMOTION_ENGINE_ID: &str = "PH1.PAE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantCompanyLifecycleState {
@@ -2039,6 +2172,9 @@ impl Ph1fStore {
             ph1k_runtime_events: Vec::new(),
             ph1k_runtime_current: BTreeMap::new(),
             ph1k_runtime_event_idempotency_index: BTreeMap::new(),
+            ph1k_feedback_captures: Vec::new(),
+            ph1k_feedback_capture_idempotency_index: BTreeMap::new(),
+            ph1k_feedback_pae_mode_by_tenant: BTreeMap::new(),
             ph1k_device_tenant_bindings: BTreeMap::new(),
             ph1c_device_tenant_bindings: BTreeMap::new(),
             ph1nlp_device_tenant_bindings: BTreeMap::new(),
@@ -2131,6 +2267,7 @@ impl Ph1fStore {
             next_capreq_event_id: 1,
             next_ph1feedback_learn_signal_bundle_id: 1,
             next_ph1k_runtime_event_id: 1,
+            next_ph1k_feedback_capture_id: 1,
             next_position_requirements_schema_event_id: 1,
             next_onb_requirement_backfill_target_row_id: 1,
             next_access_schema_event_id: 1,
@@ -14022,6 +14159,38 @@ impl Ph1fStore {
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<AuditEventId, StorageError> {
+        self.ph1feedback_event_commit_with_metadata(
+            now,
+            tenant_id,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            feedback_event_type,
+            signal_bucket,
+            reason_code,
+            idempotency_key,
+            BTreeMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1feedback_event_commit_with_metadata(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        feedback_event_type: String,
+        signal_bucket: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+        payload_metadata: BTreeMap<String, String>,
+    ) -> Result<AuditEventId, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
         Self::validate_ph1learn_idempotency("ph1feedback.idempotency_key", &idempotency_key)?;
         Self::validate_ph1learn_bounded_text(
@@ -14047,8 +14216,7 @@ impl Ph1fStore {
         let path_type = classify_feedback_path(event_type);
         let feedback_event_type = Self::feedback_event_type_name(event_type).to_string();
         let signal_bucket = Self::learn_signal_type_name(signal_type).to_string();
-
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
+        let mut payload_entries = BTreeMap::from([
             (
                 PayloadKey::new("feedback_event_type")?,
                 PayloadValue::new(feedback_event_type)?,
@@ -14061,7 +14229,26 @@ impl Ph1fStore {
                 PayloadKey::new("path_type")?,
                 PayloadValue::new(Self::feedback_path_bucket(path_type))?,
             ),
-        ]))?;
+        ]);
+        for (key, value) in payload_metadata {
+            Self::validate_ph1learn_bounded_text("ph1feedback.payload_metadata.key", &key, 64)?;
+            Self::validate_ph1learn_bounded_text(
+                "ph1feedback.payload_metadata.value",
+                &value,
+                128,
+            )?;
+            let payload_key = PayloadKey::new(&key)?;
+            if payload_entries.contains_key(&payload_key) {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1feedback.payload_metadata.key",
+                        reason: "must not duplicate base payload keys",
+                    },
+                ));
+            }
+            payload_entries.insert(payload_key, PayloadValue::new(value)?);
+        }
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -14438,6 +14625,856 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn validate_ph1k_interrupt_extended(
+        extended: &Ph1kInterruptCandidateExtendedFields,
+    ) -> Result<(), StorageError> {
+        if extended.trigger_phrase_id == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.trigger_phrase_id",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+        for (field, value, max_len) in [
+            (
+                "audio_runtime_events.trigger_locale",
+                extended.trigger_locale.as_str(),
+                32usize,
+            ),
+            (
+                "audio_runtime_events.interrupt_policy_profile_id",
+                extended.interrupt_policy_profile_id.as_str(),
+                128usize,
+            ),
+            (
+                "audio_runtime_events.interrupt_tenant_profile_id",
+                extended.interrupt_tenant_profile_id.as_str(),
+                128usize,
+            ),
+            (
+                "audio_runtime_events.interrupt_locale_tag",
+                extended.interrupt_locale_tag.as_str(),
+                32usize,
+            ),
+            (
+                "audio_runtime_events.adaptive_noise_class",
+                extended.adaptive_noise_class.as_str(),
+                32usize,
+            ),
+        ] {
+            if value.trim().is_empty() {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field,
+                        reason: "must not be empty",
+                    },
+                ));
+            }
+            if value.len() > max_len {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field,
+                        reason: "too long",
+                    },
+                ));
+            }
+        }
+        if !matches!(
+            extended.adaptive_noise_class.as_str(),
+            "CLEAN" | "ELEVATED" | "SEVERE"
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.adaptive_noise_class",
+                    reason: "must be CLEAN, ELEVATED, or SEVERE",
+                },
+            ));
+        }
+        if extended.adaptive_capture_to_handoff_latency_ms == 0
+            || extended.adaptive_capture_to_handoff_latency_ms > 10_000
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.adaptive_capture_to_handoff_latency_ms",
+                    reason: "must be within 1..=10000",
+                },
+            ));
+        }
+        Self::validate_nonnegative_f32(
+            "audio_runtime_events.adaptive_timing_jitter_ms",
+            extended.adaptive_timing_jitter_ms,
+        )?;
+        Self::validate_nonnegative_f32(
+            "audio_runtime_events.adaptive_timing_drift_ppm",
+            extended.adaptive_timing_drift_ppm,
+        )?;
+        if !extended.adaptive_device_reliability_score.is_finite() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::NotFinite {
+                    field: "audio_runtime_events.adaptive_device_reliability_score",
+                },
+            ));
+        }
+        if !(0.0..=1.0).contains(&extended.adaptive_device_reliability_score) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidRange {
+                    field: "audio_runtime_events.adaptive_device_reliability_score",
+                    min: 0.0,
+                    max: 1.0,
+                    got: extended.adaptive_device_reliability_score as f64,
+                },
+            ));
+        }
+
+        extended.quality_metrics.validate()?;
+        extended.timing_markers.validate()?;
+        extended.speech_window_metrics.validate()?;
+
+        let window_duration_ns = extended
+            .timing_markers
+            .window_end
+            .0
+            .saturating_sub(extended.timing_markers.window_start.0);
+        let max_window_ns =
+            u64::from(extended.speech_window_metrics.voiced_window_ms).saturating_mul(1_000_000);
+        if window_duration_ns > max_window_ns {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.timing_markers",
+                    reason: "window duration must be <= voiced_window_ms",
+                },
+            ));
+        }
+
+        if extended.gate_confidences.phrase_confidence
+            != extended.subject_relation_confidence_bundle.lexical_confidence
+            || extended.gate_confidences.vad_confidence
+                != extended.subject_relation_confidence_bundle.vad_confidence
+            || extended.gate_confidences.speech_likeness
+                != extended.subject_relation_confidence_bundle.speech_likeness
+            || extended.gate_confidences.echo_safe_confidence
+                != extended.subject_relation_confidence_bundle.echo_safe_confidence
+            || extended.gate_confidences.nearfield_confidence
+                != extended.subject_relation_confidence_bundle.nearfield_confidence
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.subject_relation_confidence_bundle",
+                    reason: "must match gate_confidences inputs",
+                },
+            ));
+        }
+        if matches!(
+            extended.candidate_confidence_band,
+            InterruptCandidateConfidenceBand::High
+        ) && extended.gate_confidences.phrase_confidence.0 < 0.90
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.candidate_confidence_band",
+                    reason: "HIGH requires phrase_confidence >= 0.90",
+                },
+            ));
+        }
+
+        let has_degradation = extended.degradation_context.capture_degraded
+            || extended.degradation_context.aec_unstable
+            || extended.degradation_context.device_changed
+            || extended.degradation_context.stream_gap_detected;
+        if has_degradation
+            && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.risk_context_class",
+                    reason: "LOW is not allowed when degradation_context indicates degradation",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn ph1k_event_kind_label(event_kind: Ph1kRuntimeEventKind) -> &'static str {
+        match event_kind {
+            Ph1kRuntimeEventKind::StreamRefs => "STREAM_REFS",
+            Ph1kRuntimeEventKind::VadEvent => "VAD_EVENT",
+            Ph1kRuntimeEventKind::DeviceState => "DEVICE_STATE",
+            Ph1kRuntimeEventKind::TimingStats => "TIMING_STATS",
+            Ph1kRuntimeEventKind::InterruptCandidate => "INTERRUPT_CANDIDATE",
+            Ph1kRuntimeEventKind::DegradationFlags => "DEGRADATION_FLAGS",
+            Ph1kRuntimeEventKind::TtsPlaybackActive => "TTS_PLAYBACK_ACTIVE",
+        }
+    }
+
+    fn ph1k_event_name(event_kind: Ph1kRuntimeEventKind) -> &'static str {
+        match event_kind {
+            Ph1kRuntimeEventKind::StreamRefs => "K_STREAM_REFS_COMMIT",
+            Ph1kRuntimeEventKind::VadEvent => "K_VAD_EVENT_MARKER_COMMIT",
+            Ph1kRuntimeEventKind::DeviceState => "K_DEVICE_STATE_COMMIT",
+            Ph1kRuntimeEventKind::TimingStats => "K_TIMING_STATS_COMMIT",
+            Ph1kRuntimeEventKind::InterruptCandidate => "K_INTERRUPT_CANDIDATE_COMMIT",
+            Ph1kRuntimeEventKind::DegradationFlags => "K_DEGRADATION_FLAGS_COMMIT",
+            Ph1kRuntimeEventKind::TtsPlaybackActive => "K_TTS_PLAYBACK_ACTIVE_COMMIT",
+        }
+    }
+
+    fn ph1k_default_audit_reason_code(event_kind: Ph1kRuntimeEventKind) -> ReasonCodeId {
+        match event_kind {
+            Ph1kRuntimeEventKind::StreamRefs => PH1K_AUDIT_STREAM_REFS_COMMIT,
+            Ph1kRuntimeEventKind::VadEvent => PH1K_AUDIT_VAD_EVENT_COMMIT,
+            Ph1kRuntimeEventKind::DeviceState => PH1K_AUDIT_DEVICE_STATE_COMMIT,
+            Ph1kRuntimeEventKind::TimingStats => PH1K_AUDIT_TIMING_STATS_COMMIT,
+            Ph1kRuntimeEventKind::InterruptCandidate => PH1K_AUDIT_INTERRUPT_CANDIDATE_COMMIT,
+            Ph1kRuntimeEventKind::DegradationFlags => PH1K_AUDIT_DEGRADATION_FLAGS_COMMIT,
+            Ph1kRuntimeEventKind::TtsPlaybackActive => PH1K_AUDIT_TTS_PLAYBACK_ACTIVE_COMMIT,
+        }
+    }
+
+    fn ph1k_device_health_label(health: Ph1kDeviceHealth) -> &'static str {
+        match health {
+            Ph1kDeviceHealth::Healthy => "HEALTHY",
+            Ph1kDeviceHealth::Degraded => "DEGRADED",
+            Ph1kDeviceHealth::Failed => "FAILED",
+        }
+    }
+
+    fn ph1k_device_route_label(route: DeviceRoute) -> &'static str {
+        match route {
+            DeviceRoute::BuiltIn => "BUILTIN",
+            DeviceRoute::Usb => "USB",
+            DeviceRoute::Bluetooth => "BLUETOOTH",
+            DeviceRoute::Virtual => "VIRTUAL",
+            DeviceRoute::Unknown => "UNKNOWN",
+        }
+    }
+
+    fn ph1k_candidate_band_label(band: InterruptCandidateConfidenceBand) -> &'static str {
+        match band {
+            InterruptCandidateConfidenceBand::High => "HIGH",
+            InterruptCandidateConfidenceBand::Medium => "MEDIUM",
+            InterruptCandidateConfidenceBand::Low => "LOW",
+        }
+    }
+
+    fn ph1k_vad_band_label(band: VadDecisionConfidenceBand) -> &'static str {
+        match band {
+            VadDecisionConfidenceBand::High => "HIGH",
+            VadDecisionConfidenceBand::Medium => "MEDIUM",
+            VadDecisionConfidenceBand::Low => "LOW",
+        }
+    }
+
+    fn ph1k_risk_context_label(class: InterruptRiskContextClass) -> &'static str {
+        match class {
+            InterruptRiskContextClass::Low => "LOW",
+            InterruptRiskContextClass::Guarded => "GUARDED",
+            InterruptRiskContextClass::High => "HIGH",
+        }
+    }
+
+    fn ph1k_feedback_issue_kind_label(issue_kind: Ph1kFeedbackIssueKind) -> &'static str {
+        match issue_kind {
+            Ph1kFeedbackIssueKind::FalseInterrupt => "FALSE_INTERRUPT",
+            Ph1kFeedbackIssueKind::MissedInterrupt => "MISSED_INTERRUPT",
+            Ph1kFeedbackIssueKind::WrongDegradationClassification => {
+                "WRONG_DEGRADATION_CLASSIFICATION"
+            }
+            Ph1kFeedbackIssueKind::BadFailoverSelection => "BAD_FAILOVER_SELECTION",
+        }
+    }
+
+    fn ph1k_feedback_issue_signal(
+        issue_kind: Ph1kFeedbackIssueKind,
+    ) -> (FeedbackEventType, LearnSignalType, ReasonCodeId) {
+        match issue_kind {
+            Ph1kFeedbackIssueKind::FalseInterrupt => (
+                FeedbackEventType::BargeIn,
+                LearnSignalType::BargeIn,
+                PH1K_FEEDBACK_FALSE_INTERRUPT,
+            ),
+            Ph1kFeedbackIssueKind::MissedInterrupt => (
+                FeedbackEventType::BargeIn,
+                LearnSignalType::BargeIn,
+                PH1K_FEEDBACK_MISSED_INTERRUPT,
+            ),
+            Ph1kFeedbackIssueKind::WrongDegradationClassification => (
+                FeedbackEventType::UserCorrection,
+                LearnSignalType::UserCorrection,
+                PH1K_FEEDBACK_WRONG_DEGRADATION_CLASSIFICATION,
+            ),
+            Ph1kFeedbackIssueKind::BadFailoverSelection => (
+                FeedbackEventType::DeliverySwitch,
+                LearnSignalType::DeliverySwitch,
+                PH1K_FEEDBACK_BAD_FAILOVER_SELECTION,
+            ),
+        }
+    }
+
+    fn validate_ph1k_feedback_capture_input(
+        input: &Ph1kFeedbackCaptureInput,
+    ) -> Result<(), StorageError> {
+        Self::validate_ph1k_optional_text(
+            "ph1k_feedback_capture.adaptive_noise_class",
+            &input.adaptive_noise_class,
+            32,
+        )?;
+        if let Some(noise) = input.adaptive_noise_class.as_deref() {
+            if !matches!(noise, "CLEAN" | "ELEVATED" | "SEVERE") {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1k_feedback_capture.adaptive_noise_class",
+                        reason: "must be CLEAN, ELEVATED, or SEVERE",
+                    },
+                ));
+            }
+        }
+        Self::validate_ph1k_optional_text(
+            "ph1k_feedback_capture.failover_from_device",
+            &input.failover_from_device,
+            128,
+        )?;
+        Self::validate_ph1k_optional_text(
+            "ph1k_feedback_capture.failover_to_device",
+            &input.failover_to_device,
+            128,
+        )?;
+
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::WrongDegradationClassification
+        ) && (input.capture_degraded.is_none()
+            || input.aec_unstable.is_none()
+            || input.device_changed.is_none()
+            || input.stream_gap_detected.is_none())
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1k_feedback_capture.degradation_flags",
+                    reason: "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
+                },
+            ));
+        }
+        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
+            && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1k_feedback_capture.failover_pair",
+                    reason: "both failover_from_device and failover_to_device are required for BAD_FAILOVER_SELECTION",
+                },
+            ));
+        }
+        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
+            && input.failover_from_device == input.failover_to_device
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1k_feedback_capture.failover_pair",
+                    reason: "failover_from_device and failover_to_device must differ",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn ph1k_feedback_fingerprints(
+        issue_kind: Ph1kFeedbackIssueKind,
+        reason_code: ReasonCodeId,
+        input: &Ph1kFeedbackCaptureInput,
+    ) -> (String, String) {
+        let band = input
+            .candidate_confidence_band
+            .map(Self::ph1k_candidate_band_label)
+            .unwrap_or("NONE");
+        let risk = input
+            .risk_context_class
+            .map(Self::ph1k_risk_context_label)
+            .unwrap_or("NONE");
+        let route = input
+            .adaptive_device_route
+            .map(Self::ph1k_device_route_label)
+            .unwrap_or("NONE");
+        let noise = input.adaptive_noise_class.as_deref().unwrap_or("NONE");
+        let flags = format!(
+            "{}:{}:{}:{}",
+            input.capture_degraded.unwrap_or(false) as u8,
+            input.aec_unstable.unwrap_or(false) as u8,
+            input.device_changed.unwrap_or(false) as u8,
+            input.stream_gap_detected.unwrap_or(false) as u8
+        );
+        let failover_from = input.failover_from_device.as_deref().unwrap_or("NONE");
+        let failover_to = input.failover_to_device.as_deref().unwrap_or("NONE");
+
+        let primary = format!(
+            "pkf_{}",
+            hash_hex_64(&format!(
+                "{}|{}|{}|{}|{}|{}|{:08X}",
+                Self::ph1k_feedback_issue_kind_label(issue_kind),
+                band,
+                risk,
+                route,
+                noise,
+                flags,
+                reason_code.0
+            ))
+        );
+        let secondary = format!(
+            "skf_{}",
+            hash_hex_64(&format!(
+                "{}|{}|{}|{}",
+                Self::ph1k_feedback_issue_kind_label(issue_kind),
+                failover_from,
+                failover_to,
+                flags
+            ))
+        );
+        (primary, secondary)
+    }
+
+    fn ph1k_pae_mode_label(mode: PaeMode) -> &'static str {
+        match mode {
+            PaeMode::Shadow => "SHADOW",
+            PaeMode::Assist => "ASSIST",
+            PaeMode::Lead => "LEAD",
+        }
+    }
+
+    fn ph1k_pae_mode_rank(mode: PaeMode) -> u8 {
+        match mode {
+            PaeMode::Shadow => 0,
+            PaeMode::Assist => 1,
+            PaeMode::Lead => 2,
+        }
+    }
+
+    fn ph1k_promoted_mode(mode: PaeMode) -> PaeMode {
+        match mode {
+            PaeMode::Shadow => PaeMode::Assist,
+            PaeMode::Assist => PaeMode::Lead,
+            PaeMode::Lead => PaeMode::Lead,
+        }
+    }
+
+    fn ph1k_demoted_mode(mode: PaeMode) -> PaeMode {
+        match mode {
+            PaeMode::Lead => PaeMode::Assist,
+            PaeMode::Assist => PaeMode::Shadow,
+            PaeMode::Shadow => PaeMode::Shadow,
+        }
+    }
+
+    fn ph1k_false_interrupt_rate_milli_per_hour(
+        &self,
+        tenant_id: &str,
+        now: MonotonicTimeNs,
+        include_current_event: bool,
+    ) -> u32 {
+        let window_start = now.0.saturating_sub(PH1K_STEP14_ROLLING_WINDOW_NS);
+        let mut false_count = self
+            .ph1k_feedback_captures
+            .iter()
+            .filter(|row| {
+                row.tenant_id == tenant_id
+                    && matches!(row.issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt)
+                    && row.created_at.0 >= window_start
+            })
+            .count() as u32;
+        if include_current_event {
+            false_count = false_count.saturating_add(1);
+        }
+        false_count.saturating_mul(1000)
+    }
+
+    fn ph1k_compute_step14_pae_decision(
+        issue_kind: Ph1kFeedbackIssueKind,
+        mode_from: PaeMode,
+        quality_regression: bool,
+        false_interrupt_rate_milli_per_hour: u32,
+    ) -> (PaeMode, &'static str, bool, bool, bool) {
+        let false_interrupt_regression_triggered = matches!(
+            issue_kind,
+            Ph1kFeedbackIssueKind::FalseInterrupt
+        ) && false_interrupt_rate_milli_per_hour > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
+        let quality_regression_triggered = quality_regression
+            || matches!(
+                issue_kind,
+                Ph1kFeedbackIssueKind::WrongDegradationClassification
+                    | Ph1kFeedbackIssueKind::BadFailoverSelection
+            );
+
+        let should_demote = quality_regression_triggered || false_interrupt_regression_triggered;
+        let should_promote = !should_demote
+            && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
+        let mode_to = if should_demote {
+            Self::ph1k_demoted_mode(mode_from)
+        } else if should_promote {
+            Self::ph1k_promoted_mode(mode_from)
+        } else {
+            mode_from
+        };
+
+        let action = if Self::ph1k_pae_mode_rank(mode_to) > Self::ph1k_pae_mode_rank(mode_from) {
+            "PROMOTE"
+        } else if Self::ph1k_pae_mode_rank(mode_to) < Self::ph1k_pae_mode_rank(mode_from) {
+            "DEMOTE"
+        } else {
+            "HOLD"
+        };
+
+        let rollback_triggered = quality_regression_triggered || false_interrupt_regression_triggered;
+        (
+            mode_to,
+            action,
+            rollback_triggered,
+            quality_regression_triggered,
+            false_interrupt_regression_triggered,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1k_feedback_step14_pae_audit_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        capture_id: u64,
+        issue_kind: Ph1kFeedbackIssueKind,
+        feedback_event_type: FeedbackEventType,
+        learn_signal_type: LearnSignalType,
+        reason_code: ReasonCodeId,
+        mode_from: PaeMode,
+        mode_to: PaeMode,
+        decision_action: &str,
+        rollback_triggered: bool,
+        quality_regression_triggered: bool,
+        false_interrupt_regression_triggered: bool,
+        false_interrupt_rate_milli_per_hour: u32,
+        learn_bundle_id: u64,
+        idempotency_key: &str,
+    ) -> Result<AuditEventId, StorageError> {
+        let payload = AuditPayloadMin::v1(BTreeMap::from([
+            (
+                PayloadKey::new("decision")?,
+                PayloadValue::new("PH1K_FEEDBACK_STEP14_PAE_LADDER")?,
+            ),
+            (
+                PayloadKey::new("route_chain")?,
+                PayloadValue::new("PH1.FEEDBACK->PH1.LEARN->PH1.PAE")?,
+            ),
+            (
+                PayloadKey::new("capture_id")?,
+                PayloadValue::new(capture_id.to_string())?,
+            ),
+            (
+                PayloadKey::new("learn_bundle_id")?,
+                PayloadValue::new(learn_bundle_id.to_string())?,
+            ),
+            (
+                PayloadKey::new("issue_kind")?,
+                PayloadValue::new(Self::ph1k_feedback_issue_kind_label(issue_kind))?,
+            ),
+            (
+                PayloadKey::new("feedback_event_type")?,
+                PayloadValue::new(Self::feedback_event_type_name(feedback_event_type))?,
+            ),
+            (
+                PayloadKey::new("learn_signal_type")?,
+                PayloadValue::new(Self::learn_signal_type_name(learn_signal_type))?,
+            ),
+            (
+                PayloadKey::new("mode_from")?,
+                PayloadValue::new(Self::ph1k_pae_mode_label(mode_from))?,
+            ),
+            (
+                PayloadKey::new("mode_to")?,
+                PayloadValue::new(Self::ph1k_pae_mode_label(mode_to))?,
+            ),
+            (
+                PayloadKey::new("decision_action")?,
+                PayloadValue::new(decision_action)?,
+            ),
+            (
+                PayloadKey::new("rollback_triggered")?,
+                PayloadValue::new(if rollback_triggered { "1" } else { "0" })?,
+            ),
+            (
+                PayloadKey::new("regression_quality")?,
+                PayloadValue::new(if quality_regression_triggered { "1" } else { "0" })?,
+            ),
+            (
+                PayloadKey::new("regression_false_interrupt")?,
+                PayloadValue::new(if false_interrupt_regression_triggered {
+                    "1"
+                } else {
+                    "0"
+                })?,
+            ),
+            (
+                PayloadKey::new("false_interrupt_rate_milli_per_hour")?,
+                PayloadValue::new(false_interrupt_rate_milli_per_hour.to_string())?,
+            ),
+            (
+                PayloadKey::new("false_interrupt_limit_milli_per_hour")?,
+                PayloadValue::new(PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR.to_string())?,
+            ),
+        ]))?;
+
+        let input = AuditEventInput::v1(
+            now,
+            Some(tenant_id),
+            None,
+            session_id,
+            Some(user_id),
+            Some(device_id),
+            AuditEngine::Other(PH1K_PAE_PROMOTION_ENGINE_ID.to_string()),
+            AuditEventType::Other,
+            reason_code,
+            AuditSeverity::Info,
+            correlation_id,
+            turn_id,
+            payload,
+            None,
+            Some(format!(
+                "ph1k_pae_step14:{}:{}",
+                capture_id,
+                hash_hex_64(idempotency_key)
+            )),
+        )?;
+        self.append_audit_event(input)
+    }
+
+    fn ph1k_runtime_event_audit_severity(event: &Ph1kRuntimeEventRecord) -> AuditSeverity {
+        match event.event_kind {
+            Ph1kRuntimeEventKind::DegradationFlags => {
+                if event.capture_degraded.unwrap_or(false)
+                    || event.aec_unstable.unwrap_or(false)
+                    || event.device_changed.unwrap_or(false)
+                    || event.stream_gap_detected.unwrap_or(false)
+                {
+                    AuditSeverity::Warn
+                } else {
+                    AuditSeverity::Info
+                }
+            }
+            _ => AuditSeverity::Info,
+        }
+    }
+
+    fn ph1k_runtime_event_audit_payload(
+        event: &Ph1kRuntimeEventRecord,
+    ) -> Result<AuditPayloadMin, StorageError> {
+        let mut payload = BTreeMap::new();
+        let mut insert = |key: &'static str, value: String| -> Result<(), StorageError> {
+            payload.insert(PayloadKey::new(key)?, PayloadValue::new(value)?);
+            Ok(())
+        };
+
+        insert("decision", "K_RUNTIME_EVENT_COMMIT".to_string())?;
+        insert(
+            "event_kind",
+            Self::ph1k_event_kind_label(event.event_kind).to_string(),
+        )?;
+        insert("event_name", Self::ph1k_event_name(event.event_kind).to_string())?;
+        insert("ph1k_event_id", event.event_id.to_string())?;
+
+        match event.event_kind {
+            Ph1kRuntimeEventKind::StreamRefs => {
+                if let Some(v) = event.processed_stream_id {
+                    insert("processed_stream_id", v.to_string())?;
+                }
+                if let Some(v) = event.raw_stream_id {
+                    insert("raw_stream_id", v.to_string())?;
+                }
+                if let Some(v) = event.pre_roll_buffer_id {
+                    insert("pre_roll_buffer_id", v.to_string())?;
+                }
+            }
+            Ph1kRuntimeEventKind::VadEvent => {
+                if let Some(v) = event.processed_stream_id {
+                    insert("processed_stream_id", v.to_string())?;
+                }
+            }
+            Ph1kRuntimeEventKind::DeviceState => {
+                if let Some(v) = event.selected_mic.as_ref() {
+                    insert("selected_mic", v.clone())?;
+                }
+                if let Some(v) = event.selected_speaker.as_ref() {
+                    insert("selected_speaker", v.clone())?;
+                }
+                if let Some(v) = event.device_health {
+                    insert("device_health", Self::ph1k_device_health_label(v).to_string())?;
+                }
+            }
+            Ph1kRuntimeEventKind::TimingStats => {
+                if let Some(v) = event.jitter_ms {
+                    insert("jitter_ms", format!("{v:.3}"))?;
+                }
+                if let Some(v) = event.drift_ppm {
+                    insert("drift_ppm", format!("{v:.3}"))?;
+                }
+                if let Some(v) = event.buffer_depth_ms {
+                    insert("buffer_depth_ms", format!("{v:.3}"))?;
+                }
+                if let Some(v) = event.underruns {
+                    insert("underruns", v.to_string())?;
+                }
+                if let Some(v) = event.overruns {
+                    insert("overruns", v.to_string())?;
+                }
+            }
+            Ph1kRuntimeEventKind::InterruptCandidate => {
+                if let Some(v) = event.phrase_id {
+                    insert("phrase_id", v.to_string())?;
+                }
+                if let Some(ext) = event.interrupt_extended.as_ref() {
+                    insert("trigger_phrase_id", ext.trigger_phrase_id.to_string())?;
+                    insert("trigger_locale", ext.trigger_locale.clone())?;
+                    insert(
+                        "candidate_confidence_band",
+                        Self::ph1k_candidate_band_label(ext.candidate_confidence_band).to_string(),
+                    )?;
+                    insert(
+                        "vad_decision_confidence_band",
+                        Self::ph1k_vad_band_label(ext.vad_decision_confidence_band).to_string(),
+                    )?;
+                    insert(
+                        "risk_context_class",
+                        Self::ph1k_risk_context_label(ext.risk_context_class).to_string(),
+                    )?;
+                    insert(
+                        "degradation_context",
+                        format!(
+                            "capture={},aec={},device={},gap={}",
+                            ext.degradation_context.capture_degraded as u8,
+                            ext.degradation_context.aec_unstable as u8,
+                            ext.degradation_context.device_changed as u8,
+                            ext.degradation_context.stream_gap_detected as u8
+                        ),
+                    )?;
+                    insert(
+                        "quality_metrics",
+                        format!(
+                            "snr={:.3},clip={:.3},echo={:.3},loss={:.3},double={:.3},erle={:.3}",
+                            ext.quality_metrics.snr_db,
+                            ext.quality_metrics.clipping_ratio,
+                            ext.quality_metrics.echo_delay_ms,
+                            ext.quality_metrics.packet_loss_pct,
+                            ext.quality_metrics.double_talk_score,
+                            ext.quality_metrics.erle_db
+                        ),
+                    )?;
+                    insert(
+                        "timing_markers",
+                        format!(
+                            "start={},end={},voiced_ms={}",
+                            ext.timing_markers.window_start.0,
+                            ext.timing_markers.window_end.0,
+                            ext.speech_window_metrics.voiced_window_ms
+                        ),
+                    )?;
+                    insert(
+                        "subject_relation_confidence_bundle",
+                        format!(
+                            "lex={:.3},vad={:.3},speech={:.3},echo={:.3},near={},combined={:.3}",
+                            ext.subject_relation_confidence_bundle.lexical_confidence.0,
+                            ext.subject_relation_confidence_bundle.vad_confidence.0,
+                            ext.subject_relation_confidence_bundle.speech_likeness.0,
+                            ext.subject_relation_confidence_bundle.echo_safe_confidence.0,
+                            ext.subject_relation_confidence_bundle
+                                .nearfield_confidence
+                                .map(|v| format!("{:.3}", v.0))
+                                .unwrap_or_else(|| "na".to_string()),
+                            ext.subject_relation_confidence_bundle.combined_confidence.0
+                        ),
+                    )?;
+                    insert(
+                        "interrupt_profile_refs",
+                        format!(
+                            "{}|{}|{}",
+                            ext.interrupt_policy_profile_id,
+                            ext.interrupt_tenant_profile_id,
+                            ext.interrupt_locale_tag
+                        ),
+                    )?;
+                    insert(
+                        "adaptive_profile",
+                        format!(
+                            "{}|{}|{}|{:.3}|{:.3}|{:.3}",
+                            Self::ph1k_device_route_label(ext.adaptive_device_route),
+                            ext.adaptive_noise_class,
+                            ext.adaptive_capture_to_handoff_latency_ms,
+                            ext.adaptive_timing_jitter_ms,
+                            ext.adaptive_timing_drift_ppm,
+                            ext.adaptive_device_reliability_score
+                        ),
+                    )?;
+                }
+            }
+            Ph1kRuntimeEventKind::DegradationFlags => {
+                insert(
+                    "capture_degraded",
+                    event.capture_degraded.unwrap_or(false).to_string(),
+                )?;
+                insert("aec_unstable", event.aec_unstable.unwrap_or(false).to_string())?;
+                insert("device_changed", event.device_changed.unwrap_or(false).to_string())?;
+                insert(
+                    "stream_gap_detected",
+                    event.stream_gap_detected.unwrap_or(false).to_string(),
+                )?;
+            }
+            Ph1kRuntimeEventKind::TtsPlaybackActive => {
+                insert(
+                    "tts_playback_active",
+                    event.tts_playback_active.unwrap_or(false).to_string(),
+                )?;
+            }
+        }
+        AuditPayloadMin::v1(payload).map_err(StorageError::ContractViolation)
+    }
+
+    fn ph1k_runtime_event_audit_commit(
+        &mut self,
+        event: &Ph1kRuntimeEventRecord,
+    ) -> Result<AuditEventId, StorageError> {
+        let user_id = self
+            .devices
+            .get(&event.device_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "audit_events.device_id",
+                key: event.device_id.as_str().to_string(),
+            })?
+            .user_id
+            .clone();
+
+        let reason_code = event
+            .reason_code
+            .unwrap_or_else(|| Self::ph1k_default_audit_reason_code(event.event_kind));
+        let payload = Self::ph1k_runtime_event_audit_payload(event)?;
+        let input = AuditEventInput::v1(
+            event.created_at,
+            Some(event.tenant_id.clone()),
+            None,
+            event.session_id,
+            Some(user_id),
+            Some(event.device_id.clone()),
+            AuditEngine::Ph1K,
+            AuditEventType::PerceptionSignalEmitted,
+            reason_code,
+            Self::ph1k_runtime_event_audit_severity(event),
+            CorrelationId(event.event_id as u128),
+            TurnId(event.event_id),
+            payload,
+            None,
+            Some(format!("ph1k_audit_event_{}", event.event_id)),
+        )?;
+        self.append_audit_event(input)
+    }
+
     fn quantize_milli(v: f32) -> i64 {
         (v * 1000.0).round() as i64
     }
@@ -14470,6 +15507,23 @@ impl Ph1fStore {
                     stream_gap_detected: false,
                     last_interrupt_phrase: None,
                     last_interrupt_reason_code: None,
+                    last_interrupt_trigger_phrase_id: None,
+                    last_interrupt_trigger_locale: None,
+                    last_interrupt_candidate_confidence_band: None,
+                    last_interrupt_vad_decision_confidence_band: None,
+                    last_interrupt_risk_context_class: None,
+                    last_interrupt_policy_profile_id: None,
+                    last_interrupt_tenant_profile_id: None,
+                    last_interrupt_locale_tag: None,
+                    last_interrupt_adaptive_device_route: None,
+                    last_interrupt_adaptive_noise_class: None,
+                    last_interrupt_adaptive_capture_to_handoff_latency_ms: None,
+                    last_interrupt_snr_db_milli: None,
+                    last_interrupt_clipping_ratio_milli: None,
+                    last_interrupt_echo_delay_ms_milli: None,
+                    last_interrupt_packet_loss_pct_milli: None,
+                    last_interrupt_double_talk_score_milli: None,
+                    last_interrupt_erle_db_milli: None,
                     last_event_id: event.event_id,
                     updated_at: event.created_at,
                 });
@@ -14504,6 +15558,37 @@ impl Ph1fStore {
             Ph1kRuntimeEventKind::InterruptCandidate => {
                 row.last_interrupt_phrase = event.phrase_text.clone();
                 row.last_interrupt_reason_code = event.reason_code;
+                if let Some(extended) = event.interrupt_extended.as_ref() {
+                    row.last_interrupt_trigger_phrase_id = Some(extended.trigger_phrase_id);
+                    row.last_interrupt_trigger_locale = Some(extended.trigger_locale.clone());
+                    row.last_interrupt_candidate_confidence_band =
+                        Some(extended.candidate_confidence_band);
+                    row.last_interrupt_vad_decision_confidence_band =
+                        Some(extended.vad_decision_confidence_band);
+                    row.last_interrupt_risk_context_class = Some(extended.risk_context_class);
+                    row.last_interrupt_policy_profile_id =
+                        Some(extended.interrupt_policy_profile_id.clone());
+                    row.last_interrupt_tenant_profile_id =
+                        Some(extended.interrupt_tenant_profile_id.clone());
+                    row.last_interrupt_locale_tag = Some(extended.interrupt_locale_tag.clone());
+                    row.last_interrupt_adaptive_device_route = Some(extended.adaptive_device_route);
+                    row.last_interrupt_adaptive_noise_class =
+                        Some(extended.adaptive_noise_class.clone());
+                    row.last_interrupt_adaptive_capture_to_handoff_latency_ms =
+                        Some(extended.adaptive_capture_to_handoff_latency_ms);
+                    row.last_interrupt_snr_db_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.snr_db));
+                    row.last_interrupt_clipping_ratio_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.clipping_ratio));
+                    row.last_interrupt_echo_delay_ms_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.echo_delay_ms));
+                    row.last_interrupt_packet_loss_pct_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.packet_loss_pct));
+                    row.last_interrupt_double_talk_score_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.double_talk_score));
+                    row.last_interrupt_erle_db_milli =
+                        Some(Self::quantize_milli(extended.quality_metrics.erle_db));
+                }
             }
             Ph1kRuntimeEventKind::DegradationFlags => {
                 row.capture_degraded = event.capture_degraded.unwrap_or(false);
@@ -14539,6 +15624,66 @@ impl Ph1fStore {
         phrase_id: Option<u32>,
         phrase_text: Option<String>,
         reason_code: Option<ReasonCodeId>,
+        tts_playback_active: Option<bool>,
+        capture_degraded: Option<bool>,
+        aec_unstable: Option<bool>,
+        device_changed: Option<bool>,
+        stream_gap_detected: Option<bool>,
+        idempotency_key: String,
+    ) -> Result<Ph1kRuntimeEventRecord, StorageError> {
+        self.ph1k_runtime_event_commit_extended(
+            now,
+            tenant_id,
+            device_id,
+            session_id,
+            event_kind,
+            processed_stream_id,
+            raw_stream_id,
+            pre_roll_buffer_id,
+            selected_mic,
+            selected_speaker,
+            device_health,
+            jitter_ms,
+            drift_ppm,
+            buffer_depth_ms,
+            underruns,
+            overruns,
+            phrase_id,
+            phrase_text,
+            reason_code,
+            None,
+            tts_playback_active,
+            capture_degraded,
+            aec_unstable,
+            device_changed,
+            stream_gap_detected,
+            idempotency_key,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1k_runtime_event_commit_extended(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        device_id: DeviceId,
+        session_id: Option<SessionId>,
+        event_kind: Ph1kRuntimeEventKind,
+        processed_stream_id: Option<u128>,
+        raw_stream_id: Option<u128>,
+        pre_roll_buffer_id: Option<u64>,
+        selected_mic: Option<String>,
+        selected_speaker: Option<String>,
+        device_health: Option<Ph1kDeviceHealth>,
+        jitter_ms: Option<f32>,
+        drift_ppm: Option<f32>,
+        buffer_depth_ms: Option<f32>,
+        underruns: Option<u64>,
+        overruns: Option<u64>,
+        phrase_id: Option<u32>,
+        phrase_text: Option<String>,
+        reason_code: Option<ReasonCodeId>,
+        interrupt_extended: Option<Ph1kInterruptCandidateExtendedFields>,
         tts_playback_active: Option<bool>,
         capture_degraded: Option<bool>,
         aec_unstable: Option<bool>,
@@ -14583,6 +15728,21 @@ impl Ph1fStore {
         } else {
             self.ph1k_device_tenant_bindings
                 .insert(device_id.clone(), tenant_id.clone());
+        }
+
+        let mut effective_capture_degraded = capture_degraded;
+        let mut effective_aec_unstable = aec_unstable;
+        let mut effective_device_changed = device_changed;
+        let mut effective_stream_gap_detected = stream_gap_detected;
+        if !matches!(event_kind, Ph1kRuntimeEventKind::InterruptCandidate)
+            && interrupt_extended.is_some()
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "audio_runtime_events.interrupt_extended",
+                    reason: "must be None for non-INTERRUPT_CANDIDATE events",
+                },
+            ));
         }
 
         match event_kind {
@@ -14648,6 +15808,30 @@ impl Ph1fStore {
                             reason: "phrase_id, phrase_text, and reason_code are required",
                         },
                     ));
+                }
+                if let Some(extended) = interrupt_extended.as_ref() {
+                    Self::validate_ph1k_interrupt_extended(extended)?;
+                    if phrase_id != Some(extended.trigger_phrase_id) {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "audio_runtime_events.trigger_phrase_id",
+                                reason: "must match phrase_id",
+                            },
+                        ));
+                    }
+                    if extended.trigger_locale.trim().is_empty() {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "audio_runtime_events.trigger_locale",
+                                reason: "must not be empty",
+                            },
+                        ));
+                    }
+                    effective_capture_degraded = Some(extended.degradation_context.capture_degraded);
+                    effective_aec_unstable = Some(extended.degradation_context.aec_unstable);
+                    effective_device_changed = Some(extended.degradation_context.device_changed);
+                    effective_stream_gap_detected =
+                        Some(extended.degradation_context.stream_gap_detected);
                 }
             }
             Ph1kRuntimeEventKind::DegradationFlags => {
@@ -14721,15 +15905,17 @@ impl Ph1fStore {
             phrase_id,
             phrase_text,
             reason_code,
+            interrupt_extended,
             tts_playback_active,
-            capture_degraded,
-            aec_unstable,
-            device_changed,
-            stream_gap_detected,
+            capture_degraded: effective_capture_degraded,
+            aec_unstable: effective_aec_unstable,
+            device_changed: effective_device_changed,
+            stream_gap_detected: effective_stream_gap_detected,
             idempotency_key,
             created_at: now,
         };
 
+        self.ph1k_runtime_event_audit_commit(&row)?;
         self.ph1k_runtime_events.push(row.clone());
         self.ph1k_runtime_event_idempotency_index
             .insert(idx, event_id);
@@ -14774,6 +15960,242 @@ impl Ph1fStore {
         Err(StorageError::AppendOnlyViolation {
             table: "audio_runtime_events",
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1k_feedback_capture_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: DeviceId,
+        capture_input: Ph1kFeedbackCaptureInput,
+        idempotency_key: String,
+    ) -> Result<Ph1kFeedbackCaptureRecord, StorageError> {
+        Self::validate_ph1learn_tenant_id(&tenant_id)?;
+        Self::validate_ph1learn_idempotency("ph1k_feedback_capture.idempotency_key", &idempotency_key)?;
+        self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+        Self::validate_ph1k_feedback_capture_input(&capture_input)?;
+
+        let idx = (tenant_id.clone(), idempotency_key.clone());
+        if let Some(existing_capture_id) = self.ph1k_feedback_capture_idempotency_index.get(&idx) {
+            if let Some(existing) = self
+                .ph1k_feedback_captures
+                .iter()
+                .find(|row| row.capture_id == *existing_capture_id)
+            {
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "ph1k_feedback_captures.capture_id",
+                key: existing_capture_id.to_string(),
+            });
+        }
+
+        let (event_type, signal_bucket, reason_code) =
+            Self::ph1k_feedback_issue_signal(capture_input.issue_kind);
+        let (primary_fingerprint, secondary_fingerprint) =
+            Self::ph1k_feedback_fingerprints(capture_input.issue_kind, reason_code, &capture_input);
+
+        let mut payload_metadata = BTreeMap::new();
+        payload_metadata.insert(
+            "feedback_kind".to_string(),
+            Self::ph1k_feedback_issue_kind_label(capture_input.issue_kind).to_string(),
+        );
+        payload_metadata.insert(
+            "cluster_primary_fingerprint".to_string(),
+            primary_fingerprint.clone(),
+        );
+        payload_metadata.insert(
+            "cluster_secondary_fingerprint".to_string(),
+            secondary_fingerprint.clone(),
+        );
+        payload_metadata.insert(
+            "degradation_flags".to_string(),
+            format!(
+                "capture={},aec={},device={},gap={}",
+                capture_input.capture_degraded.unwrap_or(false) as u8,
+                capture_input.aec_unstable.unwrap_or(false) as u8,
+                capture_input.device_changed.unwrap_or(false) as u8,
+                capture_input.stream_gap_detected.unwrap_or(false) as u8
+            ),
+        );
+        if let Some(band) = capture_input.candidate_confidence_band {
+            payload_metadata.insert(
+                "candidate_confidence_band".to_string(),
+                Self::ph1k_candidate_band_label(band).to_string(),
+            );
+        }
+        if let Some(risk_context) = capture_input.risk_context_class {
+            payload_metadata.insert(
+                "risk_context_class".to_string(),
+                Self::ph1k_risk_context_label(risk_context).to_string(),
+            );
+        }
+        if let Some(device_route) = capture_input.adaptive_device_route {
+            payload_metadata.insert(
+                "adaptive_device_route".to_string(),
+                Self::ph1k_device_route_label(device_route).to_string(),
+            );
+        }
+        if let Some(noise_class) = capture_input.adaptive_noise_class.as_ref() {
+            payload_metadata.insert("adaptive_noise_class".to_string(), noise_class.clone());
+        }
+        if let Some(from_device) = capture_input.failover_from_device.as_ref() {
+            payload_metadata.insert("failover_from_device".to_string(), from_device.clone());
+        }
+        if let Some(to_device) = capture_input.failover_to_device.as_ref() {
+            payload_metadata.insert("failover_to_device".to_string(), to_device.clone());
+        }
+
+        let feedback_audit_event_id = self.ph1feedback_event_commit_with_metadata(
+            now,
+            tenant_id.clone(),
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id.clone(),
+            device_id.clone(),
+            Self::feedback_event_type_name(event_type).to_string(),
+            Self::learn_signal_type_name(signal_bucket).to_string(),
+            reason_code,
+            format!(
+                "kfbk_{}",
+                hash_hex_64(&format!(
+                    "{}:{}:{}:{}",
+                    tenant_id, correlation_id.0, turn_id.0, idempotency_key
+                ))
+            ),
+            payload_metadata,
+        )?;
+
+        let feedback_capture_hash = hash_hex_64(&format!(
+            "{}:{}:{}:{}",
+            tenant_id, correlation_id.0, turn_id.0, idempotency_key
+        ));
+        let learn_bundle_id = self.ph1feedback_learn_signal_bundle_commit(
+            now,
+            tenant_id.clone(),
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id.clone(),
+            device_id.clone(),
+            Self::feedback_event_type_name(event_type).to_string(),
+            Self::learn_signal_type_name(signal_bucket).to_string(),
+            reason_code,
+            format!("ph1k_feedback_evidence:{feedback_capture_hash}"),
+            format!(
+                "ph1.k.feedback:{}:v1",
+                Self::ph1k_feedback_issue_kind_label(capture_input.issue_kind).to_ascii_lowercase()
+            ),
+            0,
+            format!("kfbk_learn_{feedback_capture_hash}"),
+        )?;
+
+        let mode_from = self
+            .ph1k_feedback_pae_mode_by_tenant
+            .get(&tenant_id)
+            .copied()
+            .unwrap_or(PaeMode::Shadow);
+        let quality_regression = capture_input.capture_degraded.unwrap_or(false)
+            || capture_input.aec_unstable.unwrap_or(false)
+            || capture_input.device_changed.unwrap_or(false)
+            || capture_input.stream_gap_detected.unwrap_or(false);
+        let false_interrupt_rate_milli_per_hour = self.ph1k_false_interrupt_rate_milli_per_hour(
+            &tenant_id,
+            now,
+            matches!(capture_input.issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt),
+        );
+        let (
+            mode_to,
+            decision_action,
+            rollback_triggered,
+            quality_regression_triggered,
+            false_interrupt_regression_triggered,
+        ) = Self::ph1k_compute_step14_pae_decision(
+            capture_input.issue_kind,
+            mode_from,
+            quality_regression,
+            false_interrupt_rate_milli_per_hour,
+        );
+
+        let capture_id = self.next_ph1k_feedback_capture_id;
+        self.next_ph1k_feedback_capture_id = self.next_ph1k_feedback_capture_id.saturating_add(1);
+        let pae_audit_event_id = self.ph1k_feedback_step14_pae_audit_commit(
+            now,
+            tenant_id.clone(),
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id.clone(),
+            device_id.clone(),
+            capture_id,
+            capture_input.issue_kind,
+            event_type,
+            signal_bucket,
+            reason_code,
+            mode_from,
+            mode_to,
+            decision_action,
+            rollback_triggered,
+            quality_regression_triggered,
+            false_interrupt_regression_triggered,
+            false_interrupt_rate_milli_per_hour,
+            learn_bundle_id,
+            &idempotency_key,
+        )?;
+        self.ph1k_feedback_pae_mode_by_tenant
+            .insert(tenant_id.clone(), mode_to);
+        let row = Ph1kFeedbackCaptureRecord {
+            schema_version: SchemaVersion(1),
+            capture_id,
+            created_at: now,
+            tenant_id: tenant_id.clone(),
+            correlation_id,
+            turn_id,
+            session_id,
+            user_id,
+            device_id,
+            issue_kind: capture_input.issue_kind,
+            feedback_event_type: event_type,
+            signal_bucket,
+            reason_code,
+            primary_fingerprint,
+            secondary_fingerprint,
+            candidate_confidence_band: capture_input.candidate_confidence_band,
+            risk_context_class: capture_input.risk_context_class,
+            adaptive_device_route: capture_input.adaptive_device_route,
+            adaptive_noise_class: capture_input.adaptive_noise_class,
+            capture_degraded: capture_input.capture_degraded.unwrap_or(false),
+            aec_unstable: capture_input.aec_unstable.unwrap_or(false),
+            device_changed: capture_input.device_changed.unwrap_or(false),
+            stream_gap_detected: capture_input.stream_gap_detected.unwrap_or(false),
+            failover_from_device: capture_input.failover_from_device,
+            failover_to_device: capture_input.failover_to_device,
+            feedback_audit_event_id,
+            learn_bundle_id,
+            pae_audit_event_id,
+            pae_mode_from: mode_from,
+            pae_mode_to: mode_to,
+            pae_decision_action: decision_action.to_string(),
+            pae_rollback_triggered: rollback_triggered,
+            pae_quality_regression_triggered: quality_regression_triggered,
+            pae_false_interrupt_regression_triggered: false_interrupt_regression_triggered,
+            false_interrupt_rate_milli_per_hour,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.ph1k_feedback_captures.push(row.clone());
+        self.ph1k_feedback_capture_idempotency_index
+            .insert(idx, capture_id);
+        Ok(row)
+    }
+
+    pub fn ph1k_feedback_capture_rows(&self) -> &[Ph1kFeedbackCaptureRecord] {
+        &self.ph1k_feedback_captures
     }
 
     // ------------------------

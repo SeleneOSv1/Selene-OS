@@ -3,7 +3,11 @@
 use crate::ph1_voice_id::Ph1VoiceIdResponse;
 use crate::ph1d::PolicyContextRef;
 use crate::ph1e::{ToolRequest, ToolRequestId, ToolResponse};
-use crate::ph1k::{InterruptCandidate, PH1K_CONTRACT_VERSION};
+use crate::ph1k::{
+    CaptureQualityClass, EchoRiskClass, InterruptCandidate, InterruptCandidateConfidenceBand,
+    InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
+    NetworkStabilityClass, PH1K_CONTRACT_VERSION,
+};
 use crate::ph1m::MemoryCandidate;
 use crate::ph1n::{FieldKey, IntentDraft, OverallConfidence, Ph1nResponse};
 use crate::ph1tts::{AnswerId, TtsControl};
@@ -12,6 +16,8 @@ use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Val
 
 pub const PH1X_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 pub const PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID: &str = "unknown";
+pub const PH1X_CLARIFY_QUESTION_MAX_CHARS: usize = 240;
+pub const PH1X_MAX_INTERRUPT_SNAPSHOT_AGE_NS: u64 = 5_000_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeliveryHint {
@@ -27,6 +33,57 @@ pub enum DeliveryHint {
 pub enum ConfirmAnswer {
     Yes,
     No,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptSubjectRelation {
+    Same,
+    Switch,
+    Uncertain,
+}
+
+impl InterruptSubjectRelation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            InterruptSubjectRelation::Same => "SAME",
+            InterruptSubjectRelation::Switch => "SWITCH",
+            InterruptSubjectRelation::Uncertain => "UNCERTAIN",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptContinuityOutcome {
+    SameSubjectAppend,
+    SwitchTopicThenReturnCheck,
+}
+
+impl InterruptContinuityOutcome {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            InterruptContinuityOutcome::SameSubjectAppend => "SAME_SUBJECT_APPEND",
+            InterruptContinuityOutcome::SwitchTopicThenReturnCheck => {
+                "SWITCH_TOPIC_THEN_RETURN_CHECK"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InterruptResumePolicy {
+    ResumeNow,
+    ResumeLater,
+    Discard,
+}
+
+impl InterruptResumePolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            InterruptResumePolicy::ResumeNow => "RESUME_NOW",
+            InterruptResumePolicy::ResumeLater => "RESUME_LATER",
+            InterruptResumePolicy::Discard => "DISCARD",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -408,6 +465,12 @@ pub struct ThreadState {
     pub identity_prompt_state: Option<IdentityPromptState>,
     /// Optional continuity topic carried across turns in one correlation chain.
     pub active_subject_ref: Option<String>,
+    /// Optional interrupted topic retained while handling interruption continuity branches.
+    pub interrupted_subject_ref: Option<String>,
+    /// True when PH1.X has switched topics and is waiting for return-check confirmation.
+    pub return_check_pending: bool,
+    /// Optional deterministic expiry timestamp for `return_check_pending`.
+    pub return_check_expires_at: Option<MonotonicTimeNs>,
     /// Optional active speaker user identity carried across turns.
     pub active_speaker_user_id: Option<String>,
 }
@@ -420,6 +483,9 @@ impl ThreadState {
             resume_buffer: None,
             identity_prompt_state: None,
             active_subject_ref: None,
+            interrupted_subject_ref: None,
+            return_check_pending: false,
+            return_check_expires_at: None,
             active_speaker_user_id: None,
         }
     }
@@ -431,6 +497,9 @@ impl ThreadState {
             resume_buffer,
             identity_prompt_state: None,
             active_subject_ref: None,
+            interrupted_subject_ref: None,
+            return_check_pending: false,
+            return_check_expires_at: None,
             active_speaker_user_id: None,
         }
     }
@@ -442,6 +511,19 @@ impl ThreadState {
     ) -> Result<Self, ContractViolation> {
         self.active_subject_ref = active_subject_ref;
         self.active_speaker_user_id = active_speaker_user_id;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_interrupt_continuity_state(
+        mut self,
+        interrupted_subject_ref: Option<String>,
+        return_check_pending: bool,
+        return_check_expires_at: Option<MonotonicTimeNs>,
+    ) -> Result<Self, ContractViolation> {
+        self.interrupted_subject_ref = interrupted_subject_ref;
+        self.return_check_pending = return_check_pending;
+        self.return_check_expires_at = return_check_expires_at;
         self.validate()?;
         Ok(self)
     }
@@ -477,6 +559,53 @@ impl Validate for ThreadState {
                     reason: "must be <= 256 chars",
                 });
             }
+        }
+        if let Some(interrupted_subject_ref) = &self.interrupted_subject_ref {
+            if interrupted_subject_ref.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.interrupted_subject_ref",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if interrupted_subject_ref.len() > 256 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.interrupted_subject_ref",
+                    reason: "must be <= 256 chars",
+                });
+            }
+        }
+        if let Some(expires_at) = self.return_check_expires_at {
+            if expires_at.0 == 0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.return_check_expires_at",
+                    reason: "must be > 0 when provided",
+                });
+            }
+        }
+        if self.return_check_pending {
+            if self.interrupted_subject_ref.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.interrupted_subject_ref",
+                    reason: "must be Some(...) when return_check_pending=true",
+                });
+            }
+            if self.return_check_expires_at.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.return_check_expires_at",
+                    reason: "must be Some(...) when return_check_pending=true",
+                });
+            }
+            if self.resume_buffer.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.resume_buffer",
+                    reason: "must be Some(...) when return_check_pending=true",
+                });
+            }
+        } else if self.return_check_expires_at.is_some() {
+            return Err(ContractViolation::InvalidValue {
+                field: "thread_state.return_check_expires_at",
+                reason: "must be None when return_check_pending=false",
+            });
         }
         if let Some(active_speaker_user_id) = &self.active_speaker_user_id {
             if active_speaker_user_id.trim().is_empty() {
@@ -673,6 +802,148 @@ impl Validate for TtsResumeSnapshot {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ph1kToPh1xInterruptHandoff {
+    pub schema_version: SchemaVersion,
+    pub candidate_confidence_band: InterruptCandidateConfidenceBand,
+    pub gate_confidences: InterruptGateConfidences,
+    pub degradation_context: InterruptDegradationContext,
+    pub risk_context_class: InterruptRiskContextClass,
+}
+
+impl Ph1kToPh1xInterruptHandoff {
+    pub fn v1(
+        candidate_confidence_band: InterruptCandidateConfidenceBand,
+        gate_confidences: InterruptGateConfidences,
+        degradation_context: InterruptDegradationContext,
+        risk_context_class: InterruptRiskContextClass,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            candidate_confidence_band,
+            gate_confidences,
+            degradation_context,
+            risk_context_class,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+
+    pub fn from_interrupt_candidate(
+        interruption: &InterruptCandidate,
+    ) -> Result<Self, ContractViolation> {
+        Self::v1(
+            interruption.candidate_confidence_band,
+            interruption.gate_confidences,
+            interruption.degradation_context,
+            interruption.risk_context_class,
+        )
+    }
+}
+
+impl Validate for Ph1kToPh1xInterruptHandoff {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1k_to_ph1x_interrupt_handoff.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        for (field, v) in [
+            (
+                "ph1k_to_ph1x_interrupt_handoff.gate_confidences.vad_confidence",
+                self.gate_confidences.vad_confidence.0,
+            ),
+            (
+                "ph1k_to_ph1x_interrupt_handoff.gate_confidences.speech_likeness",
+                self.gate_confidences.speech_likeness.0,
+            ),
+            (
+                "ph1k_to_ph1x_interrupt_handoff.gate_confidences.echo_safe_confidence",
+                self.gate_confidences.echo_safe_confidence.0,
+            ),
+            (
+                "ph1k_to_ph1x_interrupt_handoff.gate_confidences.phrase_confidence",
+                self.gate_confidences.phrase_confidence.0,
+            ),
+        ] {
+            if !v.is_finite() {
+                return Err(ContractViolation::NotFinite { field });
+            }
+            if !(0.0..=1.0).contains(&v) {
+                return Err(ContractViolation::InvalidRange {
+                    field,
+                    min: 0.0,
+                    max: 1.0,
+                    got: v as f64,
+                });
+            }
+        }
+        if let Some(v) = self.gate_confidences.nearfield_confidence {
+            if !v.0.is_finite() {
+                return Err(ContractViolation::NotFinite {
+                    field: "ph1k_to_ph1x_interrupt_handoff.gate_confidences.nearfield_confidence",
+                });
+            }
+            if !(0.0..=1.0).contains(&v.0) {
+                return Err(ContractViolation::InvalidRange {
+                    field: "ph1k_to_ph1x_interrupt_handoff.gate_confidences.nearfield_confidence",
+                    min: 0.0,
+                    max: 1.0,
+                    got: v.0 as f64,
+                });
+            }
+        }
+        if self.degradation_context.capture_degraded
+            && matches!(
+                self.degradation_context.class_bundle.capture_quality_class,
+                CaptureQualityClass::Clear
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field:
+                    "ph1k_to_ph1x_interrupt_handoff.degradation_context.class_bundle.capture_quality_class",
+                reason: "must not be CLEAR when capture_degraded=true",
+            });
+        }
+        if self.degradation_context.aec_unstable
+            && matches!(
+                self.degradation_context.class_bundle.echo_risk_class,
+                EchoRiskClass::Low
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field:
+                    "ph1k_to_ph1x_interrupt_handoff.degradation_context.class_bundle.echo_risk_class",
+                reason: "must not be LOW when aec_unstable=true",
+            });
+        }
+        if self.degradation_context.stream_gap_detected
+            && matches!(
+                self.degradation_context.class_bundle.network_stability_class,
+                NetworkStabilityClass::Stable
+            )
+        {
+            return Err(ContractViolation::InvalidValue {
+                field:
+                    "ph1k_to_ph1x_interrupt_handoff.degradation_context.class_bundle.network_stability_class",
+                reason: "must not be STABLE when stream_gap_detected=true",
+            });
+        }
+        let has_degradation = self.degradation_context.capture_degraded
+            || self.degradation_context.aec_unstable
+            || self.degradation_context.device_changed
+            || self.degradation_context.stream_gap_detected;
+        if has_degradation && matches!(self.risk_context_class, InterruptRiskContextClass::Low) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1k_to_ph1x_interrupt_handoff.risk_context_class",
+                reason: "LOW is not allowed when degradation_context indicates degradation",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1xRequest {
     pub schema_version: SchemaVersion,
@@ -707,6 +978,11 @@ pub struct Ph1xRequest {
     pub tool_response: Option<ToolResponse>,
     /// Interrupt candidate (barge-in). If present, PH1.X may cancel speech immediately.
     pub interruption: Option<InterruptCandidate>,
+    /// Optional interruption subject relation proposed by understanding path.
+    /// Forward-compatible field: enforcement may be tightened in later checklist steps.
+    pub interrupt_subject_relation: Option<InterruptSubjectRelation>,
+    /// Optional confidence for `interrupt_subject_relation` in [0.0, 1.0].
+    pub interrupt_subject_relation_confidence: Option<f32>,
     /// Optional active TTS snapshot used to build Resume Buffer when barge-in cancels speech.
     pub tts_resume_snapshot: Option<TtsResumeSnapshot>,
     /// Optional deterministic step-up outcome from PH1.ACCESS/CAPREQ.
@@ -760,6 +1036,8 @@ impl Ph1xRequest {
             nlp_output,
             tool_response,
             interruption,
+            interrupt_subject_relation: None,
+            interrupt_subject_relation_confidence: None,
             tts_resume_snapshot: None,
             step_up_result: None,
             locale,
@@ -785,6 +1063,17 @@ impl Ph1xRequest {
         tts_resume_snapshot: Option<TtsResumeSnapshot>,
     ) -> Result<Self, ContractViolation> {
         self.tts_resume_snapshot = tts_resume_snapshot;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_interrupt_subject_relation(
+        mut self,
+        interrupt_subject_relation: Option<InterruptSubjectRelation>,
+        interrupt_subject_relation_confidence: Option<f32>,
+    ) -> Result<Self, ContractViolation> {
+        self.interrupt_subject_relation = interrupt_subject_relation;
+        self.interrupt_subject_relation_confidence = interrupt_subject_relation_confidence;
         self.validate()?;
         Ok(self)
     }
@@ -899,10 +1188,12 @@ impl Validate for Ph1xRequest {
             match &self.thread_state.pending {
                 Some(PendingState::Confirm { .. })
                 | Some(PendingState::MemoryPermission { .. }) => {}
+                _ if self.thread_state.return_check_pending => {}
                 _ => {
                     return Err(ContractViolation::InvalidValue {
                         field: "ph1x_request.confirm_answer",
-                        reason: "confirm_answer is only valid when thread_state.pending is Confirm or MemoryPermission",
+                        reason:
+                            "confirm_answer is only valid when thread_state.pending is Confirm/MemoryPermission or thread_state.return_check_pending=true",
                     });
                 }
             }
@@ -954,12 +1245,71 @@ impl Validate for Ph1xRequest {
         if let Some(c) = &self.interruption {
             validate_interrupt_candidate(c)?;
         }
+        match (
+            self.interrupt_subject_relation,
+            self.interrupt_subject_relation_confidence,
+        ) {
+            (None, None) => {}
+            (Some(_), Some(conf)) => {
+                if !conf.is_finite() {
+                    return Err(ContractViolation::NotFinite {
+                        field: "ph1x_request.interrupt_subject_relation_confidence",
+                    });
+                }
+                if !(0.0..=1.0).contains(&conf) {
+                    return Err(ContractViolation::InvalidRange {
+                        field: "ph1x_request.interrupt_subject_relation_confidence",
+                        min: 0.0,
+                        max: 1.0,
+                        got: conf as f64,
+                    });
+                }
+            }
+            _ => {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.interrupt_subject_relation_confidence",
+                    reason:
+                        "must be Some(...) when interrupt_subject_relation is provided and None otherwise",
+                });
+            }
+        }
+        if self.interrupt_subject_relation.is_some()
+            && self.interruption.is_none()
+            && self.thread_state.resume_buffer.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.interrupt_subject_relation",
+                reason:
+                    "is only valid when interruption is present or thread_state.resume_buffer is active",
+            });
+        }
         if let Some(s) = &self.tts_resume_snapshot {
             s.validate()?;
-            if self.interruption.is_none() {
+            let Some(interruption) = self.interruption.as_ref() else {
                 return Err(ContractViolation::InvalidValue {
                     field: "ph1x_request.tts_resume_snapshot",
                     reason: "is only valid when interruption is present",
+                });
+            };
+            if interruption.t_event.0 > self.now.0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.interruption.t_event",
+                    reason: "must be <= now when tts_resume_snapshot is present",
+                });
+            }
+            if self.now.0.saturating_sub(interruption.t_event.0)
+                > PH1X_MAX_INTERRUPT_SNAPSHOT_AGE_NS
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.tts_resume_snapshot",
+                    reason: "is stale relative to interruption timing markers",
+                });
+            }
+            if (s.spoken_cursor_byte as usize) >= s.response_text.len() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1x_request.tts_resume_snapshot.spoken_cursor_byte",
+                    reason:
+                        "must leave non-empty unsaid remainder when interruption snapshot is present",
                 });
             }
         }
@@ -1098,6 +1448,67 @@ fn validate_interrupt_candidate(c: &InterruptCandidate) -> Result<(), ContractVi
             reason: "must be > 0",
         });
     }
+    if c.trigger_phrase_id.0 == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.trigger_phrase_id",
+            reason: "must be > 0",
+        });
+    }
+    if c.trigger_phrase_id != c.phrase_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.trigger_phrase_id",
+            reason: "must match phrase_id",
+        });
+    }
+    if c.trigger_locale.as_str().trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.trigger_locale",
+            reason: "must not be empty",
+        });
+    }
+    if c.trigger_locale.as_str().len() > 32 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.trigger_locale",
+            reason: "must be <= 32 chars",
+        });
+    }
+    if c.timing_markers.window_start.0 > c.timing_markers.window_end.0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.timing_markers.window_start",
+            reason: "must be <= timing_markers.window_end",
+        });
+    }
+    if c.timing_markers.window_end.0 != c.t_event.0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.timing_markers.window_end",
+            reason: "must match interruption.t_event",
+        });
+    }
+    if c.speech_window_metrics.voiced_window_ms == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.speech_window_metrics.voiced_window_ms",
+            reason: "must be > 0",
+        });
+    }
+    if c.speech_window_metrics.voiced_window_ms > 10_000 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.speech_window_metrics.voiced_window_ms",
+            reason: "must be <= 10000ms",
+        });
+    }
+    let window_duration_ns = c
+        .timing_markers
+        .window_end
+        .0
+        .saturating_sub(c.timing_markers.window_start.0);
+    let max_window_ns =
+        u64::from(c.speech_window_metrics.voiced_window_ms).saturating_mul(1_000_000);
+    if window_duration_ns > max_window_ns {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.timing_markers",
+            reason: "window duration must be <= speech_window_metrics.voiced_window_ms",
+        });
+    }
     let conf = c.phrase_confidence.0;
     if !conf.is_finite() {
         return Err(ContractViolation::NotFinite {
@@ -1156,6 +1567,99 @@ fn validate_interrupt_candidate(c: &InterruptCandidate) -> Result<(), ContractVi
                 got: v.0 as f64,
             });
         }
+    }
+    for (field, v) in [
+        (
+            "ph1x_request.interruption.subject_relation_confidence_bundle.lexical_confidence",
+            c.subject_relation_confidence_bundle.lexical_confidence.0,
+        ),
+        (
+            "ph1x_request.interruption.subject_relation_confidence_bundle.vad_confidence",
+            c.subject_relation_confidence_bundle.vad_confidence.0,
+        ),
+        (
+            "ph1x_request.interruption.subject_relation_confidence_bundle.speech_likeness",
+            c.subject_relation_confidence_bundle.speech_likeness.0,
+        ),
+        (
+            "ph1x_request.interruption.subject_relation_confidence_bundle.echo_safe_confidence",
+            c.subject_relation_confidence_bundle.echo_safe_confidence.0,
+        ),
+        (
+            "ph1x_request.interruption.subject_relation_confidence_bundle.combined_confidence",
+            c.subject_relation_confidence_bundle.combined_confidence.0,
+        ),
+    ] {
+        if !v.is_finite() {
+            return Err(ContractViolation::NotFinite { field });
+        }
+        if !(0.0..=1.0).contains(&v) {
+            return Err(ContractViolation::InvalidRange {
+                field,
+                min: 0.0,
+                max: 1.0,
+                got: v as f64,
+            });
+        }
+    }
+    if let Some(v) = c.subject_relation_confidence_bundle.nearfield_confidence {
+        if !v.0.is_finite() {
+            return Err(ContractViolation::NotFinite {
+                field:
+                    "ph1x_request.interruption.subject_relation_confidence_bundle.nearfield_confidence",
+            });
+        }
+        if !(0.0..=1.0).contains(&v.0) {
+            return Err(ContractViolation::InvalidRange {
+                field:
+                    "ph1x_request.interruption.subject_relation_confidence_bundle.nearfield_confidence",
+                min: 0.0,
+                max: 1.0,
+                got: v.0 as f64,
+            });
+        }
+    }
+    if c.gate_confidences.phrase_confidence
+        != c.subject_relation_confidence_bundle.lexical_confidence
+        || c.gate_confidences.vad_confidence != c.subject_relation_confidence_bundle.vad_confidence
+        || c.gate_confidences.speech_likeness
+            != c.subject_relation_confidence_bundle.speech_likeness
+        || c.gate_confidences.echo_safe_confidence
+            != c.subject_relation_confidence_bundle.echo_safe_confidence
+        || c.gate_confidences.nearfield_confidence
+            != c.subject_relation_confidence_bundle.nearfield_confidence
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.subject_relation_confidence_bundle",
+            reason: "must match gate_confidences inputs for deterministic handoff",
+        });
+    }
+    if c.subject_relation_confidence_bundle.lexical_confidence != c.phrase_confidence {
+        return Err(ContractViolation::InvalidValue {
+            field:
+                "ph1x_request.interruption.subject_relation_confidence_bundle.lexical_confidence",
+            reason: "must match phrase_confidence",
+        });
+    }
+    if matches!(
+        c.candidate_confidence_band,
+        InterruptCandidateConfidenceBand::High
+    ) && conf < 0.90
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.candidate_confidence_band",
+            reason: "HIGH requires phrase_confidence >= 0.90",
+        });
+    }
+    let has_degradation = c.degradation_context.capture_degraded
+        || c.degradation_context.aec_unstable
+        || c.degradation_context.device_changed
+        || c.degradation_context.stream_gap_detected;
+    if has_degradation && matches!(c.risk_context_class, InterruptRiskContextClass::Low) {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1x_request.interruption.risk_context_class",
+            reason: "LOW is not allowed when degradation_context indicates degradation",
+        });
     }
     Ok(())
 }
@@ -1238,6 +1742,18 @@ impl Validate for ClarifyDirective {
             return Err(ContractViolation::InvalidValue {
                 field: "clarify_directive.question",
                 reason: "must not be empty",
+            });
+        }
+        if self.question.len() > PH1X_CLARIFY_QUESTION_MAX_CHARS {
+            return Err(ContractViolation::InvalidValue {
+                field: "clarify_directive.question",
+                reason: "must be <= 240 chars",
+            });
+        }
+        if self.question.contains('\n') || self.question.contains('\r') {
+            return Err(ContractViolation::InvalidValue {
+                field: "clarify_directive.question",
+                reason: "must be single-line",
             });
         }
         if self.what_is_missing.is_empty() {
@@ -1588,6 +2104,10 @@ pub struct Ph1xResponse {
     pub thread_state: ThreadState,
     /// Optional TTS control hint. When Some(Cancel), OS must cancel speech immediately.
     pub tts_control: Option<TtsControl>,
+    /// Optional explicit interruption continuity branch outcome for audit/reporting.
+    pub interrupt_continuity_outcome: Option<InterruptContinuityOutcome>,
+    /// Optional explicit interruption resume-policy application for audit/reporting.
+    pub interrupt_resume_policy: Option<InterruptResumePolicy>,
     pub delivery_hint: DeliveryHint,
     pub reason_code: ReasonCodeId,
     pub idempotency_key: Option<String>,
@@ -1612,6 +2132,8 @@ impl Ph1xResponse {
             directive,
             thread_state,
             tts_control,
+            interrupt_continuity_outcome: None,
+            interrupt_resume_policy: None,
             delivery_hint,
             reason_code,
             idempotency_key,
@@ -1667,6 +2189,26 @@ impl Validate for Ph1xResponse {
     }
 }
 
+impl Ph1xResponse {
+    pub fn with_interrupt_continuity_outcome(
+        mut self,
+        interrupt_continuity_outcome: Option<InterruptContinuityOutcome>,
+    ) -> Result<Self, ContractViolation> {
+        self.interrupt_continuity_outcome = interrupt_continuity_outcome;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_interrupt_resume_policy(
+        mut self,
+        interrupt_resume_policy: Option<InterruptResumePolicy>,
+    ) -> Result<Self, ContractViolation> {
+        self.interrupt_resume_policy = interrupt_resume_policy;
+        self.validate()?;
+        Ok(self)
+    }
+}
+
 pub fn requires_clarify(draft: &IntentDraft) -> bool {
     draft.overall_confidence != OverallConfidence::High || !draft.required_fields_missing.is_empty()
 }
@@ -1676,10 +2218,14 @@ mod tests {
     use super::*;
     use crate::ph1d::SafetyTier;
     use crate::ph1k::{
-        Confidence, InterruptCandidate, InterruptGateConfidences, InterruptGates,
-        InterruptPhraseId, InterruptPhraseSetVersion, SpeechLikeness,
+        Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
+        InterruptDegradationContext, InterruptGateConfidences, InterruptGates,
+        InterruptLocaleTag, InterruptPhraseId, InterruptPhraseSetVersion,
+        InterruptRiskContextClass, InterruptSpeechWindowMetrics,
+        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
+        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
-    use crate::ph1n::{EvidenceSpan, IntentType, SensitivityLevel, TranscriptHash};
+    use crate::ph1n::{Chat, EvidenceSpan, IntentType, SensitivityLevel, TranscriptHash};
 
     fn policy_ok() -> PolicyContextRef {
         PolicyContextRef::v1(false, false, SafetyTier::Standard)
@@ -1687,6 +2233,59 @@ mod tests {
 
     fn id_text() -> IdentityContext {
         IdentityContext::TextUserId("user-1".to_string())
+    }
+
+    #[test]
+    fn clarify_directive_accepts_short_single_line_question() {
+        let clarify = ClarifyDirective::v1(
+            "Should I continue the previous topic or switch to your new topic?".to_string(),
+            vec![
+                "Continue previous topic".to_string(),
+                "Switch to new topic".to_string(),
+                "Not sure yet".to_string(),
+            ],
+            vec![FieldKey::Task],
+        );
+        assert!(clarify.is_ok());
+    }
+
+    #[test]
+    fn clarify_directive_rejects_multiline_question() {
+        let err = ClarifyDirective::v1(
+            "Do you want to continue?\nPlease confirm.".to_string(),
+            vec![
+                "Continue previous topic".to_string(),
+                "Switch to new topic".to_string(),
+            ],
+            vec![FieldKey::Task],
+        )
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "clarify_directive.question");
+            }
+            _ => panic!("expected InvalidValue for multiline question"),
+        }
+    }
+
+    #[test]
+    fn clarify_directive_rejects_question_over_max_chars() {
+        let long_question = "q".repeat(PH1X_CLARIFY_QUESTION_MAX_CHARS + 1);
+        let err = ClarifyDirective::v1(
+            long_question,
+            vec![
+                "Continue previous topic".to_string(),
+                "Switch to new topic".to_string(),
+            ],
+            vec![FieldKey::Task],
+        )
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "clarify_directive.question");
+            }
+            _ => panic!("expected InvalidValue for overlength question"),
+        }
     }
 
     #[test]
@@ -1775,6 +2374,97 @@ mod tests {
         assert_eq!(req.active_speaker_user_id, "user-1");
     }
 
+    #[test]
+    fn thread_state_return_check_pending_requires_interrupted_subject_and_expiry() {
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("prior_topic".to_string()),
+            "Spoken".to_string(),
+            "Unsaid".to_string(),
+            MonotonicTimeNs(10),
+        )
+        .unwrap();
+        let err = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(None, true, Some(MonotonicTimeNs(11)))
+            .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "thread_state.interrupted_subject_ref");
+            }
+            _ => panic!("expected InvalidValue for missing interrupted_subject_ref"),
+        }
+    }
+
+    #[test]
+    fn thread_state_return_check_pending_requires_resume_buffer() {
+        let err = ThreadState::empty_v1()
+            .with_interrupt_continuity_state(
+                Some("prior_topic".to_string()),
+                true,
+                Some(MonotonicTimeNs(11)),
+            )
+            .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "thread_state.resume_buffer");
+            }
+            _ => panic!("expected InvalidValue for missing resume_buffer"),
+        }
+    }
+
+    #[test]
+    fn thread_state_return_check_false_requires_no_expiry() {
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("prior_topic".to_string()),
+            "Spoken".to_string(),
+            "Unsaid".to_string(),
+            MonotonicTimeNs(10),
+        )
+        .unwrap();
+        let err = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(
+                Some("prior_topic".to_string()),
+                false,
+                Some(MonotonicTimeNs(11)),
+            )
+            .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "thread_state.return_check_expires_at");
+            }
+            _ => panic!("expected InvalidValue for expiry when return_check_pending=false"),
+        }
+    }
+
+    #[test]
+    fn thread_state_accepts_valid_interrupt_continuity_state() {
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("prior_topic".to_string()),
+            "Spoken".to_string(),
+            "Unsaid".to_string(),
+            MonotonicTimeNs(10),
+        )
+        .unwrap();
+        let state = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(
+                Some("prior_topic".to_string()),
+                true,
+                Some(MonotonicTimeNs(11)),
+            )
+            .unwrap();
+        assert!(state.return_check_pending);
+        assert_eq!(
+            state.interrupted_subject_ref.as_deref(),
+            Some("prior_topic")
+        );
+        assert_eq!(state.return_check_expires_at, Some(MonotonicTimeNs(11)));
+    }
+
     fn intent_draft_with_evidence() -> IntentDraft {
         IntentDraft::v1(
             IntentType::SendMoney,
@@ -1815,12 +2505,38 @@ mod tests {
         .unwrap()
     }
 
-    fn interrupt_wait() -> InterruptCandidate {
+    fn interrupt_wait_at(t_event_ns: u64) -> InterruptCandidate {
         InterruptCandidate::v1(
             InterruptPhraseSetVersion(1),
             InterruptPhraseId(1),
+            InterruptPhraseId(1),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
             "wait".to_string(),
             Confidence::new(0.9).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: false,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(false, false, false, false),
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(t_event_ns.saturating_sub(1_000_000)),
+                window_end: MonotonicTimeNs(t_event_ns),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 80,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.9).unwrap(),
+                vad_confidence: Confidence::new(0.9).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.9).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.9).unwrap(),
+            },
             InterruptGates {
                 vad_ok: true,
                 echo_safe_ok: true,
@@ -1834,10 +2550,58 @@ mod tests {
                 phrase_confidence: Confidence::new(0.9).unwrap(),
                 nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
             },
-            MonotonicTimeNs(1),
+            MonotonicTimeNs(t_event_ns),
             ReasonCodeId(1),
         )
         .unwrap()
+    }
+
+    fn interrupt_wait() -> InterruptCandidate {
+        interrupt_wait_at(1)
+    }
+
+    #[test]
+    fn ph1k_to_ph1x_interrupt_handoff_maps_required_risk_context_fields() {
+        let interruption = interrupt_wait();
+        let handoff =
+            Ph1kToPh1xInterruptHandoff::from_interrupt_candidate(&interruption).unwrap();
+        assert_eq!(
+            handoff.candidate_confidence_band,
+            interruption.candidate_confidence_band
+        );
+        assert_eq!(handoff.gate_confidences, interruption.gate_confidences);
+        assert_eq!(handoff.degradation_context, interruption.degradation_context);
+        assert_eq!(handoff.risk_context_class, interruption.risk_context_class);
+    }
+
+    #[test]
+    fn ph1k_to_ph1x_interrupt_handoff_rejects_low_risk_when_degraded() {
+        let err = Ph1kToPh1xInterruptHandoff::v1(
+            InterruptCandidateConfidenceBand::Medium,
+            InterruptGateConfidences {
+                vad_confidence: Confidence::new(0.8).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.8).unwrap(),
+                echo_safe_confidence: Confidence::new(0.8).unwrap(),
+                phrase_confidence: Confidence::new(0.8).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+            },
+            InterruptDegradationContext {
+                capture_degraded: true,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(true, false, false, false),
+            },
+            InterruptRiskContextClass::Low,
+        )
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1k_to_ph1x_interrupt_handoff.risk_context_class");
+            }
+            _ => panic!("expected InvalidValue for degraded LOW risk handoff"),
+        }
     }
 
     #[test]
@@ -1940,6 +2704,42 @@ mod tests {
             }),
             None,
         );
+        Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::No),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn confirm_answer_allows_return_check_pending() {
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("prior_topic".to_string()),
+            "Spoken".to_string(),
+            "Unsaid".to_string(),
+            MonotonicTimeNs(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(
+                Some("prior_topic".to_string()),
+                true,
+                Some(MonotonicTimeNs(11)),
+            )
+            .unwrap();
         Ph1xRequest::v1(
             1,
             1,
@@ -2123,5 +2923,287 @@ mod tests {
             ))
         });
         assert!(req.is_ok());
+    }
+
+    #[test]
+    fn tts_resume_snapshot_rejects_cursor_without_unsaid_remainder() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(
+                TtsResumeSnapshot::v1(
+                    AnswerId(1),
+                    Some("topic".to_string()),
+                    "First. Second.".to_string(),
+                    "First. Second.".len() as u32,
+                )
+                .unwrap(),
+            ))
+        })
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.tts_resume_snapshot.spoken_cursor_byte");
+            }
+            _ => panic!("expected InvalidValue for exhausted spoken cursor"),
+        }
+    }
+
+    #[test]
+    fn tts_resume_snapshot_rejects_stale_interrupt_timing_window() {
+        let now = MonotonicTimeNs(PH1X_MAX_INTERRUPT_SNAPSHOT_AGE_NS + 10);
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            now,
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait_at(1)),
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(
+                TtsResumeSnapshot::v1(
+                    AnswerId(1),
+                    Some("topic".to_string()),
+                    "First. Second.".to_string(),
+                    "First.".len() as u32,
+                )
+                .unwrap(),
+            ))
+        })
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.tts_resume_snapshot");
+            }
+            _ => panic!("expected InvalidValue for stale interruption snapshot"),
+        }
+    }
+
+    #[test]
+    fn interrupt_candidate_rejects_timing_window_end_mismatch() {
+        let mut interruption = interrupt_wait();
+        interruption.timing_markers.window_end = MonotonicTimeNs(2);
+
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(2),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interruption),
+            None,
+            None,
+        )
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.interruption.timing_markers.window_end");
+            }
+            _ => panic!("expected InvalidValue for timing window mismatch"),
+        }
+    }
+
+    #[test]
+    fn interrupt_subject_relation_requires_paired_confidence() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .unwrap()
+        .with_interrupt_subject_relation(Some(InterruptSubjectRelation::Same), None)
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.interrupt_subject_relation_confidence");
+            }
+            _ => panic!("expected InvalidValue for missing paired confidence"),
+        }
+    }
+
+    #[test]
+    fn interrupt_subject_relation_confidence_must_be_in_range() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .unwrap()
+        .with_interrupt_subject_relation(Some(InterruptSubjectRelation::Switch), Some(1.2))
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidRange { field, .. } => {
+                assert_eq!(field, "ph1x_request.interrupt_subject_relation_confidence");
+            }
+            _ => panic!("expected InvalidRange for confidence > 1.0"),
+        }
+    }
+
+    #[test]
+    fn interrupt_subject_relation_accepts_valid_pair() {
+        let req = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .unwrap()
+        .with_interrupt_subject_relation(Some(InterruptSubjectRelation::Uncertain), Some(0.51));
+
+        assert!(req.is_ok());
+    }
+
+    #[test]
+    fn interrupt_subject_relation_rejects_when_interruption_is_missing() {
+        let err = Ph1xRequest::v1(
+            1,
+            1,
+            MonotonicTimeNs(1),
+            ThreadState::empty_v1(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("hi".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap()
+        .with_interrupt_subject_relation(Some(InterruptSubjectRelation::Same), Some(0.9))
+        .unwrap_err();
+
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1x_request.interrupt_subject_relation");
+            }
+            _ => panic!("expected InvalidValue when interruption is missing"),
+        }
+    }
+
+    #[test]
+    fn response_accepts_interrupt_continuity_outcome() {
+        let response = Ph1xResponse::v1(
+            1,
+            1,
+            Ph1xDirective::Respond(RespondDirective::v1("ok".to_string()).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-x-1".to_string()),
+        )
+        .unwrap()
+        .with_interrupt_continuity_outcome(Some(
+            InterruptContinuityOutcome::SwitchTopicThenReturnCheck,
+        ));
+
+        assert!(response.is_ok());
+    }
+
+    #[test]
+    fn response_accepts_interrupt_resume_policy() {
+        let response = Ph1xResponse::v1(
+            1,
+            1,
+            Ph1xDirective::Respond(RespondDirective::v1("ok".to_string()).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-x-2".to_string()),
+        )
+        .unwrap()
+        .with_interrupt_resume_policy(Some(InterruptResumePolicy::ResumeLater));
+
+        assert!(response.is_ok());
+    }
+
+    #[test]
+    fn interrupt_continuity_outcome_contract_ids_are_stable() {
+        assert_eq!(
+            InterruptContinuityOutcome::SameSubjectAppend.as_str(),
+            "SAME_SUBJECT_APPEND"
+        );
+        assert_eq!(
+            InterruptContinuityOutcome::SwitchTopicThenReturnCheck.as_str(),
+            "SWITCH_TOPIC_THEN_RETURN_CHECK"
+        );
+        assert_eq!(InterruptResumePolicy::ResumeNow.as_str(), "RESUME_NOW");
+        assert_eq!(InterruptResumePolicy::ResumeLater.as_str(), "RESUME_LATER");
+        assert_eq!(InterruptResumePolicy::Discard.as_str(), "DISCARD");
+        assert_eq!(InterruptSubjectRelation::Same.as_str(), "SAME");
+        assert_eq!(InterruptSubjectRelation::Switch.as_str(), "SWITCH");
+        assert_eq!(InterruptSubjectRelation::Uncertain.as_str(), "UNCERTAIN");
     }
 }

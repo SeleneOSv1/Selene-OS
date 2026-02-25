@@ -60,3 +60,8 @@
 - AT-LEARN-02: Consent-required signals without asserted consent fail closed deterministically.
 - AT-LEARN-03: `LEARN_ARTIFACT_PACKAGE_BUILD` fails closed on ordering/target drift.
 - AT-LEARN-04: Valid package build returns `validation_status=OK` with deterministic target-engine coverage.
+
+## G) FDX Wiring Lock (Section 5F)
+- PH1.LEARN wiring must aggregate FDX signals into versioned, rollbackable artifact packages.
+- FDX artifact targets may include PH1.K/PH1.C/PH1.NLP/PH1.X/PH1.TTS adaptation surfaces only as advisory packages.
+- PH1.LEARN must fail closed on invalid ordering, invalid rollback pointers, or invalid target-engine coverage.

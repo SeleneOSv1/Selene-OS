@@ -151,3 +151,9 @@ Implementation references:
 - Selene OS may provide PH1.PERSONA hints (`style_profile_ref`, `delivery_policy_ref`) to PH1.TTS render-plan inputs only after `PERSONA_PROFILE_VALIDATE` returns `validation_status=OK`.
 - PH1.TTS must treat PH1.PERSONA output as advisory rendering posture only and must not alter factual meaning, intent outcomes, confirmation semantics, or execution order.
 - If PH1.PERSONA is unavailable or fails validation, PH1.TTS must use deterministic default render policy while preserving all core safety gates.
+
+## 11) FDX Wiring Lock (Section 5F)
+
+- PH1.TTS wiring must preserve deterministic start/cancel/fail markers for duplex replay.
+- Cancel markers must include bounded reason coding suitable for barge-in latency verification.
+- PH1.TTS remains rendering-only and must not persist interruption-branch authority fields.

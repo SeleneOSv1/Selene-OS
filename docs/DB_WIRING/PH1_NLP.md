@@ -156,3 +156,9 @@ Implementation references:
 - Selene OS may pass PH1.KNOW dictionary hints into PH1.NLP as advisory context only.
 - PH1.NLP remains authoritative for deterministic `intent_draft | clarify | chat` outputs and must not treat PH1.KNOW hints as evidence replacement.
 - PH1.KNOW hints must stay tenant-scoped and authorized-only; unknown/unverified terms still require clarify when confidence is not HIGH.
+
+## 12) FDX Wiring Lock (Section 5F)
+
+- PH1.NLP wiring must persist incremental intent-hypothesis audit posture as advisory-only outputs.
+- Low-confidence/ambiguous partials must deterministically map to clarify-safe reason codes.
+- PH1.NLP must preserve no-guess invariants in duplex paths and avoid implicit execution posture.

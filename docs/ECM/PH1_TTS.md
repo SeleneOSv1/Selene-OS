@@ -75,3 +75,10 @@
 ## Related Engine Boundary (`PH1.PERSONA`)
 - PH1.TTS may consume Selene OS-curated PH1.PERSONA style/delivery profile hints only when `PERSONA_PROFILE_VALIDATE` is `OK`.
 - PH1.TTS must treat PH1.PERSONA output as advisory rendering policy only; it cannot modify factual meaning, intent outcomes, confirmation semantics, or execution ordering.
+
+## FDX Design Lock (Section 5F)
+- PH1.TTS owns chunked speech playback and immediate cancel responsiveness in duplex sessions.
+- PH1.TTS must support interrupt-safe cancellation from PH1.X with deterministic reason-coded audit rows.
+- PH1.TTS must preserve bounded cancel latency expectations (`barge-in detect -> TTS cancel` p95 <= 120ms end-to-end path).
+- PH1.TTS remains rendering-only authority and must not perform interruption policy decisions.
+- PH1.TTS must maintain replay-safe resume snapshot compatibility with PH1.X continuity policies.

@@ -66,6 +66,7 @@
   - transcript row: `created_at`, `correlation_id`, `turn_id`, `session_id?`, `user_id`, `device_id`, `text`, `text_hash`, `idempotency_key`
   - audit row: `tenant_id`, `engine=PH1.C`, `event_type`, `reason_code`, `correlation_id`, `turn_id`, payload, `evidence_ref?`
   - provider arbitration indicators (audit payload only): `route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`
+  - PH1.K handoff indicators (audit payload only, when provided): `ph1k_handoff_interrupt_confidence_band`, `ph1k_handoff_vad_confidence_band`, `ph1k_handoff_quality_metrics_summary`, `ph1k_handoff_degradation_class_bundle`, `ph1k_selected_stt_strategy`
   - evidence span indicators (audit evidence_ref): `transcript_hash`, `critical_spans[]` with `start_byte`, `end_byte`, `field_hint?`
 - idempotency_key rule (exact formula):
   - transcript dedupe key = `(correlation_id, idempotency_key)`
@@ -81,6 +82,7 @@
 - required fields:
   - reject row: `tenant_id`, `engine=PH1.C`, `event_type=TranscriptReject`, `reason_code`, `correlation_id`, `turn_id`, payload (`transcript_hash` optional)
   - candidate row: retry guidance metadata (`retry_advice`, `decision`) + arbitration indicators (`route_class_used`, `attempt_count`, `candidate_count`, `selected_slot`, `mode_used`, `second_pass_used`)
+  - PH1.K handoff indicators (audit payload only, when provided): `ph1k_handoff_interrupt_confidence_band`, `ph1k_handoff_vad_confidence_band`, `ph1k_handoff_quality_metrics_summary`, `ph1k_handoff_degradation_class_bundle`, `ph1k_selected_stt_strategy`
   - evidence span indicators (audit evidence_ref): `transcript_hash?`, `uncertain_spans[]` with byte offsets when available
 - idempotency_key rule (exact formula):
   - audit dedupe keys = `(correlation_id, idempotency_key + ":transcript_reject")` and `(correlation_id, idempotency_key + ":candidate_eval_reject")`
@@ -157,3 +159,23 @@ Implementation references:
 - Selene OS may apply PH1.QUOTA lane decisions (`ALLOW | WAIT | REFUSE`) before PH1.C execution.
 - PH1.C must fail closed when quota returns `REFUSE` and must not execute hidden fallback paths.
 - `WAIT` posture is an OS orchestration pause only; PH1.C transcript authority and audit discipline remain unchanged when resumed.
+
+## 11) Related Engine Boundary (`PH1.K`)
+
+- Selene OS may pass optional `ph1k_handoff` into PH1.C request contract with:
+  - `interrupt_confidence_band`
+  - `vad_confidence_band`
+  - `quality_metrics` summary
+  - `degradation_class_bundle`
+- PH1.C must select bounded STT strategy from this handoff only:
+  - `STANDARD`
+  - `NOISE_ROBUST`
+  - `CLOUD_ASSIST`
+  - `CLARIFY_ONLY`
+- Unknown/missing handoff fields must fail closed at contract-validation level; absent handoff follows deterministic `STANDARD` default routing.
+
+## 12) FDX Wiring Lock (Section 5F)
+
+- PH1.C wiring must support ordered partial transcript emission metadata in duplex flows (`stable`, `revision_id`, confidence band).
+- Transcript quality failures in duplex mode must remain fail-closed and reason-coded.
+- PH1.C must persist enough bounded timing evidence to audit FDX latency gates (`capture -> PH1.C handoff`, partial-first-chunk latency).

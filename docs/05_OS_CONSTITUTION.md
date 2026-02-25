@@ -64,6 +64,15 @@ Section 1: Constitutional Laws (High-Level)
 - Selene response wording is generated dynamically (NLP+LLM) and must sound natural rather than fixed robotic templates.
 - Fixed wording is reserved for compliance-critical confirmations/refusals/policy text.
 
+15) Continuous Engine Monitoring Law
+- Every runtime engine must have explicit benchmark targets (quality, latency, safety/isolation, and audit completeness) with a named owner.
+- Engine readiness for production hardening is blocked if benchmark definitions or telemetry gates are missing.
+
+16) Closed-Loop Improvement Law
+- Benchmark breaches must emit reason-coded failure records and unresolved status.
+- Breaches must flow through `PH1.HEALTH` visibility, `PH1.FEEDBACK` capture, `PH1.LEARN` aggregation, `PH1.PAE` promotion/demotion, and governed `PH1.BUILDER` remediation proposals.
+- Recurring unresolved issues must remain open and escalated until live recurrence-proof confirms they are fixed.
+
 Section 2: Canonical Pointer Map (Authoritative References)
 
 Memory
@@ -112,6 +121,10 @@ Process and Execution
 - Global interaction policy is enforced by `PH1.POLICY`: `docs/DB_WIRING/PH1_POLICY.md` + `docs/ECM/PH1_POLICY.md`
 - Broadcast message delivery lifecycle is canonical in `docs/DB_WIRING/PH1_BCAST.md` (Section BCAST.MHP).
 - PH1.POLICY is a global rule base (prompt discipline). Message interruption lifecycle is PH1.BCAST (BCAST.MHP).
+- Engine finalization + benchmark ownership + closed-loop reporting execution plan:
+  - `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+- Health reporting/display contract:
+  - `docs/36_HEALTH_ENGINE_DISPLAY_PLAN.md`
 
 Section 3: Intent Taxonomy Summary
 

@@ -192,7 +192,9 @@ impl Ph1HealthRuntime {
             if !allowed_tenants.contains(event.tenant_id.as_str()) {
                 continue;
             }
-            if event.started_at.0 < req.time_range.from_utc.0 || event.started_at.0 > req.time_range.to_utc.0 {
+            if event.started_at.0 < req.time_range.from_utc.0
+                || event.started_at.0 > req.time_range.to_utc.0
+            {
                 continue;
             }
             if let Some(owner) = &req.engine_owner_filter {
@@ -217,7 +219,11 @@ impl Ph1HealthRuntime {
                 .get(&key)
                 .map(|existing| {
                     (event.started_at.0, event.attempt_no, &event.action_id)
-                        >= (existing.started_at.0, existing.attempt_no, &existing.action_id)
+                        >= (
+                            existing.started_at.0,
+                            existing.attempt_no,
+                            &existing.action_id,
+                        )
                 })
                 .unwrap_or(true);
             if replace {
@@ -266,17 +272,17 @@ impl Ph1HealthRuntime {
         });
 
         let page_size = min(req.page_size, self.config.max_report_rows) as usize;
-        let start_index = match read_page_start(req.page_action, req.page_cursor.as_deref(), page_size)
-        {
-            Ok(v) => v,
-            Err(_) => {
-                return self.refuse(
-                    HealthCapabilityId::HealthReportQueryRead,
-                    reason_codes::PH1_HEALTH_PAGE_CURSOR_INVALID,
-                    "health report query page cursor is invalid",
-                )
-            }
-        };
+        let start_index =
+            match read_page_start(req.page_action, req.page_cursor.as_deref(), page_size) {
+                Ok(v) => v,
+                Err(_) => {
+                    return self.refuse(
+                        HealthCapabilityId::HealthReportQueryRead,
+                        reason_codes::PH1_HEALTH_PAGE_CURSOR_INVALID,
+                        "health report query page cursor is invalid",
+                    )
+                }
+            };
         let total = rows.len();
         let clamped_start = min(start_index, total);
         let end = min(clamped_start.saturating_add(page_size), total);
@@ -708,11 +714,11 @@ fn tenant_matches_country_filter(tenant_id: &str, country_codes: &[String]) -> b
     country_codes.iter().any(|code| code == &tenant_country)
 }
 
-fn normalize_query(req: &HealthReportQueryReadRequest, display_target: HealthDisplayTarget) -> String {
-    let owner = req
-        .engine_owner_filter
-        .as_deref()
-        .unwrap_or("ALL_ENGINES");
+fn normalize_query(
+    req: &HealthReportQueryReadRequest,
+    display_target: HealthDisplayTarget,
+) -> String {
+    let owner = req.engine_owner_filter.as_deref().unwrap_or("ALL_ENGINES");
     let company_scope = match req.company_scope {
         HealthCompanyScope::TenantOnly => "TENANT_ONLY",
         HealthCompanyScope::CrossTenantTenantRows => "CROSS_TENANT_TENANT_ROWS",
@@ -1194,7 +1200,10 @@ mod tests {
         let out_next = runtime.run(&req_next);
         match out_next {
             Ph1HealthResponse::HealthReportQueryReadOk(ok) => {
-                assert_eq!(ok.display_target_applied, Some(HealthDisplayTarget::Desktop));
+                assert_eq!(
+                    ok.display_target_applied,
+                    Some(HealthDisplayTarget::Desktop)
+                );
                 assert!(ok.rows.len() <= 1);
             }
             _ => panic!("expected report query next page ok"),
@@ -1299,6 +1308,66 @@ mod tests {
     }
 
     #[test]
+    fn at_health_08b_report_query_surfaces_ph1x_interrupt_outcome_by_engine_and_topic() {
+        let runtime = Ph1HealthRuntime::new(Ph1HealthConfig::mvp_v1());
+        let mut interrupt_event = event(
+            "tenant_a",
+            "issue_interrupt_project_status",
+            "PH1.X",
+            HealthSeverity::Warn,
+            HealthIssueStatus::Open,
+            "X1",
+            HealthActionResult::Retry,
+            1,
+            0x5800_001D,
+            180,
+            None,
+            Some(260),
+            None,
+            None,
+        );
+        interrupt_event.issue_fingerprint = Some("topic:project_status".to_string());
+
+        let req = Ph1HealthRequest::HealthReportQueryRead(
+            HealthReportQueryReadRequest::v1(
+                envelope(200),
+                tenant("tenant_a"),
+                "viewer_01".to_string(),
+                HealthReportKind::IssueStatus,
+                HealthReportTimeRange::v1(MonotonicTimeNs(1), MonotonicTimeNs(220)).unwrap(),
+                Some("PH1.X".to_string()),
+                HealthCompanyScope::TenantOnly,
+                vec![],
+                vec![],
+                false,
+                true,
+                Some(HealthDisplayTarget::Desktop),
+                HealthPageAction::First,
+                None,
+                None,
+                25,
+                vec![interrupt_event],
+            )
+            .unwrap(),
+        );
+
+        let out = runtime.run(&req);
+        match out {
+            Ph1HealthResponse::HealthReportQueryReadOk(ok) => {
+                assert_eq!(ok.rows.len(), 1);
+                let row = &ok.rows[0];
+                assert_eq!(row.owner_engine_id, "PH1.X");
+                assert_eq!(row.latest_reason_code, ReasonCodeId(0x5800_001D));
+                assert_eq!(
+                    row.issue_fingerprint.as_deref(),
+                    Some("topic:project_status")
+                );
+            }
+            _ => panic!("expected report query row for PH1.X interruption outcome"),
+        }
+    }
+
+    #[test]
     fn at_health_09_recurrence_true_post_fix_keeps_issue_unresolved() {
         let runtime = Ph1HealthRuntime::new(Ph1HealthConfig::mvp_v1());
         let mut req = HealthReportQueryReadRequest::v1(
@@ -1350,7 +1419,10 @@ mod tests {
         let out = runtime.run(&Ph1HealthRequest::HealthReportQueryRead(req));
         match out {
             Ph1HealthResponse::Refuse(refuse) => {
-                assert_eq!(refuse.reason_code, reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID);
+                assert_eq!(
+                    refuse.reason_code,
+                    reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID
+                );
             }
             _ => panic!("expected fail-closed refuse for recurring resolved issue"),
         }
@@ -1407,7 +1479,10 @@ mod tests {
         let out = runtime.run(&Ph1HealthRequest::HealthReportQueryRead(req));
         match out {
             Ph1HealthResponse::Refuse(refuse) => {
-                assert_eq!(refuse.reason_code, reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID);
+                assert_eq!(
+                    refuse.reason_code,
+                    reason_codes::PH1_HEALTH_INPUT_SCHEMA_INVALID
+                );
             }
             _ => panic!("expected fail-closed refuse for incomplete escalation payload"),
         }

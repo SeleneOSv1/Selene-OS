@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::ph1k::{Confidence, DeviceState};
+use crate::ph1k::{
+    AdvancedAudioQualityMetrics, Confidence, DegradationClassBundle, DeviceState,
+    InterruptCandidateConfidenceBand, VadDecisionConfidenceBand,
+};
 use crate::ph1w::{BoundedAudioSegmentRef, SessionState};
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
@@ -117,6 +120,55 @@ impl VadQualityHint {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1cSttStrategy {
+    Standard,
+    NoiseRobust,
+    CloudAssist,
+    ClarifyOnly,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ph1kToPh1cHandoff {
+    pub schema_version: SchemaVersion,
+    pub interrupt_confidence_band: InterruptCandidateConfidenceBand,
+    pub vad_confidence_band: VadDecisionConfidenceBand,
+    pub quality_metrics: AdvancedAudioQualityMetrics,
+    pub degradation_class_bundle: DegradationClassBundle,
+}
+
+impl Ph1kToPh1cHandoff {
+    pub fn v1(
+        interrupt_confidence_band: InterruptCandidateConfidenceBand,
+        vad_confidence_band: VadDecisionConfidenceBand,
+        quality_metrics: AdvancedAudioQualityMetrics,
+        degradation_class_bundle: DegradationClassBundle,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1C_CONTRACT_VERSION,
+            interrupt_confidence_band,
+            vad_confidence_band,
+            quality_metrics,
+            degradation_class_bundle,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for Ph1kToPh1cHandoff {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1k_to_ph1c_handoff.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        self.quality_metrics.validate()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1cRequest {
     pub schema_version: SchemaVersion,
@@ -126,6 +178,7 @@ pub struct Ph1cRequest {
     pub language_hint: Option<LanguageHint>,
     pub noise_level_hint: Option<NoiseLevelHint>,
     pub vad_quality_hint: Option<VadQualityHint>,
+    pub ph1k_handoff: Option<Ph1kToPh1cHandoff>,
 }
 
 impl Ph1cRequest {
@@ -136,6 +189,7 @@ impl Ph1cRequest {
         language_hint: Option<LanguageHint>,
         noise_level_hint: Option<NoiseLevelHint>,
         vad_quality_hint: Option<VadQualityHint>,
+        ph1k_handoff: Option<Ph1kToPh1cHandoff>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1C_CONTRACT_VERSION,
@@ -145,6 +199,7 @@ impl Ph1cRequest {
             language_hint,
             noise_level_hint,
             vad_quality_hint,
+            ph1k_handoff,
         };
         r.validate()?;
         Ok(r)
@@ -155,6 +210,9 @@ impl Validate for Ph1cRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.bounded_audio_segment_ref.validate()?;
         self.device_state_ref.validate()?;
+        if let Some(h) = &self.ph1k_handoff {
+            h.validate()?;
+        }
         Ok(())
     }
 }
@@ -548,7 +606,10 @@ impl NormalizedSttConfidence {
 mod tests {
     use super::*;
     use crate::ph1k::AudioStreamId;
-    use crate::ph1k::{AudioDeviceId, DeviceHealth, DeviceState, PreRollBufferId};
+    use crate::ph1k::{
+        AdvancedAudioQualityMetrics, AudioDeviceId, DegradationClassBundle, DeviceHealth,
+        DeviceState, InterruptCandidateConfidenceBand, PreRollBufferId, VadDecisionConfidenceBand,
+    };
     use crate::ph1w::BoundedAudioSegmentRef;
     use crate::MonotonicTimeNs;
 
@@ -595,6 +656,37 @@ mod tests {
             None,
             None,
             None,
+            None,
+        );
+        assert!(req.is_ok());
+    }
+
+    #[test]
+    fn request_accepts_ph1k_handoff_payload() {
+        let seg = BoundedAudioSegmentRef::v1(
+            AudioStreamId(1),
+            PreRollBufferId(1),
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(20),
+            MonotonicTimeNs(12),
+            MonotonicTimeNs(13),
+        )
+        .unwrap();
+        let handoff = Ph1kToPh1cHandoff::v1(
+            InterruptCandidateConfidenceBand::Medium,
+            VadDecisionConfidenceBand::Medium,
+            AdvancedAudioQualityMetrics::v1(24.0, 0.03, 50.0, 2.0, 0.2, 16.0).unwrap(),
+            DegradationClassBundle::from_flags(false, true, false, false),
+        )
+        .unwrap();
+        let req = Ph1cRequest::v1(
+            seg,
+            SessionStateRef::v1(SessionState::Active, false),
+            DeviceState::v1(dev("mic"), dev("spk"), DeviceHealth::Healthy, vec![]),
+            None,
+            None,
+            None,
+            Some(handoff),
         );
         assert!(req.is_ok());
     }

@@ -14,7 +14,8 @@ use selene_kernel_contracts::ph1n::{
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
-    IdentityPromptState, PendingState, Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer,
+    IdentityPromptState, InterruptContinuityOutcome, InterruptResumePolicy,
+    InterruptSubjectRelation, PendingState, Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer,
     StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod, StepUpOutcome, StepUpResult,
     ThreadState, WaitDirective,
 };
@@ -53,10 +54,17 @@ pub mod reason_codes {
     pub const X_STEPUP_REFUSED: ReasonCodeId = ReasonCodeId(0x5800_0019);
     pub const X_STEPUP_DEFERRED: ReasonCodeId = ReasonCodeId(0x5800_001A);
     pub const X_STEPUP_CHALLENGE_UNAVAILABLE: ReasonCodeId = ReasonCodeId(0x5800_001B);
+    pub const X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY: ReasonCodeId = ReasonCodeId(0x5800_001C);
+    pub const X_INTERRUPT_SAME_SUBJECT_APPEND: ReasonCodeId = ReasonCodeId(0x5800_001D);
+    pub const X_INTERRUPT_SWITCH_TOPIC: ReasonCodeId = ReasonCodeId(0x5800_001E);
+    pub const X_INTERRUPT_RETURN_CHECK_ASKED: ReasonCodeId = ReasonCodeId(0x5800_001F);
+    pub const X_INTERRUPT_RESUME_NOW: ReasonCodeId = ReasonCodeId(0x5800_0020);
+    pub const X_INTERRUPT_DISCARD: ReasonCodeId = ReasonCodeId(0x5800_0021);
 }
 
 const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
 const IDENTITY_PROMPT_RETRY_BUDGET: u8 = 1;
+const INTERRUPT_RELATION_CONFIDENCE_MIN: f32 = 0.70;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1xConfig {
@@ -116,10 +124,17 @@ impl Ph1xRuntime {
         // Interruption is time-critical: cancel speech immediately and adopt a listening posture.
         if req.interruption.is_some() {
             let mut next_state = clear_pending(base_thread_state);
+            let mut interrupted_subject_ref = next_state
+                .active_subject_ref
+                .clone()
+                .or_else(|| Some(req.subject_ref.clone()));
             if let Some(snapshot) = &req.tts_resume_snapshot {
                 let split_at = snapshot.spoken_cursor_byte as usize;
                 let spoken_prefix = snapshot.response_text[..split_at].to_string();
                 let unsaid_remainder = snapshot.response_text[split_at..].trim_start().to_string();
+                if let Some(topic_hint) = &snapshot.topic_hint {
+                    interrupted_subject_ref = Some(topic_hint.clone());
+                }
                 if !unsaid_remainder.is_empty() {
                     let expires_at = MonotonicTimeNs(
                         req.now
@@ -133,6 +148,38 @@ impl Ph1xRuntime {
                         unsaid_remainder,
                         expires_at,
                     )?);
+                }
+            }
+            next_state = mark_interrupt_captured_topic(next_state, interrupted_subject_ref);
+            match (
+                req.interrupt_subject_relation,
+                req.interrupt_subject_relation_confidence,
+            ) {
+                (Some(InterruptSubjectRelation::Same), Some(conf))
+                | (Some(InterruptSubjectRelation::Switch), Some(conf))
+                    if conf >= INTERRUPT_RELATION_CONFIDENCE_MIN => {}
+                _ => {
+                    let attempts =
+                        bump_attempts(&next_state.pending, PendingKind::Clarify(FieldKey::Task));
+                    next_state.pending = Some(PendingState::Clarify {
+                        missing_field: FieldKey::Task,
+                        attempts,
+                    });
+                    return self.out_clarify_with_tts_control(
+                        req,
+                        next_state,
+                        reason_codes::X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY,
+                        "Should I continue the previous topic or switch to your new topic?"
+                            .to_string(),
+                        vec![
+                            "Continue previous topic".to_string(),
+                            "Switch to new topic".to_string(),
+                            "Not sure yet".to_string(),
+                        ],
+                        vec![FieldKey::Task],
+                        delivery_base,
+                        Some(TtsControl::Cancel),
+                    );
                 }
             }
             return self.out_wait(
@@ -220,6 +267,14 @@ impl Ph1xRuntime {
 
         // Confirmation answers are handled before NLP, using pending confirm snapshot.
         if let Some(ans) = req.confirm_answer {
+            if base_thread_state.return_check_pending {
+                return self.decide_from_return_check_answer(
+                    req,
+                    ans,
+                    base_thread_state,
+                    delivery_base,
+                );
+            }
             return self.decide_from_confirm_answer(req, ans, base_thread_state, delivery_base);
         }
 
@@ -277,6 +332,13 @@ impl Ph1xRuntime {
                 )
             }
             Ph1nResponse::Chat(ch) => {
+                if should_interrupt_relation_clarify(req, &base_thread_state, None) {
+                    return self.out_interrupt_relation_uncertain_clarify(
+                        req,
+                        base_thread_state,
+                        delivery_base,
+                    );
+                }
                 let identity_v2 = identity_v2_for_context(&req.identity_context);
                 let may_prompt_identity = identity_may_prompt(req, &base_thread_state, identity_v2);
                 let allow_personalization =
@@ -306,6 +368,36 @@ impl Ph1xRuntime {
                         req.identity_prompt_scope_key.as_deref(),
                     );
                 }
+                let mut same_subject_merge_applied = false;
+                let same_subject_confident = matches!(
+                    (req.interrupt_subject_relation, req.interrupt_subject_relation_confidence),
+                    (Some(InterruptSubjectRelation::Same), Some(conf))
+                        if conf >= INTERRUPT_RELATION_CONFIDENCE_MIN
+                );
+                let switch_subject_confident = matches!(
+                    (req.interrupt_subject_relation, req.interrupt_subject_relation_confidence),
+                    (Some(InterruptSubjectRelation::Switch), Some(conf))
+                        if conf >= INTERRUPT_RELATION_CONFIDENCE_MIN
+                );
+                if same_subject_confident {
+                    if let Some(rb) = next_thread_state.resume_buffer.take() {
+                        text = merge_same_subject_response_text(&rb.unsaid_remainder, &text);
+                        same_subject_merge_applied = true;
+                        next_thread_state = clear_interrupt_continuity_state(next_thread_state);
+                    }
+                }
+                let mut switch_topic_return_check_applied = false;
+                if !same_subject_merge_applied && switch_subject_confident {
+                    if next_thread_state.resume_buffer.is_some() {
+                        text = append_switch_topic_return_check(text);
+                        switch_topic_return_check_applied = true;
+                        next_thread_state = mark_return_check_pending(
+                            next_thread_state,
+                            req.now,
+                            self.config.resume_buffer_ttl_ms,
+                        );
+                    }
+                }
 
                 // Sensitive memory requires permission before it is used or cited.
                 // When triggered, defer the already-generated response text and ask one permission question.
@@ -319,7 +411,7 @@ impl Ph1xRuntime {
                             deferred_response_text: truncate_to_char_boundary(text, 32_768),
                             attempts,
                         }),
-                        base_thread_state.resume_buffer.clone(),
+                        next_thread_state.resume_buffer.clone(),
                     );
                     return self.out_respond(
                         req,
@@ -328,6 +420,29 @@ impl Ph1xRuntime {
                         "This may be sensitive. Do you want me to use it to answer? (Yes / No)"
                             .to_string(),
                         delivery_base,
+                    );
+                }
+
+                if same_subject_merge_applied {
+                    return self.out_respond_with_interrupt_metadata(
+                        req,
+                        next_thread_state,
+                        reason_codes::X_INTERRUPT_SAME_SUBJECT_APPEND,
+                        text,
+                        delivery_base,
+                        Some(InterruptContinuityOutcome::SameSubjectAppend),
+                        Some(InterruptResumePolicy::ResumeNow),
+                    );
+                }
+                if switch_topic_return_check_applied {
+                    return self.out_respond_with_interrupt_metadata(
+                        req,
+                        next_thread_state,
+                        reason_codes::X_INTERRUPT_RETURN_CHECK_ASKED,
+                        text,
+                        delivery_base,
+                        Some(InterruptContinuityOutcome::SwitchTopicThenReturnCheck),
+                        Some(InterruptResumePolicy::ResumeLater),
                     );
                 }
 
@@ -356,15 +471,17 @@ impl Ph1xRuntime {
         if matches!(d.intent_type, IntentType::Continue | IntentType::MoreDetail) {
             if let Some(rb) = base_thread_state.resume_buffer.take() {
                 base_thread_state.pending = None;
+                base_thread_state = clear_interrupt_continuity_state(base_thread_state);
 
                 match d.intent_type {
                     IntentType::Continue => {
-                        return self.out_respond(
+                        return self.out_respond_with_resume_policy(
                             req,
                             base_thread_state,
-                            reason_codes::X_RESUME_CONTINUE,
+                            reason_codes::X_INTERRUPT_RESUME_NOW,
                             rb.unsaid_remainder,
                             delivery_base,
+                            InterruptResumePolicy::ResumeNow,
                         );
                     }
                     IntentType::MoreDetail => {
@@ -375,12 +492,13 @@ impl Ph1xRuntime {
                             text.push_str(prefix);
                         }
                         text.push_str(&rb.unsaid_remainder);
-                        return self.out_respond(
+                        return self.out_respond_with_resume_policy(
                             req,
                             base_thread_state,
-                            reason_codes::X_RESUME_MORE_DETAIL,
+                            reason_codes::X_INTERRUPT_RESUME_NOW,
                             text,
                             delivery_base,
+                            InterruptResumePolicy::ResumeNow,
                         );
                     }
                     _ => {}
@@ -411,6 +529,14 @@ impl Ph1xRuntime {
                     "The reminder".to_string(),
                 ],
                 vec![missing_field],
+                delivery_base,
+            );
+        }
+
+        if should_interrupt_relation_clarify(req, &base_thread_state, Some(d)) {
+            return self.out_interrupt_relation_uncertain_clarify(
+                req,
+                base_thread_state,
                 delivery_base,
             );
         }
@@ -514,6 +640,14 @@ impl Ph1xRuntime {
         base_thread_state: ThreadState,
         delivery_base: DeliveryHint,
     ) -> Result<Ph1xResponse, ContractViolation> {
+        if base_thread_state.return_check_pending {
+            return self.decide_from_return_check_answer(
+                req,
+                ans,
+                base_thread_state,
+                delivery_base,
+            );
+        }
         let pending = base_thread_state.pending.clone();
         match pending {
             Some(PendingState::Confirm { intent_draft, attempts }) => match ans {
@@ -622,6 +756,64 @@ impl Ph1xRuntime {
                 reason:
                     "confirm_answer is only valid when thread_state.pending is Confirm or MemoryPermission",
             }),
+        }
+    }
+
+    fn decide_from_return_check_answer(
+        &self,
+        req: &Ph1xRequest,
+        ans: selene_kernel_contracts::ph1x::ConfirmAnswer,
+        mut base_thread_state: ThreadState,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        if !base_thread_state.return_check_pending {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_request.thread_state.return_check_pending",
+                reason: "must be true when handling return-check confirm answer",
+            });
+        }
+        base_thread_state.pending = None;
+        match ans {
+            selene_kernel_contracts::ph1x::ConfirmAnswer::Yes => {
+                let resume_text = match base_thread_state.resume_buffer.take() {
+                    Some(rb) => rb.unsaid_remainder,
+                    None => {
+                        return self.out_clarify(
+                            req,
+                            clear_interrupt_continuity_state(base_thread_state),
+                            reason_codes::X_RESUME_EXPIRED,
+                            "What should I continue from the previous topic?".to_string(),
+                            vec![
+                                "Continue previous topic".to_string(),
+                                "Stay on new topic".to_string(),
+                            ],
+                            vec![FieldKey::ReferenceTarget],
+                            delivery_base,
+                        );
+                    }
+                };
+                let next_state = clear_interrupt_continuity_state(base_thread_state);
+                self.out_respond_with_resume_policy(
+                    req,
+                    next_state,
+                    reason_codes::X_INTERRUPT_RESUME_NOW,
+                    resume_text,
+                    delivery_base,
+                    InterruptResumePolicy::ResumeNow,
+                )
+            }
+            selene_kernel_contracts::ph1x::ConfirmAnswer::No => {
+                base_thread_state.resume_buffer = None;
+                let next_state = clear_interrupt_continuity_state(base_thread_state);
+                self.out_respond_with_resume_policy(
+                    req,
+                    next_state,
+                    reason_codes::X_INTERRUPT_DISCARD,
+                    "Okay. I will keep focus on the new topic only.".to_string(),
+                    delivery_base,
+                    InterruptResumePolicy::Discard,
+                )
+            }
         }
     }
 
@@ -760,13 +952,60 @@ impl Ph1xRuntime {
         let directive = Ph1xDirective::Respond(
             selene_kernel_contracts::ph1x::RespondDirective::v1(response_text)?,
         );
-        self.out(
+        self.out_with_interrupt_metadata(
             req,
             directive,
             thread_state,
             None,
             delivery_base,
             reason_code,
+            None,
+            None,
+        )
+    }
+
+    fn out_respond_with_interrupt_metadata(
+        &self,
+        req: &Ph1xRequest,
+        thread_state: ThreadState,
+        reason_code: ReasonCodeId,
+        response_text: String,
+        delivery_base: DeliveryHint,
+        interrupt_continuity_outcome: Option<InterruptContinuityOutcome>,
+        interrupt_resume_policy: Option<InterruptResumePolicy>,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let directive = Ph1xDirective::Respond(
+            selene_kernel_contracts::ph1x::RespondDirective::v1(response_text)?,
+        );
+        self.out_with_interrupt_metadata(
+            req,
+            directive,
+            thread_state,
+            None,
+            delivery_base,
+            reason_code,
+            interrupt_continuity_outcome,
+            interrupt_resume_policy,
+        )
+    }
+
+    fn out_respond_with_resume_policy(
+        &self,
+        req: &Ph1xRequest,
+        thread_state: ThreadState,
+        reason_code: ReasonCodeId,
+        response_text: String,
+        delivery_base: DeliveryHint,
+        interrupt_resume_policy: InterruptResumePolicy,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        self.out_respond_with_interrupt_metadata(
+            req,
+            thread_state,
+            reason_code,
+            response_text,
+            delivery_base,
+            None,
+            Some(interrupt_resume_policy),
         )
     }
 
@@ -780,6 +1019,30 @@ impl Ph1xRuntime {
         what_is_missing: Vec<FieldKey>,
         delivery_base: DeliveryHint,
     ) -> Result<Ph1xResponse, ContractViolation> {
+        self.out_clarify_with_tts_control(
+            req,
+            thread_state,
+            reason_code,
+            question,
+            accepted_answer_formats,
+            what_is_missing,
+            delivery_base,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn out_clarify_with_tts_control(
+        &self,
+        req: &Ph1xRequest,
+        thread_state: ThreadState,
+        reason_code: ReasonCodeId,
+        question: String,
+        accepted_answer_formats: Vec<String>,
+        what_is_missing: Vec<FieldKey>,
+        delivery_base: DeliveryHint,
+        tts_control: Option<TtsControl>,
+    ) -> Result<Ph1xResponse, ContractViolation> {
         let directive = Ph1xDirective::Clarify(ClarifyDirective::v1(
             question,
             accepted_answer_formats,
@@ -789,9 +1052,35 @@ impl Ph1xRuntime {
             req,
             directive,
             thread_state,
-            None,
+            tts_control,
             delivery_base,
             reason_code,
+        )
+    }
+
+    fn out_interrupt_relation_uncertain_clarify(
+        &self,
+        req: &Ph1xRequest,
+        mut thread_state: ThreadState,
+        delivery_base: DeliveryHint,
+    ) -> Result<Ph1xResponse, ContractViolation> {
+        let attempts = bump_attempts(&thread_state.pending, PendingKind::Clarify(FieldKey::Task));
+        thread_state.pending = Some(PendingState::Clarify {
+            missing_field: FieldKey::Task,
+            attempts,
+        });
+        self.out_clarify(
+            req,
+            thread_state,
+            reason_codes::X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY,
+            "Should I continue the previous topic or switch to your new topic?".to_string(),
+            vec![
+                "Continue previous topic".to_string(),
+                "Switch to new topic".to_string(),
+                "Not sure yet".to_string(),
+            ],
+            vec![FieldKey::Task],
+            delivery_base,
         )
     }
 
@@ -935,6 +1224,29 @@ impl Ph1xRuntime {
         delivery_hint: DeliveryHint,
         reason_code: ReasonCodeId,
     ) -> Result<Ph1xResponse, ContractViolation> {
+        self.out_with_interrupt_metadata(
+            req,
+            directive,
+            thread_state,
+            tts_control,
+            delivery_hint,
+            reason_code,
+            None,
+            None,
+        )
+    }
+
+    fn out_with_interrupt_metadata(
+        &self,
+        req: &Ph1xRequest,
+        directive: Ph1xDirective,
+        thread_state: ThreadState,
+        tts_control: Option<TtsControl>,
+        delivery_hint: DeliveryHint,
+        reason_code: ReasonCodeId,
+        interrupt_continuity_outcome: Option<InterruptContinuityOutcome>,
+        interrupt_resume_policy: Option<InterruptResumePolicy>,
+    ) -> Result<Ph1xResponse, ContractViolation> {
         let delivery = match delivery_hint {
             DeliveryHint::Silent => DeliveryHint::Silent,
             _ => delivery_hint_from_base(directive_kind(&directive), delivery_hint),
@@ -955,7 +1267,9 @@ impl Ph1xRuntime {
             delivery,
             reason_code,
             idempotency_key,
-        )?;
+        )?
+        .with_interrupt_continuity_outcome(interrupt_continuity_outcome)?
+        .with_interrupt_resume_policy(interrupt_resume_policy)?;
         out.validate()?;
         Ok(out)
     }
@@ -1055,7 +1369,51 @@ fn clear_expired_resume_buffer(mut s: ThreadState, now: MonotonicTimeNs) -> Thre
     if let Some(b) = &s.resume_buffer {
         if now.0 >= b.expires_at.0 {
             s.resume_buffer = None;
+            s = clear_interrupt_continuity_state(s);
         }
+    }
+    if let Some(expires_at) = s.return_check_expires_at {
+        if now.0 >= expires_at.0 {
+            s.return_check_pending = false;
+            s.return_check_expires_at = None;
+        }
+    }
+    s
+}
+
+fn clear_interrupt_continuity_state(mut s: ThreadState) -> ThreadState {
+    s.interrupted_subject_ref = None;
+    s.return_check_pending = false;
+    s.return_check_expires_at = None;
+    s
+}
+
+fn mark_interrupt_captured_topic(
+    mut s: ThreadState,
+    interrupted_subject_ref: Option<String>,
+) -> ThreadState {
+    s.interrupted_subject_ref = interrupted_subject_ref;
+    s.return_check_pending = false;
+    s.return_check_expires_at = None;
+    s
+}
+
+fn mark_return_check_pending(mut s: ThreadState, now: MonotonicTimeNs, ttl_ms: u32) -> ThreadState {
+    if s.interrupted_subject_ref.is_none() {
+        s.interrupted_subject_ref = s
+            .resume_buffer
+            .as_ref()
+            .and_then(|rb| rb.topic_hint.clone())
+            .or_else(|| s.active_subject_ref.clone());
+    }
+    if s.resume_buffer.is_some() {
+        s.return_check_pending = true;
+        s.return_check_expires_at = Some(MonotonicTimeNs(
+            now.0.saturating_add((ttl_ms as u64) * 1_000_000),
+        ));
+    } else {
+        s.return_check_pending = false;
+        s.return_check_expires_at = None;
     }
     s
 }
@@ -1262,6 +1620,68 @@ fn truncate_to_char_boundary(mut s: String, max_bytes: usize) -> String {
     }
     s.truncate(end);
     s
+}
+
+fn merge_same_subject_response_text(unsaid_remainder: &str, new_response_text: &str) -> String {
+    let unsaid = unsaid_remainder.trim();
+    let new_text = new_response_text.trim();
+    if unsaid.is_empty() {
+        return truncate_to_char_boundary(new_text.to_string(), 32_768);
+    }
+    if new_text.is_empty() {
+        return truncate_to_char_boundary(unsaid.to_string(), 32_768);
+    }
+    if new_text.eq_ignore_ascii_case(unsaid) || new_text.contains(unsaid) {
+        return truncate_to_char_boundary(new_text.to_string(), 32_768);
+    }
+    if unsaid.contains(new_text) {
+        return truncate_to_char_boundary(unsaid.to_string(), 32_768);
+    }
+    truncate_to_char_boundary(
+        format!("{unsaid}\n\nAlso, on your new point: {new_text}"),
+        32_768,
+    )
+}
+
+fn append_switch_topic_return_check(new_response_text: String) -> String {
+    let trimmed = new_response_text.trim();
+    if trimmed.is_empty() {
+        return "Do you still want to continue the previous topic?".to_string();
+    }
+    if trimmed.contains("Do you still want to continue the previous topic?") {
+        return truncate_to_char_boundary(trimmed.to_string(), 32_768);
+    }
+    truncate_to_char_boundary(
+        format!("{trimmed}\n\nDo you still want to continue the previous topic?"),
+        32_768,
+    )
+}
+
+fn should_interrupt_relation_clarify(
+    req: &Ph1xRequest,
+    thread_state: &ThreadState,
+    intent_draft: Option<&IntentDraft>,
+) -> bool {
+    if thread_state.resume_buffer.is_none() {
+        return false;
+    }
+    if matches!(
+        intent_draft.map(|d| d.intent_type),
+        Some(IntentType::Continue | IntentType::MoreDetail)
+    ) {
+        return false;
+    }
+    match (
+        req.interrupt_subject_relation,
+        req.interrupt_subject_relation_confidence,
+    ) {
+        (Some(InterruptSubjectRelation::Uncertain), Some(_)) => true,
+        (Some(InterruptSubjectRelation::Same), Some(conf))
+        | (Some(InterruptSubjectRelation::Switch), Some(conf)) => {
+            conf < INTERRUPT_RELATION_CONFIDENCE_MIN
+        }
+        _ => true,
+    }
 }
 
 fn confirm_snapshot_intent_draft(d: &IntentDraft) -> IntentDraft {
@@ -1784,8 +2204,12 @@ mod tests {
         CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
     };
     use selene_kernel_contracts::ph1k::{
-        Confidence, InterruptCandidate, InterruptGateConfidences, InterruptGates,
-        InterruptPhraseId, InterruptPhraseSetVersion, SpeechLikeness,
+        Confidence, DegradationClassBundle, InterruptCandidate,
+        InterruptCandidateConfidenceBand, InterruptDegradationContext,
+        InterruptGateConfidences, InterruptGates, InterruptLocaleTag, InterruptPhraseId,
+        InterruptPhraseSetVersion, InterruptRiskContextClass, InterruptSpeechWindowMetrics,
+        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
+        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
@@ -1797,7 +2221,8 @@ mod tests {
     };
     use selene_kernel_contracts::ph1tts::AnswerId;
     use selene_kernel_contracts::ph1x::{
-        ConfirmAnswer, DispatchRequest, IdentityContext, IdentityPromptState, ResumeBuffer,
+        ConfirmAnswer, DispatchRequest, IdentityContext, IdentityPromptState,
+        InterruptContinuityOutcome, InterruptResumePolicy, InterruptSubjectRelation, ResumeBuffer,
         ThreadState, TtsResumeSnapshot,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
@@ -1926,8 +2351,34 @@ mod tests {
         InterruptCandidate::v1(
             InterruptPhraseSetVersion(1),
             InterruptPhraseId(1),
+            InterruptPhraseId(1),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
             "wait".to_string(),
             Confidence::new(0.9).unwrap(),
+            InterruptCandidateConfidenceBand::High,
+            InterruptRiskContextClass::Low,
+            InterruptDegradationContext {
+                capture_degraded: false,
+                aec_unstable: false,
+                device_changed: false,
+                stream_gap_detected: false,
+                class_bundle: DegradationClassBundle::from_flags(false, false, false, false),
+            },
+            InterruptTimingMarkers {
+                window_start: MonotonicTimeNs(0),
+                window_end: MonotonicTimeNs(1),
+            },
+            InterruptSpeechWindowMetrics {
+                voiced_window_ms: 1,
+            },
+            InterruptSubjectRelationConfidenceBundle {
+                lexical_confidence: Confidence::new(0.9).unwrap(),
+                vad_confidence: Confidence::new(0.9).unwrap(),
+                speech_likeness: SpeechLikeness::new(0.9).unwrap(),
+                echo_safe_confidence: Confidence::new(0.95).unwrap(),
+                nearfield_confidence: Some(Confidence::new(0.8).unwrap()),
+                combined_confidence: Confidence::new(0.9).unwrap(),
+            },
             InterruptGates {
                 vad_ok: true,
                 echo_safe_ok: true,
@@ -2839,6 +3290,9 @@ mod tests {
                 "First part.".len() as u32,
             )))
         })
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Same), Some(0.95))
+        })
         .unwrap();
         let out = rt.decide(&req).unwrap();
         assert!(matches!(out.directive, Ph1xDirective::Wait(_)));
@@ -2848,6 +3302,54 @@ mod tests {
         let rb = out.thread_state.resume_buffer.unwrap();
         assert_eq!(rb.spoken_prefix, "First part.");
         assert_eq!(rb.unsaid_remainder, "Remaining detail.");
+        assert!(out.thread_state.interrupted_subject_ref.is_some());
+        assert!(!out.thread_state.return_check_pending);
+        assert!(out.thread_state.return_check_expires_at.is_none());
+    }
+
+    #[test]
+    fn at_x_interruption_without_relation_fails_closed_into_one_clarify() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let req = Ph1xRequest::v1(
+            3,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(tts_snapshot(
+                "First part. Remaining detail.",
+                "First part.".len() as u32,
+            )))
+        })
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        let clarify = match out.directive {
+            Ph1xDirective::Clarify(d) => d,
+            _ => panic!("expected clarify"),
+        };
+        assert_eq!(out.tts_control, Some(TtsControl::Cancel));
+        assert_eq!(
+            out.reason_code,
+            reason_codes::X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY
+        );
+        assert!(matches!(
+            out.thread_state.pending,
+            Some(PendingState::Clarify { .. })
+        ));
+        assert!(out.thread_state.resume_buffer.is_some());
+        assert_eq!(clarify.accepted_answer_formats.len(), 3);
     }
 
     #[test]
@@ -3026,6 +3528,11 @@ mod tests {
             Ph1xDirective::Respond(r) => assert_eq!(r.response_text, "unsaid remainder"),
             _ => panic!("expected Respond"),
         }
+        assert_eq!(out.reason_code, reason_codes::X_INTERRUPT_RESUME_NOW);
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeNow)
+        );
         assert!(out.thread_state.resume_buffer.is_none());
     }
 
@@ -3066,7 +3573,366 @@ mod tests {
             Ph1xDirective::Respond(r) => assert!(r.response_text.ends_with("unsaid remainder")),
             _ => panic!("expected Respond"),
         }
+        assert_eq!(out.reason_code, reason_codes::X_INTERRUPT_RESUME_NOW);
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeNow)
+        );
         assert!(out.thread_state.resume_buffer.is_none());
+    }
+
+    #[test]
+    fn at_x_same_subject_merge_combines_resume_and_chat_into_one_response() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb));
+        let req = Ph1xRequest::v1(
+            77,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("I also need budget impact.".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Same), Some(0.91))
+        })
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        let response_text = match out.directive {
+            Ph1xDirective::Respond(r) => r.response_text,
+            _ => panic!("expected respond"),
+        };
+        assert_eq!(
+            out.reason_code,
+            reason_codes::X_INTERRUPT_SAME_SUBJECT_APPEND
+        );
+        assert_eq!(
+            out.interrupt_continuity_outcome,
+            Some(InterruptContinuityOutcome::SameSubjectAppend)
+        );
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeNow)
+        );
+        assert!(response_text.contains("Remaining project milestones are due Friday."));
+        assert!(response_text.contains("I also need budget impact."));
+        assert!(out.thread_state.resume_buffer.is_none());
+        assert!(out.thread_state.interrupted_subject_ref.is_none());
+        assert!(!out.thread_state.return_check_pending);
+        assert!(out.thread_state.return_check_expires_at.is_none());
+    }
+
+    #[test]
+    fn at_x_switch_subject_answers_new_topic_and_keeps_return_check_buffer() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb));
+        let req = Ph1xRequest::v1(
+            78,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1(
+                    "Shipping update: the package arrives tomorrow.".to_string(),
+                    ReasonCodeId(1),
+                )
+                .unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Switch), Some(0.92))
+        })
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        let response_text = match out.directive {
+            Ph1xDirective::Respond(r) => r.response_text,
+            _ => panic!("expected respond"),
+        };
+        assert_eq!(
+            out.reason_code,
+            reason_codes::X_INTERRUPT_RETURN_CHECK_ASKED
+        );
+        assert_eq!(
+            out.interrupt_continuity_outcome,
+            Some(InterruptContinuityOutcome::SwitchTopicThenReturnCheck)
+        );
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeLater)
+        );
+        assert!(response_text.contains("Shipping update: the package arrives tomorrow."));
+        assert!(response_text.contains("Do you still want to continue the previous topic?"));
+        assert!(out.thread_state.resume_buffer.is_some());
+        assert_eq!(
+            out.thread_state.interrupted_subject_ref.as_deref(),
+            Some("project_status")
+        );
+        assert!(out.thread_state.return_check_pending);
+        assert!(out.thread_state.return_check_expires_at.is_some());
+    }
+
+    #[test]
+    fn at_x_return_check_yes_applies_resume_now() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(
+                Some("project_status".to_string()),
+                true,
+                Some(now(11)),
+            )
+            .unwrap();
+        let req = Ph1xRequest::v1(
+            81,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(
+                    r.response_text,
+                    "Remaining project milestones are due Friday."
+                )
+            }
+            _ => panic!("expected respond"),
+        }
+        assert_eq!(out.reason_code, reason_codes::X_INTERRUPT_RESUME_NOW);
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeNow)
+        );
+        assert!(out.thread_state.resume_buffer.is_none());
+        assert!(!out.thread_state.return_check_pending);
+    }
+
+    #[test]
+    fn at_x_return_check_no_applies_discard_explicitly() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb))
+            .with_interrupt_continuity_state(
+                Some("project_status".to_string()),
+                true,
+                Some(now(11)),
+            )
+            .unwrap();
+        let req = Ph1xRequest::v1(
+            82,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::No),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("new topic only"))
+            }
+            _ => panic!("expected respond"),
+        }
+        assert_eq!(out.reason_code, reason_codes::X_INTERRUPT_DISCARD);
+        assert_eq!(
+            out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::Discard)
+        );
+        assert!(out.thread_state.resume_buffer.is_none());
+        assert!(!out.thread_state.return_check_pending);
+    }
+
+    #[test]
+    fn at_x_expired_resume_clears_interrupt_continuity_state_deterministically() {
+        let expired_rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("previous_topic".to_string()),
+            "Already spoken".to_string(),
+            "Unsaid tail".to_string(),
+            now(5),
+        )
+        .unwrap();
+        let state = ThreadState::v1(None, Some(expired_rb))
+            .with_interrupt_continuity_state(Some("previous_topic".to_string()), true, Some(now(6)))
+            .unwrap();
+        let cleared = clear_expired_resume_buffer(state, now(6));
+        assert!(cleared.resume_buffer.is_none());
+        assert!(cleared.interrupted_subject_ref.is_none());
+        assert!(!cleared.return_check_pending);
+        assert!(cleared.return_check_expires_at.is_none());
+    }
+
+    #[test]
+    fn at_x_uncertain_subject_chat_fails_closed_into_one_clarify() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb));
+        let req = Ph1xRequest::v1(
+            79,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1(
+                    "Tell me about shipping delays.".to_string(),
+                    ReasonCodeId(1),
+                )
+                .unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Uncertain), Some(0.77))
+        })
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        let clarify = match out.directive {
+            Ph1xDirective::Clarify(c) => c,
+            _ => panic!("expected clarify"),
+        };
+        assert_eq!(
+            out.reason_code,
+            reason_codes::X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY
+        );
+        assert!(matches!(
+            out.thread_state.pending,
+            Some(PendingState::Clarify { .. })
+        ));
+        assert!(out.thread_state.resume_buffer.is_some());
+        assert_eq!(clarify.accepted_answer_formats.len(), 3);
+    }
+
+    #[test]
+    fn at_x_uncertain_subject_intent_blocks_dispatch_with_one_clarify() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let rb = ResumeBuffer::v1(
+            AnswerId(1),
+            Some("project_status".to_string()),
+            "Already covered intro.".to_string(),
+            "Remaining project milestones are due Friday.".to_string(),
+            now(10),
+        )
+        .unwrap();
+        let thread = ThreadState::v1(None, Some(rb));
+        let req = Ph1xRequest::v1(
+            80,
+            1,
+            now(1),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::TimeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Uncertain), Some(0.81))
+        })
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        assert!(matches!(out.directive, Ph1xDirective::Clarify(_)));
+        assert_eq!(
+            out.reason_code,
+            reason_codes::X_INTERRUPT_RELATION_UNCERTAIN_CLARIFY
+        );
+        assert!(out.thread_state.resume_buffer.is_some());
     }
 
     #[test]
@@ -3099,15 +3965,155 @@ mod tests {
             None,
             None,
         )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Same), Some(0.90))
+        })
         .unwrap();
 
         let out = rt.decide(&req).unwrap();
-        assert!(matches!(out.directive, Ph1xDirective::Dispatch(_)));
+        assert!(
+            matches!(out.directive, Ph1xDirective::Dispatch(_)),
+            "expected dispatch, got {:?}",
+            out.directive
+        );
         assert!(out.thread_state.resume_buffer.is_some());
         assert_eq!(
             out.thread_state.resume_buffer.unwrap().unsaid_remainder,
             rb.unsaid_remainder
         );
+    }
+
+    #[test]
+    fn at_x_interrupt_continuity_replay_keeps_resume_buffer_and_resume_text_lossless() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let interrupt_req = Ph1xRequest::v1(
+            90,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            None,
+            Some(interrupt_wait()),
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_tts_resume_snapshot(Some(tts_snapshot(
+                "Intro done. Remaining milestone details are due Friday.",
+                "Intro done.".len() as u32,
+            )))
+        })
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Switch), Some(0.94))
+        })
+        .unwrap();
+
+        let interrupt_out = rt.decide(&interrupt_req).unwrap();
+        let interrupt_replay_out = rt.decide(&interrupt_req).unwrap();
+        assert_eq!(interrupt_out, interrupt_replay_out);
+        assert!(matches!(interrupt_out.directive, Ph1xDirective::Wait(_)));
+        let captured_resume = interrupt_out
+            .thread_state
+            .resume_buffer
+            .clone()
+            .expect("interrupt turn must preserve unsaid remainder");
+
+        let switch_req = Ph1xRequest::v1(
+            91,
+            2,
+            now(2),
+            interrupt_out.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Chat(
+                Chat::v1("New topic: shipping ETA?".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .and_then(|r| {
+            r.with_interrupt_subject_relation(Some(InterruptSubjectRelation::Switch), Some(0.93))
+        })
+        .unwrap();
+
+        let switch_out = rt.decide(&switch_req).unwrap();
+        let switch_replay_out = rt.decide(&switch_req).unwrap();
+        assert_eq!(switch_out, switch_replay_out);
+        assert_eq!(
+            switch_out.reason_code,
+            reason_codes::X_INTERRUPT_RETURN_CHECK_ASKED
+        );
+        assert_eq!(
+            switch_out
+                .thread_state
+                .resume_buffer
+                .clone()
+                .expect("switch turn must retain resume buffer")
+                .unsaid_remainder,
+            captured_resume.unsaid_remainder
+        );
+        assert!(switch_out.thread_state.return_check_pending);
+
+        let resume_from_first = Ph1xRequest::v1(
+            92,
+            3,
+            now(3),
+            switch_out.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let resume_from_replay = Ph1xRequest::v1(
+            92,
+            3,
+            now(3),
+            switch_replay_out.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let resumed_out = rt.decide(&resume_from_first).unwrap();
+        let resumed_replay_out = rt.decide(&resume_from_replay).unwrap();
+        assert_eq!(resumed_out, resumed_replay_out);
+        match resumed_out.directive {
+            Ph1xDirective::Respond(r) => {
+                assert_eq!(r.response_text, captured_resume.unsaid_remainder)
+            }
+            _ => panic!("expected resume response"),
+        }
+        assert_eq!(
+            resumed_out.interrupt_resume_policy,
+            Some(InterruptResumePolicy::ResumeNow)
+        );
+        assert!(resumed_out.thread_state.resume_buffer.is_none());
+        assert!(!resumed_out.thread_state.return_check_pending);
     }
 
     #[test]

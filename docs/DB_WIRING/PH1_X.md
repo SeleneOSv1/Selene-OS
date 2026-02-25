@@ -3,7 +3,7 @@
 ## 1) Engine Header
 
 - `engine_id`: `PH1.X`
-- `purpose`: Persist deterministic PH1.X conversational directives (`confirm`, `clarify`, `respond`, `dispatch`, `wait`) as bounded audit events without introducing PH1.X-owned tables.
+- `purpose`: Persist deterministic PH1.X conversational directives (`confirm`, `clarify`, `respond`, `dispatch`, `wait`) as bounded audit events without introducing PH1.X-owned tables, including interruption continuity branch metadata.
 - `version`: `v1`
 - `status`: `PASS`
 
@@ -125,9 +125,59 @@ State/boundary constraints:
 - PH1.X continuity gates are explicit and fail closed:
   - `subject_ref` is required on every PH1.X request and is stamped into returned thread state.
   - `active_speaker_user_id` is required on every PH1.X request and is stamped into returned thread state.
+  - continuity thread-state fields are deterministic:
+    - `active_subject_ref`
+    - `interrupted_subject_ref`
+    - `resume_buffer`
+    - `return_check_pending`
+    - `return_check_expires_at`
   - if `thread_state.active_speaker_user_id != request.active_speaker_user_id`: PH1.X emits a single clarify (`X_CONTINUITY_SPEAKER_MISMATCH`) and does not dispatch.
   - if `thread_state.active_subject_ref != request.subject_ref` while a pending state exists: PH1.X emits a single clarify (`X_CONTINUITY_SUBJECT_MISMATCH`) and does not dispatch.
 - WorkOrder state transitions (`DRAFT -> CLARIFY -> CONFIRM -> EXECUTING`) are persisted by `SELENE_OS_CORE_TABLES`; PH1.X emits directive rows that deterministically wire back into those transitions.
+- Interruption continuity branch contract (Step-1 lock):
+  - PH1.K handoff projection contract lock (Step-10):
+    - PH1.K handoff payload is `Ph1kToPh1xInterruptHandoff` with bounded fields only:
+      - `candidate_confidence_band`
+      - `gate_confidences`
+      - `degradation_context`
+      - `risk_context_class`
+    - PH1.K handoff is advisory input only; PH1.X remains authoritative for interruption action and branch outcome.
+  - request fields:
+    - when `interruption` is present, payload must include:
+      - `trigger_phrase_id` (must match `phrase_id`)
+      - `trigger_locale`
+      - `candidate_confidence_band` in `HIGH | MEDIUM | LOW`
+      - `risk_context_class` in `LOW | GUARDED | HIGH`
+      - `degradation_context` (`capture_degraded`, `aec_unstable`, `device_changed`, `stream_gap_detected`)
+      - `timing_markers` (`window_start`, `window_end`) with `window_end == interruption.t_event`
+      - `speech_window_metrics` (`voiced_window_ms` bounded)
+      - `subject_relation_confidence_bundle` (`lexical`, `vad`, `speech_likeness`, `echo_safe`, optional `nearfield`, `combined`) with deterministic parity against gate confidences
+    - when interruption continuity is active (`interruption` present or `thread_state.resume_buffer` present), `interrupt_subject_relation` in `SAME | SWITCH | UNCERTAIN` is required.
+    - when interruption continuity is active, `interrupt_subject_relation_confidence` in `[0.0, 1.0]` is required and paired with relation field.
+  - response field:
+    - `interrupt_continuity_outcome` in `SAME_SUBJECT_APPEND | SWITCH_TOPIC_THEN_RETURN_CHECK` (optional)
+    - `interrupt_resume_policy` in `RESUME_NOW | RESUME_LATER | DISCARD` (optional)
+  - fail-closed rule:
+    - when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one `clarify` and must not dispatch.
+    - when `tts_resume_snapshot` is present:
+      - `interruption.t_event` must be `<= now`
+      - snapshot age relative to interruption must be bounded
+      - `spoken_cursor_byte` must leave non-empty unsaid remainder
+      - timing window mismatches fail closed
+  - SAME-branch merge rule:
+    - when relation is `SAME` with sufficient confidence and resume buffer is active, PH1.X emits one `respond` output that merges `resume_buffer.unsaid_remainder` with the new chat response, sets `interrupt_continuity_outcome=SAME_SUBJECT_APPEND`, and stamps `interrupt_resume_policy=RESUME_NOW`.
+  - SWITCH-branch return-check rule:
+    - when relation is `SWITCH` with sufficient confidence and resume buffer is active, PH1.X emits one `respond` output that answers the new topic and appends one return-check question ("Do you still want to continue the previous topic?"), keeps `resume_buffer` intact, sets `interrupt_continuity_outcome=SWITCH_TOPIC_THEN_RETURN_CHECK`, and stamps `interrupt_resume_policy=RESUME_LATER`.
+  - UNCERTAIN-branch clarify rule:
+    - when interruption continuity is active and relation is `UNCERTAIN` (or confidence is below branch threshold), PH1.X emits exactly one bounded `clarify` question, blocks dispatch/action, and preserves `resume_buffer` until clarified.
+    - clarify contract is deterministic: question is single-line and `<= 240` chars; `accepted_answer_formats` is bounded to `2..=3` entries.
+  - return-check decision rule:
+    - if `return_check_pending=true` and user answers `confirm_answer=Yes`, PH1.X resumes the interrupted remainder and stamps `interrupt_resume_policy=RESUME_NOW`.
+    - if `return_check_pending=true` and user answers `confirm_answer=No`, PH1.X clears `resume_buffer` explicitly and stamps `interrupt_resume_policy=DISCARD`.
+    - silent discard is forbidden.
+  - expiry/replay determinism:
+    - if `resume_buffer.expires_at <= now`, PH1.X clears `resume_buffer`, `interrupted_subject_ref`, `return_check_pending`, and `return_check_expires_at`.
+    - if `return_check_expires_at <= now`, PH1.X clears `return_check_pending` and `return_check_expires_at`.
 
 ## 6) Audit Emissions (PH1.J)
 
@@ -138,6 +188,7 @@ PH1.X writes emit PH1.J audit events with:
   - `Other` (for `clarify`, `respond`, `wait`)
 - `reason_code(s)`:
   - deterministic PH1.X reason codes from the PH1.X contract output path
+  - interruption branch reason codes are persisted directly in `audit_events.reason_code` (no remap).
 - `payload_min` keys (bounded):
   - `directive`
   - `confirm_kind`
@@ -150,6 +201,19 @@ PH1.X writes emit PH1.J audit events with:
   - `work_order_status_snapshot`
   - `pending_state`
   - `lease_token_hash`
+  - `interrupt_subject_relation`
+  - `interrupt_subject_relation_confidence`
+  - `interrupt_continuity_outcome`
+  - `interrupt_resume_policy`
+  - `interrupted_subject_ref`
+  - `return_check_pending`
+  - `return_check_expires_at`
+
+Reporting lock:
+- PH1.HEALTH display/report paths must consume PH1.X interruption outcomes using:
+  - `owner_engine_id=PH1.X` (engine visibility),
+  - `latest_reason_code` (branch outcome reason code),
+  - `issue_fingerprint` as topic marker (topic visibility).
 
 ## 7) Acceptance Tests (DB Wiring Proof)
 
@@ -196,3 +260,13 @@ Implementation references:
 - PH1.X may consume `style_profile_ref` + `delivery_policy_ref` as phrasing/tone posture hints only.
 - PH1.X must not allow PH1.PERSONA output to alter truth, intent selection, missing-field logic, confirmation semantics, access outcomes, or dispatch gating.
 - If PH1.PERSONA validation fails, Selene OS must fail closed on persona handoff and continue with deterministic default PH1.X behavior.
+
+## 12) FDX Wiring Lock (Section 5F)
+
+- PH1.X wiring is authoritative for duplex interruption branch outcomes and final turn commit decisions.
+- PH1.X rows must preserve branch/result proof fields:
+  - `interrupt_subject_relation`
+  - `interrupt_subject_relation_confidence`
+  - `interrupt_continuity_outcome`
+  - `interrupt_resume_policy`
+- Speculative planning outputs must remain non-executing and auditable until PH1.X emits final commit posture.

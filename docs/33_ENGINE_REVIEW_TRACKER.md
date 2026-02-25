@@ -10,7 +10,8 @@ Purpose:
 
 Review order rule:
 - Order is fixed: bottom-to-top from the source file.
-- Current cycle starts at engine 01 and proceeds sequentially.
+- Round 1 closure cycle ran sequentially from engine 01.
+- Round 2 finalization cycle follows the locked queue in `Round 2 Finalization Lock (Current Cycle)` and then resumes fixed-order traversal for remaining engines.
 
 Completion gate (per engine):
 - Source extraction complete.
@@ -162,6 +163,39 @@ Build-report inclusion rule:
 | FT-03 | SIMULATION_CATALOG_TABLES | Simulation catalog persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
 | FT-04 | ENGINE_CAPABILITY_MAPS_TABLES | Capability map persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
 | FT-05 | ARTIFACTS_LEDGER_TABLES | Artifacts and cache persistence | DONE | DONE | `docs/COVERAGE_MATRIX.md` |
+
+## Round 2 Finalization Lock (Current Cycle)
+
+Cycle lock (2026-02-25):
+- This cycle is the second round for each engine.
+- Goal: finalize each engine one-by-one so it is ready for the production hardening round.
+- `READY_FOR_PRODUCTION_HARDENING` is blocked until every actionable runtime engine in this tracker completes round-2 finalization (`EXEMPT`/`MERGED` excluded).
+- Queue changes must be written here first before execution order changes.
+
+Locked priority queue:
+
+| seq | engine_id | round_2_status | note |
+|---|---|---|---|
+| 1 | PH1.VISION | DONE | user-confirmed completed in this round |
+| 2 | PH1.K | DONE | step 1-19 complete; release gate passed; closure proof recorded |
+| 3 | PH1.C | NEXT | queue advanced after PH1.K step 19 closure |
+| 4 | PH1.D | QUEUED | executes after PH1.C |
+
+Current next engine:
+- `PH1.C`
+
+PH1.K strict runbook lock:
+- Active checklist source: `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5A) PH1.K Round-2 Strict Implementation Checklist (Step 1..19)`.
+- Execution rule: PH1.K checklist is closed only when Step 18 release gate passes and Step 19 closure proof is recorded.
+- Benchmark ownership/reporting lock:
+  - PH1.K benchmark ownership and closed-loop reporting path must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5B`.
+  - Global all-engine monitoring/reporting requirements must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5C`.
+  - Round-2 completion for any engine is blocked if benchmark ownership, telemetry gates, and FEEDBACK->LEARN->PAE->BUILDER reporting sinks are not documented and wired.
+- PH1.X interrupt follow-on lock (pre-coding):
+  - PH1.X interruption continuity behavior must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5D`.
+  - PH1.K required update deltas must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5E`.
+  - Execution order lock: complete `5D` (PH1.X behavior lock) first, then execute `5E` (PH1.K required deltas), then proceed with PH1.K implementation.
+  - Current progress (`2026-02-25`): `5D` Step 1-14 complete; `5E` Step 1-10 complete; `5A` Step 1-19 complete; queue moved to `PH1.C` as next locked engine.
 
 ## Engine 01 Review Log (`PH1.REVIEW`)
 

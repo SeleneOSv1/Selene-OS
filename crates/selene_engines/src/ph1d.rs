@@ -4,12 +4,42 @@ use serde_json::Value;
 
 use selene_kernel_contracts::ph1d::{
     Ph1dAnalysis, Ph1dChat, Ph1dClarify, Ph1dFail, Ph1dFailureKind, Ph1dFieldRefinement,
-    Ph1dIntent, Ph1dOk, Ph1dRequest, Ph1dResponse,
+    Ph1dIntent, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dRequest,
+    Ph1dResponse,
 };
 use selene_kernel_contracts::ph1n::{
     EvidenceSpan, FieldKey, FieldValue, IntentType, TranscriptHash,
 };
 use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dProviderAdapterError {
+    pub message: String,
+    pub retryable: bool,
+}
+
+impl Ph1dProviderAdapterError {
+    pub fn terminal(message: String) -> Self {
+        Self {
+            message,
+            retryable: false,
+        }
+    }
+
+    pub fn retryable(message: String) -> Self {
+        Self {
+            message,
+            retryable: true,
+        }
+    }
+}
+
+pub trait Ph1dProviderAdapter {
+    fn execute(
+        &self,
+        req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError>;
+}
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;

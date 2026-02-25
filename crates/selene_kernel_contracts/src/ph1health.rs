@@ -159,7 +159,10 @@ pub struct HealthReportTimeRange {
 }
 
 impl HealthReportTimeRange {
-    pub fn v1(from_utc: MonotonicTimeNs, to_utc: MonotonicTimeNs) -> Result<Self, ContractViolation> {
+    pub fn v1(
+        from_utc: MonotonicTimeNs,
+        to_utc: MonotonicTimeNs,
+    ) -> Result<Self, ContractViolation> {
         let range = Self {
             schema_version: PH1HEALTH_CONTRACT_VERSION,
             from_utc,
@@ -417,7 +420,8 @@ impl Validate for HealthIssueEvent {
                 });
             }
         }
-        let escalation_dispatched = self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
+        let escalation_dispatched =
+            self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
         if escalation_dispatched {
             if self.bcast_id.is_none() {
                 return Err(ContractViolation::InvalidValue {
@@ -611,7 +615,10 @@ impl Validate for HealthReportQueryReadRequest {
             company_id.validate()?;
         }
         if self.company_scope == HealthCompanyScope::TenantOnly
-            && self.company_ids.iter().any(|id| id.as_str() != self.tenant_id.as_str())
+            && self
+                .company_ids
+                .iter()
+                .any(|id| id.as_str() != self.tenant_id.as_str())
         {
             return Err(ContractViolation::InvalidValue {
                 field: "health_report_query_read_request.company_scope",
@@ -625,11 +632,7 @@ impl Validate for HealthReportQueryReadRequest {
             });
         }
         for code in &self.country_codes {
-            validate_ascii_token(
-                "health_report_query_read_request.country_codes[]",
-                code,
-                3,
-            )?;
+            validate_ascii_token("health_report_query_read_request.country_codes[]", code, 3)?;
             if !code.chars().all(|c| c.is_ascii_uppercase()) {
                 return Err(ContractViolation::InvalidValue {
                     field: "health_report_query_read_request.country_codes[]",
@@ -990,7 +993,8 @@ impl Validate for HealthReportQueryRow {
                 });
             }
         }
-        let escalation_dispatched = self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
+        let escalation_dispatched =
+            self.status == HealthIssueStatus::Escalated || self.bcast_id.is_some();
         if escalation_dispatched {
             if self.bcast_id.is_none() {
                 return Err(ContractViolation::InvalidValue {
@@ -1022,7 +1026,11 @@ impl Validate for HealthReportQueryRow {
                     reason: "must be present when escalation is dispatched",
                 });
             };
-            validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+            validate_text(
+                "health_report_query_row.unresolved_reason_exact",
+                reason,
+                512,
+            )?;
             if self.attempted_fix_actions.is_empty() {
                 return Err(ContractViolation::InvalidValue {
                     field: "health_report_query_row.attempted_fix_actions",
@@ -1065,7 +1073,11 @@ impl Validate for HealthReportQueryRow {
             });
         }
         for action in &self.attempted_fix_actions {
-            validate_text("health_report_query_row.attempted_fix_actions[]", action, 160)?;
+            validate_text(
+                "health_report_query_row.attempted_fix_actions[]",
+                action,
+                160,
+            )?;
         }
         if !escalation_dispatched {
             if let Some(evidence) = &self.current_monitoring_evidence {
@@ -1076,7 +1088,11 @@ impl Validate for HealthReportQueryRow {
                 )?;
             }
             if let Some(reason) = &self.unresolved_reason_exact {
-                validate_text("health_report_query_row.unresolved_reason_exact", reason, 512)?;
+                validate_text(
+                    "health_report_query_row.unresolved_reason_exact",
+                    reason,
+                    512,
+                )?;
             }
         }
         Ok(())
@@ -1220,7 +1236,11 @@ impl Validate for HealthReportQueryReadOk {
         }
         self.paging.validate()?;
         if let Some(clarify) = &self.requires_clarification {
-            validate_text("health_report_query_read_ok.requires_clarification", clarify, 240)?;
+            validate_text(
+                "health_report_query_read_ok.requires_clarification",
+                clarify,
+                240,
+            )?;
         }
         if !self.no_authority_mutation {
             return Err(ContractViolation::InvalidValue {
@@ -2018,19 +2038,22 @@ mod tests {
         event.ack_state = Some(HealthAckState::Waiting);
         let event = event
             .with_escalation_payload(
-            Some("critical stt misses for payroll intake".to_string()),
-            vec!["restarted stt route".to_string(), "rotated decoder".to_string()],
-            Some("same fingerprint detected in live stream".to_string()),
-            Some("recurrence still observed".to_string()),
-        )
-        .unwrap()
-        .with_resolution_proof(
-            Some("stt_missing_token_june".to_string()),
-            Some(MonotonicTimeNs(100)),
-            Some(MonotonicTimeNs(130)),
-            Some(true),
-        )
-        .unwrap();
+                Some("critical stt misses for payroll intake".to_string()),
+                vec![
+                    "restarted stt route".to_string(),
+                    "rotated decoder".to_string(),
+                ],
+                Some("same fingerprint detected in live stream".to_string()),
+                Some("recurrence still observed".to_string()),
+            )
+            .unwrap()
+            .with_resolution_proof(
+                Some("stt_missing_token_june".to_string()),
+                Some(MonotonicTimeNs(100)),
+                Some(MonotonicTimeNs(130)),
+                Some(true),
+            )
+            .unwrap();
         assert!(event.validate().is_ok());
     }
 

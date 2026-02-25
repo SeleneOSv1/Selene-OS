@@ -2,10 +2,13 @@
 
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket, LanguageHintConfidence, LanguageTag, Ph1cAuditMeta, Ph1cRequest,
-    Ph1cResponse, QualityBucket, RetryAdvice, RouteClassUsed, RoutingModeUsed, SelectedSlot,
-    TranscriptOk, TranscriptReject,
+    Ph1cResponse, Ph1cSttStrategy, QualityBucket, RetryAdvice, RouteClassUsed, RoutingModeUsed,
+    SelectedSlot, TranscriptOk, TranscriptReject,
 };
-use selene_kernel_contracts::ph1k::DeviceHealth;
+use selene_kernel_contracts::ph1k::{
+    CaptureQualityClass, DeviceHealth, InterruptCandidateConfidenceBand, NetworkStabilityClass,
+    RecoverabilityClass, VadDecisionConfidenceBand,
+};
 use selene_kernel_contracts::ReasonCodeId;
 
 pub mod reason_codes {
@@ -101,7 +104,29 @@ impl Ph1cRuntime {
             ));
         }
 
-        let ladder = select_provider_ladder(req);
+        let strategy = select_stt_strategy(req);
+        if matches!(strategy, Ph1cSttStrategy::ClarifyOnly) {
+            let reject_meta = build_audit_meta(
+                &self.config,
+                0,
+                0,
+                SelectedSlot::None,
+                0,
+                QualityBucket::Low,
+                QualityBucket::Low,
+                QualityBucket::Low,
+                None,
+                None,
+                Some(strategy_policy_profile_id(strategy).to_string()),
+                Some("ph1k_handoff_clarify_only".to_string()),
+            );
+            return Ph1cResponse::TranscriptReject(TranscriptReject::v1_with_metadata(
+                reason_codes::STT_FAIL_AUDIO_DEGRADED,
+                RetryAdvice::SwitchToText,
+                Some(reject_meta),
+            ));
+        }
+        let ladder = select_provider_ladder(strategy);
 
         let mut attempts_used: u8 = 0;
         let mut total_latency_ms: u32 = 0;
@@ -152,8 +177,8 @@ impl Ph1cRuntime {
                 QualityBucket::High,
                 None,
                 None,
-                None,
-                None,
+                Some(strategy_policy_profile_id(strategy).to_string()),
+                Some("ph1k_handoff_strategy".to_string()),
             );
             let ok = TranscriptOk::v1_with_metadata(
                 ok.transcript_text,
@@ -178,8 +203,8 @@ impl Ph1cRuntime {
             QualityBucket::Low,
             None,
             None,
-            None,
-            None,
+            Some(strategy_policy_profile_id(strategy).to_string()),
+            Some("ph1k_handoff_strategy".to_string()),
         );
         Ph1cResponse::TranscriptReject(TranscriptReject::v1_with_metadata(
             reason,
@@ -241,13 +266,76 @@ enum AttemptEval {
     Reject { reason: ReasonCodeId },
 }
 
-fn select_provider_ladder(_req: &Ph1cRequest) -> [ProviderSlot; 3] {
-    // Deterministic ordering; routing rules will expand as providers are added.
-    [
-        ProviderSlot::Primary,
-        ProviderSlot::Secondary,
-        ProviderSlot::Tertiary,
-    ]
+fn strategy_policy_profile_id(strategy: Ph1cSttStrategy) -> &'static str {
+    match strategy {
+        Ph1cSttStrategy::Standard => "ph1k_handoff_standard",
+        Ph1cSttStrategy::NoiseRobust => "ph1k_handoff_noise_robust",
+        Ph1cSttStrategy::CloudAssist => "ph1k_handoff_cloud_assist",
+        Ph1cSttStrategy::ClarifyOnly => "ph1k_handoff_clarify_only",
+    }
+}
+
+fn select_stt_strategy(req: &Ph1cRequest) -> Ph1cSttStrategy {
+    let Some(h) = &req.ph1k_handoff else {
+        return Ph1cSttStrategy::Standard;
+    };
+
+    if matches!(
+        h.degradation_class_bundle.capture_quality_class,
+        CaptureQualityClass::Critical
+    ) || matches!(
+        h.degradation_class_bundle.recoverability_class,
+        RecoverabilityClass::FailoverRequired
+    ) {
+        return Ph1cSttStrategy::ClarifyOnly;
+    }
+
+    if h.quality_metrics.packet_loss_pct >= 4.0
+        || h.quality_metrics.snr_db < 14.0
+        || matches!(
+            h.degradation_class_bundle.network_stability_class,
+            NetworkStabilityClass::Flaky | NetworkStabilityClass::Unstable
+        )
+    {
+        return Ph1cSttStrategy::NoiseRobust;
+    }
+
+    if matches!(h.interrupt_confidence_band, InterruptCandidateConfidenceBand::Low)
+        || matches!(h.vad_confidence_band, VadDecisionConfidenceBand::Low)
+        || matches!(
+            h.degradation_class_bundle.capture_quality_class,
+            CaptureQualityClass::Degraded
+        )
+    {
+        return Ph1cSttStrategy::CloudAssist;
+    }
+
+    Ph1cSttStrategy::Standard
+}
+
+fn select_provider_ladder(strategy: Ph1cSttStrategy) -> [ProviderSlot; 3] {
+    match strategy {
+        Ph1cSttStrategy::Standard => [
+            ProviderSlot::Primary,
+            ProviderSlot::Secondary,
+            ProviderSlot::Tertiary,
+        ],
+        Ph1cSttStrategy::NoiseRobust => [
+            ProviderSlot::Secondary,
+            ProviderSlot::Primary,
+            ProviderSlot::Tertiary,
+        ],
+        Ph1cSttStrategy::CloudAssist => [
+            ProviderSlot::Tertiary,
+            ProviderSlot::Primary,
+            ProviderSlot::Secondary,
+        ],
+        Ph1cSttStrategy::ClarifyOnly => [
+            ProviderSlot::Secondary,
+            ProviderSlot::Tertiary,
+            ProviderSlot::Primary,
+        ],
+    }
 }
 
 fn is_language_mismatch(req: &Ph1cRequest, actual: &LanguageTag) -> bool {
@@ -445,9 +533,13 @@ fn build_audit_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1c::{LanguageHint, SessionStateRef};
-    use selene_kernel_contracts::ph1k::{AudioDeviceId, DeviceHealth, DeviceState};
-    use selene_kernel_contracts::ph1k::{AudioStreamId, PreRollBufferId};
+    use selene_kernel_contracts::ph1c::{LanguageHint, Ph1kToPh1cHandoff, SessionStateRef};
+    use selene_kernel_contracts::ph1k::{
+        AdvancedAudioQualityMetrics, AudioDeviceId, AudioStreamId, CaptureQualityClass,
+        DegradationClassBundle, DeviceHealth, DeviceState, EchoRiskClass,
+        InterruptCandidateConfidenceBand, NetworkStabilityClass, PreRollBufferId,
+        RecoverabilityClass, VadDecisionConfidenceBand,
+    };
     use selene_kernel_contracts::ph1w::BoundedAudioSegmentRef;
     use selene_kernel_contracts::ph1w::SessionState;
     use selene_kernel_contracts::MonotonicTimeNs;
@@ -476,6 +568,24 @@ mod tests {
             None,
             None,
             None,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn handoff(
+        interrupt_band: InterruptCandidateConfidenceBand,
+        vad_band: VadDecisionConfidenceBand,
+        snr_db: f32,
+        packet_loss_pct: f32,
+        degradation_class_bundle: DegradationClassBundle,
+    ) -> Ph1kToPh1cHandoff {
+        Ph1kToPh1cHandoff::v1(
+            interrupt_band,
+            vad_band,
+            AdvancedAudioQualityMetrics::v1(snr_db, 0.03, 40.0, packet_loss_pct, 0.15, 16.0)
+                .unwrap(),
+            degradation_class_bundle,
         )
         .unwrap()
     }
@@ -616,5 +726,166 @@ mod tests {
         assert!(
             matches!(out, Ph1cResponse::TranscriptReject(r) if r.reason_code == reason_codes::STT_FAIL_BUDGET_EXCEEDED)
         );
+    }
+
+    #[test]
+    fn ph1k_handoff_noise_robust_strategy_prefers_secondary_under_budget() {
+        let mut req = req_with_duration(800);
+        req.ph1k_handoff = Some(handoff(
+            InterruptCandidateConfidenceBand::Medium,
+            VadDecisionConfidenceBand::Medium,
+            12.0,
+            6.0,
+            DegradationClassBundle {
+                capture_quality_class: CaptureQualityClass::Guarded,
+                echo_risk_class: EchoRiskClass::Elevated,
+                network_stability_class: NetworkStabilityClass::Flaky,
+                recoverability_class: RecoverabilityClass::Guarded,
+            },
+        ));
+
+        let mut cfg = Ph1cConfig::mvp_desktop_v1();
+        cfg.max_total_latency_budget_ms = 1_000;
+        let rt = Ph1cRuntime::new(cfg);
+        let attempts = vec![
+            SttAttempt {
+                provider: ProviderSlot::Primary,
+                latency_ms: 900,
+                transcript_text: "set meeting tomorrow".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.96,
+                low_confidence_ratio: 0.02,
+                stable: true,
+            },
+            SttAttempt {
+                provider: ProviderSlot::Secondary,
+                latency_ms: 180,
+                transcript_text: "set meeting tomorrow".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.95,
+                low_confidence_ratio: 0.02,
+                stable: true,
+            },
+        ];
+        let out = rt.run(&req, &attempts);
+        assert!(matches!(out, Ph1cResponse::TranscriptOk(_)));
+    }
+
+    #[test]
+    fn ph1k_handoff_critical_degradation_forces_clarify_only() {
+        let mut req = req_with_duration(800);
+        req.ph1k_handoff = Some(handoff(
+            InterruptCandidateConfidenceBand::Low,
+            VadDecisionConfidenceBand::Low,
+            8.0,
+            20.0,
+            DegradationClassBundle {
+                capture_quality_class: CaptureQualityClass::Critical,
+                echo_risk_class: EchoRiskClass::High,
+                network_stability_class: NetworkStabilityClass::Unstable,
+                recoverability_class: RecoverabilityClass::FailoverRequired,
+            },
+        ));
+        let rt = Ph1cRuntime::new(Ph1cConfig::mvp_desktop_v1());
+        let out = rt.run(&req, &[]);
+        assert!(
+            matches!(out, Ph1cResponse::TranscriptReject(r) if r.retry_advice == RetryAdvice::SwitchToText)
+        );
+    }
+
+    #[test]
+    fn ph1k_handoff_cloud_assist_strategy_prefers_tertiary_when_confidence_is_low() {
+        let mut req = req_with_duration(800);
+        req.ph1k_handoff = Some(handoff(
+            InterruptCandidateConfidenceBand::Low,
+            VadDecisionConfidenceBand::Low,
+            26.0,
+            0.5,
+            DegradationClassBundle {
+                capture_quality_class: CaptureQualityClass::Guarded,
+                echo_risk_class: EchoRiskClass::Low,
+                network_stability_class: NetworkStabilityClass::Stable,
+                recoverability_class: RecoverabilityClass::Guarded,
+            },
+        ));
+
+        let mut cfg = Ph1cConfig::mvp_desktop_v1();
+        cfg.max_attempts_per_turn = 1;
+        let rt = Ph1cRuntime::new(cfg);
+        let attempts = vec![
+            SttAttempt {
+                provider: ProviderSlot::Primary,
+                latency_ms: 90,
+                transcript_text: "".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.10,
+                low_confidence_ratio: 1.0,
+                stable: false,
+            },
+            SttAttempt {
+                provider: ProviderSlot::Tertiary,
+                latency_ms: 95,
+                transcript_text: "use cloud assist path".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.96,
+                low_confidence_ratio: 0.02,
+                stable: true,
+            },
+        ];
+
+        match rt.run(&req, &attempts) {
+            Ph1cResponse::TranscriptOk(ok) => {
+                assert_eq!(ok.transcript_text, "use cloud assist path")
+            }
+            other => panic!("expected transcript_ok from tertiary-first cloud assist, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ph1k_handoff_standard_strategy_prefers_primary_when_quality_is_clean() {
+        let mut req = req_with_duration(800);
+        req.ph1k_handoff = Some(handoff(
+            InterruptCandidateConfidenceBand::High,
+            VadDecisionConfidenceBand::High,
+            30.0,
+            0.2,
+            DegradationClassBundle {
+                capture_quality_class: CaptureQualityClass::Clear,
+                echo_risk_class: EchoRiskClass::Low,
+                network_stability_class: NetworkStabilityClass::Stable,
+                recoverability_class: RecoverabilityClass::Fast,
+            },
+        ));
+
+        let mut cfg = Ph1cConfig::mvp_desktop_v1();
+        cfg.max_attempts_per_turn = 1;
+        let rt = Ph1cRuntime::new(cfg);
+        let attempts = vec![
+            SttAttempt {
+                provider: ProviderSlot::Primary,
+                latency_ms: 80,
+                transcript_text: "primary strategy path".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.97,
+                low_confidence_ratio: 0.02,
+                stable: true,
+            },
+            SttAttempt {
+                provider: ProviderSlot::Secondary,
+                latency_ms: 70,
+                transcript_text: "secondary strategy path".to_string(),
+                language_tag: LanguageTag::new("en").unwrap(),
+                avg_word_confidence: 0.98,
+                low_confidence_ratio: 0.01,
+                stable: true,
+            },
+        ];
+
+        match rt.run(&req, &attempts) {
+            Ph1cResponse::TranscriptOk(ok) => {
+                assert_eq!(ok.transcript_text, "primary strategy path")
+            }
+            other => panic!("expected transcript_ok from primary-first standard path, got: {other:?}"),
+        }
     }
 }

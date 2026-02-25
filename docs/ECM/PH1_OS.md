@@ -129,3 +129,17 @@
 - `PH1.ACCESS.001/PH2.ACCESS.002`: authority truth remains external and is consumed as gate input.
 - `PH1.WORK`, `PH1.LEASE`, `PH1.SCHED`: execution dependency outcomes remain external and are consumed as gate inputs.
 - `PH1.J`: orchestration policy and decision outputs must remain reason-coded for audit.
+
+## FDX Design Lock (Section 5F)
+- PH1.OS is the orchestration owner for Full-Duplex + Barge-In + Incremental Planning runtime order.
+- PH1.OS must enforce canonical duplex sequence:
+  - capture (PH1.K) -> partial transcript (PH1.C) -> incremental hypotheses (PH1.NLP) -> interruption/commit decision (PH1.X) -> playback control (PH1.TTS).
+- PH1.OS must fail closed on missing or invalid duplex signals.
+- PH1.OS must block any execution side effect from speculative outputs.
+- PH1.OS must wire duplex incident events into `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER`.
+- PH1.OS must enforce FDX release-gate checks before closure/promotion:
+  - false interrupts <= 0.3/hour
+  - missed interrupts <= 2%
+  - non-lexical trigger acceptance = 0.0%
+  - audit completeness = 100%
+  - tenant isolation = 100%

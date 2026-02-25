@@ -122,3 +122,13 @@
 - AT-OS-16: delivery ownership drift fails guardrails (`PH1.BCAST.001` lifecycle owner, `PH1.DELIVERY` provider attempts, `PH1.REM.001` timing-only, SMS setup pre-send gate enforced).
 - AT-OS-17: clarify owner precedence is fail-closed (`clarify_required=true` requires `clarify_owner_engine_id=PH1.NLP`).
 - AT-OS-18: optional understanding-assist policy blocks invalid clarify-loop requests (`PH1.PRUNE`/`PH1.DIAG`) when required posture flags are missing.
+
+## G) FDX Wiring Lock (Section 5F)
+- PH1.OS wiring must enforce end-to-end duplex ordering and fail-closed policy for missing/invalid upstream duplex signals.
+- PH1.OS must explicitly block execution side effects from speculative outputs.
+- PH1.OS must ensure FDX metric proof collection is complete before release gate closure:
+  - false interrupt rate
+  - missed interrupt rate
+  - barge-in detect->cancel latency
+  - partial transcript first-chunk latency
+  - non-lexical trigger acceptance (must remain 0.0%)

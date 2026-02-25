@@ -90,6 +90,36 @@ echo "=================================================="
 
 echo
 echo "=================================================="
+echo "1C2) PH1.X INTERRUPT CONTINUITY RELEASE GATE"
+echo "=================================================="
+./scripts/check_ph1x_release_gate.sh docs/fixtures/ph1x_interrupt_continuity_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C3) PH1.K 5E READINESS GATE"
+echo "=================================================="
+./scripts/check_ph1k_5e_readiness_gate.sh
+
+echo
+echo "=================================================="
+echo "1C4) PH1.K ROUND-2 BASELINE SNAPSHOT FREEZE"
+echo "=================================================="
+./scripts/check_ph1k_round2_baseline_snapshot.sh docs/fixtures/ph1k_round2_baseline_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C5) PH1.K ROUND-2 BENCHMARK/EVAL SNAPSHOT HARNESS"
+echo "=================================================="
+./scripts/check_ph1k_round2_eval_snapshot.sh docs/fixtures/ph1k_round2_eval_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C6) PH1.K GLOBAL-STANDARD RELEASE GATE"
+echo "=================================================="
+./scripts/check_ph1k_release_gate.sh docs/fixtures/ph1k_round2_eval_snapshot.csv
+
+echo
+echo "=================================================="
 echo "1D) RUNTIME BOUNDARY GUARDRAIL (OFFLINE/CONTROL-PLANE)"
 echo "=================================================="
 ./scripts/check_runtime_boundary_guards.sh

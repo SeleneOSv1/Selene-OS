@@ -1,0 +1,2 @@
+captured_at_utc,commit_hash,window_min,active_session_hours,interrupt_attempts,false_interrupt_count,missed_interrupt_count,vad_boundary_p95_ms,device_failover_recovery_p95_ms,aec_unstable_count,stream_gap_detected_count,device_changed_count,kernel_contract_tests_pass,engine_tests_pass,os_tests_pass
+2026-02-25T06:45:00Z,eeb98c11cb36adc0e932dc3ac87da381ad220893,60,3.5,420,1,5,142,730,2,1,4,1,1,1

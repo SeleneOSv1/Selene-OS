@@ -49,3 +49,8 @@
 - AT-FEEDBACK-02: Signal candidate ordering is bounded and deterministic.
 - AT-FEEDBACK-03: Event/signal budget overflow fails closed deterministically.
 - AT-FEEDBACK-04: Signal-emit validation drift fails closed before LEARN/PAE handoff.
+
+## G) FDX Wiring Lock (Section 5F)
+- PH1.FEEDBACK wiring must capture duplex incident signals with deterministic ordering and bounded evidence refs.
+- Required FDX signal families: false interrupt, missed interrupt, late cancel, low-confidence transcript fallback, continuity clarify fallback.
+- All FDX signals remain advisory-only and flow through Selene OS into PH1.LEARN/PH1.PAE.

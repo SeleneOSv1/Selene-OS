@@ -18,8 +18,7 @@ use selene_adapter::{
     app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
     UiChatTranscriptResponse, UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
-    UiHealthTimelinePaging,
-    VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]

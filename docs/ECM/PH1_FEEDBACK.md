@@ -54,3 +54,13 @@
 - PH1.PAE consumption boundary is `PAE_POLICY_SCORE_BUILD` input only; FEEDBACK never influences `PAE_ADAPTATION_HINT_EMIT` directly.
 - PH1.LEARN capability contracts are defined in `docs/DB_WIRING/PH1_LEARN.md` and `docs/ECM/PH1_LEARN.md`.
 - FEEDBACK storage/artifact append-only contracts remain canonical in `docs/ECM/PH1_LEARN_FEEDBACK_KNOW.md`.
+
+## FDX Design Lock (Section 5F)
+- PH1.FEEDBACK must capture duplex-specific failures and corrections as bounded signals.
+- Minimum FDX event coverage includes:
+  - false interrupt
+  - missed interrupt
+  - late cancel
+  - low-confidence transcript fallback
+  - clarify-after-duplex uncertainty
+- PH1.FEEDBACK outputs remain advisory and must flow only through Selene OS into PH1.LEARN/PH1.PAE.
