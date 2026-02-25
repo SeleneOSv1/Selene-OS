@@ -73,6 +73,7 @@ use selene_kernel_contracts::ph1position::{
     PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot,
     PositionValidationStatus, TenantId,
 };
+use selene_kernel_contracts::ph1selfheal::{FailureEvent, FixCard, ProblemCard, PromotionDecision};
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
     SimulationId, SimulationVersion,
@@ -633,6 +634,34 @@ pub struct BuilderPostDeployJudgeResultLedgerRow {
     pub result: BuilderPostDeployJudgeResult,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfHealFailureEventLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub failure_event: FailureEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfHealProblemCardLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub problem_card: ProblemCard,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfHealFixCardLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub fix_card: FixCard,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelfHealPromotionDecisionLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub promotion_decision: PromotionDecision,
+}
+
 #[derive(Debug, Clone)]
 pub struct Ph1fStore {
     identities: BTreeMap<UserId, IdentityRecord>,
@@ -693,6 +722,21 @@ pub struct Ph1fStore {
     // Idempotency: (correlation_id, turn_id, engine_id, outcome_type, idempotency_key) -> row_id
     outcome_utilization_idempotency_index:
         BTreeMap<(CorrelationId, TurnId, String, String, String), u64>,
+    // 14.7.6 self-healing append-only card chain persistence.
+    self_heal_failure_event_ledger: Vec<SelfHealFailureEventLedgerRow>,
+    self_heal_problem_card_ledger: Vec<SelfHealProblemCardLedgerRow>,
+    self_heal_fix_card_ledger: Vec<SelfHealFixCardLedgerRow>,
+    self_heal_promotion_decision_ledger: Vec<SelfHealPromotionDecisionLedgerRow>,
+    // Unique indices by stable card IDs.
+    self_heal_failure_id_index: BTreeMap<String, u64>,
+    self_heal_problem_id_index: BTreeMap<String, u64>,
+    self_heal_fix_id_index: BTreeMap<String, u64>,
+    self_heal_decision_id_index: BTreeMap<String, u64>,
+    // Idempotency indices: (card_id, idempotency_key) -> row_id.
+    self_heal_failure_idempotency_index: BTreeMap<(String, String), u64>,
+    self_heal_problem_idempotency_index: BTreeMap<(String, String), u64>,
+    self_heal_fix_idempotency_index: BTreeMap<(String, String), u64>,
+    self_heal_decision_idempotency_index: BTreeMap<(String, String), u64>,
     // Builder Selene pipeline append-only tables (proposal -> validation run -> gate results).
     builder_proposal_ledger: Vec<BuilderProposalLedgerRow>,
     builder_validation_run_ledger: Vec<BuilderValidationRunLedgerRow>,
@@ -1014,6 +1058,10 @@ pub struct Ph1fStore {
     next_memory_metric_event_id: u64,
     next_memory_thread_event_id: u64,
     next_outcome_utilization_row_id: u64,
+    next_self_heal_failure_row_id: u64,
+    next_self_heal_problem_row_id: u64,
+    next_self_heal_fix_row_id: u64,
+    next_self_heal_decision_row_id: u64,
     next_builder_proposal_row_id: u64,
     next_builder_validation_run_row_id: u64,
     next_builder_validation_gate_result_row_id: u64,
@@ -1912,6 +1960,18 @@ impl Ph1fStore {
             conversation_ledger: Vec::new(),
             outcome_utilization_ledger: Vec::new(),
             outcome_utilization_idempotency_index: BTreeMap::new(),
+            self_heal_failure_event_ledger: Vec::new(),
+            self_heal_problem_card_ledger: Vec::new(),
+            self_heal_fix_card_ledger: Vec::new(),
+            self_heal_promotion_decision_ledger: Vec::new(),
+            self_heal_failure_id_index: BTreeMap::new(),
+            self_heal_problem_id_index: BTreeMap::new(),
+            self_heal_fix_id_index: BTreeMap::new(),
+            self_heal_decision_id_index: BTreeMap::new(),
+            self_heal_failure_idempotency_index: BTreeMap::new(),
+            self_heal_problem_idempotency_index: BTreeMap::new(),
+            self_heal_fix_idempotency_index: BTreeMap::new(),
+            self_heal_decision_idempotency_index: BTreeMap::new(),
             builder_proposal_ledger: Vec::new(),
             builder_validation_run_ledger: Vec::new(),
             builder_validation_gate_result_ledger: Vec::new(),
@@ -2048,6 +2108,10 @@ impl Ph1fStore {
             next_memory_metric_event_id: 1,
             next_memory_thread_event_id: 1,
             next_outcome_utilization_row_id: 1,
+            next_self_heal_failure_row_id: 1,
+            next_self_heal_problem_row_id: 1,
+            next_self_heal_fix_row_id: 1,
+            next_self_heal_decision_row_id: 1,
             next_builder_proposal_row_id: 1,
             next_builder_validation_run_row_id: 1,
             next_builder_validation_gate_result_row_id: 1,
@@ -3177,6 +3241,240 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         Err(StorageError::AppendOnlyViolation {
             table: "outcome_utilization_ledger",
+        })
+    }
+
+    pub fn append_self_heal_failure_event_ledger_row(
+        &mut self,
+        failure_event: FailureEvent,
+    ) -> Result<u64, StorageError> {
+        failure_event.validate()?;
+
+        let idem_key = (
+            failure_event.failure_id.clone(),
+            failure_event.idempotency_key.clone(),
+        );
+        if let Some(existing_row_id) = self.self_heal_failure_idempotency_index.get(&idem_key) {
+            return Ok(*existing_row_id);
+        }
+        if self
+            .self_heal_failure_id_index
+            .contains_key(&failure_event.failure_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "self_heal_failure_events.failure_id",
+                key: failure_event.failure_id.clone(),
+            });
+        }
+
+        let row_id = self.next_self_heal_failure_row_id;
+        self.next_self_heal_failure_row_id = self.next_self_heal_failure_row_id.saturating_add(1);
+        self.self_heal_failure_event_ledger
+            .push(SelfHealFailureEventLedgerRow {
+                schema_version: SchemaVersion(1),
+                row_id,
+                failure_event: failure_event.clone(),
+            });
+        self.self_heal_failure_id_index
+            .insert(failure_event.failure_id.clone(), row_id);
+        self.self_heal_failure_idempotency_index
+            .insert(idem_key, row_id);
+
+        Ok(row_id)
+    }
+
+    pub fn self_heal_failure_event_ledger_rows(&self) -> &[SelfHealFailureEventLedgerRow] {
+        &self.self_heal_failure_event_ledger
+    }
+
+    pub fn attempt_overwrite_self_heal_failure_event_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "self_heal_failure_events",
+        })
+    }
+
+    pub fn append_self_heal_problem_card_ledger_row(
+        &mut self,
+        problem_card: ProblemCard,
+    ) -> Result<u64, StorageError> {
+        problem_card.validate()?;
+
+        if !self
+            .self_heal_failure_id_index
+            .contains_key(&problem_card.latest_failure_id)
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "self_heal_problem_cards.latest_failure_id",
+                key: problem_card.latest_failure_id.clone(),
+            });
+        }
+
+        let idem_key = (
+            problem_card.problem_id.clone(),
+            problem_card.idempotency_key.clone(),
+        );
+        if let Some(existing_row_id) = self.self_heal_problem_idempotency_index.get(&idem_key) {
+            return Ok(*existing_row_id);
+        }
+        if self
+            .self_heal_problem_id_index
+            .contains_key(&problem_card.problem_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "self_heal_problem_cards.problem_id",
+                key: problem_card.problem_id.clone(),
+            });
+        }
+
+        let row_id = self.next_self_heal_problem_row_id;
+        self.next_self_heal_problem_row_id = self.next_self_heal_problem_row_id.saturating_add(1);
+        self.self_heal_problem_card_ledger
+            .push(SelfHealProblemCardLedgerRow {
+                schema_version: SchemaVersion(1),
+                row_id,
+                problem_card: problem_card.clone(),
+            });
+        self.self_heal_problem_id_index
+            .insert(problem_card.problem_id.clone(), row_id);
+        self.self_heal_problem_idempotency_index
+            .insert(idem_key, row_id);
+
+        Ok(row_id)
+    }
+
+    pub fn self_heal_problem_card_ledger_rows(&self) -> &[SelfHealProblemCardLedgerRow] {
+        &self.self_heal_problem_card_ledger
+    }
+
+    pub fn attempt_overwrite_self_heal_problem_card_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "self_heal_problem_cards",
+        })
+    }
+
+    pub fn append_self_heal_fix_card_ledger_row(
+        &mut self,
+        fix_card: FixCard,
+    ) -> Result<u64, StorageError> {
+        fix_card.validate()?;
+
+        if !self
+            .self_heal_problem_id_index
+            .contains_key(&fix_card.problem_id)
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "self_heal_fix_cards.problem_id",
+                key: fix_card.problem_id.clone(),
+            });
+        }
+
+        let idem_key = (fix_card.fix_id.clone(), fix_card.idempotency_key.clone());
+        if let Some(existing_row_id) = self.self_heal_fix_idempotency_index.get(&idem_key) {
+            return Ok(*existing_row_id);
+        }
+        if self.self_heal_fix_id_index.contains_key(&fix_card.fix_id) {
+            return Err(StorageError::DuplicateKey {
+                table: "self_heal_fix_cards.fix_id",
+                key: fix_card.fix_id.clone(),
+            });
+        }
+
+        let row_id = self.next_self_heal_fix_row_id;
+        self.next_self_heal_fix_row_id = self.next_self_heal_fix_row_id.saturating_add(1);
+        self.self_heal_fix_card_ledger
+            .push(SelfHealFixCardLedgerRow {
+                schema_version: SchemaVersion(1),
+                row_id,
+                fix_card: fix_card.clone(),
+            });
+        self.self_heal_fix_id_index
+            .insert(fix_card.fix_id.clone(), row_id);
+        self.self_heal_fix_idempotency_index
+            .insert(idem_key, row_id);
+
+        Ok(row_id)
+    }
+
+    pub fn self_heal_fix_card_ledger_rows(&self) -> &[SelfHealFixCardLedgerRow] {
+        &self.self_heal_fix_card_ledger
+    }
+
+    pub fn attempt_overwrite_self_heal_fix_card_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "self_heal_fix_cards",
+        })
+    }
+
+    pub fn append_self_heal_promotion_decision_ledger_row(
+        &mut self,
+        promotion_decision: PromotionDecision,
+    ) -> Result<u64, StorageError> {
+        promotion_decision.validate()?;
+
+        if !self
+            .self_heal_fix_id_index
+            .contains_key(&promotion_decision.fix_id)
+        {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "self_heal_promotion_decisions.fix_id",
+                key: promotion_decision.fix_id.clone(),
+            });
+        }
+
+        let idem_key = (
+            promotion_decision.decision_id.clone(),
+            promotion_decision.idempotency_key.clone(),
+        );
+        if let Some(existing_row_id) = self.self_heal_decision_idempotency_index.get(&idem_key) {
+            return Ok(*existing_row_id);
+        }
+        if self
+            .self_heal_decision_id_index
+            .contains_key(&promotion_decision.decision_id)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "self_heal_promotion_decisions.decision_id",
+                key: promotion_decision.decision_id.clone(),
+            });
+        }
+
+        let row_id = self.next_self_heal_decision_row_id;
+        self.next_self_heal_decision_row_id = self.next_self_heal_decision_row_id.saturating_add(1);
+        self.self_heal_promotion_decision_ledger
+            .push(SelfHealPromotionDecisionLedgerRow {
+                schema_version: SchemaVersion(1),
+                row_id,
+                promotion_decision: promotion_decision.clone(),
+            });
+        self.self_heal_decision_id_index
+            .insert(promotion_decision.decision_id.clone(), row_id);
+        self.self_heal_decision_idempotency_index
+            .insert(idem_key, row_id);
+
+        Ok(row_id)
+    }
+
+    pub fn self_heal_promotion_decision_ledger_rows(
+        &self,
+    ) -> &[SelfHealPromotionDecisionLedgerRow] {
+        &self.self_heal_promotion_decision_ledger
+    }
+
+    pub fn attempt_overwrite_self_heal_promotion_decision_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "self_heal_promotion_decisions",
         })
     }
 

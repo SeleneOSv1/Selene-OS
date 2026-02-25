@@ -11,17 +11,28 @@ use selene_kernel_contracts::ph1builder::{
     BuilderSignalWindow, BuilderValidationGateId, BuilderValidationGateResult,
     BuilderValidationRun, BuilderValidationRunStatus,
 };
+use selene_kernel_contracts::ph1d::Ph1dProviderTask;
 use selene_kernel_contracts::ph1f::ConversationTurnInput;
+use selene_kernel_contracts::ph1feedback::{
+    FeedbackConfidenceBucket, FeedbackEventType, FeedbackPathType, FeedbackToolStatus,
+};
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
     DeviceId, PayloadKey, PayloadValue, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
+use selene_kernel_contracts::ph1learn::{LearnArtifactTarget, LearnScope};
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryLedgerEvent,
     MemoryLedgerEventKind, MemoryProvenance, MemorySensitivityFlag, MemoryUsePolicy, MemoryValue,
 };
+use selene_kernel_contracts::ph1pae::{PaeMode, PaeProviderSlot, PaeRouteDomain};
 use selene_kernel_contracts::ph1position::{PositionScheduleType, TenantId};
+use selene_kernel_contracts::ph1selfheal::{
+    FailureContainmentAction, FailureEvent, FailureProviderContext, FixCard, FixKind, FixSource,
+    ProblemCard, ProblemCardState, PromotionDecision, PromotionDecisionAction,
+    SelfHealValidationStatus,
+};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_storage::ph1f::{
     BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore,
@@ -225,6 +236,163 @@ fn builder_post_deploy_result(
         ReasonCodeId(0xB1D0_1003),
         MonotonicTimeNs(500),
         Some(idempotency_key.to_string()),
+    )
+    .unwrap()
+}
+
+fn self_heal_failure_event(
+    failure_id: &str,
+    idempotency_key: &str,
+    escalation_required: bool,
+) -> FailureEvent {
+    FailureEvent::v1(
+        failure_id.to_string(),
+        "tenant_1".to_string(),
+        "user_1".to_string(),
+        "speaker_1".to_string(),
+        "session_1".to_string(),
+        "device_1".to_string(),
+        CorrelationId(9200),
+        TurnId(12),
+        FeedbackEventType::ToolFail,
+        ReasonCodeId(0xA100_0001),
+        FeedbackPathType::Defect,
+        "evidence:selfheal:1".to_string(),
+        idempotency_key.to_string(),
+        FeedbackConfidenceBucket::Low,
+        FeedbackToolStatus::Fail,
+        410,
+        1,
+        vec!["ocr_text".to_string()],
+        "fingerprint_1".to_string(),
+        FailureContainmentAction::FailClosedRefuse,
+        escalation_required,
+        if escalation_required {
+            Some("cannot confirm resolution in live path".to_string())
+        } else {
+            None
+        },
+        Some(
+            FailureProviderContext::v1(
+                PaeRouteDomain::Tooling,
+                PaeProviderSlot::Primary,
+                Ph1dProviderTask::OcrTextExtract,
+                12_000,
+                95,
+                false,
+            )
+            .unwrap(),
+        ),
+    )
+    .unwrap()
+}
+
+fn self_heal_problem_card(
+    problem_id: &str,
+    latest_failure_id: &str,
+    idempotency_key: &str,
+    requires_human: bool,
+) -> ProblemCard {
+    ProblemCard::v1(
+        problem_id.to_string(),
+        "fingerprint_1".to_string(),
+        "tenant_1".to_string(),
+        "PH1.OS".to_string(),
+        LearnScope::Tenant,
+        Some("tenant_1".to_string()),
+        MonotonicTimeNs(1_000),
+        MonotonicTimeNs(1_500),
+        3,
+        latest_failure_id.to_string(),
+        vec!["signal_1".to_string()],
+        vec!["evidence:selfheal:1".to_string()],
+        -120,
+        40,
+        20,
+        if requires_human {
+            ProblemCardState::EscalatedOpen
+        } else {
+            ProblemCardState::Open
+        },
+        requires_human,
+        if requires_human {
+            Some("bcast_1".to_string())
+        } else {
+            None
+        },
+        if requires_human {
+            Some("manual verification required".to_string())
+        } else {
+            None
+        },
+        idempotency_key.to_string(),
+    )
+    .unwrap()
+}
+
+fn self_heal_fix_card(fix_id: &str, problem_id: &str, idempotency_key: &str) -> FixCard {
+    FixCard::v1(
+        fix_id.to_string(),
+        problem_id.to_string(),
+        FixSource::Learn,
+        FixKind::Artifact,
+        Some("artifact_1".to_string()),
+        Some(LearnArtifactTarget::PaeRoutingWeights),
+        Some(2),
+        Some(130),
+        Some("artifact_prev".to_string()),
+        Some("provenance_1".to_string()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        SelfHealValidationStatus::Ok,
+        vec!["diag_ok".to_string()],
+        true,
+        true,
+        idempotency_key.to_string(),
+    )
+    .unwrap()
+}
+
+fn self_heal_promotion_decision(
+    decision_id: &str,
+    fix_id: &str,
+    idempotency_key: &str,
+) -> PromotionDecision {
+    PromotionDecision::v1(
+        decision_id.to_string(),
+        fix_id.to_string(),
+        "tenant_1".to_string(),
+        PaeRouteDomain::Tooling,
+        PaeProviderSlot::Primary,
+        PaeMode::Assist,
+        PaeMode::Assist,
+        PromotionDecisionAction::Hold,
+        100,
+        800,
+        3,
+        0,
+        "candidate_1".to_string(),
+        1_900,
+        2_200,
+        100,
+        80,
+        70,
+        120,
+        true,
+        true,
+        ReasonCodeId(0xA100_0002),
+        true,
+        true,
+        false,
+        None,
+        None,
+        idempotency_key.to_string(),
+        MonotonicTimeNs(2_000),
     )
     .unwrap()
 }
@@ -841,4 +1009,112 @@ fn at_f_db_09_builder_learning_context_persists_in_proposal_rows() {
         .iter()
         .any(|engine| engine == "PH1.FEEDBACK"));
     assert_eq!(learning.evidence_refs.len(), 3);
+}
+
+#[test]
+fn at_f_db_10_self_heal_cards_append_only_and_idempotent() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let failure = self_heal_failure_event("failure_1", "idem_failure_1", true);
+    let failure_row = s
+        .append_self_heal_failure_event_ledger_row(failure.clone())
+        .unwrap();
+    let failure_row_retry = s
+        .append_self_heal_failure_event_ledger_row(failure)
+        .unwrap();
+    assert_eq!(failure_row, failure_row_retry);
+    assert_eq!(s.self_heal_failure_event_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_self_heal_failure_event_ledger_row(failure_row),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let problem = self_heal_problem_card("problem_1", "failure_1", "idem_problem_1", true);
+    let problem_row = s
+        .append_self_heal_problem_card_ledger_row(problem.clone())
+        .unwrap();
+    let problem_row_retry = s.append_self_heal_problem_card_ledger_row(problem).unwrap();
+    assert_eq!(problem_row, problem_row_retry);
+    assert_eq!(s.self_heal_problem_card_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_self_heal_problem_card_ledger_row(problem_row),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let fix = self_heal_fix_card("fix_1", "problem_1", "idem_fix_1");
+    let fix_row = s.append_self_heal_fix_card_ledger_row(fix.clone()).unwrap();
+    let fix_row_retry = s.append_self_heal_fix_card_ledger_row(fix).unwrap();
+    assert_eq!(fix_row, fix_row_retry);
+    assert_eq!(s.self_heal_fix_card_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_self_heal_fix_card_ledger_row(fix_row),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let decision = self_heal_promotion_decision("decision_1", "fix_1", "idem_decision_1");
+    let decision_row = s
+        .append_self_heal_promotion_decision_ledger_row(decision.clone())
+        .unwrap();
+    let decision_row_retry = s
+        .append_self_heal_promotion_decision_ledger_row(decision)
+        .unwrap();
+    assert_eq!(decision_row, decision_row_retry);
+    assert_eq!(s.self_heal_promotion_decision_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_self_heal_promotion_decision_ledger_row(decision_row),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_f_db_11_self_heal_cards_fail_closed_on_fk_chain_break() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let missing_failure_problem =
+        s.append_self_heal_problem_card_ledger_row(self_heal_problem_card(
+            "problem_fk_bad",
+            "missing_failure",
+            "idem_problem_fk_bad",
+            false,
+        ));
+    assert!(matches!(
+        missing_failure_problem,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    let missing_problem_fix = s.append_self_heal_fix_card_ledger_row(self_heal_fix_card(
+        "fix_fk_bad",
+        "missing_problem",
+        "idem_fix_fk_bad",
+    ));
+    assert!(matches!(
+        missing_problem_fix,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+
+    let missing_fix_decision = s.append_self_heal_promotion_decision_ledger_row(
+        self_heal_promotion_decision("decision_fk_bad", "missing_fix", "idem_decision_fk_bad"),
+    );
+    assert!(matches!(
+        missing_fix_decision,
+        Err(StorageError::ForeignKeyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_f_db_12_self_heal_duplicate_card_id_rejected_without_idempotency_match() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    s.append_self_heal_failure_event_ledger_row(self_heal_failure_event(
+        "failure_dup",
+        "idem_failure_dup_1",
+        false,
+    ))
+    .unwrap();
+    let dup = s.append_self_heal_failure_event_ledger_row(self_heal_failure_event(
+        "failure_dup",
+        "idem_failure_dup_2",
+        false,
+    ));
+    assert!(matches!(dup, Err(StorageError::DuplicateKey { .. })));
 }

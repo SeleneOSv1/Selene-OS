@@ -10,7 +10,11 @@ use selene_kernel_contracts::ph1learn::{
     LearnSignalAggregateRequest, LearnSignalType, LearnTargetEngine, LearnValidationStatus,
     Ph1LearnRequest, Ph1LearnResponse,
 };
-use selene_kernel_contracts::{ContractViolation, Validate};
+use selene_kernel_contracts::ph1selfheal::{
+    stable_card_id, FailureEvent, FixCard, FixKind, FixSource, ProblemCard, ProblemCardState,
+    SelfHealValidationStatus,
+};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -406,6 +410,210 @@ pub enum LearnWiringOutcome {
     NotInvokedNoSignals,
     Refused(LearnRefuse),
     Forwarded(LearnForwardBundle),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProblemCardEscalationState {
+    pub state: ProblemCardState,
+    pub requires_human: bool,
+    pub bcast_id: Option<String>,
+    pub unresolved_reason: Option<String>,
+}
+
+impl ProblemCardEscalationState {
+    pub fn open() -> Self {
+        Self {
+            state: ProblemCardState::Open,
+            requires_human: false,
+            bcast_id: None,
+            unresolved_reason: None,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn map_learn_bundle_to_problem_card(
+    failure_event: &FailureEvent,
+    turn_input: &LearnTurnInput,
+    bundle: &LearnForwardBundle,
+    owner_engine: String,
+    first_seen_at: MonotonicTimeNs,
+    last_seen_at: MonotonicTimeNs,
+    escalation: ProblemCardEscalationState,
+) -> Result<ProblemCard, ContractViolation> {
+    failure_event.validate()?;
+    turn_input.validate()?;
+    bundle.validate()?;
+    validate_token(
+        "map_learn_bundle_to_problem_card.owner_engine",
+        &owner_engine,
+        64,
+    )?;
+
+    if failure_event.tenant_id != turn_input.tenant_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_learn_bundle_to_problem_card.turn_input.tenant_id",
+            reason: "must match failure_event.tenant_id",
+        });
+    }
+    if failure_event.correlation_id != bundle.correlation_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_learn_bundle_to_problem_card.bundle.correlation_id",
+            reason: "must match failure_event.correlation_id",
+        });
+    }
+    if failure_event.turn_id != bundle.turn_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_learn_bundle_to_problem_card.bundle.turn_id",
+            reason: "must match failure_event.turn_id",
+        });
+    }
+
+    let selected_artifact =
+        find_selected_artifact(bundle).ok_or(ContractViolation::InvalidValue {
+            field: "map_learn_bundle_to_problem_card.bundle.signal_aggregate.selected_artifact_id",
+            reason: "must resolve to an artifact in ordered_artifacts",
+        })?;
+
+    let signal_ids = turn_input
+        .signals
+        .iter()
+        .map(|signal| signal.signal_id.clone())
+        .collect::<Vec<_>>();
+    let mut evidence_refs = turn_input
+        .signals
+        .iter()
+        .map(|signal| signal.evidence_ref.clone())
+        .collect::<Vec<_>>();
+    if !evidence_refs
+        .iter()
+        .any(|v| v == &failure_event.evidence_ref)
+    {
+        evidence_refs.push(failure_event.evidence_ref.clone());
+    }
+    if !evidence_refs
+        .iter()
+        .any(|v| v == &selected_artifact.provenance_ref)
+    {
+        evidence_refs.push(selected_artifact.provenance_ref.clone());
+    }
+
+    let recurrence_count = turn_input
+        .signals
+        .iter()
+        .map(|signal| signal.occurrence_count as u32)
+        .sum::<u32>()
+        .max(1);
+    let quality_impact_sum = turn_input
+        .signals
+        .iter()
+        .map(|signal| i32::from(signal.metric_value_bp))
+        .sum::<i32>();
+    let quality_impact_bp =
+        (quality_impact_sum / turn_input.signals.len() as i32).clamp(-20_000, 20_000) as i16;
+
+    let problem_id = stable_card_id(
+        "problem",
+        &[
+            turn_input.tenant_id.as_str(),
+            failure_event.fingerprint.as_str(),
+            selected_artifact.artifact_id.as_str(),
+        ],
+    )?;
+    let idempotency_key = stable_card_id(
+        "idem_problem",
+        &[problem_id.as_str(), failure_event.idempotency_key.as_str()],
+    )?;
+
+    ProblemCard::v1(
+        problem_id,
+        failure_event.fingerprint.clone(),
+        turn_input.tenant_id.clone(),
+        owner_engine,
+        selected_artifact.scope,
+        selected_artifact.scope_ref.clone(),
+        first_seen_at,
+        last_seen_at,
+        recurrence_count,
+        failure_event.failure_id.clone(),
+        signal_ids,
+        evidence_refs,
+        quality_impact_bp,
+        0,
+        0,
+        escalation.state,
+        escalation.requires_human,
+        escalation.bcast_id,
+        escalation.unresolved_reason,
+        idempotency_key,
+    )
+}
+
+pub fn map_learn_bundle_to_fix_card(
+    problem_card: &ProblemCard,
+    bundle: &LearnForwardBundle,
+) -> Result<FixCard, ContractViolation> {
+    problem_card.validate()?;
+    bundle.validate()?;
+
+    let selected_artifact =
+        find_selected_artifact(bundle).ok_or(ContractViolation::InvalidValue {
+            field: "map_learn_bundle_to_fix_card.bundle.signal_aggregate.selected_artifact_id",
+            reason: "must resolve to an artifact in ordered_artifacts",
+        })?;
+
+    let fix_id = stable_card_id(
+        "fix",
+        &[
+            problem_card.problem_id.as_str(),
+            selected_artifact.artifact_id.as_str(),
+            &selected_artifact.artifact_version.to_string(),
+        ],
+    )?;
+    let idempotency_key = stable_card_id(
+        "idem_fix",
+        &[fix_id.as_str(), problem_card.idempotency_key.as_str()],
+    )?;
+
+    FixCard::v1(
+        fix_id,
+        problem_card.problem_id.clone(),
+        FixSource::Learn,
+        FixKind::Artifact,
+        Some(selected_artifact.artifact_id.clone()),
+        Some(selected_artifact.target),
+        Some(selected_artifact.artifact_version),
+        Some(selected_artifact.expected_effect_bp),
+        selected_artifact.rollback_to.clone(),
+        Some(selected_artifact.provenance_ref.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        if bundle.artifact_package_build.validation_status == LearnValidationStatus::Ok {
+            SelfHealValidationStatus::Ok
+        } else {
+            SelfHealValidationStatus::Fail
+        },
+        bundle.artifact_package_build.diagnostics.clone(),
+        bundle.signal_aggregate.advisory_only && bundle.artifact_package_build.advisory_only,
+        bundle.signal_aggregate.no_execution_authority
+            && bundle.artifact_package_build.no_execution_authority,
+        idempotency_key,
+    )
+}
+
+fn find_selected_artifact(
+    bundle: &LearnForwardBundle,
+) -> Option<&selene_kernel_contracts::ph1learn::LearnArtifactCandidate> {
+    bundle
+        .signal_aggregate
+        .ordered_artifacts
+        .iter()
+        .find(|artifact| artifact.artifact_id == bundle.signal_aggregate.selected_artifact_id)
 }
 
 pub trait Ph1LearnEngine {
@@ -847,10 +1055,17 @@ fn validate_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1feedback::{
+        FeedbackConfidenceBucket, FeedbackEventType, FeedbackPathType, FeedbackToolStatus,
+    };
     use selene_kernel_contracts::ph1learn::{
         LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnScope, LearnSignalAggregateOk,
         LearnSignalType,
     };
+    use selene_kernel_contracts::ph1selfheal::{
+        FailureContainmentAction, FailureEvent, ProblemCardState,
+    };
+    use selene_kernel_contracts::MonotonicTimeNs;
     use selene_kernel_contracts::ReasonCodeId;
 
     struct DeterministicLearnEngine;
@@ -1369,5 +1584,132 @@ mod tests {
             refuse.reason_code,
             reason_codes::PH1_LEARN_ROLLBACK_METADATA_MISSING
         );
+    }
+
+    fn mapped_failure_event(correlation_id: CorrelationId, turn_id: TurnId) -> FailureEvent {
+        FailureEvent::v1(
+            "failure_map_1".to_string(),
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            correlation_id,
+            turn_id,
+            FeedbackEventType::ToolFail,
+            ReasonCodeId(0x4C45_9001),
+            FeedbackPathType::Defect,
+            "evidence:learn_map".to_string(),
+            "idem:failure:learn_map".to_string(),
+            FeedbackConfidenceBucket::Low,
+            FeedbackToolStatus::Fail,
+            90,
+            1,
+            vec!["field_a".to_string()],
+            "fingerprint_1".to_string(),
+            FailureContainmentAction::FailClosedRefuse,
+            false,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn at_learn_09_mapper_builds_problem_and_fix_cards_deterministically() {
+        let wiring =
+            Ph1LearnWiring::new(Ph1LearnWiringConfig::mvp_v1(true), DeterministicLearnEngine)
+                .unwrap();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5309),
+            TurnId(509),
+            "tenant_1".to_string(),
+            vec![
+                signal("sig_91", LearnSignalType::SttReject),
+                signal("sig_92", LearnSignalType::UserCorrection),
+            ],
+            vec![],
+            true,
+            true,
+        )
+        .unwrap();
+        let out = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded learn bundle");
+        };
+        let failure_event = mapped_failure_event(CorrelationId(5309), TurnId(509));
+        let escalation = ProblemCardEscalationState::open();
+
+        let problem_a = map_learn_bundle_to_problem_card(
+            &failure_event,
+            &input,
+            &bundle,
+            "PH1.LEARN".to_string(),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(120),
+            escalation.clone(),
+        )
+        .unwrap();
+        let problem_b = map_learn_bundle_to_problem_card(
+            &failure_event,
+            &input,
+            &bundle,
+            "PH1.LEARN".to_string(),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(120),
+            escalation,
+        )
+        .unwrap();
+        assert_eq!(problem_a.problem_id, problem_b.problem_id);
+        assert_eq!(problem_a.state, ProblemCardState::Open);
+        assert_eq!(problem_a.latest_failure_id, failure_event.failure_id);
+
+        let fix_a = map_learn_bundle_to_fix_card(&problem_a, &bundle).unwrap();
+        let fix_b = map_learn_bundle_to_fix_card(&problem_a, &bundle).unwrap();
+        assert_eq!(fix_a.fix_id, fix_b.fix_id);
+        assert_eq!(fix_a.problem_id, problem_a.problem_id);
+    }
+
+    #[test]
+    fn at_learn_10_mapper_fails_closed_on_tenant_mismatch() {
+        let wiring =
+            Ph1LearnWiring::new(Ph1LearnWiringConfig::mvp_v1(true), DeterministicLearnEngine)
+                .unwrap();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5310),
+            TurnId(510),
+            "tenant_1".to_string(),
+            vec![signal("sig_101", LearnSignalType::SttReject)],
+            vec![],
+            true,
+            true,
+        )
+        .unwrap();
+        let out = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded learn bundle");
+        };
+        let mut failure_event = mapped_failure_event(CorrelationId(5310), TurnId(510));
+        failure_event.tenant_id = "tenant_2".to_string();
+
+        let err = map_learn_bundle_to_problem_card(
+            &failure_event,
+            &input,
+            &bundle,
+            "PH1.LEARN".to_string(),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(120),
+            ProblemCardEscalationState::open(),
+        )
+        .expect_err("tenant mismatch must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "map_learn_bundle_to_problem_card.turn_input.tenant_id"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
     }
 }

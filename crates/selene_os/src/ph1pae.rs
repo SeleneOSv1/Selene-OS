@@ -10,7 +10,10 @@ use selene_kernel_contracts::ph1pae::{
     PaeRequestEnvelope, PaeRouteDomain, PaeSignalVector, PaeTargetEngine, PaeValidationStatus,
     Ph1PaeRequest, Ph1PaeResponse,
 };
-use selene_kernel_contracts::{ContractViolation, Validate};
+use selene_kernel_contracts::ph1selfheal::{
+    stable_card_id, FixCard, PromotionDecision, PromotionDecisionAction,
+};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -202,6 +205,148 @@ pub enum PaeWiringOutcome {
     Forwarded(PaeForwardBundle),
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn map_pae_bundle_to_promotion_decision(
+    fix_card: &FixCard,
+    turn_input: &PaeTurnInput,
+    bundle: &PaeForwardBundle,
+    governance_required: bool,
+    governance_ticket_ref: Option<String>,
+    approved_by: Option<String>,
+    evaluated_at: MonotonicTimeNs,
+) -> Result<PromotionDecision, ContractViolation> {
+    fix_card.validate()?;
+    turn_input.validate()?;
+    bundle.validate()?;
+
+    if turn_input.correlation_id != bundle.correlation_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.correlation_id",
+            reason: "must match pae_turn_input.correlation_id",
+        });
+    }
+    if turn_input.turn_id != bundle.turn_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.turn_id",
+            reason: "must match pae_turn_input.turn_id",
+        });
+    }
+
+    let selected_score =
+        bundle
+            .score_build
+            .ordered_scores
+            .first()
+            .ok_or(ContractViolation::InvalidValue {
+                field: "map_pae_bundle_to_promotion_decision.bundle.score_build.ordered_scores",
+                reason: "must be non-empty",
+            })?;
+    if selected_score.candidate_id != bundle.score_build.selected_candidate_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.score_build.selected_candidate_id",
+            reason: "must match first ordered score candidate_id",
+        });
+    }
+
+    let decision_action = infer_decision_action(
+        turn_input.current_mode,
+        bundle.score_build.selected_mode,
+        bundle.score_build.promotion_eligible,
+    );
+    let from_mode = turn_input.current_mode;
+    let to_mode = bundle.score_build.selected_mode;
+    let decision_id = stable_card_id(
+        "decision",
+        &[
+            fix_card.fix_id.as_str(),
+            bundle.score_build.selected_candidate_id.as_str(),
+            pae_mode_key(from_mode),
+            pae_mode_key(to_mode),
+            decision_action_key(decision_action),
+        ],
+    )?;
+    let idempotency_key = stable_card_id(
+        "idem_decision",
+        &[decision_id.as_str(), fix_card.idempotency_key.as_str()],
+    )?;
+
+    PromotionDecision::v1(
+        decision_id,
+        fix_card.fix_id.clone(),
+        turn_input.tenant_id.clone(),
+        selected_score.route_domain,
+        selected_score.provider_slot,
+        from_mode,
+        to_mode,
+        decision_action,
+        turn_input.minimum_sample_size,
+        turn_input.promotion_threshold_bp,
+        turn_input.demotion_failure_threshold,
+        turn_input.consecutive_threshold_failures,
+        bundle.score_build.selected_candidate_id.clone(),
+        selected_score.total_score_bp,
+        selected_score.quality_score_bp,
+        selected_score.latency_penalty_bp,
+        selected_score.cost_penalty_bp,
+        selected_score.regression_penalty_bp,
+        selected_score.sample_size,
+        bundle.score_build.promotion_eligible,
+        bundle.score_build.rollback_ready,
+        bundle.score_build.reason_code,
+        bundle.score_build.advisory_only && bundle.hint_emit.advisory_only,
+        bundle.score_build.no_execution_authority && bundle.hint_emit.no_execution_authority,
+        governance_required,
+        governance_ticket_ref,
+        approved_by,
+        idempotency_key,
+        evaluated_at,
+    )
+}
+
+fn infer_decision_action(
+    from_mode: PaeMode,
+    to_mode: PaeMode,
+    promotion_eligible: bool,
+) -> PromotionDecisionAction {
+    if !promotion_eligible {
+        return PromotionDecisionAction::Hold;
+    }
+    let from_rank = pae_mode_rank(from_mode);
+    let to_rank = pae_mode_rank(to_mode);
+    if to_rank > from_rank {
+        PromotionDecisionAction::Promote
+    } else if to_rank < from_rank {
+        PromotionDecisionAction::Demote
+    } else {
+        PromotionDecisionAction::Hold
+    }
+}
+
+fn pae_mode_rank(mode: PaeMode) -> u8 {
+    match mode {
+        PaeMode::Shadow => 0,
+        PaeMode::Assist => 1,
+        PaeMode::Lead => 2,
+    }
+}
+
+fn pae_mode_key(mode: PaeMode) -> &'static str {
+    match mode {
+        PaeMode::Shadow => "SHADOW",
+        PaeMode::Assist => "ASSIST",
+        PaeMode::Lead => "LEAD",
+    }
+}
+
+fn decision_action_key(action: PromotionDecisionAction) -> &'static str {
+    match action {
+        PromotionDecisionAction::Promote => "PROMOTE",
+        PromotionDecisionAction::Demote => "DEMOTE",
+        PromotionDecisionAction::Hold => "HOLD",
+        PromotionDecisionAction::Rollback => "ROLLBACK",
+    }
+}
+
 pub trait Ph1PaeEngine {
     fn run(&self, req: &Ph1PaeRequest) -> Ph1PaeResponse;
 }
@@ -386,9 +531,14 @@ fn validate_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1learn::LearnArtifactTarget;
     use selene_kernel_contracts::ph1pae::{
         PaeAdaptationHint, PaePolicyScoreBuildOk, PaeProviderSlot, PaeScoreEntry, PaeSignalSource,
     };
+    use selene_kernel_contracts::ph1selfheal::{
+        FixCard, FixKind, FixSource, SelfHealValidationStatus,
+    };
+    use selene_kernel_contracts::MonotonicTimeNs;
     use selene_kernel_contracts::ReasonCodeId;
 
     #[derive(Clone)]
@@ -518,6 +668,34 @@ mod tests {
         .unwrap()
     }
 
+    fn sample_fix_card() -> FixCard {
+        FixCard::v1(
+            "fix_map_1".to_string(),
+            "problem_map_1".to_string(),
+            FixSource::Hybrid,
+            FixKind::Hybrid,
+            Some("artifact_map_1".to_string()),
+            Some(LearnArtifactTarget::PaeRoutingWeights),
+            Some(2),
+            Some(140),
+            Some("artifact_prev_1".to_string()),
+            Some("prov:1".to_string()),
+            Some("c1".to_string()),
+            Some(PaeMode::Assist),
+            Some(2200),
+            Some(200),
+            Some(150),
+            Some(100),
+            Some(180),
+            SelfHealValidationStatus::Ok,
+            Vec::new(),
+            true,
+            true,
+            "idem:fix:map:1".to_string(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_pae_01_os_invokes_and_returns_forward_bundle() {
         let wiring = Ph1PaeWiring::new(
@@ -590,6 +768,84 @@ mod tests {
                 assert_eq!(refuse.capability_id, PaeCapabilityId::PaeAdaptationHintEmit);
             }
             _ => panic!("expected refused outcome"),
+        }
+    }
+
+    #[test]
+    fn at_pae_05_mapper_builds_promotion_decision_deterministically() {
+        let wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            DeterministicPaeEngine {
+                force_emit_fail: false,
+            },
+        )
+        .unwrap();
+        let input = sample_input();
+        let out = wiring.run_turn(&input).unwrap();
+        let PaeWiringOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded bundle");
+        };
+        let fix_card = sample_fix_card();
+
+        let decision_a = map_pae_bundle_to_promotion_decision(
+            &fix_card,
+            &input,
+            &bundle,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            MonotonicTimeNs(1_000),
+        )
+        .unwrap();
+        let decision_b = map_pae_bundle_to_promotion_decision(
+            &fix_card,
+            &input,
+            &bundle,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            MonotonicTimeNs(1_000),
+        )
+        .unwrap();
+        assert_eq!(decision_a.decision_id, decision_b.decision_id);
+        assert_eq!(decision_a.fix_id, fix_card.fix_id);
+        assert_eq!(decision_a.tenant_id, input.tenant_id);
+    }
+
+    #[test]
+    fn at_pae_06_mapper_fails_closed_on_correlation_mismatch() {
+        let wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            DeterministicPaeEngine {
+                force_emit_fail: false,
+            },
+        )
+        .unwrap();
+        let input = sample_input();
+        let out = wiring.run_turn(&input).unwrap();
+        let PaeWiringOutcome::Forwarded(mut bundle) = out else {
+            panic!("expected forwarded bundle");
+        };
+        bundle.correlation_id = CorrelationId(123_456);
+
+        let err = map_pae_bundle_to_promotion_decision(
+            &sample_fix_card(),
+            &input,
+            &bundle,
+            false,
+            None,
+            None,
+            MonotonicTimeNs(1_001),
+        )
+        .expect_err("correlation mismatch must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "map_pae_bundle_to_promotion_decision.bundle.correlation_id"
+                );
+            }
+            _ => panic!("expected invalid-value violation"),
         }
     }
 }

@@ -5,21 +5,50 @@ use std::{cmp::min, collections::BTreeSet};
 use selene_engines::ph1_voice_id::{
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
+use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
 use selene_kernel_contracts::ph1_voice_id::{Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId};
+use selene_kernel_contracts::ph1c::TranscriptOk;
+use selene_kernel_contracts::ph1d::{
+    Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderInputPayloadKind,
+    Ph1dProviderRouteClass, Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus,
+    RequestId, SafetyTier, SchemaHash,
+};
+use selene_kernel_contracts::ph1doc::{DocValidationStatus, DocumentSourceKind};
+use selene_kernel_contracts::ph1feedback::FeedbackEventRecord;
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+use selene_kernel_contracts::ph1n::{Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1os::{
     OsCapabilityId, OsDecisionComputeOk, OsDecisionComputeRequest, OsGateDecision, OsNextMove,
     OsOutcomeUtilizationEntry, OsPolicyEvaluateOk, OsPolicyEvaluateRequest, OsRefuse,
     OsRequestEnvelope, Ph1OsRequest, Ph1OsResponse, OS_CLARIFY_OWNER_ENGINE_ID,
 };
-use selene_kernel_contracts::{ContractViolation, Validate};
+use selene_kernel_contracts::ph1selfheal::{
+    FailureContainmentAction, FailureProviderContext, ProblemCardState, PromotionDecisionAction,
+    SelfHealCardChain,
+};
+use selene_kernel_contracts::ph1vision::VisualSourceKind;
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, SchemaVersion, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
+use serde_json::{json, Value};
 
 use crate::device_artifact_sync::{self, DeviceArtifactSyncSenderRuntime};
 use crate::ph1_voice_id::{
     Ph1VoiceIdLiveRuntime, VoiceIdentityChannel, VoiceIdentityPlatform,
     VoiceIdentityRuntimeContext, VoiceIdentitySignalScope,
 };
+use crate::ph1context::{
+    ContextForwardBundle, ContextTurnInput, ContextWiringOutcome, Ph1ContextEngine,
+    Ph1ContextWiring,
+};
+use crate::ph1doc::DocForwardBundle;
+use crate::ph1feedback::{map_feedback_event_to_failure_event, FeedbackForwardBundle};
+use crate::ph1learn::{
+    map_learn_bundle_to_fix_card, map_learn_bundle_to_problem_card, LearnForwardBundle,
+    LearnTurnInput, ProblemCardEscalationState,
+};
+use crate::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringOutcome};
+use crate::ph1pae::{map_pae_bundle_to_promotion_decision, PaeForwardBundle, PaeTurnInput};
+use crate::ph1vision::VisionForwardBundle;
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -33,6 +62,14 @@ pub mod reason_codes {
     pub const PH1_OS_TOPLEVEL_RUNTIME_BOUNDARY_VIOLATION: ReasonCodeId = ReasonCodeId(0x4F53_0204);
     pub const PH1_OS_TOPLEVEL_CLARIFY_OWNER_INVALID: ReasonCodeId = ReasonCodeId(0x4F53_0205);
     pub const PH1_OS_TOPLEVEL_OPTIONAL_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4F53_0206);
+    pub const PH1_OS_OCR_ROUTE_INVALID_INPUT: ReasonCodeId = ReasonCodeId(0x4F53_0301);
+    pub const PH1_OS_OCR_ROUTE_PROVIDER_ERROR: ReasonCodeId = ReasonCodeId(0x4F53_0302);
+    pub const PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x4F53_0303);
+    pub const PH1_OS_OCR_ROUTE_PROVIDER_LOW_CONFIDENCE: ReasonCodeId = ReasonCodeId(0x4F53_0304);
+    pub const PH1_OS_OCR_ROUTE_CONTEXT_REFUSED: ReasonCodeId = ReasonCodeId(0x4F53_0305);
+    pub const PH1_OS_OCR_ROUTE_NLP_REFUSED: ReasonCodeId = ReasonCodeId(0x4F53_0306);
+    pub const PH1_OS_OCR_ROUTE_NLP_INPUT_INVALID: ReasonCodeId = ReasonCodeId(0x4F53_0307);
+    pub const PH1_OS_OCR_ROUTE_CLARIFY_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4F53_0308);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1253,6 +1290,1158 @@ where
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct OsSelfHealChainInput {
+    pub feedback_event: FeedbackEventRecord,
+    pub feedback_bundle: FeedbackForwardBundle,
+    pub learn_turn_input: LearnTurnInput,
+    pub learn_bundle: LearnForwardBundle,
+    pub pae_turn_input: PaeTurnInput,
+    pub pae_bundle: PaeForwardBundle,
+    pub owner_engine: String,
+    pub first_seen_at: MonotonicTimeNs,
+    pub last_seen_at: MonotonicTimeNs,
+    pub containment_action: FailureContainmentAction,
+    pub escalation_required: bool,
+    pub unresolved_reason: Option<String>,
+    pub bcast_id: Option<String>,
+    pub provider_context: Option<FailureProviderContext>,
+    pub governance_required: bool,
+    pub governance_ticket_ref: Option<String>,
+    pub approved_by: Option<String>,
+    pub evaluated_at: MonotonicTimeNs,
+}
+
+pub fn build_self_heal_chain_from_engine_outputs(
+    input: &OsSelfHealChainInput,
+) -> Result<SelfHealCardChain, ContractViolation> {
+    if !is_engine_id_token(&input.owner_engine) {
+        return Err(ContractViolation::InvalidValue {
+            field: "os_self_heal_chain_input.owner_engine",
+            reason: "must be ASCII [A-Z0-9._] and <= 64 chars",
+        });
+    }
+
+    let failure_event = map_feedback_event_to_failure_event(
+        &input.feedback_event,
+        &input.feedback_bundle,
+        input.containment_action,
+        input.escalation_required,
+        input.unresolved_reason.clone(),
+        input.provider_context.clone(),
+    )?;
+
+    let escalation_state = ProblemCardEscalationState {
+        state: if input.escalation_required {
+            ProblemCardState::EscalatedOpen
+        } else {
+            ProblemCardState::Open
+        },
+        requires_human: input.escalation_required,
+        bcast_id: input.bcast_id.clone(),
+        unresolved_reason: input.unresolved_reason.clone(),
+    };
+
+    let problem_card = map_learn_bundle_to_problem_card(
+        &failure_event,
+        &input.learn_turn_input,
+        &input.learn_bundle,
+        input.owner_engine.clone(),
+        input.first_seen_at,
+        input.last_seen_at,
+        escalation_state,
+    )?;
+
+    let fix_card = map_learn_bundle_to_fix_card(&problem_card, &input.learn_bundle)?;
+
+    let promotion_decision = map_pae_bundle_to_promotion_decision(
+        &fix_card,
+        &input.pae_turn_input,
+        &input.pae_bundle,
+        input.governance_required,
+        input.governance_ticket_ref.clone(),
+        input.approved_by.clone(),
+        input.evaluated_at,
+    )?;
+
+    SelfHealCardChain::v1(failure_event, problem_card, fix_card, promotion_decision)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsSelfHealReleaseGateConfig {
+    pub max_problem_age_ns: u64,
+    pub max_decision_age_ns: u64,
+}
+
+impl OsSelfHealReleaseGateConfig {
+    pub fn mvp_v1() -> Self {
+        Self {
+            max_problem_age_ns: 7 * 24 * 60 * 60 * 1_000_000_000,
+            max_decision_age_ns: 24 * 60 * 60 * 1_000_000_000,
+        }
+    }
+}
+
+pub fn check_self_heal_release_gate(
+    chain: &SelfHealCardChain,
+    now: MonotonicTimeNs,
+    config: OsSelfHealReleaseGateConfig,
+) -> Result<(), ContractViolation> {
+    chain.validate()?;
+    if now.0 < chain.problem_card.last_seen_at.0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_self_heal_release_gate.now",
+            reason: "must be >= problem_card.last_seen_at",
+        });
+    }
+    if now.0 < chain.promotion_decision.evaluated_at.0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_self_heal_release_gate.now",
+            reason: "must be >= promotion_decision.evaluated_at",
+        });
+    }
+
+    let problem_age_ns = now.0.saturating_sub(chain.problem_card.last_seen_at.0);
+    if problem_age_ns > config.max_problem_age_ns {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_self_heal_release_gate.problem_card.last_seen_at",
+            reason: "stale problem_card evidence blocks promotion",
+        });
+    }
+
+    let decision_age_ns = now
+        .0
+        .saturating_sub(chain.promotion_decision.evaluated_at.0);
+    if decision_age_ns > config.max_decision_age_ns {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_self_heal_release_gate.promotion_decision.evaluated_at",
+            reason: "stale promotion decision blocks promotion",
+        });
+    }
+
+    if chain.failure_event.escalation_required && chain.problem_card.bcast_id.is_none() {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_self_heal_release_gate.problem_card.bcast_id",
+            reason: "escalation-required chain must include bcast_id proof link",
+        });
+    }
+
+    if matches!(
+        chain.promotion_decision.decision_action,
+        PromotionDecisionAction::Promote
+    ) {
+        if !chain.promotion_decision.promotion_eligible || !chain.promotion_decision.rollback_ready
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "check_self_heal_release_gate.promotion_decision",
+                reason: "PROMOTE requires promotion_eligible=true and rollback_ready=true",
+            });
+        }
+        if chain.problem_card.requires_human
+            || matches!(chain.problem_card.state, ProblemCardState::EscalatedOpen)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "check_self_heal_release_gate.problem_card.state",
+                reason: "PROMOTE blocked while problem requires human escalation",
+            });
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OsOcrSourceEngine {
+    Vision,
+    Doc,
+}
+
+impl OsOcrSourceEngine {
+    pub fn as_engine_id(self) -> &'static str {
+        match self {
+            OsOcrSourceEngine::Vision => "PH1.VISION",
+            OsOcrSourceEngine::Doc => "PH1.DOC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OsOcrAnalyzerForwardBundle {
+    Vision(VisionForwardBundle),
+    Doc(DocForwardBundle),
+}
+
+impl OsOcrAnalyzerForwardBundle {
+    pub fn validate(&self) -> Result<(), ContractViolation> {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(bundle) => bundle.validate(),
+            OsOcrAnalyzerForwardBundle::Doc(bundle) => bundle.validate(),
+        }
+    }
+
+    pub fn correlation_id(&self) -> CorrelationId {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(bundle) => bundle.correlation_id,
+            OsOcrAnalyzerForwardBundle::Doc(bundle) => bundle.correlation_id,
+        }
+    }
+
+    pub fn turn_id(&self) -> TurnId {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(bundle) => bundle.turn_id,
+            OsOcrAnalyzerForwardBundle::Doc(bundle) => bundle.turn_id,
+        }
+    }
+
+    fn source_engine(&self) -> OsOcrSourceEngine {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(_) => OsOcrSourceEngine::Vision,
+            OsOcrAnalyzerForwardBundle::Doc(_) => OsOcrSourceEngine::Doc,
+        }
+    }
+
+    fn input_payload_kind(&self) -> Ph1dProviderInputPayloadKind {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(_) => Ph1dProviderInputPayloadKind::Image,
+            OsOcrAnalyzerForwardBundle::Doc(_) => Ph1dProviderInputPayloadKind::Document,
+        }
+    }
+
+    fn input_payload_ref(&self) -> String {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(bundle) => {
+                format!("ocr:vision:{}", bundle.source_ref.source_id.as_str())
+            }
+            OsOcrAnalyzerForwardBundle::Doc(bundle) => {
+                format!("ocr:doc:{}", bundle.source_ref.source_id.as_str())
+            }
+        }
+    }
+
+    fn input_payload_inline(&self) -> String {
+        match self {
+            OsOcrAnalyzerForwardBundle::Vision(bundle) => vision_ocr_payload(bundle).to_string(),
+            OsOcrAnalyzerForwardBundle::Doc(bundle) => doc_ocr_payload(bundle).to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1OsOcrRouteConfig {
+    pub route_enabled: bool,
+    pub tenant_id: String,
+    pub provider_route_class: Ph1dProviderRouteClass,
+    pub provider_id: String,
+    pub model_id: String,
+    pub timeout_ms: u32,
+    pub retry_budget: u8,
+    pub min_provider_confidence_bp: u16,
+    pub safety_tier: SafetyTier,
+    pub privacy_mode: bool,
+    pub do_not_disturb: bool,
+}
+
+impl Ph1OsOcrRouteConfig {
+    pub fn openai_default() -> Self {
+        Self {
+            route_enabled: true,
+            tenant_id: "tenant_default".to_string(),
+            provider_route_class: Ph1dProviderRouteClass::Primary,
+            provider_id: "openai".to_string(),
+            model_id: std::env::var("PH1D_OPENAI_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            timeout_ms: 15_000,
+            retry_budget: 1,
+            min_provider_confidence_bp: 0,
+            safety_tier: SafetyTier::Standard,
+            privacy_mode: false,
+            do_not_disturb: false,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ContractViolation> {
+        if self.tenant_id.trim().is_empty()
+            || self.tenant_id.len() > 128
+            || !is_provider_token(&self.tenant_id)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.tenant_id",
+                reason: "must be non-empty provider token and <= 128 chars",
+            });
+        }
+        if self.provider_id.trim().is_empty()
+            || self.provider_id.len() > 64
+            || !is_provider_token(&self.provider_id)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.provider_id",
+                reason: "must be non-empty provider token and <= 64 chars",
+            });
+        }
+        if self.model_id.trim().is_empty()
+            || self.model_id.len() > 128
+            || !is_provider_token(&self.model_id)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.model_id",
+                reason: "must be non-empty provider token and <= 128 chars",
+            });
+        }
+        if !(100..=60_000).contains(&self.timeout_ms) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.timeout_ms",
+                reason: "must be within 100..=60000",
+            });
+        }
+        if self.retry_budget > 10 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.retry_budget",
+                reason: "must be <= 10",
+            });
+        }
+        if self.min_provider_confidence_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_route_config.min_provider_confidence_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OsOcrProviderForwardBundle {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub source_engine: OsOcrSourceEngine,
+    pub provider_call: Ph1dProviderCallResponse,
+    pub extracted_text: String,
+}
+
+impl OsOcrProviderForwardBundle {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        source_engine: OsOcrSourceEngine,
+        provider_call: Ph1dProviderCallResponse,
+        extracted_text: String,
+    ) -> Result<Self, ContractViolation> {
+        let bundle = Self {
+            correlation_id,
+            turn_id,
+            source_engine,
+            provider_call,
+            extracted_text,
+        };
+        bundle.validate()?;
+        Ok(bundle)
+    }
+}
+
+impl Validate for OsOcrProviderForwardBundle {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        self.provider_call.validate()?;
+        if u128::from(self.provider_call.correlation_id) != self.correlation_id.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.provider_call.correlation_id",
+                reason: "must match os_ocr_provider_forward_bundle.correlation_id",
+            });
+        }
+        if self.provider_call.turn_id != self.turn_id.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.provider_call.turn_id",
+                reason: "must match os_ocr_provider_forward_bundle.turn_id",
+            });
+        }
+        if !matches!(
+            self.provider_call.provider_task,
+            Ph1dProviderTask::OcrTextExtract
+        ) {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.provider_call.provider_task",
+                reason: "must be OCR_TEXT_EXTRACT",
+            });
+        }
+        if self.provider_call.provider_status != Ph1dProviderStatus::Ok
+            || self.provider_call.validation_status != Ph1dProviderValidationStatus::SchemaOk
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.provider_call.validation_status",
+                reason: "provider call must be provider_status=OK and validation_status=SCHEMA_OK",
+            });
+        }
+        if self.extracted_text.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.extracted_text",
+                reason: "must not be empty",
+            });
+        }
+        if self.extracted_text.len() > 65_536 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_provider_forward_bundle.extracted_text",
+                reason: "must be <= 65536 chars",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OsOcrRouteOutcome {
+    NotInvokedDisabled,
+    Refused(OsRefuse),
+    Forwarded(OsOcrProviderForwardBundle),
+}
+
+#[derive(Debug, Clone)]
+pub struct Ph1OsOcrRouteWiring<A>
+where
+    A: Ph1dProviderAdapter,
+{
+    config: Ph1OsOcrRouteConfig,
+    adapter: A,
+}
+
+impl<A> Ph1OsOcrRouteWiring<A>
+where
+    A: Ph1dProviderAdapter,
+{
+    pub fn new(config: Ph1OsOcrRouteConfig, adapter: A) -> Result<Self, ContractViolation> {
+        config.validate()?;
+        Ok(Self { config, adapter })
+    }
+
+    pub fn run_handoff(
+        &self,
+        analyzer_bundle: &OsOcrAnalyzerForwardBundle,
+    ) -> Result<OsOcrRouteOutcome, ContractViolation> {
+        if !self.config.route_enabled {
+            return Ok(OsOcrRouteOutcome::NotInvokedDisabled);
+        }
+
+        if analyzer_bundle.validate().is_err() {
+            return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_INVALID_INPUT,
+                "ocr route input failed analyzer contract validation".to_string(),
+            )?));
+        }
+
+        let source_engine = analyzer_bundle.source_engine();
+        let provider_req = build_ocr_provider_request(&self.config, analyzer_bundle)?;
+        let provider_resp = match self.adapter.execute(&provider_req) {
+            Ok(resp) => resp,
+            Err(Ph1dProviderAdapterError { .. }) => {
+                return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_ERROR,
+                    "ocr provider transport/adapter error".to_string(),
+                )?))
+            }
+        };
+
+        if provider_resp.validate().is_err()
+            || provider_resp.correlation_id != provider_req.correlation_id
+            || provider_resp.turn_id != provider_req.turn_id
+            || provider_resp.request_id != provider_req.request_id
+            || provider_resp.idempotency_key != provider_req.idempotency_key
+            || provider_resp.provider_task != provider_req.provider_task
+        {
+            return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED,
+                "ocr provider response failed contract/idempotency validation".to_string(),
+            )?));
+        }
+
+        if provider_resp.provider_status != Ph1dProviderStatus::Ok
+            || provider_resp.validation_status != Ph1dProviderValidationStatus::SchemaOk
+        {
+            return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED,
+                "ocr provider response must be provider_status=OK and validation_status=SCHEMA_OK"
+                    .to_string(),
+            )?));
+        }
+
+        if self.config.min_provider_confidence_bp > 0 {
+            let Some(confidence_bp) = provider_resp.provider_confidence_bp else {
+                return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_LOW_CONFIDENCE,
+                    "ocr provider confidence missing under active confidence floor".to_string(),
+                )?));
+            };
+            if confidence_bp < self.config.min_provider_confidence_bp {
+                return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_LOW_CONFIDENCE,
+                    "ocr provider confidence below policy floor".to_string(),
+                )?));
+            }
+        }
+
+        let extracted_text = provider_resp
+            .normalized_output_json
+            .as_deref()
+            .and_then(extract_ocr_text_from_normalized_json);
+        let Some(extracted_text) = extracted_text else {
+            return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED,
+                "ocr provider normalized output missing extractable text".to_string(),
+            )?));
+        };
+
+        let bundle = OsOcrProviderForwardBundle::v1(
+            analyzer_bundle.correlation_id(),
+            analyzer_bundle.turn_id(),
+            source_engine,
+            provider_resp,
+            extracted_text,
+        )?;
+        Ok(OsOcrRouteOutcome::Forwarded(bundle))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1OsOcrContextNlpConfig {
+    pub bridge_enabled: bool,
+    pub context_intent_type: String,
+    pub context_source_engine_id: String,
+    pub context_rank_score_bp: i16,
+    pub context_sensitivity_private: bool,
+    pub max_ocr_append_chars: u16,
+    pub high_confidence_min_bp: u16,
+    pub medium_confidence_min_bp: u16,
+    pub missing_provider_confidence_band: OsOcrConfidenceBand,
+    pub medium_confidence_requires_clarify: bool,
+    pub low_confidence_requires_clarify: bool,
+}
+
+impl Ph1OsOcrContextNlpConfig {
+    pub fn mvp_v1() -> Self {
+        Self {
+            bridge_enabled: true,
+            context_intent_type: "OCR_TEXT_EXTRACT".to_string(),
+            context_source_engine_id: "PH1.D".to_string(),
+            context_rank_score_bp: 1500,
+            context_sensitivity_private: true,
+            max_ocr_append_chars: 2048,
+            high_confidence_min_bp: 8500,
+            medium_confidence_min_bp: 5500,
+            missing_provider_confidence_band: OsOcrConfidenceBand::Medium,
+            medium_confidence_requires_clarify: false,
+            low_confidence_requires_clarify: true,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ContractViolation> {
+        if self.context_intent_type.trim().is_empty()
+            || self.context_intent_type.len() > 96
+            || self.context_intent_type.chars().any(|c| c.is_control())
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.context_intent_type",
+                reason: "must be non-empty, <= 96 chars, and contain no control chars",
+            });
+        }
+        if !is_engine_id_token(&self.context_source_engine_id) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.context_source_engine_id",
+                reason: "must be ASCII [A-Z0-9._] and <= 64 chars",
+            });
+        }
+        if !(-20_000..=20_000).contains(&self.context_rank_score_bp) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.context_rank_score_bp",
+                reason: "must be within -20000..=20000",
+            });
+        }
+        if self.max_ocr_append_chars == 0 || self.max_ocr_append_chars > 8192 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.max_ocr_append_chars",
+                reason: "must be within 1..=8192",
+            });
+        }
+        if self.high_confidence_min_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.high_confidence_min_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if self.medium_confidence_min_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.medium_confidence_min_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if self.medium_confidence_min_bp > self.high_confidence_min_bp {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1os_ocr_context_nlp_config.medium_confidence_min_bp",
+                reason: "must be <= high_confidence_min_bp",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OsOcrConfidenceBand {
+    High,
+    Medium,
+    Low,
+}
+
+impl OsOcrConfidenceBand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OsOcrConfidenceBand::High => "HIGH",
+            OsOcrConfidenceBand::Medium => "MEDIUM",
+            OsOcrConfidenceBand::Low => "LOW",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OsOcrContextNlpForwardBundle {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub ocr_provider_bundle: OsOcrProviderForwardBundle,
+    pub confidence_band: OsOcrConfidenceBand,
+    pub clarify_policy_required: bool,
+    pub context_bundle: ContextForwardBundle,
+    pub nlp_output: Ph1nResponse,
+    pub nlp_fail_closed: bool,
+}
+
+impl OsOcrContextNlpForwardBundle {
+    pub fn v1(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        ocr_provider_bundle: OsOcrProviderForwardBundle,
+        confidence_band: OsOcrConfidenceBand,
+        clarify_policy_required: bool,
+        context_bundle: ContextForwardBundle,
+        nlp_output: Ph1nResponse,
+        nlp_fail_closed: bool,
+    ) -> Result<Self, ContractViolation> {
+        let bundle = Self {
+            correlation_id,
+            turn_id,
+            ocr_provider_bundle,
+            confidence_band,
+            clarify_policy_required,
+            context_bundle,
+            nlp_output,
+            nlp_fail_closed,
+        };
+        bundle.validate()?;
+        Ok(bundle)
+    }
+}
+
+impl Validate for OsOcrContextNlpForwardBundle {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.correlation_id.validate()?;
+        self.turn_id.validate()?;
+        self.ocr_provider_bundle.validate()?;
+        self.context_bundle.validate()?;
+        if self.ocr_provider_bundle.correlation_id != self.correlation_id
+            || self.ocr_provider_bundle.turn_id != self.turn_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_context_nlp_forward_bundle.ocr_provider_bundle",
+                reason: "correlation/turn must match top-level bundle",
+            });
+        }
+        if self.context_bundle.correlation_id != self.correlation_id
+            || self.context_bundle.turn_id != self.turn_id
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_context_nlp_forward_bundle.context_bundle",
+                reason: "correlation/turn must match top-level bundle",
+            });
+        }
+        validate_nlp_response(&self.nlp_output)?;
+        if self.clarify_policy_required && !matches!(self.nlp_output, Ph1nResponse::Clarify(_)) {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ocr_context_nlp_forward_bundle.nlp_output",
+                reason: "must be clarify when clarify_policy_required=true",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum OsOcrContextNlpOutcome {
+    NotInvokedDisabled,
+    Refused(OsRefuse),
+    Forwarded(OsOcrContextNlpForwardBundle),
+}
+
+#[derive(Debug, Clone)]
+pub struct Ph1OsOcrContextNlpWiring<CE, NE>
+where
+    CE: Ph1ContextEngine,
+    NE: Ph1nEngine,
+{
+    config: Ph1OsOcrContextNlpConfig,
+    context_wiring: Ph1ContextWiring<CE>,
+    nlp_wiring: Ph1nWiring<NE>,
+}
+
+impl<CE, NE> Ph1OsOcrContextNlpWiring<CE, NE>
+where
+    CE: Ph1ContextEngine,
+    NE: Ph1nEngine,
+{
+    pub fn new(
+        config: Ph1OsOcrContextNlpConfig,
+        context_wiring: Ph1ContextWiring<CE>,
+        nlp_wiring: Ph1nWiring<NE>,
+    ) -> Result<Self, ContractViolation> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            context_wiring,
+            nlp_wiring,
+        })
+    }
+
+    pub fn run_handoff(
+        &self,
+        ocr_bundle: &OsOcrProviderForwardBundle,
+        base_nlp_request: &Ph1nRequest,
+    ) -> Result<OsOcrContextNlpOutcome, ContractViolation> {
+        base_nlp_request.validate()?;
+
+        if !self.config.bridge_enabled {
+            return Ok(OsOcrContextNlpOutcome::NotInvokedDisabled);
+        }
+
+        if ocr_bundle.validate().is_err() {
+            return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_INVALID_INPUT,
+                "ocr->context/nlp handoff requires a validated OCR provider bundle".to_string(),
+            )?));
+        }
+        let confidence_band = classify_ocr_confidence_band(&self.config, ocr_bundle);
+        let clarify_policy_required =
+            confidence_band_requires_clarify(&self.config, confidence_band);
+
+        let context_input = match build_context_turn_input_from_ocr(&self.config, ocr_bundle) {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_INVALID_INPUT,
+                    "failed to construct context input from OCR bundle".to_string(),
+                )?))
+            }
+        };
+
+        let context_bundle = match self.context_wiring.run_turn(&context_input)? {
+            ContextWiringOutcome::NotInvokedDisabled => {
+                return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_CONTEXT_REFUSED,
+                    "context wiring disabled during OCR handoff".to_string(),
+                )?))
+            }
+            ContextWiringOutcome::NotInvokedNoContextInput => {
+                return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_CONTEXT_REFUSED,
+                    "context wiring produced no context input during OCR handoff".to_string(),
+                )?))
+            }
+            ContextWiringOutcome::Refused(refuse) => {
+                return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_CONTEXT_REFUSED,
+                    format!(
+                        "context wiring refused OCR handoff (reason_code={:?})",
+                        refuse.reason_code
+                    ),
+                )?))
+            }
+            ContextWiringOutcome::Forwarded(bundle) => bundle,
+        };
+
+        let nlp_request =
+            match build_nlp_request_from_ocr(&self.config, base_nlp_request, ocr_bundle) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                        reason_codes::PH1_OS_OCR_ROUTE_NLP_INPUT_INVALID,
+                        "failed to construct NLP request from OCR bundle".to_string(),
+                    )?))
+                }
+            };
+
+        let (nlp_output, nlp_fail_closed) = match self.nlp_wiring.run_turn(&nlp_request)? {
+            Ph1nWiringOutcome::NotInvokedDisabled => {
+                return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                    reason_codes::PH1_OS_OCR_ROUTE_NLP_REFUSED,
+                    "NLP wiring disabled during OCR handoff".to_string(),
+                )?))
+            }
+            Ph1nWiringOutcome::Refused(resp) => (resp, true),
+            Ph1nWiringOutcome::Forwarded(resp) => (resp, false),
+        };
+        if clarify_policy_required && !matches!(nlp_output, Ph1nResponse::Clarify(_)) {
+            return Ok(OsOcrContextNlpOutcome::Refused(os_ocr_refuse(
+                reason_codes::PH1_OS_OCR_ROUTE_CLARIFY_POLICY_BLOCK,
+                format!(
+                    "OCR confidence band {} requires PH1.NLP clarify output",
+                    confidence_band.as_str()
+                ),
+            )?));
+        }
+
+        let bundle = OsOcrContextNlpForwardBundle::v1(
+            ocr_bundle.correlation_id,
+            ocr_bundle.turn_id,
+            ocr_bundle.clone(),
+            confidence_band,
+            clarify_policy_required,
+            context_bundle,
+            nlp_output,
+            nlp_fail_closed,
+        )?;
+        Ok(OsOcrContextNlpOutcome::Forwarded(bundle))
+    }
+}
+
+fn classify_ocr_confidence_band(
+    config: &Ph1OsOcrContextNlpConfig,
+    ocr_bundle: &OsOcrProviderForwardBundle,
+) -> OsOcrConfidenceBand {
+    match ocr_bundle.provider_call.provider_confidence_bp {
+        Some(confidence_bp) if confidence_bp >= config.high_confidence_min_bp => {
+            OsOcrConfidenceBand::High
+        }
+        Some(confidence_bp) if confidence_bp >= config.medium_confidence_min_bp => {
+            OsOcrConfidenceBand::Medium
+        }
+        Some(_) => OsOcrConfidenceBand::Low,
+        None => config.missing_provider_confidence_band,
+    }
+}
+
+fn confidence_band_requires_clarify(
+    config: &Ph1OsOcrContextNlpConfig,
+    confidence_band: OsOcrConfidenceBand,
+) -> bool {
+    match confidence_band {
+        OsOcrConfidenceBand::High => false,
+        OsOcrConfidenceBand::Medium => config.medium_confidence_requires_clarify,
+        OsOcrConfidenceBand::Low => config.low_confidence_requires_clarify,
+    }
+}
+
+fn build_context_turn_input_from_ocr(
+    config: &Ph1OsOcrContextNlpConfig,
+    ocr_bundle: &OsOcrProviderForwardBundle,
+) -> Result<ContextTurnInput, ContractViolation> {
+    let source_kind = match ocr_bundle.source_engine {
+        OsOcrSourceEngine::Vision => {
+            selene_kernel_contracts::ph1context::ContextSourceKind::VisionEvidence
+        }
+        OsOcrSourceEngine::Doc => {
+            selene_kernel_contracts::ph1context::ContextSourceKind::DocEvidence
+        }
+    };
+    let item_hash_seed = format!(
+        "ocr_ctx:{}:{}:{}:{}",
+        ocr_bundle.correlation_id.0,
+        ocr_bundle.turn_id.0,
+        ocr_bundle.source_engine.as_engine_id(),
+        ocr_bundle.extracted_text
+    );
+    let item_hash = stable_nonzero_hash_u64(item_hash_seed.as_bytes());
+    let item_id = format!("ocr_ctx_{item_hash:016x}");
+    let content_ref = format!("ocr_content:{item_hash:016x}");
+    let provider_call_ref = ocr_bundle
+        .provider_call
+        .provider_call_id
+        .as_deref()
+        .unwrap_or("provider_call_unknown");
+    let evidence_ref = format!("ocr_evidence:{provider_call_ref}");
+    let source_item = selene_kernel_contracts::ph1context::ContextSourceItem::v1(
+        item_id,
+        config.context_source_engine_id.clone(),
+        source_kind,
+        config.context_rank_score_bp,
+        content_ref,
+        evidence_ref,
+        config.context_sensitivity_private,
+    )?;
+    ContextTurnInput::v1(
+        ocr_bundle.correlation_id,
+        ocr_bundle.turn_id,
+        config.context_intent_type.clone(),
+        config.context_sensitivity_private,
+        vec![source_item],
+        true,
+        true,
+    )
+}
+
+fn build_nlp_request_from_ocr(
+    config: &Ph1OsOcrContextNlpConfig,
+    base_nlp_request: &Ph1nRequest,
+    ocr_bundle: &OsOcrProviderForwardBundle,
+) -> Result<Ph1nRequest, ContractViolation> {
+    let ocr_text = ocr_bundle.extracted_text.trim();
+    if ocr_text.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1os_ocr_context_nlp.nlp_input.ocr_text",
+            reason: "must not be empty",
+        });
+    }
+    if ocr_text.chars().count() > config.max_ocr_append_chars as usize {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1os_ocr_context_nlp.nlp_input.ocr_text",
+            reason: "exceeds max_ocr_append_chars",
+        });
+    }
+
+    let source_label = match ocr_bundle.source_engine {
+        OsOcrSourceEngine::Vision => "VISION",
+        OsOcrSourceEngine::Doc => "DOC",
+    };
+    let mut merged_transcript = base_nlp_request.transcript_ok.transcript_text.clone();
+    if !merged_transcript
+        .chars()
+        .last()
+        .map(char::is_whitespace)
+        .unwrap_or(false)
+    {
+        merged_transcript.push(' ');
+    }
+    merged_transcript.push_str("[OCR:");
+    merged_transcript.push_str(source_label);
+    merged_transcript.push_str("] ");
+    merged_transcript.push_str(ocr_text);
+
+    let merged_transcript_ok = TranscriptOk::v1_with_metadata(
+        merged_transcript,
+        base_nlp_request.transcript_ok.language_tag.clone(),
+        base_nlp_request.transcript_ok.confidence_bucket,
+        base_nlp_request.transcript_ok.uncertain_spans.clone(),
+        base_nlp_request.transcript_ok.audit_meta.clone(),
+    )?;
+
+    let mut nlp_request = base_nlp_request.clone();
+    nlp_request.transcript_ok = merged_transcript_ok;
+    nlp_request.validate()?;
+    Ok(nlp_request)
+}
+
+fn validate_nlp_response(resp: &Ph1nResponse) -> Result<(), ContractViolation> {
+    match resp {
+        Ph1nResponse::IntentDraft(v) => v.validate(),
+        Ph1nResponse::Clarify(v) => v.validate(),
+        Ph1nResponse::Chat(v) => v.validate(),
+    }
+}
+
+fn build_ocr_provider_request(
+    config: &Ph1OsOcrRouteConfig,
+    analyzer_bundle: &OsOcrAnalyzerForwardBundle,
+) -> Result<Ph1dProviderCallRequest, ContractViolation> {
+    let correlation_id_u64 = u64::try_from(analyzer_bundle.correlation_id().0).map_err(|_| {
+        ContractViolation::InvalidValue {
+            field: "ph1os_ocr_route.correlation_id",
+            reason: "must fit in u64 for PH1.D provider call envelope",
+        }
+    })?;
+    let payload_ref = analyzer_bundle.input_payload_ref();
+    let payload_inline = analyzer_bundle.input_payload_inline();
+    let payload_hash = stable_schema_hash(payload_inline.as_bytes());
+    let request_hash_seed = format!(
+        "ph1os_ocr:req:{}:{}:{}:{:016x}",
+        analyzer_bundle.source_engine().as_engine_id(),
+        analyzer_bundle.correlation_id().0,
+        analyzer_bundle.turn_id().0,
+        payload_hash.0
+    );
+    let request_id = RequestId(stable_nonzero_hash_u64(request_hash_seed.as_bytes()));
+    let idem_seed = format!(
+        "ph1os_ocr:idem:{}:{}:{}:{:016x}",
+        analyzer_bundle.source_engine().as_engine_id(),
+        analyzer_bundle.correlation_id().0,
+        analyzer_bundle.turn_id().0,
+        payload_hash.0
+    );
+    let idempotency_key = format!(
+        "ph1os_ocr:{:016x}",
+        stable_nonzero_hash_u64(idem_seed.as_bytes())
+    );
+
+    let policy_seed = format!(
+        "{}:{}:{}",
+        config.safety_tier as u8, config.privacy_mode, config.do_not_disturb
+    );
+
+    Ph1dProviderCallRequest::v1(
+        correlation_id_u64,
+        analyzer_bundle.turn_id().0,
+        config.tenant_id.clone(),
+        request_id,
+        idempotency_key,
+        Ph1dProviderTask::OcrTextExtract,
+        config.provider_route_class,
+        config.provider_id.clone(),
+        config.model_id.clone(),
+        config.timeout_ms,
+        config.retry_budget,
+        None,
+        None,
+        SchemaVersion(1),
+        stable_schema_hash(b"ph1d_ocr_output_schema_v1"),
+        stable_schema_hash(b"ph1os_ocr_tool_catalog_none"),
+        stable_schema_hash(policy_seed.as_bytes()),
+        None,
+        payload_ref,
+        analyzer_bundle.input_payload_kind(),
+        payload_hash,
+        Some(payload_inline),
+        Some("application/json".to_string()),
+        config.safety_tier,
+        config.privacy_mode,
+        config.do_not_disturb,
+    )
+}
+
+fn os_ocr_refuse(
+    reason_code: selene_kernel_contracts::ReasonCodeId,
+    reason: String,
+) -> Result<OsRefuse, ContractViolation> {
+    OsRefuse::v1(OsCapabilityId::OsDecisionCompute, reason_code, reason)
+}
+
+fn extract_ocr_text_from_normalized_json(json_text: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(json_text).ok()?;
+
+    if let Some(text) = value.get("ocr_text").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(text) = value.get("text").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(text) = value.get("short_analysis").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(lines) = value.get("lines").and_then(Value::as_array) {
+        let joined = lines
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !joined.is_empty() {
+            return Some(joined);
+        }
+    }
+    None
+}
+
+fn vision_ocr_payload(bundle: &VisionForwardBundle) -> Value {
+    json!({
+        "source_engine": "PH1.VISION",
+        "source_ref": {
+            "source_id": bundle.source_ref.source_id.as_str(),
+            "source_kind": visual_source_kind_label(bundle.source_ref.source_kind),
+        },
+        "visible_content_only": bundle.visible_content_only,
+        "evidence_items": bundle.evidence_items.iter().map(|item| {
+            let bbox = item.bbox.map(|b| {
+                json!({
+                    "x": b.x,
+                    "y": b.y,
+                    "w": b.w,
+                    "h": b.h
+                })
+            });
+            json!({
+                "text": item.text,
+                "bbox": bbox
+            })
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn doc_ocr_payload(bundle: &DocForwardBundle) -> Value {
+    json!({
+        "source_engine": "PH1.DOC",
+        "source_ref": {
+            "source_id": bundle.source_ref.source_id.as_str(),
+            "source_kind": document_source_kind_label(bundle.source_ref.source_kind),
+        },
+        "citation_validation_status": match bundle.citation_map.validation_status {
+            DocValidationStatus::Ok => "OK",
+            DocValidationStatus::Fail => "FAIL",
+        },
+        "evidence_backed_only": bundle.extract.evidence_backed_only && bundle.citation_map.evidence_backed_only,
+        "evidence_items": bundle.extract.evidence_items.iter().map(|item| {
+            json!({
+                "evidence_id": item.evidence_id.as_str(),
+                "segment_id": item.segment_id.as_str(),
+                "page_index": item.page_index,
+                "text": item.text
+            })
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn visual_source_kind_label(kind: VisualSourceKind) -> &'static str {
+    match kind {
+        VisualSourceKind::Image => "IMAGE",
+        VisualSourceKind::Screenshot => "SCREENSHOT",
+        VisualSourceKind::Diagram => "DIAGRAM",
+    }
+}
+
+fn document_source_kind_label(kind: DocumentSourceKind) -> &'static str {
+    match kind {
+        DocumentSourceKind::Pdf => "PDF",
+        DocumentSourceKind::Word => "WORD",
+        DocumentSourceKind::Html => "HTML",
+        DocumentSourceKind::Scan => "SCAN",
+    }
+}
+
+fn stable_schema_hash(bytes: &[u8]) -> SchemaHash {
+    SchemaHash(stable_nonzero_hash_u64(bytes))
+}
+
+fn stable_nonzero_hash_u64(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
+}
+
+fn is_provider_token(value: &str) -> bool {
+    value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ':' | '/'))
+}
+
 fn voice_identity_runtime_context(
     voice_context: OsVoiceTurnContext,
     tenant_id: Option<String>,
@@ -1632,9 +2821,33 @@ fn is_engine_id_token(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ph1doc::DocForwardBundle;
+    use crate::ph1vision::VisionForwardBundle;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+    use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
+    };
+    use selene_kernel_contracts::ph1c::{
+        ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk as NlpTranscriptOk,
+    };
+    use selene_kernel_contracts::ph1context::{
+        ContextBundleBuildOk, ContextBundleItem, ContextBundleTrimOk, ContextSourceKind,
+        ContextValidationStatus, Ph1ContextRequest, Ph1ContextResponse,
+    };
+    use selene_kernel_contracts::ph1d::{
+        Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderInputPayloadKind,
+        Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus, SchemaHash,
+    };
+    use selene_kernel_contracts::ph1doc::{
+        DocCitationMapBuildOk, DocEvidenceExtractOk, DocEvidenceId, DocEvidenceItem,
+        DocValidationStatus, DocumentSegmentId, DocumentSourceId, DocumentSourceKind,
+        DocumentSourceRef,
+    };
+    use selene_kernel_contracts::ph1feedback::{
+        FeedbackConfidenceBucket, FeedbackEventCollectOk, FeedbackEventRecord, FeedbackEventType,
+        FeedbackMetrics, FeedbackSignalCandidate, FeedbackSignalEmitOk, FeedbackSignalTarget,
+        FeedbackToolStatus, FeedbackValidationStatus,
     };
     use selene_kernel_contracts::ph1j::{AuditEngine, DeviceId, PayloadKey};
     use selene_kernel_contracts::ph1k::{
@@ -1642,7 +2855,21 @@ mod tests {
         Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+    use selene_kernel_contracts::ph1learn::{
+        LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnArtifactTarget, LearnScope,
+        LearnSignal, LearnSignalAggregateOk, LearnSignalType, LearnTargetEngine,
+        LearnValidationStatus,
+    };
+    use selene_kernel_contracts::ph1n::{Chat, Ph1nRequest, Ph1nResponse};
     use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
+    use selene_kernel_contracts::ph1pae::{
+        PaeAdaptationHint, PaeAdaptationHintEmitOk, PaeMode, PaePolicyCandidate,
+        PaePolicyScoreBuildOk, PaeProviderSlot, PaeRouteDomain, PaeScoreEntry, PaeSignalSource,
+        PaeSignalVector, PaeTargetEngine, PaeValidationStatus,
+    };
+    use selene_kernel_contracts::ph1vision::{
+        VisionEvidenceItem, VisualSourceId, VisualSourceKind, VisualSourceRef,
+    };
     use selene_kernel_contracts::ReasonCodeId;
     use selene_kernel_contracts::{MonotonicTimeNs, SessionState};
     use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore};
@@ -2829,5 +4056,994 @@ mod tests {
         assert_ne!(key_a, key_c);
         assert_ne!(key_a, key_d);
         assert!(key_a.len() <= 192);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum OcrAdapterMode {
+        SchemaOk,
+        SchemaFail,
+        MediumConfidence,
+        LowConfidence,
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordingOcrAdapter {
+        mode: OcrAdapterMode,
+        seen_requests: Rc<RefCell<Vec<Ph1dProviderCallRequest>>>,
+    }
+
+    impl RecordingOcrAdapter {
+        fn new(mode: OcrAdapterMode) -> Self {
+            Self {
+                mode,
+                seen_requests: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+    }
+
+    impl Ph1dProviderAdapter for RecordingOcrAdapter {
+        fn execute(
+            &self,
+            req: &Ph1dProviderCallRequest,
+        ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
+            self.seen_requests.borrow_mut().push(req.clone());
+
+            let (validation_status, normalized_output_json, confidence_bp, reason_code) =
+                match self.mode {
+                    OcrAdapterMode::SchemaOk => (
+                        Ph1dProviderValidationStatus::SchemaOk,
+                        Some(r#"{"ocr_text":"invoice total due 123.45"}"#.to_string()),
+                        Some(9100),
+                        ReasonCodeId(0x4F53_3301),
+                    ),
+                    OcrAdapterMode::SchemaFail => (
+                        Ph1dProviderValidationStatus::SchemaFail,
+                        None,
+                        Some(9100),
+                        ReasonCodeId(0x4F53_3302),
+                    ),
+                    OcrAdapterMode::MediumConfidence => (
+                        Ph1dProviderValidationStatus::SchemaOk,
+                        Some(r#"{"ocr_text":"line item subtotal 77"}"#.to_string()),
+                        Some(6200),
+                        ReasonCodeId(0x4F53_3304),
+                    ),
+                    OcrAdapterMode::LowConfidence => (
+                        Ph1dProviderValidationStatus::SchemaOk,
+                        Some(r#"{"ocr_text":"possible subtotal 88"}"#.to_string()),
+                        Some(1200),
+                        ReasonCodeId(0x4F53_3303),
+                    ),
+                };
+
+            Ph1dProviderCallResponse::v1(
+                req.correlation_id,
+                req.turn_id,
+                req.request_id,
+                req.idempotency_key.clone(),
+                Some("provider_call_ocr_1".to_string()),
+                req.provider_id.clone(),
+                req.provider_task,
+                req.model_id.clone(),
+                Ph1dProviderStatus::Ok,
+                88,
+                0,
+                confidence_bp,
+                Some(SchemaHash(7001)),
+                normalized_output_json,
+                validation_status,
+                reason_code,
+            )
+            .map_err(|e| Ph1dProviderAdapterError::terminal(format!("{e:?}")))
+        }
+    }
+
+    fn sample_vision_forward_bundle() -> VisionForwardBundle {
+        let source_ref = VisualSourceRef::v1(
+            VisualSourceId::new("vision_src_1").unwrap(),
+            VisualSourceKind::Screenshot,
+        )
+        .unwrap();
+        VisionForwardBundle::v1(
+            CorrelationId(9901),
+            TurnId(1201),
+            source_ref,
+            vec![
+                VisionEvidenceItem::v1("Invoice #42".to_string(), None).unwrap(),
+                VisionEvidenceItem::v1("Total Due 123.45".to_string(), None).unwrap(),
+            ],
+            true,
+        )
+        .unwrap()
+    }
+
+    fn sample_doc_forward_bundle() -> DocForwardBundle {
+        let source_ref = DocumentSourceRef::v1(
+            DocumentSourceId::new("doc_src_1").unwrap(),
+            DocumentSourceKind::Scan,
+        )
+        .unwrap();
+        let evidence_items = vec![
+            DocEvidenceItem::v1(
+                DocEvidenceId::new("doc_ev_001").unwrap(),
+                DocumentSegmentId::new("seg_001").unwrap(),
+                Some(1),
+                "Invoice Number 42".to_string(),
+            )
+            .unwrap(),
+            DocEvidenceItem::v1(
+                DocEvidenceId::new("doc_ev_002").unwrap(),
+                DocumentSegmentId::new("seg_002").unwrap(),
+                Some(1),
+                "Subtotal 88".to_string(),
+            )
+            .unwrap(),
+        ];
+        let extract = DocEvidenceExtractOk::v1(
+            ReasonCodeId(0x444F_1101),
+            source_ref.clone(),
+            evidence_items,
+            true,
+        )
+        .unwrap();
+        let citation_map = DocCitationMapBuildOk::v1(
+            ReasonCodeId(0x444F_1102),
+            source_ref.clone(),
+            DocValidationStatus::Ok,
+            vec![],
+            true,
+        )
+        .unwrap();
+        DocForwardBundle::v1(
+            CorrelationId(9902),
+            TurnId(1202),
+            source_ref,
+            extract,
+            citation_map,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn at_os_23_ocr_handoff_routes_vision_bundle_through_ph1d_provider() {
+        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaOk);
+        let wiring =
+            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter.clone())
+                .unwrap();
+
+        let outcome = wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Vision(
+                sample_vision_forward_bundle(),
+            ))
+            .unwrap();
+        let OsOcrRouteOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected ocr route forwarded outcome");
+        };
+        assert_eq!(bundle.source_engine, OsOcrSourceEngine::Vision);
+        assert_eq!(
+            bundle.provider_call.provider_task,
+            Ph1dProviderTask::OcrTextExtract
+        );
+        assert_eq!(bundle.extracted_text, "invoice total due 123.45");
+
+        let seen = adapter.seen_requests.borrow();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].provider_task, Ph1dProviderTask::OcrTextExtract);
+        assert_eq!(
+            seen[0].input_payload_kind,
+            Ph1dProviderInputPayloadKind::Image
+        );
+        assert_eq!(seen[0].input_payload_ref, "ocr:vision:vision_src_1");
+        assert!(seen[0]
+            .input_payload_inline
+            .as_deref()
+            .expect("inline payload must be present")
+            .contains("\"source_engine\":\"PH1.VISION\""));
+    }
+
+    #[test]
+    fn at_os_24_ocr_handoff_routes_doc_bundle_through_ph1d_provider() {
+        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaOk);
+        let wiring =
+            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter.clone())
+                .unwrap();
+
+        let outcome = wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Doc(sample_doc_forward_bundle()))
+            .unwrap();
+        let OsOcrRouteOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected ocr route forwarded outcome");
+        };
+        assert_eq!(bundle.source_engine, OsOcrSourceEngine::Doc);
+        assert_eq!(
+            bundle.provider_call.provider_task,
+            Ph1dProviderTask::OcrTextExtract
+        );
+
+        let seen = adapter.seen_requests.borrow();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(
+            seen[0].input_payload_kind,
+            Ph1dProviderInputPayloadKind::Document
+        );
+        assert_eq!(seen[0].input_payload_ref, "ocr:doc:doc_src_1");
+        assert!(seen[0]
+            .input_payload_inline
+            .as_deref()
+            .expect("inline payload must be present")
+            .contains("\"source_engine\":\"PH1.DOC\""));
+    }
+
+    #[test]
+    fn at_os_25_ocr_handoff_fails_closed_on_provider_schema_drift() {
+        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaFail);
+        let wiring =
+            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
+
+        let outcome = wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Vision(
+                sample_vision_forward_bundle(),
+            ))
+            .unwrap();
+        let OsOcrRouteOutcome::Refused(refuse) = outcome else {
+            panic!("expected ocr route refusal");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED
+        );
+    }
+
+    #[test]
+    fn at_os_26_ocr_handoff_fails_closed_on_low_confidence() {
+        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::LowConfidence);
+        let mut config = Ph1OsOcrRouteConfig::openai_default();
+        config.min_provider_confidence_bp = 7000;
+        let wiring = Ph1OsOcrRouteWiring::new(config, adapter).unwrap();
+
+        let outcome = wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Doc(sample_doc_forward_bundle()))
+            .unwrap();
+        let OsOcrRouteOutcome::Refused(refuse) = outcome else {
+            panic!("expected ocr route refusal");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_LOW_CONFIDENCE
+        );
+    }
+
+    #[derive(Debug, Clone)]
+    struct OcrBridgeContextEngine;
+
+    impl Ph1ContextEngine for OcrBridgeContextEngine {
+        fn run(&self, req: &Ph1ContextRequest) -> Ph1ContextResponse {
+            match req {
+                Ph1ContextRequest::ContextBundleBuild(r) => {
+                    let mut ordered = r
+                        .source_items
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, src)| {
+                            ContextBundleItem::v1(
+                                src.item_id.clone(),
+                                src.source_engine.clone(),
+                                src.source_kind,
+                                (idx + 1) as u8,
+                                src.content_ref.clone(),
+                                src.evidence_ref.clone(),
+                                src.sensitivity_private,
+                            )
+                            .unwrap()
+                        })
+                        .collect::<Vec<_>>();
+                    ordered.sort_by(|a, b| a.item_id.cmp(&b.item_id));
+                    for (idx, item) in ordered.iter_mut().enumerate() {
+                        item.bundle_rank = (idx + 1) as u8;
+                    }
+                    let selected_item_ids = vec![ordered[0].item_id.clone()];
+                    Ph1ContextResponse::ContextBundleBuildOk(
+                        ContextBundleBuildOk::v1(
+                            ReasonCodeId(0x4358_2201),
+                            selected_item_ids,
+                            ordered,
+                            true,
+                            true,
+                            true,
+                        )
+                        .unwrap(),
+                    )
+                }
+                Ph1ContextRequest::ContextBundleTrim(_) => Ph1ContextResponse::ContextBundleTrimOk(
+                    ContextBundleTrimOk::v1(
+                        ReasonCodeId(0x4358_2202),
+                        ContextValidationStatus::Ok,
+                        vec![],
+                        true,
+                        true,
+                        true,
+                        true,
+                    )
+                    .unwrap(),
+                ),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum OcrBridgeNlpMode {
+        Chat,
+        EngineErrorFailClosed,
+    }
+
+    #[derive(Debug, Clone)]
+    struct RecordingNlpEngine {
+        mode: OcrBridgeNlpMode,
+        seen_requests: Rc<RefCell<Vec<Ph1nRequest>>>,
+    }
+
+    impl RecordingNlpEngine {
+        fn new(mode: OcrBridgeNlpMode) -> Self {
+            Self {
+                mode,
+                seen_requests: Rc::new(RefCell::new(Vec::new())),
+            }
+        }
+    }
+
+    impl Ph1nEngine for RecordingNlpEngine {
+        fn run(&self, req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+            self.seen_requests.borrow_mut().push(req.clone());
+            match self.mode {
+                OcrBridgeNlpMode::Chat => Ok(Ph1nResponse::Chat(
+                    Chat::v1("Acknowledged.".to_string(), ReasonCodeId(0x4E00_2201)).unwrap(),
+                )),
+                OcrBridgeNlpMode::EngineErrorFailClosed => Err(ContractViolation::InvalidValue {
+                    field: "ph1n_runtime",
+                    reason: "forced nlp failure for fail-closed validation",
+                }),
+            }
+        }
+    }
+
+    fn sample_ocr_provider_bundle_from_route_mode(
+        mode: OcrAdapterMode,
+    ) -> OsOcrProviderForwardBundle {
+        let adapter = RecordingOcrAdapter::new(mode);
+        let route_wiring =
+            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
+        let out = route_wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Vision(
+                sample_vision_forward_bundle(),
+            ))
+            .unwrap();
+        match out {
+            OsOcrRouteOutcome::Forwarded(bundle) => bundle,
+            _ => panic!("expected routed OCR forwarded bundle"),
+        }
+    }
+
+    fn sample_ocr_provider_bundle_from_route() -> OsOcrProviderForwardBundle {
+        sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::SchemaOk)
+    }
+
+    fn base_nlp_request_for_ocr() -> Ph1nRequest {
+        let transcript = NlpTranscriptOk::v1(
+            "show me the invoice status".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        Ph1nRequest::v1(transcript, SessionStateRef::v1(SessionState::Active, false)).unwrap()
+    }
+
+    #[test]
+    fn at_os_27_ocr_validated_output_feeds_context_and_nlp() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_engine = RecordingNlpEngine::new(OcrBridgeNlpMode::Chat);
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            nlp_engine.clone(),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let ocr_bundle = sample_ocr_provider_bundle_from_route();
+        let base_nlp_request = base_nlp_request_for_ocr();
+        let out = bridge.run_handoff(&ocr_bundle, &base_nlp_request).unwrap();
+        let OsOcrContextNlpOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded OCR->CONTEXT/NLP outcome");
+        };
+        assert!(!bundle.nlp_fail_closed);
+        assert_eq!(bundle.confidence_band, OsOcrConfidenceBand::High);
+        assert!(!bundle.clarify_policy_required);
+        assert!(matches!(bundle.nlp_output, Ph1nResponse::Chat(_)));
+        assert_eq!(
+            bundle
+                .context_bundle
+                .bundle_build
+                .ordered_bundle_items
+                .len(),
+            1
+        );
+        let item = &bundle.context_bundle.bundle_build.ordered_bundle_items[0];
+        assert_eq!(item.source_engine, "PH1.D");
+        assert_eq!(item.source_kind, ContextSourceKind::VisionEvidence);
+
+        let seen = nlp_engine.seen_requests.borrow();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0]
+            .transcript_ok
+            .transcript_text
+            .contains("[OCR:VISION]"));
+        assert!(seen[0]
+            .transcript_ok
+            .transcript_text
+            .contains("invoice total due 123.45"));
+    }
+
+    #[test]
+    fn at_os_28_ocr_context_nlp_fails_closed_when_context_disabled() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(false),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::Chat),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route(),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Refused(refuse) = out else {
+            panic!("expected refusal when context wiring is disabled");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_CONTEXT_REFUSED
+        );
+    }
+
+    #[test]
+    fn at_os_29_ocr_context_nlp_fails_closed_when_nlp_disabled() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(false),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::Chat),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route(),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Refused(refuse) = out else {
+            panic!("expected refusal when NLP wiring is disabled");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_NLP_REFUSED
+        );
+    }
+
+    #[test]
+    fn at_os_30_ocr_context_nlp_preserves_fail_closed_nlp_output() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::EngineErrorFailClosed),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route(),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded outcome with fail-closed NLP output");
+        };
+        assert!(bundle.nlp_fail_closed);
+        assert_eq!(bundle.confidence_band, OsOcrConfidenceBand::High);
+        assert!(matches!(bundle.nlp_output, Ph1nResponse::Clarify(_)));
+    }
+
+    #[test]
+    fn at_os_31_ocr_context_nlp_routes_medium_confidence_without_clarify_when_policy_allows() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::Chat),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::MediumConfidence),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded outcome under medium-confidence policy");
+        };
+        assert_eq!(bundle.confidence_band, OsOcrConfidenceBand::Medium);
+        assert!(!bundle.clarify_policy_required);
+        assert!(matches!(bundle.nlp_output, Ph1nResponse::Chat(_)));
+    }
+
+    #[test]
+    fn at_os_32_ocr_context_nlp_low_confidence_blocks_non_clarify_output() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::Chat),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::LowConfidence),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Refused(refuse) = out else {
+            panic!("expected clarify-policy refusal for low-confidence non-clarify output");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_CLARIFY_POLICY_BLOCK
+        );
+    }
+
+    #[test]
+    fn at_os_33_ocr_context_nlp_low_confidence_accepts_ph1_nlp_clarify() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            RecordingNlpEngine::new(OcrBridgeNlpMode::EngineErrorFailClosed),
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let out = bridge
+            .run_handoff(
+                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::LowConfidence),
+                &base_nlp_request_for_ocr(),
+            )
+            .unwrap();
+        let OsOcrContextNlpOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded low-confidence outcome when PH1.NLP returns clarify");
+        };
+        assert_eq!(bundle.confidence_band, OsOcrConfidenceBand::Low);
+        assert!(bundle.clarify_policy_required);
+        assert!(matches!(bundle.nlp_output, Ph1nResponse::Clarify(_)));
+    }
+
+    fn sample_self_heal_chain_input(
+        escalation_required: bool,
+        bcast_id: Option<&str>,
+    ) -> OsSelfHealChainInput {
+        let correlation_id = CorrelationId(44_001);
+        let turn_id = TurnId(17);
+
+        let feedback_event = FeedbackEventRecord::v1(
+            "feedback_event_1".to_string(),
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            correlation_id,
+            turn_id,
+            FeedbackEventType::ToolFail,
+            ReasonCodeId(0x4642_2001),
+            "evidence:selfheal:1".to_string(),
+            "idem_feedback_1".to_string(),
+            FeedbackMetrics::v1(
+                420,
+                1,
+                FeedbackConfidenceBucket::Low,
+                vec!["ocr_text".to_string()],
+                FeedbackToolStatus::Fail,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let feedback_bundle = FeedbackForwardBundle::v1(
+            correlation_id,
+            turn_id,
+            FeedbackEventCollectOk::v1(
+                ReasonCodeId(0x4642_2002),
+                "feedback_candidate_1".to_string(),
+                vec![FeedbackSignalCandidate::v1(
+                    "feedback_candidate_1".to_string(),
+                    FeedbackEventType::ToolFail,
+                    "tool_fail_rate".to_string(),
+                    FeedbackSignalTarget::LearnPackage,
+                    -220,
+                    12,
+                    "evidence:selfheal:1".to_string(),
+                )
+                .unwrap()],
+                true,
+                true,
+            )
+            .unwrap(),
+            FeedbackSignalEmitOk::v1(
+                ReasonCodeId(0x4642_2003),
+                FeedbackValidationStatus::Ok,
+                vec!["ok".to_string()],
+                true,
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let learn_turn_input = LearnTurnInput::v2(
+            correlation_id,
+            turn_id,
+            "tenant_1".to_string(),
+            vec![LearnSignal::v1(
+                "learn_signal_1".to_string(),
+                "tenant_1".to_string(),
+                LearnSignalType::ToolFail,
+                LearnScope::Tenant,
+                Some("tenant_1".to_string()),
+                "ocr_fail_rate".to_string(),
+                -180,
+                3,
+                false,
+                false,
+                false,
+                "evidence:selfheal:1".to_string(),
+            )
+            .unwrap()],
+            vec![LearnTargetEngine::Pae],
+            true,
+            true,
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+
+        let learn_bundle = LearnForwardBundle::v1(
+            correlation_id,
+            turn_id,
+            LearnSignalAggregateOk::v1(
+                ReasonCodeId(0x4C45_2001),
+                "artifact_1".to_string(),
+                vec![LearnArtifactCandidate::v1(
+                    "artifact_1".to_string(),
+                    LearnArtifactTarget::PaeRoutingWeights,
+                    LearnScope::Tenant,
+                    Some("tenant_1".to_string()),
+                    2,
+                    140,
+                    "prov:selfheal:1".to_string(),
+                    Some("artifact_prev".to_string()),
+                    true,
+                )
+                .unwrap()],
+                true,
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+            LearnArtifactPackageBuildOk::v1(
+                ReasonCodeId(0x4C45_2002),
+                LearnValidationStatus::Ok,
+                vec!["ok".to_string()],
+                vec![LearnTargetEngine::Pae],
+                true,
+                true,
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let pae_turn_input = PaeTurnInput::v1(
+            correlation_id,
+            turn_id,
+            "tenant_1".to_string(),
+            "device_profile_1".to_string(),
+            PaeMode::Shadow,
+            vec![PaeSignalVector::v1(
+                "pae_signal_1".to_string(),
+                PaeSignalSource::Learn,
+                PaeRouteDomain::Tooling,
+                "ocr_fail_rate".to_string(),
+                -160,
+                9_100,
+                true,
+                "evidence:selfheal:1".to_string(),
+            )
+            .unwrap()],
+            vec![PaePolicyCandidate::v1(
+                "candidate_1".to_string(),
+                PaeRouteDomain::Tooling,
+                PaeProviderSlot::Primary,
+                PaeMode::Assist,
+                220,
+                250,
+                120,
+                90,
+                180,
+                Some("artifact_1".to_string()),
+                None,
+            )
+            .unwrap()],
+            vec![PaeTargetEngine::Ph1C],
+            true,
+            100,
+            800,
+            3,
+            0,
+            true,
+        )
+        .unwrap();
+
+        let pae_bundle = PaeForwardBundle::v1(
+            correlation_id,
+            turn_id,
+            PaePolicyScoreBuildOk::v1(
+                ReasonCodeId(0x5041_2001),
+                "candidate_1".to_string(),
+                vec![PaeScoreEntry::v1(
+                    "candidate_1".to_string(),
+                    PaeRouteDomain::Tooling,
+                    PaeProviderSlot::Primary,
+                    PaeMode::Assist,
+                    1_950,
+                    2_300,
+                    100,
+                    80,
+                    70,
+                    180,
+                )
+                .unwrap()],
+                PaeMode::Assist,
+                true,
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+            PaeAdaptationHintEmitOk::v1(
+                ReasonCodeId(0x5041_2002),
+                PaeValidationStatus::Ok,
+                vec![],
+                vec![PaeTargetEngine::Ph1C],
+                vec![PaeAdaptationHint::v1(
+                    "hint_1".to_string(),
+                    PaeTargetEngine::Ph1C,
+                    PaeRouteDomain::Tooling,
+                    "routing_weight".to_string(),
+                    "shift_primary".to_string(),
+                    8_900,
+                    "prov:selfheal:1".to_string(),
+                )
+                .unwrap()],
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        OsSelfHealChainInput {
+            feedback_event,
+            feedback_bundle,
+            learn_turn_input,
+            learn_bundle,
+            pae_turn_input,
+            pae_bundle,
+            owner_engine: "PH1.OS".to_string(),
+            first_seen_at: MonotonicTimeNs(1_000),
+            last_seen_at: MonotonicTimeNs(2_000),
+            containment_action: FailureContainmentAction::FailClosedRefuse,
+            escalation_required,
+            unresolved_reason: if escalation_required {
+                Some("resolution not yet proven".to_string())
+            } else {
+                None
+            },
+            bcast_id: bcast_id.map(str::to_string),
+            provider_context: Some(
+                FailureProviderContext::v1(
+                    PaeRouteDomain::Tooling,
+                    PaeProviderSlot::Primary,
+                    Ph1dProviderTask::OcrTextExtract,
+                    12_000,
+                    95,
+                    false,
+                )
+                .unwrap(),
+            ),
+            governance_required: false,
+            governance_ticket_ref: None,
+            approved_by: None,
+            evaluated_at: MonotonicTimeNs(2_100),
+        }
+    }
+
+    #[test]
+    fn at_os_34_self_heal_chain_completeness_and_release_gate_pass() {
+        let input = sample_self_heal_chain_input(false, None);
+        let chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        assert_eq!(
+            chain.problem_card.latest_failure_id,
+            chain.failure_event.failure_id
+        );
+        assert_eq!(chain.fix_card.problem_id, chain.problem_card.problem_id);
+        assert_eq!(chain.promotion_decision.fix_id, chain.fix_card.fix_id);
+        check_self_heal_release_gate(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsSelfHealReleaseGateConfig::mvp_v1(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn at_os_35_self_heal_chain_fails_closed_on_feedback_correlation_mismatch() {
+        let mut input = sample_self_heal_chain_input(false, None);
+        input.feedback_bundle.correlation_id = CorrelationId(99_991);
+        let err = build_self_heal_chain_from_engine_outputs(&input)
+            .expect_err("correlation mismatch must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "map_feedback_event_to_failure_event.event.correlation_id"
+                );
+            }
+            _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_36_self_heal_chain_replay_is_deterministic() {
+        let input = sample_self_heal_chain_input(false, None);
+        let chain_a = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        let chain_b = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        assert_eq!(
+            chain_a.failure_event.fingerprint,
+            chain_b.failure_event.fingerprint
+        );
+        assert_eq!(
+            chain_a.problem_card.problem_id,
+            chain_b.problem_card.problem_id
+        );
+        assert_eq!(chain_a.fix_card.fix_id, chain_b.fix_card.fix_id);
+        assert_eq!(
+            chain_a.promotion_decision.decision_id,
+            chain_b.promotion_decision.decision_id
+        );
+    }
+
+    #[test]
+    fn at_os_37_self_heal_release_gate_blocks_escalation_without_bcast_proof() {
+        let input = sample_self_heal_chain_input(true, None);
+        let chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        let err = check_self_heal_release_gate(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsSelfHealReleaseGateConfig::mvp_v1(),
+        )
+        .expect_err("escalation without bcast_id must be blocked");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "check_self_heal_release_gate.problem_card.bcast_id");
+            }
+            _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_38_self_heal_release_gate_blocks_stale_decision_evidence() {
+        let input = sample_self_heal_chain_input(false, None);
+        let chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        let err = check_self_heal_release_gate(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsSelfHealReleaseGateConfig {
+                max_problem_age_ns: 500,
+                max_decision_age_ns: 50,
+            },
+        )
+        .expect_err("stale decision evidence must block release");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "check_self_heal_release_gate.promotion_decision.evaluated_at"
+                );
+            }
+            _ => panic!("expected invalid-value violation"),
+        }
     }
 }

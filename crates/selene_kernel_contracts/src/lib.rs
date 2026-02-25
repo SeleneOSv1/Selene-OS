@@ -56,6 +56,7 @@ pub mod ph1rem;
 pub mod ph1rll;
 pub mod ph1sched;
 pub mod ph1search;
+pub mod ph1selfheal;
 pub mod ph1simcat;
 pub mod ph1srl;
 pub mod ph1summary;

@@ -58,6 +58,7 @@ use selene_kernel_contracts::ph1position::{
     PositionRequirementsSchemaLifecycleResult, PositionScheduleType, PositionSchemaApplyScope,
     PositionSchemaSelectorSnapshot, PositionValidationStatus, TenantId,
 };
+use selene_kernel_contracts::ph1selfheal::{FailureEvent, FixCard, ProblemCard, PromotionDecision};
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
     SimulationId,
@@ -84,10 +85,12 @@ use crate::ph1f::{
     MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
     MobileArtifactSyncQueueRecord, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
     Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kRuntimeCurrentRecord,
-    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord, SessionRecord,
-    StorageError, TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
-    VoiceProfileRecord, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
-    WakeRuntimeEventRecord, WakeSampleResult,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
+    SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
+    SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
+    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
+    WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord, WakeRuntimeEventRecord,
+    WakeSampleResult,
 };
 
 /// Typed repository interface for PH1.F foundational storage wiring.
@@ -1230,6 +1233,45 @@ pub trait BuilderSeleneRepo {
     ) -> Result<u64, StorageError>;
     fn builder_post_deploy_judge_result_rows(&self) -> &[BuilderPostDeployJudgeResultLedgerRow];
     fn attempt_overwrite_builder_post_deploy_judge_result_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+}
+
+/// Typed repository interface for 14.7.6 self-healing cards
+/// (`FailureEvent -> ProblemCard -> FixCard -> PromotionDecision`).
+pub trait Ph1SelfHealRepo {
+    fn append_self_heal_failure_event_row(
+        &mut self,
+        failure_event: FailureEvent,
+    ) -> Result<u64, StorageError>;
+    fn self_heal_failure_event_rows(&self) -> &[SelfHealFailureEventLedgerRow];
+    fn attempt_overwrite_self_heal_failure_event_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_self_heal_problem_card_row(
+        &mut self,
+        problem_card: ProblemCard,
+    ) -> Result<u64, StorageError>;
+    fn self_heal_problem_card_rows(&self) -> &[SelfHealProblemCardLedgerRow];
+    fn attempt_overwrite_self_heal_problem_card_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError>;
+
+    fn append_self_heal_fix_card_row(&mut self, fix_card: FixCard) -> Result<u64, StorageError>;
+    fn self_heal_fix_card_rows(&self) -> &[SelfHealFixCardLedgerRow];
+    fn attempt_overwrite_self_heal_fix_card_row(&mut self, row_id: u64)
+        -> Result<(), StorageError>;
+
+    fn append_self_heal_promotion_decision_row(
+        &mut self,
+        promotion_decision: PromotionDecision,
+    ) -> Result<u64, StorageError>;
+    fn self_heal_promotion_decision_rows(&self) -> &[SelfHealPromotionDecisionLedgerRow];
+    fn attempt_overwrite_self_heal_promotion_decision_row(
         &mut self,
         row_id: u64,
     ) -> Result<(), StorageError>;
@@ -3754,6 +3796,77 @@ impl BuilderSeleneRepo for Ph1fStore {
         row_id: u64,
     ) -> Result<(), StorageError> {
         self.attempt_overwrite_builder_post_deploy_judge_result_ledger_row(row_id)
+    }
+}
+
+impl Ph1SelfHealRepo for Ph1fStore {
+    fn append_self_heal_failure_event_row(
+        &mut self,
+        failure_event: FailureEvent,
+    ) -> Result<u64, StorageError> {
+        self.append_self_heal_failure_event_ledger_row(failure_event)
+    }
+
+    fn self_heal_failure_event_rows(&self) -> &[SelfHealFailureEventLedgerRow] {
+        self.self_heal_failure_event_ledger_rows()
+    }
+
+    fn attempt_overwrite_self_heal_failure_event_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_self_heal_failure_event_ledger_row(row_id)
+    }
+
+    fn append_self_heal_problem_card_row(
+        &mut self,
+        problem_card: ProblemCard,
+    ) -> Result<u64, StorageError> {
+        self.append_self_heal_problem_card_ledger_row(problem_card)
+    }
+
+    fn self_heal_problem_card_rows(&self) -> &[SelfHealProblemCardLedgerRow] {
+        self.self_heal_problem_card_ledger_rows()
+    }
+
+    fn attempt_overwrite_self_heal_problem_card_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_self_heal_problem_card_ledger_row(row_id)
+    }
+
+    fn append_self_heal_fix_card_row(&mut self, fix_card: FixCard) -> Result<u64, StorageError> {
+        self.append_self_heal_fix_card_ledger_row(fix_card)
+    }
+
+    fn self_heal_fix_card_rows(&self) -> &[SelfHealFixCardLedgerRow] {
+        self.self_heal_fix_card_ledger_rows()
+    }
+
+    fn attempt_overwrite_self_heal_fix_card_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_self_heal_fix_card_ledger_row(row_id)
+    }
+
+    fn append_self_heal_promotion_decision_row(
+        &mut self,
+        promotion_decision: PromotionDecision,
+    ) -> Result<u64, StorageError> {
+        self.append_self_heal_promotion_decision_ledger_row(promotion_decision)
+    }
+
+    fn self_heal_promotion_decision_rows(&self) -> &[SelfHealPromotionDecisionLedgerRow] {
+        self.self_heal_promotion_decision_ledger_rows()
+    }
+
+    fn attempt_overwrite_self_heal_promotion_decision_row(
+        &mut self,
+        row_id: u64,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_self_heal_promotion_decision_ledger_row(row_id)
     }
 }
 
