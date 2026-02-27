@@ -39,9 +39,6 @@ use selene_engines::ph1vision::{
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
 };
-use selene_kernel_contracts::ph1art::{
-    ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
-};
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket as Ph1cConfidenceBucket, LanguageHint, LanguageHintConfidence, LanguageTag,
     NoiseLevelHint, Ph1cRequest, Ph1cResponse, Ph1kToPh1cHandoff, RetryAdvice as Ph1cRetryAdvice,
@@ -81,6 +78,7 @@ use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcome
 use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
+use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
@@ -93,6 +91,7 @@ use selene_kernel_contracts::{
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
     AppOnboardingContinueRequest, AppServerIngressRuntime, AppVoiceIngressRequest,
+    AppVoicePh1xBuildInput, AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -1744,7 +1743,6 @@ impl AdapterRuntime {
         let mut feedback_events_emitted = 0u64;
         let mut learn_artifacts_emitted = 0u64;
         let mut builder_input_entries = Vec::new();
-        let mut next_version_by_scope: BTreeMap<(String, ArtifactType), u32> = BTreeMap::new();
 
         for issue in issue_records {
             let (outcome_type, reason_code) = match issue.issue_kind {
@@ -1840,36 +1838,7 @@ impl AdapterRuntime {
                 }
             }
 
-            let artifact_type = artifact_type_for_sync_issue(issue.issue_kind);
-            let version_key = (tenant_id.clone(), artifact_type);
-            let next_version = if let Some(existing) = next_version_by_scope.get_mut(&version_key) {
-                *existing = existing.saturating_add(1);
-                *existing
-            } else {
-                let rows = store.ph1learn_artifact_rows(
-                    ArtifactScopeType::Tenant,
-                    &tenant_id,
-                    artifact_type,
-                );
-                let base = rows
-                    .iter()
-                    .map(|row| row.artifact_version.0)
-                    .max()
-                    .unwrap_or(0)
-                    .saturating_add(1);
-                next_version_by_scope.insert(version_key, base);
-                base
-            };
-            let package_hash = stable_hash_hex_16(&format!(
-                "{tenant}:{job}:{kind:?}:{issue}:{attempt}:{err}",
-                tenant = tenant_id,
-                job = issue.sync_job_id,
-                kind = issue.sync_kind,
-                issue = issue_tag,
-                attempt = issue.attempt_count,
-                err = issue.last_error.as_deref().unwrap_or("none"),
-            ));
-            let payload_ref = truncate_ascii(
+            let evidence_ref = truncate_ascii(
                 &format!(
                     "learn:voice_sync:{issue}:{job}:attempt:{attempt}:kind:{kind:?}",
                     issue = issue_tag,
@@ -1888,20 +1857,23 @@ impl AdapterRuntime {
                 128,
             );
             let learn_idem = sanitize_idempotency_token(&format!(
-                "learn_sync:{}:{}:{}",
+                "learn_bundle_sync:{}:{}:{}",
                 issue_tag, issue.sync_job_id, issue.attempt_count
             ));
-            match store.ph1learn_artifact_commit(
+            match store.ph1feedback_learn_signal_bundle_commit(
                 now,
                 tenant_id.clone(),
-                ArtifactScopeType::Tenant,
-                tenant_id,
-                artifact_type,
-                ArtifactVersion(next_version),
-                package_hash,
-                payload_ref,
+                correlation_id,
+                turn_id,
+                None,
+                user_id,
+                issue.device_id,
+                feedback_event_type.to_string(),
+                learn_signal_type.to_string(),
+                reason_code,
+                evidence_ref,
                 provenance_ref,
-                ArtifactStatus::Active,
+                sync_issue_latency_ms(issue.issue_kind),
                 learn_idem,
             ) {
                 Ok(_) => {
@@ -1909,7 +1881,7 @@ impl AdapterRuntime {
                 }
                 Err(err) => {
                     eprintln!(
-                        "selene_adapter learn artifact emit failed: {}",
+                        "selene_adapter learn signal bundle emit failed: {}",
                         storage_error_to_string(err)
                     );
                 }
@@ -3217,9 +3189,15 @@ impl AdapterRuntime {
             empty_observation(),
         )
         .map_err(|err| format!("invalid ingress request: {err:?}"))?;
-        let outcome = self
+        let ph1x_build = self.build_ph1x_build_input_for_voice_turn(
+            &request,
+            now,
+            user_text_final.as_deref().or(user_text_partial.as_deref()),
+            tenant_id_for_ph1c.as_deref(),
+        );
+        let execution = self
             .ingress
-            .run_voice_turn(&mut store, ingress_request)
+            .run_voice_turn_end_to_end(&mut store, ingress_request, ph1x_build)
             .map_err(storage_error_to_string)?;
         self.commit_ph1d_runtime_outcome(
             &mut store,
@@ -3230,7 +3208,7 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
             user_text_final.as_deref(),
-            &outcome,
+            &execution.voice_outcome,
         )?;
         self.record_transcript_updates(
             &mut store,
@@ -3276,11 +3254,62 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.as_deref(),
             )?;
         }
-        let response = outcome_to_adapter_response(outcome);
+        let response = execution_outcome_to_adapter_response(execution);
         if persist_on_success {
             self.append_journal_entry(request_for_journal)?;
         }
         Ok(response)
+    }
+
+    fn build_ph1x_build_input_for_voice_turn(
+        &self,
+        request: &VoiceTurnAdapterRequest,
+        now: MonotonicTimeNs,
+        transcript_text: Option<&str>,
+        tenant_scope: Option<&str>,
+    ) -> AppVoicePh1xBuildInput {
+        let locale = request
+            .audio_capture_ref
+            .as_ref()
+            .and_then(|capture| capture.locale_tag.as_ref())
+            .map(|value| truncate_ascii(value.trim(), 16))
+            .filter(|value| !value.is_empty());
+        let nlp_output =
+            self.best_effort_nlp_output_for_voice_turn(request, transcript_text, tenant_scope);
+        AppVoicePh1xBuildInput {
+            now,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: Vec::new(),
+            confirm_answer: None,
+            nlp_output: Some(nlp_output),
+            tool_response: None,
+            interruption: None,
+            locale,
+            last_failure_reason_code: None,
+        }
+    }
+
+    fn best_effort_nlp_output_for_voice_turn(
+        &self,
+        request: &VoiceTurnAdapterRequest,
+        transcript_text: Option<&str>,
+        tenant_scope: Option<&str>,
+    ) -> Ph1nResponse {
+        let fallback_text = transcript_text
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("help");
+        let fallback = fallback_voice_nlp_output(fallback_text);
+        let Ok(nlp_request) =
+            build_base_nlp_request_for_vision_handoff(request, Some(fallback_text), tenant_scope)
+        else {
+            return fallback;
+        };
+        EnginePh1nRuntime::new(EnginePh1nConfig::mvp_v1())
+            .run(&nlp_request)
+            .unwrap_or(fallback)
     }
 
     pub fn default_from_env() -> Result<Self, String> {
@@ -3764,6 +3793,40 @@ fn empty_observation() -> EngineVoiceIdObservation {
     }
 }
 
+fn execution_outcome_to_adapter_response(
+    execution: AppVoiceTurnExecutionOutcome,
+) -> VoiceTurnAdapterResponse {
+    let mut response = outcome_to_adapter_response(execution.voice_outcome);
+    let mut reason_parts = Vec::new();
+    if let Some(reason) = response.reason.take() {
+        reason_parts.push(reason);
+    }
+    reason_parts.push(format!(
+        "next_move={}",
+        app_voice_turn_next_move_label(execution.next_move)
+    ));
+    if let Some(reason_code) = execution.reason_code {
+        reason_parts.push(format!("x_reason_code={}", reason_code.0));
+    }
+    if let Some(response_text) = execution.response_text {
+        reason_parts.push(format!("x_response={}", truncate_ascii(&response_text, 96)));
+    }
+    response.reason = Some(reason_parts.join(" | "));
+    response
+}
+
+fn app_voice_turn_next_move_label(next_move: AppVoiceTurnNextMove) -> &'static str {
+    match next_move {
+        AppVoiceTurnNextMove::NotInvokedDisabled => "NOT_INVOKED_DISABLED",
+        AppVoiceTurnNextMove::Refused => "REFUSED",
+        AppVoiceTurnNextMove::Confirm => "CONFIRM",
+        AppVoiceTurnNextMove::Clarify => "CLARIFY",
+        AppVoiceTurnNextMove::Respond => "RESPOND",
+        AppVoiceTurnNextMove::Dispatch => "DISPATCH",
+        AppVoiceTurnNextMove::Wait => "WAIT",
+    }
+}
+
 fn outcome_to_adapter_response(outcome: OsVoiceLiveTurnOutcome) -> VoiceTurnAdapterResponse {
     match outcome {
         OsVoiceLiveTurnOutcome::NotInvokedDisabled => VoiceTurnAdapterResponse {
@@ -3798,6 +3861,21 @@ fn outcome_to_adapter_response(outcome: OsVoiceLiveTurnOutcome) -> VoiceTurnAdap
             }
         }
     }
+}
+
+fn fallback_voice_nlp_output(transcript_text: &str) -> Ph1nResponse {
+    let fallback_text = truncate_ascii(transcript_text.trim(), 512);
+    let fallback_text = if fallback_text.is_empty() {
+        "help".to_string()
+    } else {
+        fallback_text
+    };
+    let fallback_chat =
+        Ph1nChat::v1(fallback_text, ph1d_reason_codes::D_PROVIDER_OK).unwrap_or_else(|_| {
+            Ph1nChat::v1("help".to_string(), ph1d_reason_codes::D_PROVIDER_OK)
+                .expect("static PH1.N fallback chat must be valid")
+        });
+    Ph1nResponse::Chat(fallback_chat)
 }
 
 fn sanitize_transcript_text_option(value: Option<String>) -> Option<String> {
@@ -3986,14 +4064,6 @@ fn sync_issue_latency_ms(kind: SyncIssueKind) -> u32 {
         SyncIssueKind::Retry => 100,
         SyncIssueKind::DeadLetter => 250,
         SyncIssueKind::ReplayDue => 500,
-    }
-}
-
-fn artifact_type_for_sync_issue(kind: SyncIssueKind) -> ArtifactType {
-    match kind {
-        SyncIssueKind::Retry => ArtifactType::VoiceIdProfileDeltaPack,
-        SyncIssueKind::DeadLetter => ArtifactType::VoiceIdProfileDeltaPack,
-        SyncIssueKind::ReplayDue => ArtifactType::VoiceIdThresholdPack,
     }
 }
 
@@ -7456,6 +7526,129 @@ mod tests {
             .len();
         assert!(after_feedback > before_feedback);
         assert!(after_learn > before_learn);
+    }
+
+    #[test]
+    fn at_adapter_36_public_voice_lane_uses_end_to_end_ph1x_tool_flow_across_platforms() {
+        let runtime = AdapterRuntime::default();
+        for (idx, platform, trigger, device_id) in [
+            (1_u64, "IOS", "EXPLICIT", "e2e_ios_device_1"),
+            (2_u64, "ANDROID", "EXPLICIT", "e2e_android_device_1"),
+            (3_u64, "DESKTOP", "EXPLICIT", "e2e_desktop_device_1"),
+        ] {
+            let mut req = base_request();
+            req.turn_id = 40_000 + idx;
+            req.now_ns = Some(40_000 + idx);
+            req.app_platform = platform.to_string();
+            req.trigger = trigger.to_string();
+            req.device_id = Some(device_id.to_string());
+            req.user_text_final = Some("what time is it".to_string());
+            req.user_text_partial = None;
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("platform voice turn should succeed");
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.outcome, "FORWARDED");
+            let reason = out.reason.unwrap_or_default();
+            assert!(
+                reason.contains("next_move=RESPOND"),
+                "reason must include PH1.X next_move evidence, got: {reason}"
+            );
+            assert!(
+                reason.contains("x_response=Local time:"),
+                "reason must include PH1.E tool follow-up output, got: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn at_adapter_37_sync_improvements_emit_feedback_and_learn_bundles_without_new_artifacts() {
+        let runtime = AdapterRuntime::default();
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let tenant_id = "tenant_sync";
+        let user_id = UserId::new(format!("{tenant_id}:user_sync_1")).expect("valid user id");
+
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .expect("identity seed must succeed");
+
+        store
+            .ph1learn_artifact_commit(
+                MonotonicTimeNs(2),
+                tenant_id.to_string(),
+                selene_kernel_contracts::ph1art::ArtifactScopeType::User,
+                user_id.as_str().to_string(),
+                selene_kernel_contracts::ph1art::ArtifactType::VoiceIdThresholdPack,
+                selene_kernel_contracts::ph1art::ArtifactVersion(1),
+                "pkg_hash_sync_seed".to_string(),
+                "payload_sync_seed".to_string(),
+                "prov_sync_seed".to_string(),
+                selene_kernel_contracts::ph1art::ArtifactStatus::RolledBack,
+                "idem_sync_seed".to_string(),
+            )
+            .expect("seed artifact commit must enqueue one sync row");
+        let sync_row = store
+            .mobile_artifact_sync_queue_rows()
+            .first()
+            .cloned()
+            .expect("sync queue row must exist");
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    sync_row.device_id.clone(),
+                    user_id.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .expect("device seed must be valid"),
+            )
+            .expect("device seed must succeed");
+        let _dequeued = store
+            .mobile_artifact_sync_dequeue_batch(
+                MonotonicTimeNs(3),
+                1,
+                30_000,
+                "worker_sync_1".to_string(),
+            )
+            .expect("dequeue must succeed");
+        store
+            .mobile_artifact_sync_dead_letter_commit(
+                MonotonicTimeNs(4),
+                &sync_row.sync_job_id,
+                Some("worker_sync_1"),
+                "forced_dead_letter".to_string(),
+            )
+            .expect("dead-letter commit must succeed");
+
+        let before_artifact_rows = store.artifacts_ledger_rows().len();
+        let now = MonotonicTimeNs(4);
+        let correlation_id = CorrelationId(41_001);
+        let turn_id = TurnId(41_001);
+        let queue_after = snapshot_sync_queue_counters(&store, now);
+        let emitted = runtime
+            .emit_sync_improvement_events(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &DeviceArtifactSyncWorkerPassMetrics::default(),
+                &queue_after,
+            )
+            .expect("sync improvement emission must succeed");
+
+        assert!(emitted.feedback_events_emitted >= 1);
+        assert!(emitted.learn_artifacts_emitted >= 1);
+        assert!(emitted.builder_input_entries.len() >= 1);
+        assert_eq!(store.artifacts_ledger_rows().len(), before_artifact_rows);
+        assert!(!store.ph1feedback_audit_rows(correlation_id).is_empty());
+        assert!(!store.ph1feedback_learn_signal_bundle_rows(correlation_id).is_empty());
     }
 
     #[test]

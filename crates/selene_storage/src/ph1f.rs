@@ -131,6 +131,10 @@ const LINK_TOKEN_ACTIVE_KEY_ID_ENV: &str = "SELENE_LINK_TOKEN_ACTIVE_KEY_ID";
 const LINK_TOKEN_SIGNATURE_VERSION: &str = "v1";
 const DEFAULT_LINK_TOKEN_SIGNING_KEY_ID: &str = "link_kid_v1";
 const DEFAULT_LINK_TOKEN_SIGNING_SECRET: &str = "selene_link_local_dev_secret_v1";
+const ACTIVE_ARTIFACT_WRITER_ID: &str = "PH1.BUILDER";
+const ACTIVE_ARTIFACT_WRITER_ALLOWLIST_ENV: &str = "SELENE_ACTIVE_ARTIFACT_WRITER_ALLOWLIST";
+const ACTIVE_ARTIFACT_TEST_BYPASS_ENV: &str =
+    "SELENE_ALLOW_NON_BUILDER_ACTIVE_ARTIFACT_WRITES_TEST_ONLY";
 
 fn parse_link_token_signing_keyring_from_env() -> BTreeMap<String, String> {
     let mut keyring = BTreeMap::new();
@@ -315,6 +319,43 @@ fn is_token_safe_ascii(value: &str) -> bool {
     value.chars().all(|c| {
         c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ':' || c == '.' || c == '/'
     })
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|raw| {
+            matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn active_artifact_writer_allowed_with(
+    created_by: &str,
+    allowlist_raw: Option<&str>,
+    test_bypass: bool,
+) -> bool {
+    if created_by == ACTIVE_ARTIFACT_WRITER_ID {
+        return true;
+    }
+    if test_bypass {
+        return true;
+    }
+    allowlist_raw
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| entry == created_by)
+}
+
+fn active_artifact_writer_allowed(created_by: &str) -> bool {
+    let allowlist_raw = std::env::var(ACTIVE_ARTIFACT_WRITER_ALLOWLIST_ENV).ok();
+    let test_bypass = env_flag_enabled(ACTIVE_ARTIFACT_TEST_BYPASS_ENV);
+    active_artifact_writer_allowed_with(created_by, allowlist_raw.as_deref(), test_bypass)
 }
 
 fn validate_builder_idempotency_key(field: &'static str, key: &str) -> Result<(), StorageError> {
@@ -4842,6 +4883,17 @@ impl Ph1fStore {
                 // Deterministic no-op on retry.
                 return Ok(*existing_id);
             }
+        }
+
+        if input.status == ArtifactStatus::Active
+            && !active_artifact_writer_allowed(input.created_by.as_str())
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "artifacts_ledger.created_by",
+                    reason: "ACTIVE artifact writes require PH1.BUILDER unless allowlisted or test bypass is enabled",
+                },
+            ));
         }
 
         let unique_key = (
@@ -19196,6 +19248,65 @@ mod tests {
             )
             .expect_err("bundle commit over SLO must fail closed");
         assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_05_active_artifact_writer_guard_rejects_non_builder_by_default() {
+        let mut s = store_with_user_and_device();
+        let err = s
+            .append_artifact_ledger_row(
+                ArtifactLedgerRowInput::v1(
+                    MonotonicTimeNs(600),
+                    ArtifactScopeType::Tenant,
+                    "tenant_1".to_string(),
+                    ArtifactType::SttRoutingPolicyPack,
+                    ArtifactVersion(1),
+                    "pkg_hash_guard_reject".to_string(),
+                    "blob://guard/reject".to_string(),
+                    "PH1.LEARN".to_string(),
+                    "corr:guard:reject".to_string(),
+                    ArtifactStatus::Active,
+                    Some("idem:guard:reject".to_string()),
+                )
+                .expect("guard test input must be valid"),
+            )
+            .expect_err("non-builder ACTIVE writer must fail closed");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_fdbk_06_active_artifact_writer_guard_allows_builder_writer() {
+        let mut s = store_with_user_and_device();
+        let artifact_id = s
+            .append_artifact_ledger_row(
+                ArtifactLedgerRowInput::v1(
+                    MonotonicTimeNs(601),
+                    ArtifactScopeType::Tenant,
+                    "tenant_1".to_string(),
+                    ArtifactType::SttRoutingPolicyPack,
+                    ArtifactVersion(1),
+                    "pkg_hash_guard_allow".to_string(),
+                    "blob://guard/allow".to_string(),
+                    "PH1.BUILDER".to_string(),
+                    "corr:guard:allow".to_string(),
+                    ArtifactStatus::Active,
+                    Some("idem:guard:allow".to_string()),
+                )
+                .expect("guard test input must be valid"),
+            )
+            .expect("builder ACTIVE writer must succeed");
+        assert_eq!(artifact_id, 1);
+    }
+
+    #[test]
+    fn at_fdbk_07_active_artifact_writer_allowlist_and_test_bypass_are_respected() {
+        assert!(active_artifact_writer_allowed_with(
+            "PH1.LEARN",
+            Some("PH1.LEARN,PH1.KNOW"),
+            false
+        ));
+        assert!(!active_artifact_writer_allowed_with("PH1.LEARN", None, false));
+        assert!(active_artifact_writer_allowed_with("PH1.LEARN", None, true));
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.

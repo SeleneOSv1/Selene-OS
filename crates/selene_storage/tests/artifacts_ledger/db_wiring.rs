@@ -24,7 +24,7 @@ fn artifact_ev(
         ArtifactVersion(artifact_version),
         "sha256_pkg_hash_v1".to_string(),
         "blob://artifact_ref_v1".to_string(),
-        "PH1.LEARN".to_string(),
+        "PH1.BUILDER".to_string(),
         "corr:123".to_string(),
         status,
         idempotency_key.map(ToString::to_string),

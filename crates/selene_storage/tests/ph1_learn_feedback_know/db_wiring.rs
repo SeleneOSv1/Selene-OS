@@ -8,6 +8,18 @@ use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
 use selene_storage::repo::{Ph1LearnFeedbackKnowRepo, Ph1fFoundationRepo};
+use std::sync::Once;
+
+static ACTIVE_ARTIFACT_WRITER_ALLOWLIST_INIT: Once = Once::new();
+
+fn enable_legacy_active_artifact_writer_allowlist_for_tests() {
+    ACTIVE_ARTIFACT_WRITER_ALLOWLIST_INIT.call_once(|| {
+        std::env::set_var(
+            "SELENE_ACTIVE_ARTIFACT_WRITER_ALLOWLIST",
+            "PH1.LEARN,PH1.KNOW",
+        );
+    });
+}
 
 fn user(id: &str) -> UserId {
     UserId::new(id).unwrap()
@@ -18,6 +30,8 @@ fn device(id: &str) -> DeviceId {
 }
 
 fn seed_identity_device(store: &mut Ph1fStore, user_id: UserId, device_id: DeviceId) {
+    enable_legacy_active_artifact_writer_allowlist_for_tests();
+
     store
         .insert_identity_row(IdentityRecord::v1(
             user_id.clone(),

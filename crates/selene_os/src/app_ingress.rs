@@ -1426,21 +1426,12 @@ impl AppServerIngressRuntime {
         Ok((outcome, ph1x_request))
     }
 
-    pub fn run_desktop_voice_turn_end_to_end(
+    pub fn run_voice_turn_end_to_end(
         &self,
         store: &mut Ph1fStore,
         request: AppVoiceIngressRequest,
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
-        if request.app_platform != AppPlatform::Desktop {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "app_voice_ingress_request.app_platform",
-                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
-                },
-            ));
-        }
-
         let actor_user_id = request.actor_user_id.clone();
         let dispatch_now = x_build.now;
         let (voice_outcome, ph1x_request) =
@@ -1549,6 +1540,23 @@ impl AppServerIngressRuntime {
         }
 
         Ok(out)
+    }
+
+    pub fn run_desktop_voice_turn_end_to_end(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        if request.app_platform != AppPlatform::Desktop {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.app_platform",
+                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
+                },
+            ));
+        }
+        self.run_voice_turn_end_to_end(store, request, x_build)
     }
 
     pub fn run_device_artifact_sync_worker_pass(
