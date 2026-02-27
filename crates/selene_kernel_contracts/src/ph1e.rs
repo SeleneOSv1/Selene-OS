@@ -53,6 +53,7 @@ pub enum ToolName {
     Weather,
     WebSearch,
     News,
+    UrlFetchAndCite,
     Other(String),
 }
 
@@ -80,6 +81,7 @@ impl ToolName {
             ToolName::Weather => "weather",
             ToolName::WebSearch => "web_search",
             ToolName::News => "news",
+            ToolName::UrlFetchAndCite => "url_fetch_and_cite",
             ToolName::Other(s) => s.as_str(),
         }
     }
@@ -520,10 +522,33 @@ pub enum ToolResult {
     Weather { summary: String },
     WebSearch { items: Vec<ToolTextSnippet> },
     News { items: Vec<ToolTextSnippet> },
+    UrlFetchAndCite { citations: Vec<ToolTextSnippet> },
 }
 
 impl Validate for ToolResult {
     fn validate(&self) -> Result<(), ContractViolation> {
+        fn validate_items(
+            field_name: &'static str,
+            items: &[ToolTextSnippet],
+        ) -> Result<(), ContractViolation> {
+            if items.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: field_name,
+                    reason: "must not be empty",
+                });
+            }
+            if items.len() > 20 {
+                return Err(ContractViolation::InvalidValue {
+                    field: field_name,
+                    reason: "must be <= 20 entries",
+                });
+            }
+            for it in items {
+                it.validate()?;
+            }
+            Ok(())
+        }
+
         match self {
             ToolResult::Time { local_time_iso } => {
                 if local_time_iso.trim().is_empty() {
@@ -554,21 +579,10 @@ impl Validate for ToolResult {
                 }
             }
             ToolResult::WebSearch { items } | ToolResult::News { items } => {
-                if items.is_empty() {
-                    return Err(ContractViolation::InvalidValue {
-                        field: "tool_result.items",
-                        reason: "must not be empty",
-                    });
-                }
-                if items.len() > 20 {
-                    return Err(ContractViolation::InvalidValue {
-                        field: "tool_result.items",
-                        reason: "must be <= 20 entries",
-                    });
-                }
-                for it in items {
-                    it.validate()?;
-                }
+                validate_items("tool_result.items", items)?;
+            }
+            ToolResult::UrlFetchAndCite { citations } => {
+                validate_items("tool_result.citations", citations)?;
             }
         }
         Ok(())

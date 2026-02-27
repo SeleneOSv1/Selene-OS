@@ -15,6 +15,7 @@ pub mod reason_codes {
     pub const E_OK_WEATHER: ReasonCodeId = ReasonCodeId(0x4500_1002);
     pub const E_OK_WEB_SEARCH: ReasonCodeId = ReasonCodeId(0x4500_1003);
     pub const E_OK_NEWS: ReasonCodeId = ReasonCodeId(0x4500_1004);
+    pub const E_OK_URL_FETCH_AND_CITE: ReasonCodeId = ReasonCodeId(0x4500_1005);
 
     pub const E_FAIL_FORBIDDEN_TOOL: ReasonCodeId = ReasonCodeId(0x4500_0001);
     pub const E_FAIL_FORBIDDEN_ORIGIN: ReasonCodeId = ReasonCodeId(0x4500_0002);
@@ -90,7 +91,10 @@ impl ToolRouter {
         }
 
         // Defense-in-depth policy block (enterprise).
-        if matches!(req.tool_name, ToolName::WebSearch | ToolName::News)
+        if matches!(
+            req.tool_name,
+            ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite
+        )
             && (req.policy_context_ref.privacy_mode
                 || req.policy_context_ref.safety_tier == SafetyTier::Strict)
         {
@@ -212,6 +216,7 @@ fn ok_reason_code(tool_name: &str) -> ReasonCodeId {
         "weather" => reason_codes::E_OK_WEATHER,
         "web_search" => reason_codes::E_OK_WEB_SEARCH,
         "news" => reason_codes::E_OK_NEWS,
+        "url_fetch_and_cite" => reason_codes::E_OK_URL_FETCH_AND_CITE,
         _ => reason_codes::E_OK_WEB_SEARCH,
     }
 }
@@ -222,6 +227,11 @@ fn clamp_result(mut result: ToolResult, max_results: u8) -> ToolResult {
         ToolResult::WebSearch { items } | ToolResult::News { items } => {
             if items.len() > n {
                 items.truncate(n);
+            }
+        }
+        ToolResult::UrlFetchAndCite { citations } => {
+            if citations.len() > n {
+                citations.truncate(n);
             }
         }
         ToolResult::Time { .. } | ToolResult::Weather { .. } => {}
@@ -244,6 +254,19 @@ fn violates_domain_policy(
                 }
             }
             for it in items {
+                if !url_allowed(allowlist, denylist, &it.url) {
+                    return true;
+                }
+            }
+            false
+        }
+        ToolResult::UrlFetchAndCite { citations } => {
+            for s in &source_metadata.sources {
+                if !url_allowed(allowlist, denylist, &s.url) {
+                    return true;
+                }
+            }
+            for it in citations {
                 if !url_allowed(allowlist, denylist, &it.url) {
                     return true;
                 }

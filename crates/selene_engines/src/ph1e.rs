@@ -104,6 +104,13 @@ impl Ph1eRuntime {
                     url: "https://example.com/news-item".to_string(),
                 }],
             },
+            ToolName::UrlFetchAndCite => ToolResult::UrlFetchAndCite {
+                citations: vec![ToolTextSnippet {
+                    title: format!("Source page: {}", truncate_ascii(&req.query, 40)),
+                    snippet: format!("Citation extracted from '{}'", truncate_ascii(&req.query, 80)),
+                    url: "https://example.com/url-fetch-citation".to_string(),
+                }],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -148,7 +155,10 @@ fn budget_exceeded(request_budget: StrictBudget, config: Ph1eConfig) -> bool {
 }
 
 fn policy_blocks(req: &ToolRequest) -> bool {
-    matches!(req.tool_name, ToolName::WebSearch | ToolName::News)
+    matches!(
+        req.tool_name,
+        ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite
+    )
         && (req.policy_context_ref.privacy_mode
             || matches!(
                 req.policy_context_ref.safety_tier,
@@ -178,6 +188,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::Weather => "https://example.com/weather",
         ToolName::WebSearch => "https://example.com/search",
         ToolName::News => "https://example.com/news",
+        ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -274,5 +285,24 @@ mod tests {
         let out = rt.run(&req);
         assert_eq!(out.tool_status, ToolStatus::Fail);
         assert_eq!(out.reason_code, reason_codes::E_FAIL_BUDGET_EXCEEDED);
+    }
+
+    #[test]
+    fn at_e_06_url_fetch_and_cite_returns_citations_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::UrlFetchAndCite,
+            "open this URL and cite it: https://example.com/spec",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::UrlFetchAndCite { citations } => assert!(!citations.is_empty()),
+            other => panic!("expected UrlFetchAndCite result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
     }
 }
