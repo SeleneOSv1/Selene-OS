@@ -30,6 +30,13 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `PH1X_TOOL_RESPONSE_RENDER`
+- `name`: Render read-only PH1.E tool response into final user-facing text payload
+- `input_schema`: `(tool_response, locale?, output_mode=text|tts, reason_code)`
+- `output_schema`: `(response_text, source_list, citations?, retrieved_at, reason_code)`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
 ### `PH1X_DISPATCH_COMMIT_ROW`
 - `name`: Commit dispatch directive
 - `input_schema`: `(now, tenant_id, correlation_id, turn_id, session_id?, user_id, device_id, work_order_id, work_order_status_snapshot, pending_state, dispatch_target, lease_token_hash?, reason_code, idempotency_key)`
