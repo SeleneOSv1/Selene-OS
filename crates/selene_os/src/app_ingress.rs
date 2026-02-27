@@ -34,9 +34,12 @@ use selene_kernel_contracts::ph1persona::{
 };
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
+    OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
     OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbTermsAcceptCommitRequest,
     OnboardingNextStep, OnboardingSessionId, OnboardingStatus, Ph1OnbRequest, Ph1OnbResponse,
-    ProofType, SimulationType, TermsStatus, ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+    ProofType, SenderVerifyDecision, SimulationType, TermsStatus, VerificationStatus,
+    ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+    ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
     ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
 };
 use selene_kernel_contracts::ph1position::TenantId;
@@ -222,6 +225,12 @@ pub enum AppOnboardingContinueAction {
         device_id: DeviceId,
         sample_seed: String,
     },
+    EmployeePhotoCaptureSend {
+        photo_blob_ref: String,
+    },
+    EmployeeSenderVerifyCommit {
+        decision: SenderVerifyDecision,
+    },
     EmoPersonaLock,
     AccessProvisionCommit,
     CompleteCommit,
@@ -312,6 +321,14 @@ impl AppOnboardingContinueRequest {
                     64,
                 )?;
             }
+            AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => {
+                validate_ascii_token(
+                    "app_onboarding_continue_request.employee_photo_capture_send.photo_blob_ref",
+                    photo_blob_ref,
+                    192,
+                )?;
+            }
+            AppOnboardingContinueAction::EmployeeSenderVerifyCommit { .. } => {}
             AppOnboardingContinueAction::EmoPersonaLock => {}
             AppOnboardingContinueAction::AccessProvisionCommit => {}
             AppOnboardingContinueAction::CompleteCommit => {}
@@ -333,6 +350,7 @@ pub enum AppOnboardingContinueNextStep {
     Terms,
     PrimaryDeviceConfirm,
     VoiceEnroll,
+    SenderVerification,
     EmoPersonaLock,
     AccessProvision,
     Complete,
@@ -860,10 +878,16 @@ impl AppServerIngressRuntime {
                         ));
                     }
                 };
+                let sender_verification_pending =
+                    onboarding_sender_verification_pending(store, &onboarding_session_id)?;
                 Ok(AppOnboardingContinueOutcome {
                     onboarding_session_id: onboarding_session_id.as_str().to_string(),
                     next_step: if terms_status == TermsStatus::Accepted {
-                        AppOnboardingContinueNextStep::PrimaryDeviceConfirm
+                        if sender_verification_pending {
+                            AppOnboardingContinueNextStep::SenderVerification
+                        } else {
+                            AppOnboardingContinueNextStep::PrimaryDeviceConfirm
+                        }
                     } else {
                         AppOnboardingContinueNextStep::Blocked
                     },
@@ -927,10 +951,16 @@ impl AppServerIngressRuntime {
                         ));
                     }
                 };
+                let sender_verification_pending =
+                    onboarding_sender_verification_pending(store, &onboarding_session_id)?;
                 Ok(AppOnboardingContinueOutcome {
                     onboarding_session_id: onboarding_session_id.as_str().to_string(),
                     next_step: if primary_device_confirmed {
-                        AppOnboardingContinueNextStep::VoiceEnroll
+                        if sender_verification_pending {
+                            AppOnboardingContinueNextStep::SenderVerification
+                        } else {
+                            AppOnboardingContinueNextStep::VoiceEnroll
+                        }
                     } else {
                         AppOnboardingContinueNextStep::PrimaryDeviceConfirm
                     },
@@ -951,6 +981,14 @@ impl AppServerIngressRuntime {
                 device_id,
                 sample_seed,
             } => {
+                if onboarding_sender_verification_pending(store, &onboarding_session_id)? {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_VOICE_ENROLL",
+                        },
+                    ));
+                }
                 self.executor.ensure_simulation_chain_active_for_tenant(
                     store,
                     &effective_tenant,
@@ -1043,6 +1081,30 @@ impl AppServerIngressRuntime {
                     onboarding_status: None,
                 })
             }
+            AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => {
+                self.run_onboarding_employee_photo_capture_send(
+                    store,
+                    correlation_id,
+                    turn_id,
+                    onboarding_session_id,
+                    effective_tenant,
+                    photo_blob_ref,
+                    idempotency_key,
+                    now,
+                )
+            }
+            AppOnboardingContinueAction::EmployeeSenderVerifyCommit { decision } => {
+                self.run_onboarding_employee_sender_verify_commit(
+                    store,
+                    correlation_id,
+                    turn_id,
+                    onboarding_session_id,
+                    effective_tenant,
+                    decision,
+                    idempotency_key,
+                    now,
+                )
+            }
             AppOnboardingContinueAction::EmoPersonaLock => self.run_onboarding_emo_persona_lock(
                 store,
                 correlation_id,
@@ -1073,6 +1135,192 @@ impl AppServerIngressRuntime {
                 now,
             ),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_onboarding_employee_photo_capture_send(
+        &self,
+        store: &mut Ph1fStore,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        onboarding_session_id: OnboardingSessionId,
+        effective_tenant: TenantId,
+        photo_blob_ref: String,
+        idempotency_key: String,
+        now: MonotonicTimeNs,
+    ) -> Result<AppOnboardingContinueOutcome, StorageError> {
+        self.executor.ensure_simulation_active_for_tenant(
+            store,
+            &effective_tenant,
+            ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT,
+            "app_onboarding_continue_request.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+        let sender_user_id = onboarding_sender_user_id_for_session(store, &onboarding_session_id)?;
+        let req = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::EmployeePhotoCaptureSendCommit(
+                OnbEmployeePhotoCaptureSendCommitRequest {
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    photo_blob_ref,
+                    sender_user_id,
+                    idempotency_key,
+                },
+            ),
+        };
+        req.validate().map_err(StorageError::ContractViolation)?;
+        let out = self.executor.execute_onb(store, &req)?;
+        let verification_status = match out {
+            Ph1OnbResponse::Ok(ok) => ok
+                .employee_photo_result
+                .ok_or_else(|| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1onb_response.employee_photo_result",
+                        reason: "employee photo result must be present",
+                    })
+                })?
+                .verification_status,
+            Ph1OnbResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_response",
+                        reason: "ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_REFUSED",
+                    },
+                ));
+            }
+        };
+        let onboarding_status = match verification_status {
+            VerificationStatus::Pending => OnboardingStatus::VerificationPending,
+            VerificationStatus::Confirmed => OnboardingStatus::VerificationConfirmed,
+            VerificationStatus::Rejected => OnboardingStatus::VerificationRejected,
+        };
+        Ok(AppOnboardingContinueOutcome {
+            onboarding_session_id: onboarding_session_id.as_str().to_string(),
+            next_step: AppOnboardingContinueNextStep::SenderVerification,
+            blocking_field: None,
+            blocking_question: None,
+            remaining_missing_fields: store
+                .ph1onb_session_row(&onboarding_session_id)
+                .map(|r| r.missing_fields.clone())
+                .unwrap_or_default(),
+            remaining_platform_receipt_kinds: store
+                .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+            voice_artifact_sync_receipt_ref: store
+                .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+            access_engine_instance_id: store
+                .ph1onb_session_row(&onboarding_session_id)
+                .and_then(|row| row.access_engine_instance_id.clone()),
+            onboarding_status: Some(onboarding_status),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_onboarding_employee_sender_verify_commit(
+        &self,
+        store: &mut Ph1fStore,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        onboarding_session_id: OnboardingSessionId,
+        effective_tenant: TenantId,
+        decision: SenderVerifyDecision,
+        idempotency_key: String,
+        now: MonotonicTimeNs,
+    ) -> Result<AppOnboardingContinueOutcome, StorageError> {
+        self.executor.ensure_simulation_active_for_tenant(
+            store,
+            &effective_tenant,
+            ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
+            "app_onboarding_continue_request.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+        let sender_user_id = onboarding_sender_user_id_for_session(store, &onboarding_session_id)?;
+        let req = Ph1OnbRequest {
+            schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: ONB_EMPLOYEE_SENDER_VERIFY_COMMIT.to_string(),
+            simulation_type: SimulationType::Commit,
+            request: OnbRequest::EmployeeSenderVerifyCommit(OnbEmployeeSenderVerifyCommitRequest {
+                onboarding_session_id: onboarding_session_id.clone(),
+                sender_user_id,
+                decision,
+                idempotency_key,
+            }),
+        };
+        req.validate().map_err(StorageError::ContractViolation)?;
+        let out = self.executor.execute_onb(store, &req)?;
+        let verification_status = match out {
+            Ph1OnbResponse::Ok(ok) => ok
+                .employee_sender_verify_result
+                .ok_or_else(|| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1onb_response.employee_sender_verify_result",
+                        reason: "employee sender verify result must be present",
+                    })
+                })?
+                .verification_status,
+            Ph1OnbResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_response",
+                        reason: "ONB_EMPLOYEE_SENDER_VERIFY_REFUSED",
+                    },
+                ));
+            }
+        };
+        let next_step = match verification_status {
+            VerificationStatus::Pending => AppOnboardingContinueNextStep::SenderVerification,
+            VerificationStatus::Rejected => AppOnboardingContinueNextStep::Blocked,
+            VerificationStatus::Confirmed => {
+                let session = store.ph1onb_session_row(&onboarding_session_id).ok_or(
+                    StorageError::ForeignKeyViolation {
+                        table: "onboarding_sessions.onboarding_session_id",
+                        key: onboarding_session_id.as_str().to_string(),
+                    },
+                )?;
+                if !session.primary_device_confirmed {
+                    AppOnboardingContinueNextStep::PrimaryDeviceConfirm
+                } else if store
+                    .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id)
+                    .is_none()
+                {
+                    AppOnboardingContinueNextStep::VoiceEnroll
+                } else {
+                    AppOnboardingContinueNextStep::EmoPersonaLock
+                }
+            }
+        };
+        let onboarding_status = match verification_status {
+            VerificationStatus::Pending => OnboardingStatus::VerificationPending,
+            VerificationStatus::Confirmed => OnboardingStatus::VerificationConfirmed,
+            VerificationStatus::Rejected => OnboardingStatus::VerificationRejected,
+        };
+        Ok(AppOnboardingContinueOutcome {
+            onboarding_session_id: onboarding_session_id.as_str().to_string(),
+            next_step,
+            blocking_field: None,
+            blocking_question: None,
+            remaining_missing_fields: store
+                .ph1onb_session_row(&onboarding_session_id)
+                .map(|r| r.missing_fields.clone())
+                .unwrap_or_default(),
+            remaining_platform_receipt_kinds: store
+                .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+            voice_artifact_sync_receipt_ref: store
+                .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+            access_engine_instance_id: store
+                .ph1onb_session_row(&onboarding_session_id)
+                .and_then(|row| row.access_engine_instance_id.clone()),
+            onboarding_status: Some(onboarding_status),
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1124,6 +1372,14 @@ impl AppServerIngressRuntime {
                 ContractViolation::InvalidValue {
                     field: "app_onboarding_continue_request.action",
                     reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        if onboarding_sender_verification_pending(store, &onboarding_session_id)? {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
                 },
             ));
         }
@@ -1862,6 +2118,43 @@ fn onboarding_missing_field_question(field_key: &str) -> String {
     }
 }
 
+fn onboarding_sender_verification_pending(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+) -> Result<bool, StorageError> {
+    const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
+    let session = store
+        .ph1onb_session_row(onboarding_session_id)
+        .ok_or(StorageError::ForeignKeyViolation {
+            table: "onboarding_sessions.onboarding_session_id",
+            key: onboarding_session_id.as_str().to_string(),
+        })?;
+    let required = session
+        .required_verification_gates
+        .iter()
+        .any(|gate| gate == GATE_SENDER_CONFIRMATION);
+    Ok(required && session.verification_status != Some(VerificationStatus::Confirmed))
+}
+
+fn onboarding_sender_user_id_for_session(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+) -> Result<UserId, StorageError> {
+    let session = store
+        .ph1onb_session_row(onboarding_session_id)
+        .ok_or(StorageError::ForeignKeyViolation {
+            table: "onboarding_sessions.onboarding_session_id",
+            key: onboarding_session_id.as_str().to_string(),
+        })?;
+    let link = store.ph1link_get_link(&session.token_id).ok_or(
+        StorageError::ForeignKeyViolation {
+            table: "links.token_id",
+            key: session.token_id.as_str().to_string(),
+        },
+    )?;
+    Ok(link.inviter_user_id.clone())
+}
+
 fn onboarding_default_role_id(invitee_type: InviteeType) -> &'static str {
     match invitee_type {
         InviteeType::Company => "company_default",
@@ -2496,6 +2789,37 @@ mod tests {
         (link.token_id, link.token_signature)
     }
 
+    fn seed_invite_link_for_click_with_employee_prefilled_context(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+        tenant_id: &str,
+        now: MonotonicTimeNs,
+    ) -> (TokenId, String) {
+        let prefilled = selene_kernel_contracts::ph1link::PrefilledContext::v1(
+            Some(tenant_id.to_string()),
+            Some("company_1".to_string()),
+            Some("position_1".to_string()),
+            Some("loc_1".to_string()),
+            Some("2026-03-01".to_string()),
+            None,
+            Some("band_l2".to_string()),
+            vec!["US".to_string()],
+        )
+        .expect("prefilled context must be valid");
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                now,
+                inviter_user_id.clone(),
+                InviteeType::Employee,
+                Some(tenant_id.to_string()),
+                None,
+                Some(prefilled),
+                None,
+            )
+            .expect("link draft generation should succeed");
+        (link.token_id, link.token_signature)
+    }
+
     fn seed_employee_company_and_position(
         store: &mut Ph1fStore,
         tenant_id: &str,
@@ -2533,6 +2857,64 @@ mod tests {
         store
             .ph1position_upsert(position)
             .expect("position seed upsert must succeed");
+    }
+
+    fn seed_employee_position_schema_requiring_sender_verification(
+        store: &mut Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &str,
+        now: MonotonicTimeNs,
+    ) {
+        let tenant = TenantId::new(tenant_id.to_string()).expect("tenant id must be valid");
+        let selector = selene_kernel_contracts::ph1position::PositionSchemaSelectorSnapshot {
+            company_size: Some("SMALL".to_string()),
+            industry_code: Some("LOGISTICS".to_string()),
+            jurisdiction: Some("US".to_string()),
+            position_family: Some("OPS".to_string()),
+        };
+        let doc_field = selene_kernel_contracts::ph1position::PositionRequirementFieldSpec {
+            field_key: "working_hours".to_string(),
+            field_type: selene_kernel_contracts::ph1position::PositionRequirementFieldType::String,
+            required_rule: selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
+            required_predicate_ref: None,
+            validation_ref: None,
+            sensitivity: selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
+            exposure_rule:
+                selene_kernel_contracts::ph1position::PositionRequirementExposureRule::InternalOnly,
+            evidence_mode:
+                selene_kernel_contracts::ph1position::PositionRequirementEvidenceMode::DocRequired,
+            prompt_short: "Provide working hours".to_string(),
+            prompt_long: "Please provide working hours evidence.".to_string(),
+        };
+        store
+            .ph1position_requirements_schema_create_draft(
+                now,
+                actor_user_id.clone(),
+                tenant.clone(),
+                "company_1".to_string(),
+                selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+                "schema_v1".to_string(),
+                selector,
+                vec![doc_field],
+                "onb-schema-create".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+                ReasonCodeId(0x5900_0006),
+            )
+            .expect("position schema draft must be created");
+        store
+            .ph1position_requirements_schema_activate_commit(
+                MonotonicTimeNs(now.0.saturating_add(1)),
+                actor_user_id.clone(),
+                tenant,
+                "company_1".to_string(),
+                selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+                "schema_v1".to_string(),
+                selene_kernel_contracts::ph1position::PositionSchemaApplyScope::NewHiresOnly,
+                "onb-schema-activate".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+                ReasonCodeId(0x5900_0008),
+            )
+            .expect("position schema activation must succeed");
     }
 
     fn external_injected_memory_candidate() -> MemoryCandidate {
@@ -3446,6 +3828,203 @@ mod tests {
                 .missing_fields
                 .len(),
             0
+        );
+    }
+
+    #[test]
+    fn rung_onboarding_sender_verification_gate_routes_to_sender_verification_step() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:rung_verify_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("rung_verify_inviter_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+        seed_employee_company_and_position(&mut store, "tenant_1", MonotonicTimeNs(119));
+        seed_employee_position_schema_requiring_sender_verification(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(120),
+        );
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+            (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+            (ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, SimulationType::Commit),
+            (ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, SimulationType::Commit),
+            (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click_with_employee_prefilled_context(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(121),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9911),
+                    "rung-verify-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "rung-verify-fp".to_string(),
+                    "ios_instance_rung_verify".to_string(),
+                    "nonce_rung_verify".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(122),
+            )
+            .unwrap();
+        assert!(
+            start
+                .required_verification_gates
+                .contains(&"SENDER_CONFIRMATION".to_string())
+        );
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-ask-prompt".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(123),
+            )
+            .unwrap();
+        while ask_out.next_step == AppOnboardingContinueNextStep::AskMissing {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask step must expose one missing field");
+            let value = match field_key.as_str() {
+                "driver_license_doc_ref" => "doc:driver:license:1",
+                "working_hours" => "09:00-17:00",
+                "jurisdiction_tags" => "US,CA",
+                "compensation_tier_ref" => "band_l2",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9911),
+                        onboarding_session_id.clone(),
+                        format!("rung-verify-ask-{field_key}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(124),
+                )
+                .unwrap();
+        }
+        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9911),
+                        onboarding_session_id.clone(),
+                        format!("rung-verify-platform-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::PlatformSetupReceipt {
+                            receipt_kind: receipt_kind.clone(),
+                            receipt_ref: format!("receipt:rung-verify:{receipt_kind}"),
+                            signer: "selene_mobile_app".to_string(),
+                            payload_hash: format!("{:064x}", idx + 1),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(125 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(platform_out.next_step, AppOnboardingContinueNextStep::Terms);
+
+        let terms = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-terms".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::TermsAccept {
+                        terms_version_id: "terms_v1".to_string(),
+                        accepted: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(130),
+            )
+            .unwrap();
+        assert_eq!(terms.next_step, AppOnboardingContinueNextStep::SenderVerification);
+
+        let photo = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-photo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::EmployeePhotoCaptureSend {
+                        photo_blob_ref: "blob:photo:rung:1".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(131),
+            )
+            .unwrap();
+        assert_eq!(photo.next_step, AppOnboardingContinueNextStep::SenderVerification);
+        assert_eq!(photo.onboarding_status, Some(OnboardingStatus::VerificationPending));
+
+        let verify = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-sender".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::EmployeeSenderVerifyCommit {
+                        decision: SenderVerifyDecision::Confirm,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(132),
+            )
+            .unwrap();
+        assert_eq!(
+            verify.next_step,
+            AppOnboardingContinueNextStep::PrimaryDeviceConfirm
+        );
+        assert_eq!(
+            verify.onboarding_status,
+            Some(OnboardingStatus::VerificationConfirmed)
         );
     }
 

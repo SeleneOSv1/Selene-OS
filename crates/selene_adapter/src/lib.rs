@@ -76,7 +76,7 @@ use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapsh
 use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
-use selene_kernel_contracts::ph1onb::{OnboardingNextStep, OnboardingSessionId};
+use selene_kernel_contracts::ph1onb::{OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision};
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
@@ -271,6 +271,8 @@ pub struct OnboardingContinueAdapterRequest {
     pub device_id: Option<String>,
     pub proof_ok: Option<bool>,
     pub sample_seed: Option<String>,
+    pub photo_blob_ref: Option<String>,
+    pub sender_decision: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1000,6 +1002,8 @@ impl AdapterRuntime {
             request.device_id,
             request.proof_ok,
             request.sample_seed,
+            request.photo_blob_ref,
+            request.sender_decision,
         )?;
         let ingress_request = AppOnboardingContinueRequest::v1(
             correlation_id,
@@ -3524,6 +3528,8 @@ fn parse_onboarding_continue_action(
     device_id: Option<String>,
     proof_ok: Option<bool>,
     sample_seed: Option<String>,
+    photo_blob_ref: Option<String>,
+    sender_decision: Option<String>,
 ) -> Result<AppOnboardingContinueAction, String> {
     let normalized = action.trim().to_ascii_uppercase();
     match normalized.as_str() {
@@ -3580,11 +3586,38 @@ fn parse_onboarding_continue_action(
                 sample_seed,
             })
         }
+        "EMPLOYEE_PHOTO_CAPTURE_SEND" => {
+            let photo_blob_ref = photo_blob_ref
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    "photo_blob_ref is required for EMPLOYEE_PHOTO_CAPTURE_SEND".to_string()
+                })?;
+            Ok(AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref })
+        }
+        "EMPLOYEE_SENDER_VERIFY_COMMIT" => {
+            let decision = sender_decision
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    "sender_decision is required for EMPLOYEE_SENDER_VERIFY_COMMIT".to_string()
+                })?;
+            let normalized_decision = decision.trim().to_ascii_uppercase();
+            let decision = match normalized_decision.as_str() {
+                "CONFIRM" => SenderVerifyDecision::Confirm,
+                "REJECT" => SenderVerifyDecision::Reject,
+                _ => {
+                    return Err(
+                        "sender_decision must be CONFIRM or REJECT for EMPLOYEE_SENDER_VERIFY_COMMIT"
+                            .to_string(),
+                    );
+                }
+            };
+            Ok(AppOnboardingContinueAction::EmployeeSenderVerifyCommit { decision })
+        }
         "EMO_PERSONA_LOCK" => Ok(AppOnboardingContinueAction::EmoPersonaLock),
         "ACCESS_PROVISION_COMMIT" => Ok(AppOnboardingContinueAction::AccessProvisionCommit),
         "COMPLETE_COMMIT" => Ok(AppOnboardingContinueAction::CompleteCommit),
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMPLOYEE_PHOTO_CAPTURE_SEND|EMPLOYEE_SENDER_VERIFY_COMMIT|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
             action
         )),
     }
@@ -3597,6 +3630,7 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
         AppOnboardingContinueNextStep::Terms => "TERMS",
         AppOnboardingContinueNextStep::PrimaryDeviceConfirm => "PRIMARY_DEVICE_CONFIRM",
         AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
+        AppOnboardingContinueNextStep::SenderVerification => "SENDER_VERIFICATION",
         AppOnboardingContinueNextStep::EmoPersonaLock => "EMO_PERSONA_LOCK",
         AppOnboardingContinueNextStep::AccessProvision => "ACCESS_PROVISION",
         AppOnboardingContinueNextStep::Complete => "COMPLETE",
@@ -6547,6 +6581,8 @@ mod tests {
                 device_id: None,
                 proof_ok: None,
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("first ask-missing turn should prompt");
         assert_eq!(ask_prompt.next_step.as_deref(), Some("ASK_MISSING"));
@@ -6588,6 +6624,8 @@ mod tests {
                     device_id: None,
                     proof_ok: None,
                     sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
                 })
                 .expect("ask-missing value submit should succeed");
         }
@@ -6614,6 +6652,8 @@ mod tests {
                     device_id: None,
                     proof_ok: None,
                     sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
                 })
                 .expect("platform setup receipt should succeed");
         }
@@ -6637,6 +6677,8 @@ mod tests {
                 device_id: None,
                 proof_ok: None,
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("terms should succeed");
         assert_eq!(terms.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
@@ -6658,6 +6700,8 @@ mod tests {
                 device_id: Some("runc_adapter_inviter_device".to_string()),
                 proof_ok: Some(true),
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("device confirm should succeed");
         assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
@@ -6679,6 +6723,8 @@ mod tests {
                 device_id: Some("runc_adapter_inviter_device".to_string()),
                 proof_ok: None,
                 sample_seed: Some("runc_adapter_seed".to_string()),
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("voice enroll should succeed");
         assert_eq!(voice.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
@@ -6701,6 +6747,8 @@ mod tests {
                 device_id: None,
                 proof_ok: None,
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("emo/persona lock should succeed");
         assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
@@ -6722,6 +6770,8 @@ mod tests {
                 device_id: None,
                 proof_ok: None,
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("access provision should succeed");
         assert_eq!(access.next_step.as_deref(), Some("COMPLETE"));
@@ -6748,12 +6798,79 @@ mod tests {
                 device_id: None,
                 proof_ok: None,
                 sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
             })
             .expect("onboarding complete should succeed");
         assert_eq!(complete.next_step.as_deref(), Some("READY"));
         assert_eq!(complete.onboarding_status.as_deref(), Some("COMPLETE"));
         assert!(complete.access_engine_instance_id.is_some());
         assert!(complete.voice_artifact_sync_receipt_ref.is_some());
+    }
+
+    #[test]
+    fn rung_onboarding_continue_adapter_parses_sender_verification_actions() {
+        let photo = parse_onboarding_continue_action(
+            "EMPLOYEE_PHOTO_CAPTURE_SEND",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("blob:photo:test".to_string()),
+            None,
+        )
+        .expect("photo capture action must parse");
+        assert!(matches!(
+            photo,
+            AppOnboardingContinueAction::EmployeePhotoCaptureSend { .. }
+        ));
+
+        let verify = parse_onboarding_continue_action(
+            "EMPLOYEE_SENDER_VERIFY_COMMIT",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("CONFIRM".to_string()),
+        )
+        .expect("sender verify action must parse");
+        assert!(matches!(
+            verify,
+            AppOnboardingContinueAction::EmployeeSenderVerifyCommit {
+                decision: SenderVerifyDecision::Confirm
+            }
+        ));
+
+        let err = parse_onboarding_continue_action(
+            "EMPLOYEE_SENDER_VERIFY_COMMIT",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("MAYBE".to_string()),
+        )
+        .expect_err("invalid sender decision must fail");
+        assert!(err.contains("sender_decision must be CONFIRM or REJECT"));
     }
 
     #[test]
@@ -6765,6 +6882,8 @@ mod tests {
             Some("receipt:rund-adapter:install".to_string()),
             None,
             Some(format!("{:064x}", 1)),
+            None,
+            None,
             None,
             None,
             None,
