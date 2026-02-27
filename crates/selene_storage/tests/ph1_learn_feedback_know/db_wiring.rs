@@ -98,7 +98,7 @@ fn at_learn_db_01_tenant_isolation_enforced() {
     );
     assert!(matches!(mismatch, Err(StorageError::ContractViolation(_))));
 
-    s.ph1learn_artifact_commit_row(
+    s.ph1builder_active_artifact_commit(
         MonotonicTimeNs(103),
         "tenant_a".to_string(),
         ArtifactScopeType::Tenant,
@@ -108,7 +108,6 @@ fn at_learn_db_01_tenant_isolation_enforced() {
         "pkg_hash_learn_a".to_string(),
         "blob://learn_a".to_string(),
         "corr:25001".to_string(),
-        ArtifactStatus::Active,
         "learn-tenant-a".to_string(),
     )
     .unwrap();
@@ -165,7 +164,7 @@ fn at_learn_db_02_append_only_enforced() {
         .unwrap();
 
     let learn_artifact_id = s
-        .ph1learn_artifact_commit_row(
+        .ph1builder_active_artifact_commit(
             MonotonicTimeNs(201),
             "tenant_a".to_string(),
             ArtifactScopeType::Tenant,
@@ -175,7 +174,6 @@ fn at_learn_db_02_append_only_enforced() {
             "pkg_hash_learn_append".to_string(),
             "blob://learn_append".to_string(),
             "corr:26001".to_string(),
-            ArtifactStatus::Active,
             "learn-append".to_string(),
         )
         .unwrap();
@@ -233,7 +231,7 @@ fn at_learn_db_03_idempotency_dedupe_works() {
     assert_eq!(s.ph1feedback_audit_rows(corr).len(), 1);
 
     let learn_first = s
-        .ph1learn_artifact_commit_row(
+        .ph1builder_active_artifact_commit(
             MonotonicTimeNs(302),
             "tenant_a".to_string(),
             ArtifactScopeType::Tenant,
@@ -243,13 +241,12 @@ fn at_learn_db_03_idempotency_dedupe_works() {
             "pkg_hash_learn_idem".to_string(),
             "blob://learn_idem".to_string(),
             "corr:27001".to_string(),
-            ArtifactStatus::Active,
             "learn-idem".to_string(),
         )
         .unwrap();
 
     let learn_second = s
-        .ph1learn_artifact_commit_row(
+        .ph1builder_active_artifact_commit(
             MonotonicTimeNs(303),
             "tenant_a".to_string(),
             ArtifactScopeType::Tenant,
@@ -259,7 +256,6 @@ fn at_learn_db_03_idempotency_dedupe_works() {
             "pkg_hash_learn_idem_ignored".to_string(),
             "blob://learn_idem_ignored".to_string(),
             "corr:27001b".to_string(),
-            ArtifactStatus::Active,
             "learn-idem".to_string(),
         )
         .unwrap();
@@ -424,7 +420,7 @@ fn at_learn_db_05_single_writer_artifact_types_enforced() {
         Err(StorageError::ContractViolation(_))
     ));
 
-    s.ph1learn_artifact_commit_row(
+    s.ph1builder_active_artifact_commit(
         MonotonicTimeNs(503),
         "tenant_a".to_string(),
         ArtifactScopeType::Tenant,
@@ -434,7 +430,6 @@ fn at_learn_db_05_single_writer_artifact_types_enforced() {
         "pkg_hash_learn_ok".to_string(),
         "blob://learn_ok".to_string(),
         "corr:29003".to_string(),
-        ArtifactStatus::Active,
         "learn-owner-ok".to_string(),
     )
     .unwrap();
@@ -450,4 +445,61 @@ fn at_learn_db_05_single_writer_artifact_types_enforced() {
         "know-owner-ok".to_string(),
     )
     .unwrap();
+}
+
+#[test]
+fn at_learn_db_06_non_builder_active_artifact_write_fails_closed() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u, d);
+
+    let out = s.ph1learn_artifact_commit_row(
+        MonotonicTimeNs(600),
+        "tenant_a".to_string(),
+        ArtifactScopeType::Tenant,
+        "tenant_a".to_string(),
+        ArtifactType::SttAdaptationProfile,
+        ArtifactVersion(1),
+        "pkg_hash_guard_fail".to_string(),
+        "blob://guard_fail".to_string(),
+        "corr:30001".to_string(),
+        ArtifactStatus::Active,
+        "learn-guard-fail".to_string(),
+    );
+    assert!(matches!(
+        out,
+        Err(StorageError::ContractViolation(_))
+    ));
+}
+
+#[test]
+fn at_learn_db_07_builder_active_artifact_write_succeeds() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u, d);
+
+    s.ph1builder_active_artifact_commit(
+        MonotonicTimeNs(601),
+        "tenant_a".to_string(),
+        ArtifactScopeType::Tenant,
+        "tenant_a".to_string(),
+        ArtifactType::SttAdaptationProfile,
+        ArtifactVersion(1),
+        "pkg_hash_guard_ok".to_string(),
+        "blob://guard_ok".to_string(),
+        "corr:30002".to_string(),
+        "builder-guard-ok".to_string(),
+    )
+    .unwrap();
+
+    let rows = s.ph1learn_artifact_rows(
+        ArtifactScopeType::Tenant,
+        "tenant_a",
+        ArtifactType::SttAdaptationProfile,
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].created_by, "PH1.BUILDER");
+    assert_eq!(rows[0].status, ArtifactStatus::Active);
 }

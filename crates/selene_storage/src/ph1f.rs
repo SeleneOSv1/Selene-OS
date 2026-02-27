@@ -15298,6 +15298,14 @@ impl Ph1fStore {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
         Self::validate_ph1learn_idempotency("ph1learn.idempotency_key", &idempotency_key)?;
         Self::validate_ph1learn_artifact_type(artifact_type)?;
+        if status == ArtifactStatus::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1learn.status",
+                    reason: "ACTIVE artifact writes require PH1.BUILDER commit path",
+                },
+            ));
+        }
         self.validate_ph1learn_scope_and_bindings(&tenant_id, scope_type, &scope_id)?;
 
         let input = ArtifactLedgerRowInput::v1(
@@ -15317,6 +15325,42 @@ impl Ph1fStore {
         self.append_artifact_ledger_row(input)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1builder_active_artifact_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        scope_type: ArtifactScopeType,
+        scope_id: String,
+        artifact_type: ArtifactType,
+        artifact_version: ArtifactVersion,
+        package_hash: String,
+        payload_ref: String,
+        provenance_ref: String,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        Self::validate_ph1learn_tenant_id(&tenant_id)?;
+        Self::validate_ph1learn_idempotency("ph1builder.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1learn_artifact_type(artifact_type)?;
+        self.validate_ph1learn_scope_and_bindings(&tenant_id, scope_type, &scope_id)?;
+
+        let input = ArtifactLedgerRowInput::v1(
+            now,
+            scope_type,
+            scope_id,
+            artifact_type,
+            artifact_version,
+            package_hash,
+            payload_ref,
+            "PH1.BUILDER".to_string(),
+            provenance_ref,
+            ArtifactStatus::Active,
+            Some(idempotency_key),
+        )?;
+
+        self.append_artifact_ledger_row(input)
+    }
+
     pub fn ph1learn_artifact_rows(
         &self,
         scope_type: ArtifactScopeType,
@@ -15329,7 +15373,7 @@ impl Ph1fStore {
                 row.scope_type == scope_type
                     && row.scope_id == scope_id
                     && row.artifact_type == artifact_type
-                    && row.created_by == "PH1.LEARN"
+                    && (row.created_by == "PH1.LEARN" || row.created_by == "PH1.BUILDER")
             })
             .collect()
     }
