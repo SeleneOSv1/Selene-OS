@@ -206,21 +206,12 @@ impl AppServerIngressRuntime {
         Ok((outcome, ph1x_request))
     }
 
-    pub fn run_desktop_voice_turn_end_to_end(
+    pub fn run_voice_turn_end_to_end(
         &self,
         store: &mut Ph1fStore,
         request: AppVoiceIngressRequest,
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
-        if request.app_platform != AppPlatform::Desktop {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "app_voice_ingress_request.app_platform",
-                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
-                },
-            ));
-        }
-
         let actor_user_id = request.actor_user_id.clone();
         let dispatch_now = x_build.now;
         let (voice_outcome, ph1x_request) =
@@ -329,6 +320,23 @@ impl AppServerIngressRuntime {
         }
 
         Ok(out)
+    }
+
+    pub fn run_desktop_voice_turn_end_to_end(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        if request.app_platform != AppPlatform::Desktop {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.app_platform",
+                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
+                },
+            ));
+        }
+        self.run_voice_turn_end_to_end(store, request, x_build)
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -1543,6 +1551,58 @@ mod tests {
 
         let out = runtime
             .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("https://example.com/search-result"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_a2_ios_voice_turn_end_to_end_dispatches_web_search_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runa2_ios_websearch_user").unwrap();
+        let device_id = DeviceId::new("runa2_ios_websearch_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(96031),
+            TurnId(97031),
+            AppPlatform::Ios,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(101),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(web_search_draft("search the web for selene tool parity")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_voice_turn_end_to_end(&mut store, request, x_build)
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");

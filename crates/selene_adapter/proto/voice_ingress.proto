@@ -22,6 +22,9 @@ message RunVoiceTurnResponse {
   string status = 1;
   string outcome = 2;
   string reason = 3;
+  string next_move = 4;
+  string response_text = 5;
+  string reason_code = 6;
 }
 
 message UiHealthReportQueryRequest {

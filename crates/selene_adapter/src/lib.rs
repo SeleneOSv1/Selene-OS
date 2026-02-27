@@ -81,6 +81,7 @@ use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
+use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
@@ -89,7 +90,10 @@ use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as Wake
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
-use selene_os::app_ingress::{AppServerIngressRuntime, AppVoiceIngressRequest};
+use selene_os::app_ingress::{
+    AppServerIngressRuntime, AppVoiceIngressRequest, AppVoicePh1xBuildInput,
+    AppVoiceTurnExecutionOutcome, AppVoiceTurnNextMove,
+};
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
     Ph1VoiceIdLiveConfig, VoiceIdContractMigrationConfig, VoiceIdentityEmbeddingGateGovernedConfig,
@@ -224,6 +228,9 @@ pub struct VoiceTurnAdapterResponse {
     pub status: String,
     pub outcome: String,
     pub reason: Option<String>,
+    pub next_move: Option<String>,
+    pub response_text: Option<String>,
+    pub reason_code: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -3056,9 +3063,33 @@ impl AdapterRuntime {
             empty_observation(),
         )
         .map_err(|err| format!("invalid ingress request: {err:?}"))?;
-        let outcome = self
+        let nlp_output = build_nlp_output_for_voice_turn(
+            &request,
+            user_text_final.as_deref(),
+            tenant_id_for_ph1c.as_deref(),
+        )?;
+        let locale = request
+            .audio_capture_ref
+            .as_ref()
+            .and_then(|capture| capture.locale_tag.as_deref())
+            .map(|raw| truncate_ascii(raw.trim(), 16))
+            .filter(|value| !value.is_empty());
+        let x_build = AppVoicePh1xBuildInput {
+            now,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: Vec::new(),
+            confirm_answer: None,
+            nlp_output: Some(nlp_output),
+            tool_response: None,
+            interruption: None,
+            locale,
+            last_failure_reason_code: None,
+        };
+        let execution_outcome = self
             .ingress
-            .run_voice_turn(&mut store, ingress_request)
+            .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
             .map_err(storage_error_to_string)?;
         self.commit_ph1d_runtime_outcome(
             &mut store,
@@ -3069,7 +3100,7 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
             user_text_final.as_deref(),
-            &outcome,
+            &execution_outcome.voice_outcome,
         )?;
         self.record_transcript_updates(
             &mut store,
@@ -3115,7 +3146,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.as_deref(),
             )?;
         }
-        let response = outcome_to_adapter_response(outcome);
+        let response = execution_outcome_to_adapter_response(execution_outcome);
         if persist_on_success {
             self.append_journal_entry(request_for_journal)?;
         }
@@ -3368,6 +3399,18 @@ fn build_base_nlp_request_for_vision_handoff(
         .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
 }
 
+fn build_nlp_output_for_voice_turn(
+    request: &VoiceTurnAdapterRequest,
+    transcript_text: Option<&str>,
+    runtime_tenant_scope: Option<&str>,
+) -> Result<Ph1nResponse, String> {
+    let nlp_request =
+        build_base_nlp_request_for_vision_handoff(request, transcript_text, runtime_tenant_scope)?;
+    AdapterNlpEngineRuntime::new()
+        .run(&nlp_request)
+        .map_err(|err| format!("ph1n runtime failed while building PH1.X input: {err:?}"))
+}
+
 fn build_vision_turn_input_from_adapter_request(
     request: &VoiceTurnAdapterRequest,
     correlation_id: CorrelationId,
@@ -3500,39 +3543,54 @@ fn empty_observation() -> EngineVoiceIdObservation {
     }
 }
 
-fn outcome_to_adapter_response(outcome: OsVoiceLiveTurnOutcome) -> VoiceTurnAdapterResponse {
+fn voice_outcome_reason(outcome: &OsVoiceLiveTurnOutcome) -> Option<String> {
     match outcome {
-        OsVoiceLiveTurnOutcome::NotInvokedDisabled => VoiceTurnAdapterResponse {
-            status: "ok".to_string(),
-            outcome: "NOT_INVOKED_DISABLED".to_string(),
-            reason: None,
-        },
-        OsVoiceLiveTurnOutcome::Refused(refuse) => VoiceTurnAdapterResponse {
-            status: "ok".to_string(),
-            outcome: "REFUSED".to_string(),
-            reason: Some(format!(
-                "os_refuse reason_code={} message={}",
-                refuse.reason_code.0, refuse.message
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => None,
+        OsVoiceLiveTurnOutcome::Refused(refuse) => Some(format!(
+            "os_refuse reason_code={} message={}",
+            refuse.reason_code.0, refuse.message
+        )),
+        OsVoiceLiveTurnOutcome::Forwarded(bundle) => match &bundle.voice_identity_assertion {
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => Some(format!(
+                "voice_identity=OK score_bp={} user_id={}",
+                ok.score_bp,
+                ok.user_id.as_ref().map(UserId::as_str).unwrap_or("none")
+            )),
+            Ph1VoiceIdResponse::SpeakerAssertionUnknown(u) => Some(format!(
+                "voice_identity=UNKNOWN reason_code={} score_bp={}",
+                u.reason_code.0, u.score_bp
             )),
         },
-        OsVoiceLiveTurnOutcome::Forwarded(bundle) => {
-            let reason = match bundle.voice_identity_assertion {
-                Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => Some(format!(
-                    "voice_identity=OK score_bp={} user_id={}",
-                    ok.score_bp,
-                    ok.user_id.as_ref().map(UserId::as_str).unwrap_or("none")
-                )),
-                Ph1VoiceIdResponse::SpeakerAssertionUnknown(u) => Some(format!(
-                    "voice_identity=UNKNOWN reason_code={} score_bp={}",
-                    u.reason_code.0, u.score_bp
-                )),
-            };
-            VoiceTurnAdapterResponse {
-                status: "ok".to_string(),
-                outcome: "FORWARDED".to_string(),
-                reason,
-            }
-        }
+    }
+}
+
+fn next_move_label(next_move: AppVoiceTurnNextMove) -> &'static str {
+    match next_move {
+        AppVoiceTurnNextMove::NotInvokedDisabled => "NOT_INVOKED_DISABLED",
+        AppVoiceTurnNextMove::Refused => "REFUSED",
+        AppVoiceTurnNextMove::Confirm => "CONFIRM",
+        AppVoiceTurnNextMove::Clarify => "CLARIFY",
+        AppVoiceTurnNextMove::Respond => "RESPOND",
+        AppVoiceTurnNextMove::Dispatch => "DISPATCH",
+        AppVoiceTurnNextMove::Wait => "WAIT",
+    }
+}
+
+fn execution_outcome_to_adapter_response(
+    execution: AppVoiceTurnExecutionOutcome,
+) -> VoiceTurnAdapterResponse {
+    let outcome = match &execution.voice_outcome {
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => "NOT_INVOKED_DISABLED",
+        OsVoiceLiveTurnOutcome::Refused(_) => "REFUSED",
+        OsVoiceLiveTurnOutcome::Forwarded(_) => "FORWARDED",
+    };
+    VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: outcome.to_string(),
+        reason: voice_outcome_reason(&execution.voice_outcome),
+        next_move: Some(next_move_label(execution.next_move).to_string()),
+        response_text: execution.response_text,
+        reason_code: execution.reason_code.map(|code| code.0.to_string()),
     }
 }
 
@@ -6057,6 +6115,27 @@ mod tests {
             .expect("desktop request must succeed");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FORWARDED");
+    }
+
+    #[test]
+    fn at_adapter_03b_voice_turn_returns_ph1x_response_payload_with_provenance() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice turn with explicit web query must succeed");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FORWARDED");
+        assert_eq!(out.next_move.as_deref(), Some("RESPOND"));
+        assert_eq!(out.reason_code.as_deref(), Some("1476395016"));
+        let response_text = out
+            .response_text
+            .as_deref()
+            .expect("response_text must be present for tool response");
+        assert!(response_text.contains("Here are the results:"));
+        assert!(response_text.contains("Sources:"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
     }
 
     #[test]

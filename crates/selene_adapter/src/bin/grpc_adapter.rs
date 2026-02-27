@@ -65,6 +65,9 @@ impl VoiceIngress for GrpcVoiceIngress {
                 status: out.status,
                 outcome: out.outcome,
                 reason: out.reason.unwrap_or_default(),
+                next_move: out.next_move.unwrap_or_default(),
+                response_text: out.response_text.unwrap_or_default(),
+                reason_code: out.reason_code.unwrap_or_default(),
             })),
             Err(reason) => Err(Status::invalid_argument(reason)),
         }

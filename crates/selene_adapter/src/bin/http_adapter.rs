@@ -323,6 +323,9 @@ async fn run_voice_turn(
                     status: "error".to_string(),
                     outcome: "REJECTED".to_string(),
                     reason: Some("adapter runtime lock poisoned".to_string()),
+                    next_move: None,
+                    response_text: None,
+                    reason_code: None,
                 }),
             )
         }
@@ -335,6 +338,9 @@ async fn run_voice_turn(
                 status: "error".to_string(),
                 outcome: "REJECTED".to_string(),
                 reason: Some(reason),
+                next_move: None,
+                response_text: None,
+                reason_code: None,
             }),
         ),
     }
