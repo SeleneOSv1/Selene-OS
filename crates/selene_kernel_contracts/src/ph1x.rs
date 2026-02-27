@@ -1877,6 +1877,7 @@ impl Validate for SimulationCandidateDispatch {
             self.intent_draft.intent_type,
             crate::ph1n::IntentType::TimeQuery
                 | crate::ph1n::IntentType::WeatherQuery
+                | crate::ph1n::IntentType::WebSearchQuery
                 | crate::ph1n::IntentType::Continue
                 | crate::ph1n::IntentType::MoreDetail
         ) {

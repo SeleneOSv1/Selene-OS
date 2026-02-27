@@ -96,6 +96,7 @@ Important ACTIVE blueprints now present and aligned:
 - `MEMORY_REMEMBER_REQUEST`
 - `TOOL_TIME_QUERY`
 - `TOOL_WEATHER_QUERY`
+- `TOOL_WEB_SEARCH`
 - `REMINDER_MANAGE`
 - `EMO_PROFILE_MANAGE`
 
@@ -112,10 +113,11 @@ Contracts:
 Blueprints:
 - `docs/BLUEPRINTS/TOOL_TIME_QUERY.md`
 - `docs/BLUEPRINTS/TOOL_WEATHER_QUERY.md`
+- `docs/BLUEPRINTS/TOOL_WEB_SEARCH.md`
 
 Coverage expectations now realized:
-- PH1.E `simulations_owned = [TOOL_TIME_QUERY_COMMIT, TOOL_WEATHER_QUERY_COMMIT]`
-- PH1.E `blueprints_referenced_by = [TOOL_TIME_QUERY, TOOL_WEATHER_QUERY]`
+- PH1.E `simulations_owned = []` (read-only tool lane)
+- PH1.E `blueprints_referenced_by = [TOOL_TIME_QUERY, TOOL_WEATHER_QUERY, TOOL_WEB_SEARCH]`
 - PH1.E blockers none
 
 ## 7) PH1.REM and PH1.EMO.GUIDE/PH1.EMO.CORE (Locked)

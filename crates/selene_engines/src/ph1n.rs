@@ -108,7 +108,9 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
-        IntentType::TimeQuery | IntentType::WeatherQuery => (SensitivityLevel::Public, false),
+        IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery => {
+            (SensitivityLevel::Public, false)
+        }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
     }
 }
@@ -163,6 +165,19 @@ fn looks_like_generate_link(lower: &str) -> bool {
         || contains_word(lower, "create")
         || contains_word(lower, "make");
     has_link && has_generate
+}
+
+fn looks_like_web_search(lower: &str) -> bool {
+    (contains_word(lower, "search")
+        && (contains_word(lower, "web")
+            || contains_word(lower, "internet")
+            || contains_word(lower, "online")))
+        || lower.starts_with("search for ")
+        || lower.starts_with("look up ")
+        || lower.contains(" look up ")
+        || lower.starts_with("find ")
+        || lower.contains(" find ")
+        || lower.starts_with("google ")
 }
 
 fn detect_intents(lower: &str) -> Vec<IntentType> {
@@ -231,6 +246,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     {
         push(IntentType::TimeQuery);
     }
+    if looks_like_web_search(s) {
+        push(IntentType::WebSearchQuery);
+    }
     if s.contains("remind me") || s.contains("reminder") {
         push(IntentType::SetReminder);
     }
@@ -297,7 +315,7 @@ fn normalize_intent(
     let t = &req.transcript_ok.transcript_text;
 
     match intent_type {
-        IntentType::TimeQuery | IntentType::WeatherQuery => {
+        IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1717,6 +1735,7 @@ fn intent_label(t: &IntentType) -> String {
     match t {
         IntentType::WeatherQuery => "Weather".to_string(),
         IntentType::TimeQuery => "Time".to_string(),
+        IntentType::WebSearchQuery => "Search the web".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -2862,6 +2881,24 @@ mod tests {
                     .iter()
                     .any(|f| f.key == FieldKey::AccessReviewChannel));
                 assert!(d.fields.iter().any(|f| f.key == FieldKey::AccessRuleAction));
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_18_web_search_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene search the web for PH1 tool routing best practices",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WebSearchQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
         }

@@ -36,6 +36,7 @@ pub enum IntentType {
     AccessInstanceCompileRefresh,
     TimeQuery,
     WeatherQuery,
+    WebSearchQuery,
     /// Conversation-control: resume an interrupted answer (Resume Buffer).
     Continue,
     /// Conversation-control: a clear follow-up that attaches to the interrupted answer (Combine).

@@ -605,11 +605,12 @@ impl Ph1xRuntime {
         // Read-only tool dispatch (PH1.E).
         if matches!(
             d.intent_type,
-            IntentType::TimeQuery | IntentType::WeatherQuery
+            IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
                 IntentType::WeatherQuery => (ToolName::Weather, intent_query_text(d)),
+                IntentType::WebSearchQuery => (ToolName::WebSearch, intent_query_text(d)),
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1747,6 +1748,19 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
             }
         }
     }
+    if let Some(meta) = &tr.source_metadata {
+        if !out.ends_with('\n') && !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Sources:\n");
+        for (i, s) in meta.sources.iter().enumerate().take(5) {
+            out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
+        }
+        out.push_str(&format!(
+            "Retrieved at (unix_ms): {}",
+            meta.retrieved_at_unix_ms
+        ));
+    }
     if out.trim().is_empty() {
         // Defensive fallback; shouldn't happen due to ToolResponse validation.
         "Done.".to_string()
@@ -1890,7 +1904,9 @@ fn confirm_text(d: &IntentDraft) -> String {
                 "You want to compile or refresh access for {target_user} using profile {profile_id} in {tenant}. Is that correct?"
             )
         }
-        IntentType::TimeQuery | IntentType::WeatherQuery => "Is that right?".to_string(),
+        IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery => {
+            "Is that right?".to_string()
+        }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
     }
 }
@@ -2463,7 +2479,7 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
-        CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
+        CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId, ToolTextSnippet,
     };
     use selene_kernel_contracts::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
@@ -2739,6 +2755,48 @@ mod tests {
     }
 
     #[test]
+    fn at_x_dispatches_read_only_web_search_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            2,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WebSearchQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::WebSearch),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
     fn at_x_continuity_speaker_mismatch_fails_closed_into_one_clarify() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
@@ -2896,6 +2954,85 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_tool_ok_web_search_includes_provenance_source_and_timestamp() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            8,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WebSearchQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Result".to_string(),
+                    snippet: "Snippet".to_string(),
+                    url: "https://example.com/search-result".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            8,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
     }
 
     #[test]
