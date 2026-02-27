@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
 use selene_kernel_contracts::ph1_voice_id::{
@@ -13,8 +14,11 @@ use selene_kernel_contracts::ph1access::{
     ACCESS_AP_SCHEMA_RETIRE_COMMIT, ACCESS_AP_SCHEMA_UPDATE_COMMIT, ACCESS_INSTANCE_COMPILE_COMMIT,
 };
 use selene_kernel_contracts::ph1bcast::{
-    BcastOutcome, BcastRecipientState, BcastRequest, BcastSimulationType, Ph1BcastRequest,
-    Ph1BcastResponse, BCAST_REMINDER_FIRED_COMMIT,
+    BcastDeliveryMethod, BcastDraftCreateRequest, BcastDeliverCommitRequest, BcastOutcome,
+    BcastRecipientRegion, BcastRecipientState, BcastRequest, BcastSimulationType,
+    BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
+    BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
+    PH1BCAST_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
@@ -23,7 +27,8 @@ use selene_kernel_contracts::ph1capreq::{
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1delivery::{
-    DeliveryChannel, Ph1DeliveryRequest, Ph1DeliveryResponse,
+    DeliveryChannel, DeliveryOutcome, Ph1DeliveryRequest, Ph1DeliveryResponse,
+    DELIVERY_SEND_COMMIT,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
@@ -111,6 +116,7 @@ use selene_engines::ph1policy::{Ph1PolicyConfig, Ph1PolicyRuntime};
 pub struct SimulationExecutor {
     bcast: Ph1BcastRuntime,
     delivery: Ph1DeliveryRuntime,
+    delivery_send_idempotency: RefCell<BTreeMap<String, Ph1DeliveryResponse>>,
     link: Ph1LinkRuntime,
     memory: RefCell<Ph1mWiring<Ph1mRuntime>>,
     onb: Ph1OnbOrchRuntime,
@@ -141,6 +147,7 @@ pub enum SimulationDispatchOutcome {
     BroadcastDeliverySend {
         bcast: Ph1BcastResponse,
         delivery: Ph1DeliveryResponse,
+        delivery_emitted: bool,
     },
     BroadcastMhpHandoff {
         bcast: Ph1BcastResponse,
@@ -169,6 +176,15 @@ pub enum SimulationDispatchOutcome {
     MemoryRecall(Ph1mRecallResponse),
     MemoryForget(Ph1mForgetResponse),
     Link(Ph1LinkResponse),
+    LinkDelivered {
+        link: Ph1LinkResponse,
+        bcast: Ph1BcastResponse,
+        delivery: Ph1DeliveryResponse,
+        link_token_ref: String,
+        broadcast_thread_id: String,
+        delivery_proof_ref: Option<String>,
+        delivery_emitted: bool,
+    },
     Reminder(Ph1RemResponse),
     Onboarding(Ph1OnbResponse),
     Position(Ph1PositionResponse),
@@ -199,6 +215,13 @@ pub mod reason_codes {
     pub const SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED: ReasonCodeId =
         ReasonCodeId(0x5349_0003);
     pub const SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE: ReasonCodeId = ReasonCodeId(0x5349_0004);
+    pub const SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_MISSING: ReasonCodeId =
+        ReasonCodeId(0x5349_0005);
+    pub const SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_INACTIVE: ReasonCodeId =
+        ReasonCodeId(0x5349_0006);
+    pub const SIM_DISPATCH_GUARD_SEND_LINK_DELIVERY_ACCESS_REQUIRED: ReasonCodeId =
+        ReasonCodeId(0x5349_0007);
+    pub const SIM_DISPATCH_SEND_LINK_DELIVERY_REFUSED: ReasonCodeId = ReasonCodeId(0x5349_0008);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +259,7 @@ impl Default for SimulationExecutor {
         Self {
             bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
+            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link: Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1()),
             memory: RefCell::new(new_ph1m_wiring()),
             onb: Ph1OnbOrchRuntime::default(),
@@ -257,6 +281,7 @@ impl SimulationExecutor {
         Self {
             bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
+            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -276,6 +301,7 @@ impl SimulationExecutor {
         Self {
             bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
+            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -300,6 +326,7 @@ impl SimulationExecutor {
         Self {
             bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
+            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             onb,
@@ -735,32 +762,55 @@ impl SimulationExecutor {
         let provider_ref =
             Ph1DeliveryRuntime::default_provider_ref_for_channel(channel).to_string();
 
-        let delivery_req = Ph1DeliveryRequest::send_commit_v1(
-            req.correlation_id,
-            req.turn_id,
-            req.now,
-            deliver_req.tenant_id.clone(),
+        let delivery_idempotency_key = format!(
+            "delivery_send:{}:{}",
+            deliver_req.idempotency_key, delivery_request_ref
+        );
+        let delivery_cache_key = format!(
+            "{}:{}:{}:{}",
+            deliver_req.tenant_id.as_str(),
             broadcast_id,
-            deliver_req.recipient_id.as_str().to_string(),
-            channel,
-            deliver_req.delivery_plan_ref.clone(),
-            provider_ref,
-            deliver_req.simulation_context.clone(),
-            format!(
-                "delivery_send:{}:{}",
-                deliver_req.idempotency_key, delivery_request_ref
-            ),
-        )
-        .map_err(StorageError::ContractViolation)?;
-
-        let delivery_resp = self.delivery.run(&delivery_req);
-        delivery_resp
-            .validate()
+            deliver_req.recipient_id.as_str(),
+            delivery_idempotency_key
+        );
+        let cached_delivery = {
+            self.delivery_send_idempotency
+                .borrow()
+                .get(&delivery_cache_key)
+                .cloned()
+        };
+        let (delivery_resp, delivery_emitted) = if let Some(cached) = cached_delivery {
+            (cached, false)
+        } else {
+            let delivery_req = Ph1DeliveryRequest::send_commit_v1(
+                req.correlation_id,
+                req.turn_id,
+                req.now,
+                deliver_req.tenant_id.clone(),
+                broadcast_id,
+                deliver_req.recipient_id.as_str().to_string(),
+                channel,
+                deliver_req.delivery_plan_ref.clone(),
+                provider_ref,
+                deliver_req.simulation_context.clone(),
+                delivery_idempotency_key,
+            )
             .map_err(StorageError::ContractViolation)?;
+
+            let delivery_resp = self.delivery.run(&delivery_req);
+            delivery_resp
+                .validate()
+                .map_err(StorageError::ContractViolation)?;
+            self.delivery_send_idempotency
+                .borrow_mut()
+                .insert(delivery_cache_key, delivery_resp.clone());
+            (delivery_resp, true)
+        };
 
         Ok(SimulationDispatchOutcome::BroadcastDeliverySend {
             bcast: bcast_resp,
             delivery: delivery_resp,
+            delivery_emitted,
         })
     }
 
@@ -1611,6 +1661,46 @@ impl SimulationExecutor {
                 },
             ));
         }
+        self.guard_send_link_chain_simulations_v1(store, actor_user_id, d)?;
+        Ok(())
+    }
+
+    fn guard_send_link_chain_simulations_v1(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        d: &IntentDraft,
+    ) -> Result<(), StorageError> {
+        if d.intent_type != IntentType::CreateInviteLink || !invite_delivery_requested(d) {
+            return Ok(());
+        }
+        let tenant_id = resolve_invite_tenant_id(store, d, actor_user_id)?;
+        let required = [
+            LINK_INVITE_GENERATE_DRAFT,
+            BCAST_CREATE_DRAFT,
+            BCAST_DELIVER_COMMIT,
+            DELIVERY_SEND_COMMIT,
+        ];
+        for simulation_id in required {
+            let simulation_id =
+                SimulationId::new(simulation_id.to_string()).map_err(StorageError::ContractViolation)?;
+            let Some(row) = store.simulation_catalog_current_row(&tenant_id, &simulation_id) else {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                        reason: "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_MISSING",
+                    },
+                ));
+            };
+            if row.status != SimulationStatus::Active {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                        reason: "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_INACTIVE",
+                    },
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1624,7 +1714,11 @@ impl SimulationExecutor {
         match d.intent_type {
             IntentType::CreateInviteLink => {
                 let tenant_id = resolve_invite_tenant_id(store, d, actor_user_id)?;
-                self.enforce_link_access_gate(store, actor_user_id, &tenant_id, now)
+                self.enforce_link_access_gate(store, actor_user_id, &tenant_id, now)?;
+                if invite_delivery_requested(d) {
+                    self.enforce_link_delivery_access_gate(store, actor_user_id, &tenant_id, now)?;
+                }
+                Ok(())
             }
             IntentType::CapreqManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
@@ -1964,6 +2058,9 @@ impl SimulationExecutor {
                     parse_invitee_type(required_field_value(d, FieldKey::InviteeType)?)?;
                 let tenant_id = resolve_invite_tenant_id(store, d, &actor_user_id)?;
                 self.enforce_link_access_gate(store, &actor_user_id, &tenant_id, now)?;
+                if invite_delivery_requested(d) {
+                    self.enforce_link_delivery_access_gate(store, &actor_user_id, &tenant_id, now)?;
+                }
                 let tenant_id = Some(tenant_id.as_str().to_string());
 
                 let req = Ph1LinkRequest::invite_generate_draft_v1(
@@ -1977,7 +2074,153 @@ impl SimulationExecutor {
                     None,
                     None,
                 )?;
-                let resp = self.execute_link(store, &req)?;
+                let link_resp = self.execute_link(store, &req)?;
+                if !invite_delivery_requested(d) {
+                    self.best_effort_ph1m_capture_turn_digest(
+                        store,
+                        &actor_user_id,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        d,
+                        x_idempotency_key,
+                    );
+                    return Ok(SimulationDispatchOutcome::Link(link_resp));
+                }
+
+                let delivery_method = parse_bcast_delivery_method(required_field_value(
+                    d,
+                    FieldKey::DeliveryMethod,
+                )?)?;
+                let recipient_id = parse_bcast_recipient_id(required_field_value(
+                    d,
+                    FieldKey::RecipientContact,
+                )?)?;
+                let link_token_ref = link_token_ref_from_link_response(&link_resp)?;
+
+                let idempotency_seed = x_idempotency_key
+                    .map(|k| k.to_string())
+                    .unwrap_or_else(|| format!("{}:{}", correlation_id.0, turn_id.0));
+                let draft_idempotency_key = format!(
+                    "link_send_draft:{}",
+                    short_hash_hex(&[
+                        idempotency_seed.as_str(),
+                        link_token_ref.as_str(),
+                        recipient_id.as_str(),
+                    ])
+                );
+                let deliver_idempotency_key = format!(
+                    "link_send_deliver:{}",
+                    short_hash_hex(&[
+                        idempotency_seed.as_str(),
+                        link_token_ref.as_str(),
+                        recipient_id.as_str(),
+                        bcast_delivery_method_token(delivery_method),
+                    ])
+                );
+
+                let tenant_scope = resolve_invite_tenant_id(store, d, &actor_user_id)?;
+                let tenant_scope_id = tenant_scope.as_str().to_string();
+                let audience_spec = format!("recipient:{}", recipient_id.as_str());
+                let content_payload_ref = format!("invite_link_token:{link_token_ref}");
+                let draft_req = Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: BCAST_CREATE_DRAFT.to_string(),
+                    simulation_type: BcastSimulationType::Draft,
+                    request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                        tenant_id: tenant_scope.clone(),
+                        sender_user_id: actor_user_id.clone(),
+                        audience_spec,
+                        classification: BroadcastClassification::Priority,
+                        content_payload_ref,
+                        prompt_dedupe_key: None,
+                        idempotency_key: draft_idempotency_key,
+                    }),
+                };
+                draft_req
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let draft_resp = self.bcast.run(&draft_req);
+                draft_resp
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let broadcast_id = broadcast_id_from_bcast_draft_response(&draft_resp)?;
+
+                let deliver_req = Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+                    simulation_type: BcastSimulationType::Commit,
+                    request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                        tenant_id: tenant_scope.clone(),
+                        sender_user_id: actor_user_id.clone(),
+                        broadcast_id,
+                        recipient_id: recipient_id.clone(),
+                        delivery_method,
+                        recipient_region: bcast_recipient_region_for_method(delivery_method),
+                        app_unavailable: delivery_method != BcastDeliveryMethod::SeleneApp,
+                        delivery_plan_ref: resolve_link_delivery_plan_ref(
+                            d,
+                            delivery_method,
+                            link_token_ref.as_str(),
+                        ),
+                        simulation_context: format!(
+                            "link_deliver:{}:{}",
+                            link_token_ref,
+                            short_hash_hex(&[
+                                recipient_id.as_str(),
+                                bcast_delivery_method_token(delivery_method),
+                            ])
+                        ),
+                        idempotency_key: deliver_idempotency_key,
+                    }),
+                };
+                let delivery_outcome = self.run_broadcast_deliver_with_delivery(&deliver_req)?;
+                let (bcast_resp, delivery_resp, broadcast_thread_id, delivery_emitted) =
+                    match delivery_outcome {
+                        SimulationDispatchOutcome::BroadcastDeliverySend {
+                            bcast,
+                            delivery,
+                            delivery_emitted,
+                        } => {
+                            let broadcast_thread_id = broadcast_id_from_bcast_deliver_response(&bcast)?;
+                            (bcast, delivery, broadcast_thread_id, delivery_emitted)
+                        }
+                        _ => {
+                            return Err(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "simulation_candidate_dispatch.intent_draft.intent_type",
+                                    reason: "unexpected non-delivery outcome for send-link dispatch",
+                                },
+                            ))
+                        }
+                    };
+                if let Ph1DeliveryResponse::Refuse(refuse) = &delivery_resp {
+                    self.best_effort_emit_send_link_delivery_audit(
+                        store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        tenant_scope_id.as_str(),
+                        &actor_user_id,
+                        link_token_ref.as_str(),
+                        broadcast_thread_id.as_str(),
+                        refuse.reason_code,
+                        x_idempotency_key,
+                    );
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "simulation_candidate_dispatch.create_invite_link.delivery",
+                            reason: "SIM_DISPATCH_SEND_LINK_DELIVERY_REFUSED",
+                        },
+                    ));
+                }
+                let delivery_proof_ref = delivery_proof_ref_from_response(&delivery_resp);
                 self.best_effort_ph1m_capture_turn_digest(
                     store,
                     &actor_user_id,
@@ -1987,7 +2230,15 @@ impl SimulationExecutor {
                     d,
                     x_idempotency_key,
                 );
-                Ok(SimulationDispatchOutcome::Link(resp))
+                Ok(SimulationDispatchOutcome::LinkDelivered {
+                    link: link_resp,
+                    bcast: bcast_resp,
+                    delivery: delivery_resp,
+                    link_token_ref,
+                    broadcast_thread_id,
+                    delivery_proof_ref,
+                    delivery_emitted,
+                })
             }
             IntentType::CapreqManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
@@ -2312,6 +2563,50 @@ impl SimulationExecutor {
         let _ = self.memory.borrow_mut().run_turn_and_persist(store, &input);
     }
 
+    fn best_effort_emit_send_link_delivery_audit(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: &str,
+        actor_user_id: &UserId,
+        link_token_ref: &str,
+        broadcast_thread_id: &str,
+        reason_code: ReasonCodeId,
+        x_idempotency_key: Option<&str>,
+    ) {
+        let idempotency_key = x_idempotency_key
+            .map(|k| format!("link_send_delivery_fail:{k}"))
+            .unwrap_or_else(|| {
+                format!(
+                    "link_send_delivery_fail:{}:{}",
+                    correlation_id.0, turn_id.0
+                )
+            });
+
+        let _ = store.ph1access_capreq_step_up_audit_commit(
+            now,
+            tenant_id.to_string(),
+            correlation_id,
+            turn_id,
+            actor_user_id.clone(),
+            "SEND_LINK".to_string(),
+            format!(
+                "DELIVERY_REFUSED:{}",
+                truncate_utf8(&reason_code.0.to_string(), 24)
+            ),
+            format!(
+                "CREATE_INVITE_LINK_SEND:{}:{}",
+                truncate_utf8(link_token_ref, 40),
+                truncate_utf8(broadcast_thread_id, 40)
+            ),
+            "NONE".to_string(),
+            reason_code,
+            idempotency_key,
+        );
+    }
+
     fn enforce_capreq_access_gate(
         &self,
         store: &Ph1fStore,
@@ -2344,6 +2639,24 @@ impl SimulationExecutor {
             "LINK_INVITE",
             "simulation_candidate_dispatch.link.access_instance_id",
             "simulation_candidate_dispatch.link.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_link_delivery_access_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            "DELIVERY_SEND",
+            "simulation_candidate_dispatch.link_delivery.access_instance_id",
+            "simulation_candidate_dispatch.link_delivery.access_decision",
             now,
         )
     }
@@ -2529,6 +2842,149 @@ fn parse_invitee_type(
                     "must be one of: company, customer, employee, family_member, friend, associate",
             },
         )),
+    }
+}
+
+fn invite_delivery_requested(d: &IntentDraft) -> bool {
+    optional_field_value(d, FieldKey::DeliveryMethod).is_some()
+}
+
+fn parse_bcast_delivery_method(v: &FieldValue) -> Result<BcastDeliveryMethod, StorageError> {
+    let s = field_str(v).to_ascii_lowercase();
+    match s.as_str() {
+        "selene_app" | "seleneapp" | "app" | "selene app" => Ok(BcastDeliveryMethod::SeleneApp),
+        "sms" | "text" => Ok(BcastDeliveryMethod::Sms),
+        "whatsapp" | "wa" => Ok(BcastDeliveryMethod::Whatsapp),
+        "wechat" | "we_chat" => Ok(BcastDeliveryMethod::Wechat),
+        "email" | "mail" => Ok(BcastDeliveryMethod::Email),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.fields.delivery_method",
+                reason: "must be one of: selene_app, sms, whatsapp, wechat, email",
+            },
+        )),
+    }
+}
+
+fn bcast_recipient_region_for_method(method: BcastDeliveryMethod) -> BcastRecipientRegion {
+    match method {
+        BcastDeliveryMethod::Wechat => BcastRecipientRegion::China,
+        _ => BcastRecipientRegion::Global,
+    }
+}
+
+fn bcast_delivery_method_token(method: BcastDeliveryMethod) -> &'static str {
+    match method {
+        BcastDeliveryMethod::SeleneApp => "selene_app",
+        BcastDeliveryMethod::Sms => "sms",
+        BcastDeliveryMethod::Whatsapp => "whatsapp",
+        BcastDeliveryMethod::Wechat => "wechat",
+        BcastDeliveryMethod::Email => "email",
+    }
+}
+
+fn resolve_link_delivery_plan_ref(
+    d: &IntentDraft,
+    method: BcastDeliveryMethod,
+    link_token_ref: &str,
+) -> String {
+    // Deterministic simulation fault-injection hook for delivery-fail path tests.
+    let force_provider_fail = optional_field_value(d, FieldKey::ReferenceTarget)
+        .map(|v| field_str(v).to_ascii_lowercase().contains("provider_fail"))
+        .unwrap_or(false);
+    if force_provider_fail {
+        return "provider_fail_payload".to_string();
+    }
+    format!(
+        "invite_link_{}_{}",
+        bcast_delivery_method_token(method),
+        short_hash_hex(&[link_token_ref])
+    )
+}
+
+fn parse_bcast_recipient_id(v: &FieldValue) -> Result<BroadcastRecipientId, StorageError> {
+    let recipient = field_str(v).trim();
+    if recipient.is_empty() {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.fields.recipient_contact",
+                reason: "must not be empty for send-link delivery",
+            },
+        ));
+    }
+    BroadcastRecipientId::new(recipient.to_string()).map_err(StorageError::ContractViolation)
+}
+
+fn link_token_ref_from_link_response(resp: &Ph1LinkResponse) -> Result<String, StorageError> {
+    match resp {
+        Ph1LinkResponse::Ok(ok) => ok
+            .link_generate_result
+            .as_ref()
+            .map(|result| result.token_id.as_str().to_string())
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link.link_generate_result",
+                    reason: "missing link_generate_result in LINK_INVITE_GENERATE_DRAFT response",
+                })
+            }),
+        Ph1LinkResponse::Refuse(_) => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.link",
+                reason: "link generation refused; cannot continue to broadcast delivery",
+            },
+        )),
+    }
+}
+
+fn broadcast_id_from_bcast_draft_response(
+    resp: &Ph1BcastResponse,
+) -> Result<selene_kernel_contracts::ph1bcast::BroadcastId, StorageError> {
+    match resp {
+        Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+            BcastOutcome::DraftCreate(result) => Ok(result.broadcast_id.clone()),
+            _ => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_draft.outcome",
+                    reason: "must be DraftCreate",
+                },
+            )),
+        },
+        Ph1BcastResponse::Refuse(_) => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.bcast_draft",
+                reason: "BCAST draft creation refused",
+            },
+        )),
+    }
+}
+
+fn broadcast_id_from_bcast_deliver_response(resp: &Ph1BcastResponse) -> Result<String, StorageError> {
+    match resp {
+        Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+            BcastOutcome::DeliverCommit(result) => Ok(result.broadcast_id.as_str().to_string()),
+            _ => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_deliver.outcome",
+                    reason: "must be DeliverCommit",
+                },
+            )),
+        },
+        Ph1BcastResponse::Refuse(_) => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.bcast_deliver",
+                reason: "BCAST deliver commit refused",
+            },
+        )),
+    }
+}
+
+fn delivery_proof_ref_from_response(resp: &Ph1DeliveryResponse) -> Option<String> {
+    match resp {
+        Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+            DeliveryOutcome::Send(result) => Some(result.delivery_proof_ref.clone()),
+            _ => None,
+        },
+        Ph1DeliveryResponse::Refuse(_) => None,
     }
 }
 
@@ -3738,6 +4194,20 @@ mod tests {
             store,
             actor,
             tenant,
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+    }
+
+    fn seed_link_send_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            "role.link_sender",
+            "{\"allow\":[\"LINK_INVITE\",\"DELIVERY_SEND\"]}",
             AccessMode::A,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -5683,8 +6153,13 @@ mod tests {
             .run_broadcast_deliver_with_delivery(&deliver_req)
             .unwrap();
         match out {
-            SimulationDispatchOutcome::BroadcastDeliverySend { bcast, delivery } => {
+            SimulationDispatchOutcome::BroadcastDeliverySend {
+                bcast,
+                delivery,
+                delivery_emitted,
+            } => {
                 assert!(matches!(bcast, Ph1BcastResponse::Ok(_)));
+                assert!(delivery_emitted);
                 match delivery {
                     Ph1DeliveryResponse::Ok(ok) => match ok.outcome {
                         DeliveryOutcome::Send(v) => {
@@ -6025,6 +6500,484 @@ mod tests {
         };
 
         assert_eq!(token_1, token_2);
+    }
+
+    #[test]
+    fn run3_send_link_dispatch_routes_to_bcast_delivery_and_is_idempotent() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("tenant_1:inviter-link-send-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_send_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            BCAST_CREATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            BCAST_DELIVER_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            DELIVERY_SEND_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+
+        let mk_x = |turn_id: u64| {
+            let draft = IntentDraft::v1(
+                IntentType::CreateInviteLink,
+                SchemaVersion(1),
+                vec![
+                    IntentField {
+                        key: FieldKey::InviteeType,
+                        value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                            .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::DeliveryMethod,
+                        value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                            .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::RecipientContact,
+                        value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                ],
+                vec![],
+                OverallConfidence::High,
+                vec![],
+                ReasonCodeId(1),
+                SensitivityLevel::Private,
+                true,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+
+            Ph1xResponse::v1(
+                10,
+                turn_id,
+                Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+                ThreadState::empty_v1(),
+                None,
+                DeliveryHint::AudibleAndText,
+                ReasonCodeId(1),
+                Some("idem-run3-send-link-1".to_string()),
+            )
+            .unwrap()
+        };
+
+        let extract = |outcome: SimulationDispatchOutcome| {
+            match outcome {
+                SimulationDispatchOutcome::LinkDelivered {
+                    link,
+                    bcast,
+                    delivery,
+                    link_token_ref,
+                    broadcast_thread_id,
+                    delivery_proof_ref,
+                    delivery_emitted,
+                } => {
+                    match link {
+                        Ph1LinkResponse::Ok(ok) => {
+                            let generated = ok
+                                .link_generate_result
+                                .expect("link_generate_result must be present");
+                            assert_eq!(generated.token_id.as_str(), link_token_ref.as_str());
+                        }
+                        Ph1LinkResponse::Refuse(_) => panic!("expected link ok"),
+                    }
+                    match &bcast {
+                        Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+                            BcastOutcome::DeliverCommit(deliver) => {
+                                assert_eq!(deliver.broadcast_id.as_str(), broadcast_thread_id);
+                            }
+                            _ => panic!("expected bcast deliver outcome"),
+                        },
+                        Ph1BcastResponse::Refuse(_) => panic!("expected bcast ok"),
+                    }
+
+                    let delivery_attempt_id = match &delivery {
+                        Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+                            DeliveryOutcome::Send(send) => {
+                                assert_eq!(
+                                    delivery_proof_ref.as_deref(),
+                                    Some(send.delivery_proof_ref.as_str())
+                                );
+                                send.delivery_attempt_id.clone()
+                            }
+                            _ => panic!("expected delivery send outcome"),
+                        },
+                        Ph1DeliveryResponse::Refuse(_) => panic!("expected delivery ok"),
+                    };
+
+                    (
+                        link_token_ref,
+                        broadcast_thread_id,
+                        delivery_proof_ref.expect("delivery proof ref must be present"),
+                        delivery_attempt_id,
+                        delivery_emitted,
+                    )
+                }
+                _ => panic!("expected LinkDelivered outcome"),
+            }
+        };
+
+        let first = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(210),
+                &mk_x(36),
+            )
+            .unwrap();
+        let second = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(211),
+                &mk_x(37),
+            )
+            .unwrap();
+
+        let (token_1, broadcast_1, proof_1, attempt_1, emitted_1) = extract(first);
+        let (token_2, broadcast_2, proof_2, attempt_2, emitted_2) = extract(second);
+        assert_eq!(token_1, token_2);
+        assert_eq!(broadcast_1, broadcast_2);
+        assert_eq!(proof_1, proof_2);
+        assert_eq!(attempt_1, attempt_2);
+        assert!(emitted_1);
+        assert!(!emitted_2);
+        assert_eq!(exec.delivery_send_idempotency.borrow().len(), 1);
+    }
+
+    #[test]
+    fn run3_send_link_requires_delivery_access_authority() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:inviter-link-send-deny-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        // Link-only permission must fail send-link dispatch at delivery authority gate.
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::DeliveryMethod,
+                    value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::RecipientContact,
+                    value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let x = Ph1xResponse::v1(
+            10,
+            38,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-run3-send-link-deny-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(220),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.link_delivery.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn run3_send_link_requires_full_active_simulation_chain() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:inviter-link-send-sim-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_send_access_instance(&mut store, &actor, "tenant_1");
+        // Omit DELIVERY_SEND_COMMIT on purpose: send-link must fail before execution.
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::DeliveryMethod,
+                    value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::RecipientContact,
+                    value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let x = Ph1xResponse::v1(
+            10,
+            39,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-run3-send-link-sim-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(221),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                    reason: "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_MISSING",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn run3_send_link_delivery_failure_is_fail_closed_and_retry_safe() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:inviter-link-send-fail-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_send_access_instance(&mut store, &actor, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let mk_x = |turn_id: u64| {
+            let draft = IntentDraft::v1(
+                IntentType::CreateInviteLink,
+                SchemaVersion(1),
+                vec![
+                    IntentField {
+                        key: FieldKey::InviteeType,
+                        value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                            .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::DeliveryMethod,
+                        value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                            .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::RecipientContact,
+                        value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::ReferenceTarget,
+                        value: FieldValue::verbatim("provider_fail".to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                ],
+                vec![],
+                OverallConfidence::High,
+                vec![],
+                ReasonCodeId(1),
+                SensitivityLevel::Private,
+                true,
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            Ph1xResponse::v1(
+                10,
+                turn_id,
+                Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+                ThreadState::empty_v1(),
+                None,
+                DeliveryHint::AudibleAndText,
+                ReasonCodeId(1),
+                Some("idem-run3-send-link-fail-1".to_string()),
+            )
+            .unwrap()
+        };
+
+        let first = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor.clone(),
+            MonotonicTimeNs(222),
+            &mk_x(40),
+        );
+        let second = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(223),
+            &mk_x(41),
+        );
+
+        for out in [first, second] {
+            assert!(matches!(
+                out,
+                Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.create_invite_link.delivery",
+                        reason: "SIM_DISPATCH_SEND_LINK_DELIVERY_REFUSED",
+                    }
+                ))
+            ));
+        }
+
+        let audit_rows = store.audit_events_by_correlation(CorrelationId(10));
+        let send_link_failure_audit_rows = audit_rows
+            .iter()
+            .filter(|row| {
+                matches!(&row.engine, AuditEngine::Other(engine) if engine == "PH1.ACCESS/CAPREQ")
+                    && row.reason_code
+                        == selene_engines::ph1delivery::reason_codes::DELIVERY_PROVIDER_SEND_FAILED
+            })
+            .count();
+        assert_eq!(send_link_failure_audit_rows, 1);
+        assert_eq!(exec.delivery_send_idempotency.borrow().len(), 1);
     }
 
     #[test]
