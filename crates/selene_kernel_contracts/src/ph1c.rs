@@ -26,6 +26,18 @@ impl SessionStateRef {
     }
 }
 
+impl Validate for SessionStateRef {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_state_ref.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LanguageTag(String);
 

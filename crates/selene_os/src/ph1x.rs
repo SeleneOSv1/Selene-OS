@@ -9,7 +9,7 @@ use selene_kernel_contracts::ph1m::{
     MemoryCandidate, MemoryConfidence, MemorySensitivityFlag, MemoryUsePolicy,
 };
 use selene_kernel_contracts::ph1n::{
-    FieldKey, IntentDraft, IntentType, OverallConfidence, Ph1nResponse,
+    AmbiguityFlag, FieldKey, IntentDraft, IntentType, OverallConfidence, Ph1nResponse,
 };
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
@@ -537,6 +537,30 @@ impl Ph1xRuntime {
             return self.out_interrupt_relation_uncertain_clarify(
                 req,
                 base_thread_state,
+                delivery_base,
+            );
+        }
+
+        if let Some(clarify) = clarify_for_invite_link_recipient_resolution(d)? {
+            let missing_field = clarify.what_is_missing[0];
+            let attempts = bump_attempts(
+                &base_thread_state.pending,
+                PendingKind::Clarify(missing_field),
+            );
+            let next_state = ThreadState::v1(
+                Some(PendingState::Clarify {
+                    missing_field,
+                    attempts,
+                }),
+                base_thread_state.resume_buffer.clone(),
+            );
+            return self.out_clarify(
+                req,
+                next_state,
+                reason_codes::X_NLP_CLARIFY,
+                clarify.question,
+                clarify.accepted_answer_formats,
+                clarify.what_is_missing,
                 delivery_base,
             );
         }
@@ -1872,6 +1896,111 @@ fn retry_message_for_failure(_rc: ReasonCodeId) -> String {
     "Sorry — I couldn’t complete that just now. Could you try again?".to_string()
 }
 
+fn clarify_for_invite_link_recipient_resolution(
+    d: &IntentDraft,
+) -> Result<Option<ClarifyDirective>, ContractViolation> {
+    if d.intent_type != IntentType::CreateInviteLink {
+        return Ok(None);
+    }
+
+    if d.ambiguity_flags
+        .contains(&AmbiguityFlag::RecipientAmbiguous)
+    {
+        let recipient_name = field_original(d, FieldKey::Recipient)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or("recipient");
+        return Ok(Some(ClarifyDirective::v1(
+            format!("Which {recipient_name}?"),
+            vec![
+                format!("{recipient_name} from work"),
+                format!("{recipient_name} from family"),
+            ],
+            vec![FieldKey::Recipient],
+        )?));
+    }
+
+    if has_missing_field(d, FieldKey::DeliveryMethod) {
+        return Ok(Some(ClarifyDirective::v1(
+            "How should I send it (Selene App / SMS / WhatsApp / WeChat / email)?".to_string(),
+            vec![
+                "Selene App".to_string(),
+                "SMS".to_string(),
+                "Email".to_string(),
+            ],
+            vec![FieldKey::DeliveryMethod],
+        )?));
+    }
+
+    if has_missing_field(d, FieldKey::RecipientContact) {
+        if let Some(recipient_name) = field_original(d, FieldKey::Recipient)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            let channel = invite_delivery_channel_label(d);
+            return Ok(Some(ClarifyDirective::v1(
+                format!("What is {recipient_name}'s contact for {channel}?"),
+                contact_answer_formats_for_channel(channel),
+                vec![FieldKey::RecipientContact],
+            )?));
+        }
+    }
+
+    Ok(None)
+}
+
+fn has_missing_field(d: &IntentDraft, key: FieldKey) -> bool {
+    d.required_fields_missing.contains(&key)
+}
+
+fn invite_delivery_channel_label(d: &IntentDraft) -> &'static str {
+    let token = d
+        .fields
+        .iter()
+        .find(|f| f.key == FieldKey::DeliveryMethod)
+        .and_then(|f| f.value.normalized_value.as_deref())
+        .or_else(|| field_original(d, FieldKey::DeliveryMethod))
+        .unwrap_or("selene_app")
+        .trim()
+        .to_ascii_lowercase();
+
+    match token.as_str() {
+        "selene_app" | "app" => "Selene App",
+        "sms" | "text" => "SMS",
+        "whatsapp" | "wa" => "WhatsApp",
+        "wechat" | "we_chat" => "WeChat",
+        "email" | "mail" => "email",
+        _ => "Selene App",
+    }
+}
+
+fn contact_answer_formats_for_channel(channel: &str) -> Vec<String> {
+    match channel {
+        "Selene App" => vec![
+            "Use Tom in Selene App".to_string(),
+            "Tom's Selene App user ID is tom_lee".to_string(),
+        ],
+        "SMS" => vec!["+14155551212".to_string(), "+442071234567".to_string()],
+        "email" => vec![
+            "tom@example.com".to_string(),
+            "tom.lee@company.com".to_string(),
+        ],
+        "WhatsApp" => vec![
+            "WhatsApp: +14155551212".to_string(),
+            "WhatsApp: tom_lee".to_string(),
+        ],
+        "WeChat" => vec![
+            "WeChat: tomlee".to_string(),
+            "WeChat: tom_family".to_string(),
+        ],
+        _ => vec![
+            "+14155551212".to_string(),
+            "tom@example.com".to_string(),
+            "WeChat: tomlee".to_string(),
+        ],
+    }
+}
+
 fn clarify_for_missing(
     intent_type: IntentType,
     missing: &[FieldKey],
@@ -2204,20 +2333,19 @@ mod tests {
         CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
     };
     use selene_kernel_contracts::ph1k::{
-        Confidence, DegradationClassBundle, InterruptCandidate,
-        InterruptCandidateConfidenceBand, InterruptDegradationContext,
-        InterruptGateConfidences, InterruptGates, InterruptLocaleTag, InterruptPhraseId,
-        InterruptPhraseSetVersion, InterruptRiskContextClass, InterruptSpeechWindowMetrics,
-        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
-        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
+        Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
+        InterruptDegradationContext, InterruptGateConfidences, InterruptGates, InterruptLocaleTag,
+        InterruptPhraseId, InterruptPhraseSetVersion, InterruptRiskContextClass,
+        InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
+        InterruptTimingMarkers, SpeechLikeness, PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
         MemoryUsePolicy, MemoryValue,
     };
     use selene_kernel_contracts::ph1n::{
-        Chat, Clarify, EvidenceSpan, FieldValue, IntentField, OverallConfidence, Ph1nResponse,
-        SensitivityLevel, TranscriptHash,
+        AmbiguityFlag, Chat, Clarify, EvidenceSpan, FieldValue, IntentField, OverallConfidence,
+        Ph1nResponse, SensitivityLevel, TranscriptHash,
     };
     use selene_kernel_contracts::ph1tts::AnswerId;
     use selene_kernel_contracts::ph1x::{
@@ -3092,6 +3220,129 @@ mod tests {
             out.thread_state.pending,
             Some(PendingState::Clarify { .. })
         ));
+    }
+
+    #[test]
+    fn run4_invite_link_ambiguous_tom_asks_exactly_one_disambiguation_question() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::CreateInviteLink);
+        d.fields = vec![
+            IntentField {
+                key: FieldKey::InviteeType,
+                value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::DeliveryMethod,
+                value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::Recipient,
+                value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+        ];
+        d.required_fields_missing = vec![FieldKey::RecipientContact];
+        d.ambiguity_flags = vec![AmbiguityFlag::RecipientAmbiguous];
+
+        let req = Ph1xRequest::v1(
+            901,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Clarify(c) => {
+                assert_eq!(c.question, "Which Tom?");
+                assert_eq!(c.what_is_missing, vec![FieldKey::Recipient]);
+                assert!((2..=3).contains(&c.accepted_answer_formats.len()));
+            }
+            _ => panic!("expected clarify"),
+        }
+        assert_eq!(
+            out.thread_state.pending,
+            Some(PendingState::Clarify {
+                missing_field: FieldKey::Recipient,
+                attempts: 1
+            })
+        );
+    }
+
+    #[test]
+    fn run4_invite_link_missing_contact_asks_exactly_one_delivery_contact_question() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::CreateInviteLink);
+        d.fields = vec![
+            IntentField {
+                key: FieldKey::InviteeType,
+                value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::DeliveryMethod,
+                value: FieldValue::normalized("send".to_string(), "selene_app".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::Recipient,
+                value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+        ];
+        d.required_fields_missing = vec![FieldKey::RecipientContact];
+
+        let req = Ph1xRequest::v1(
+            902,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Clarify(c) => {
+                assert_eq!(c.question, "What is Tom's contact for Selene App?");
+                assert_eq!(c.what_is_missing, vec![FieldKey::RecipientContact]);
+                assert!((2..=3).contains(&c.accepted_answer_formats.len()));
+            }
+            _ => panic!("expected clarify"),
+        }
+        assert_eq!(
+            out.thread_state.pending,
+            Some(PendingState::Clarify {
+                missing_field: FieldKey::RecipientContact,
+                attempts: 1
+            })
+        );
     }
 
     #[test]

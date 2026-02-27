@@ -811,9 +811,8 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
             None
         }
     });
-    let recipient_contact = extract_recipient_contact(t)
-        // As a last resort, accept a short "to X" span as the "contact" (future slices can tighten this).
-        .or_else(|| extract_recipient_after_to(&lower, t));
+    let recipient_contact = extract_recipient_contact(t);
+    let recipient_name = extract_recipient_after_to(&lower, t);
     let runtime_tenant_id = req
         .runtime_tenant_id
         .as_ref()
@@ -855,8 +854,20 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
             confidence: OverallConfidence::High,
         });
         evidence.push(evidence_span(FieldKey::RecipientContact, t, &c)?);
-    } else if delivery_requested {
-        missing.push(FieldKey::RecipientContact);
+    } else {
+        if let Some(name) = recipient_name {
+            fields.push(IntentField {
+                key: FieldKey::Recipient,
+                value: FieldValue::verbatim(name.clone())?,
+                confidence: OverallConfidence::High,
+            });
+            evidence.push(evidence_span(FieldKey::Recipient, t, &name)?);
+            if delivery_requested {
+                missing.push(FieldKey::RecipientContact);
+            }
+        } else if delivery_requested {
+            missing.push(FieldKey::Recipient);
+        }
     }
 
     if let Some(tenant) = tenant_id {
@@ -2687,7 +2698,7 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::CreateInviteLink);
-                assert!(d.required_fields_missing.is_empty());
+                assert_eq!(d.required_fields_missing, vec![FieldKey::RecipientContact]);
                 let tenant = d
                     .fields
                     .iter()
@@ -2698,8 +2709,8 @@ mod tests {
                 let recipient = d
                     .fields
                     .iter()
-                    .find(|f| f.key == FieldKey::RecipientContact)
-                    .expect("recipient contact must be present");
+                    .find(|f| f.key == FieldKey::Recipient)
+                    .expect("recipient name must be present");
                 assert_eq!(recipient.value.original_span, "Tom");
 
                 let method = d
