@@ -27,8 +27,8 @@ use selene_engines::ph1health::{
 };
 use selene_engines::ph1k::{
     build_interrupt_feedback_signal, build_ph1k_to_ph1c_handoff, default_adaptive_policy_input,
-    evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput,
-    InterruptNoiseClass, InterruptPhraseMatcher, PhraseDetection,
+    evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput, InterruptNoiseClass,
+    InterruptPhraseMatcher, PhraseDetection,
 };
 use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
@@ -81,12 +81,12 @@ use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
-use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
 };
 use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
+use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -106,9 +106,9 @@ use selene_os::ph1builder::{
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
-    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome,
-    OsVoiceLiveTurnOutcome, OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring,
-    Ph1OsOcrRouteConfig, Ph1OsOcrRouteWiring,
+    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsVoiceLiveTurnOutcome,
+    OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring, Ph1OsOcrRouteConfig,
+    Ph1OsOcrRouteWiring,
 };
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
@@ -215,6 +215,7 @@ pub struct VoiceTurnAdapterRequest {
     pub tenant_id: Option<String>,
     pub device_id: Option<String>,
     pub now_ns: Option<u64>,
+    pub thread_key: Option<String>,
     pub user_text_partial: Option<String>,
     pub user_text_final: Option<String>,
     pub selene_text_partial: Option<String>,
@@ -695,7 +696,6 @@ struct Ph1cLiveTurnOutcomeSummary {
     low_latency_commit: bool,
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
 }
-
 
 #[derive(Debug, Clone)]
 struct EnvPh1dLiveAdapter {
@@ -2035,7 +2035,9 @@ impl AdapterRuntime {
             return Ok(());
         };
         let (feedback_event_type, reason_code) = match &ph1c.response {
-            Ph1cResponse::TranscriptReject(reject) => (FeedbackEventType::SttReject, reject.reason_code),
+            Ph1cResponse::TranscriptReject(reject) => {
+                (FeedbackEventType::SttReject, reject.reason_code)
+            }
             Ph1cResponse::TranscriptOk(_) => return Ok(()),
         };
         let Some((feedback_event_type, learn_signal_type)) =
@@ -2075,10 +2077,8 @@ impl AdapterRuntime {
                 .map(|meta| meta.total_latency_ms.min(2_000))
                 .unwrap_or(0),
         };
-        let learn_idem = sanitize_idempotency_token(&format!(
-            "ph1c_learn_{}_{}",
-            correlation_id.0, turn_id.0
-        ));
+        let learn_idem =
+            sanitize_idempotency_token(&format!("ph1c_learn_{}_{}", correlation_id.0, turn_id.0));
         let evidence_ref = truncate_ascii(
             ph1c.final_text
                 .as_deref()
@@ -2280,7 +2280,8 @@ impl AdapterRuntime {
             return Ok(());
         };
         for (idx, provider_call) in provider_calls.iter().enumerate() {
-            if provider_call.provider_status == selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok
+            if provider_call.provider_status
+                == selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok
                 && provider_call.validation_status
                     == selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaOk
             {
@@ -2863,7 +2864,9 @@ impl AdapterRuntime {
                     refuse.reason_code.0, refuse.message
                 ))
             }
-            VisionWiringOutcome::Forwarded { bundle, .. } => OsOcrAnalyzerForwardBundle::Vision(bundle),
+            VisionWiringOutcome::Forwarded { bundle, .. } => {
+                OsOcrAnalyzerForwardBundle::Vision(bundle)
+            }
         };
 
         let live_adapter = self.ph1d_live_adapter.clone().ok_or_else(|| {
@@ -2896,8 +2899,11 @@ impl AdapterRuntime {
             AdapterContextEngineRuntime::new(),
         )
         .map_err(|err| format!("ph1context wiring bootstrap failed: {err:?}"))?;
-        let nlp_wiring = Ph1nWiring::new(Ph1nWiringConfig::mvp_v1(true), AdapterNlpEngineRuntime::new())
-            .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
+        let nlp_wiring = Ph1nWiring::new(
+            Ph1nWiringConfig::mvp_v1(true),
+            AdapterNlpEngineRuntime::new(),
+        )
+        .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
         let bridge = Ph1OsOcrContextNlpWiring::new(
             Ph1OsOcrContextNlpConfig::mvp_v1(),
             context_wiring,
@@ -3068,6 +3074,8 @@ impl AdapterRuntime {
             user_text_final.as_deref(),
             tenant_id_for_ph1c.as_deref(),
         )?;
+        let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
+        let base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
         let locale = request
             .audio_capture_ref
             .as_ref()
@@ -3076,7 +3084,7 @@ impl AdapterRuntime {
             .filter(|value| !value.is_empty());
         let x_build = AppVoicePh1xBuildInput {
             now,
-            thread_state: ThreadState::empty_v1(),
+            thread_state: base_thread_state,
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: Vec::new(),
@@ -3091,6 +3099,18 @@ impl AdapterRuntime {
             .ingress
             .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
             .map_err(storage_error_to_string)?;
+        if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
+            persist_ph1x_thread_state(
+                &mut store,
+                now,
+                &actor_user_id,
+                &thread_key,
+                ph1x_response.thread_state.clone(),
+                ph1x_response.reason_code,
+                correlation_id,
+                turn_id,
+            )?;
+        }
         self.commit_ph1d_runtime_outcome(
             &mut store,
             now,
@@ -3393,10 +3413,13 @@ fn build_base_nlp_request_for_vision_handoff(
     let runtime_tenant_id = runtime_tenant_scope
         .map(|tenant| truncate_ascii(tenant.trim(), 64))
         .filter(|tenant| !tenant.is_empty());
-    Ph1nRequest::v1(transcript_ok, Ph1cSessionStateRef::v1(SessionState::Active, false))
-        .map_err(|err| format!("failed to build NLP request for vision handoff: {err:?}"))?
-        .with_runtime_tenant_id(runtime_tenant_id)
-        .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
+    Ph1nRequest::v1(
+        transcript_ok,
+        Ph1cSessionStateRef::v1(SessionState::Active, false),
+    )
+    .map_err(|err| format!("failed to build NLP request for vision handoff: {err:?}"))?
+    .with_runtime_tenant_id(runtime_tenant_id)
+    .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
 }
 
 fn build_nlp_output_for_voice_turn(
@@ -3813,6 +3836,64 @@ fn sanitize_idempotency_token(value: &str) -> String {
     } else {
         truncate_ascii(&out, 128)
     }
+}
+
+fn resolve_adapter_thread_key(value: Option<&str>) -> String {
+    let raw = value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .unwrap_or("default");
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "default".to_string()
+    } else {
+        truncate_ascii(&out, 96)
+    }
+}
+
+fn load_ph1x_thread_state(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    thread_key: &str,
+) -> ThreadState {
+    store
+        .ph1x_thread_state_current_row(actor_user_id, thread_key)
+        .map(|row| row.thread_state.clone())
+        .unwrap_or_else(ThreadState::empty_v1)
+}
+
+fn persist_ph1x_thread_state(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    actor_user_id: &UserId,
+    thread_key: &str,
+    thread_state: ThreadState,
+    reason_code: ReasonCodeId,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+) -> Result<(), String> {
+    let idempotency_key = sanitize_idempotency_token(&format!(
+        "adapter_ph1x_thread_state:{}:{}:{}",
+        correlation_id.0, turn_id.0, thread_key
+    ));
+    let _ = store
+        .ph1x_thread_state_upsert_commit(
+            now,
+            actor_user_id.clone(),
+            thread_key.to_string(),
+            thread_state,
+            reason_code,
+            idempotency_key,
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
 }
 
 fn truncate_ascii(value: &str, max_len: usize) -> String {
@@ -5878,6 +5959,8 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1n::FieldKey;
+    use selene_kernel_contracts::ph1x::{PendingState, ThreadState as KernelThreadState};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn base_request() -> VoiceTurnAdapterRequest {
@@ -5890,6 +5973,7 @@ mod tests {
             tenant_id: Some("tenant_a".to_string()),
             device_id: Some("adapter_device_1".to_string()),
             now_ns: Some(3),
+            thread_key: None,
             user_text_partial: None,
             user_text_final: None,
             selene_text_partial: None,
@@ -5979,7 +6063,10 @@ mod tests {
         )
         .unwrap()
         .expect("vision input should be present");
-        assert_eq!(input.source_ref.source_id.as_str(), "vision_source_adapter_1");
+        assert_eq!(
+            input.source_ref.source_id.as_str(),
+            "vision_source_adapter_1"
+        );
         assert!(input.visible_tokens.is_empty());
     }
 
@@ -6015,11 +6102,13 @@ mod tests {
         request.app_platform = "DESKTOP".to_string();
         request.tenant_id = None;
         request.actor_user_id = "tenant_a:user_adapter_test".to_string();
-        request.user_text_final = Some("Selene send a link to Tom for tenant tenant_999".to_string());
+        request.user_text_final =
+            Some("Selene send a link to Tom for tenant tenant_999".to_string());
 
         let actor_user_id =
             UserId::new(request.actor_user_id.clone()).expect("actor user id must parse");
-        let runtime_tenant_scope = resolve_tenant_scope(request.tenant_id.clone(), &actor_user_id, None);
+        let runtime_tenant_scope =
+            resolve_tenant_scope(request.tenant_id.clone(), &actor_user_id, None);
         let nlp_req = build_base_nlp_request_for_vision_handoff(
             &request,
             request.user_text_final.as_deref(),
@@ -6136,6 +6225,95 @@ mod tests {
         assert!(response_text.contains("Here are the results:"));
         assert!(response_text.contains("Sources:"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
+    }
+
+    #[test]
+    fn at_adapter_03c_thread_state_loader_round_trips_from_ph1f() {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let thread_key = resolve_adapter_thread_key(Some("trip_japan"));
+
+        {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(1),
+            )
+            .expect("identity + device seed should succeed");
+            store
+                .ph1x_thread_state_upsert_commit(
+                    MonotonicTimeNs(2),
+                    actor_user_id.clone(),
+                    thread_key.clone(),
+                    KernelThreadState::v1(
+                        Some(PendingState::Clarify {
+                            missing_field: FieldKey::Task,
+                            attempts: 1,
+                        }),
+                        None,
+                    ),
+                    ReasonCodeId(0x5800_7001),
+                    "adapter_thread_state_seed".to_string(),
+                )
+                .expect("thread state seed should commit");
+            let loaded = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+            match loaded.pending {
+                Some(PendingState::Clarify {
+                    missing_field,
+                    attempts,
+                }) => {
+                    assert_eq!(missing_field, FieldKey::Task);
+                    assert_eq!(attempts, 1);
+                }
+                _ => panic!("expected clarify pending state"),
+            }
+        }
+    }
+
+    #[test]
+    fn at_adapter_03d_cross_device_turns_share_same_thread_state_scope() {
+        let runtime = AdapterRuntime::default();
+        let mut ios = base_request();
+        ios.thread_key = Some("trip_sync".to_string());
+        ios.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+        ios.device_id = Some("adapter_ios_device_cross_1".to_string());
+        ios.app_platform = "IOS".to_string();
+        ios.correlation_id = 10_101;
+        ios.turn_id = 20_101;
+        ios.now_ns = Some(11);
+        runtime
+            .run_voice_turn(ios)
+            .expect("ios voice turn should succeed");
+
+        let mut desktop = base_request();
+        desktop.thread_key = Some("trip_sync".to_string());
+        desktop.user_text_final = Some("Selene what's the latest news about NVIDIA".to_string());
+        desktop.device_id = Some("adapter_desktop_device_cross_1".to_string());
+        desktop.app_platform = "DESKTOP".to_string();
+        desktop.correlation_id = 10_102;
+        desktop.turn_id = 20_102;
+        desktop.now_ns = Some(12);
+        runtime
+            .run_voice_turn(desktop)
+            .expect("desktop voice turn should succeed");
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, "trip_sync")
+            .expect("shared thread state should exist");
+        assert_eq!(current.updated_at, MonotonicTimeNs(12));
+        let ledger_count = store
+            .ph1x_thread_state_ledger_rows()
+            .iter()
+            .filter(|row| {
+                row.user_id.as_str() == actor_user_id.as_str() && row.thread_key == "trip_sync"
+            })
+            .count();
+        assert_eq!(ledger_count, 2);
     }
 
     #[test]

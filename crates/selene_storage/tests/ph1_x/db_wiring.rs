@@ -4,6 +4,8 @@ use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEventType, CorrelationId, DeviceId, PayloadKey, TurnId,
 };
+use selene_kernel_contracts::ph1n::FieldKey;
+use selene_kernel_contracts::ph1x::{PendingState, ThreadState};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo, Ph1xConversationRepo};
@@ -342,4 +344,60 @@ fn at_x_db_05_interrupt_branch_reason_codes_are_auditable() {
             .as_str(),
         "INTERRUPT_RELATION_UNCERTAIN_CLARIFY"
     );
+}
+
+#[test]
+fn at_x_db_06_thread_state_round_trip_is_append_only_and_idempotent() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let u = user("tenant_a:user_1");
+    let d = device("tenant_a_device_1");
+    seed_identity_device(&mut s, u.clone(), d);
+
+    let first_state = ThreadState::v1(
+        Some(PendingState::Clarify {
+            missing_field: FieldKey::Task,
+            attempts: 1,
+        }),
+        None,
+    );
+    let first_event_id = s
+        .ph1x_thread_state_upsert_commit(
+            MonotonicTimeNs(600),
+            u.clone(),
+            "trip_japan".to_string(),
+            first_state.clone(),
+            ReasonCodeId(0x5800_6001),
+            "x-thread-idem".to_string(),
+        )
+        .unwrap();
+    let retry_event_id = s
+        .ph1x_thread_state_upsert_commit(
+            MonotonicTimeNs(601),
+            u.clone(),
+            "trip_japan".to_string(),
+            ThreadState::v1(
+                Some(PendingState::Clarify {
+                    missing_field: FieldKey::Recipient,
+                    attempts: 2,
+                }),
+                None,
+            ),
+            ReasonCodeId(0x5800_6002),
+            "x-thread-idem".to_string(),
+        )
+        .unwrap();
+    assert_eq!(first_event_id, retry_event_id);
+    assert_eq!(s.ph1x_thread_state_ledger_rows().len(), 1);
+
+    let current = s
+        .ph1x_thread_state_current_row(&u, "trip_japan")
+        .expect("thread state current row should be present");
+    assert_eq!(current.thread_state, first_state);
+    assert_eq!(current.reason_code, ReasonCodeId(0x5800_6001));
+
+    assert!(matches!(
+        s.attempt_overwrite_ph1x_thread_state_ledger_row(first_event_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
 }

@@ -40,12 +40,11 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
     InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
-    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
-    InterruptTimingMarkers, VadDecisionConfidenceBand,
+    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers,
+    VadDecisionConfidenceBand,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1learn::LearnSignalType;
-use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1link::{
     deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
     DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
@@ -68,6 +67,7 @@ use selene_kernel_contracts::ph1onb::{
     TermsStatus, VerificationStatus,
 };
 use selene_kernel_contracts::ph1os::OsOutcomeActionClass;
+use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, BlueprintStatus, BlueprintVersion, IntentType, ProcessBlueprintEvent,
     ProcessBlueprintEventInput, ProcessId,
@@ -88,6 +88,7 @@ use selene_kernel_contracts::ph1simcat::{
 use selene_kernel_contracts::ph1work::{
     WorkOrderCurrentRecord, WorkOrderId, WorkOrderLedgerEvent, WorkOrderLedgerEventInput,
 };
+use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -523,6 +524,28 @@ pub struct MemoryThreadRefRecord {
     pub created_at: MonotonicTimeNs,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ph1xThreadStateLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub ph1x_thread_state_event_id: u64,
+    pub user_id: UserId,
+    pub thread_key: String,
+    pub thread_state: ThreadState,
+    pub reason_code: ReasonCodeId,
+    pub updated_at: MonotonicTimeNs,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ph1xThreadStateCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub user_id: UserId,
+    pub thread_key: String,
+    pub thread_state: ThreadState,
+    pub reason_code: ReasonCodeId,
+    pub updated_at: MonotonicTimeNs,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryGraphNodeRecord {
     pub schema_version: SchemaVersion,
@@ -725,6 +748,10 @@ pub struct Ph1fStore {
     memory_retention_idempotency_index: BTreeMap<(UserId, String), MonotonicTimeNs>,
 
     conversation_ledger: Vec<ConversationTurnRecord>,
+    ph1x_thread_state_ledger: Vec<Ph1xThreadStateLedgerRow>,
+    ph1x_thread_state_current: BTreeMap<(UserId, String), Ph1xThreadStateCurrentRecord>,
+    // Idempotency: (user_id, thread_key, idempotency_key) -> ph1x_thread_state_event_id
+    ph1x_thread_state_idempotency_index: BTreeMap<(UserId, String, String), u64>,
     outcome_utilization_ledger: Vec<OutcomeUtilizationLedgerRow>,
     // Idempotency: (correlation_id, turn_id, engine_id, outcome_type, idempotency_key) -> row_id
     outcome_utilization_idempotency_index:
@@ -1070,6 +1097,7 @@ pub struct Ph1fStore {
     next_emotional_thread_event_id: u64,
     next_memory_metric_event_id: u64,
     next_memory_thread_event_id: u64,
+    next_ph1x_thread_state_event_id: u64,
     next_outcome_utilization_row_id: u64,
     next_self_heal_failure_row_id: u64,
     next_self_heal_problem_row_id: u64,
@@ -2091,6 +2119,9 @@ impl Ph1fStore {
             memory_retention_preferences: BTreeMap::new(),
             memory_retention_idempotency_index: BTreeMap::new(),
             conversation_ledger: Vec::new(),
+            ph1x_thread_state_ledger: Vec::new(),
+            ph1x_thread_state_current: BTreeMap::new(),
+            ph1x_thread_state_idempotency_index: BTreeMap::new(),
             outcome_utilization_ledger: Vec::new(),
             outcome_utilization_idempotency_index: BTreeMap::new(),
             self_heal_failure_event_ledger: Vec::new(),
@@ -2243,6 +2274,7 @@ impl Ph1fStore {
             next_emotional_thread_event_id: 1,
             next_memory_metric_event_id: 1,
             next_memory_thread_event_id: 1,
+            next_ph1x_thread_state_event_id: 1,
             next_outcome_utilization_row_id: 1,
             next_self_heal_failure_row_id: 1,
             next_self_heal_problem_row_id: 1,
@@ -12433,6 +12465,18 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn validate_ph1x_thread_key(thread_key: &str) -> Result<(), StorageError> {
+        if thread_key.trim().is_empty() || thread_key.len() > 96 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1x_thread_state.thread_key",
+                    reason: "must be non-empty and <= 96 chars",
+                },
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_ph1x_scope_and_bindings(
         &mut self,
         tenant_id: &str,
@@ -12743,6 +12787,95 @@ impl Ph1fStore {
             .iter()
             .filter(|e| e.correlation_id == correlation_id && e.engine == AuditEngine::Ph1X)
             .collect()
+    }
+
+    pub fn ph1x_thread_state_upsert_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        user_id: UserId,
+        thread_key: String,
+        thread_state: ThreadState,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<u64, StorageError> {
+        Self::validate_ph1x_thread_key(&thread_key)?;
+        Self::validate_ph1x_idempotency("ph1x_thread_state.idempotency_key", &idempotency_key)?;
+        thread_state.validate()?;
+        if reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1x_thread_state.reason_code",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+        if !self.identities.contains_key(&user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "ph1x_thread_state.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+
+        let idem_idx = (user_id.clone(), thread_key.clone(), idempotency_key.clone());
+        if let Some(existing_id) = self
+            .ph1x_thread_state_idempotency_index
+            .get(&idem_idx)
+            .copied()
+        {
+            return Ok(existing_id);
+        }
+
+        let event_id = self.next_ph1x_thread_state_event_id;
+        self.next_ph1x_thread_state_event_id =
+            self.next_ph1x_thread_state_event_id.saturating_add(1);
+
+        self.ph1x_thread_state_ledger
+            .push(Ph1xThreadStateLedgerRow {
+                schema_version: SchemaVersion(1),
+                ph1x_thread_state_event_id: event_id,
+                user_id: user_id.clone(),
+                thread_key: thread_key.clone(),
+                thread_state: thread_state.clone(),
+                reason_code,
+                updated_at: now,
+                idempotency_key: idempotency_key.clone(),
+            });
+        self.ph1x_thread_state_current.insert(
+            (user_id.clone(), thread_key.clone()),
+            Ph1xThreadStateCurrentRecord {
+                schema_version: SchemaVersion(1),
+                user_id: user_id.clone(),
+                thread_key,
+                thread_state,
+                reason_code,
+                updated_at: now,
+            },
+        );
+        self.ph1x_thread_state_idempotency_index
+            .insert(idem_idx, event_id);
+        Ok(event_id)
+    }
+
+    pub fn ph1x_thread_state_ledger_rows(&self) -> &[Ph1xThreadStateLedgerRow] {
+        &self.ph1x_thread_state_ledger
+    }
+
+    pub fn ph1x_thread_state_current_row(
+        &self,
+        user_id: &UserId,
+        thread_key: &str,
+    ) -> Option<&Ph1xThreadStateCurrentRecord> {
+        self.ph1x_thread_state_current
+            .get(&(user_id.clone(), thread_key.to_string()))
+    }
+
+    pub fn attempt_overwrite_ph1x_thread_state_ledger_row(
+        &mut self,
+        _event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "ph1x_thread_state_ledger",
+        })
     }
 
     fn validate_access_capreq_tenant_id(tenant_id: &str) -> Result<(), StorageError> {
@@ -14748,15 +14881,21 @@ impl Ph1fStore {
         }
 
         if extended.gate_confidences.phrase_confidence
-            != extended.subject_relation_confidence_bundle.lexical_confidence
+            != extended
+                .subject_relation_confidence_bundle
+                .lexical_confidence
             || extended.gate_confidences.vad_confidence
                 != extended.subject_relation_confidence_bundle.vad_confidence
             || extended.gate_confidences.speech_likeness
                 != extended.subject_relation_confidence_bundle.speech_likeness
             || extended.gate_confidences.echo_safe_confidence
-                != extended.subject_relation_confidence_bundle.echo_safe_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .echo_safe_confidence
             || extended.gate_confidences.nearfield_confidence
-                != extended.subject_relation_confidence_bundle.nearfield_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .nearfield_confidence
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14782,8 +14921,7 @@ impl Ph1fStore {
             || extended.degradation_context.aec_unstable
             || extended.degradation_context.device_changed
             || extended.degradation_context.stream_gap_detected;
-        if has_degradation
-            && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
+        if has_degradation && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14951,12 +15089,15 @@ impl Ph1fStore {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1k_feedback_capture.degradation_flags",
-                    reason: "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
+                    reason:
+                        "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14965,8 +15106,10 @@ impl Ph1fStore {
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && input.failover_from_device == input.failover_to_device
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && input.failover_from_device == input.failover_to_device
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -15092,10 +15235,10 @@ impl Ph1fStore {
         quality_regression: bool,
         false_interrupt_rate_milli_per_hour: u32,
     ) -> (PaeMode, &'static str, bool, bool, bool) {
-        let false_interrupt_regression_triggered = matches!(
-            issue_kind,
-            Ph1kFeedbackIssueKind::FalseInterrupt
-        ) && false_interrupt_rate_milli_per_hour > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
+        let false_interrupt_regression_triggered =
+            matches!(issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt)
+                && false_interrupt_rate_milli_per_hour
+                    > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
         let quality_regression_triggered = quality_regression
             || matches!(
                 issue_kind,
@@ -15104,8 +15247,8 @@ impl Ph1fStore {
             );
 
         let should_demote = quality_regression_triggered || false_interrupt_regression_triggered;
-        let should_promote = !should_demote
-            && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
+        let should_promote =
+            !should_demote && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
         let mode_to = if should_demote {
             Self::ph1k_demoted_mode(mode_from)
         } else if should_promote {
@@ -15122,7 +15265,8 @@ impl Ph1fStore {
             "HOLD"
         };
 
-        let rollback_triggered = quality_regression_triggered || false_interrupt_regression_triggered;
+        let rollback_triggered =
+            quality_regression_triggered || false_interrupt_regression_triggered;
         (
             mode_to,
             action,
@@ -15204,7 +15348,11 @@ impl Ph1fStore {
             ),
             (
                 PayloadKey::new("regression_quality")?,
-                PayloadValue::new(if quality_regression_triggered { "1" } else { "0" })?,
+                PayloadValue::new(if quality_regression_triggered {
+                    "1"
+                } else {
+                    "0"
+                })?,
             ),
             (
                 PayloadKey::new("regression_false_interrupt")?,
@@ -15279,7 +15427,10 @@ impl Ph1fStore {
             "event_kind",
             Self::ph1k_event_kind_label(event.event_kind).to_string(),
         )?;
-        insert("event_name", Self::ph1k_event_name(event.event_kind).to_string())?;
+        insert(
+            "event_name",
+            Self::ph1k_event_name(event.event_kind).to_string(),
+        )?;
         insert("ph1k_event_id", event.event_id.to_string())?;
 
         match event.event_kind {
@@ -15307,7 +15458,10 @@ impl Ph1fStore {
                     insert("selected_speaker", v.clone())?;
                 }
                 if let Some(v) = event.device_health {
-                    insert("device_health", Self::ph1k_device_health_label(v).to_string())?;
+                    insert(
+                        "device_health",
+                        Self::ph1k_device_health_label(v).to_string(),
+                    )?;
                 }
             }
             Ph1kRuntimeEventKind::TimingStats => {
@@ -15384,7 +15538,9 @@ impl Ph1fStore {
                             ext.subject_relation_confidence_bundle.lexical_confidence.0,
                             ext.subject_relation_confidence_bundle.vad_confidence.0,
                             ext.subject_relation_confidence_bundle.speech_likeness.0,
-                            ext.subject_relation_confidence_bundle.echo_safe_confidence.0,
+                            ext.subject_relation_confidence_bundle
+                                .echo_safe_confidence
+                                .0,
                             ext.subject_relation_confidence_bundle
                                 .nearfield_confidence
                                 .map(|v| format!("{:.3}", v.0))
@@ -15420,8 +15576,14 @@ impl Ph1fStore {
                     "capture_degraded",
                     event.capture_degraded.unwrap_or(false).to_string(),
                 )?;
-                insert("aec_unstable", event.aec_unstable.unwrap_or(false).to_string())?;
-                insert("device_changed", event.device_changed.unwrap_or(false).to_string())?;
+                insert(
+                    "aec_unstable",
+                    event.aec_unstable.unwrap_or(false).to_string(),
+                )?;
+                insert(
+                    "device_changed",
+                    event.device_changed.unwrap_or(false).to_string(),
+                )?;
                 insert(
                     "stream_gap_detected",
                     event.stream_gap_detected.unwrap_or(false).to_string(),
@@ -15578,14 +15740,17 @@ impl Ph1fStore {
                         Some(extended.adaptive_capture_to_handoff_latency_ms);
                     row.last_interrupt_snr_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.snr_db));
-                    row.last_interrupt_clipping_ratio_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.clipping_ratio));
+                    row.last_interrupt_clipping_ratio_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.clipping_ratio,
+                    ));
                     row.last_interrupt_echo_delay_ms_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.echo_delay_ms));
-                    row.last_interrupt_packet_loss_pct_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.packet_loss_pct));
-                    row.last_interrupt_double_talk_score_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.double_talk_score));
+                    row.last_interrupt_packet_loss_pct_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.packet_loss_pct,
+                    ));
+                    row.last_interrupt_double_talk_score_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.double_talk_score,
+                    ));
                     row.last_interrupt_erle_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.erle_db));
                 }
@@ -15827,7 +15992,8 @@ impl Ph1fStore {
                             },
                         ));
                     }
-                    effective_capture_degraded = Some(extended.degradation_context.capture_degraded);
+                    effective_capture_degraded =
+                        Some(extended.degradation_context.capture_degraded);
                     effective_aec_unstable = Some(extended.degradation_context.aec_unstable);
                     effective_device_changed = Some(extended.degradation_context.device_changed);
                     effective_stream_gap_detected =
@@ -15976,7 +16142,10 @@ impl Ph1fStore {
         idempotency_key: String,
     ) -> Result<Ph1kFeedbackCaptureRecord, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
-        Self::validate_ph1learn_idempotency("ph1k_feedback_capture.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1learn_idempotency(
+            "ph1k_feedback_capture.idempotency_key",
+            &idempotency_key,
+        )?;
         self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
         Self::validate_ph1k_feedback_capture_input(&capture_input)?;
 
@@ -16108,7 +16277,10 @@ impl Ph1fStore {
         let false_interrupt_rate_milli_per_hour = self.ph1k_false_interrupt_rate_milli_per_hour(
             &tenant_id,
             now,
-            matches!(capture_input.issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt),
+            matches!(
+                capture_input.issue_kind,
+                Ph1kFeedbackIssueKind::FalseInterrupt
+            ),
         );
         let (
             mode_to,

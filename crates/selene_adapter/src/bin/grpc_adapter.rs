@@ -48,6 +48,11 @@ impl VoiceIngress for GrpcVoiceIngress {
             } else {
                 Some(req.now_ns)
             },
+            thread_key: if req.thread_key.trim().is_empty() {
+                None
+            } else {
+                Some(req.thread_key)
+            },
             user_text_partial: None,
             user_text_final: None,
             selene_text_partial: None,

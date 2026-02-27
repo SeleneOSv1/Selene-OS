@@ -16,6 +16,7 @@ message RunVoiceTurnRequest {
   string tenant_id = 6;
   string device_id = 7;
   uint64 now_ns = 8;
+  string thread_key = 9;
 }
 
 message RunVoiceTurnResponse {
