@@ -957,6 +957,268 @@ impl Validate for BuilderPromotionReport {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuilderReviewAction {
+    PromoteRelease,
+    LaunchUpdate,
+}
+
+impl BuilderReviewAction {
+    fn as_str(self) -> &'static str {
+        match self {
+            BuilderReviewAction::PromoteRelease => "promote_release",
+            BuilderReviewAction::LaunchUpdate => "launch_update",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderReviewIssue {
+    pub reason_code: ReasonCodeId,
+    pub detail: String,
+}
+
+impl BuilderReviewIssue {
+    pub fn v1(reason_code: ReasonCodeId, detail: String) -> Result<Self, ContractViolation> {
+        let issue = Self { reason_code, detail };
+        issue.validate()?;
+        Ok(issue)
+    }
+}
+
+impl Validate for BuilderReviewIssue {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_review_issue.reason_code",
+                reason: "must be non-zero",
+            });
+        }
+        validate_ascii_text("builder_review_issue.detail", &self.detail, 256)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderReviewReport {
+    pub report_id: String,
+    pub proposal_id: String,
+    pub action: BuilderReviewAction,
+    pub generated_at: MonotonicTimeNs,
+    pub blockers: Vec<BuilderReviewIssue>,
+    pub warnings: Vec<BuilderReviewIssue>,
+}
+
+impl BuilderReviewReport {
+    pub fn v1(
+        proposal_id: String,
+        action: BuilderReviewAction,
+        generated_at: MonotonicTimeNs,
+        blockers: Vec<BuilderReviewIssue>,
+        warnings: Vec<BuilderReviewIssue>,
+    ) -> Result<Self, ContractViolation> {
+        let report = Self {
+            report_id: deterministic_review_report_id(&proposal_id, action, generated_at),
+            proposal_id,
+            action,
+            generated_at,
+            blockers,
+            warnings,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub fn blocks_release(&self) -> bool {
+        !self.blockers.is_empty()
+    }
+}
+
+impl Validate for BuilderReviewReport {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token_ascii("builder_review_report.report_id", &self.report_id, 96)?;
+        validate_token_ascii("builder_review_report.proposal_id", &self.proposal_id, 96)?;
+        if self.generated_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_review_report.generated_at",
+                reason: "must be > 0",
+            });
+        }
+        if self.blockers.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_review_report.blockers",
+                reason: "must be <= 32",
+            });
+        }
+        if self.warnings.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "builder_review_report.warnings",
+                reason: "must be <= 32",
+            });
+        }
+        for blocker in &self.blockers {
+            blocker.validate()?;
+        }
+        for warning in &self.warnings {
+            warning.validate()?;
+        }
+        Ok(())
+    }
+}
+
+pub fn run_release_promotion_review(
+    current: &BuilderReleaseState,
+    approval: &BuilderApprovalState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+) -> Result<BuilderReviewReport, ContractViolation> {
+    current.validate()?;
+    approval.validate()?;
+
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if current.proposal_id != approval.proposal_id {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+            "approval proposal_id must match release proposal_id".to_string(),
+        )?);
+    }
+    if current.status != BuilderReleaseStateStatus::Active {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+            "release promotion requires ACTIVE stage state".to_string(),
+        )?);
+    }
+    if !judge_gates.passed_for_stage(current.stage) {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_ROLLOUT_STAGE_GATE_FAILED,
+            format!(
+                "rollout gate failed for stage {}",
+                rollout_stage_label(current.stage)
+            ),
+        )?);
+    }
+
+    match next_release_stage(current.stage) {
+        Some(next_stage) => {
+            if next_stage == BuilderReleaseStage::Production
+                && approval.status != BuilderApprovalStateStatus::Approved
+            {
+                blockers.push(BuilderReviewIssue::v1(
+                    reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+                    "production rollout blocked because approval class is unresolved".to_string(),
+                )?);
+            }
+        }
+        None => blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+            "release stage cannot advance beyond PRODUCTION".to_string(),
+        )?),
+    }
+
+    if current.stage == BuilderReleaseStage::Ramp50 {
+        let Some(kpis) = prompt_rate_kpis else {
+            blockers.push(BuilderReviewIssue::v1(
+                reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+                "prompt-rate KPI snapshot is required before production promotion".to_string(),
+            )?);
+            return BuilderReviewReport::v1(
+                current.proposal_id.clone(),
+                BuilderReviewAction::PromoteRelease,
+                now,
+                blockers,
+                warnings,
+            );
+        };
+        if !kpis.passes_gate() {
+            blockers.push(BuilderReviewIssue::v1(
+                reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+                "prompt-rate KPI gate failed".to_string(),
+            )?);
+        }
+    } else if current.stage == BuilderReleaseStage::Ramp25 && prompt_rate_kpis.is_none() {
+        warnings.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+            "prompt-rate KPI snapshot will be required at RAMP50 before production promotion"
+                .to_string(),
+        )?);
+    }
+
+    BuilderReviewReport::v1(
+        current.proposal_id.clone(),
+        BuilderReviewAction::PromoteRelease,
+        now,
+        blockers,
+        warnings,
+    )
+}
+
+pub fn run_launch_update_review(
+    binding: &BuilderGovernedReleaseBinding,
+    release: &BuilderReleaseState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+) -> Result<BuilderReviewReport, ContractViolation> {
+    binding.validate()?;
+    release.validate()?;
+
+    let mut blockers = Vec::new();
+    let mut warnings = Vec::new();
+
+    if binding.proposal_id != release.proposal_id {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD,
+            "release proposal_id must match governed binding proposal_id".to_string(),
+        )?);
+    }
+    if release.stage != BuilderReleaseStage::Production
+        || release.status != BuilderReleaseStateStatus::Completed
+    {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD,
+            "launch update requires PRODUCTION release stage in COMPLETED state".to_string(),
+        )?);
+    }
+    if !judge_gates.full_passed {
+        blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD,
+            "launch update blocked because full rollout judge gate is not passed".to_string(),
+        )?);
+    }
+    match prompt_rate_kpis {
+        Some(kpis) => {
+            if !kpis.passes_gate() {
+                blockers.push(BuilderReviewIssue::v1(
+                    reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+                    "launch update blocked because prompt-rate KPI gate failed".to_string(),
+                )?);
+            }
+        }
+        None => blockers.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
+            "launch update requires prompt-rate KPI snapshot".to_string(),
+        )?),
+    }
+
+    if release.rollback_hook.is_empty() {
+        warnings.push(BuilderReviewIssue::v1(
+            reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD,
+            "rollback hook is empty; launch update should retain rollback pointer".to_string(),
+        )?);
+    }
+
+    BuilderReviewReport::v1(
+        release.proposal_id.clone(),
+        BuilderReviewAction::LaunchUpdate,
+        now,
+        blockers,
+        warnings,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuilderRuntimeActivationHandoff {
     pub proposal_id: String,
@@ -1055,29 +1317,24 @@ pub fn promote_with_judge_gates(
     now: MonotonicTimeNs,
     idempotency_key: Option<String>,
 ) -> Result<BuilderReleaseState, BuilderRefusal> {
-    if !judge_gates.passed_for_stage(current.stage) {
+    let review = run_release_promotion_review(
+        current,
+        approval,
+        judge_gates,
+        prompt_rate_kpis,
+        now,
+    )
+    .map_err(|_| BuilderRefusal {
+        stage: "REVIEW",
+        reason_code: reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+        message: "review preflight validation failed".to_string(),
+    })?;
+    if let Some(blocker) = review.blockers.first() {
         return Err(BuilderRefusal {
-            stage: "ROLLOUT_GATE",
-            reason_code: reason_codes::PH1_BUILDER_ROLLOUT_STAGE_GATE_FAILED,
-            message: format!(
-                "rollout gate failed for stage {}",
-                rollout_stage_label(current.stage)
-            ),
+            stage: "REVIEW",
+            reason_code: blocker.reason_code,
+            message: blocker.detail.clone(),
         });
-    }
-    if current.stage == BuilderReleaseStage::Ramp50 {
-        let kpis = prompt_rate_kpis.ok_or_else(|| BuilderRefusal {
-            stage: "PROMPT_RATE",
-            reason_code: reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
-            message: "prompt-rate KPI snapshot is required before production promotion".to_string(),
-        })?;
-        if !kpis.passes_gate() {
-            return Err(BuilderRefusal {
-                stage: "PROMPT_RATE",
-                reason_code: reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED,
-                message: "prompt-rate KPI gate failed".to_string(),
-            });
-        }
     }
     controller.promote(current, approval, now, idempotency_key)
 }
@@ -1141,11 +1398,8 @@ pub fn publish_runtime_activation_handoff(
     prompt_rate_kpis: Option<BuilderPromptRateKpis>,
     now: MonotonicTimeNs,
 ) -> Result<BuilderRuntimeActivationHandoff, ContractViolation> {
-    let prompt_pass = prompt_rate_kpis.map(|k| k.passes_gate()).unwrap_or(false);
-    let activation_published = release.stage == BuilderReleaseStage::Production
-        && release.status == BuilderReleaseStateStatus::Completed
-        && judge_gates.full_passed
-        && prompt_pass;
+    let review = run_launch_update_review(binding, release, judge_gates, prompt_rate_kpis, now)?;
+    let activation_published = !review.blocks_release();
     let active_pointer_ref = if activation_published {
         Some(deterministic_runtime_activation_pointer_ref(binding))
     } else {
@@ -1154,7 +1408,11 @@ pub fn publish_runtime_activation_handoff(
     let reason_code = if activation_published {
         reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_PUBLISHED
     } else {
-        reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD
+        review
+            .blockers
+            .first()
+            .map(|issue| issue.reason_code)
+            .unwrap_or(reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD)
     };
     BuilderRuntimeActivationHandoff::v1(
         release.proposal_id.clone(),
@@ -2775,6 +3033,22 @@ fn deterministic_promotion_report_id(
             sanitize_token_component(proposal_id, 24),
             rollout_stage_label(from_stage),
             rollout_stage_label(to_stage),
+            generated_at.0
+        ),
+        96,
+    )
+}
+
+fn deterministic_review_report_id(
+    proposal_id: &str,
+    action: BuilderReviewAction,
+    generated_at: MonotonicTimeNs,
+) -> String {
+    truncate_token(
+        format!(
+            "builder_review_{}_{}_{}",
+            sanitize_token_component(proposal_id, 24),
+            action.as_str(),
             generated_at.0
         ),
         96,
@@ -4507,6 +4781,42 @@ mod tests {
         assert_eq!(
             handoff.reason_code,
             reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD
+        );
+    }
+
+    #[test]
+    fn run7_builder_review_preflight_blocks_production_promotion_and_emits_reason_coded_report() {
+        let controller = BuilderReleaseController;
+        let approval = approved_state_for("run7p1", 2_000);
+        let release = active_release_for("run7p1", BuilderReleaseStage::Ramp50, 2_001);
+        let gates = BuilderRolloutJudgeGates::v1(true, true, true, true);
+
+        let review =
+            run_release_promotion_review(&release, &approval, gates, None, MonotonicTimeNs(2_002))
+                .unwrap();
+        assert_eq!(review.action, BuilderReviewAction::PromoteRelease);
+        assert!(review.blocks_release());
+        assert_eq!(review.blockers.len(), 1);
+        assert_eq!(
+            review.blockers[0].reason_code,
+            reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED
+        );
+        assert_eq!(review.warnings.len(), 0);
+
+        let refusal = promote_with_judge_gates(
+            &controller,
+            &release,
+            &approval,
+            gates,
+            None,
+            MonotonicTimeNs(2_003),
+            Some("run7_promote_blocked".to_string()),
+        )
+        .unwrap_err();
+        assert_eq!(refusal.stage, "REVIEW");
+        assert_eq!(
+            refusal.reason_code,
+            reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED
         );
     }
 }
