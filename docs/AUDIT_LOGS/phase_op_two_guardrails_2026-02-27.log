@@ -1,0 +1,507 @@
+==================================================
+0) REPO STATE (MUST BE REPORTED EXACTLY)
+==================================================
+BRANCH:
+codex/phase-f-2026-02-27
+PINNED COMMIT HASH:
+78a8402b431b42179251e2e398a5a6a1696de10f
+
+GIT STATUS (SHORT):
+ M scripts/selene_design_readiness_audit.sh
+
+GIT DIFF (NAME ONLY):
+scripts/selene_design_readiness_audit.sh
+
+LAST COMMIT:
+78a8402 Phase M/N: enforce sim requirement and sim catalog parity guards
+
+AUDIT_TREE_STATE: DIRTY
+AUDIT_VALIDITY_NOTE: closure decisions require pinned commit hash plus this dirty-file listing.
+
+==================================================
+1) CANONICAL DOC EXISTENCE + BASIC HEALTH
+==================================================
+OK: docs/04_KERNEL_CONTRACTS.md
+OK: docs/05_OS_CONSTITUTION.md
+OK: docs/06_ENGINE_MAP.md
+OK: docs/07_ENGINE_REGISTRY.md
+OK: docs/08_SIMULATION_CATALOG.md
+OK: docs/09_BLUEPRINT_REGISTRY.md
+OK: docs/10_DB_OWNERSHIP_MATRIX.md
+OK: docs/11_DESIGN_LOCK_SEQUENCE.md
+OK: docs/COVERAGE_MATRIX.md
+OK: docs/13_PROBLEMS_TO_FIX.md
+
+==================================================
+1B) ENGINE TRACKER DUPLICATION GUARDRAIL
+==================================================
+CHECK_OK rows=77 duplicate_namespace_guardrail=pass
+
+==================================================
+1B2) RETIRED ENGINE MERGE RESIDUE GUARDRAIL
+==================================================
+CHECK_OK merge_residue_retired_engines=pass
+
+==================================================
+1C) OPTIONAL ENGINE UTILITY GATES (U4/U5)
+==================================================
+UTILITY_REVIEW:engine_id=PH1.PRUNE,gate_u4_pass=1,gate_u5_trigger=0,action=KEEP
+UTILITY_REVIEW:engine_id=PH1.DIAG,gate_u4_pass=1,gate_u5_trigger=0,action=KEEP
+UTILITY_REVIEW:engine_id=PH1.PREFETCH,gate_u4_pass=1,gate_u5_trigger=0,action=KEEP
+UTILITY_REVIEW_SUMMARY:rows=3,u4_fail_count=0,u5_trigger_count=0,fail_on_u4=1
+
+==================================================
+1C2) PH1.X INTERRUPT CONTINUITY RELEASE GATE
+==================================================
+PH1X_BENCH:window_min=30,same_subject_bp=9900,switch_topic_bp=9944,resume_buffer_bp=9955,branch_latency_p95_ms=48,audit_bp=10000
+CHECK_OK ph1x_interrupt_continuity_benchmarks=pass rows=1
+CHECK_OK ph1x_release_gate=pass input=docs/fixtures/ph1x_interrupt_continuity_snapshot.csv
+
+==================================================
+1C3) PH1.K 5E READINESS GATE
+==================================================
+CHECK_OK:ph1k_5e_step_1_declared
+CHECK_OK:ph1k_5e_step_1_complete
+CHECK_OK:ph1k_5e_step_2_declared
+CHECK_OK:ph1k_5e_step_2_complete
+CHECK_OK:ph1k_5e_step_3_declared
+CHECK_OK:ph1k_5e_step_3_complete
+CHECK_OK:ph1k_5e_step_4_declared
+CHECK_OK:ph1k_5e_step_4_complete
+CHECK_OK:ph1k_5e_step_5_declared
+CHECK_OK:ph1k_5e_step_5_complete
+CHECK_OK:ph1k_5e_step_6_declared
+CHECK_OK:ph1k_5e_step_6_complete
+CHECK_OK:ph1k_5e_step_7_declared
+CHECK_OK:ph1k_5e_step_7_complete
+CHECK_OK:ph1k_5e_step_8_declared
+CHECK_OK:ph1k_5e_step_8_complete
+CHECK_OK:ph1k_5e_step_9_declared
+CHECK_OK:ph1k_5e_step_9_complete
+CHECK_OK:ph1k_5e_step_10_declared
+CHECK_OK:ph1k_5e_step_10_complete
+CHECK_OK:ph1x_5d_handoff_complete
+CHECK_OK:learning_sink_chain_declared
+CHECK_OK:tracker_progress_locked
+CHECK_OK:db_wiring_timing_markers_documented
+CHECK_OK:db_wiring_speech_window_metrics_documented
+CHECK_OK:db_wiring_subject_bundle_documented
+CHECK_OK:db_wiring_reason_code_lexical_rejected
+CHECK_OK:db_wiring_reason_code_noise_rejected
+CHECK_OK:db_wiring_reason_code_candidate_high
+CHECK_OK:db_wiring_feedback_reason_code_false
+CHECK_OK:ecm_timing_markers_documented
+CHECK_OK:ecm_speech_window_metrics_documented
+CHECK_OK:ecm_subject_bundle_documented
+CHECK_OK:ecm_learning_sink_chain_documented
+CHECK_OK:runtime_feedback_mapper_exists
+CHECK_OK:runtime_reason_code_high_exists
+CHECK_OK:runtime_reason_code_noise_rejected_exists
+CHECK_OK:x_contract_snapshot_age_guard_exists
+CHECK_OK:x_contract_subject_bundle_guard_exists
+CHECK_OK:x_contract_timing_window_guard_exists
+CHECK_OK ph1k_5e_readiness_gate=pass
+
+==================================================
+1C4) PH1.K ROUND-2 BASELINE SNAPSHOT FREEZE
+==================================================
+PH1K_BASELINE:captured_at_utc=2026-02-25T06:45:00Z,commit_hash=eeb98c11cb36adc0e932dc3ac87da381ad220893,false_interrupt_rate_per_hour=0.2857,missed_interrupt_bp=119,vad_boundary_p95_ms=142,device_failover_recovery_p95_ms=730,aec_unstable_count=2,stream_gap_detected_count=1,device_changed_count=4
+CHECK_OK ph1k_round2_baseline_snapshot=pass rows=1
+
+==================================================
+1C5) PH1.K ROUND-2 BENCHMARK/EVAL SNAPSHOT HARNESS
+==================================================
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:00:00Z,locale=en-US,device_route=BUILT_IN,noise_class=CLEAN,overlap_speech=0,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.25,end_of_speech_p95_ms=148,capture_to_ph1c_handoff_p95_ms=92,device_failover_recovery_p95_ms=780,noisy_recovery_success_pct=99.00,multilingual_interrupt_recall_pct=97.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:05:00Z,locale=en-US,device_route=BLUETOOTH,noise_class=ELEVATED,overlap_speech=1,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.46,end_of_speech_p95_ms=170,capture_to_ph1c_handoff_p95_ms=108,device_failover_recovery_p95_ms=1220,noisy_recovery_success_pct=97.80,multilingual_interrupt_recall_pct=95.60,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:10:00Z,locale=en-US,device_route=USB,noise_class=SEVERE,overlap_speech=1,false_interrupt_rate_per_hour=0.1700,missed_interrupt_rate_pct=1.78,end_of_speech_p95_ms=176,capture_to_ph1c_handoff_p95_ms=114,device_failover_recovery_p95_ms=1380,noisy_recovery_success_pct=97.20,multilingual_interrupt_recall_pct=95.10,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:15:00Z,locale=es-ES,device_route=BUILT_IN,noise_class=CLEAN,overlap_speech=0,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=1.15,end_of_speech_p95_ms=142,capture_to_ph1c_handoff_p95_ms=90,device_failover_recovery_p95_ms=720,noisy_recovery_success_pct=99.30,multilingual_interrupt_recall_pct=96.40,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:20:00Z,locale=es-ES,device_route=BLUETOOTH,noise_class=ELEVATED,overlap_speech=1,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.67,end_of_speech_p95_ms=168,capture_to_ph1c_handoff_p95_ms=109,device_failover_recovery_p95_ms=1260,noisy_recovery_success_pct=97.50,multilingual_interrupt_recall_pct=95.40,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:25:00Z,locale=es-ES,device_route=VIRTUAL,noise_class=SEVERE,overlap_speech=1,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=2.00,end_of_speech_p95_ms=179,capture_to_ph1c_handoff_p95_ms=118,device_failover_recovery_p95_ms=1450,noisy_recovery_success_pct=97.00,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:30:00Z,locale=zh-CN,device_route=USB,noise_class=CLEAN,overlap_speech=0,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=0.71,end_of_speech_p95_ms=144,capture_to_ph1c_handoff_p95_ms=88,device_failover_recovery_p95_ms=760,noisy_recovery_success_pct=99.10,multilingual_interrupt_recall_pct=97.20,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:35:00Z,locale=zh-CN,device_route=BLUETOOTH,noise_class=ELEVATED,overlap_speech=1,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.67,end_of_speech_p95_ms=171,capture_to_ph1c_handoff_p95_ms=110,device_failover_recovery_p95_ms=1300,noisy_recovery_success_pct=97.40,multilingual_interrupt_recall_pct=95.30,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:40:00Z,locale=zh-CN,device_route=VIRTUAL,noise_class=SEVERE,overlap_speech=1,false_interrupt_rate_per_hour=0.1700,missed_interrupt_rate_pct=1.90,end_of_speech_p95_ms=178,capture_to_ph1c_handoff_p95_ms=119,device_failover_recovery_p95_ms=1490,noisy_recovery_success_pct=97.10,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:45:00Z,locale=tr-TR,device_route=BUILT_IN,noise_class=CLEAN,overlap_speech=0,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=0.83,end_of_speech_p95_ms=141,capture_to_ph1c_handoff_p95_ms=87,device_failover_recovery_p95_ms=710,noisy_recovery_success_pct=99.40,multilingual_interrupt_recall_pct=96.80,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:50:00Z,locale=tr-TR,device_route=USB,noise_class=ELEVATED,overlap_speech=1,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.61,end_of_speech_p95_ms=167,capture_to_ph1c_handoff_p95_ms=107,device_failover_recovery_p95_ms=1210,noisy_recovery_success_pct=97.70,multilingual_interrupt_recall_pct=95.50,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_ROW:captured_at_utc=2026-02-25T09:55:00Z,locale=tr-TR,device_route=VIRTUAL,noise_class=SEVERE,overlap_speech=1,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.82,end_of_speech_p95_ms=180,capture_to_ph1c_handoff_p95_ms=120,device_failover_recovery_p95_ms=1500,noisy_recovery_success_pct=97.00,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_EVAL_SUMMARY:rows=12,avg_false_interrupt_rate_per_hour=0.1575,avg_missed_interrupt_rate_pct=1.49,avg_end_of_speech_p95_ms=163.67,avg_capture_to_ph1c_handoff_p95_ms=105.17,avg_device_failover_recovery_p95_ms=1148.33,avg_noisy_recovery_success_pct=97.96,avg_multilingual_interrupt_recall_pct=95.77,avg_audit_completeness_pct=100.00,avg_tenant_isolation_pct=100.00
+PH1K_EVAL_WORST:rows=12,max_false_interrupt_rate_per_hour=0.2500,max_missed_interrupt_rate_pct=2.00,max_end_of_speech_p95_ms=180,max_capture_to_ph1c_handoff_p95_ms=120,max_device_failover_recovery_p95_ms=1500,min_noisy_recovery_success_pct=97.00,min_multilingual_interrupt_recall_pct=95.00,min_audit_completeness_pct=100.00,min_tenant_isolation_pct=100.00
+PH1K_EVAL_TREND:file_order_first=2026-02-25T09:00:00Z,file_order_last=2026-02-25T09:55:00Z,false_rate_delta=-0.0500,missed_pct_delta=0.57,end_of_speech_p95_delta_ms=32,capture_to_ph1c_handoff_p95_delta_ms=28
+CHECK_OK ph1k_round2_eval_snapshot=pass rows=12
+
+==================================================
+1C6) PH1.K GLOBAL-STANDARD RELEASE GATE
+==================================================
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:00:00Z,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.25,end_of_speech_p95_ms=148,capture_to_ph1c_handoff_p95_ms=92,device_failover_recovery_p95_ms=780,noisy_recovery_success_pct=99.00,multilingual_interrupt_recall_pct=97.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:05:00Z,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.46,end_of_speech_p95_ms=170,capture_to_ph1c_handoff_p95_ms=108,device_failover_recovery_p95_ms=1220,noisy_recovery_success_pct=97.80,multilingual_interrupt_recall_pct=95.60,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:10:00Z,false_interrupt_rate_per_hour=0.1700,missed_interrupt_rate_pct=1.78,end_of_speech_p95_ms=176,capture_to_ph1c_handoff_p95_ms=114,device_failover_recovery_p95_ms=1380,noisy_recovery_success_pct=97.20,multilingual_interrupt_recall_pct=95.10,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:15:00Z,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=1.15,end_of_speech_p95_ms=142,capture_to_ph1c_handoff_p95_ms=90,device_failover_recovery_p95_ms=720,noisy_recovery_success_pct=99.30,multilingual_interrupt_recall_pct=96.40,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:20:00Z,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.67,end_of_speech_p95_ms=168,capture_to_ph1c_handoff_p95_ms=109,device_failover_recovery_p95_ms=1260,noisy_recovery_success_pct=97.50,multilingual_interrupt_recall_pct=95.40,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:25:00Z,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=2.00,end_of_speech_p95_ms=179,capture_to_ph1c_handoff_p95_ms=118,device_failover_recovery_p95_ms=1450,noisy_recovery_success_pct=97.00,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:30:00Z,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=0.71,end_of_speech_p95_ms=144,capture_to_ph1c_handoff_p95_ms=88,device_failover_recovery_p95_ms=760,noisy_recovery_success_pct=99.10,multilingual_interrupt_recall_pct=97.20,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:35:00Z,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.67,end_of_speech_p95_ms=171,capture_to_ph1c_handoff_p95_ms=110,device_failover_recovery_p95_ms=1300,noisy_recovery_success_pct=97.40,multilingual_interrupt_recall_pct=95.30,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:40:00Z,false_interrupt_rate_per_hour=0.1700,missed_interrupt_rate_pct=1.90,end_of_speech_p95_ms=178,capture_to_ph1c_handoff_p95_ms=119,device_failover_recovery_p95_ms=1490,noisy_recovery_success_pct=97.10,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:45:00Z,false_interrupt_rate_per_hour=0.0000,missed_interrupt_rate_pct=0.83,end_of_speech_p95_ms=141,capture_to_ph1c_handoff_p95_ms=87,device_failover_recovery_p95_ms=710,noisy_recovery_success_pct=99.40,multilingual_interrupt_recall_pct=96.80,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:50:00Z,false_interrupt_rate_per_hour=0.2500,missed_interrupt_rate_pct=1.61,end_of_speech_p95_ms=167,capture_to_ph1c_handoff_p95_ms=107,device_failover_recovery_p95_ms=1210,noisy_recovery_success_pct=97.70,multilingual_interrupt_recall_pct=95.50,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_ROW:captured_at_utc=2026-02-25T09:55:00Z,false_interrupt_rate_per_hour=0.2000,missed_interrupt_rate_pct=1.82,end_of_speech_p95_ms=180,capture_to_ph1c_handoff_p95_ms=120,device_failover_recovery_p95_ms=1500,noisy_recovery_success_pct=97.00,multilingual_interrupt_recall_pct=95.00,audit_completeness_pct=100.00,tenant_isolation_pct=100.00
+PH1K_RELEASE_WORST:false_interrupt_rate_per_hour_max=0.2500,missed_interrupt_rate_pct_max=2.00,end_of_speech_p95_ms_max=180,capture_to_ph1c_handoff_p95_ms_max=120,device_failover_recovery_p95_ms_max=1500,noisy_recovery_success_pct_min=97.00,multilingual_interrupt_recall_pct_min=95.00,audit_completeness_pct_min=100.00,tenant_isolation_pct_min=100.00
+CHECK_OK ph1k_release_gate=pass input=docs/fixtures/ph1k_round2_eval_snapshot.csv rows=12
+
+==================================================
+1D) RUNTIME BOUNDARY GUARDRAIL (OFFLINE/CONTROL-PLANE)
+==================================================
+CHECK_OK runtime_boundary_guards=pass
+
+==================================================
+1E) DELIVERY OWNERSHIP BOUNDARY GUARDRAIL
+==================================================
+CHECK_OK delivery_ownership_boundaries=pass
+
+==================================================
+1F) UNDERSTANDING + CLARIFY PRECEDENCE GUARDRAIL
+==================================================
+CHECK_OK understanding_clarify_precedence=pass
+
+==================================================
+1G) LEARNING OWNERSHIP BOUNDARY GUARDRAIL
+==================================================
+CHECK_OK learning_ownership_boundaries=pass
+
+==================================================
+1G2) PH1 READ-ONLY TOOL PARITY GUARDRAIL
+==================================================
+CHECK_OK ph1_tool_parity=pass
+
+==================================================
+1H) BUILDER PIPELINE PHASE13-A GUARDRAIL
+==================================================
+CHECK_OK builder_pipeline_phase13a=pass
+
+==================================================
+1I) BUILDER PIPELINE PHASE13-B GUARDRAIL
+==================================================
+CHECK_OK builder_pipeline_phase13b=pass
+
+==================================================
+1J) BUILDER PIPELINE PHASE13-C GUARDRAIL
+==================================================
+CHECK_OK builder_pipeline_phase13c=pass
+
+==================================================
+1K) BUILDER PIPELINE PHASE13-D GUARDRAIL
+==================================================
+CHECK_OK builder_pipeline_phase13d=pass
+
+==================================================
+1L) BUILDER STAGE-2 CANARY REPLAY GUARDRAIL
+==================================================
+CHECK_OK builder_stage2_canary_replay=pass
+
+==================================================
+1M) BUILDER STAGE-2 PROMOTION GATE CHECK
+==================================================
+CHECK_OK builder_stage2_promotion_gate=pass rows=1
+
+==================================================
+1N) BUILDER STAGE-3 RELEASE GATE (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_STAGE3_RELEASE_GATE=1 to require real telemetry export + promotion gate before Stage-3 ramp.
+
+==================================================
+1O) BUILDER HUMAN PERMISSION LOOP (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_HUMAN_PERMISSION=1 to require BCAST/REM-backed human code+launch approvals, daily-review freshness, and plain-language issue/fix permission prompts.
+
+==================================================
+1P) BUILDER LEARNING->PATCH BRIDGE GATE (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_LEARNING_BRIDGE=1 to require evidence-backed learning reports before learning-triggered builder patching.
+
+==================================================
+1Q) BUILDER PIPELINE PHASE13-E LEARNING BRIDGE CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13e=pass
+
+==================================================
+1R) BUILDER E2E GATE FLOW (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_E2E_GATE_FLOW=1 to require one-command learning->approval->stage gate chain.
+
+==================================================
+1S) BUILDER PIPELINE PHASE13-F HUMAN BRIEF AUTOGEN CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13f=pass
+
+==================================================
+1T) BUILDER PIPELINE PHASE13-G PERMISSION PACKET CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13g=pass
+
+==================================================
+1U) BUILDER PIPELINE PHASE13-H DECISION INGEST CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13h=pass
+
+==================================================
+1V) BUILDER PIPELINE PHASE13-I DECISION-FILE INGEST CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13i=pass
+
+==================================================
+1W) BUILDER PIPELINE PHASE13-J DECISION-SEED EXPORT CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13j=pass
+
+==================================================
+1X) BUILDER PIPELINE PHASE13-K DECISION-FILE AUTO-SYNC CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13k=pass
+
+==================================================
+1Y) BUILDER RELEASE HARD GATE (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_RELEASE_HARD_GATE=1 to require one strict release entrypoint (auto-sync decision files + live telemetry stage gate).
+
+==================================================
+1Z) BUILDER PIPELINE PHASE13-L HARD-GATE GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13l=pass
+
+==================================================
+1AA) BUILDER PIPELINE PHASE13-M CONTROLLED-ROLLOUT START GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13m=pass
+
+==================================================
+1AB) BUILDER CONTROLLED ROLLOUT START GATE (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_CONTROLLED_ROLLOUT_START=1 to require synchronized remote head + freeze-tag parity + replay + strict hard-gate before rollout kickoff.
+
+==================================================
+1AC) BUILDER PIPELINE PHASE13-N ROLLBACK-DRILL GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13n=pass
+
+==================================================
+1AD) BUILDER ROLLBACK DRILL (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_ROLLBACK_DRILL=1 to require dry-run revert safety proof before rollout progression.
+
+==================================================
+1AE) BUILDER PIPELINE PHASE13-O PRE-LAUNCH BUNDLE GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13o=pass
+
+==================================================
+1AF) BUILDER PRE-LAUNCH BUNDLE (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_PRELAUNCH_BUNDLE=1 to require rollout-start + rollback-drill + hard-gate final checklist before launch progression.
+
+==================================================
+1AG) BUILDER PIPELINE PHASE13-P CONTROLLED-LAUNCH EXECUTOR GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13p=pass
+
+==================================================
+1AH) BUILDER CONTROLLED LAUNCH EXECUTOR (OPTIONAL ENFORCED, PREVIEW-ONLY)
+==================================================
+SKIP: set ENFORCE_BUILDER_CONTROLLED_LAUNCH_EXECUTE=1 to require controlled launch-executor preview checks in readiness audit.
+
+==================================================
+1AI) BUILDER PIPELINE PHASE13-Q STAGE-BOUND JUDGE GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13q=pass
+
+==================================================
+1AJ) BUILDER STAGE-BOUND JUDGE BINDING (OPTIONAL ENFORCED, PREVIEW-ONLY)
+==================================================
+SKIP: set ENFORCE_BUILDER_STAGE_JUDGE_BINDING=1 to require stage-bound judge telemetry checks per current release_state in readiness audit.
+
+==================================================
+1AK) BUILDER PIPELINE PHASE13-R PRODUCTION-SOAK WATCHDOG GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13r=pass
+
+==================================================
+1AL) BUILDER PRODUCTION SOAK WATCHDOG (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK=1 to require fresh production-stage judge telemetry and fail-closed production soak checks.
+
+==================================================
+1AM) BUILDER PIPELINE PHASE13-S PRODUCTION-SOAK RUNNER GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13s=pass
+
+==================================================
+1AN) BUILDER PRODUCTION SOAK RUNNER (OPTIONAL ENFORCED, ONCE MODE)
+==================================================
+SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_RUNNER=1 to require fail-closed production-soak runner checks (once mode) with BCAST failure-alert dispatch in readiness audit.
+
+==================================================
+1AO) BUILDER PIPELINE PHASE13-T PRODUCTION-SOAK AUTOMATION GUARDRAIL CHECK
+==================================================
+CHECK_OK builder_pipeline_phase13t=pass
+
+==================================================
+1AP) BUILDER PRODUCTION SOAK AUTOMATION STATUS (OPTIONAL ENFORCED)
+==================================================
+SKIP: set ENFORCE_BUILDER_PRODUCTION_SOAK_AUTOMATION=1 to require launchd automation loaded-status checks in readiness audit.
+
+==================================================
+2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP
+==================================================
+
+==================================================
+3) BLUEPRINT REGISTRY DISCIPLINE
+   - Exactly one ACTIVE per intent_type
+   - ACTIVE blueprint must be code-ready: capability_ids resolve + side-effects have sim requirements
+==================================================
+--- 3A) Registry uniqueness: duplicate ACTIVE intents (if any) ---
+CHECK_OK blueprint_active_intent_uniqueness=pass
+
+--- 3B) List ACTIVE blueprint files (for later checks) ---
+docs/BLUEPRINTS/LINK_INVITE.md
+docs/BLUEPRINTS/LINK_DELIVER_INVITE.md
+docs/BLUEPRINTS/LINK_OPEN_ACTIVATE.md
+docs/BLUEPRINTS/ONB_INVITED.md
+docs/BLUEPRINTS/ONB_BIZ_SETUP.md
+docs/BLUEPRINTS/ONB_SCHEMA_MANAGE.md
+docs/BLUEPRINTS/ONB_REQUIREMENT_BACKFILL.md
+docs/BLUEPRINTS/POSITION_MANAGE.md
+docs/BLUEPRINTS/CAPREQ_MANAGE.md
+docs/BLUEPRINTS/ACCESS_SCHEMA_MANAGE.md
+docs/BLUEPRINTS/ACCESS_ESCALATION_VOTE.md
+docs/BLUEPRINTS/ACCESS_INSTANCE_COMPILE_REFRESH.md
+docs/BLUEPRINTS/MESSAGE_COMPOSE_AND_SEND.md
+docs/BLUEPRINTS/MEMORY_QUERY.md
+docs/BLUEPRINTS/MEMORY_FORGET_REQUEST.md
+docs/BLUEPRINTS/MEMORY_REMEMBER_REQUEST.md
+docs/BLUEPRINTS/TOOL_TIME_QUERY.md
+docs/BLUEPRINTS/TOOL_WEATHER_QUERY.md
+docs/BLUEPRINTS/TOOL_WEB_SEARCH.md
+docs/BLUEPRINTS/TOOL_NEWS.md
+docs/BLUEPRINTS/TOOL_URL_FETCH_AND_CITE.md
+docs/BLUEPRINTS/TOOL_DOCUMENT_UNDERSTAND.md
+docs/BLUEPRINTS/TOOL_PHOTO_UNDERSTAND.md
+docs/BLUEPRINTS/REMINDER_MANAGE.md
+docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md
+CHECK_OK blueprint_active_paths=pass count=25
+
+--- 3C) Extract capability_ids used by ACTIVE blueprints ---
+ACTIVE CAPABILITIES (unique):
+      82 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.o2zZM5BzFmdJ/active_caps_unique.txt
+
+--- 3D) Build ECM capability set (exact tokens) ---
+ECM CAPABILITIES (unique):
+     283 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.o2zZM5BzFmdJ/ecm_caps_exact.txt
+
+--- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---
+CHECK_OK blueprint_capability_parity=pass
+
+--- 3F) ACTIVE blueprints: side_effects!=NONE must not have Simulation Requirements: none ---
+BAD_ACTIVE_SIMREQ_NONE_FOUND:0
+CHECK_OK blueprint_side_effect_simreq_none=pass
+
+--- 3G) Simulation IDs listed by ACTIVE blueprints must exist in sim catalog ---
+NON_SIM_TEXT_LINES (if any):
+CHECK_OK blueprint_sim_requirements_non_sim_text=pass
+CHECK_OK blueprint_sim_catalog_parity=pass
+
+==================================================
+4) KERNEL ↔ DB_WIRING ↔ SQL ↔ SIM CATALOG PARITY (DRIFT HOTSPOTS)
+   (Report mismatches; do not fix)
+==================================================
+--- 4A) PH1.LINK key enums (InviteeType + LinkStatus) ---
+KERNEL InviteeType:
+50:pub enum InviteeType {
+KERNEL LinkStatus:
+77:pub enum LinkStatus {
+SQL onboarding_link_tokens status constraint:
+35:CREATE TABLE IF NOT EXISTS onboarding_link_tokens (
+48:        status IN (
+49:            'DRAFT_CREATED',
+50:            'SENT',
+51:            'OPENED',
+52:            'ACTIVATED',
+53:            'CONSUMED',
+54:            'REVOKED',
+55:            'EXPIRED',
+56:            'BLOCKED'
+82:            'LINK_EXPIRED_RECOVERY'
+DB_WIRING PH1_LINK lifecycle line:
+48:  - lifecycle state is bounded (`DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED`)
+
+--- 4B) Onboarding draft status keywords + constraints ---
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:5:CREATE TABLE IF NOT EXISTS onboarding_drafts (
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:20:    CHECK (status IN ('DRAFT_CREATED', 'DRAFT_READY', 'COMMITTED', 'REVOKED', 'EXPIRED')),
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:28:CREATE UNIQUE INDEX IF NOT EXISTS ux_onboarding_drafts_tenant_draft
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:29:    ON onboarding_drafts(tenant_id, draft_id);
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:31:CREATE UNIQUE INDEX IF NOT EXISTS ux_onboarding_drafts_idempotency
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:32:    ON onboarding_drafts(tenant_id, idempotency_key)
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:37:    draft_id TEXT NOT NULL REFERENCES onboarding_drafts(draft_id),
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:49:            'DRAFT_CREATED',
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:54:            'REVOKED',
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:55:            'EXPIRED',
+crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql:82:            'LINK_EXPIRED_RECOVERY'
+docs/DB_WIRING/PH1_LINK.md:30:### `onboarding_drafts`
+docs/DB_WIRING/PH1_LINK.md:37:  - `status` is bounded (`DRAFT_CREATED | DRAFT_READY | COMMITTED | REVOKED | EXPIRED`) with deterministic monotonic transitions
+docs/DB_WIRING/PH1_LINK.md:48:  - lifecycle state is bounded (`DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED`)
+docs/DB_WIRING/PH1_LINK.md:85:- reads: `onboarding_drafts`, `onboarding_link_tokens`
+docs/DB_WIRING/PH1_LINK.md:88:  - `onboarding_drafts(tenant_id, draft_id)`
+docs/DB_WIRING/PH1_LINK.md:99:- writes: `onboarding_drafts`, `onboarding_link_tokens` (or equivalent PH1.F current records in MVP runtime lock)
+docs/DB_WIRING/PH1_LINK.md:106:- writes: `onboarding_drafts` deterministic update + missing-required recompute
+docs/DB_WIRING/PH1_LINK.md:112:  - draft exists and is not terminal (`COMMITTED | REVOKED | EXPIRED`)
+docs/DB_WIRING/PH1_LINK.md:113:  - linked token lifecycle is not terminal (`CONSUMED | REVOKED | EXPIRED`)
+docs/DB_WIRING/PH1_LINK.md:121:- PH1.LINK runtime projection for delivery success is deterministic: `DRAFT_CREATED -> SENT`.
+docs/DB_WIRING/PH1_LINK.md:125:- writes: token status transition (`DRAFT_CREATED|SENT -> OPENED -> ACTIVATED`), or deterministic terminal passthrough (`BLOCKED|EXPIRED|REVOKED|CONSUMED`), plus bound device fingerprint hash
+docs/DB_WIRING/PH1_LINK.md:135:- writes: token lifecycle transition to `REVOKED`
+docs/DB_WIRING/PH1_LINK.md:145:  - token is `REVOKED` and cannot be activated/consumed afterwards
+docs/DB_WIRING/PH1_LINK.md:156:- `onboarding_drafts.creator_user_id -> identities.user_id`
+docs/DB_WIRING/PH1_LINK.md:157:- `onboarding_link_tokens.draft_id -> onboarding_drafts.draft_id`
+docs/DB_WIRING/PH1_LINK.md:160:- `ux_onboarding_drafts_tenant_draft`
+docs/DB_WIRING/PH1_LINK.md:161:- `ux_onboarding_drafts_idempotency` (partial)
+docs/04_KERNEL_CONTRACTS.md:136:confirmation_state (NOT_REQUIRED | PENDING | CONFIRMED | EXPIRED)
+docs/04_KERNEL_CONTRACTS.md:791:KC.16.1 Table: onboarding_drafts
+docs/04_KERNEL_CONTRACTS.md:809:status (DRAFT_CREATED | DRAFT_READY | COMMITTED | REVOKED | EXPIRED)
+docs/04_KERNEL_CONTRACTS.md:825:Transition enforcement rule: status transitions are monotonic and deterministic (no COMMITTED -> DRAFT_CREATED), enforced by PH1.F/PH1.LINK runtime state machine; SQL CHECK enforces enum membership only.
+docs/04_KERNEL_CONTRACTS.md:833:draft_id (FK -> onboarding_drafts.draft_id)
+docs/04_KERNEL_CONTRACTS.md:841:status (DRAFT_CREATED | SENT | OPENED | ACTIVATED | CONSUMED | REVOKED | EXPIRED | BLOCKED)
+docs/04_KERNEL_CONTRACTS.md:859:FOREIGN KEY (draft_id) REFERENCES onboarding_drafts(draft_id)
+docs/04_KERNEL_CONTRACTS.md:891:Commit path must be atomic: create real entity + mark draft COMMITTED + mark token CONSUMED in one transaction.
+docs/04_KERNEL_CONTRACTS.md:1067:status (DRAFT_CREATED | SENT | HALTED | EXPIRED | CANCELED)
+docs/04_KERNEL_CONTRACTS.md:1239:status (ACTIVE | EXPIRED | REVOKED)
+docs/04_KERNEL_CONTRACTS.md:1927:confirmation_state (NOT_REQUIRED | PENDING | CONFIRMED | EXPIRED)
+docs/04_KERNEL_CONTRACTS.md:2023:lease_state (ACTIVE | EXPIRED | RELEASED)
+docs/04_KERNEL_CONTRACTS.md:2225:state (DRAFT_CREATED | RUNNING | COMPLETED | CANCELED)
+
+==================================================
+5) DRIFT/BANNED LEGACY TOKENS SWEEP (CASE-INSENSITIVE)
+   (Report any hit with file:line)
+==================================================
+
+==================================================
+6) SIM CATALOG LEGACY COMPLIANCE EVIDENCE (LINK DOMAIN)
+   - The lines below are expected evidence when legacy LINK delivery sims remain marked LEGACY_DO_NOT_WIRE.
+   - Treat as a finding only if status is not LEGACY_DO_NOT_WIRE or wording contradicts LINK_DELIVER_INVITE ownership.
+==================================================
+34:| LINK_INVITE_SEND_COMMIT | COMMIT | Link | Legacy do-not-wire send placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
+36:| LINK_INVITE_RESEND_COMMIT | COMMIT | Link | Legacy do-not-wire resend placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; delivery only via LINK_DELIVER_INVITE |
+42:| LINK_DELIVERY_FAILURE_HANDLING_COMMIT | COMMIT | Link | Legacy do-not-wire failure placeholder; delivery owned by LINK_DELIVER_INVITE | LEGACY_DO_NOT_WIRE | v1 | LEGACY_DO_NOT_WIRE; state handling only, delivery via LINK_DELIVER_INVITE |
+318:### LINK_INVITE_SEND_COMMIT (COMMIT)
+320:LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
+394:### LINK_INVITE_RESEND_COMMIT (COMMIT)
+396:LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
+570:### LINK_DELIVERY_FAILURE_HANDLING_COMMIT (COMMIT)
+572:LEGACY_DO_NOT_WIRE: Delivery is performed only by LINK_DELIVER_INVITE (PH1.BCAST + PH1.DELIVERY). This simulation must not be wired.
+
+==================================================
+7) OUTPUT FORMAT REQUIRED (IN YOUR CHAT RESPONSE)
+==================================================
+In your reply, paste:
+A) This full terminal output (do not summarize it away).
+B) Then a structured issue list with:
+   - Severity (BLOCKER/RISK/CLEANUP)
+   - File:line references
+   - Why it matters (drift risk / broken contract / bad relationship)
+   - The smallest safe fix (DESIGN/DOC ONLY; no code changes) and the proof command to confirm.
+
+END OF AUDIT

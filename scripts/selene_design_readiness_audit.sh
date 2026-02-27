@@ -425,13 +425,22 @@ echo "   - ACTIVE blueprint must be code-ready: capability_ids resolve + side-ef
 echo "=================================================="
 
 echo "--- 3A) Registry uniqueness: duplicate ACTIVE intents (if any) ---"
-awk -F'|' '
-  /^\|/ && $0 !~ /^\|---/ {
-    for(i=1;i<=NF;i++){gsub(/^ +| +$/, "", $i)}
-    intent=$2; status=$5;
-    if(intent!="intent_type" && status=="ACTIVE"){print intent}
-  }
-' docs/09_BLUEPRINT_REGISTRY.md | sort | uniq -c | awk '$1>1{print "DUP_ACTIVE_INTENT:",$0}' || true
+dup_active_intents="$(
+  awk -F'|' '
+    /^\|/ && $0 !~ /^\|---/ {
+      for(i=1;i<=NF;i++){gsub(/^ +| +$/, "", $i)}
+      intent=$2; status=$5;
+      if(intent!="intent_type" && status=="ACTIVE"){print intent}
+    }
+  ' docs/09_BLUEPRINT_REGISTRY.md | sort | uniq -c | awk '$1>1{print "DUP_ACTIVE_INTENT:",$0}'
+)"
+if [ -n "${dup_active_intents}" ]; then
+  printf "%s\n" "${dup_active_intents}"
+  dup_active_intent_count="$(printf "%s\n" "${dup_active_intents}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_active_intent_uniqueness=fail count=${dup_active_intent_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_intent_uniqueness=pass"
 
 echo
 echo "--- 3B) List ACTIVE blueprint files (for later checks) ---"
@@ -446,6 +455,27 @@ awk -F'|' '
   }
 ' docs/09_BLUEPRINT_REGISTRY.md > "${ACTIVE_BLUEPRINTS_TXT}"
 cat "${ACTIVE_BLUEPRINTS_TXT}"
+
+active_blueprint_count="$(wc -l < "${ACTIVE_BLUEPRINTS_TXT}" | tr -d ' ')"
+if [ "${active_blueprint_count}" -eq 0 ]; then
+  echo "CHECK_FAIL blueprint_active_paths=fail count=0"
+  exit 1
+fi
+
+missing_active_blueprint_count=0
+while read -r f; do
+  [ -n "${f}" ] || continue
+  if [ ! -f "${f}" ]; then
+    echo "MISSING_ACTIVE_BLUEPRINT_PATH: ${f}"
+    missing_active_blueprint_count=$((missing_active_blueprint_count + 1))
+  fi
+done < "${ACTIVE_BLUEPRINTS_TXT}"
+
+if [ "${missing_active_blueprint_count}" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_active_paths=fail missing=${missing_active_blueprint_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_paths=pass count=${active_blueprint_count}"
 
 echo
 echo "--- 3C) Extract capability_ids used by ACTIVE blueprints ---"
