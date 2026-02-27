@@ -144,6 +144,12 @@ echo "=================================================="
 
 echo
 echo "=================================================="
+echo "1G2) PH1 READ-ONLY TOOL PARITY GUARDRAIL"
+echo "=================================================="
+./scripts/check_ph1_tool_parity.sh
+
+echo
+echo "=================================================="
 echo "1H) BUILDER PIPELINE PHASE13-A GUARDRAIL"
 echo "=================================================="
 ./scripts/check_builder_pipeline_phase13a.sh
