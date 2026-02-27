@@ -4928,12 +4928,15 @@ fn append_ph1c_live_telemetry_csv(
     finalized: bool,
     low_latency_commit: bool,
 ) -> Result<(), String> {
+    let default_csv_path = resolve_repo_root_from_cwd()
+        .map(|root| root.join(".dev/ph1c_live_telemetry.csv"))
+        .unwrap_or_else(|| PathBuf::from(".dev/ph1c_live_telemetry.csv"));
     let csv_path = env::var("SELENE_PH1C_LIVE_TELEMETRY_PATH")
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(".dev/ph1c_live_telemetry.csv"));
+        .unwrap_or(default_csv_path);
     if let Some(parent) = csv_path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).map_err(|err| {
