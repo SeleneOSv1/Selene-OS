@@ -174,6 +174,34 @@ impl Ph1eRuntime {
                     url: "https://example.com/data-analysis-citation".to_string(),
                 }],
             },
+            ToolName::DeepResearch => ToolResult::DeepResearch {
+                summary: format!(
+                    "Deep research synthesis for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "scope".to_string(),
+                        value: "multi-source synthesis".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "confidence".to_string(),
+                        value: "high".to_string(),
+                    },
+                ],
+                citations: vec![
+                    ToolTextSnippet {
+                        title: "Primary source A".to_string(),
+                        snippet: "Key finding from source A".to_string(),
+                        url: "https://example.com/research-source-a".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Primary source B".to_string(),
+                        snippet: "Cross-check finding from source B".to_string(),
+                        url: "https://example.com/research-source-b".to_string(),
+                    },
+                ],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -220,7 +248,7 @@ fn budget_exceeded(request_budget: StrictBudget, config: Ph1eConfig) -> bool {
 fn policy_blocks(req: &ToolRequest) -> bool {
     matches!(
         req.tool_name,
-        ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite
+        ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite | ToolName::DeepResearch
     )
         && (req.policy_context_ref.privacy_mode
             || matches!(
@@ -255,6 +283,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::DocumentUnderstand => "https://example.com/document",
         ToolName::PhotoUnderstand => "https://example.com/photo",
         ToolName::DataAnalysis => "https://example.com/data-analysis",
+        ToolName::DeepResearch => "https://example.com/deep-research",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -447,6 +476,33 @@ mod tests {
                 assert!(!citations.is_empty());
             }
             other => panic!("expected DataAnalysis result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_10_deep_research_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::DeepResearch,
+            "deep research AI chip policy changes with citations",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::DeepResearch {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected DeepResearch result, got {other:?}"),
         }
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());

@@ -546,6 +546,7 @@ impl Ph1xRuntime {
                 | IntentType::DocumentUnderstandQuery
                 | IntentType::PhotoUnderstandQuery
                 | IntentType::DataAnalysisQuery
+                | IntentType::DeepResearchQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
@@ -562,6 +563,7 @@ impl Ph1xRuntime {
                     (ToolName::PhotoUnderstand, intent_query_text(d))
                 }
                 IntentType::DataAnalysisQuery => (ToolName::DataAnalysis, intent_query_text(d)),
+                IntentType::DeepResearchQuery => (ToolName::DeepResearch, intent_query_text(d)),
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1496,6 +1498,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
                 }
             }
+            ToolResult::DeepResearch {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Extracted fields:\n");
+                for field in extracted_fields.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                }
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
         }
     }
     if let Some(meta) = &tr.source_metadata {
@@ -1661,7 +1680,8 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::UrlFetchAndCiteQuery
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
-        | IntentType::DataAnalysisQuery => {
+        | IntentType::DataAnalysisQuery
+        | IntentType::DeepResearchQuery => {
             "Is that right?".to_string()
         }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),

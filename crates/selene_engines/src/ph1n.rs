@@ -115,7 +115,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::UrlFetchAndCiteQuery
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
-        | IntentType::DataAnalysisQuery => {
+        | IntentType::DataAnalysisQuery
+        | IntentType::DeepResearchQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -257,6 +258,19 @@ fn looks_like_data_analysis(lower: &str) -> bool {
         || lower.starts_with("analyze this spreadsheet")
 }
 
+fn looks_like_deep_research(lower: &str) -> bool {
+    (contains_word(lower, "research")
+        && (contains_word(lower, "deep")
+            || contains_word(lower, "report")
+            || contains_word(lower, "sources")
+            || contains_word(lower, "synthesize")
+            || contains_word(lower, "multi-source")
+            || contains_word(lower, "multi source")))
+        || lower.starts_with("deep research ")
+        || lower.starts_with("research this topic")
+        || lower.starts_with("research and summarize ")
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -338,6 +352,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_data_analysis(s) {
         push(IntentType::DataAnalysisQuery);
     }
+    if looks_like_deep_research(s) {
+        push(IntentType::DeepResearchQuery);
+    }
     if looks_like_photo_understand(s) && !looks_like_data_analysis(s) {
         push(IntentType::PhotoUnderstandQuery);
     }
@@ -414,7 +431,8 @@ fn normalize_intent(
         | IntentType::UrlFetchAndCiteQuery
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
-        | IntentType::DataAnalysisQuery => {
+        | IntentType::DataAnalysisQuery
+        | IntentType::DeepResearchQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1840,6 +1858,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::DocumentUnderstandQuery => "Read and summarize document".to_string(),
         IntentType::PhotoUnderstandQuery => "Understand photo or screenshot".to_string(),
         IntentType::DataAnalysisQuery => "Analyze uploaded data".to_string(),
+        IntentType::DeepResearchQuery => "Deep research report".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -3086,6 +3105,24 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::DataAnalysisQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_24_deep_research_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene do deep research on AI chip export controls with sources",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::DeepResearchQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),

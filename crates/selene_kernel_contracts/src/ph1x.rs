@@ -1883,6 +1883,7 @@ impl Validate for SimulationCandidateDispatch {
                 | crate::ph1n::IntentType::DocumentUnderstandQuery
                 | crate::ph1n::IntentType::PhotoUnderstandQuery
                 | crate::ph1n::IntentType::DataAnalysisQuery
+                | crate::ph1n::IntentType::DeepResearchQuery
                 | crate::ph1n::IntentType::Continue
                 | crate::ph1n::IntentType::MoreDetail
         ) {
