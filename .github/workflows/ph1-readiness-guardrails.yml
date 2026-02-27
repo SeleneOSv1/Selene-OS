@@ -1,0 +1,36 @@
+name: PH1 Readiness Guardrails
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness-guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Ensure ripgrep available
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+
+      - name: PH1 tool parity guardrail
+        run: bash scripts/check_ph1_tool_parity.sh
+
+      - name: Selene readiness audit (strict clean tree)
+        run: AUDIT_REQUIRE_CLEAN_TREE=1 bash scripts/selene_design_readiness_audit.sh
