@@ -19,16 +19,16 @@ use selene_engines::ph1context::{
 };
 use selene_engines::ph1d::{
     reason_codes as ph1d_reason_codes, ModelCallOutcome as Ph1dModelCallOutcome,
-    Ph1dLiveProviderAdapter, Ph1dProviderAdapter, Ph1dRuntime as EnginePh1dRuntime,
+    Ph1dProviderAdapter, Ph1dProviderAdapterError, Ph1dRuntime as EnginePh1dRuntime,
 };
 use selene_engines::ph1health::{
     reason_codes as health_reason_codes, Ph1HealthConfig as EngineHealthConfig,
     Ph1HealthRuntime as EngineHealthRuntime,
 };
 use selene_engines::ph1k::{
-    build_duplex_frame, build_interrupt_feedback_signal, build_ph1k_to_ph1c_handoff,
-    default_adaptive_policy_input, evaluate_interrupt_candidate, InterruptFeedbackSignalKind,
-    InterruptInput, InterruptNoiseClass, InterruptPhraseMatcher, PhraseDetection,
+    build_interrupt_feedback_signal, build_ph1k_to_ph1c_handoff, default_adaptive_policy_input,
+    evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput,
+    InterruptNoiseClass, InterruptPhraseMatcher, PhraseDetection,
 };
 use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
@@ -68,10 +68,9 @@ use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind,
     AudioStreamRef, ChannelCount, Confidence, DeviceHealth, DeviceReliabilityScoreInput,
-    DeviceRoute, DeviceState, DuplexFrame, FrameDurationMs, InterruptLexiconPolicyBinding,
-    InterruptLocaleTag, InterruptPhraseSetVersion, InterruptPolicyProfileId,
-    InterruptTenantProfileId, PreRollBufferId, PreRollBufferRef, SampleFormat, SampleRateHz,
-    SpeechLikeness, TimingStats as Ph1kTimingStats, TtsPlaybackActiveEvent, VadEvent,
+    DeviceRoute, DeviceState, FrameDurationMs, InterruptLexiconPolicyBinding, InterruptLocaleTag,
+    PreRollBufferId, PreRollBufferRef, SampleFormat, SampleRateHz, SpeechLikeness,
+    TimingStats as Ph1kTimingStats, TtsPlaybackActiveEvent, VadEvent,
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
 use selene_kernel_contracts::ph1learn::LearnSignalType;
@@ -83,8 +82,8 @@ use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse}
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
 use selene_kernel_contracts::ph1vision::{
-    BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisionRawSourceRef, VisualSourceId,
-    VisualSourceKind, VisualSourceRef, VisualToken,
+    BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
+    VisualSourceRef, VisualToken,
 };
 use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
 use selene_kernel_contracts::{
@@ -100,14 +99,10 @@ use selene_os::ph1builder::{
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
-use selene_os::ph1feedback::{
-    build_gold_case_capture_from_ph1c_response, build_gold_case_capture_from_ph1d_response,
-    GoldCaseCaptureContext,
-};
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
-    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsPh1kLiveEvidence,
+    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome,
     OsVoiceLiveTurnOutcome, OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring,
     Ph1OsOcrRouteConfig, Ph1OsOcrRouteWiring,
 };
@@ -120,9 +115,9 @@ use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
 use selene_os::simulation_executor::SimulationExecutor;
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
-    OutcomeUtilizationLedgerRowInput, Ph1dCommitEnvelope, Ph1fStore, Ph1kDeviceHealth,
-    Ph1kFeedbackCaptureInput, Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields,
-    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, StorageError,
+    OutcomeUtilizationLedgerRowInput, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
+    Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeEventKind,
+    Ph1kRuntimeEventRecord, StorageError,
 };
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
@@ -462,7 +457,7 @@ pub struct AdapterRuntime {
     ph1c_streaming_enabled: bool,
     ph1c_runtime: EnginePh1cRuntime,
     ph1d_runtime: EnginePh1dRuntime,
-    ph1d_live_adapter: Option<Ph1dLiveProviderAdapter>,
+    ph1d_live_adapter: Option<EnvPh1dLiveAdapter>,
     persistence: Option<AdapterPersistenceConfig>,
 }
 
@@ -694,6 +689,44 @@ struct Ph1cLiveTurnOutcomeSummary {
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
 }
 
+
+#[derive(Debug, Clone)]
+struct EnvPh1dLiveAdapter {
+    provider_id: String,
+    model_id: String,
+}
+
+impl EnvPh1dLiveAdapter {
+    fn from_env() -> Result<Self, String> {
+        let provider_id = env::var("SELENE_PH1D_LIVE_PROVIDER_ID")
+            .ok()
+            .map(|v| truncate_ascii(v.trim(), 64))
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| "missing SELENE_PH1D_LIVE_PROVIDER_ID".to_string())?;
+        let model_id = env::var("SELENE_PH1D_LIVE_MODEL_ID")
+            .ok()
+            .map(|v| truncate_ascii(v.trim(), 128))
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "ph1d_live_model_default".to_string());
+        Ok(Self {
+            provider_id,
+            model_id,
+        })
+    }
+}
+
+impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
+    fn execute(
+        &self,
+        _req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
+        Err(Ph1dProviderAdapterError::terminal(format!(
+            "ph1d live provider adapter unavailable for provider={} model={}",
+            self.provider_id, self.model_id
+        )))
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RecordingPh1dProviderAdapter<'a, A>
 where
@@ -719,7 +752,7 @@ where
     fn execute(
         &self,
         req: &Ph1dProviderCallRequest,
-    ) -> Result<Ph1dProviderCallResponse, selene_engines::ph1d::Ph1dProviderAdapterError> {
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
         let out = self.inner.execute(req)?;
         if let Ok(mut records) = self.records.lock() {
             records.push(out.clone());
@@ -737,7 +770,6 @@ struct Ph1kLiveSignalBundle {
     device_state: DeviceState,
     timing_stats: Ph1kTimingStats,
     tts_playback: TtsPlaybackActiveEvent,
-    duplex_frame: DuplexFrame,
     interrupt_input: InterruptInput,
     interrupt_decision: selene_engines::ph1k::InterruptDecisionTrace,
     ph1c_handoff: Ph1kToPh1cHandoff,
@@ -1995,40 +2027,18 @@ impl AdapterRuntime {
         let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
             return Ok(());
         };
-        let capture_context = GoldCaseCaptureContext::v1(
-            truncate_ascii(tenant_id, 64),
-            truncate_ascii(actor_user_id.as_str(), 96),
-            truncate_ascii(&format!("speaker_{}", actor_user_id.as_str()), 96),
-            sanitize_idempotency_token(&format!("session_{}_{}", correlation_id.0, turn_id.0)),
-            truncate_ascii(device_id.as_str(), 96),
-            correlation_id,
-            turn_id,
-            sanitize_idempotency_token(&format!(
-                "ph1c_live_gold_{}_{}",
-                correlation_id.0, turn_id.0
-            )),
-        );
-        let Ok(capture_context) = capture_context else {
-            return Ok(());
-        };
-        let capture = build_gold_case_capture_from_ph1c_response(
-            &capture_context,
-            &ph1c.response,
-            None,
-            ph1c.final_text.clone(),
-        )
-        .map_err(|err| format!("ph1c gold-case capture failed: {err:?}"))?;
-        let Some(capture) = capture else {
-            return Ok(());
+        let (feedback_event_type, reason_code) = match &ph1c.response {
+            Ph1cResponse::TranscriptReject(reject) => (FeedbackEventType::SttReject, reject.reason_code),
+            Ph1cResponse::TranscriptOk(_) => return Ok(()),
         };
         let Some((feedback_event_type, learn_signal_type)) =
-            feedback_learn_pair_for_ph1c_capture(capture.feedback_event.event_type)
+            feedback_learn_pair_for_ph1c_capture(feedback_event_type)
         else {
             return Ok(());
         };
         let feedback_idem = sanitize_idempotency_token(&format!(
-            "ph1c_gold_feedback_{}_{}_{}",
-            correlation_id.0, turn_id.0, capture.gold_case_id
+            "ph1c_feedback_{}_{}",
+            correlation_id.0, turn_id.0
         ));
         store
             .ph1feedback_event_commit(
@@ -2041,7 +2051,7 @@ impl AdapterRuntime {
                 device_id.clone(),
                 feedback_event_type.to_string(),
                 learn_signal_type.to_string(),
-                capture.feedback_event.reason_code,
+                reason_code,
                 feedback_idem,
             )
             .map_err(storage_error_to_string)?;
@@ -2059,9 +2069,15 @@ impl AdapterRuntime {
                 .unwrap_or(0),
         };
         let learn_idem = sanitize_idempotency_token(&format!(
-            "ph1c_gold_learn_{}_{}_{}",
-            correlation_id.0, turn_id.0, capture.gold_case_id
+            "ph1c_learn_{}_{}",
+            correlation_id.0, turn_id.0
         ));
+        let evidence_ref = truncate_ascii(
+            ph1c.final_text
+                .as_deref()
+                .unwrap_or("ph1c_transcript_unavailable"),
+            128,
+        );
         store
             .ph1feedback_learn_signal_bundle_commit(
                 now,
@@ -2073,15 +2089,9 @@ impl AdapterRuntime {
                 device_id.clone(),
                 feedback_event_type.to_string(),
                 learn_signal_type.to_string(),
-                capture.feedback_event.reason_code,
-                truncate_ascii(&capture.feedback_event.evidence_ref, 128),
-                truncate_ascii(
-                    &format!(
-                        "ph1c_gold:{}:{}",
-                        capture.gold_case_id, capture.primary_failure_fingerprint
-                    ),
-                    128,
-                ),
+                reason_code,
+                evidence_ref.clone(),
+                truncate_ascii(&format!("ph1c_capture:{evidence_ref}"), 128),
                 ingest_latency_ms,
                 learn_idem,
             )
@@ -2139,19 +2149,6 @@ impl AdapterRuntime {
         let response = self
             .ph1d_runtime
             .run(&request, ph1d_model_outcome_from_os_outcome(os_outcome));
-        let envelope = Ph1dCommitEnvelope::v1(
-            request.request_id,
-            request.prompt_template_version,
-            request.output_schema_hash,
-            request.tool_catalog_hash,
-            request.policy_context_hash,
-            request.transcript_hash,
-            "ph1d_router_v1".to_string(),
-            "PRIMARY".to_string(),
-            0,
-            256,
-        )
-        .map_err(|err| format!("ph1d envelope invalid: {err:?}"))?;
 
         match response {
             Ph1dResponse::Ok(Ph1dOk::Chat(chat)) => {
@@ -2164,7 +2161,6 @@ impl AdapterRuntime {
                         None,
                         actor_user_id.clone(),
                         device_id.clone(),
-                        envelope,
                         chat.reason_code,
                         sanitize_idempotency_token(&format!(
                             "ph1d_chat:{}:{}",
@@ -2183,7 +2179,6 @@ impl AdapterRuntime {
                         None,
                         actor_user_id.clone(),
                         device_id.clone(),
-                        envelope,
                         truncate_ascii(&format!("{:?}", intent.refined_intent_type), 64),
                         intent.reason_code,
                         sanitize_idempotency_token(&format!(
@@ -2208,7 +2203,6 @@ impl AdapterRuntime {
                         None,
                         actor_user_id.clone(),
                         device_id.clone(),
-                        envelope,
                         truncate_ascii(&missing, 64),
                         clarify.reason_code,
                         sanitize_idempotency_token(&format!(
@@ -2228,7 +2222,6 @@ impl AdapterRuntime {
                         None,
                         actor_user_id.clone(),
                         device_id.clone(),
-                        envelope,
                         truncate_ascii(&analysis.short_analysis, 64),
                         analysis.reason_code,
                         sanitize_idempotency_token(&format!(
@@ -2248,7 +2241,6 @@ impl AdapterRuntime {
                         None,
                         actor_user_id.clone(),
                         device_id.clone(),
-                        envelope,
                         ph1d_fail_code(fail.kind).to_string(),
                         fail.reason_code,
                         sanitize_idempotency_token(&format!(
@@ -2281,39 +2273,21 @@ impl AdapterRuntime {
             return Ok(());
         };
         for (idx, provider_call) in provider_calls.iter().enumerate() {
-            let capture_context = GoldCaseCaptureContext::v1(
-                truncate_ascii(tenant_id, 64),
-                truncate_ascii(actor_user_id.as_str(), 96),
-                truncate_ascii(&format!("speaker_{}", actor_user_id.as_str()), 96),
-                sanitize_idempotency_token(&format!("session_{}_{}", correlation_id.0, turn_id.0)),
-                truncate_ascii(device_id.as_str(), 96),
-                correlation_id,
-                turn_id,
-                sanitize_idempotency_token(&format!(
-                    "ph1d_live_gold_{}_{}_{}",
-                    correlation_id.0, turn_id.0, idx
-                )),
-            )
-            .map_err(|err| format!("ph1d gold-case context build failed: {err:?}"))?;
-            let capture = build_gold_case_capture_from_ph1d_response(
-                &capture_context,
-                provider_call,
-                None,
-                final_transcript.clone(),
-                language_locale.clone(),
-            )
-            .map_err(|err| format!("ph1d gold-case capture failed: {err:?}"))?;
-            let Some(capture) = capture else {
+            if provider_call.provider_status == selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok
+                && provider_call.validation_status
+                    == selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaOk
+            {
                 continue;
-            };
+            }
+            let feedback_event_type = FeedbackEventType::SttReject;
             let Some((feedback_event_type, learn_signal_type)) =
-                feedback_learn_pair_for_ph1d_capture(capture.feedback_event.event_type)
+                feedback_learn_pair_for_ph1d_capture(feedback_event_type)
             else {
                 continue;
             };
             let feedback_idem = sanitize_idempotency_token(&format!(
-                "ph1d_gold_feedback_{}_{}_{}_{}",
-                correlation_id.0, turn_id.0, idx, capture.gold_case_id
+                "ph1d_feedback_{}_{}_{}",
+                correlation_id.0, turn_id.0, idx
             ));
             store
                 .ph1feedback_event_commit(
@@ -2326,14 +2300,21 @@ impl AdapterRuntime {
                     device_id.clone(),
                     feedback_event_type.to_string(),
                     learn_signal_type.to_string(),
-                    capture.feedback_event.reason_code,
+                    provider_call.reason_code,
                     feedback_idem,
                 )
                 .map_err(storage_error_to_string)?;
             let learn_idem = sanitize_idempotency_token(&format!(
-                "ph1d_gold_learn_{}_{}_{}_{}",
-                correlation_id.0, turn_id.0, idx, capture.gold_case_id
+                "ph1d_learn_{}_{}_{}",
+                correlation_id.0, turn_id.0, idx
             ));
+            let evidence = truncate_ascii(
+                final_transcript
+                    .as_deref()
+                    .or(language_locale.as_deref())
+                    .unwrap_or("ph1d_provider_error"),
+                128,
+            );
             store
                 .ph1feedback_learn_signal_bundle_commit(
                     now,
@@ -2345,12 +2326,12 @@ impl AdapterRuntime {
                     device_id.clone(),
                     feedback_event_type.to_string(),
                     learn_signal_type.to_string(),
-                    capture.feedback_event.reason_code,
-                    truncate_ascii(&capture.feedback_event.evidence_ref, 128),
+                    provider_call.reason_code,
+                    evidence,
                     truncate_ascii(
                         &format!(
-                            "ph1d_gold:{}:{}",
-                            capture.gold_case_id, capture.primary_failure_fingerprint
+                            "ph1d_provider:{}:{}",
+                            provider_call.provider_id, provider_call.model_id
                         ),
                         128,
                     ),
@@ -2908,9 +2889,7 @@ impl AdapterRuntime {
             AdapterContextEngineRuntime::new(),
         )
         .map_err(|err| format!("ph1context wiring bootstrap failed: {err:?}"))?;
-        let mut nlp_wiring_config = Ph1nWiringConfig::mvp_v1(true);
-        nlp_wiring_config.require_ph1c_handoff = false;
-        let nlp_wiring = Ph1nWiring::new(nlp_wiring_config, AdapterNlpEngineRuntime::new())
+        let nlp_wiring = Ph1nWiring::new(Ph1nWiringConfig::mvp_v1(true), AdapterNlpEngineRuntime::new())
             .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
         let bridge = Ph1OsOcrContextNlpWiring::new(
             Ph1OsOcrContextNlpConfig::mvp_v1(),
@@ -3026,25 +3005,6 @@ impl AdapterRuntime {
                 ph1c,
             )?;
         }
-        let mut ingress_transcript_ok = user_text_final
-            .as_ref()
-            .map(|text| !text.trim().is_empty())
-            .unwrap_or(false);
-        let mut ingress_clarify_required = !ingress_transcript_ok;
-        if !ingress_transcript_ok {
-            if let Some(ph1c) = ph1c_live_outcome.as_ref() {
-                match &ph1c.response {
-                    Ph1cResponse::TranscriptOk(_) => {
-                        ingress_transcript_ok = true;
-                        ingress_clarify_required = false;
-                    }
-                    Ph1cResponse::TranscriptReject(_) => {
-                        ingress_transcript_ok = false;
-                        ingress_clarify_required = true;
-                    }
-                }
-            }
-        }
         self.run_ph1vision_os_orchestration_step(
             &request,
             correlation_id,
@@ -3083,13 +3043,11 @@ impl AdapterRuntime {
             eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
         }
 
-        let mut ingress_request = AppVoiceIngressRequest::v1(
+        let ingress_request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
             app_platform,
             trigger,
-            ingress_transcript_ok,
-            ingress_clarify_required,
             voice_id_request,
             actor_user_id.clone(),
             tenant_id_for_ph1c.clone(),
@@ -3098,10 +3056,6 @@ impl AdapterRuntime {
             empty_observation(),
         )
         .map_err(|err| format!("invalid ingress request: {err:?}"))?;
-        let evidence = build_os_ph1k_live_evidence(&ph1k_bundle);
-        ingress_request = ingress_request
-            .with_ph1k_live_evidence(evidence)
-            .map_err(|err| format!("invalid ph1k live evidence: {err:?}"))?;
         let outcome = self
             .ingress
             .run_voice_turn(&mut store, ingress_request)
@@ -3422,6 +3376,9 @@ fn build_vision_turn_input_from_adapter_request(
     let Some(visual) = request.visual_input_ref.as_ref() else {
         return Ok(None);
     };
+    if !visual.turn_opt_in_enabled {
+        return Ok(None);
+    }
     let source_kind = parse_visual_source_kind(visual.source_kind.as_deref())?;
     let source_id = visual
         .source_id
@@ -3445,39 +3402,12 @@ fn build_vision_turn_input_from_adapter_request(
         source_kind,
     )
     .map_err(|err| format!("invalid PH1.VISION source_ref: {err:?}"))?;
-    let image_ref = visual
-        .image_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| truncate_ascii(value, 512));
-    let blob_ref = visual
-        .blob_ref
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| truncate_ascii(value, 512));
-    let raw_source_ref = if image_ref.is_some() || blob_ref.is_some() {
-        Some(
-            VisionRawSourceRef::v1(image_ref, blob_ref)
-                .map_err(|err| format!("invalid PH1.VISION raw source refs: {err:?}"))?,
-        )
-    } else {
-        None
-    };
     let mut visible_tokens = Vec::with_capacity(visual.visible_tokens.len());
     for token_ref in &visual.visible_tokens {
         visible_tokens.push(parse_visual_token_ref(token_ref)?);
     }
-    let turn_input = VisionTurnInput::v1(
-        correlation_id,
-        turn_id,
-        visual.turn_opt_in_enabled,
-        source_ref,
-        raw_source_ref,
-        visible_tokens,
-    )
-    .map_err(|err| format!("invalid PH1.VISION turn input: {err:?}"))?;
+    let turn_input = VisionTurnInput::v1(correlation_id, turn_id, source_ref, visible_tokens)
+        .map_err(|err| format!("invalid PH1.VISION turn input: {err:?}"))?;
     Ok(Some(turn_input))
 }
 
@@ -4248,7 +4178,6 @@ fn build_ph1k_live_signal_bundle(
     adaptive_policy_input.timing_stats = timing_stats;
     adaptive_policy_input.capture_to_handoff_latency_ms = confirm_delta_ms.min(10_000) as u32;
     let timing_stats_for_bundle = adaptive_policy_input.timing_stats;
-    let capture_to_handoff_latency_ms = adaptive_policy_input.capture_to_handoff_latency_ms;
     let device_health = if capture_degraded || aec_unstable || stream_gap_detected {
         DeviceHealth::Degraded
     } else {
