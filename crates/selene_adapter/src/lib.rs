@@ -53,7 +53,7 @@ use selene_kernel_contracts::ph1d::{
     Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
     PolicyContextRef, SafetyTier,
 };
-use selene_kernel_contracts::ph1e::{CacheStatus, ToolCatalogRef, ToolName, ToolResponse};
+use selene_kernel_contracts::ph1e::{CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolStatus};
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
@@ -87,7 +87,7 @@ use selene_kernel_contracts::ph1vision::{
     VisualSourceRef, VisualToken,
 };
 use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
-use selene_kernel_contracts::ph1x::{ThreadPolicyFlags, ThreadState};
+use selene_kernel_contracts::ph1x::{PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -141,6 +141,9 @@ pub mod reason_codes {
     pub const ADAPTER_SYNC_RETRY: ReasonCodeId = ReasonCodeId(0xAD70_0001);
     pub const ADAPTER_SYNC_DEADLETTER: ReasonCodeId = ReasonCodeId(0xAD70_0002);
     pub const ADAPTER_SYNC_REPLAY_DUE: ReasonCodeId = ReasonCodeId(0xAD70_0003);
+    pub const ADAPTER_READ_ONLY_TOOL_FAIL_INCIDENT: ReasonCodeId = ReasonCodeId(0xAD70_0011);
+    pub const ADAPTER_READ_ONLY_CLARIFY_LOOP_INCIDENT: ReasonCodeId = ReasonCodeId(0xAD70_0012);
+    pub const ADAPTER_READ_ONLY_USER_CORRECTION_INCIDENT: ReasonCodeId = ReasonCodeId(0xAD70_0013);
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -773,6 +776,62 @@ struct SyncImprovementEmissionResult {
     feedback_events_emitted: u64,
     learn_artifacts_emitted: u64,
     builder_input_entries: Vec<OsOutcomeUtilizationEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadOnlyIncidentKind {
+    ToolFail,
+    ClarifyLoop,
+    UserCorrection,
+}
+
+impl ReadOnlyIncidentKind {
+    fn outcome_type(self) -> &'static str {
+        match self {
+            ReadOnlyIncidentKind::ToolFail => "READ_ONLY_TOOL_FAIL",
+            ReadOnlyIncidentKind::ClarifyLoop => "READ_ONLY_CLARIFY_LOOP",
+            ReadOnlyIncidentKind::UserCorrection => "READ_ONLY_USER_CORRECTION",
+        }
+    }
+
+    fn tag(self) -> &'static str {
+        match self {
+            ReadOnlyIncidentKind::ToolFail => "tool_fail",
+            ReadOnlyIncidentKind::ClarifyLoop => "clarify_loop",
+            ReadOnlyIncidentKind::UserCorrection => "user_correction",
+        }
+    }
+
+    fn feedback_event_type(self) -> FeedbackEventType {
+        match self {
+            ReadOnlyIncidentKind::ToolFail => FeedbackEventType::ToolFail,
+            ReadOnlyIncidentKind::ClarifyLoop => FeedbackEventType::ClarifyLoop,
+            ReadOnlyIncidentKind::UserCorrection => FeedbackEventType::UserCorrection,
+        }
+    }
+
+    fn learn_signal_type(self) -> LearnSignalType {
+        match self {
+            ReadOnlyIncidentKind::ToolFail => LearnSignalType::ToolFail,
+            ReadOnlyIncidentKind::ClarifyLoop => LearnSignalType::ClarifyLoop,
+            ReadOnlyIncidentKind::UserCorrection => LearnSignalType::UserCorrection,
+        }
+    }
+
+    fn severe(self) -> bool {
+        matches!(
+            self,
+            ReadOnlyIncidentKind::ToolFail | ReadOnlyIncidentKind::ClarifyLoop
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadOnlyIncidentRecord {
+    kind: ReadOnlyIncidentKind,
+    reason_code: ReasonCodeId,
+    evidence_ref: String,
+    provenance_ref: String,
 }
 
 #[derive(Debug, Clone)]
@@ -2037,6 +2096,247 @@ impl AdapterRuntime {
                 self.record_builder_status(&format!("ERROR:{err:?}"), BuilderStatusKind::Error)?;
             }
         }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_read_only_lane_incidents_and_maybe_run_builder(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        device_id: &DeviceId,
+        user_text_final: Option<&str>,
+        execution_outcome: &AppVoiceTurnExecutionOutcome,
+    ) -> Result<(), String> {
+        let Some(tenant_id) = tenant_id else {
+            return Ok(());
+        };
+        let incidents = detect_read_only_turn_incidents(user_text_final, execution_outcome);
+        if incidents.is_empty() {
+            return Ok(());
+        }
+
+        let mut feedback_events_emitted = 0u64;
+        let mut learn_artifacts_emitted = 0u64;
+        let mut builder_input_entries = Vec::new();
+        let mut severe_incident_observed = false;
+
+        for incident in incidents {
+            severe_incident_observed |= incident.kind.severe();
+            let feedback_event_type = feedback_event_type_str(incident.kind.feedback_event_type());
+            let learn_signal_type = learn_signal_type_str(incident.kind.learn_signal_type());
+            let issue_tag = incident.kind.tag();
+
+            let feedback_idem = sanitize_idempotency_token(&format!(
+                "ro_feedback_{}_{}_{}",
+                issue_tag, correlation_id.0, turn_id.0
+            ));
+            match store.ph1feedback_event_commit(
+                now,
+                tenant_id.to_string(),
+                correlation_id,
+                turn_id,
+                None,
+                actor_user_id.clone(),
+                device_id.clone(),
+                feedback_event_type.to_string(),
+                learn_signal_type.to_string(),
+                incident.reason_code,
+                feedback_idem,
+            ) {
+                Ok(_) => {
+                    feedback_events_emitted = feedback_events_emitted.saturating_add(1);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "selene_adapter read-only feedback emit failed: {}",
+                        storage_error_to_string(err)
+                    );
+                }
+            }
+
+            let learn_idem = sanitize_idempotency_token(&format!(
+                "ro_learn_{}_{}_{}",
+                issue_tag, correlation_id.0, turn_id.0
+            ));
+            match store.ph1feedback_learn_signal_bundle_commit(
+                now,
+                tenant_id.to_string(),
+                correlation_id,
+                turn_id,
+                None,
+                actor_user_id.clone(),
+                device_id.clone(),
+                feedback_event_type.to_string(),
+                learn_signal_type.to_string(),
+                incident.reason_code,
+                incident.evidence_ref.clone(),
+                incident.provenance_ref.clone(),
+                0,
+                learn_idem,
+            ) {
+                Ok(_) => {
+                    learn_artifacts_emitted = learn_artifacts_emitted.saturating_add(1);
+                }
+                Err(err) => {
+                    eprintln!(
+                        "selene_adapter read-only learn bundle emit failed: {}",
+                        storage_error_to_string(err)
+                    );
+                }
+            }
+
+            let outcome_idem = sanitize_idempotency_token(&format!(
+                "ro_outcome_{}_{}_{}",
+                issue_tag, correlation_id.0, turn_id.0
+            ));
+            if let Err(err) =
+                store.append_outcome_utilization_ledger_row(OutcomeUtilizationLedgerRowInput {
+                    created_at: now,
+                    correlation_id,
+                    turn_id,
+                    engine_id: "PH1.FEEDBACK".to_string(),
+                    outcome_type: incident.kind.outcome_type().to_string(),
+                    action_class: OsOutcomeActionClass::QueueLearn,
+                    consumed_by: "PH1.LEARN".to_string(),
+                    latency_cost_ms: 120,
+                    decision_delta: true,
+                    reason_code: incident.reason_code,
+                    idempotency_key: Some(outcome_idem.clone()),
+                })
+            {
+                eprintln!(
+                    "selene_adapter read-only outcome utilization append failed: {}",
+                    storage_error_to_string(err)
+                );
+                continue;
+            }
+
+            match OsOutcomeUtilizationEntry::v1(
+                "PH1.FEEDBACK".to_string(),
+                incident.kind.outcome_type().to_string(),
+                correlation_id,
+                turn_id,
+                OsOutcomeActionClass::QueueLearn,
+                "PH1.LEARN".to_string(),
+                120,
+                true,
+                incident.reason_code,
+            ) {
+                Ok(entry) => builder_input_entries.push(entry),
+                Err(err) => {
+                    eprintln!(
+                        "selene_adapter read-only outcome entry build failed: {err:?}"
+                    );
+                }
+            }
+        }
+
+        let emission = SyncImprovementEmissionResult {
+            feedback_events_emitted,
+            learn_artifacts_emitted,
+            builder_input_entries,
+        };
+        if let Err(err) = self.record_sync_improvement_metrics(&emission) {
+            eprintln!(
+                "selene_adapter read-only incident metrics update failed: {}",
+                err
+            );
+        }
+        self.maybe_run_builder_for_read_only_incidents(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            severe_incident_observed,
+            &emission.builder_input_entries,
+        )?;
+
+        Ok(())
+    }
+
+    fn maybe_run_builder_for_read_only_incidents(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        severe_incident_observed: bool,
+        outcome_entries: &[OsOutcomeUtilizationEntry],
+    ) -> Result<(), String> {
+        if !self.auto_builder_enabled {
+            self.record_builder_status("DISABLED", BuilderStatusKind::NotInvoked)?;
+            return Ok(());
+        }
+        if outcome_entries.is_empty() {
+            self.record_builder_status("NO_READ_ONLY_INCIDENTS", BuilderStatusKind::NotInvoked)?;
+            return Ok(());
+        }
+        if !severe_incident_observed {
+            self.record_builder_status("SKIPPED_NON_SEVERE_READ_ONLY", BuilderStatusKind::NotInvoked)?;
+            return Ok(());
+        }
+
+        self.record_builder_status("RUNNING_READ_ONLY", BuilderStatusKind::RunStarted)?;
+        let orchestrator = Ph1BuilderOrchestrator::new(
+            Ph1BuilderConfig::mvp_v1(true),
+            AdapterPatternEngineRuntime::new(),
+            AdapterRllEngineRuntime::new(),
+            DeterministicBuilderSandboxValidator,
+        )
+        .map_err(|err| format!("failed to initialize builder orchestrator: {err:?}"))?;
+        let window_start = MonotonicTimeNs(now.0.saturating_sub(60_000_000_000));
+        let builder_input = BuilderOfflineInput::v1(
+            correlation_id,
+            turn_id,
+            window_start,
+            now,
+            now,
+            outcome_entries.to_vec(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            true,
+        )
+        .map_err(|err| format!("failed to build builder offline input: {err:?}"))?;
+
+        match orchestrator.run_offline(store, &builder_input) {
+            Ok(BuilderOrchestrationOutcome::Completed(_)) => {
+                self.record_builder_status("COMPLETED_READ_ONLY", BuilderStatusKind::Completed)?;
+            }
+            Ok(BuilderOrchestrationOutcome::Refused(refuse)) => {
+                self.record_builder_status(
+                    &format!("REFUSED_READ_ONLY:{}:{}", refuse.stage, refuse.reason_code.0),
+                    BuilderStatusKind::Refused,
+                )?;
+            }
+            Ok(BuilderOrchestrationOutcome::NotInvokedDisabled) => {
+                self.record_builder_status(
+                    "NOT_INVOKED_DISABLED_READ_ONLY",
+                    BuilderStatusKind::NotInvoked,
+                )?;
+            }
+            Ok(BuilderOrchestrationOutcome::NotInvokedNoSignals) => {
+                self.record_builder_status(
+                    "NOT_INVOKED_NO_SIGNALS_READ_ONLY",
+                    BuilderStatusKind::NotInvoked,
+                )?;
+            }
+            Err(err) => {
+                self.record_builder_status(
+                    &format!("ERROR_READ_ONLY:{err:?}"),
+                    BuilderStatusKind::Error,
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -3338,6 +3638,19 @@ impl AdapterRuntime {
             user_text_final.as_deref(),
             &execution_outcome.voice_outcome,
         )?;
+        if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            tenant_id_for_ph1c.as_deref(),
+            &runtime_device_id,
+            user_text_final.as_deref(),
+            &execution_outcome,
+        ) {
+            eprintln!("selene_adapter read-only incident emission failed: {err}");
+        }
         self.record_transcript_updates(
             &mut store,
             now,
@@ -3964,6 +4277,85 @@ fn outcome_label(execution: &AppVoiceTurnExecutionOutcome) -> &'static str {
     "FINAL"
 }
 
+fn detect_read_only_turn_incidents(
+    user_text_final: Option<&str>,
+    execution: &AppVoiceTurnExecutionOutcome,
+) -> Vec<ReadOnlyIncidentRecord> {
+    if execution.dispatch_outcome.is_some() {
+        return Vec::new();
+    }
+
+    let mut incidents = Vec::new();
+    if let Some(tool_response) = execution.tool_response.as_ref() {
+        if tool_response.tool_status == ToolStatus::Fail {
+            let reason_code = execution
+                .reason_code
+                .or(tool_response.fail_reason_code)
+                .unwrap_or(reason_codes::ADAPTER_READ_ONLY_TOOL_FAIL_INCIDENT);
+            incidents.push(ReadOnlyIncidentRecord {
+                kind: ReadOnlyIncidentKind::ToolFail,
+                reason_code,
+                evidence_ref: truncate_ascii(
+                    &format!(
+                        "tool_fail:query_hash:{}:cache:{}",
+                        tool_response.query_hash.0,
+                        cache_status_label(tool_response.cache_status)
+                    ),
+                    128,
+                ),
+                provenance_ref: truncate_ascii(
+                    &format!("ph1e_tool_fail:reason_code:{}", reason_code.0),
+                    128,
+                ),
+            });
+        }
+    }
+
+    if let Some(ph1x_response) = execution.ph1x_response.as_ref() {
+        if matches!(&ph1x_response.directive, Ph1xDirective::Clarify(_)) {
+            if let Some(PendingState::Clarify {
+                missing_field,
+                attempts,
+            }) = ph1x_response.thread_state.pending.as_ref()
+            {
+                if *attempts >= 2 {
+                    let reason_code = execution
+                        .reason_code
+                        .unwrap_or(reason_codes::ADAPTER_READ_ONLY_CLARIFY_LOOP_INCIDENT);
+                    incidents.push(ReadOnlyIncidentRecord {
+                        kind: ReadOnlyIncidentKind::ClarifyLoop,
+                        reason_code,
+                        evidence_ref: truncate_ascii(
+                            &format!(
+                                "clarify_loop:attempts:{}:field:{:?}",
+                                attempts, missing_field
+                            ),
+                            128,
+                        ),
+                        provenance_ref: truncate_ascii(
+                            &format!("ph1x_clarify_loop:attempts:{attempts}"),
+                            128,
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(text) = user_text_final {
+        if user_text_looks_like_correction(text) {
+            incidents.push(ReadOnlyIncidentRecord {
+                kind: ReadOnlyIncidentKind::UserCorrection,
+                reason_code: reason_codes::ADAPTER_READ_ONLY_USER_CORRECTION_INCIDENT,
+                evidence_ref: truncate_ascii(text.trim(), 128),
+                provenance_ref: "user_text:correction_phrase".to_string(),
+            });
+        }
+    }
+
+    incidents
+}
+
 fn cache_status_label(cache_status: CacheStatus) -> &'static str {
     match cache_status {
         CacheStatus::Hit => "hit",
@@ -4015,6 +4407,29 @@ fn sanitize_transcript_text_option(value: Option<String>) -> Option<String> {
     value
         .map(|v| truncate_ascii(v.trim(), 8192))
         .filter(|v| !v.trim().is_empty())
+}
+
+fn user_text_looks_like_correction(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    const PREFIXES: [&str; 8] = [
+        "no ",
+        "no,",
+        "actually",
+        "i meant",
+        "sorry, i meant",
+        "let me correct",
+        "correction:",
+        "that's not",
+    ];
+    if PREFIXES.iter().any(|prefix| normalized.starts_with(prefix)) {
+        return true;
+    }
+    normalized.contains(" i meant ")
+        || normalized.contains(" correction ")
+        || normalized.contains(" not that")
 }
 
 fn adapter_transcript_role_from_storage(role: ConversationRole) -> AdapterTranscriptRole {
@@ -6537,6 +6952,19 @@ mod tests {
             .unwrap();
     }
 
+    fn feedback_event_type_matches(
+        row: &selene_kernel_contracts::ph1j::AuditEvent,
+        expected: &str,
+    ) -> bool {
+        let key = selene_kernel_contracts::ph1j::PayloadKey::new("feedback_event_type")
+            .expect("feedback_event_type key is valid");
+        row.payload_min
+            .entries
+            .get(&key)
+            .map(|value| value.as_str() == expected)
+            .unwrap_or(false)
+    }
+
     fn seed_simulation_catalog_status(
         store: &mut Ph1fStore,
         tenant: &str,
@@ -7989,6 +8417,102 @@ mod tests {
         assert!(flags.force_privacy_mode);
         assert!(!flags.force_do_not_disturb);
         assert!(flags.force_strict_safety);
+    }
+
+    #[test]
+    fn at_adapter_03g_read_only_tool_fail_emits_feedback_learn_and_builder_signal() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 10_104;
+        req.turn_id = 20_104;
+        req.now_ns = Some(14);
+        req.user_text_final = Some("Selene search the web for timeout".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("tool-fail turn should still return an adapter response");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+
+        let correlation_id = CorrelationId(10_104);
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
+        assert!(feedback_rows.iter().any(|row| {
+            feedback_event_type_matches(row, "ToolFail")
+        }));
+        let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
+        assert!(learn_rows.iter().any(|row| {
+            row.learn_signal_type == LearnSignalType::ToolFail
+        }));
+        drop(store);
+
+        let health = runtime
+            .health_report(Some(14))
+            .expect("health report should expose builder counters");
+        assert!(health.sync.improvement.builder_runs_total >= 1);
+    }
+
+    #[test]
+    fn at_adapter_03h_clarify_loop_emits_feedback_and_learn_signal_bundle() {
+        let runtime = AdapterRuntime::default();
+
+        let mut first = base_request();
+        first.correlation_id = 10_105;
+        first.turn_id = 20_105;
+        first.now_ns = Some(15);
+        first.thread_key = Some("clarify_loop_thread".to_string());
+        first.user_text_final = Some("Set reminder".to_string());
+        let out_first = runtime
+            .run_voice_turn(first)
+            .expect("first clarify turn should succeed");
+        assert_eq!(out_first.next_move, "clarify");
+
+        let mut second = base_request();
+        second.correlation_id = 10_106;
+        second.turn_id = 20_106;
+        second.now_ns = Some(16);
+        second.thread_key = Some("clarify_loop_thread".to_string());
+        second.user_text_final = Some("Set reminder".to_string());
+        let out_second = runtime
+            .run_voice_turn(second)
+            .expect("second clarify turn should succeed");
+        assert_eq!(out_second.next_move, "clarify");
+
+        let correlation_id = CorrelationId(10_106);
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
+        assert!(feedback_rows.iter().any(|row| {
+            feedback_event_type_matches(row, "ClarifyLoop")
+        }));
+        let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
+        assert!(learn_rows.iter().any(|row| {
+            row.learn_signal_type == LearnSignalType::ClarifyLoop
+        }));
+    }
+
+    #[test]
+    fn at_adapter_03i_user_correction_phrase_emits_feedback_and_learn_signal_bundle() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 10_107;
+        req.turn_id = 20_107;
+        req.now_ns = Some(17);
+        req.user_text_final = Some("No, I meant weather in Singapore".to_string());
+
+        runtime
+            .run_voice_turn(req)
+            .expect("user-correction turn should succeed");
+
+        let correlation_id = CorrelationId(10_107);
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
+        assert!(feedback_rows.iter().any(|row| {
+            feedback_event_type_matches(row, "UserCorrection")
+        }));
+        let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
+        assert!(learn_rows.iter().any(|row| {
+            row.learn_signal_type == LearnSignalType::UserCorrection
+        }));
     }
 
     #[test]
