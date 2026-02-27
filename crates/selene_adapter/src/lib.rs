@@ -53,7 +53,7 @@ use selene_kernel_contracts::ph1d::{
     Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
     PolicyContextRef, SafetyTier,
 };
-use selene_kernel_contracts::ph1e::{ToolCatalogRef, ToolName};
+use selene_kernel_contracts::ph1e::{CacheStatus, ToolCatalogRef, ToolName, ToolResponse};
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
@@ -231,9 +231,23 @@ pub struct VoiceTurnAdapterResponse {
     pub status: String,
     pub outcome: String,
     pub reason: Option<String>,
-    pub next_move: Option<String>,
-    pub response_text: Option<String>,
-    pub reason_code: Option<String>,
+    pub next_move: String,
+    pub response_text: String,
+    pub reason_code: String,
+    pub provenance: Option<VoiceTurnProvenance>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VoiceTurnProvenanceSource {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VoiceTurnProvenance {
+    pub sources: Vec<VoiceTurnProvenanceSource>,
+    pub retrieved_at: u64,
+    pub cache_status: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -3885,33 +3899,77 @@ fn voice_outcome_reason(outcome: &OsVoiceLiveTurnOutcome) -> Option<String> {
     }
 }
 
-fn next_move_label(next_move: AppVoiceTurnNextMove) -> &'static str {
-    match next_move {
-        AppVoiceTurnNextMove::NotInvokedDisabled => "NOT_INVOKED_DISABLED",
-        AppVoiceTurnNextMove::Refused => "REFUSED",
-        AppVoiceTurnNextMove::Confirm => "CONFIRM",
-        AppVoiceTurnNextMove::Clarify => "CLARIFY",
-        AppVoiceTurnNextMove::Respond => "RESPOND",
-        AppVoiceTurnNextMove::Dispatch => "DISPATCH",
-        AppVoiceTurnNextMove::Wait => "WAIT",
+fn next_move_label(execution: &AppVoiceTurnExecutionOutcome) -> &'static str {
+    if execution.dispatch_outcome.is_some() {
+        return "dispatch_sim";
+    }
+    if execution.tool_response.is_some() {
+        return "dispatch_tool";
+    }
+    match execution.next_move {
+        AppVoiceTurnNextMove::Confirm | AppVoiceTurnNextMove::Clarify => "clarify",
+        AppVoiceTurnNextMove::Dispatch => "dispatch_sim",
+        AppVoiceTurnNextMove::NotInvokedDisabled
+        | AppVoiceTurnNextMove::Refused
+        | AppVoiceTurnNextMove::Respond
+        | AppVoiceTurnNextMove::Wait => "respond",
     }
 }
 
-fn execution_outcome_to_adapter_response(
-    execution: AppVoiceTurnExecutionOutcome,
-) -> VoiceTurnAdapterResponse {
-    let outcome = match &execution.voice_outcome {
-        OsVoiceLiveTurnOutcome::NotInvokedDisabled => "NOT_INVOKED_DISABLED",
-        OsVoiceLiveTurnOutcome::Refused(_) => "REFUSED",
-        OsVoiceLiveTurnOutcome::Forwarded(_) => "FORWARDED",
+fn outcome_label(execution: &AppVoiceTurnExecutionOutcome) -> &'static str {
+    if execution.dispatch_outcome.is_some() {
+        return "DISPATCH_SIM";
+    }
+    if execution.tool_response.is_some() {
+        return "FINAL_TOOL";
+    }
+    "FINAL"
+}
+
+fn cache_status_label(cache_status: CacheStatus) -> &'static str {
+    match cache_status {
+        CacheStatus::Hit => "hit",
+        CacheStatus::Miss => "miss",
+        CacheStatus::Bypassed => "bypassed",
+    }
+}
+
+fn provenance_from_tool_response(tool_response: &ToolResponse) -> VoiceTurnProvenance {
+    let (sources, retrieved_at) = match tool_response.source_metadata.as_ref() {
+        Some(meta) => (
+            meta.sources
+                .iter()
+                .map(|src| VoiceTurnProvenanceSource {
+                    title: src.title.clone(),
+                    url: src.url.clone(),
+                })
+                .collect(),
+            meta.retrieved_at_unix_ms,
+        ),
+        None => (Vec::new(), 0),
     };
+    VoiceTurnProvenance {
+        sources,
+        retrieved_at,
+        cache_status: cache_status_label(tool_response.cache_status).to_string(),
+    }
+}
+
+fn execution_outcome_to_adapter_response(execution: AppVoiceTurnExecutionOutcome) -> VoiceTurnAdapterResponse {
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
-        outcome: outcome.to_string(),
+        outcome: outcome_label(&execution).to_string(),
         reason: voice_outcome_reason(&execution.voice_outcome),
-        next_move: Some(next_move_label(execution.next_move).to_string()),
-        response_text: execution.response_text,
-        reason_code: execution.reason_code.map(|code| code.0.to_string()),
+        next_move: next_move_label(&execution).to_string(),
+        response_text: execution.response_text.unwrap_or_default(),
+        reason_code: execution
+            .reason_code
+            .map(|code| code.0.to_string())
+            .unwrap_or_else(|| "0".to_string()),
+        provenance: execution
+            .tool_response
+            .as_ref()
+            .map(provenance_from_tool_response),
     }
 }
 
@@ -7603,7 +7661,7 @@ mod tests {
             .run_voice_turn(base_request())
             .expect("valid request must succeed");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FORWARDED");
+        assert_eq!(out.outcome, "FINAL");
         assert!(out
             .reason
             .as_deref()
@@ -7632,7 +7690,7 @@ mod tests {
             .run_voice_turn(req)
             .expect("desktop request must succeed");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FORWARDED");
+        assert_eq!(out.outcome, "FINAL");
     }
 
     #[test]
@@ -7644,16 +7702,20 @@ mod tests {
             .run_voice_turn(req)
             .expect("voice turn with explicit web query must succeed");
         assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FORWARDED");
-        assert_eq!(out.next_move.as_deref(), Some("RESPOND"));
-        assert_eq!(out.reason_code.as_deref(), Some("1476395016"));
-        let response_text = out
-            .response_text
-            .as_deref()
-            .expect("response_text must be present for tool response");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert_eq!(out.next_move, "dispatch_tool");
+        assert_eq!(out.reason_code, "1476395016");
+        let response_text = out.response_text.as_str();
         assert!(response_text.contains("Here are the results:"));
         assert!(response_text.contains("Sources:"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
+        let provenance = out
+            .provenance
+            .as_ref()
+            .expect("tool response must include provenance payload");
+        assert!(!provenance.sources.is_empty());
+        assert!(provenance.retrieved_at > 0);
+        assert!(!provenance.cache_status.is_empty());
     }
 
     #[test]

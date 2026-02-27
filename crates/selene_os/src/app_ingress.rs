@@ -405,6 +405,7 @@ pub struct AppVoiceTurnExecutionOutcome {
     pub ph1x_request: Option<Ph1xRequest>,
     pub ph1x_response: Option<Ph1xResponse>,
     pub dispatch_outcome: Option<SimulationDispatchOutcome>,
+    pub tool_response: Option<ToolResponse>,
     pub response_text: Option<String>,
     pub reason_code: Option<ReasonCodeId>,
 }
@@ -2061,6 +2062,7 @@ impl AppServerIngressRuntime {
             ph1x_request: Some(ph1x_request),
             ph1x_response: Some(ph1x_response.clone()),
             dispatch_outcome: None,
+            tool_response: None,
             response_text: None,
             reason_code: Some(ph1x_response.reason_code),
         };
@@ -2085,6 +2087,7 @@ impl AppServerIngressRuntime {
             Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
                 DispatchRequest::Tool(tool_request) => {
                     let tool_response = self.ph1e_runtime.run(tool_request);
+                    let tool_response_for_followup = tool_response.clone();
                     let tool_followup_request = build_tool_followup_ph1x_request(
                         out.ph1x_request
                             .as_ref()
@@ -2095,7 +2098,7 @@ impl AppServerIngressRuntime {
                                 },
                             ))?,
                         &ph1x_response,
-                        tool_response,
+                        tool_response_for_followup,
                     )?;
                     let tool_followup_response = self
                         .ph1x_runtime
@@ -2104,6 +2107,7 @@ impl AppServerIngressRuntime {
 
                     out.ph1x_request = Some(tool_followup_request);
                     out.ph1x_response = Some(tool_followup_response.clone());
+                    out.tool_response = Some(tool_response);
                     out.reason_code = Some(tool_followup_response.reason_code);
                     match tool_followup_response.directive {
                         Ph1xDirective::Confirm(confirm) => {
@@ -2245,6 +2249,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             ph1x_request: None,
             ph1x_response: None,
             dispatch_outcome: None,
+            tool_response: None,
             response_text: None,
             reason_code: None,
         },
@@ -2254,6 +2259,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             ph1x_request: None,
             ph1x_response: None,
             dispatch_outcome: None,
+            tool_response: None,
             response_text: Some(refuse.message.clone()),
             reason_code: Some(refuse.reason_code),
         },
@@ -2263,6 +2269,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             ph1x_request: None,
             ph1x_response: None,
             dispatch_outcome: None,
+            tool_response: None,
             response_text: None,
             reason_code: None,
         },

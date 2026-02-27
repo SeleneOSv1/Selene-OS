@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use selene_adapter::grpc_api::{
     voice_ingress_server::{VoiceIngress, VoiceIngressServer},
-    RunVoiceTurnRequest, RunVoiceTurnResponse, UiHealthReportPaging, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthReportRow,
+    RunVoiceTurnProvenance, RunVoiceTurnRequest, RunVoiceTurnResponse, RunVoiceTurnSourceRef,
+    UiHealthReportPaging, UiHealthReportQueryRequest, UiHealthReportQueryResponse,
+    UiHealthReportRow,
 };
 use selene_adapter::{
     AdapterRuntime, UiHealthReportQueryRequest as AdapterUiHealthReportQueryRequest,
@@ -70,9 +71,21 @@ impl VoiceIngress for GrpcVoiceIngress {
                 status: out.status,
                 outcome: out.outcome,
                 reason: out.reason.unwrap_or_default(),
-                next_move: out.next_move.unwrap_or_default(),
-                response_text: out.response_text.unwrap_or_default(),
-                reason_code: out.reason_code.unwrap_or_default(),
+                next_move: out.next_move,
+                response_text: out.response_text,
+                reason_code: out.reason_code,
+                provenance: out.provenance.map(|p| RunVoiceTurnProvenance {
+                    sources: p
+                        .sources
+                        .into_iter()
+                        .map(|s| RunVoiceTurnSourceRef {
+                            title: s.title,
+                            url: s.url,
+                        })
+                        .collect(),
+                    retrieved_at: p.retrieved_at,
+                    cache_status: p.cache_status,
+                }),
             })),
             Err(reason) => Err(Status::invalid_argument(reason)),
         }

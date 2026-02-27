@@ -26,6 +26,18 @@ message RunVoiceTurnResponse {
   string next_move = 4;
   string response_text = 5;
   string reason_code = 6;
+  RunVoiceTurnProvenance provenance = 7;
+}
+
+message RunVoiceTurnSourceRef {
+  string title = 1;
+  string url = 2;
+}
+
+message RunVoiceTurnProvenance {
+  repeated RunVoiceTurnSourceRef sources = 1;
+  uint64 retrieved_at = 2;
+  string cache_status = 3;
 }
 
 message UiHealthReportQueryRequest {

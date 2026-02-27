@@ -12838,6 +12838,52 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn ph1d_runtime_payload_entries(
+        decision: &str,
+        output_mode: &str,
+        transcript_hash: Option<&str>,
+    ) -> Result<BTreeMap<PayloadKey, PayloadValue>, StorageError> {
+        let mut entries = BTreeMap::from([
+            (PayloadKey::new("decision")?, PayloadValue::new(decision)?),
+            (
+                PayloadKey::new("output_mode")?,
+                PayloadValue::new(output_mode)?,
+            ),
+            (PayloadKey::new("request_id")?, PayloadValue::new("0")?),
+            (
+                PayloadKey::new("prompt_template_version")?,
+                PayloadValue::new("1")?,
+            ),
+            (
+                PayloadKey::new("output_schema_hash")?,
+                PayloadValue::new("ph1d_output_schema_v1")?,
+            ),
+            (
+                PayloadKey::new("tool_catalog_hash")?,
+                PayloadValue::new("ph1d_tool_catalog_v1")?,
+            ),
+            (
+                PayloadKey::new("policy_context_hash")?,
+                PayloadValue::new("ph1d_policy_context_v1")?,
+            ),
+            (PayloadKey::new("model_id")?, PayloadValue::new("unknown")?),
+            (
+                PayloadKey::new("model_route_class")?,
+                PayloadValue::new("deterministic_mock")?,
+            ),
+            (
+                PayloadKey::new("temperature_bp")?,
+                PayloadValue::new("0")?,
+            ),
+            (PayloadKey::new("max_tokens")?, PayloadValue::new("0")?),
+        ]);
+        entries.insert(
+            PayloadKey::new("transcript_hash")?,
+            PayloadValue::new(transcript_hash.unwrap_or("transcript_unavailable"))?,
+        );
+        Ok(entries)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ph1d_chat_commit(
         &mut self,
@@ -12855,10 +12901,8 @@ impl Ph1fStore {
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("CHAT")?),
-            (PayloadKey::new("output_mode")?, PayloadValue::new("chat")?),
-        ]))?;
+        let payload =
+            AuditPayloadMin::v1(Self::ph1d_runtime_payload_entries("CHAT", "chat", None)?)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12900,17 +12944,12 @@ impl Ph1fStore {
         Self::validate_ph1d_bounded_text("ph1d.refined_intent_type", &refined_intent_type, 64)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("INTENT")?),
-            (
-                PayloadKey::new("refined_intent_type")?,
-                PayloadValue::new(refined_intent_type)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("intent")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_runtime_payload_entries("INTENT", "intent", None)?;
+        payload_entries.insert(
+            PayloadKey::new("refined_intent_type")?,
+            PayloadValue::new(refined_intent_type)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12952,17 +12991,12 @@ impl Ph1fStore {
         Self::validate_ph1d_bounded_text("ph1d.what_is_missing", &what_is_missing, 64)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("CLARIFY")?),
-            (
-                PayloadKey::new("what_is_missing")?,
-                PayloadValue::new(what_is_missing)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("clarify")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_runtime_payload_entries("CLARIFY", "clarify", None)?;
+        payload_entries.insert(
+            PayloadKey::new("what_is_missing")?,
+            PayloadValue::new(what_is_missing)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -13004,17 +13038,12 @@ impl Ph1fStore {
         Self::validate_ph1d_bounded_text("ph1d.analysis_kind", &analysis_kind, 64)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("ANALYSIS")?),
-            (
-                PayloadKey::new("analysis_kind")?,
-                PayloadValue::new(analysis_kind)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("analysis")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_runtime_payload_entries("ANALYSIS", "analysis", None)?;
+        payload_entries.insert(
+            PayloadKey::new("analysis_kind")?,
+            PayloadValue::new(analysis_kind)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -13056,14 +13085,13 @@ impl Ph1fStore {
         Self::validate_ph1d_bounded_text("ph1d.fail_code", &fail_code, 64)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (
-                PayloadKey::new("decision")?,
-                PayloadValue::new("FAIL_CLOSED")?,
-            ),
-            (PayloadKey::new("fail_code")?, PayloadValue::new(fail_code)?),
-            (PayloadKey::new("output_mode")?, PayloadValue::new("fail")?),
-        ]))?;
+        let mut payload_entries =
+            Self::ph1d_runtime_payload_entries("FAIL_CLOSED", "fail", None)?;
+        payload_entries.insert(
+            PayloadKey::new("fail_code")?,
+            PayloadValue::new(fail_code)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
