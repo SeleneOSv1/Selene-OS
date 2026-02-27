@@ -181,6 +181,48 @@ impl Validate for Ph1kToPh1cHandoff {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SpeakerOverlapClass {
+    Unknown,
+    SingleSpeaker,
+    MultiSpeaker,
+    InterruptionOverlap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeakerOverlapHint {
+    pub schema_version: SchemaVersion,
+    pub overlap_class: SpeakerOverlapClass,
+    pub confidence: Confidence,
+}
+
+impl SpeakerOverlapHint {
+    pub fn v1(
+        overlap_class: SpeakerOverlapClass,
+        confidence: Confidence,
+    ) -> Result<Self, ContractViolation> {
+        let hint = Self {
+            schema_version: PH1C_CONTRACT_VERSION,
+            overlap_class,
+            confidence,
+        };
+        hint.validate()?;
+        Ok(hint)
+    }
+}
+
+impl Validate for SpeakerOverlapHint {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "speaker_overlap_hint.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1cRequest {
     pub schema_version: SchemaVersion,
@@ -190,6 +232,7 @@ pub struct Ph1cRequest {
     pub language_hint: Option<LanguageHint>,
     pub noise_level_hint: Option<NoiseLevelHint>,
     pub vad_quality_hint: Option<VadQualityHint>,
+    pub speaker_overlap_hint: Option<SpeakerOverlapHint>,
     pub ph1k_handoff: Option<Ph1kToPh1cHandoff>,
 }
 
@@ -211,17 +254,31 @@ impl Ph1cRequest {
             language_hint,
             noise_level_hint,
             vad_quality_hint,
+            speaker_overlap_hint: None,
             ph1k_handoff,
         };
         r.validate()?;
         Ok(r)
+    }
+
+    pub fn with_speaker_overlap_hint(
+        mut self,
+        speaker_overlap_hint: Option<SpeakerOverlapHint>,
+    ) -> Result<Self, ContractViolation> {
+        self.speaker_overlap_hint = speaker_overlap_hint;
+        self.validate()?;
+        Ok(self)
     }
 }
 
 impl Validate for Ph1cRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.bounded_audio_segment_ref.validate()?;
+        self.session_state_ref.validate()?;
         self.device_state_ref.validate()?;
+        if let Some(hint) = &self.speaker_overlap_hint {
+            hint.validate()?;
+        }
         if let Some(h) = &self.ph1k_handoff {
             h.validate()?;
         }
@@ -611,6 +668,124 @@ impl NormalizedSttConfidence {
             low_confidence_ratio,
             stable,
         })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialTranscript {
+    pub schema_version: SchemaVersion,
+    pub text_chunk: String,
+    pub confidence: Confidence,
+    pub stable: bool,
+    pub revision_id: u32,
+}
+
+impl PartialTranscript {
+    pub fn v1(
+        text_chunk: String,
+        confidence: Confidence,
+        stable: bool,
+        revision_id: u32,
+    ) -> Result<Self, ContractViolation> {
+        let partial = Self {
+            schema_version: PH1C_CONTRACT_VERSION,
+            text_chunk,
+            confidence,
+            stable,
+            revision_id,
+        };
+        partial.validate()?;
+        Ok(partial)
+    }
+}
+
+impl Validate for PartialTranscript {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        if self.text_chunk.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript.text_chunk",
+                reason: "must not be empty",
+            });
+        }
+        if self.text_chunk.len() > 8_192 {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript.text_chunk",
+                reason: "must be <= 8192 chars",
+            });
+        }
+        if self.revision_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript.revision_id",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialTranscriptBatch {
+    pub schema_version: SchemaVersion,
+    pub partials: Vec<PartialTranscript>,
+    pub finalized: bool,
+}
+
+impl PartialTranscriptBatch {
+    pub fn v1(partials: Vec<PartialTranscript>, finalized: bool) -> Result<Self, ContractViolation> {
+        let batch = Self {
+            schema_version: PH1C_CONTRACT_VERSION,
+            partials,
+            finalized,
+        };
+        batch.validate()?;
+        Ok(batch)
+    }
+}
+
+impl Validate for PartialTranscriptBatch {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1C_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript_batch.schema_version",
+                reason: "must match PH1C_CONTRACT_VERSION",
+            });
+        }
+        if self.partials.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript_batch.partials",
+                reason: "must contain at least one entry",
+            });
+        }
+        if self.partials.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript_batch.partials",
+                reason: "must contain <= 64 entries",
+            });
+        }
+        let mut expected_revision: u32 = 1;
+        for partial in &self.partials {
+            partial.validate()?;
+            if partial.revision_id != expected_revision {
+                return Err(ContractViolation::InvalidValue {
+                    field: "partial_transcript_batch.partials[].revision_id",
+                    reason: "must be contiguous and start at 1",
+                });
+            }
+            expected_revision = expected_revision.saturating_add(1);
+        }
+        if self.finalized && !self.partials.last().is_some_and(|partial| partial.stable) {
+            return Err(ContractViolation::InvalidValue {
+                field: "partial_transcript_batch.finalized",
+                reason: "last partial must be stable when finalized=true",
+            });
+        }
+        Ok(())
     }
 }
 

@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use selene_kernel_contracts::ph1d::{
     Ph1dAnalysis, Ph1dChat, Ph1dClarify, Ph1dFail, Ph1dFailureKind, Ph1dFieldRefinement,
-    Ph1dIntent, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dRequest,
-    Ph1dResponse,
+    Ph1dIntent, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderTask,
+    Ph1dRequest, Ph1dResponse,
 };
 use selene_kernel_contracts::ph1n::{
     EvidenceSpan, FieldKey, FieldValue, IntentType, TranscriptHash,
@@ -52,6 +52,102 @@ pub mod reason_codes {
     pub const D_FAIL_BUDGET_EXCEEDED: ReasonCodeId = ReasonCodeId(0x4400_0005);
 
     pub const D_CLARIFY_EVIDENCE_REQUIRED: ReasonCodeId = ReasonCodeId(0x4400_0100);
+
+    // Provider-facing bridge outcomes used by PH1.C live provider adapter path.
+    pub const D_PROVIDER_OK: ReasonCodeId = ReasonCodeId(0x4400_1000);
+    pub const D_PROVIDER_TIMEOUT: ReasonCodeId = ReasonCodeId(0x4400_1001);
+    pub const D_PROVIDER_SCHEMA_DRIFT: ReasonCodeId = ReasonCodeId(0x4400_1002);
+    pub const D_PROVIDER_CONTRACT_MISMATCH: ReasonCodeId = ReasonCodeId(0x4400_1003);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedProviderNormalizedOutput {
+    pub schema_version: u64,
+    pub provider_task: Ph1dProviderTask,
+    pub text_output: Option<String>,
+    pub language_tag: Option<String>,
+    pub confidence_bp: Option<u16>,
+    pub stable: Option<bool>,
+}
+
+pub fn decode_normalized_output_json(
+    json_text: &str,
+) -> Result<DecodedProviderNormalizedOutput, ContractViolation> {
+    let value: Value = serde_json::from_str(json_text).map_err(|_| ContractViolation::InvalidValue {
+        field: "ph1d_provider_normalized_output_json",
+        reason: "must be valid JSON object",
+    })?;
+    let obj = value.as_object().ok_or(ContractViolation::InvalidValue {
+        field: "ph1d_provider_normalized_output_json",
+        reason: "must be a JSON object",
+    })?;
+
+    let schema_version = obj
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .ok_or(ContractViolation::InvalidValue {
+            field: "ph1d_provider_normalized_output_json.schema_version",
+            reason: "must be a positive integer",
+        })?;
+    if schema_version == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1d_provider_normalized_output_json.schema_version",
+            reason: "must be > 0",
+        });
+    }
+
+    let provider_task = match obj
+        .get("provider_task")
+        .and_then(|v| v.as_str())
+        .ok_or(ContractViolation::InvalidValue {
+            field: "ph1d_provider_normalized_output_json.provider_task",
+            reason: "must be present",
+        })? {
+        "OCR_TEXT_EXTRACT" => Ph1dProviderTask::OcrTextExtract,
+        "STT_TRANSCRIBE" => Ph1dProviderTask::SttTranscribe,
+        _ => {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_normalized_output_json.provider_task",
+                reason: "unsupported provider_task",
+            })
+        }
+    };
+
+    let text_output = obj
+        .get("text_output")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let language_tag = obj
+        .get("language_tag")
+        .and_then(|v| v.as_str())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    let confidence_bp = match obj.get("confidence_bp").and_then(|v| v.as_u64()) {
+        Some(raw) => {
+            if raw > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output_json.confidence_bp",
+                    reason: "must be <= 10000",
+                });
+            }
+            Some(raw as u16)
+        }
+        None => None,
+    };
+
+    let stable = obj.get("stable").and_then(|v| v.as_bool());
+
+    Ok(DecodedProviderNormalizedOutput {
+        schema_version,
+        provider_task,
+        text_output,
+        language_tag,
+        confidence_bp,
+        stable,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

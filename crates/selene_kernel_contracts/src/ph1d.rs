@@ -6,6 +6,7 @@ use crate::ph1n::{EvidenceSpan, FieldKey, FieldValue, IntentType, Ph1nResponse, 
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1D_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1: SchemaHash = SchemaHash(0x5048_3144_0001);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(pub u64);
@@ -77,12 +78,14 @@ impl Validate for PolicyContextRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ph1dProviderTask {
     OcrTextExtract,
+    SttTranscribe,
 }
 
 impl Ph1dProviderTask {
     pub const fn as_str(self) -> &'static str {
         match self {
             Ph1dProviderTask::OcrTextExtract => "OCR_TEXT_EXTRACT",
+            Ph1dProviderTask::SttTranscribe => "STT_TRANSCRIBE",
         }
     }
 }
@@ -108,6 +111,7 @@ impl Ph1dProviderRouteClass {
 pub enum Ph1dProviderInputPayloadKind {
     Image,
     Document,
+    Audio,
 }
 
 impl Ph1dProviderInputPayloadKind {
@@ -115,6 +119,7 @@ impl Ph1dProviderInputPayloadKind {
         match self {
             Ph1dProviderInputPayloadKind::Image => "IMAGE",
             Ph1dProviderInputPayloadKind::Document => "DOCUMENT",
+            Ph1dProviderInputPayloadKind::Audio => "AUDIO",
         }
     }
 }
