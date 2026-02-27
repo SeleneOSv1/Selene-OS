@@ -72,6 +72,27 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
+### `PH1E_TOOL_DATA_ANALYSIS_QUERY`
+- `name`: Execute read-only uploaded-data analysis query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, data_ref, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, structured_fields, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_DEEP_RESEARCH_QUERY`
+- `name`: Execute read-only deep-research synthesis query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, query, locale?, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, structured_fields, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_RECORD_MODE_QUERY`
+- `name`: Execute read-only recording transcript summary/action-item query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, recording_ref, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, summary, action_items, evidence_refs, provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
 ### `PH1E_READ_AUDIT_ROWS`
 - `name`: Read PH1.E audit rows for one correlation thread
 - `input_schema`: `correlation_id`
