@@ -116,6 +116,11 @@ Blueprint files currently present:
 - `REMINDER_MANAGE.md`
 - `TOOL_TIME_QUERY.md`
 - `TOOL_WEATHER_QUERY.md`
+- `TOOL_WEB_SEARCH.md`
+- `TOOL_NEWS.md`
+- `TOOL_URL_FETCH_AND_CITE.md`
+- `TOOL_DOCUMENT_UNDERSTAND.md`
+- `TOOL_PHOTO_UNDERSTAND.md`
 
 ## 5) Architecture and Runtime Wiring
 Architecture summary source:
@@ -178,6 +183,11 @@ Active intents currently in registry:
 - `MEMORY_REMEMBER_REQUEST`
 - `TOOL_TIME_QUERY`
 - `TOOL_WEATHER_QUERY`
+- `TOOL_WEB_SEARCH`
+- `TOOL_NEWS`
+- `TOOL_URL_FETCH_AND_CITE`
+- `TOOL_DOCUMENT_UNDERSTAND`
+- `TOOL_PHOTO_UNDERSTAND`
 - `REMINDER_MANAGE`
 - `EMO_PROFILE_MANAGE`
 
@@ -219,7 +229,7 @@ Canonical link-token lifecycle state set:
 ## 10) PH1.E / PH1.REM / PH1.EMO.GUIDE+PH1.EMO.CORE Closure State
 `PH1.E`
 - DB wiring + ECM docs complete
-- tool blueprints complete (`TOOL_TIME_QUERY`, `TOOL_WEATHER_QUERY`)
+- tool blueprints complete (`TOOL_TIME_QUERY`, `TOOL_WEATHER_QUERY`, `TOOL_WEB_SEARCH`, `TOOL_NEWS`, `TOOL_URL_FETCH_AND_CITE`, `TOOL_DOCUMENT_UNDERSTAND`, `TOOL_PHOTO_UNDERSTAND`)
 - simulation ownership aligned in coverage matrix
 
 `PH1.REM`

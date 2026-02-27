@@ -538,11 +538,28 @@ impl Ph1xRuntime {
         // Read-only tool dispatch (PH1.E).
         if matches!(
             d.intent_type,
-            IntentType::TimeQuery | IntentType::WeatherQuery
+            IntentType::TimeQuery
+                | IntentType::WeatherQuery
+                | IntentType::WebSearchQuery
+                | IntentType::NewsQuery
+                | IntentType::UrlFetchAndCiteQuery
+                | IntentType::DocumentUnderstandQuery
+                | IntentType::PhotoUnderstandQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
                 IntentType::WeatherQuery => (ToolName::Weather, intent_query_text(d)),
+                IntentType::WebSearchQuery => (ToolName::WebSearch, intent_query_text(d)),
+                IntentType::NewsQuery => (ToolName::News, intent_query_text(d)),
+                IntentType::UrlFetchAndCiteQuery => {
+                    (ToolName::UrlFetchAndCite, intent_query_text(d))
+                }
+                IntentType::DocumentUnderstandQuery => {
+                    (ToolName::DocumentUnderstand, intent_query_text(d))
+                }
+                IntentType::PhotoUnderstandQuery => {
+                    (ToolName::PhotoUnderstand, intent_query_text(d))
+                }
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1420,7 +1437,60 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
                 }
             }
+            ToolResult::UrlFetchAndCite { citations } => {
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
+            ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Extracted fields:\n");
+                for field in extracted_fields.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                }
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
+            ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Extracted fields:\n");
+                for field in extracted_fields.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                }
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
         }
+    }
+    if let Some(meta) = &tr.source_metadata {
+        if !out.ends_with('\n') && !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Sources:\n");
+        for (i, s) in meta.sources.iter().enumerate().take(5) {
+            out.push_str(&format!("{}. {} ({})\n", i + 1, s.title, s.url));
+        }
+        out.push_str(&format!(
+            "Retrieved at (unix_ms): {}",
+            meta.retrieved_at_unix_ms
+        ));
     }
     if out.trim().is_empty() {
         // Defensive fallback; shouldn't happen due to ToolResponse validation.
@@ -1565,7 +1635,15 @@ fn confirm_text(d: &IntentDraft) -> String {
                 "You want to compile or refresh access for {target_user} using profile {profile_id} in {tenant}. Is that correct?"
             )
         }
-        IntentType::TimeQuery | IntentType::WeatherQuery => "Is that right?".to_string(),
+        IntentType::TimeQuery
+        | IntentType::WeatherQuery
+        | IntentType::WebSearchQuery
+        | IntentType::NewsQuery
+        | IntentType::UrlFetchAndCiteQuery
+        | IntentType::DocumentUnderstandQuery
+        | IntentType::PhotoUnderstandQuery => {
+            "Is that right?".to_string()
+        }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
     }
 }
@@ -1863,15 +1941,15 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{
-        CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
+        CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId, ToolStructuredField,
+        ToolTextSnippet,
     };
     use selene_kernel_contracts::ph1k::{
-        Confidence, DegradationClassBundle, InterruptCandidate,
-        InterruptCandidateConfidenceBand, InterruptDegradationContext,
-        InterruptGateConfidences, InterruptGates, InterruptLocaleTag, InterruptPhraseId,
-        InterruptPhraseSetVersion, InterruptRiskContextClass, InterruptSpeechWindowMetrics,
-        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
-        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
+        Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
+        InterruptDegradationContext, InterruptGateConfidences, InterruptGates, InterruptLocaleTag,
+        InterruptPhraseId, InterruptPhraseSetVersion, InterruptRiskContextClass,
+        InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
+        InterruptTimingMarkers, SpeechLikeness, PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
@@ -2109,6 +2187,214 @@ mod tests {
     }
 
     #[test]
+    fn at_x_dispatches_read_only_web_search_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            2,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WebSearchQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::WebSearch),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_dispatches_read_only_news_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            3,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(IntentType::NewsQuery))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::News),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_dispatches_read_only_url_fetch_and_cite_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            4,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::UrlFetchAndCiteQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::UrlFetchAndCite),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_dispatches_read_only_document_understand_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            5,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::DocumentUnderstandQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::DocumentUnderstand),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_dispatches_read_only_photo_understand_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            6,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::PhotoUnderstandQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::PhotoUnderstand),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
     fn at_x_continuity_speaker_mismatch_fails_closed_into_one_clarify() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
@@ -2266,6 +2552,414 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_tool_ok_web_search_includes_provenance_source_and_timestamp() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            8,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WebSearchQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::WebSearch {
+                items: vec![ToolTextSnippet {
+                    title: "Result".to_string(),
+                    snippet: "Snippet".to_string(),
+                    url: "https://example.com/search-result".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            8,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_news_includes_provenance_source_and_timestamp() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            9,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(IntentType::NewsQuery))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::News {
+                items: vec![ToolTextSnippet {
+                    title: "Headline".to_string(),
+                    snippet: "Snippet".to_string(),
+                    url: "https://example.com/news-result".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            9,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_url_fetch_and_cite_includes_provenance_and_citations() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            10,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::UrlFetchAndCiteQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::UrlFetchAndCite {
+                citations: vec![ToolTextSnippet {
+                    title: "Citation".to_string(),
+                    snippet: "Quoted fact".to_string(),
+                    url: "https://example.com/url-cite".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            10,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("Citations:"));
+                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_document_understand_includes_structured_extraction_and_citations() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            11,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::DocumentUnderstandQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::DocumentUnderstand {
+                summary: "Document summary".to_string(),
+                extracted_fields: vec![ToolStructuredField {
+                    key: "policy".to_string(),
+                    value: "approved".to_string(),
+                }],
+                citations: vec![ToolTextSnippet {
+                    title: "Doc citation".to_string(),
+                    snippet: "Quoted text".to_string(),
+                    url: "https://example.com/doc-cite".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            11,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("Summary:"));
+                assert!(r.response_text.contains("Extracted fields:"));
+                assert!(r.response_text.contains("Citations:"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_photo_understand_includes_structured_extraction_and_citations() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            12,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::PhotoUnderstandQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::PhotoUnderstand {
+                summary: "Photo summary".to_string(),
+                extracted_fields: vec![ToolStructuredField {
+                    key: "visible_text".to_string(),
+                    value: "Q4 revenue up 20%".to_string(),
+                }],
+                citations: vec![ToolTextSnippet {
+                    title: "Image citation".to_string(),
+                    snippet: "Visible chart label".to_string(),
+                    url: "https://example.com/photo-cite".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            12,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("Summary:"));
+                assert!(r.response_text.contains("Extracted fields:"));
+                assert!(r.response_text.contains("Citations:"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
     }
 
     #[test]
