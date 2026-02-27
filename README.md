@@ -1,3 +1,5 @@
+Codex must open and follow docs/CODEX_LAW.md before doing any work.
+
 # Selene OS
 
 Selene OS is a contracts-first project with a Rust workspace scaffold and documentation-first build plan.
