@@ -533,7 +533,14 @@ while read -r f; do
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 
 echo "NON_SIM_TEXT_LINES (if any):"
-rg -n "^NON_SIM_TEXT:" "${ACTIVE_SIMREQ_IDS_TXT}" || true
+non_sim_lines="$(rg -n "^NON_SIM_TEXT:" "${ACTIVE_SIMREQ_IDS_TXT}" || true)"
+if [ -n "${non_sim_lines}" ]; then
+  printf "%s\n" "${non_sim_lines}"
+  non_sim_count="$(printf "%s\n" "${non_sim_lines}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_sim_requirements_non_sim_text=fail count=${non_sim_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_sim_requirements_non_sim_text=pass"
 
 grep -v '^NON_SIM_TEXT:' "${ACTIVE_SIMREQ_IDS_TXT}" | sort -u > "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}"
 comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" | sed 's/^/MISSING_SIM_ID: /' || true
