@@ -415,7 +415,14 @@ echo
 echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
-rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true
+coverage_matrix_hits="$(rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true)"
+if [ -n "${coverage_matrix_hits}" ]; then
+  printf "%s\n" "${coverage_matrix_hits}"
+  coverage_matrix_hit_count="$(printf "%s\n" "${coverage_matrix_hits}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL coverage_matrix_status_tokens=fail count=${coverage_matrix_hit_count}"
+  exit 1
+fi
+echo "CHECK_OK coverage_matrix_status_tokens=pass"
 
 echo
 echo "=================================================="
@@ -576,9 +583,59 @@ if [ "$bad" -gt 0 ]; then
 fi
 echo "CHECK_OK blueprint_side_effect_simreq_none=pass"
 
+missing_side_effect_simreq=0
+while read -r f; do
+  has_side=$(awk -F'|' '
+    BEGIN{x=0}
+    /^\| / && $0 !~ /^\|---/ {
+      se=$7;
+      gsub(/^ +| +$/, "", se);
+      if(se!="side_effects" && se!="NONE" && se!="READ_ONLY"){x=1}
+    }
+    END{print x}
+  ' "$f")
+  [ "$has_side" = "1" ] || continue
+
+  sim_declared_count="$(
+    awk '
+      BEGIN{in_sec=0;c=0}
+      /^## [0-9]+\) Simulation Requirements/{in_sec=1; next}
+      /^## [0-9]+\)/{in_sec=0}
+      {
+        if(in_sec && $0 ~ /^- /){
+          sim_id=$0;
+          gsub(/^[[:space:]]*-[[:space:]]+/, "", sim_id);
+          gsub(/`/, "", sim_id);
+          sub(/[[:space:]]*\(.*/, "", sim_id);
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", sim_id);
+          if(tolower(sim_id)!="none" && sim_id ~ /^[A-Z0-9_]+$/){c++}
+        }
+      }
+      END{print c}
+    ' "$f"
+  )"
+
+  if [ "${sim_declared_count}" -eq 0 ]; then
+    echo "MISSING_SIDE_EFFECT_SIMREQ: ${f}"
+    missing_side_effect_simreq=$((missing_side_effect_simreq + 1))
+  fi
+done < "${ACTIVE_BLUEPRINTS_TXT}"
+
+if [ "${missing_side_effect_simreq}" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_side_effect_simreq_missing=fail count=${missing_side_effect_simreq}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_side_effect_simreq_missing=pass"
+
 echo
 echo "--- 3G) Simulation IDs listed by ACTIVE blueprints must exist in sim catalog ---"
 rg -n "^### [A-Z0-9_]+ \(" docs/08_SIMULATION_CATALOG.md | sed 's/^.*### //;s/ (.*$//' | sort -u > "${SIM_IDS_TXT}"
+sim_catalog_id_count="$(wc -l < "${SIM_IDS_TXT}" | tr -d ' ')"
+if [ "${sim_catalog_id_count}" -eq 0 ]; then
+  echo "CHECK_FAIL sim_catalog_id_extract=fail count=0"
+  exit 1
+fi
+echo "CHECK_OK sim_catalog_id_extract=pass count=${sim_catalog_id_count}"
 
 : > "${ACTIVE_SIMREQ_IDS_TXT}"
 while read -r f; do
