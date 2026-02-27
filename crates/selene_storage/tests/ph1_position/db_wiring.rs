@@ -579,6 +579,7 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
     s.ph1link_invite_open_activate_commit_row(
         MonotonicTimeNs(605),
         link_1.token_id.clone(),
+        link_1.token_signature.clone(),
         "fp_employee_1".to_string(),
         AppPlatform::Ios,
         "ios_instance_pos_1".to_string(),
@@ -686,6 +687,7 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
     s.ph1link_invite_open_activate_commit_row(
         MonotonicTimeNs(614),
         link_2.token_id.clone(),
+        link_2.token_signature.clone(),
         "fp_employee_2".to_string(),
         AppPlatform::Ios,
         "ios_instance_pos_2".to_string(),

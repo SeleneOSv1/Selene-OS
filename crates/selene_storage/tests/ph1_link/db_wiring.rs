@@ -12,7 +12,7 @@ use selene_kernel_contracts::ph1position::{
     PositionRequirementFieldType, PositionRequirementRuleType, PositionRequirementSensitivity,
     PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot, TenantId,
 };
-use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord,
@@ -163,6 +163,7 @@ fn at_link_db_02_append_only_enforced() {
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(201),
             link.token_id,
+            link.token_signature,
             "append_fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_append".to_string(),
@@ -242,6 +243,7 @@ fn at_link_db_04_current_table_consistency_with_lifecycle_and_proofs() {
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(401),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_401".to_string(),
@@ -388,6 +390,7 @@ fn at_link_db_07_revoke_refused_for_activated_without_ap_override() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(541),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_1".to_string(),
@@ -454,6 +457,7 @@ fn at_link_db_09_open_activate_idempotency_replay_behavior() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(581),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_2".to_string(),
@@ -469,6 +473,7 @@ fn at_link_db_09_open_activate_idempotency_replay_behavior() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(582),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_other".to_string(),
             AppPlatform::Ios,
             "ios_instance_2".to_string(),
@@ -504,6 +509,7 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(601),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_3".to_string(),
@@ -518,6 +524,7 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(602),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_other".to_string(),
             AppPlatform::Ios,
             "ios_instance_4".to_string(),
@@ -533,6 +540,7 @@ fn at_link_db_10_forward_block_deterministic_single_path() {
         .ph1link_invite_open_activate_commit_with_idempotency(
             MonotonicTimeNs(603),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_other".to_string(),
             AppPlatform::Ios,
             "ios_instance_4".to_string(),
@@ -738,6 +746,7 @@ fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
         .ph1link_invite_open_activate_commit_row_with_idempotency(
             MonotonicTimeNs(721),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_primary".to_string(),
             AppPlatform::Ios,
             "ios_instance_721".to_string(),
@@ -753,6 +762,7 @@ fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
         .ph1link_invite_open_activate_commit_row_with_idempotency(
             MonotonicTimeNs(722),
             link.token_id.clone(),
+            link.token_signature.clone(),
             "fp_other".to_string(),
             AppPlatform::Ios,
             "ios_instance_721".to_string(),
@@ -767,5 +777,50 @@ fn at_link_db_13_open_activate_row_with_idempotency_replays_by_key() {
     assert_eq!(
         s.ph1link_get_link_row(&link.token_id).unwrap().status,
         LinkStatus::Activated
+    );
+}
+
+#[test]
+fn run1_link_open_activate_fails_closed_for_bad_token_signature() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_1");
+    seed_identity_device(&mut s, u, device("tenant_a_device_1"));
+
+    let (link, _) = s
+        .ph1link_invite_generate_draft_row(
+            MonotonicTimeNs(800),
+            user("tenant_a:user_1"),
+            InviteeType::FamilyMember,
+            Some("tenant_a".to_string()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+    let err = s
+        .ph1link_invite_open_activate_commit_row_with_idempotency(
+            MonotonicTimeNs(801),
+            link.token_id.clone(),
+            "v1.link_kid_v1.invalid".to_string(),
+            "fp_primary".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_801".to_string(),
+            "nonce_801".to_string(),
+            MonotonicTimeNs(801),
+            "row-open-idem-signature-invalid".to_string(),
+        )
+        .expect_err("invalid signature must fail closed");
+
+    match err {
+        StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+            assert_eq!(field, "ph1link_invite_open_activate_commit.token_signature");
+            assert_eq!(reason, "TOKEN_SIGNATURE_INVALID");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    assert_eq!(
+        s.ph1link_get_link_row(&link.token_id).unwrap().status,
+        LinkStatus::DraftCreated
     );
 }

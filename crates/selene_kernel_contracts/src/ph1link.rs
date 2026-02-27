@@ -340,6 +340,7 @@ impl Validate for PrefilledContext {
 pub struct LinkRecord {
     pub schema_version: SchemaVersion,
     pub token_id: TokenId,
+    pub token_signature: String,
     pub draft_id: DraftId,
     pub payload_hash: String,
     pub schema_version_id: Option<String>,
@@ -363,6 +364,7 @@ impl LinkRecord {
     #[allow(clippy::too_many_arguments)]
     pub fn v1(
         token_id: TokenId,
+        token_signature: String,
         draft_id: DraftId,
         payload_hash: String,
         schema_version_id: Option<String>,
@@ -384,6 +386,7 @@ impl LinkRecord {
         let r = Self {
             schema_version: PH1LINK_CONTRACT_VERSION,
             token_id,
+            token_signature,
             draft_id,
             payload_hash,
             schema_version_id,
@@ -416,6 +419,31 @@ impl Validate for LinkRecord {
             });
         }
         self.token_id.validate()?;
+        if self.token_signature.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_record.token_signature",
+                reason: "must not be empty",
+            });
+        }
+        if self.token_signature.len() > 192 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_record.token_signature",
+                reason: "must be <= 192 chars",
+            });
+        }
+        if !self.token_signature.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_record.token_signature",
+                reason: "must be ASCII",
+            });
+        }
+        let signature_parts = self.token_signature.split('.').count();
+        if signature_parts != 3 {
+            return Err(ContractViolation::InvalidValue {
+                field: "link_record.token_signature",
+                reason: "must follow v1.<key_id>.<digest> format",
+            });
+        }
         if self.payload_hash.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "link_record.payload_hash",
@@ -1429,6 +1457,7 @@ impl Validate for InviteDraftUpdateCommitRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InviteOpenActivateCommitRequest {
     pub token_id: TokenId,
+    pub token_signature: String,
     pub device_fingerprint: String,
     pub app_platform: AppPlatform,
     pub app_instance_id: String,
@@ -1440,6 +1469,24 @@ pub struct InviteOpenActivateCommitRequest {
 impl Validate for InviteOpenActivateCommitRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.token_id.validate()?;
+        if self.token_signature.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.token_signature",
+                reason: "must not be empty",
+            });
+        }
+        if self.token_signature.len() > 192 {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.token_signature",
+                reason: "must be <= 192 chars",
+            });
+        }
+        if !self.token_signature.is_ascii() {
+            return Err(ContractViolation::InvalidValue {
+                field: "invite_open_activate_commit_request.token_signature",
+                reason: "must be ASCII",
+            });
+        }
         self.app_platform.validate()?;
         if self.device_fingerprint.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
@@ -1701,6 +1748,7 @@ impl Ph1LinkRequest {
         turn_id: TurnId,
         now: MonotonicTimeNs,
         token_id: TokenId,
+        token_signature: String,
         device_fingerprint: String,
         app_platform: AppPlatform,
         app_instance_id: String,
@@ -1710,6 +1758,7 @@ impl Ph1LinkRequest {
     ) -> Result<Self, ContractViolation> {
         let req = InviteOpenActivateCommitRequest {
             token_id,
+            token_signature,
             device_fingerprint,
             app_platform,
             app_instance_id,

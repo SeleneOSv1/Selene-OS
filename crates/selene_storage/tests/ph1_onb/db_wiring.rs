@@ -19,7 +19,7 @@ use selene_kernel_contracts::ph1position::{
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
+    DeviceRecord, IdentityRecord, IdentityStatus, OnbAskMissingOutcomeKind, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord, WakeSampleResult,
 };
 use selene_storage::repo::{
@@ -120,6 +120,7 @@ fn seed_activated_link_with_platform(
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(now + 1),
             link.token_id.clone(),
+            link.token_signature,
             format!("fp_{now}"),
             app_platform,
             app_instance_id.to_string(),
@@ -187,6 +188,40 @@ fn complete_locked_voice_enrollment(
     completed
         .voice_artifact_sync_receipt_ref
         .expect("voice sync receipt should exist after complete")
+}
+
+fn complete_emo_persona_lock(
+    store: &mut Ph1fStore,
+    onboarding_session_id: selene_kernel_contracts::ph1onb::OnboardingSessionId,
+    tenant_id: &str,
+    user_id: UserId,
+    device_id: DeviceId,
+    now_base: u64,
+    id_prefix: &str,
+) {
+    let persona_event_id = store
+        .ph1persona_profile_commit(
+            MonotonicTimeNs(now_base),
+            tenant_id.to_string(),
+            CorrelationId(now_base as u128),
+            TurnId((now_base % 10_000) + 1),
+            None,
+            user_id,
+            device_id,
+            "style_supportive".to_string(),
+            "voice_default".to_string(),
+            format!("prefs:{id_prefix}"),
+            ReasonCodeId(7001),
+            format!("{id_prefix}-emo-lock"),
+        )
+        .unwrap();
+    store
+        .ph1onb_emo_persona_lock_commit(
+            MonotonicTimeNs(now_base + 1),
+            onboarding_session_id,
+            persona_event_id,
+        )
+        .unwrap();
 }
 
 fn seed_company(store: &mut Ph1fStore, tenant_id: &TenantId, company_id: &str) {
@@ -664,6 +699,15 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         "onb-flow-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        u.clone(),
+        d.clone(),
+        605,
+        "onb-flow",
+    );
 
     let access_created = s
         .ph1onb_access_instance_create_commit_row(
@@ -920,14 +964,36 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
     s.ph1onb_employee_sender_verify_commit_row(
         MonotonicTimeNs(907),
         started.onboarding_session_id.clone(),
-        inviter,
+        inviter.clone(),
         selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
         "onb-required-verify".to_string(),
     )
     .unwrap();
 
-    s.ph1onb_access_instance_create_commit_row(
+    let access_emo_blocked = s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(908),
+        started.onboarding_session_id.clone(),
+        user("tenant_a:hire_1"),
+        Some(tenant_id.clone()),
+        "employee".to_string(),
+        "onb-required-access-emo-blocked".to_string(),
+    );
+    assert!(matches!(
+        access_emo_blocked,
+        Err(StorageError::ContractViolation(_))
+    ));
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        &tenant_id,
+        inviter,
+        inviter_device.clone(),
+        908,
+        "onb-required",
+    );
+
+    s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(909),
         started.onboarding_session_id.clone(),
         user("tenant_a:hire_1"),
         Some(tenant_id),
@@ -939,12 +1005,12 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
         &mut s,
         started.onboarding_session_id.clone(),
         inviter_device,
-        909,
+        910,
         "onb-required",
     );
     let completed = s
         .ph1onb_complete_commit_row(
-            MonotonicTimeNs(913),
+            MonotonicTimeNs(914),
             started.onboarding_session_id,
             "onb-required-complete-ok".to_string(),
             Some(voice_receipt),
@@ -1129,7 +1195,7 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
     let sender_refused = s.ph1onb_employee_sender_verify_commit_row(
         MonotonicTimeNs(1004),
         started.onboarding_session_id.clone(),
-        inviter,
+        inviter.clone(),
         selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
         "onb-no-required-verify".to_string(),
     );
@@ -1147,6 +1213,15 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
         "onb-no-required-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter,
+        inviter_device.clone(),
+        1005,
+        "onb-no-required",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1006),
         started.onboarding_session_id.clone(),
@@ -1223,6 +1298,15 @@ fn at_onb_db_13_ios_complete_allows_missing_wake_receipt_when_voice_locked() {
         "onb-ios-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1013,
+        "onb-ios",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1014),
         started.onboarding_session_id.clone(),
@@ -1348,6 +1432,15 @@ fn at_onb_db_14_android_complete_requires_wake_receipt_when_wake_is_complete() {
         "onb-android-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1023,
+        "onb-android",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1024),
         started.onboarding_session_id.clone(),
@@ -1552,6 +1645,15 @@ fn at_onb_db_14b_desktop_complete_requires_wake_receipt_when_wake_is_complete() 
         "onb-desktop-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1063,
+        "onb-desktop",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1064),
         started.onboarding_session_id.clone(),
@@ -2045,4 +2147,163 @@ fn at_onb_db_11_backfill_fail_closed_on_tenant_scope_and_missing_target() {
         complete_wrong_tenant,
         Err(StorageError::ContractViolation(_))
     ));
+}
+
+#[test]
+fn runc_onb_db_ask_missing_state_round_trip_updates_session_record() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_roundtrip");
+    let inviter_device = device("tenant_a_device_roundtrip");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let token_id = seed_activated_link(
+        &mut s,
+        1_500,
+        inviter,
+        InviteeType::Employee,
+        Some("tenant_a".to_string()),
+        None,
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1_501),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_roundtrip".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let before = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding session row must exist before ask-missing");
+    assert!(!before.missing_fields.is_empty());
+    let first_field = before
+        .active_missing_field
+        .clone()
+        .expect("active missing field must be set on session start");
+
+    let prompt = s
+        .ph1onb_ask_missing_field_turn(
+            MonotonicTimeNs(1_502),
+            started.onboarding_session_id.clone(),
+            None,
+            "onb-roundtrip-ask-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(prompt.kind, OnbAskMissingOutcomeKind::Prompt);
+    assert_eq!(prompt.attempts, 1);
+    assert_eq!(prompt.field_key.as_deref(), Some(first_field.as_str()));
+
+    let updated = s
+        .ph1onb_ask_missing_field_turn(
+            MonotonicTimeNs(1_503),
+            started.onboarding_session_id.clone(),
+            Some("roundtrip_value".to_string()),
+            "onb-roundtrip-ask-2".to_string(),
+        )
+        .unwrap();
+    assert_eq!(updated.kind, OnbAskMissingOutcomeKind::Updated);
+
+    let after = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding session row must exist after ask-missing");
+    assert_eq!(after.active_missing_attempts, 0);
+    assert!(after
+        .asked_missing_fields
+        .iter()
+        .any(|asked| asked == &first_field));
+    assert_eq!(after.missing_fields, updated.remaining_missing_fields);
+}
+
+#[test]
+fn rund_onb_db_platform_setup_receipt_round_trip_updates_session_record() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_platform_roundtrip");
+    let inviter_device = device("tenant_a_device_platform_roundtrip");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1_600,
+        inviter,
+        InviteeType::Employee,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_onb_platform_roundtrip",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1_601),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_1600".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_platform_roundtrip".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let outcome = s
+        .ph1onb_platform_setup_receipt_commit(
+            MonotonicTimeNs(1_602),
+            started.onboarding_session_id.clone(),
+            "install_launch_handshake".to_string(),
+            "receipt:platform:install-launch".to_string(),
+            "selene_mobile_app".to_string(),
+            format!("{:064x}", 0xA1u64),
+            "onb-platform-roundtrip-1".to_string(),
+        )
+        .expect("platform receipt commit should succeed");
+    assert_eq!(outcome.accepted_receipt_kind, "install_launch_handshake");
+    assert!(outcome
+        .remaining_required_receipt_kinds
+        .iter()
+        .all(|kind| kind != "install_launch_handshake"));
+
+    let row = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding row must exist");
+    assert_eq!(
+        row.platform_setup_receipts
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some("receipt:platform:install-launch")
+    );
+    assert_eq!(
+        row.platform_setup_receipt_signers
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some("selene_mobile_app")
+    );
+    let expected_hash = format!("{:064x}", 0xA1u64);
+    assert_eq!(
+        row.platform_setup_receipt_payload_hashes
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some(expected_hash.as_str())
+    );
+
+    let idem_outcome = s
+        .ph1onb_platform_setup_receipt_commit(
+            MonotonicTimeNs(1_603),
+            started.onboarding_session_id.clone(),
+            "install_launch_handshake".to_string(),
+            "receipt:platform:install-launch".to_string(),
+            "selene_mobile_app".to_string(),
+            expected_hash,
+            "onb-platform-roundtrip-1".to_string(),
+        )
+        .expect("idempotent replay should return cached outcome");
+    assert_eq!(
+        outcome.remaining_required_receipt_kinds,
+        idem_outcome.remaining_required_receipt_kinds
+    );
 }

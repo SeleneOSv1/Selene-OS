@@ -1307,12 +1307,18 @@ mod tests {
             }
             _ => panic!("expected ok"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
             corr(),
             turn(),
             MonotonicTimeNs(now().0 + 5),
             token_id.clone(),
+            token_signature,
             "device_fp_1".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_onb".to_string(),
@@ -1547,12 +1553,18 @@ mod tests {
             }
             _ => panic!("expected ok"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
             corr(),
             turn(),
             MonotonicTimeNs(now().0 + 5),
             token_id.clone(),
+            token_signature,
             "device_fp_required_verify".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_onb".to_string(),
@@ -2689,12 +2701,18 @@ mod tests {
             }
             _ => panic!("expected LINK generate ok"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
             corr(),
             TurnId(turn().0 + 1),
             MonotonicTimeNs(now().0 + 5),
             token_id,
+            token_signature,
             "device_fp_link_handoff".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_link_handoff".to_string(),

@@ -127,6 +127,169 @@ fn hash_hex_64(s: &str) -> String {
     format!("{:016x}", h)
 }
 
+const LINK_TOKEN_SIGNING_KEYS_ENV: &str = "SELENE_LINK_TOKEN_SIGNING_KEYS";
+const LINK_TOKEN_ACTIVE_KEY_ID_ENV: &str = "SELENE_LINK_TOKEN_ACTIVE_KEY_ID";
+const LINK_TOKEN_SIGNATURE_VERSION: &str = "v1";
+const DEFAULT_LINK_TOKEN_SIGNING_KEY_ID: &str = "link_kid_v1";
+const DEFAULT_LINK_TOKEN_SIGNING_SECRET: &str = "selene_link_local_dev_secret_v1";
+
+fn parse_link_token_signing_keyring_from_env() -> BTreeMap<String, String> {
+    let mut keyring = BTreeMap::new();
+    let Ok(raw) = std::env::var(LINK_TOKEN_SIGNING_KEYS_ENV) else {
+        return keyring;
+    };
+    for entry in raw.split(',') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((key_id_raw, secret_raw)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key_id = key_id_raw.trim();
+        let secret = secret_raw.trim();
+        if key_id.is_empty()
+            || key_id.len() > 64
+            || !key_id.is_ascii()
+            || secret.is_empty()
+            || secret.len() > 256
+            || !secret.is_ascii()
+        {
+            continue;
+        }
+        keyring.insert(key_id.to_string(), secret.to_string());
+    }
+    keyring
+}
+
+fn link_token_signing_keyring() -> BTreeMap<String, String> {
+    let mut keyring = parse_link_token_signing_keyring_from_env();
+    if keyring.is_empty() {
+        keyring.insert(
+            DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string(),
+            DEFAULT_LINK_TOKEN_SIGNING_SECRET.to_string(),
+        );
+    }
+    keyring
+}
+
+fn link_token_active_key_id(keyring: &BTreeMap<String, String>) -> String {
+    if let Ok(raw_key_id) = std::env::var(LINK_TOKEN_ACTIVE_KEY_ID_ENV) {
+        let key_id = raw_key_id.trim();
+        if !key_id.is_empty() && keyring.contains_key(key_id) {
+            return key_id.to_string();
+        }
+    }
+    if keyring.contains_key(DEFAULT_LINK_TOKEN_SIGNING_KEY_ID) {
+        return DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string();
+    }
+    keyring
+        .keys()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string())
+}
+
+fn deterministic_link_token_signature(
+    token_id: &TokenId,
+    payload_hash: &str,
+    expires_at: MonotonicTimeNs,
+    key_id: &str,
+    secret: &str,
+) -> String {
+    let signature_material = format!(
+        "{LINK_TOKEN_SIGNATURE_VERSION}|{key_id}|{}|{payload_hash}|{}|{secret}",
+        token_id.as_str(),
+        expires_at.0
+    );
+    let digest = hash_hex_64(&signature_material);
+    format!("{LINK_TOKEN_SIGNATURE_VERSION}.{key_id}.{digest}")
+}
+
+fn generate_link_token_signature(
+    token_id: &TokenId,
+    payload_hash: &str,
+    expires_at: MonotonicTimeNs,
+) -> String {
+    let keyring = link_token_signing_keyring();
+    let key_id = link_token_active_key_id(&keyring);
+    let secret = keyring
+        .get(key_id.as_str())
+        .expect("active link signing key must exist in keyring");
+    deterministic_link_token_signature(token_id, payload_hash, expires_at, key_id.as_str(), secret)
+}
+
+fn parse_link_token_signature_parts(signature: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = signature.split('.');
+    let version = parts.next()?;
+    let key_id = parts.next()?;
+    let digest = parts.next()?;
+    if parts.next().is_some() || version.is_empty() || key_id.is_empty() || digest.is_empty() {
+        return None;
+    }
+    Some((version, key_id, digest))
+}
+
+fn validate_stored_link_token_signature(link: &LinkRecord) -> Result<(), StorageError> {
+    let Some((version, key_id, _digest)) = parse_link_token_signature_parts(&link.token_signature)
+    else {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    };
+    if version != LINK_TOKEN_SIGNATURE_VERSION {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    let keyring = link_token_signing_keyring();
+    let Some(secret) = keyring.get(key_id) else {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_KEY_UNAVAILABLE",
+            },
+        ));
+    };
+    let expected = deterministic_link_token_signature(
+        &link.token_id,
+        &link.payload_hash,
+        link.expires_at,
+        key_id,
+        secret.as_str(),
+    );
+    if expected != link.token_signature {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn validate_presented_link_token_signature(
+    link: &LinkRecord,
+    token_signature: &str,
+) -> Result<(), StorageError> {
+    if token_signature != link.token_signature {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    validate_stored_link_token_signature(link)
+}
+
 fn ms_to_ns(ms: u32) -> u64 {
     (ms as u64).saturating_mul(1_000_000)
 }
@@ -844,6 +1007,8 @@ pub struct Ph1fStore {
     onb_sender_verify_idempotency_index:
         BTreeMap<(OnboardingSessionId, String), VerificationStatus>,
     onb_primary_device_idempotency_index: BTreeMap<(OnboardingSessionId, String), bool>,
+    onb_platform_setup_idempotency_index:
+        BTreeMap<(OnboardingSessionId, String), Vec<String>>,
     // Idempotency: (user_id + role_id + idempotency_key) for access instance create.
     onb_access_instance_idempotency_index: BTreeMap<(UserId, String, String), String>,
     onb_complete_idempotency_index: BTreeMap<(OnboardingSessionId, String), OnboardingStatus>,
@@ -1209,9 +1374,40 @@ pub struct OnboardingSessionRecord {
     pub primary_device_device_id: Option<DeviceId>,
     pub primary_device_proof_type: Option<ProofType>,
     pub primary_device_confirmed: bool,
+    pub emo_persona_lock_audit_event_id: Option<AuditEventId>,
     pub access_engine_instance_id: Option<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub wake_artifact_sync_receipt_ref: Option<String>,
+    // Platform setup receipts keyed by deterministic receipt_kind.
+    pub platform_setup_receipts: BTreeMap<String, String>,
+    pub platform_setup_receipt_signers: BTreeMap<String, String>,
+    pub platform_setup_receipt_payload_hashes: BTreeMap<String, String>,
+    // AskMissing state (single source of truth per onboarding session).
+    pub missing_fields: Vec<String>,
+    pub asked_missing_fields: Vec<String>,
+    pub active_missing_field: Option<String>,
+    pub active_missing_attempts: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnbAskMissingOutcomeKind {
+    Prompt,
+    Updated,
+    Escalated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbAskMissingOutcome {
+    pub kind: OnbAskMissingOutcomeKind,
+    pub field_key: Option<String>,
+    pub attempts: u8,
+    pub remaining_missing_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbPlatformSetupReceiptOutcome {
+    pub accepted_receipt_kind: String,
+    pub remaining_required_receipt_kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2171,6 +2367,7 @@ impl Ph1fStore {
             onb_photo_idempotency_index: BTreeMap::new(),
             onb_sender_verify_idempotency_index: BTreeMap::new(),
             onb_primary_device_idempotency_index: BTreeMap::new(),
+            onb_platform_setup_idempotency_index: BTreeMap::new(),
             onb_access_instance_idempotency_index: BTreeMap::new(),
             onb_complete_idempotency_index: BTreeMap::new(),
             onb_requirement_backfill_campaigns: BTreeMap::new(),
@@ -5406,6 +5603,7 @@ impl Ph1fStore {
         self.next_link_seq = self.next_link_seq.saturating_add(1);
         let token_id = TokenId::new(format!("link_{link_seq}_{payload_hash}"))?;
         let draft_id = DraftId::new(format!("draft_{link_seq}_{payload_hash}"))?;
+        let token_signature = generate_link_token_signature(&token_id, &payload_hash, expires_at);
         let missing_required_fields = self.ph1link_compute_missing_required_fields(
             invitee_type,
             &schema_version_id,
@@ -5414,6 +5612,7 @@ impl Ph1fStore {
 
         let rec = LinkRecord::v1(
             token_id.clone(),
+            token_signature,
             draft_id,
             payload_hash.clone(),
             schema_version_id,
@@ -5630,6 +5829,15 @@ impl Ph1fStore {
         token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<LinkOpenActivateResultParts, StorageError> {
+        let token_signature = self
+            .links
+            .get(&token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?
+            .token_signature
+            .clone();
         let legacy_idempotency_key = format!(
             "legacy:{}",
             deterministic_device_fingerprint_hash_hex(&device_fingerprint)
@@ -5637,6 +5845,7 @@ impl Ph1fStore {
         self.ph1link_invite_open_activate_commit_with_idempotency(
             now,
             token_id,
+            token_signature,
             device_fingerprint,
             AppPlatform::Ios,
             "legacy_app_instance".to_string(),
@@ -5650,6 +5859,7 @@ impl Ph1fStore {
         &mut self,
         now: MonotonicTimeNs,
         token_id: TokenId,
+        token_signature: String,
         device_fingerprint: String,
         app_platform: AppPlatform,
         app_instance_id: String,
@@ -5701,6 +5911,30 @@ impl Ph1fStore {
                 },
             ));
         }
+        if token_signature.trim().is_empty() || token_signature.len() > 192 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.token_signature",
+                    reason: "must be non-empty and <= 192 chars",
+                },
+            ));
+        }
+        if !token_signature.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.token_signature",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        let link_for_signature =
+            self.links
+                .get(&token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?;
+        validate_presented_link_token_signature(link_for_signature, &token_signature)?;
 
         let idx_key = (token_id.clone(), idempotency_key);
         if let Some(existing) = self.link_open_activate_idempotency_index.get(&idx_key) {
@@ -5978,9 +6212,12 @@ impl Ph1fStore {
         let link_seq = self.next_link_seq;
         self.next_link_seq = self.next_link_seq.saturating_add(1);
         let token_id = TokenId::new(format!("link_{link_seq}_{}", old.payload_hash))?;
+        let token_signature =
+            generate_link_token_signature(&token_id, &old.payload_hash, expires_at);
 
         let rec = LinkRecord::v1(
             token_id.clone(),
+            token_signature,
             old.draft_id.clone(),
             old.payload_hash.clone(),
             old.schema_version_id.clone(),
@@ -6275,7 +6512,7 @@ impl Ph1fStore {
             }
             let next_step = match rec.status {
                 OnboardingStatus::DraftCreated => {
-                    if rec.invitee_type == InviteeType::Employee && rec.tenant_id.is_none() {
+                    if !rec.missing_fields.is_empty() {
                         OnboardingNextStep::AskMissing
                     } else if rec.prefilled_context_ref.is_some() {
                         OnboardingNextStep::LoadPrefilled
@@ -6356,9 +6593,17 @@ impl Ph1fStore {
             primary_device_device_id: None,
             primary_device_proof_type: None,
             primary_device_confirmed: false,
+            emo_persona_lock_audit_event_id: None,
             access_engine_instance_id: None,
             voice_artifact_sync_receipt_ref: None,
             wake_artifact_sync_receipt_ref: None,
+            platform_setup_receipts: BTreeMap::new(),
+            platform_setup_receipt_signers: BTreeMap::new(),
+            platform_setup_receipt_payload_hashes: BTreeMap::new(),
+            missing_fields: link.missing_required_fields.clone(),
+            asked_missing_fields: Vec::new(),
+            active_missing_field: link.missing_required_fields.first().cloned(),
+            active_missing_attempts: 0,
         };
 
         self.onboarding_sessions
@@ -6366,10 +6611,9 @@ impl Ph1fStore {
         self.onboarding_session_by_link
             .insert(token_id.clone(), onboarding_session_id.clone());
 
-        let next_step =
-            if link.invitee_type == InviteeType::Employee && effective_tenant_id.is_none() {
-                OnboardingNextStep::AskMissing
-            } else if effective_prefilled_context_ref.is_some() {
+        let next_step = if !link.missing_required_fields.is_empty() {
+            OnboardingNextStep::AskMissing
+        } else if effective_prefilled_context_ref.is_some() {
                 OnboardingNextStep::LoadPrefilled
             } else {
                 OnboardingNextStep::Terms
@@ -6597,6 +6841,208 @@ impl Ph1fStore {
     ) -> Result<bool, StorageError> {
         const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
         self.ph1onb_verification_gate_required(onboarding_session_id, GATE_SENDER_CONFIRMATION)
+    }
+
+    fn ph1onb_required_platform_receipt_kinds(app_platform: AppPlatform) -> &'static [&'static str] {
+        match app_platform {
+            AppPlatform::Ios => &[
+                "install_launch_handshake",
+                "push_permission_granted",
+                "notification_token_bound",
+                "ios_side_button_configured",
+            ],
+            AppPlatform::Android => &[
+                "install_launch_handshake",
+                "mic_permission_granted",
+                "background_audio_enabled",
+                "push_permission_granted",
+                "notification_token_bound",
+                "android_wakeword_configured",
+            ],
+            AppPlatform::Desktop => &[
+                "install_launch_handshake",
+                "mic_permission_granted",
+                "desktop_wakeword_configured",
+                "desktop_pairing_bound",
+            ],
+        }
+    }
+
+    fn ph1onb_validate_platform_receipt_signer(
+        app_platform: AppPlatform,
+        signer: &str,
+    ) -> Result<(), StorageError> {
+        if signer.trim().is_empty() || signer.len() > 64 || !signer.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.signer",
+                    reason: "must be non-empty ASCII and <= 64 chars",
+                },
+            ));
+        }
+        let expected_signer = match app_platform {
+            AppPlatform::Ios | AppPlatform::Android => "selene_mobile_app",
+            AppPlatform::Desktop => "selene_desktop_app",
+        };
+        if signer != expected_signer {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.signer",
+                    reason: "must match platform signer policy",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn ph1onb_validate_platform_receipt_payload_hash(
+        payload_hash: &str,
+    ) -> Result<(), StorageError> {
+        if payload_hash.len() != 64
+            || !payload_hash.is_ascii()
+            || !payload_hash
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.payload_hash",
+                    reason: "must be lowercase hex sha256 (64 chars)",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn ph1onb_remaining_platform_receipt_kinds_for_record(
+        rec: &OnboardingSessionRecord,
+    ) -> Vec<String> {
+        Self::ph1onb_required_platform_receipt_kinds(rec.app_platform)
+            .iter()
+            .filter(|required| !rec.platform_setup_receipts.contains_key(**required))
+            .map(|required| (*required).to_string())
+            .collect()
+    }
+
+    pub fn ph1onb_remaining_platform_receipt_kinds(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Result<Vec<String>, StorageError> {
+        let rec = self.onboarding_sessions.get(onboarding_session_id).ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            },
+        )?;
+        Ok(Self::ph1onb_remaining_platform_receipt_kinds_for_record(rec))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1onb_platform_setup_receipt_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        onboarding_session_id: OnboardingSessionId,
+        receipt_kind: String,
+        receipt_ref: String,
+        signer: String,
+        payload_hash: String,
+        idempotency_key: String,
+    ) -> Result<OnbPlatformSetupReceiptOutcome, StorageError> {
+        Self::validate_ph1link_idempotency_key(
+            "ph1onb_platform_setup_receipt_commit.idempotency_key",
+            &idempotency_key,
+        )?;
+        if receipt_kind.trim().is_empty() || receipt_kind.len() > 64 || !receipt_kind.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.receipt_kind",
+                    reason: "must be non-empty ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if receipt_ref.trim().is_empty() || receipt_ref.len() > 192 || !receipt_ref.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.receipt_ref",
+                    reason: "must be non-empty ASCII and <= 192 chars",
+                },
+            ));
+        }
+        Self::ph1onb_validate_platform_receipt_payload_hash(&payload_hash)?;
+
+        let idem_idx = (onboarding_session_id.clone(), idempotency_key.clone());
+        if let Some(existing_remaining) = self.onb_platform_setup_idempotency_index.get(&idem_idx) {
+            return Ok(OnbPlatformSetupReceiptOutcome {
+                accepted_receipt_kind: receipt_kind,
+                remaining_required_receipt_kinds: existing_remaining.clone(),
+            });
+        }
+
+        let rec = self
+            .onboarding_sessions
+            .get_mut(&onboarding_session_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        if rec.status != OnboardingStatus::DraftCreated {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.status",
+                    reason: "session must be DRAFT_CREATED",
+                },
+            ));
+        }
+
+        let required = Self::ph1onb_required_platform_receipt_kinds(rec.app_platform);
+        if !required.iter().any(|required_kind| *required_kind == receipt_kind) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_platform_setup_receipt_commit.receipt_kind",
+                    reason: "receipt_kind is not allowed for onboarding platform",
+                },
+            ));
+        }
+        Self::ph1onb_validate_platform_receipt_signer(rec.app_platform, &signer)?;
+
+        if let Some(existing_ref) = rec.platform_setup_receipts.get(&receipt_kind) {
+            let existing_signer = rec
+                .platform_setup_receipt_signers
+                .get(&receipt_kind)
+                .cloned()
+                .unwrap_or_default();
+            let existing_payload_hash = rec
+                .platform_setup_receipt_payload_hashes
+                .get(&receipt_kind)
+                .cloned()
+                .unwrap_or_default();
+            if existing_ref != &receipt_ref
+                || existing_signer != signer
+                || existing_payload_hash != payload_hash
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_platform_setup_receipt_commit.receipt_kind",
+                        reason: "receipt_kind already bound with different proof",
+                    },
+                ));
+            }
+        } else {
+            rec.platform_setup_receipts
+                .insert(receipt_kind.clone(), receipt_ref);
+            rec.platform_setup_receipt_signers
+                .insert(receipt_kind.clone(), signer);
+            rec.platform_setup_receipt_payload_hashes
+                .insert(receipt_kind.clone(), payload_hash);
+        }
+        rec.updated_at = now;
+        let remaining = Self::ph1onb_remaining_platform_receipt_kinds_for_record(rec);
+        self.onb_platform_setup_idempotency_index
+            .insert(idem_idx, remaining.clone());
+        Ok(OnbPlatformSetupReceiptOutcome {
+            accepted_receipt_kind: receipt_kind,
+            remaining_required_receipt_kinds: remaining,
+        })
     }
 
     fn ph1onb_required_verification_gates_for_token(
@@ -6899,6 +7345,40 @@ impl Ph1fStore {
         )?)
     }
 
+    pub fn ph1onb_emo_persona_lock_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        onboarding_session_id: OnboardingSessionId,
+        persona_audit_event_id: AuditEventId,
+    ) -> Result<(), StorageError> {
+        let persona_event = self
+            .audit_events
+            .iter()
+            .find(|event| event.event_id == persona_audit_event_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.emo_persona_lock_audit_event_id",
+                key: persona_audit_event_id.0.to_string(),
+            })?;
+        if !matches!(&persona_event.engine, AuditEngine::Other(name) if name == "PH1.PERSONA") {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_emo_persona_lock_commit.persona_audit_event_id",
+                    reason: "must reference PH1.PERSONA audit event",
+                },
+            ));
+        }
+        let rec = self
+            .onboarding_sessions
+            .get_mut(&onboarding_session_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        rec.emo_persona_lock_audit_event_id = Some(persona_audit_event_id);
+        rec.updated_at = now;
+        Ok(())
+    }
+
     pub fn ph1onb_access_instance_create_commit(
         &mut self,
         now: MonotonicTimeNs,
@@ -6923,6 +7403,7 @@ impl Ph1fStore {
             terms_status,
             token_id,
             existing_tenant_id,
+            emo_persona_lock_audit_event_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
                 StorageError::ForeignKeyViolation {
@@ -6937,6 +7418,7 @@ impl Ph1fStore {
                 rec.terms_status,
                 rec.token_id.clone(),
                 rec.tenant_id.clone(),
+                rec.emo_persona_lock_audit_event_id,
             )
         };
 
@@ -6953,6 +7435,14 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1onb_access_instance_create_commit.primary_device_confirmed",
                     reason: "must be true before creating access instance",
+                },
+            ));
+        }
+        if emo_persona_lock_audit_event_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_access_instance_create_commit.emo_persona_lock_audit_event_id",
+                    reason: "must exist before creating access instance",
                 },
             ));
         }
@@ -7076,6 +7566,7 @@ impl Ph1fStore {
             token_id,
             tenant_id,
             app_platform,
+            emo_persona_lock_audit_event_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
                 StorageError::ForeignKeyViolation {
@@ -7091,6 +7582,7 @@ impl Ph1fStore {
                 rec.token_id.clone(),
                 rec.tenant_id.clone(),
                 rec.app_platform,
+                rec.emo_persona_lock_audit_event_id,
             )
         };
 
@@ -7111,6 +7603,14 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1onb_complete_commit.verification_status",
                     reason: "schema-required sender verification must be CONFIRMED before completing onboarding",
+                },
+            ));
+        }
+        if emo_persona_lock_audit_event_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.emo_persona_lock_audit_event_id",
+                    reason: "must exist before completing onboarding",
                 },
             ));
         }
@@ -7615,6 +8115,153 @@ impl Ph1fStore {
         &self.onboarding_sessions
     }
 
+    pub fn ph1onb_ask_missing_field_turn(
+        &mut self,
+        now: MonotonicTimeNs,
+        onboarding_session_id: OnboardingSessionId,
+        field_value: Option<String>,
+        idempotency_key: String,
+    ) -> Result<OnbAskMissingOutcome, StorageError> {
+        Self::validate_ph1link_idempotency_key(
+            "ph1onb_ask_missing_field_turn.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let (expected_field, token_id) = {
+            let rec = self
+                .onboarding_sessions
+                .get(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            if rec.status != OnboardingStatus::DraftCreated {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_ask_missing_field_turn.status",
+                        reason: "session must be DRAFT_CREATED",
+                    },
+                ));
+            }
+            if rec.missing_fields.is_empty() {
+                return Ok(OnbAskMissingOutcome {
+                    kind: OnbAskMissingOutcomeKind::Updated,
+                    field_key: None,
+                    attempts: 0,
+                    remaining_missing_fields: Vec::new(),
+                });
+            }
+
+            let expected_field = rec
+                .active_missing_field
+                .clone()
+                .filter(|field| rec.missing_fields.iter().any(|m| m == field))
+                .unwrap_or_else(|| rec.missing_fields[0].clone());
+            (expected_field, rec.token_id.clone())
+        };
+
+        {
+            let rec_mut = self
+                .onboarding_sessions
+                .get_mut(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            if rec_mut.active_missing_field.as_ref() != Some(&expected_field) {
+                rec_mut.active_missing_field = Some(expected_field.clone());
+                rec_mut.active_missing_attempts = 0;
+            }
+        }
+
+        let value = field_value
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        let update_failed = if let Some(value) = value {
+            let draft_id = self
+                .links
+                .get(&token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?
+                .draft_id
+                .clone();
+            let mut creator_update_fields = BTreeMap::new();
+            creator_update_fields.insert(expected_field.clone(), value);
+            match self.ph1link_invite_draft_update_commit(
+                now,
+                draft_id,
+                creator_update_fields,
+                idempotency_key,
+            ) {
+                Ok((_, _, missing_required_fields)) => {
+                    let rec_mut = self
+                        .onboarding_sessions
+                        .get_mut(&onboarding_session_id)
+                        .ok_or(StorageError::ForeignKeyViolation {
+                            table: "onboarding_sessions.onboarding_session_id",
+                            key: onboarding_session_id.as_str().to_string(),
+                        })?;
+                    rec_mut.missing_fields = missing_required_fields.clone();
+                    if !rec_mut
+                        .asked_missing_fields
+                        .iter()
+                        .any(|asked| asked == &expected_field)
+                    {
+                        rec_mut.asked_missing_fields.push(expected_field.clone());
+                    }
+                    rec_mut.active_missing_field = missing_required_fields.first().cloned();
+                    rec_mut.active_missing_attempts = 0;
+                    rec_mut.updated_at = now;
+                    return Ok(OnbAskMissingOutcome {
+                        kind: OnbAskMissingOutcomeKind::Updated,
+                        field_key: rec_mut.active_missing_field.clone(),
+                        attempts: 0,
+                        remaining_missing_fields: missing_required_fields,
+                    });
+                }
+                Err(StorageError::ContractViolation(_)) => true,
+                Err(other) => return Err(other),
+            }
+        } else {
+            true
+        };
+
+        if update_failed {
+            let rec_mut = self
+                .onboarding_sessions
+                .get_mut(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            rec_mut.active_missing_attempts = rec_mut.active_missing_attempts.saturating_add(1);
+            rec_mut.updated_at = now;
+            let attempts = rec_mut.active_missing_attempts;
+            let remaining_missing_fields = rec_mut.missing_fields.clone();
+            let kind = if attempts >= 2 {
+                OnbAskMissingOutcomeKind::Escalated
+            } else {
+                OnbAskMissingOutcomeKind::Prompt
+            };
+            return Ok(OnbAskMissingOutcome {
+                kind,
+                field_key: Some(expected_field),
+                attempts,
+                remaining_missing_fields,
+            });
+        }
+
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1onb_ask_missing_field_turn",
+                reason: "unreachable ask-missing state",
+            },
+        ))
+    }
+
     pub fn ph1onb_voice_runtime_mode(
         &self,
         onboarding_session_id: &OnboardingSessionId,
@@ -7628,6 +8275,34 @@ impl Ph1fStore {
         } else {
             OnboardingVoiceRuntimeMode::Limited
         }
+    }
+
+    pub fn ph1onb_latest_locked_voice_receipt_ref(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Option<String> {
+        self.voice_enrollment_sessions
+            .values()
+            .filter(|rec| {
+                rec.onboarding_session_id == *onboarding_session_id
+                    && rec.voice_enroll_status == VoiceEnrollStatus::Locked
+            })
+            .max_by_key(|rec| (rec.updated_at.0, rec.created_at.0))
+            .and_then(|rec| rec.voice_artifact_sync_receipt_ref.clone())
+    }
+
+    pub fn ph1onb_latest_complete_wake_receipt_ref(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Option<String> {
+        self.wake_enrollment_sessions
+            .values()
+            .filter(|rec| {
+                rec.onboarding_session_id.as_ref() == Some(onboarding_session_id)
+                    && rec.wake_enroll_status == WakeEnrollStatus::Complete
+            })
+            .max_by_key(|rec| (rec.updated_at.0, rec.created_at.0))
+            .and_then(|rec| rec.wake_artifact_sync_receipt_ref.clone())
     }
 
     fn summarize_voice_capture_profile(
@@ -17412,9 +18087,17 @@ mod tests {
                 primary_device_device_id: None,
                 primary_device_proof_type: None,
                 primary_device_confirmed: false,
+                emo_persona_lock_audit_event_id: None,
                 access_engine_instance_id: None,
                 voice_artifact_sync_receipt_ref: None,
                 wake_artifact_sync_receipt_ref: None,
+                platform_setup_receipts: BTreeMap::new(),
+                platform_setup_receipt_signers: BTreeMap::new(),
+                platform_setup_receipt_payload_hashes: BTreeMap::new(),
+                missing_fields: Vec::new(),
+                asked_missing_fields: Vec::new(),
+                active_missing_field: None,
+                active_missing_attempts: 0,
             },
         );
         onb_id

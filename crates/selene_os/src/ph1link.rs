@@ -104,7 +104,12 @@ impl Ph1LinkRuntime {
                     .transpose()
                     .map_err(StorageError::ContractViolation)?;
 
-                let link_url = format!("{}/{}", self.config.base_url, link_rec.token_id.as_str());
+                let link_url = format!(
+                    "{}/{}?sig={}",
+                    self.config.base_url,
+                    link_rec.token_id.as_str(),
+                    link_rec.token_signature
+                );
                 let out = LinkGenerateResult::v1(
                     link_rec.draft_id.clone(),
                     link_rec.token_id.clone(),
@@ -193,6 +198,7 @@ impl Ph1LinkRuntime {
                 ) = store.ph1link_invite_open_activate_commit_with_idempotency(
                     req.now,
                     r.token_id.clone(),
+                    r.token_signature.clone(),
                     r.device_fingerprint.clone(),
                     r.app_platform,
                     r.app_instance_id.clone(),
@@ -332,8 +338,12 @@ impl Ph1LinkRuntime {
                     )),
                 )?;
 
-                let new_link_url =
-                    format!("{}/{}", self.config.base_url, new_link.token_id.as_str());
+                let new_link_url = format!(
+                    "{}/{}?sig={}",
+                    self.config.base_url,
+                    new_link.token_id.as_str(),
+                    new_link.token_signature
+                );
                 let out = LinkExpiredRecoveryResult::v1(
                     new_link.token_id.clone(),
                     new_link.draft_id.clone(),
@@ -650,12 +660,18 @@ mod tests {
             Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open1 = Ph1LinkRequest::invite_open_activate_commit_v1(
             CorrelationId(2),
             TurnId(2),
             now(20),
             token_id.clone(),
+            token_signature.clone(),
             "device_fp_a".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_link".to_string(),
@@ -680,6 +696,7 @@ mod tests {
             TurnId(3),
             now(21),
             token_id,
+            token_signature,
             "device_fp_b".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_link".to_string(),
@@ -791,12 +808,18 @@ mod tests {
             Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
             CorrelationId(5),
             TurnId(2),
             now(11),
             token_id.clone(),
+            token_signature,
             "device_fp_a".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_link".to_string(),
@@ -919,6 +942,11 @@ mod tests {
             Ph1LinkResponse::Ok(o) => o.link_generate_result.unwrap().token_id,
             _ => panic!("expected OK"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         // Bind on first open.
         let open = Ph1LinkRequest::invite_open_activate_commit_v1(
@@ -926,6 +954,7 @@ mod tests {
             TurnId(2),
             now(20),
             token_id.clone(),
+            token_signature,
             "device_fp_a".to_string(),
             selene_kernel_contracts::ph1link::AppPlatform::Ios,
             "ios_instance_link".to_string(),
