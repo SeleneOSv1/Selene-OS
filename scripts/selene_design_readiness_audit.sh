@@ -490,6 +490,19 @@ while read -r f; do
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 sort -u "${ACTIVE_CAPS_TXT}" > "${ACTIVE_CAPS_UNIQUE_TXT}"
 echo "ACTIVE CAPABILITIES (unique):"; wc -l "${ACTIVE_CAPS_UNIQUE_TXT}"
+active_cap_count="$(wc -l < "${ACTIVE_CAPS_UNIQUE_TXT}" | tr -d ' ')"
+if [ "${active_cap_count}" -eq 0 ]; then
+  echo "CHECK_FAIL blueprint_active_capability_extract=fail count=0"
+  exit 1
+fi
+invalid_active_caps="$(grep -Ev '^[A-Z0-9_]+$' "${ACTIVE_CAPS_UNIQUE_TXT}" || true)"
+if [ -n "${invalid_active_caps}" ]; then
+  printf "%s\n" "${invalid_active_caps}" | sed 's/^/INVALID_ACTIVE_CAPABILITY_ID: /'
+  invalid_active_cap_count="$(printf "%s\n" "${invalid_active_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_active_capability_extract=fail invalid=${invalid_active_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_capability_extract=pass count=${active_cap_count}"
 
 echo
 echo "--- 3D) Build ECM capability set (exact tokens) ---"
@@ -498,6 +511,19 @@ echo "--- 3D) Build ECM capability set (exact tokens) ---"
   rg -n '^#+ `[^`]+`$' docs/ECM/*.md -S | awk -F'`' '{if(NF>=3) print $2}';
 } | sort -u > "${ECM_CAPS_EXACT_TXT}"
 echo "ECM CAPABILITIES (unique):"; wc -l "${ECM_CAPS_EXACT_TXT}"
+ecm_cap_count="$(wc -l < "${ECM_CAPS_EXACT_TXT}" | tr -d ' ')"
+if [ "${ecm_cap_count}" -eq 0 ]; then
+  echo "CHECK_FAIL ecm_capability_extract=fail count=0"
+  exit 1
+fi
+invalid_ecm_caps="$(grep -Ev '^[A-Z0-9_]+$' "${ECM_CAPS_EXACT_TXT}" || true)"
+if [ -n "${invalid_ecm_caps}" ]; then
+  printf "%s\n" "${invalid_ecm_caps}" | sed 's/^/INVALID_ECM_CAPABILITY_ID: /'
+  invalid_ecm_cap_count="$(printf "%s\n" "${invalid_ecm_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL ecm_capability_extract=fail invalid=${invalid_ecm_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK ecm_capability_extract=pass count=${ecm_cap_count}"
 
 echo
 echo "--- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---"
@@ -621,7 +647,14 @@ echo "=================================================="
 echo "5) DRIFT/BANNED LEGACY TOKENS SWEEP (CASE-INSENSITIVE)"
 echo "   (Report any hit with file:line)"
 echo "=================================================="
-rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S --glob '!docs/archive/**' || true
+legacy_token_hits="$(rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S --glob '!docs/archive/**' || true)"
+if [ -n "${legacy_token_hits}" ]; then
+  printf "%s\n" "${legacy_token_hits}"
+  legacy_token_hit_count="$(printf "%s\n" "${legacy_token_hits}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL banned_legacy_token_sweep=fail count=${legacy_token_hit_count}"
+  exit 1
+fi
+echo "CHECK_OK banned_legacy_token_sweep=pass"
 
 echo
 echo "=================================================="
@@ -631,6 +664,53 @@ echo "   - Treat as a finding only if status is not LEGACY_DO_NOT_WIRE or wordin
 echo "=================================================="
 rg -n "LINK_INVITE_SEND_COMMIT|LINK_INVITE_RESEND_COMMIT|LINK_DELIVERY_FAILURE_HANDLING_COMMIT|LEGACY_DO_NOT_WIRE" docs/08_SIMULATION_CATALOG.md -n || true
 rg -n "PH1\.LINK" docs/08_SIMULATION_CATALOG.md -n || true
+
+legacy_ids=(
+  "LINK_INVITE_SEND_COMMIT"
+  "LINK_INVITE_RESEND_COMMIT"
+  "LINK_DELIVERY_FAILURE_HANDLING_COMMIT"
+)
+
+legacy_link_fail_count=0
+for legacy_id in "${legacy_ids[@]}"; do
+  row_line="$(rg -n "^\| ${legacy_id} \|" docs/08_SIMULATION_CATALOG.md || true)"
+  if [ -z "${row_line}" ]; then
+    echo "LEGACY_LINK_MISSING_ROW:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+    continue
+  fi
+  if ! printf "%s\n" "${row_line}" | rg -q "LEGACY_DO_NOT_WIRE"; then
+    echo "LEGACY_LINK_BAD_STATUS:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+  if ! printf "%s\n" "${row_line}" | rg -qi "delivery .*LINK_DELIVER_INVITE"; then
+    echo "LEGACY_LINK_BAD_OWNERSHIP_TEXT:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+
+  header_line_raw="$(rg -n "^### ${legacy_id} \(COMMIT\)" docs/08_SIMULATION_CATALOG.md || true)"
+  if [ -z "${header_line_raw}" ]; then
+    echo "LEGACY_LINK_MISSING_SECTION:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+    continue
+  fi
+  header_line="$(printf "%s\n" "${header_line_raw}" | head -n 1 | cut -d: -f1)"
+  section_window="$(sed -n "${header_line},$((header_line+8))p" docs/08_SIMULATION_CATALOG.md)"
+  if ! printf "%s\n" "${section_window}" | rg -q "LEGACY_DO_NOT_WIRE"; then
+    echo "LEGACY_LINK_SECTION_BAD_STATUS:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+  if ! printf "%s\n" "${section_window}" | rg -q "LINK_DELIVER_INVITE"; then
+    echo "LEGACY_LINK_SECTION_BAD_OWNERSHIP:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+done
+
+if [ "${legacy_link_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL legacy_link_sim_catalog_compliance=fail count=${legacy_link_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK legacy_link_sim_catalog_compliance=pass"
 
 echo
 echo "=================================================="
