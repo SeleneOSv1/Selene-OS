@@ -52,6 +52,8 @@ impl VoiceIngress for GrpcVoiceIngress {
             user_text_final: None,
             selene_text_partial: None,
             selene_text_final: None,
+            audio_capture_ref: None,
+            visual_input_ref: None,
         };
 
         let runtime = self
