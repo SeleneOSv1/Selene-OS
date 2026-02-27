@@ -2118,3 +2118,91 @@ fn runc_onb_db_ask_missing_state_round_trip_updates_session_record() {
         .any(|asked| asked == &first_field));
     assert_eq!(after.missing_fields, updated.remaining_missing_fields);
 }
+
+#[test]
+fn rund_onb_db_platform_setup_receipt_round_trip_updates_session_record() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_platform_roundtrip");
+    let inviter_device = device("tenant_a_device_platform_roundtrip");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let token_id = seed_activated_link_with_platform(
+        &mut s,
+        1_600,
+        inviter,
+        InviteeType::Employee,
+        Some("tenant_a".to_string()),
+        None,
+        AppPlatform::Ios,
+        "ios_instance_onb_platform_roundtrip",
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1_601),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_1600".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_platform_roundtrip".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let outcome = s
+        .ph1onb_platform_setup_receipt_commit(
+            MonotonicTimeNs(1_602),
+            started.onboarding_session_id.clone(),
+            "install_launch_handshake".to_string(),
+            "receipt:platform:install-launch".to_string(),
+            "selene_mobile_app".to_string(),
+            format!("{:064x}", 0xA1u64),
+            "onb-platform-roundtrip-1".to_string(),
+        )
+        .expect("platform receipt commit should succeed");
+    assert_eq!(outcome.accepted_receipt_kind, "install_launch_handshake");
+    assert!(outcome
+        .remaining_required_receipt_kinds
+        .iter()
+        .all(|kind| kind != "install_launch_handshake"));
+
+    let row = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding row must exist");
+    assert_eq!(
+        row.platform_setup_receipts
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some("receipt:platform:install-launch")
+    );
+    assert_eq!(
+        row.platform_setup_receipt_signers
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some("selene_mobile_app")
+    );
+    let expected_hash = format!("{:064x}", 0xA1u64);
+    assert_eq!(
+        row.platform_setup_receipt_payload_hashes
+            .get("install_launch_handshake")
+            .map(String::as_str),
+        Some(expected_hash.as_str())
+    );
+
+    let idem_outcome = s
+        .ph1onb_platform_setup_receipt_commit(
+            MonotonicTimeNs(1_603),
+            started.onboarding_session_id.clone(),
+            "install_launch_handshake".to_string(),
+            "receipt:platform:install-launch".to_string(),
+            "selene_mobile_app".to_string(),
+            expected_hash,
+            "onb-platform-roundtrip-1".to_string(),
+        )
+        .expect("idempotent replay should return cached outcome");
+    assert_eq!(
+        outcome.remaining_required_receipt_kinds,
+        idem_outcome.remaining_required_receipt_kinds
+    );
+}

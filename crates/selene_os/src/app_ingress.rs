@@ -177,6 +177,12 @@ pub enum AppOnboardingContinueAction {
     AskMissingSubmit {
         field_value: Option<String>,
     },
+    PlatformSetupReceipt {
+        receipt_kind: String,
+        receipt_ref: String,
+        signer: String,
+        payload_hash: String,
+    },
     TermsAccept {
         terms_version_id: String,
         accepted: bool,
@@ -235,6 +241,33 @@ impl AppOnboardingContinueRequest {
                 terms_version_id,
                 64,
             )?,
+            AppOnboardingContinueAction::PlatformSetupReceipt {
+                receipt_kind,
+                receipt_ref,
+                signer,
+                payload_hash,
+            } => {
+                validate_ascii_token(
+                    "app_onboarding_continue_request.platform_setup_receipt.receipt_kind",
+                    receipt_kind,
+                    64,
+                )?;
+                validate_ascii_token(
+                    "app_onboarding_continue_request.platform_setup_receipt.receipt_ref",
+                    receipt_ref,
+                    192,
+                )?;
+                validate_ascii_token(
+                    "app_onboarding_continue_request.platform_setup_receipt.signer",
+                    signer,
+                    64,
+                )?;
+                validate_ascii_token(
+                    "app_onboarding_continue_request.platform_setup_receipt.payload_hash",
+                    payload_hash,
+                    64,
+                )?;
+            }
             AppOnboardingContinueAction::PrimaryDeviceConfirm { device_id, .. } => {
                 device_id.validate()?;
             }
@@ -263,6 +296,7 @@ impl AppOnboardingContinueRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppOnboardingContinueNextStep {
     AskMissing,
+    PlatformSetup,
     Terms,
     PrimaryDeviceConfirm,
     VoiceEnroll,
@@ -277,6 +311,7 @@ pub struct AppOnboardingContinueOutcome {
     pub blocking_field: Option<String>,
     pub blocking_question: Option<String>,
     pub remaining_missing_fields: Vec<String>,
+    pub remaining_platform_receipt_kinds: Vec<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
 }
 
@@ -620,8 +655,14 @@ impl AppServerIngressRuntime {
                 match ask.kind {
                     selene_storage::ph1f::OnbAskMissingOutcomeKind::Prompt
                     | selene_storage::ph1f::OnbAskMissingOutcomeKind::Updated => {
+                        let remaining_platform_receipt_kinds = store
+                            .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
                         let next_step = if ask.remaining_missing_fields.is_empty() {
-                            AppOnboardingContinueNextStep::Terms
+                            if remaining_platform_receipt_kinds.is_empty() {
+                                AppOnboardingContinueNextStep::Terms
+                            } else {
+                                AppOnboardingContinueNextStep::PlatformSetup
+                            }
                         } else {
                             AppOnboardingContinueNextStep::AskMissing
                         };
@@ -641,6 +682,7 @@ impl AppServerIngressRuntime {
                             blocking_field,
                             blocking_question,
                             remaining_missing_fields: ask.remaining_missing_fields,
+                            remaining_platform_receipt_kinds,
                             voice_artifact_sync_receipt_ref: None,
                         })
                     }
@@ -653,6 +695,59 @@ impl AppServerIngressRuntime {
                         ))
                     }
                 }
+            }
+            AppOnboardingContinueAction::PlatformSetupReceipt {
+                receipt_kind,
+                receipt_ref,
+                signer,
+                payload_hash,
+            } => {
+                if store
+                    .ph1onb_session_row(&onboarding_session_id)
+                    .map(|rec| !rec.missing_fields.is_empty())
+                    .unwrap_or(false)
+                {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_ASK_MISSING_REQUIRED_BEFORE_PLATFORM_SETUP",
+                        },
+                    ));
+                }
+                self.executor.ensure_simulation_active_for_tenant(
+                    store,
+                    &effective_tenant,
+                    LINK_INVITE_DRAFT_UPDATE_COMMIT,
+                    "app_onboarding_continue_request.simulation_id",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                )?;
+                let receipt_outcome = store.ph1onb_platform_setup_receipt_commit(
+                    now,
+                    onboarding_session_id.clone(),
+                    receipt_kind,
+                    receipt_ref,
+                    signer,
+                    payload_hash,
+                    idempotency_key,
+                )?;
+                Ok(AppOnboardingContinueOutcome {
+                    onboarding_session_id: onboarding_session_id.as_str().to_string(),
+                    next_step: if receipt_outcome.remaining_required_receipt_kinds.is_empty() {
+                        AppOnboardingContinueNextStep::Terms
+                    } else {
+                        AppOnboardingContinueNextStep::PlatformSetup
+                    },
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .map(|r| r.missing_fields.clone())
+                        .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: receipt_outcome
+                        .remaining_required_receipt_kinds,
+                    voice_artifact_sync_receipt_ref: None,
+                })
             }
             AppOnboardingContinueAction::TermsAccept {
                 terms_version_id,
@@ -667,6 +762,16 @@ impl AppServerIngressRuntime {
                         ContractViolation::InvalidValue {
                             field: "app_onboarding_continue_request.action",
                             reason: "ONB_ASK_MISSING_REQUIRED_BEFORE_TERMS",
+                        },
+                    ));
+                }
+                let remaining_platform_receipt_kinds = store
+                    .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
+                if !remaining_platform_receipt_kinds.is_empty() {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_PLATFORM_SETUP_REQUIRED_BEFORE_TERMS",
                         },
                     ));
                 }
@@ -726,6 +831,8 @@ impl AppServerIngressRuntime {
                         .ph1onb_session_row(&onboarding_session_id)
                         .map(|r| r.missing_fields.clone())
                         .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
                     voice_artifact_sync_receipt_ref: None,
                 })
             }
@@ -789,6 +896,8 @@ impl AppServerIngressRuntime {
                         .ph1onb_session_row(&onboarding_session_id)
                         .map(|r| r.missing_fields.clone())
                         .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
                     voice_artifact_sync_receipt_ref: None,
                 })
             }
@@ -881,6 +990,8 @@ impl AppServerIngressRuntime {
                         .ph1onb_session_row(&onboarding_session_id)
                         .map(|r| r.missing_fields.clone())
                         .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
                     voice_artifact_sync_receipt_ref,
                 })
             }
@@ -2387,8 +2498,35 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::Terms);
+        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
         assert!(ask_out.remaining_missing_fields.is_empty());
+        assert!(!ask_out.remaining_platform_receipt_kinds.is_empty());
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9902),
+                        onboarding_session_id.clone(),
+                        format!("runc-flow-platform-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::PlatformSetupReceipt {
+                            receipt_kind: receipt_kind.clone(),
+                            receipt_ref: format!("receipt:runc-flow:{receipt_kind}"),
+                            signer: "selene_mobile_app".to_string(),
+                            payload_hash: format!("{:064x}", idx + 1),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(101 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(platform_out.next_step, AppOnboardingContinueNextStep::Terms);
+        assert!(platform_out.remaining_platform_receipt_kinds.is_empty());
 
         let terms = runtime
             .run_onboarding_continue(
@@ -2458,5 +2596,293 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn rund_onboarding_terms_blocked_until_platform_receipts_complete() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:rund_terms_block_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("rund_terms_block_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+            (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(130),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9903),
+                    "rund-terms-block-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "rund-terms-block-fp".to_string(),
+                    "ios_instance_rund_terms_block".to_string(),
+                    "nonce_rund_terms_block".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(131),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9903),
+                    onboarding_session_id.clone(),
+                    "rund-terms-block-ask-prompt".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(132),
+            )
+            .unwrap();
+        for idx in 0..8 {
+            if ask_out.next_step != AppOnboardingContinueNextStep::AskMissing {
+                break;
+            }
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask-missing must return blocking field");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9903),
+                        onboarding_session_id.clone(),
+                        format!("rund-terms-block-ask-value-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(field_value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(133 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        assert!(!ask_out.remaining_platform_receipt_kinds.is_empty());
+
+        let err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9903),
+                    onboarding_session_id,
+                    "rund-terms-block-terms".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::TermsAccept {
+                        terms_version_id: "terms_v1".to_string(),
+                        accepted: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(145),
+            )
+            .expect_err("terms must be blocked before platform setup receipts are complete");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_PLATFORM_SETUP_REQUIRED_BEFORE_TERMS");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rund_onboarding_platform_setup_receipt_rejects_invalid_signer_and_hash() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:rund_platform_guard_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("rund_platform_guard_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(150),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9904),
+                    "rund-platform-guard-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "rund-platform-guard-fp".to_string(),
+                    "ios_instance_rund_platform_guard".to_string(),
+                    "nonce_rund_platform_guard".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(151),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9904),
+                    onboarding_session_id.clone(),
+                    "rund-platform-guard-ask-prompt".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(152),
+            )
+            .unwrap();
+        for idx in 0..8 {
+            if ask_out.next_step != AppOnboardingContinueNextStep::AskMissing {
+                break;
+            }
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask-missing must return blocking field");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9904),
+                        onboarding_session_id.clone(),
+                        format!("rund-platform-guard-ask-value-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(field_value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(153 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        let receipt_kind = ask_out
+            .remaining_platform_receipt_kinds
+            .first()
+            .cloned()
+            .expect("platform setup must require at least one receipt");
+
+        let bad_signer_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9904),
+                    onboarding_session_id.clone(),
+                    "rund-platform-guard-bad-signer".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PlatformSetupReceipt {
+                        receipt_kind: receipt_kind.clone(),
+                        receipt_ref: "receipt:rund-platform:bad-signer".to_string(),
+                        signer: "not_allowed_signer".to_string(),
+                        payload_hash: format!("{:064x}", 1),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(170),
+            )
+            .expect_err("invalid signer must fail closed");
+        match bad_signer_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "ph1onb_platform_setup_receipt_commit.signer");
+                assert_eq!(reason, "must match platform signer policy");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let bad_hash_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9904),
+                    onboarding_session_id,
+                    "rund-platform-guard-bad-hash".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PlatformSetupReceipt {
+                        receipt_kind,
+                        receipt_ref: "receipt:rund-platform:bad-hash".to_string(),
+                        signer: "selene_mobile_app".to_string(),
+                        payload_hash: "BAD_HASH".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(171),
+            )
+            .expect_err("invalid payload hash must fail closed");
+        match bad_hash_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "ph1onb_platform_setup_receipt_commit.payload_hash");
+                assert_eq!(reason, "must be lowercase hex sha256 (64 chars)");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

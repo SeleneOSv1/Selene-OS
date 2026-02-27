@@ -262,6 +262,10 @@ pub struct OnboardingContinueAdapterRequest {
     pub tenant_id: Option<String>,
     pub action: String,
     pub field_value: Option<String>,
+    pub receipt_kind: Option<String>,
+    pub receipt_ref: Option<String>,
+    pub signer: Option<String>,
+    pub payload_hash: Option<String>,
     pub terms_version_id: Option<String>,
     pub accepted: Option<bool>,
     pub device_id: Option<String>,
@@ -279,6 +283,7 @@ pub struct OnboardingContinueAdapterResponse {
     pub blocking_field: Option<String>,
     pub blocking_question: Option<String>,
     pub remaining_missing_fields: Vec<String>,
+    pub remaining_platform_receipt_kinds: Vec<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
 }
 
@@ -984,6 +989,10 @@ impl AdapterRuntime {
         let action = parse_onboarding_continue_action(
             &request.action,
             request.field_value,
+            request.receipt_kind,
+            request.receipt_ref,
+            request.signer,
+            request.payload_hash,
             request.terms_version_id,
             request.accepted,
             request.device_id,
@@ -1018,6 +1027,7 @@ impl AdapterRuntime {
             blocking_field: outcome.blocking_field,
             blocking_question: outcome.blocking_question,
             remaining_missing_fields: outcome.remaining_missing_fields,
+            remaining_platform_receipt_kinds: outcome.remaining_platform_receipt_kinds,
             voice_artifact_sync_receipt_ref: outcome.voice_artifact_sync_receipt_ref,
         })
     }
@@ -3499,6 +3509,10 @@ fn onboarding_next_step_to_api_value(next_step: OnboardingNextStep) -> String {
 fn parse_onboarding_continue_action(
     action: &str,
     field_value: Option<String>,
+    receipt_kind: Option<String>,
+    receipt_ref: Option<String>,
+    signer: Option<String>,
+    payload_hash: Option<String>,
     terms_version_id: Option<String>,
     accepted: Option<bool>,
     device_id: Option<String>,
@@ -3508,6 +3522,26 @@ fn parse_onboarding_continue_action(
     let normalized = action.trim().to_ascii_uppercase();
     match normalized.as_str() {
         "ASK_MISSING_SUBMIT" => Ok(AppOnboardingContinueAction::AskMissingSubmit { field_value }),
+        "PLATFORM_SETUP_RECEIPT" => {
+            let receipt_kind = receipt_kind
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "receipt_kind is required for PLATFORM_SETUP_RECEIPT".to_string())?;
+            let receipt_ref = receipt_ref
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "receipt_ref is required for PLATFORM_SETUP_RECEIPT".to_string())?;
+            let signer = signer
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "signer is required for PLATFORM_SETUP_RECEIPT".to_string())?;
+            let payload_hash = payload_hash
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "payload_hash is required for PLATFORM_SETUP_RECEIPT".to_string())?;
+            Ok(AppOnboardingContinueAction::PlatformSetupReceipt {
+                receipt_kind,
+                receipt_ref,
+                signer,
+                payload_hash,
+            })
+        }
         "TERMS_ACCEPT" => {
             let terms_version_id = terms_version_id
                 .filter(|value| !value.trim().is_empty())
@@ -3541,7 +3575,7 @@ fn parse_onboarding_continue_action(
             })
         }
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK",
             action
         )),
     }
@@ -3550,6 +3584,7 @@ fn parse_onboarding_continue_action(
 fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNextStep) -> String {
     match next_step {
         AppOnboardingContinueNextStep::AskMissing => "ASK_MISSING",
+        AppOnboardingContinueNextStep::PlatformSetup => "PLATFORM_SETUP",
         AppOnboardingContinueNextStep::Terms => "TERMS",
         AppOnboardingContinueNextStep::PrimaryDeviceConfirm => "PRIMARY_DEVICE_CONFIRM",
         AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
@@ -6453,6 +6488,10 @@ mod tests {
                 tenant_id: Some("tenant_1".to_string()),
                 action: "ASK_MISSING_SUBMIT".to_string(),
                 field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
                 terms_version_id: None,
                 accepted: None,
                 device_id: None,
@@ -6490,6 +6529,10 @@ mod tests {
                     tenant_id: Some("tenant_1".to_string()),
                     action: "ASK_MISSING_SUBMIT".to_string(),
                     field_value: Some(field_value.to_string()),
+                    receipt_kind: None,
+                    receipt_ref: None,
+                    signer: None,
+                    payload_hash: None,
                     terms_version_id: None,
                     accepted: None,
                     device_id: None,
@@ -6498,7 +6541,34 @@ mod tests {
                 })
                 .expect("ask-missing value submit should succeed");
         }
-        assert_eq!(ask_out.next_step.as_deref(), Some("TERMS"));
+        assert_eq!(ask_out.next_step.as_deref(), Some("PLATFORM_SETUP"));
+        assert!(!ask_out.remaining_platform_receipt_kinds.is_empty());
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 72_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runc-adapter-platform-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "PLATFORM_SETUP_RECEIPT".to_string(),
+                    field_value: None,
+                    receipt_kind: Some(receipt_kind.clone()),
+                    receipt_ref: Some(format!("receipt:runc-adapter:{receipt_kind}")),
+                    signer: Some("selene_mobile_app".to_string()),
+                    payload_hash: Some(format!("{:064x}", idx + 1)),
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                })
+                .expect("platform setup receipt should succeed");
+        }
+        assert_eq!(platform_out.next_step.as_deref(), Some("TERMS"));
+        assert!(platform_out.remaining_platform_receipt_kinds.is_empty());
 
         let terms = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
@@ -6508,6 +6578,10 @@ mod tests {
                 tenant_id: Some("tenant_1".to_string()),
                 action: "TERMS_ACCEPT".to_string(),
                 field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
                 terms_version_id: Some("terms_v1".to_string()),
                 accepted: Some(true),
                 device_id: None,
@@ -6525,6 +6599,10 @@ mod tests {
                 tenant_id: Some("tenant_1".to_string()),
                 action: "PRIMARY_DEVICE_CONFIRM".to_string(),
                 field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
                 terms_version_id: None,
                 accepted: None,
                 device_id: Some("runc_adapter_inviter_device".to_string()),
@@ -6542,6 +6620,10 @@ mod tests {
                 tenant_id: Some("tenant_1".to_string()),
                 action: "VOICE_ENROLL_LOCK".to_string(),
                 field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
                 terms_version_id: None,
                 accepted: None,
                 device_id: Some("runc_adapter_inviter_device".to_string()),
@@ -6551,6 +6633,25 @@ mod tests {
             .expect("voice enroll should succeed");
         assert_eq!(voice.next_step.as_deref(), Some("ACCESS_PROVISION"));
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
+    }
+
+    #[test]
+    fn rund_onboarding_continue_adapter_requires_platform_receipt_fields() {
+        let err = parse_onboarding_continue_action(
+            "PLATFORM_SETUP_RECEIPT",
+            None,
+            Some("install_launch_handshake".to_string()),
+            Some("receipt:rund-adapter:install".to_string()),
+            None,
+            Some(format!("{:064x}", 1)),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect_err("missing signer must fail action parsing");
+        assert_eq!(err, "signer is required for PLATFORM_SETUP_RECEIPT");
     }
 
     fn synthetic_health_for_detail_tests() -> AdapterHealthResponse {

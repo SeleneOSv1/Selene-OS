@@ -400,6 +400,7 @@ async fn run_onboarding_continue(
                     blocking_field: None,
                     blocking_question: None,
                     remaining_missing_fields: Vec::new(),
+                    remaining_platform_receipt_kinds: Vec::new(),
                     voice_artifact_sync_receipt_ref: None,
                 }),
             )
@@ -418,6 +419,7 @@ async fn run_onboarding_continue(
                 blocking_field: None,
                 blocking_question: None,
                 remaining_missing_fields: Vec::new(),
+                remaining_platform_receipt_kinds: Vec::new(),
                 voice_artifact_sync_receipt_ref: None,
             }),
         ),
