@@ -614,6 +614,7 @@ impl Ph1xRuntime {
                 | IntentType::PhotoUnderstandQuery
                 | IntentType::DataAnalysisQuery
                 | IntentType::DeepResearchQuery
+                | IntentType::RecordModeQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
@@ -631,6 +632,7 @@ impl Ph1xRuntime {
                 }
                 IntentType::DataAnalysisQuery => (ToolName::DataAnalysis, intent_query_text(d)),
                 IntentType::DeepResearchQuery => (ToolName::DeepResearch, intent_query_text(d)),
+                IntentType::RecordModeQuery => (ToolName::RecordMode, intent_query_text(d)),
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1840,6 +1842,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
                 }
             }
+            ToolResult::RecordMode {
+                summary,
+                action_items,
+                evidence_refs,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Action items:\n");
+                for item in action_items.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", item.key, item.value));
+                }
+                out.push_str("Recording evidence refs:\n");
+                for evidence in evidence_refs.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", evidence.key, evidence.value));
+                }
+            }
         }
     }
     if let Some(meta) = &tr.source_metadata {
@@ -2006,7 +2025,8 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
-        | IntentType::DeepResearchQuery => {
+        | IntentType::DeepResearchQuery
+        | IntentType::RecordModeQuery => {
             "Is that right?".to_string()
         }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
@@ -3150,6 +3170,48 @@ mod tests {
     }
 
     #[test]
+    fn at_x_dispatches_read_only_record_mode_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            17,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::RecordModeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::RecordMode),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
     fn at_x_continuity_speaker_mismatch_fails_closed_into_one_clarify() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
 
@@ -3883,6 +3945,91 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Extracted fields:"));
                 assert!(r.response_text.contains("Citations:"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_record_mode_includes_action_items_and_evidence_refs() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            18,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::RecordModeQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::RecordMode {
+                summary: "Meeting summary".to_string(),
+                action_items: vec![ToolStructuredField {
+                    key: "action_item_1".to_string(),
+                    value: "Send recap to team".to_string(),
+                }],
+                evidence_refs: vec![ToolStructuredField {
+                    key: "chunk_002".to_string(),
+                    value: "speaker=JD timecode=00:04:11-00:04:40".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            18,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("Summary:"));
+                assert!(r.response_text.contains("Action items:"));
+                assert!(r.response_text.contains("Recording evidence refs:"));
                 assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
             }
             _ => panic!("expected Respond"),

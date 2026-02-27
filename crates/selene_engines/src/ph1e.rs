@@ -202,6 +202,32 @@ impl Ph1eRuntime {
                     },
                 ],
             },
+            ToolName::RecordMode => ToolResult::RecordMode {
+                summary: format!(
+                    "Recording summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                action_items: vec![
+                    ToolStructuredField {
+                        key: "action_item_1".to_string(),
+                        value: "Draft follow-up summary by EOD".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "action_item_2".to_string(),
+                        value: "Share meeting decisions with finance".to_string(),
+                    },
+                ],
+                evidence_refs: vec![
+                    ToolStructuredField {
+                        key: "chunk_001".to_string(),
+                        value: "speaker=PM timecode=00:02:10-00:02:38".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "chunk_004".to_string(),
+                        value: "speaker=Ops timecode=00:11:05-00:11:42".to_string(),
+                    },
+                ],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -284,6 +310,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::PhotoUnderstand => "https://example.com/photo",
         ToolName::DataAnalysis => "https://example.com/data-analysis",
         ToolName::DeepResearch => "https://example.com/deep-research",
+        ToolName::RecordMode => "recording://session/demo/chunk_001",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -507,5 +534,32 @@ mod tests {
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_11_record_mode_returns_recording_evidence_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::RecordMode,
+            "summarize this meeting recording and list action items",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::RecordMode {
+                summary,
+                action_items,
+                evidence_refs,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!action_items.is_empty());
+                assert!(!evidence_refs.is_empty());
+            }
+            other => panic!("expected RecordMode result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.starts_with("recording://"));
     }
 }

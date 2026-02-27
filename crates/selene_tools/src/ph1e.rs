@@ -20,6 +20,7 @@ pub mod reason_codes {
     pub const E_OK_PHOTO_UNDERSTAND: ReasonCodeId = ReasonCodeId(0x4500_1007);
     pub const E_OK_DATA_ANALYSIS: ReasonCodeId = ReasonCodeId(0x4500_1008);
     pub const E_OK_DEEP_RESEARCH: ReasonCodeId = ReasonCodeId(0x4500_1009);
+    pub const E_OK_RECORD_MODE: ReasonCodeId = ReasonCodeId(0x4500_1010);
 
     pub const E_FAIL_FORBIDDEN_TOOL: ReasonCodeId = ReasonCodeId(0x4500_0001);
     pub const E_FAIL_FORBIDDEN_ORIGIN: ReasonCodeId = ReasonCodeId(0x4500_0002);
@@ -228,6 +229,7 @@ fn ok_reason_code(tool_name: &str) -> ReasonCodeId {
         "photo_understand" => reason_codes::E_OK_PHOTO_UNDERSTAND,
         "data_analysis" => reason_codes::E_OK_DATA_ANALYSIS,
         "deep_research" => reason_codes::E_OK_DEEP_RESEARCH,
+        "record_mode" => reason_codes::E_OK_RECORD_MODE,
         _ => reason_codes::E_OK_WEB_SEARCH,
     }
 }
@@ -263,6 +265,18 @@ fn clamp_result(mut result: ToolResult, max_results: u8) -> ToolResult {
         ToolResult::DeepResearch { citations, .. } => {
             if citations.len() > n {
                 citations.truncate(n);
+            }
+        }
+        ToolResult::RecordMode {
+            action_items,
+            evidence_refs,
+            ..
+        } => {
+            if action_items.len() > n {
+                action_items.truncate(n);
+            }
+            if evidence_refs.len() > n {
+                evidence_refs.truncate(n);
             }
         }
         ToolResult::Time { .. } | ToolResult::Weather { .. } => {}
@@ -356,7 +370,9 @@ fn violates_domain_policy(
             }
             false
         }
-        ToolResult::Time { .. } | ToolResult::Weather { .. } => false,
+        ToolResult::Time { .. } | ToolResult::Weather { .. } | ToolResult::RecordMode { .. } => {
+            false
+        }
     }
 }
 

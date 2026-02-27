@@ -547,6 +547,7 @@ impl Ph1xRuntime {
                 | IntentType::PhotoUnderstandQuery
                 | IntentType::DataAnalysisQuery
                 | IntentType::DeepResearchQuery
+                | IntentType::RecordModeQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
@@ -564,6 +565,7 @@ impl Ph1xRuntime {
                 }
                 IntentType::DataAnalysisQuery => (ToolName::DataAnalysis, intent_query_text(d)),
                 IntentType::DeepResearchQuery => (ToolName::DeepResearch, intent_query_text(d)),
+                IntentType::RecordModeQuery => (ToolName::RecordMode, intent_query_text(d)),
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1515,6 +1517,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
                 }
             }
+            ToolResult::RecordMode {
+                summary,
+                action_items,
+                evidence_refs,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Action items:\n");
+                for item in action_items.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", item.key, item.value));
+                }
+                out.push_str("Recording evidence refs:\n");
+                for evidence in evidence_refs.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", evidence.key, evidence.value));
+                }
+            }
         }
     }
     if let Some(meta) = &tr.source_metadata {
@@ -1681,7 +1700,8 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
-        | IntentType::DeepResearchQuery => {
+        | IntentType::DeepResearchQuery
+        | IntentType::RecordModeQuery => {
             "Is that right?".to_string()
         }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),

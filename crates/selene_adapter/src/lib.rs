@@ -2337,6 +2337,7 @@ impl AdapterRuntime {
                 ToolName::PhotoUnderstand,
                 ToolName::DataAnalysis,
                 ToolName::DeepResearch,
+                ToolName::RecordMode,
             ])
                 .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
         )

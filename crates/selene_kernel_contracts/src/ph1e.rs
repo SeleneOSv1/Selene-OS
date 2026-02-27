@@ -58,6 +58,7 @@ pub enum ToolName {
     PhotoUnderstand,
     DataAnalysis,
     DeepResearch,
+    RecordMode,
     Other(String),
 }
 
@@ -90,6 +91,7 @@ impl ToolName {
             ToolName::PhotoUnderstand => "photo_understand",
             ToolName::DataAnalysis => "data_analysis",
             ToolName::DeepResearch => "deep_research",
+            ToolName::RecordMode => "record_mode",
             ToolName::Other(s) => s.as_str(),
         }
     }
@@ -593,6 +595,11 @@ pub enum ToolResult {
         extracted_fields: Vec<ToolStructuredField>,
         citations: Vec<ToolTextSnippet>,
     },
+    RecordMode {
+        summary: String,
+        action_items: Vec<ToolStructuredField>,
+        evidence_refs: Vec<ToolStructuredField>,
+    },
 }
 
 impl Validate for ToolResult {
@@ -789,6 +796,54 @@ impl Validate for ToolResult {
                     field.validate()?;
                 }
                 validate_items("tool_result.deep_research.citations", citations)?;
+            }
+            ToolResult::RecordMode {
+                summary,
+                action_items,
+                evidence_refs,
+            } => {
+                if summary.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.summary",
+                        reason: "must not be empty",
+                    });
+                }
+                if summary.len() > 1024 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.summary",
+                        reason: "must be <= 1024 chars",
+                    });
+                }
+                if action_items.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.action_items",
+                        reason: "must not be empty",
+                    });
+                }
+                if action_items.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.action_items",
+                        reason: "must be <= 20 entries",
+                    });
+                }
+                for field in action_items {
+                    field.validate()?;
+                }
+                if evidence_refs.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.evidence_refs",
+                        reason: "must not be empty",
+                    });
+                }
+                if evidence_refs.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.record_mode.evidence_refs",
+                        reason: "must be <= 20 entries",
+                    });
+                }
+                for field in evidence_refs {
+                    field.validate()?;
+                }
             }
         }
         Ok(())

@@ -116,7 +116,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
-        | IntentType::DeepResearchQuery => {
+        | IntentType::DeepResearchQuery
+        | IntentType::RecordModeQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -271,10 +272,30 @@ fn looks_like_deep_research(lower: &str) -> bool {
         || lower.starts_with("research and summarize ")
 }
 
+fn looks_like_record_mode(lower: &str) -> bool {
+    ((contains_word(lower, "recording")
+        || contains_word(lower, "meeting")
+        || contains_word(lower, "transcript")
+        || contains_word(lower, "audio")
+        || lower.starts_with("record mode "))
+        && (contains_word(lower, "summarize")
+            || contains_word(lower, "summary")
+            || lower.contains("action item")
+            || lower.contains("action items")
+            || contains_word(lower, "minutes")
+            || lower.contains("follow up")
+            || lower.contains("follow-up")))
+        || lower.starts_with("summarize this recording")
+        || lower.starts_with("summarize this meeting")
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
         .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace());
+    let data_analysis = looks_like_data_analysis(s);
+    let deep_research = looks_like_deep_research(s);
+    let record_mode = looks_like_record_mode(s);
     let mut out: Vec<IntentType> = Vec::new();
 
     let mut push = |t: IntentType| {
@@ -349,13 +370,16 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_document_understand(s) {
         push(IntentType::DocumentUnderstandQuery);
     }
-    if looks_like_data_analysis(s) {
+    if data_analysis {
         push(IntentType::DataAnalysisQuery);
     }
-    if looks_like_deep_research(s) {
+    if deep_research {
         push(IntentType::DeepResearchQuery);
     }
-    if looks_like_photo_understand(s) && !looks_like_data_analysis(s) {
+    if record_mode {
+        push(IntentType::RecordModeQuery);
+    }
+    if looks_like_photo_understand(s) && !data_analysis {
         push(IntentType::PhotoUnderstandQuery);
     }
     if s.contains("remind me") || s.contains("reminder") {
@@ -365,7 +389,7 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if (s.contains("set ") && s.contains(" for ")) || s.contains(" later") {
         push(IntentType::SetReminder);
     }
-    if s.contains("meeting") || s.contains("schedule") {
+    if (s.contains("meeting") || s.contains("schedule")) && !record_mode {
         push(IntentType::CreateCalendarEvent);
     }
     if s.contains("book a table") || s.contains("book table") {
@@ -432,7 +456,8 @@ fn normalize_intent(
         | IntentType::DocumentUnderstandQuery
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
-        | IntentType::DeepResearchQuery => {
+        | IntentType::DeepResearchQuery
+        | IntentType::RecordModeQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1859,6 +1884,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::PhotoUnderstandQuery => "Understand photo or screenshot".to_string(),
         IntentType::DataAnalysisQuery => "Analyze uploaded data".to_string(),
         IntentType::DeepResearchQuery => "Deep research report".to_string(),
+        IntentType::RecordModeQuery => "Summarize recording and action items".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -3123,6 +3149,24 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::DeepResearchQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_25_record_mode_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene summarize this meeting recording and list action items",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::RecordModeQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
