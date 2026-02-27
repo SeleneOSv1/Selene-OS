@@ -3819,6 +3819,9 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
     fn run_a_desktop_voice_turn_end_to_end_dispatches_web_search_and_returns_provenance() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:runa_websearch_user").unwrap();
