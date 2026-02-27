@@ -99,6 +99,7 @@ Important ACTIVE blueprints now present and aligned:
 - `TOOL_WEB_SEARCH`
 - `TOOL_NEWS`
 - `TOOL_URL_FETCH_AND_CITE`
+- `TOOL_DOCUMENT_UNDERSTAND`
 - `REMINDER_MANAGE`
 - `EMO_PROFILE_MANAGE`
 
@@ -118,10 +119,11 @@ Blueprints:
 - `docs/BLUEPRINTS/TOOL_WEB_SEARCH.md`
 - `docs/BLUEPRINTS/TOOL_NEWS.md`
 - `docs/BLUEPRINTS/TOOL_URL_FETCH_AND_CITE.md`
+- `docs/BLUEPRINTS/TOOL_DOCUMENT_UNDERSTAND.md`
 
 Coverage expectations now realized:
 - PH1.E `simulations_owned = []` (read-only tool lane)
-- PH1.E `blueprints_referenced_by = [TOOL_TIME_QUERY, TOOL_WEATHER_QUERY, TOOL_WEB_SEARCH, TOOL_NEWS, TOOL_URL_FETCH_AND_CITE]`
+- PH1.E `blueprints_referenced_by = [TOOL_TIME_QUERY, TOOL_WEATHER_QUERY, TOOL_WEB_SEARCH, TOOL_NEWS, TOOL_URL_FETCH_AND_CITE, TOOL_DOCUMENT_UNDERSTAND]`
 - PH1.E blockers none
 
 ## 7) PH1.REM and PH1.EMO.GUIDE/PH1.EMO.CORE (Locked)

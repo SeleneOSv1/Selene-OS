@@ -1880,6 +1880,7 @@ impl Validate for SimulationCandidateDispatch {
                 | crate::ph1n::IntentType::WebSearchQuery
                 | crate::ph1n::IntentType::NewsQuery
                 | crate::ph1n::IntentType::UrlFetchAndCiteQuery
+                | crate::ph1n::IntentType::DocumentUnderstandQuery
                 | crate::ph1n::IntentType::Continue
                 | crate::ph1n::IntentType::MoreDetail
         ) {

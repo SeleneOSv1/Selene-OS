@@ -975,6 +975,31 @@ mod tests {
         )
     }
 
+    fn document_understand_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::DocumentUnderstandQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
     fn seed_link_send_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
         store
             .ph2access_upsert_instance_commit(
@@ -1604,6 +1629,62 @@ mod tests {
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("Citations:"));
         assert!(response_text.contains("https://example.com"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_d_desktop_voice_turn_end_to_end_dispatches_document_understand_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:rund_doc_user").unwrap();
+        let device_id = DeviceId::new("rund_doc_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9606),
+            TurnId(9706),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(13),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(document_understand_draft(
+                "read this PDF and summarize it",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("Summary:"));
+        assert!(response_text.contains("Extracted fields:"));
+        assert!(response_text.contains("Citations:"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(

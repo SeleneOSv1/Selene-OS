@@ -2,7 +2,7 @@
 
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
-    ToolResult, ToolTextSnippet,
+    ToolResult, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
@@ -111,6 +111,27 @@ impl Ph1eRuntime {
                     url: "https://example.com/url-fetch-citation".to_string(),
                 }],
             },
+            ToolName::DocumentUnderstand => ToolResult::DocumentUnderstand {
+                summary: format!(
+                    "Document summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "document_type".to_string(),
+                        value: "pdf".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "key_point".to_string(),
+                        value: "Deterministic extracted statement".to_string(),
+                    },
+                ],
+                citations: vec![ToolTextSnippet {
+                    title: "Document citation".to_string(),
+                    snippet: "Extracted from uploaded document segment".to_string(),
+                    url: "https://example.com/document-citation".to_string(),
+                }],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -189,6 +210,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::WebSearch => "https://example.com/search",
         ToolName::News => "https://example.com/news",
         ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
+        ToolName::DocumentUnderstand => "https://example.com/document",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -300,6 +322,33 @@ mod tests {
         match out.tool_result.as_ref().expect("tool result required for ok") {
             ToolResult::UrlFetchAndCite { citations } => assert!(!citations.is_empty()),
             other => panic!("expected UrlFetchAndCite result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_07_document_understand_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::DocumentUnderstand,
+            "read this PDF and summarize it",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected DocumentUnderstand result, got {other:?}"),
         }
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());

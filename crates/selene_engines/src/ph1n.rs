@@ -112,7 +112,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::WeatherQuery
         | IntentType::WebSearchQuery
         | IntentType::NewsQuery
-        | IntentType::UrlFetchAndCiteQuery => {
+        | IntentType::UrlFetchAndCiteQuery
+        | IntentType::DocumentUnderstandQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -207,6 +208,18 @@ fn looks_like_url_fetch_and_cite(lower: &str) -> bool {
             && (contains_word(lower, "cite") || contains_word(lower, "citation"))
 }
 
+fn looks_like_document_understand(lower: &str) -> bool {
+    (contains_word(lower, "pdf")
+        || contains_word(lower, "document")
+        || contains_word(lower, "doc")
+        || contains_word(lower, "file"))
+        && (contains_word(lower, "read")
+            || contains_word(lower, "summarize")
+            || contains_word(lower, "summary")
+            || contains_word(lower, "extract")
+            || contains_word(lower, "what does this"))
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -282,6 +295,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_url_fetch_and_cite(s) {
         push(IntentType::UrlFetchAndCiteQuery);
     }
+    if looks_like_document_understand(s) {
+        push(IntentType::DocumentUnderstandQuery);
+    }
     if s.contains("remind me") || s.contains("reminder") {
         push(IntentType::SetReminder);
     }
@@ -352,7 +368,8 @@ fn normalize_intent(
         | IntentType::WeatherQuery
         | IntentType::WebSearchQuery
         | IntentType::NewsQuery
-        | IntentType::UrlFetchAndCiteQuery => {
+        | IntentType::UrlFetchAndCiteQuery
+        | IntentType::DocumentUnderstandQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1775,6 +1792,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::WebSearchQuery => "Search the web".to_string(),
         IntentType::NewsQuery => "Get news".to_string(),
         IntentType::UrlFetchAndCiteQuery => "Open URL and cite".to_string(),
+        IntentType::DocumentUnderstandQuery => "Read and summarize document".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -2973,6 +2991,21 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::UrlFetchAndCiteQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_21_document_understand_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene read this PDF and summarize it", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::DocumentUnderstandQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
