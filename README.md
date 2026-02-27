@@ -1,4 +1,4 @@
-Codex must open and follow docs/Codex Law.md before doing any work.
+Codex must open and follow docs/CODEX_LAW.md before doing any work.
 
 # Selene OS
 
