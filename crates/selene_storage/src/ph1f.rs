@@ -1346,6 +1346,7 @@ pub struct OnboardingSessionRecord {
     pub primary_device_device_id: Option<DeviceId>,
     pub primary_device_proof_type: Option<ProofType>,
     pub primary_device_confirmed: bool,
+    pub emo_persona_lock_audit_event_id: Option<AuditEventId>,
     pub access_engine_instance_id: Option<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub wake_artifact_sync_receipt_ref: Option<String>,
@@ -6560,6 +6561,7 @@ impl Ph1fStore {
             primary_device_device_id: None,
             primary_device_proof_type: None,
             primary_device_confirmed: false,
+            emo_persona_lock_audit_event_id: None,
             access_engine_instance_id: None,
             voice_artifact_sync_receipt_ref: None,
             wake_artifact_sync_receipt_ref: None,
@@ -7309,6 +7311,40 @@ impl Ph1fStore {
             onboarding_session_id,
             proof_ok,
         )?)
+    }
+
+    pub fn ph1onb_emo_persona_lock_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        onboarding_session_id: OnboardingSessionId,
+        persona_audit_event_id: AuditEventId,
+    ) -> Result<(), StorageError> {
+        let persona_event = self
+            .audit_events
+            .iter()
+            .find(|event| event.event_id == persona_audit_event_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.emo_persona_lock_audit_event_id",
+                key: persona_audit_event_id.0.to_string(),
+            })?;
+        if !matches!(&persona_event.engine, AuditEngine::Other(name) if name == "PH1.PERSONA") {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_emo_persona_lock_commit.persona_audit_event_id",
+                    reason: "must reference PH1.PERSONA audit event",
+                },
+            ));
+        }
+        let rec = self
+            .onboarding_sessions
+            .get_mut(&onboarding_session_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        rec.emo_persona_lock_audit_event_id = Some(persona_audit_event_id);
+        rec.updated_at = now;
+        Ok(())
     }
 
     pub fn ph1onb_access_instance_create_commit(
@@ -17898,6 +17934,7 @@ mod tests {
                 primary_device_device_id: None,
                 primary_device_proof_type: None,
                 primary_device_confirmed: false,
+                emo_persona_lock_audit_event_id: None,
                 access_engine_instance_id: None,
                 voice_artifact_sync_receipt_ref: None,
                 wake_artifact_sync_receipt_ref: None,

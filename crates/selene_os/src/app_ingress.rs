@@ -19,7 +19,7 @@ use selene_kernel_contracts::ph1_voice_id::{
 };
 use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1e::ToolResponse;
-use selene_kernel_contracts::ph1j::{AuditEngine, CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
@@ -1718,7 +1718,7 @@ impl AppServerIngressRuntime {
             ));
         }
 
-        store.ph1persona_profile_commit(
+        let persona_lock_audit_event_id = store.ph1persona_profile_commit(
             now,
             effective_tenant.as_str().to_string(),
             correlation_id,
@@ -1732,6 +1732,11 @@ impl AppServerIngressRuntime {
             persona_build_ok.profile_snapshot.preferences_snapshot_ref,
             persona_validate_ok.reason_code,
             format!("{idempotency_key}-persona-commit"),
+        )?;
+        store.ph1onb_emo_persona_lock_commit(
+            now,
+            onboarding_session_id.clone(),
+            persona_lock_audit_event_id,
         )?;
 
         Ok(AppOnboardingContinueOutcome {
@@ -1803,11 +1808,7 @@ impl AppServerIngressRuntime {
                 reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_ACCESS_PROVISION",
             })
         })?;
-        if !onboarding_has_persona_lock_for_device_since(
-            store,
-            &device_id,
-            session.created_at,
-        ) {
+        if session.emo_persona_lock_audit_event_id.is_none() {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "app_onboarding_continue_request.action",
@@ -1921,17 +1922,15 @@ impl AppServerIngressRuntime {
                 table: "onboarding_sessions.onboarding_session_id",
                 key: onboarding_session_id.as_str().to_string(),
             })?;
-        let primary_device_id = session.primary_device_device_id.clone().ok_or_else(|| {
-            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "app_onboarding_continue_request.action",
-                reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_COMPLETE",
-            })
-        })?;
-        if !onboarding_has_persona_lock_for_device_since(
-            store,
-            &primary_device_id,
-            session.created_at,
-        ) {
+        if session.primary_device_device_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_COMPLETE",
+                },
+            ));
+        }
+        if session.emo_persona_lock_audit_event_id.is_none() {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "app_onboarding_continue_request.action",
@@ -2363,18 +2362,6 @@ fn ensure_onboarding_persona_subject(
         short_hash_hex(&[onboarding_session_id.as_str(), user_id.as_str()])
     );
     Ok((user_id, speaker_id))
-}
-
-fn onboarding_has_persona_lock_for_device_since(
-    store: &Ph1fStore,
-    device_id: &DeviceId,
-    session_created_at: MonotonicTimeNs,
-) -> bool {
-    store.audit_events().iter().any(|event| {
-        event.created_at.0 >= session_created_at.0
-            && event.device_id.as_ref() == Some(device_id)
-            && matches!(&event.engine, AuditEngine::Other(name) if name == "PH1.PERSONA")
-    })
 }
 
 fn emo_signal_bundle_for_onboarding_session(
