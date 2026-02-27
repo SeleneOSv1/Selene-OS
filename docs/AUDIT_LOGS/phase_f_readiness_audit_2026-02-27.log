@@ -4,19 +4,17 @@
 BRANCH:
 codex/phase-f-2026-02-27
 PINNED COMMIT HASH:
-156c29bb2abb5a2eff2fa8a92aed176cf15b6b33
+ed7efb38f2310a3ea70fcb90a7647881b4d185ec
 
 GIT STATUS (SHORT):
- M scripts/export_builder_stage2_canary_metrics.sh
 
 GIT DIFF (NAME ONLY):
-scripts/export_builder_stage2_canary_metrics.sh
 
 LAST COMMIT:
-156c29b Run 7: add builder review preflight gate
+ed7efb3 Phase F: readiness audit pass in isolated worktree
 
-AUDIT_TREE_STATE: DIRTY
-AUDIT_VALIDITY_NOTE: closure decisions require pinned commit hash plus this dirty-file listing.
+AUDIT_TREE_STATE: CLEAN
+AUDIT_VALIDITY_NOTE: closure decisions may use this run directly.
 
 ==================================================
 1) CANONICAL DOC EXISTENCE + BASIC HEALTH
@@ -376,11 +374,11 @@ docs/BLUEPRINTS/EMO_PROFILE_MANAGE.md
 
 --- 3C) Extract capability_ids used by ACTIVE blueprints ---
 ACTIVE CAPABILITIES (unique):
-      75 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.TD1WYevYk2y5/active_caps_unique.txt
+      75 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.RNKCtkpRFHE0/active_caps_unique.txt
 
 --- 3D) Build ECM capability set (exact tokens) ---
 ECM CAPABILITIES (unique):
-     275 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.TD1WYevYk2y5/ecm_caps_exact.txt
+     275 /var/folders/rk/zdkf3hvj1fdcsx84fl0xt3sw0000gn/T//selene_design_readiness_audit.RNKCtkpRFHE0/ecm_caps_exact.txt
 
 --- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---
 
