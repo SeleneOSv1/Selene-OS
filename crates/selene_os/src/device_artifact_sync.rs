@@ -443,12 +443,18 @@ mod tests {
             }
             _ => panic!("expected link generate ok"),
         };
+        let token_signature = store
+            .ph1link_get_link(&token_id)
+            .expect("link must exist after generate")
+            .token_signature
+            .clone();
 
         let open_req = Ph1LinkRequest::invite_open_activate_commit_v1(
             CorrelationId(100),
             TurnId(2),
             MonotonicTimeNs(4),
             token_id.clone(),
+            token_signature,
             fp.to_string(),
             AppPlatform::Ios,
             "ios_instance_onb".to_string(),

@@ -40,12 +40,11 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
     InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
-    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
-    InterruptTimingMarkers, VadDecisionConfidenceBand,
+    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers,
+    VadDecisionConfidenceBand,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1learn::LearnSignalType;
-use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1link::{
     deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
     DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
@@ -68,6 +67,7 @@ use selene_kernel_contracts::ph1onb::{
     TermsStatus, VerificationStatus,
 };
 use selene_kernel_contracts::ph1os::OsOutcomeActionClass;
+use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, BlueprintStatus, BlueprintVersion, IntentType, ProcessBlueprintEvent,
     ProcessBlueprintEventInput, ProcessId,
@@ -124,6 +124,169 @@ fn hash_hex_64(s: &str) -> String {
         h = 1;
     }
     format!("{:016x}", h)
+}
+
+const LINK_TOKEN_SIGNING_KEYS_ENV: &str = "SELENE_LINK_TOKEN_SIGNING_KEYS";
+const LINK_TOKEN_ACTIVE_KEY_ID_ENV: &str = "SELENE_LINK_TOKEN_ACTIVE_KEY_ID";
+const LINK_TOKEN_SIGNATURE_VERSION: &str = "v1";
+const DEFAULT_LINK_TOKEN_SIGNING_KEY_ID: &str = "link_kid_v1";
+const DEFAULT_LINK_TOKEN_SIGNING_SECRET: &str = "selene_link_local_dev_secret_v1";
+
+fn parse_link_token_signing_keyring_from_env() -> BTreeMap<String, String> {
+    let mut keyring = BTreeMap::new();
+    let Ok(raw) = std::env::var(LINK_TOKEN_SIGNING_KEYS_ENV) else {
+        return keyring;
+    };
+    for entry in raw.split(',') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((key_id_raw, secret_raw)) = trimmed.split_once(':') else {
+            continue;
+        };
+        let key_id = key_id_raw.trim();
+        let secret = secret_raw.trim();
+        if key_id.is_empty()
+            || key_id.len() > 64
+            || !key_id.is_ascii()
+            || secret.is_empty()
+            || secret.len() > 256
+            || !secret.is_ascii()
+        {
+            continue;
+        }
+        keyring.insert(key_id.to_string(), secret.to_string());
+    }
+    keyring
+}
+
+fn link_token_signing_keyring() -> BTreeMap<String, String> {
+    let mut keyring = parse_link_token_signing_keyring_from_env();
+    if keyring.is_empty() {
+        keyring.insert(
+            DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string(),
+            DEFAULT_LINK_TOKEN_SIGNING_SECRET.to_string(),
+        );
+    }
+    keyring
+}
+
+fn link_token_active_key_id(keyring: &BTreeMap<String, String>) -> String {
+    if let Ok(raw_key_id) = std::env::var(LINK_TOKEN_ACTIVE_KEY_ID_ENV) {
+        let key_id = raw_key_id.trim();
+        if !key_id.is_empty() && keyring.contains_key(key_id) {
+            return key_id.to_string();
+        }
+    }
+    if keyring.contains_key(DEFAULT_LINK_TOKEN_SIGNING_KEY_ID) {
+        return DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string();
+    }
+    keyring
+        .keys()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_LINK_TOKEN_SIGNING_KEY_ID.to_string())
+}
+
+fn deterministic_link_token_signature(
+    token_id: &TokenId,
+    payload_hash: &str,
+    expires_at: MonotonicTimeNs,
+    key_id: &str,
+    secret: &str,
+) -> String {
+    let signature_material = format!(
+        "{LINK_TOKEN_SIGNATURE_VERSION}|{key_id}|{}|{payload_hash}|{}|{secret}",
+        token_id.as_str(),
+        expires_at.0
+    );
+    let digest = hash_hex_64(&signature_material);
+    format!("{LINK_TOKEN_SIGNATURE_VERSION}.{key_id}.{digest}")
+}
+
+fn generate_link_token_signature(
+    token_id: &TokenId,
+    payload_hash: &str,
+    expires_at: MonotonicTimeNs,
+) -> String {
+    let keyring = link_token_signing_keyring();
+    let key_id = link_token_active_key_id(&keyring);
+    let secret = keyring
+        .get(key_id.as_str())
+        .expect("active link signing key must exist in keyring");
+    deterministic_link_token_signature(token_id, payload_hash, expires_at, key_id.as_str(), secret)
+}
+
+fn parse_link_token_signature_parts(signature: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = signature.split('.');
+    let version = parts.next()?;
+    let key_id = parts.next()?;
+    let digest = parts.next()?;
+    if parts.next().is_some() || version.is_empty() || key_id.is_empty() || digest.is_empty() {
+        return None;
+    }
+    Some((version, key_id, digest))
+}
+
+fn validate_stored_link_token_signature(link: &LinkRecord) -> Result<(), StorageError> {
+    let Some((version, key_id, _digest)) = parse_link_token_signature_parts(&link.token_signature)
+    else {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    };
+    if version != LINK_TOKEN_SIGNATURE_VERSION {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    let keyring = link_token_signing_keyring();
+    let Some(secret) = keyring.get(key_id) else {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_KEY_UNAVAILABLE",
+            },
+        ));
+    };
+    let expected = deterministic_link_token_signature(
+        &link.token_id,
+        &link.payload_hash,
+        link.expires_at,
+        key_id,
+        secret.as_str(),
+    );
+    if expected != link.token_signature {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn validate_presented_link_token_signature(
+    link: &LinkRecord,
+    token_signature: &str,
+) -> Result<(), StorageError> {
+    if token_signature != link.token_signature {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1link_invite_open_activate_commit.token_signature",
+                reason: "TOKEN_SIGNATURE_INVALID",
+            },
+        ));
+    }
+    validate_stored_link_token_signature(link)
 }
 
 fn ms_to_ns(ms: u32) -> u64 {
@@ -5374,6 +5537,7 @@ impl Ph1fStore {
         self.next_link_seq = self.next_link_seq.saturating_add(1);
         let token_id = TokenId::new(format!("link_{link_seq}_{payload_hash}"))?;
         let draft_id = DraftId::new(format!("draft_{link_seq}_{payload_hash}"))?;
+        let token_signature = generate_link_token_signature(&token_id, &payload_hash, expires_at);
         let missing_required_fields = self.ph1link_compute_missing_required_fields(
             invitee_type,
             &schema_version_id,
@@ -5382,6 +5546,7 @@ impl Ph1fStore {
 
         let rec = LinkRecord::v1(
             token_id.clone(),
+            token_signature,
             draft_id,
             payload_hash.clone(),
             schema_version_id,
@@ -5598,6 +5763,15 @@ impl Ph1fStore {
         token_id: TokenId,
         device_fingerprint: String,
     ) -> Result<LinkOpenActivateResultParts, StorageError> {
+        let token_signature = self
+            .links
+            .get(&token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: token_id.as_str().to_string(),
+            })?
+            .token_signature
+            .clone();
         let legacy_idempotency_key = format!(
             "legacy:{}",
             deterministic_device_fingerprint_hash_hex(&device_fingerprint)
@@ -5605,6 +5779,7 @@ impl Ph1fStore {
         self.ph1link_invite_open_activate_commit_with_idempotency(
             now,
             token_id,
+            token_signature,
             device_fingerprint,
             AppPlatform::Ios,
             "legacy_app_instance".to_string(),
@@ -5618,6 +5793,7 @@ impl Ph1fStore {
         &mut self,
         now: MonotonicTimeNs,
         token_id: TokenId,
+        token_signature: String,
         device_fingerprint: String,
         app_platform: AppPlatform,
         app_instance_id: String,
@@ -5669,6 +5845,30 @@ impl Ph1fStore {
                 },
             ));
         }
+        if token_signature.trim().is_empty() || token_signature.len() > 192 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.token_signature",
+                    reason: "must be non-empty and <= 192 chars",
+                },
+            ));
+        }
+        if !token_signature.is_ascii() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_invite_open_activate_commit.token_signature",
+                    reason: "must be ASCII",
+                },
+            ));
+        }
+        let link_for_signature =
+            self.links
+                .get(&token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?;
+        validate_presented_link_token_signature(link_for_signature, &token_signature)?;
 
         let idx_key = (token_id.clone(), idempotency_key);
         if let Some(existing) = self.link_open_activate_idempotency_index.get(&idx_key) {
@@ -5946,9 +6146,12 @@ impl Ph1fStore {
         let link_seq = self.next_link_seq;
         self.next_link_seq = self.next_link_seq.saturating_add(1);
         let token_id = TokenId::new(format!("link_{link_seq}_{}", old.payload_hash))?;
+        let token_signature =
+            generate_link_token_signature(&token_id, &old.payload_hash, expires_at);
 
         let rec = LinkRecord::v1(
             token_id.clone(),
+            token_signature,
             old.draft_id.clone(),
             old.payload_hash.clone(),
             old.schema_version_id.clone(),
@@ -14748,15 +14951,21 @@ impl Ph1fStore {
         }
 
         if extended.gate_confidences.phrase_confidence
-            != extended.subject_relation_confidence_bundle.lexical_confidence
+            != extended
+                .subject_relation_confidence_bundle
+                .lexical_confidence
             || extended.gate_confidences.vad_confidence
                 != extended.subject_relation_confidence_bundle.vad_confidence
             || extended.gate_confidences.speech_likeness
                 != extended.subject_relation_confidence_bundle.speech_likeness
             || extended.gate_confidences.echo_safe_confidence
-                != extended.subject_relation_confidence_bundle.echo_safe_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .echo_safe_confidence
             || extended.gate_confidences.nearfield_confidence
-                != extended.subject_relation_confidence_bundle.nearfield_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .nearfield_confidence
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14782,8 +14991,7 @@ impl Ph1fStore {
             || extended.degradation_context.aec_unstable
             || extended.degradation_context.device_changed
             || extended.degradation_context.stream_gap_detected;
-        if has_degradation
-            && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
+        if has_degradation && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14951,12 +15159,15 @@ impl Ph1fStore {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1k_feedback_capture.degradation_flags",
-                    reason: "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
+                    reason:
+                        "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14965,8 +15176,10 @@ impl Ph1fStore {
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && input.failover_from_device == input.failover_to_device
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && input.failover_from_device == input.failover_to_device
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -15092,10 +15305,10 @@ impl Ph1fStore {
         quality_regression: bool,
         false_interrupt_rate_milli_per_hour: u32,
     ) -> (PaeMode, &'static str, bool, bool, bool) {
-        let false_interrupt_regression_triggered = matches!(
-            issue_kind,
-            Ph1kFeedbackIssueKind::FalseInterrupt
-        ) && false_interrupt_rate_milli_per_hour > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
+        let false_interrupt_regression_triggered =
+            matches!(issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt)
+                && false_interrupt_rate_milli_per_hour
+                    > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
         let quality_regression_triggered = quality_regression
             || matches!(
                 issue_kind,
@@ -15104,8 +15317,8 @@ impl Ph1fStore {
             );
 
         let should_demote = quality_regression_triggered || false_interrupt_regression_triggered;
-        let should_promote = !should_demote
-            && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
+        let should_promote =
+            !should_demote && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
         let mode_to = if should_demote {
             Self::ph1k_demoted_mode(mode_from)
         } else if should_promote {
@@ -15122,7 +15335,8 @@ impl Ph1fStore {
             "HOLD"
         };
 
-        let rollback_triggered = quality_regression_triggered || false_interrupt_regression_triggered;
+        let rollback_triggered =
+            quality_regression_triggered || false_interrupt_regression_triggered;
         (
             mode_to,
             action,
@@ -15204,7 +15418,11 @@ impl Ph1fStore {
             ),
             (
                 PayloadKey::new("regression_quality")?,
-                PayloadValue::new(if quality_regression_triggered { "1" } else { "0" })?,
+                PayloadValue::new(if quality_regression_triggered {
+                    "1"
+                } else {
+                    "0"
+                })?,
             ),
             (
                 PayloadKey::new("regression_false_interrupt")?,
@@ -15279,7 +15497,10 @@ impl Ph1fStore {
             "event_kind",
             Self::ph1k_event_kind_label(event.event_kind).to_string(),
         )?;
-        insert("event_name", Self::ph1k_event_name(event.event_kind).to_string())?;
+        insert(
+            "event_name",
+            Self::ph1k_event_name(event.event_kind).to_string(),
+        )?;
         insert("ph1k_event_id", event.event_id.to_string())?;
 
         match event.event_kind {
@@ -15307,7 +15528,10 @@ impl Ph1fStore {
                     insert("selected_speaker", v.clone())?;
                 }
                 if let Some(v) = event.device_health {
-                    insert("device_health", Self::ph1k_device_health_label(v).to_string())?;
+                    insert(
+                        "device_health",
+                        Self::ph1k_device_health_label(v).to_string(),
+                    )?;
                 }
             }
             Ph1kRuntimeEventKind::TimingStats => {
@@ -15384,7 +15608,9 @@ impl Ph1fStore {
                             ext.subject_relation_confidence_bundle.lexical_confidence.0,
                             ext.subject_relation_confidence_bundle.vad_confidence.0,
                             ext.subject_relation_confidence_bundle.speech_likeness.0,
-                            ext.subject_relation_confidence_bundle.echo_safe_confidence.0,
+                            ext.subject_relation_confidence_bundle
+                                .echo_safe_confidence
+                                .0,
                             ext.subject_relation_confidence_bundle
                                 .nearfield_confidence
                                 .map(|v| format!("{:.3}", v.0))
@@ -15420,8 +15646,14 @@ impl Ph1fStore {
                     "capture_degraded",
                     event.capture_degraded.unwrap_or(false).to_string(),
                 )?;
-                insert("aec_unstable", event.aec_unstable.unwrap_or(false).to_string())?;
-                insert("device_changed", event.device_changed.unwrap_or(false).to_string())?;
+                insert(
+                    "aec_unstable",
+                    event.aec_unstable.unwrap_or(false).to_string(),
+                )?;
+                insert(
+                    "device_changed",
+                    event.device_changed.unwrap_or(false).to_string(),
+                )?;
                 insert(
                     "stream_gap_detected",
                     event.stream_gap_detected.unwrap_or(false).to_string(),
@@ -15578,14 +15810,17 @@ impl Ph1fStore {
                         Some(extended.adaptive_capture_to_handoff_latency_ms);
                     row.last_interrupt_snr_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.snr_db));
-                    row.last_interrupt_clipping_ratio_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.clipping_ratio));
+                    row.last_interrupt_clipping_ratio_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.clipping_ratio,
+                    ));
                     row.last_interrupt_echo_delay_ms_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.echo_delay_ms));
-                    row.last_interrupt_packet_loss_pct_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.packet_loss_pct));
-                    row.last_interrupt_double_talk_score_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.double_talk_score));
+                    row.last_interrupt_packet_loss_pct_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.packet_loss_pct,
+                    ));
+                    row.last_interrupt_double_talk_score_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.double_talk_score,
+                    ));
                     row.last_interrupt_erle_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.erle_db));
                 }
@@ -15827,7 +16062,8 @@ impl Ph1fStore {
                             },
                         ));
                     }
-                    effective_capture_degraded = Some(extended.degradation_context.capture_degraded);
+                    effective_capture_degraded =
+                        Some(extended.degradation_context.capture_degraded);
                     effective_aec_unstable = Some(extended.degradation_context.aec_unstable);
                     effective_device_changed = Some(extended.degradation_context.device_changed);
                     effective_stream_gap_detected =
@@ -15976,7 +16212,10 @@ impl Ph1fStore {
         idempotency_key: String,
     ) -> Result<Ph1kFeedbackCaptureRecord, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
-        Self::validate_ph1learn_idempotency("ph1k_feedback_capture.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1learn_idempotency(
+            "ph1k_feedback_capture.idempotency_key",
+            &idempotency_key,
+        )?;
         self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
         Self::validate_ph1k_feedback_capture_input(&capture_input)?;
 
@@ -16108,7 +16347,10 @@ impl Ph1fStore {
         let false_interrupt_rate_milli_per_hour = self.ph1k_false_interrupt_rate_milli_per_hour(
             &tenant_id,
             now,
-            matches!(capture_input.issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt),
+            matches!(
+                capture_input.issue_kind,
+                Ph1kFeedbackIssueKind::FalseInterrupt
+            ),
         );
         let (
             mode_to,

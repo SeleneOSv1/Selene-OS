@@ -27,8 +27,8 @@ use selene_engines::ph1health::{
 };
 use selene_engines::ph1k::{
     build_interrupt_feedback_signal, build_ph1k_to_ph1c_handoff, default_adaptive_policy_input,
-    evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput,
-    InterruptNoiseClass, InterruptPhraseMatcher, PhraseDetection,
+    evaluate_interrupt_candidate, InterruptFeedbackSignalKind, InterruptInput, InterruptNoiseClass,
+    InterruptPhraseMatcher, PhraseDetection,
 };
 use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
@@ -74,8 +74,9 @@ use selene_kernel_contracts::ph1k::{
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
 use selene_kernel_contracts::ph1learn::LearnSignalType;
-use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
+use selene_kernel_contracts::ph1onb::OnboardingNextStep;
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
@@ -89,7 +90,9 @@ use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as Wake
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
-use selene_os::app_ingress::{AppServerIngressRuntime, AppVoiceIngressRequest};
+use selene_os::app_ingress::{
+    AppInviteLinkOpenRequest, AppServerIngressRuntime, AppVoiceIngressRequest,
+};
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
     Ph1VoiceIdLiveConfig, VoiceIdContractMigrationConfig, VoiceIdentityEmbeddingGateGovernedConfig,
@@ -102,9 +105,9 @@ use selene_os::ph1builder::{
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
-    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome,
-    OsVoiceLiveTurnOutcome, OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring,
-    Ph1OsOcrRouteConfig, Ph1OsOcrRouteWiring,
+    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsVoiceLiveTurnOutcome,
+    OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring, Ph1OsOcrRouteConfig,
+    Ph1OsOcrRouteWiring,
 };
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
@@ -224,6 +227,30 @@ pub struct VoiceTurnAdapterResponse {
     pub status: String,
     pub outcome: String,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InviteLinkOpenAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub token_id: String,
+    pub token_signature: String,
+    pub tenant_id: Option<String>,
+    pub app_platform: String,
+    pub device_fingerprint: String,
+    pub app_instance_id: String,
+    pub deep_link_nonce: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InviteLinkOpenAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub onboarding_session_id: Option<String>,
+    pub next_step: Option<String>,
+    pub required_fields: Vec<String>,
+    pub required_verification_gates: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -689,7 +716,6 @@ struct Ph1cLiveTurnOutcomeSummary {
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
 }
 
-
 #[derive(Debug, Clone)]
 struct EnvPh1dLiveAdapter {
     provider_id: String,
@@ -875,6 +901,48 @@ impl AdapterRuntime {
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, String> {
         self.run_voice_turn_internal(request, true)
+    }
+
+    pub fn run_invite_link_open_and_start_onboarding(
+        &self,
+        request: InviteLinkOpenAdapterRequest,
+    ) -> Result<InviteLinkOpenAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let app_platform = parse_app_platform(&request.app_platform)?;
+        let token_id = TokenId::new(request.token_id.clone())
+            .map_err(|err| format!("invalid token_id: {err:?}"))?;
+        let ingress_request = AppInviteLinkOpenRequest::v1(
+            correlation_id,
+            request.idempotency_key,
+            token_id,
+            request.token_signature,
+            request.tenant_id,
+            app_platform,
+            request.device_fingerprint,
+            request.app_instance_id,
+            request.deep_link_nonce,
+        )
+        .map_err(|err| format!("invalid invite_link_open request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_invite_link_open_and_start_onboarding(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(InviteLinkOpenAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "ONBOARDING_STARTED".to_string(),
+            reason: None,
+            onboarding_session_id: Some(outcome.onboarding_session_id),
+            next_step: Some(onboarding_next_step_to_api_value(outcome.next_step)),
+            required_fields: outcome.required_fields,
+            required_verification_gates: outcome.required_verification_gates,
+        })
     }
 
     pub fn run_device_artifact_sync_worker_pass(&self, now_ns: Option<u64>) -> Result<(), String> {
@@ -2028,7 +2096,9 @@ impl AdapterRuntime {
             return Ok(());
         };
         let (feedback_event_type, reason_code) = match &ph1c.response {
-            Ph1cResponse::TranscriptReject(reject) => (FeedbackEventType::SttReject, reject.reason_code),
+            Ph1cResponse::TranscriptReject(reject) => {
+                (FeedbackEventType::SttReject, reject.reason_code)
+            }
             Ph1cResponse::TranscriptOk(_) => return Ok(()),
         };
         let Some((feedback_event_type, learn_signal_type)) =
@@ -2068,10 +2138,8 @@ impl AdapterRuntime {
                 .map(|meta| meta.total_latency_ms.min(2_000))
                 .unwrap_or(0),
         };
-        let learn_idem = sanitize_idempotency_token(&format!(
-            "ph1c_learn_{}_{}",
-            correlation_id.0, turn_id.0
-        ));
+        let learn_idem =
+            sanitize_idempotency_token(&format!("ph1c_learn_{}_{}", correlation_id.0, turn_id.0));
         let evidence_ref = truncate_ascii(
             ph1c.final_text
                 .as_deref()
@@ -2273,7 +2341,8 @@ impl AdapterRuntime {
             return Ok(());
         };
         for (idx, provider_call) in provider_calls.iter().enumerate() {
-            if provider_call.provider_status == selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok
+            if provider_call.provider_status
+                == selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok
                 && provider_call.validation_status
                     == selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaOk
             {
@@ -2856,7 +2925,9 @@ impl AdapterRuntime {
                     refuse.reason_code.0, refuse.message
                 ))
             }
-            VisionWiringOutcome::Forwarded { bundle, .. } => OsOcrAnalyzerForwardBundle::Vision(bundle),
+            VisionWiringOutcome::Forwarded { bundle, .. } => {
+                OsOcrAnalyzerForwardBundle::Vision(bundle)
+            }
         };
 
         let live_adapter = self.ph1d_live_adapter.clone().ok_or_else(|| {
@@ -2889,8 +2960,11 @@ impl AdapterRuntime {
             AdapterContextEngineRuntime::new(),
         )
         .map_err(|err| format!("ph1context wiring bootstrap failed: {err:?}"))?;
-        let nlp_wiring = Ph1nWiring::new(Ph1nWiringConfig::mvp_v1(true), AdapterNlpEngineRuntime::new())
-            .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
+        let nlp_wiring = Ph1nWiring::new(
+            Ph1nWiringConfig::mvp_v1(true),
+            AdapterNlpEngineRuntime::new(),
+        )
+        .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
         let bridge = Ph1OsOcrContextNlpWiring::new(
             Ph1OsOcrContextNlpConfig::mvp_v1(),
             context_wiring,
@@ -3335,6 +3409,16 @@ fn parse_trigger(value: &str) -> Result<OsVoiceTrigger, String> {
     }
 }
 
+fn onboarding_next_step_to_api_value(next_step: OnboardingNextStep) -> String {
+    match next_step {
+        OnboardingNextStep::Install => "INSTALL",
+        OnboardingNextStep::Terms => "TERMS",
+        OnboardingNextStep::LoadPrefilled => "LOAD_PREFILLED",
+        OnboardingNextStep::AskMissing => "ASK_MISSING",
+    }
+    .to_string()
+}
+
 fn build_base_nlp_request_for_vision_handoff(
     request: &VoiceTurnAdapterRequest,
     base_transcript_text: Option<&str>,
@@ -3362,10 +3446,13 @@ fn build_base_nlp_request_for_vision_handoff(
     let runtime_tenant_id = runtime_tenant_scope
         .map(|tenant| truncate_ascii(tenant.trim(), 64))
         .filter(|tenant| !tenant.is_empty());
-    Ph1nRequest::v1(transcript_ok, Ph1cSessionStateRef::v1(SessionState::Active, false))
-        .map_err(|err| format!("failed to build NLP request for vision handoff: {err:?}"))?
-        .with_runtime_tenant_id(runtime_tenant_id)
-        .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
+    Ph1nRequest::v1(
+        transcript_ok,
+        Ph1cSessionStateRef::v1(SessionState::Active, false),
+    )
+    .map_err(|err| format!("failed to build NLP request for vision handoff: {err:?}"))?
+    .with_runtime_tenant_id(runtime_tenant_id)
+    .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
 }
 
 fn build_vision_turn_input_from_adapter_request(
@@ -5820,6 +5907,14 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1link::{InviteeType, LINK_INVITE_OPEN_ACTIVATE_COMMIT};
+    use selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT;
+    use selene_kernel_contracts::ph1position::TenantId;
+    use selene_kernel_contracts::ph1simcat::{
+        SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
+        SimulationVersion,
+    };
+    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn base_request() -> VoiceTurnAdapterRequest {
@@ -5903,6 +5998,76 @@ mod tests {
         }
     }
 
+    fn seed_identity_and_device(store: &mut Ph1fStore, user_id: &UserId, device_id: &DeviceId) {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(1),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn seed_simulation_catalog_status(
+        store: &mut Ph1fStore,
+        tenant: &str,
+        simulation_id: &str,
+        simulation_type: SimulationType,
+        status: SimulationStatus,
+    ) {
+        let event = SimulationCatalogEventInput::v1(
+            MonotonicTimeNs(1),
+            TenantId::new(tenant.to_string()).unwrap(),
+            SimulationId::new(simulation_id.to_string()).unwrap(),
+            SimulationVersion(1),
+            simulation_type,
+            status,
+            "PH1.TEST".to_string(),
+            "reads_v1".to_string(),
+            "writes_v1".to_string(),
+            ReasonCodeId(1),
+            None,
+        )
+        .unwrap();
+        store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn seed_invite_link_for_click(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+    ) -> (String, String) {
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                now,
+                inviter_user_id.clone(),
+                InviteeType::Employee,
+                Some("tenant_1".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        (
+            link.token_id.as_str().to_string(),
+            link.token_signature.clone(),
+        )
+    }
+
     #[test]
     fn at_adapter_vision_01_build_vision_turn_input_accepts_visual_source_and_tokens() {
         let mut request = base_request();
@@ -5921,7 +6086,10 @@ mod tests {
         )
         .unwrap()
         .expect("vision input should be present");
-        assert_eq!(input.source_ref.source_id.as_str(), "vision_source_adapter_1");
+        assert_eq!(
+            input.source_ref.source_id.as_str(),
+            "vision_source_adapter_1"
+        );
         assert!(input.visible_tokens.is_empty());
     }
 
@@ -5957,11 +6125,13 @@ mod tests {
         request.app_platform = "DESKTOP".to_string();
         request.tenant_id = None;
         request.actor_user_id = "tenant_a:user_adapter_test".to_string();
-        request.user_text_final = Some("Selene send a link to Tom for tenant tenant_999".to_string());
+        request.user_text_final =
+            Some("Selene send a link to Tom for tenant tenant_999".to_string());
 
         let actor_user_id =
             UserId::new(request.actor_user_id.clone()).expect("actor user id must parse");
-        let runtime_tenant_scope = resolve_tenant_scope(request.tenant_id.clone(), &actor_user_id, None);
+        let runtime_tenant_scope =
+            resolve_tenant_scope(request.tenant_id.clone(), &actor_user_id, None);
         let nlp_req = build_base_nlp_request_for_vision_handoff(
             &request,
             request.user_text_final.as_deref(),
@@ -5987,6 +6157,96 @@ mod tests {
             }
             _ => panic!("expected invite intent draft"),
         }
+    }
+
+    #[test]
+    fn run1_invite_click_adapter_starts_onboarding_without_turn_or_client_time_inputs() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:run1_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("run1_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+                SimulationType::Commit,
+                SimulationStatus::Active,
+            );
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                ONB_SESSION_START_DRAFT,
+                SimulationType::Draft,
+                SimulationStatus::Active,
+            );
+            seed_invite_link_for_click(&mut store, &inviter_user_id)
+        };
+
+        let response = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 71_001,
+                idempotency_key: "run1-invite-click-adapter-1".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "run1_adapter_fp".to_string(),
+                app_instance_id: "ios_instance_run1_adapter".to_string(),
+                deep_link_nonce: "nonce_run1_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.outcome, "ONBOARDING_STARTED");
+        assert!(response.onboarding_session_id.is_some());
+        assert_eq!(response.next_step.as_deref(), Some("TERMS"));
+        assert!(!response.required_fields.is_empty());
+    }
+
+    #[test]
+    fn run1_invite_click_adapter_fails_closed_for_bad_signature() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:run1_adapter_inviter_sig").unwrap();
+        let inviter_device_id = DeviceId::new("run1_adapter_inviter_device_sig").unwrap();
+
+        let token_id = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+                SimulationType::Commit,
+                SimulationStatus::Active,
+            );
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                ONB_SESSION_START_DRAFT,
+                SimulationType::Draft,
+                SimulationStatus::Active,
+            );
+            let (token_id, _signature) = seed_invite_link_for_click(&mut store, &inviter_user_id);
+            token_id
+        };
+
+        let err = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 71_002,
+                idempotency_key: "run1-invite-click-adapter-2".to_string(),
+                token_id,
+                token_signature: "v1.link_kid_v1.invalid".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "run1_adapter_fp_bad".to_string(),
+                app_instance_id: "ios_instance_run1_adapter_bad".to_string(),
+                deep_link_nonce: "nonce_run1_adapter_bad".to_string(),
+            })
+            .expect_err("bad signature must fail closed");
+        assert!(err.contains("TOKEN_SIGNATURE_INVALID"));
     }
 
     fn synthetic_health_for_detail_tests() -> AdapterHealthResponse {

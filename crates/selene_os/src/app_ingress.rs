@@ -11,9 +11,16 @@ use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1e::ToolResponse;
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
-use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::ph1link::{
+    AppPlatform, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
+    LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+};
 use selene_kernel_contracts::ph1m::MemoryCandidate;
 use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
+use selene_kernel_contracts::ph1onb::{
+    OnboardingNextStep, Ph1OnbRequest, Ph1OnbResponse, ONB_SESSION_START_DRAFT,
+};
+use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
     StepUpCapabilities, ThreadState,
@@ -24,11 +31,11 @@ use selene_kernel_contracts::{
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
-use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::ph1os::{
     OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
 };
+use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::simulation_executor::{SimulationDispatchOutcome, SimulationExecutor};
 
 #[derive(Debug, Clone)]
@@ -77,6 +84,85 @@ impl AppVoiceIngressRequest {
             observation,
         })
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AppInviteLinkOpenRequest {
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub token_id: TokenId,
+    pub token_signature: String,
+    pub tenant_id: Option<String>,
+    pub app_platform: AppPlatform,
+    pub device_fingerprint: String,
+    pub app_instance_id: String,
+    pub deep_link_nonce: String,
+}
+
+impl AppInviteLinkOpenRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        token_id: TokenId,
+        token_signature: String,
+        tenant_id: Option<String>,
+        app_platform: AppPlatform,
+        device_fingerprint: String,
+        app_instance_id: String,
+        deep_link_nonce: String,
+    ) -> Result<Self, ContractViolation> {
+        correlation_id.validate()?;
+        token_id.validate()?;
+        app_platform.validate()?;
+        validate_ascii_token(
+            "app_invite_link_open_request.idempotency_key",
+            &idempotency_key,
+            128,
+        )?;
+        validate_ascii_token(
+            "app_invite_link_open_request.token_signature",
+            &token_signature,
+            192,
+        )?;
+        validate_ascii_token(
+            "app_invite_link_open_request.device_fingerprint",
+            &device_fingerprint,
+            256,
+        )?;
+        validate_ascii_token(
+            "app_invite_link_open_request.app_instance_id",
+            &app_instance_id,
+            128,
+        )?;
+        validate_ascii_token(
+            "app_invite_link_open_request.deep_link_nonce",
+            &deep_link_nonce,
+            128,
+        )?;
+        if let Some(tenant_id) = tenant_id.as_ref() {
+            validate_ascii_token("app_invite_link_open_request.tenant_id", tenant_id, 64)?;
+        }
+        Ok(Self {
+            correlation_id,
+            idempotency_key,
+            token_id,
+            token_signature,
+            tenant_id,
+            app_platform,
+            device_fingerprint,
+            app_instance_id,
+            deep_link_nonce,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppInviteLinkOpenOutcome {
+    pub onboarding_session_id: String,
+    pub next_step: OnboardingNextStep,
+    pub required_fields: Vec<String>,
+    pub required_verification_gates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +261,148 @@ impl AppServerIngressRuntime {
             .execute_os_voice_live_turn(store, live_turn_input)
     }
 
+    pub fn run_invite_link_open_and_start_onboarding(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppInviteLinkOpenRequest,
+        now: MonotonicTimeNs,
+    ) -> Result<AppInviteLinkOpenOutcome, StorageError> {
+        if now.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_invite_link_open_request.now",
+                    reason: "must be > 0",
+                },
+            ));
+        }
+
+        let link_record = store.ph1link_get_link(&request.token_id).cloned().ok_or(
+            StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: request.token_id.as_str().to_string(),
+            },
+        )?;
+        let link_tenant = link_record
+            .prefilled_context
+            .as_ref()
+            .and_then(|ctx| ctx.tenant_id.as_ref())
+            .map(|tenant| TenantId::new(tenant.to_string()))
+            .transpose()
+            .map_err(StorageError::ContractViolation)?;
+        let request_tenant = request
+            .tenant_id
+            .as_ref()
+            .map(|tenant| TenantId::new(tenant.to_string()))
+            .transpose()
+            .map_err(StorageError::ContractViolation)?;
+        if let (Some(request_tenant), Some(link_tenant)) = (&request_tenant, &link_tenant) {
+            if request_tenant != link_tenant {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_invite_link_open_request.tenant_id",
+                        reason: "must match link tenant scope",
+                    },
+                ));
+            }
+        }
+        let effective_tenant = request_tenant.or(link_tenant).ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_invite_link_open_request.tenant_id",
+                reason: "missing tenant scope for invite-open activation",
+            })
+        })?;
+        self.executor.ensure_simulation_chain_active_for_tenant(
+            store,
+            &effective_tenant,
+            &[LINK_INVITE_OPEN_ACTIVATE_COMMIT, ONB_SESSION_START_DRAFT],
+            "app_invite_link_open_request.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+
+        let turn_id = TurnId(1);
+        let link_req = Ph1LinkRequest::invite_open_activate_commit_v1(
+            request.correlation_id,
+            turn_id,
+            now,
+            request.token_id.clone(),
+            request.token_signature.clone(),
+            request.device_fingerprint.clone(),
+            request.app_platform,
+            request.app_instance_id.clone(),
+            request.deep_link_nonce.clone(),
+            now,
+            request.idempotency_key.clone(),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let link_response = self.executor.execute_link(store, &link_req)?;
+        let activation = match link_response {
+            Ph1LinkResponse::Ok(ok) => ok.link_activation_result.ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1link_response.link_activation_result",
+                    reason: "invite-open activation result must be present",
+                })
+            })?,
+            Ph1LinkResponse::Refuse(refuse) => {
+                let _ = refuse;
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1link_response",
+                        reason: "LINK_OPEN_ACTIVATE_REFUSED",
+                    },
+                ));
+            }
+        };
+        if activation.activation_status != LinkStatus::Activated {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1link_response.link_activation_result.activation_status",
+                    reason: "link open/activate must resolve to ACTIVATED",
+                },
+            ));
+        }
+
+        let onb_req = Ph1OnbRequest::session_start_draft_v1(
+            request.correlation_id,
+            turn_id,
+            now,
+            request.token_id,
+            activation.prefilled_context_ref.clone(),
+            Some(effective_tenant.as_str().to_string()),
+            request.device_fingerprint,
+            request.app_platform,
+            request.app_instance_id,
+            request.deep_link_nonce,
+            now,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let onb_response = self.executor.execute_onb(store, &onb_req)?;
+        let session_start = match onb_response {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1onb_response.session_start_result",
+                    reason: "onboarding session start result must be present",
+                })
+            })?,
+            Ph1OnbResponse::Refuse(refuse) => {
+                let _ = refuse;
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_response",
+                        reason: "ONB_SESSION_START_REFUSED",
+                    },
+                ));
+            }
+        };
+
+        Ok(AppInviteLinkOpenOutcome {
+            onboarding_session_id: session_start.onboarding_session_id.as_str().to_string(),
+            next_step: session_start.next_step,
+            required_fields: activation.missing_required_fields,
+            required_verification_gates: session_start.required_verification_gates,
+        })
+    }
+
     pub fn run_voice_turn_and_build_ph1x_request(
         &self,
         store: &mut Ph1fStore,
@@ -187,16 +415,16 @@ impl AppServerIngressRuntime {
         let outcome = self.run_voice_turn(store, request)?;
 
         let ph1x_request = match &outcome {
-            OsVoiceLiveTurnOutcome::Forwarded(forwarded) => Some(
-                self.build_ph1x_request_for_forwarded_voice(
+            OsVoiceLiveTurnOutcome::Forwarded(forwarded) => {
+                Some(self.build_ph1x_request_for_forwarded_voice(
                     store,
                     correlation_id,
                     turn_id,
                     app_platform,
                     forwarded,
                     x_build,
-                )?,
-            ),
+                )?)
+            }
             OsVoiceLiveTurnOutcome::NotInvokedDisabled | OsVoiceLiveTurnOutcome::Refused(_) => None,
         };
 
@@ -223,7 +451,9 @@ impl AppServerIngressRuntime {
         let (voice_outcome, ph1x_request) =
             self.run_voice_turn_and_build_ph1x_request(store, request, x_build)?;
         let Some(ph1x_request) = ph1x_request else {
-            return Ok(app_voice_turn_execution_outcome_from_voice_only(voice_outcome));
+            return Ok(app_voice_turn_execution_outcome_from_voice_only(
+                voice_outcome,
+            ));
         };
 
         let ph1x_response = self
@@ -402,6 +632,32 @@ fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> St
         },
         _ => "Done.".to_string(),
     }
+}
+
+fn validate_ascii_token(
+    field: &'static str,
+    value: &str,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "too long",
+        });
+    }
+    if !value.is_ascii() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be ASCII",
+        });
+    }
+    Ok(())
 }
 
 fn os_voice_platform_from_app_platform(app_platform: AppPlatform) -> OsVoicePlatform {
@@ -598,9 +854,21 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 mod tests {
     use super::*;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+    use selene_kernel_contracts::ph1_voice_id::{
+        DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerLabel,
+    };
     use selene_kernel_contracts::ph1bcast::{BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT};
+    use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1delivery::DELIVERY_SEND_COMMIT;
-    use selene_kernel_contracts::ph1link::LINK_INVITE_GENERATE_DRAFT;
+    use selene_kernel_contracts::ph1k::{
+        AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
+        Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+    };
+    use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+    use selene_kernel_contracts::ph1link::{
+        InviteeType, LinkStatus, TokenId, LINK_INVITE_GENERATE_DRAFT,
+        LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+    };
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
         MemoryUsePolicy, MemoryValue,
@@ -609,15 +877,7 @@ mod tests {
         Chat, FieldKey, FieldValue, IntentDraft, IntentField, IntentType, OverallConfidence,
         Ph1nResponse, SensitivityLevel,
     };
-    use selene_kernel_contracts::ph1_voice_id::{
-        DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerLabel,
-    };
-    use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
-    use selene_kernel_contracts::ph1k::{
-        AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
-        Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
-    };
-    use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+    use selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT;
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1simcat::{
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
@@ -626,7 +886,9 @@ mod tests {
     use selene_kernel_contracts::ph1x::{
         ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadState,
     };
-    use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
+    use selene_kernel_contracts::{
+        ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState,
+    };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
         DeviceRecord, IdentityRecord, IdentityStatus,
@@ -715,14 +977,12 @@ mod tests {
             SpeakerAssertionOk::v1(
                 SpeakerId::new("spk_ingress_confirmed").unwrap(),
                 Some(user_id),
-                vec![
-                    DiarizationSegment::v1(
-                        MonotonicTimeNs(1),
-                        MonotonicTimeNs(2),
-                        Some(SpeakerLabel::speaker_a()),
-                    )
-                    .unwrap(),
-                ],
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
                 SpeakerLabel::speaker_a(),
             )
             .unwrap(),
@@ -746,7 +1006,8 @@ mod tests {
                     },
                     IntentField {
                         key: FieldKey::DeliveryMethod,
-                        value: FieldValue::normalized("send".to_string(), "sms".to_string()).unwrap(),
+                        value: FieldValue::normalized("send".to_string(), "sms".to_string())
+                            .unwrap(),
                         confidence: OverallConfidence::High,
                     },
                     IntentField {
@@ -862,6 +1123,26 @@ mod tests {
         )
         .unwrap();
         store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn seed_invite_link_for_click(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+        tenant_id: &str,
+        now: MonotonicTimeNs,
+    ) -> (TokenId, String) {
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                now,
+                inviter_user_id.clone(),
+                InviteeType::Employee,
+                Some(tenant_id.to_string()),
+                None,
+                None,
+                None,
+            )
+            .expect("link draft generation should succeed");
+        (link.token_id, link.token_signature)
     }
 
     fn external_injected_memory_candidate() -> MemoryCandidate {
@@ -1155,7 +1436,10 @@ mod tests {
         assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 1);
 
         let out = runtime.ph1x_runtime.decide(&ph1x_request).unwrap();
-        assert!(!matches!(out.directive, selene_kernel_contracts::ph1x::Ph1xDirective::Clarify(_)));
+        assert!(!matches!(
+            out.directive,
+            selene_kernel_contracts::ph1x::Ph1xDirective::Clarify(_)
+        ));
     }
 
     #[test]
@@ -1296,5 +1580,116 @@ mod tests {
                 .directive,
             Ph1xDirective::Dispatch(_)
         ));
+    }
+
+    #[test]
+    fn run1_invite_link_click_starts_onboarding_with_active_simulations() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:run1_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("run1_inviter_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            ONB_SESSION_START_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(40),
+        );
+        let req = AppInviteLinkOpenRequest::v1(
+            CorrelationId(9801),
+            "run1-invite-click-idem-1".to_string(),
+            token_id.clone(),
+            token_signature,
+            Some("tenant_1".to_string()),
+            AppPlatform::Ios,
+            "run1-device-fingerprint-a".to_string(),
+            "ios_instance_run1".to_string(),
+            "run1_nonce_9801".to_string(),
+        )
+        .unwrap();
+        let out = runtime
+            .run_invite_link_open_and_start_onboarding(&mut store, req, MonotonicTimeNs(41))
+            .unwrap();
+
+        assert!(out.onboarding_session_id.starts_with("onb_"));
+        assert_eq!(out.next_step, OnboardingNextStep::Terms);
+        assert!(!out.required_fields.is_empty());
+        assert_eq!(
+            store
+                .ph1link_get_link(&token_id)
+                .expect("link row must exist")
+                .status,
+            LinkStatus::Activated
+        );
+    }
+
+    #[test]
+    fn run1_invite_link_click_fails_closed_when_onboarding_simulation_not_active() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:run1_inviter_guard").unwrap();
+        let inviter_device_id = DeviceId::new("run1_inviter_device_2").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(50),
+        );
+        let req = AppInviteLinkOpenRequest::v1(
+            CorrelationId(9802),
+            "run1-invite-click-idem-2".to_string(),
+            token_id.clone(),
+            token_signature,
+            Some("tenant_1".to_string()),
+            AppPlatform::Ios,
+            "run1-device-fingerprint-b".to_string(),
+            "ios_instance_run1".to_string(),
+            "run1_nonce_9802".to_string(),
+        )
+        .unwrap();
+        let err = runtime
+            .run_invite_link_open_and_start_onboarding(&mut store, req, MonotonicTimeNs(51))
+            .expect_err("missing ONB simulation should fail closed");
+
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_invite_link_open_request.simulation_id");
+                assert_eq!(reason, "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert_eq!(
+            store
+                .ph1link_get_link(&token_id)
+                .expect("link row must exist")
+                .status,
+            LinkStatus::DraftCreated
+        );
     }
 }

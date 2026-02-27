@@ -120,6 +120,7 @@ fn seed_activated_link_with_platform(
         .ph1link_invite_open_activate_commit_row(
             MonotonicTimeNs(now + 1),
             link.token_id.clone(),
+            link.token_signature,
             format!("fp_{now}"),
             app_platform,
             app_instance_id.to_string(),

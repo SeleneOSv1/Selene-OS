@@ -14,7 +14,7 @@ use selene_kernel_contracts::ph1access::{
     ACCESS_AP_SCHEMA_RETIRE_COMMIT, ACCESS_AP_SCHEMA_UPDATE_COMMIT, ACCESS_INSTANCE_COMPILE_COMMIT,
 };
 use selene_kernel_contracts::ph1bcast::{
-    BcastDeliveryMethod, BcastDraftCreateRequest, BcastDeliverCommitRequest, BcastOutcome,
+    BcastDeliverCommitRequest, BcastDeliveryMethod, BcastDraftCreateRequest, BcastOutcome,
     BcastRecipientRegion, BcastRecipientState, BcastRequest, BcastSimulationType,
     BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
     BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
@@ -27,8 +27,7 @@ use selene_kernel_contracts::ph1capreq::{
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1delivery::{
-    DeliveryChannel, DeliveryOutcome, Ph1DeliveryRequest, Ph1DeliveryResponse,
-    DELIVERY_SEND_COMMIT,
+    DeliveryChannel, DeliveryOutcome, Ph1DeliveryRequest, Ph1DeliveryResponse, DELIVERY_SEND_COMMIT,
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
@@ -418,6 +417,58 @@ impl SimulationExecutor {
         req: &Ph1CapreqRequest,
     ) -> Result<Ph1CapreqResponse, StorageError> {
         self.capreq.run(store, req)
+    }
+
+    pub fn ensure_simulation_active_for_tenant(
+        &self,
+        store: &Ph1fStore,
+        tenant_id: &TenantId,
+        simulation_id: &str,
+        field: &'static str,
+        missing_reason: &'static str,
+        inactive_reason: &'static str,
+    ) -> Result<(), StorageError> {
+        let simulation_id = SimulationId::new(simulation_id.to_string())
+            .map_err(StorageError::ContractViolation)?;
+        let Some(sim_row) = store.simulation_catalog_current_row(tenant_id, &simulation_id) else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: missing_reason,
+                },
+            ));
+        };
+        if sim_row.status != SimulationStatus::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: inactive_reason,
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn ensure_simulation_chain_active_for_tenant(
+        &self,
+        store: &Ph1fStore,
+        tenant_id: &TenantId,
+        simulation_ids: &[&str],
+        field: &'static str,
+        missing_reason: &'static str,
+        inactive_reason: &'static str,
+    ) -> Result<(), StorageError> {
+        for simulation_id in simulation_ids {
+            self.ensure_simulation_active_for_tenant(
+                store,
+                tenant_id,
+                simulation_id,
+                field,
+                missing_reason,
+                inactive_reason,
+            )?;
+        }
+        Ok(())
     }
 
     fn os_voice_platform_from_app_platform(app_platform: AppPlatform) -> OsVoicePlatform {
@@ -1650,22 +1701,14 @@ impl SimulationExecutor {
         self.ensure_dispatch_access_allow_v1(store, actor_user_id, now, d)?;
         let (tenant_id, simulation_id) =
             simulation_catalog_guard_target_v1(store, actor_user_id, d)?;
-        let Some(sim_row) = store.simulation_catalog_current_row(&tenant_id, &simulation_id) else {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
-                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
-                },
-            ));
-        };
-        if sim_row.status != SimulationStatus::Active {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
-                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
-                },
-            ));
-        }
+        self.ensure_simulation_active_for_tenant(
+            store,
+            &tenant_id,
+            simulation_id.as_str(),
+            "simulation_candidate_dispatch.intent_draft.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
         self.guard_send_link_chain_simulations_v1(store, actor_user_id, d)?;
         Ok(())
     }
@@ -1680,32 +1723,19 @@ impl SimulationExecutor {
             return Ok(());
         }
         let tenant_id = resolve_invite_tenant_id(store, d, actor_user_id)?;
-        let required = [
-            LINK_INVITE_GENERATE_DRAFT,
-            BCAST_CREATE_DRAFT,
-            BCAST_DELIVER_COMMIT,
-            DELIVERY_SEND_COMMIT,
-        ];
-        for simulation_id in required {
-            let simulation_id =
-                SimulationId::new(simulation_id.to_string()).map_err(StorageError::ContractViolation)?;
-            let Some(row) = store.simulation_catalog_current_row(&tenant_id, &simulation_id) else {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.intent_draft.simulation_id",
-                        reason: "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_MISSING",
-                    },
-                ));
-            };
-            if row.status != SimulationStatus::Active {
-                return Err(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "simulation_candidate_dispatch.intent_draft.simulation_id",
-                        reason: "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_INACTIVE",
-                    },
-                ));
-            }
-        }
+        self.ensure_simulation_chain_active_for_tenant(
+            store,
+            &tenant_id,
+            &[
+                LINK_INVITE_GENERATE_DRAFT,
+                BCAST_CREATE_DRAFT,
+                BCAST_DELIVER_COMMIT,
+                DELIVERY_SEND_COMMIT,
+            ],
+            "simulation_candidate_dispatch.intent_draft.simulation_id",
+            "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_MISSING",
+            "SIM_DISPATCH_GUARD_SEND_LINK_CHAIN_SIMULATION_INACTIVE",
+        )?;
         Ok(())
     }
 
@@ -2097,10 +2127,8 @@ impl SimulationExecutor {
                     d,
                     FieldKey::DeliveryMethod,
                 )?)?;
-                let recipient_id = parse_bcast_recipient_id(required_field_value(
-                    d,
-                    FieldKey::RecipientContact,
-                )?)?;
+                let recipient_id =
+                    parse_bcast_recipient_id(required_field_value(d, FieldKey::RecipientContact)?)?;
                 let link_token_ref = link_token_ref_from_link_response(&link_resp)?;
 
                 let idempotency_seed = x_idempotency_key
@@ -2193,14 +2221,16 @@ impl SimulationExecutor {
                             delivery,
                             delivery_emitted,
                         } => {
-                            let broadcast_thread_id = broadcast_id_from_bcast_deliver_response(&bcast)?;
+                            let broadcast_thread_id =
+                                broadcast_id_from_bcast_deliver_response(&bcast)?;
                             (bcast, delivery, broadcast_thread_id, delivery_emitted)
                         }
                         _ => {
                             return Err(StorageError::ContractViolation(
                                 ContractViolation::InvalidValue {
                                     field: "simulation_candidate_dispatch.intent_draft.intent_type",
-                                    reason: "unexpected non-delivery outcome for send-link dispatch",
+                                    reason:
+                                        "unexpected non-delivery outcome for send-link dispatch",
                                 },
                             ))
                         }
@@ -2630,8 +2660,11 @@ impl SimulationExecutor {
             MemoryConfidence::High,
             MemoryConsent::ExplicitRemember,
             evidence_quote,
-            MemoryProvenance::v1(None, Some(format!("test:{}:{}", correlation_id.0, turn_id.0)))
-                .map_err(StorageError::ContractViolation)?,
+            MemoryProvenance::v1(
+                None,
+                Some(format!("test:{}:{}", correlation_id.0, turn_id.0)),
+            )
+            .map_err(StorageError::ContractViolation)?,
         )
         .map_err(StorageError::ContractViolation)?;
         let propose_req = Ph1mProposeRequest::v1(
@@ -2733,10 +2766,7 @@ impl SimulationExecutor {
         let idempotency_key = x_idempotency_key
             .map(|k| format!("link_send_delivery_fail:{k}"))
             .unwrap_or_else(|| {
-                format!(
-                    "link_send_delivery_fail:{}:{}",
-                    correlation_id.0, turn_id.0
-                )
+                format!("link_send_delivery_fail:{}:{}", correlation_id.0, turn_id.0)
             });
 
         let _ = store.ph1access_capreq_step_up_audit_commit(
@@ -3112,7 +3142,9 @@ fn broadcast_id_from_bcast_draft_response(
     }
 }
 
-fn broadcast_id_from_bcast_deliver_response(resp: &Ph1BcastResponse) -> Result<String, StorageError> {
+fn broadcast_id_from_bcast_deliver_response(
+    resp: &Ph1BcastResponse,
+) -> Result<String, StorageError> {
     match resp {
         Ph1BcastResponse::Ok(ok) => match &ok.outcome {
             BcastOutcome::DeliverCommit(result) => Ok(result.broadcast_id.as_str().to_string()),
@@ -6716,8 +6748,11 @@ mod tests {
                 vec![
                     IntentField {
                         key: FieldKey::InviteeType,
-                        value: FieldValue::normalized("associate".to_string(), "associate".to_string())
-                            .unwrap(),
+                        value: FieldValue::normalized(
+                            "associate".to_string(),
+                            "associate".to_string(),
+                        )
+                        .unwrap(),
                         confidence: OverallConfidence::High,
                     },
                     IntentField {
@@ -6756,60 +6791,58 @@ mod tests {
             .unwrap()
         };
 
-        let extract = |outcome: SimulationDispatchOutcome| {
-            match outcome {
-                SimulationDispatchOutcome::LinkDelivered {
-                    link,
-                    bcast,
-                    delivery,
+        let extract = |outcome: SimulationDispatchOutcome| match outcome {
+            SimulationDispatchOutcome::LinkDelivered {
+                link,
+                bcast,
+                delivery,
+                link_token_ref,
+                broadcast_thread_id,
+                delivery_proof_ref,
+                delivery_emitted,
+            } => {
+                match link {
+                    Ph1LinkResponse::Ok(ok) => {
+                        let generated = ok
+                            .link_generate_result
+                            .expect("link_generate_result must be present");
+                        assert_eq!(generated.token_id.as_str(), link_token_ref.as_str());
+                    }
+                    Ph1LinkResponse::Refuse(_) => panic!("expected link ok"),
+                }
+                match &bcast {
+                    Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+                        BcastOutcome::DeliverCommit(deliver) => {
+                            assert_eq!(deliver.broadcast_id.as_str(), broadcast_thread_id);
+                        }
+                        _ => panic!("expected bcast deliver outcome"),
+                    },
+                    Ph1BcastResponse::Refuse(_) => panic!("expected bcast ok"),
+                }
+
+                let delivery_attempt_id = match &delivery {
+                    Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+                        DeliveryOutcome::Send(send) => {
+                            assert_eq!(
+                                delivery_proof_ref.as_deref(),
+                                Some(send.delivery_proof_ref.as_str())
+                            );
+                            send.delivery_attempt_id.clone()
+                        }
+                        _ => panic!("expected delivery send outcome"),
+                    },
+                    Ph1DeliveryResponse::Refuse(_) => panic!("expected delivery ok"),
+                };
+
+                (
                     link_token_ref,
                     broadcast_thread_id,
-                    delivery_proof_ref,
+                    delivery_proof_ref.expect("delivery proof ref must be present"),
+                    delivery_attempt_id,
                     delivery_emitted,
-                } => {
-                    match link {
-                        Ph1LinkResponse::Ok(ok) => {
-                            let generated = ok
-                                .link_generate_result
-                                .expect("link_generate_result must be present");
-                            assert_eq!(generated.token_id.as_str(), link_token_ref.as_str());
-                        }
-                        Ph1LinkResponse::Refuse(_) => panic!("expected link ok"),
-                    }
-                    match &bcast {
-                        Ph1BcastResponse::Ok(ok) => match &ok.outcome {
-                            BcastOutcome::DeliverCommit(deliver) => {
-                                assert_eq!(deliver.broadcast_id.as_str(), broadcast_thread_id);
-                            }
-                            _ => panic!("expected bcast deliver outcome"),
-                        },
-                        Ph1BcastResponse::Refuse(_) => panic!("expected bcast ok"),
-                    }
-
-                    let delivery_attempt_id = match &delivery {
-                        Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
-                            DeliveryOutcome::Send(send) => {
-                                assert_eq!(
-                                    delivery_proof_ref.as_deref(),
-                                    Some(send.delivery_proof_ref.as_str())
-                                );
-                                send.delivery_attempt_id.clone()
-                            }
-                            _ => panic!("expected delivery send outcome"),
-                        },
-                        Ph1DeliveryResponse::Refuse(_) => panic!("expected delivery ok"),
-                    };
-
-                    (
-                        link_token_ref,
-                        broadcast_thread_id,
-                        delivery_proof_ref.expect("delivery proof ref must be present"),
-                        delivery_attempt_id,
-                        delivery_emitted,
-                    )
-                }
-                _ => panic!("expected LinkDelivered outcome"),
+                )
             }
+            _ => panic!("expected LinkDelivered outcome"),
         };
 
         let first = exec
@@ -7060,8 +7093,11 @@ mod tests {
                 vec![
                     IntentField {
                         key: FieldKey::InviteeType,
-                        value: FieldValue::normalized("associate".to_string(), "associate".to_string())
-                            .unwrap(),
+                        value: FieldValue::normalized(
+                            "associate".to_string(),
+                            "associate".to_string(),
+                        )
+                        .unwrap(),
                         confidence: OverallConfidence::High,
                     },
                     IntentField {

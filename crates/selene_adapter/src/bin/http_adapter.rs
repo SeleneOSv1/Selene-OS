@@ -16,7 +16,8 @@ use axum::{
 };
 use selene_adapter::{
     app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
-    UiChatTranscriptResponse, UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, UiChatTranscriptResponse,
+    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
     UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
     UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
 };
@@ -71,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/ui/health/report/query", post(ui_health_report_query))
         .route("/v1/ui/chat/transcript", get(ui_chat_transcript))
         .route("/v1/voice/turn", post(run_voice_turn))
+        .route("/v1/invite/click", post(run_invite_click))
         .with_state(runtime);
 
     println!(
@@ -335,6 +337,44 @@ async fn run_voice_turn(
                 status: "error".to_string(),
                 outcome: "REJECTED".to_string(),
                 reason: Some(reason),
+            }),
+        ),
+    }
+}
+
+async fn run_invite_click(
+    State(runtime): State<Arc<Mutex<AdapterRuntime>>>,
+    Json(request): Json<InviteLinkOpenAdapterRequest>,
+) -> (StatusCode, Json<InviteLinkOpenAdapterResponse>) {
+    let runtime = match runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(InviteLinkOpenAdapterResponse {
+                    status: "error".to_string(),
+                    outcome: "REJECTED".to_string(),
+                    reason: Some("adapter runtime lock poisoned".to_string()),
+                    onboarding_session_id: None,
+                    next_step: None,
+                    required_fields: Vec::new(),
+                    required_verification_gates: Vec::new(),
+                }),
+            )
+        }
+    };
+    match runtime.run_invite_link_open_and_start_onboarding(request) {
+        Ok(response) => (StatusCode::OK, Json(response)),
+        Err(reason) => (
+            StatusCode::BAD_REQUEST,
+            Json(InviteLinkOpenAdapterResponse {
+                status: "error".to_string(),
+                outcome: "REJECTED".to_string(),
+                reason: Some(reason),
+                onboarding_session_id: None,
+                next_step: None,
+                required_fields: Vec::new(),
+                required_verification_gates: Vec::new(),
             }),
         ),
     }
