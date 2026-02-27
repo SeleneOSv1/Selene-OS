@@ -108,7 +108,10 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
-        IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery => {
+        IntentType::TimeQuery
+        | IntentType::WeatherQuery
+        | IntentType::WebSearchQuery
+        | IntentType::NewsQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -180,6 +183,17 @@ fn looks_like_web_search(lower: &str) -> bool {
         || lower.starts_with("google ")
 }
 
+fn looks_like_news_query(lower: &str) -> bool {
+    (contains_word(lower, "news")
+        && (contains_word(lower, "latest")
+            || contains_word(lower, "today")
+            || contains_word(lower, "headlines")
+            || contains_word(lower, "about")))
+        || lower.starts_with("news about ")
+        || lower.starts_with("latest news")
+        || lower.starts_with("headlines")
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -249,6 +263,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_web_search(s) {
         push(IntentType::WebSearchQuery);
     }
+    if looks_like_news_query(s) {
+        push(IntentType::NewsQuery);
+    }
     if s.contains("remind me") || s.contains("reminder") {
         push(IntentType::SetReminder);
     }
@@ -315,7 +332,10 @@ fn normalize_intent(
     let t = &req.transcript_ok.transcript_text;
 
     match intent_type {
-        IntentType::TimeQuery | IntentType::WeatherQuery | IntentType::WebSearchQuery => {
+        IntentType::TimeQuery
+        | IntentType::WeatherQuery
+        | IntentType::WebSearchQuery
+        | IntentType::NewsQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1736,6 +1756,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::WeatherQuery => "Weather".to_string(),
         IntentType::TimeQuery => "Time".to_string(),
         IntentType::WebSearchQuery => "Search the web".to_string(),
+        IntentType::NewsQuery => "Get news".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -2898,6 +2919,24 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::WebSearchQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_19_news_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene what's the latest news about AI chip policy",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::NewsQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),

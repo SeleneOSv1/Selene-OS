@@ -3632,6 +3632,7 @@ fn intent_type_token(intent: IntentType) -> &'static str {
         IntentType::TimeQuery => "TIME_QUERY",
         IntentType::WeatherQuery => "WEATHER_QUERY",
         IntentType::WebSearchQuery => "WEB_SEARCH_QUERY",
+        IntentType::NewsQuery => "NEWS_QUERY",
         IntentType::Continue => "CONTINUE",
         IntentType::MoreDetail => "MORE_DETAIL",
     }
