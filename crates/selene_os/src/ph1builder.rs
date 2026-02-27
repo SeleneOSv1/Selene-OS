@@ -3756,6 +3756,27 @@ mod tests {
     };
     use selene_storage::ph1f::Ph1fStore;
 
+    fn unique_temp_markdown_path(prefix: &str) -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let thread_id = format!("{:?}", std::thread::current().id())
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .collect::<String>();
+        std::env::temp_dir()
+            .join(format!(
+                "{}_{}_{}_{}.md",
+                prefix,
+                std::process::id(),
+                thread_id,
+                nanos
+            ))
+            .display()
+            .to_string()
+    }
+
     struct DeterministicPatternEngine;
 
     impl Ph1PatternEngine for DeterministicPatternEngine {
@@ -3889,27 +3910,9 @@ mod tests {
     fn input() -> BuilderOfflineInput {
         let correlation_id = CorrelationId(7001);
         let turn_id = TurnId(801);
-        let learning_report_path = std::env::temp_dir()
-            .join(format!(
-                "builder_learning_report_{}_{}.md",
-                correlation_id.0, turn_id.0
-            ))
-            .display()
-            .to_string();
-        let change_brief_path = std::env::temp_dir()
-            .join(format!(
-                "builder_change_brief_{}_{}.md",
-                correlation_id.0, turn_id.0
-            ))
-            .display()
-            .to_string();
-        let permission_packet_path = std::env::temp_dir()
-            .join(format!(
-                "builder_permission_packet_{}_{}.md",
-                correlation_id.0, turn_id.0
-            ))
-            .display()
-            .to_string();
+        let learning_report_path = unique_temp_markdown_path("builder_learning_report");
+        let change_brief_path = unique_temp_markdown_path("builder_change_brief");
+        let permission_packet_path = unique_temp_markdown_path("builder_permission_packet");
         let entries = vec![
             OsOutcomeUtilizationEntry::v1(
                 "PH1.SEARCH".to_string(),
@@ -4590,10 +4593,7 @@ mod tests {
             )
             .unwrap(),
         ];
-        let report_path = std::env::temp_dir()
-            .join("builder_learning_report_auto_generated.md")
-            .display()
-            .to_string();
+        let report_path = unique_temp_markdown_path("builder_learning_report_auto_generated");
         let _ = std::fs::remove_file(&report_path);
         builder_input.learning_report_output_path = Some(report_path.clone());
 
@@ -4634,10 +4634,7 @@ mod tests {
         )
         .unwrap();
 
-        let report_path = std::env::temp_dir()
-            .join("builder_learning_report_should_not_exist.md")
-            .display()
-            .to_string();
+        let report_path = unique_temp_markdown_path("builder_learning_report_should_not_exist");
         let _ = std::fs::remove_file(&report_path);
 
         let mut builder_input = input();
@@ -4696,10 +4693,7 @@ mod tests {
         .unwrap();
 
         let mut builder_input = input();
-        let brief_path = std::env::temp_dir()
-            .join("builder_change_brief_auto_generated.md")
-            .display()
-            .to_string();
+        let brief_path = unique_temp_markdown_path("builder_change_brief_auto_generated");
         let _ = std::fs::remove_file(&brief_path);
         builder_input.change_brief_output_path = Some(brief_path.clone());
 
@@ -4731,10 +4725,7 @@ mod tests {
         .unwrap();
 
         let mut builder_input = input();
-        let packet_path = std::env::temp_dir()
-            .join("builder_permission_packet_auto_generated.md")
-            .display()
-            .to_string();
+        let packet_path = unique_temp_markdown_path("builder_permission_packet_auto_generated");
         let _ = std::fs::remove_file(&packet_path);
         builder_input.permission_packet_output_path = Some(packet_path.clone());
 
