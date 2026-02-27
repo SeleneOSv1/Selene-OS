@@ -56,8 +56,8 @@ link_opened_at: timestamp_ms
 - LINK_INVITE_FORWARD_BLOCK_COMMIT (mismatch branch executed exactly once from LINK_INVITE_OPEN_ACTIVATE_COMMIT)
 
 Single-path mismatch rule:
-- Device mismatch handling is a single deterministic branch under `LINK_INVITE_OPEN_ACTIVATE_COMMIT`.
-- The branch records `BLOCKED` through `LINK_INVITE_FORWARD_BLOCK_COMMIT` semantics once; no second independent block path is allowed.
+Device mismatch handling is a single deterministic branch under `LINK_INVITE_OPEN_ACTIVATE_COMMIT`.
+The branch records `BLOCKED` through `LINK_INVITE_FORWARD_BLOCK_COMMIT` semantics once; no second independent block path is allowed.
 
 ## 7) Refusal Conditions
 - token invalid/expired/revoked/consumed -> LINK_TOKEN_INVALID
