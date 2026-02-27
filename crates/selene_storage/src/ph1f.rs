@@ -1347,6 +1347,26 @@ pub struct OnboardingSessionRecord {
     pub access_engine_instance_id: Option<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
     pub wake_artifact_sync_receipt_ref: Option<String>,
+    // AskMissing state (single source of truth per onboarding session).
+    pub missing_fields: Vec<String>,
+    pub asked_missing_fields: Vec<String>,
+    pub active_missing_field: Option<String>,
+    pub active_missing_attempts: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnbAskMissingOutcomeKind {
+    Prompt,
+    Updated,
+    Escalated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OnbAskMissingOutcome {
+    pub kind: OnbAskMissingOutcomeKind,
+    pub field_key: Option<String>,
+    pub attempts: u8,
+    pub remaining_missing_fields: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6446,7 +6466,7 @@ impl Ph1fStore {
             }
             let next_step = match rec.status {
                 OnboardingStatus::DraftCreated => {
-                    if rec.invitee_type == InviteeType::Employee && rec.tenant_id.is_none() {
+                    if !rec.missing_fields.is_empty() {
                         OnboardingNextStep::AskMissing
                     } else if rec.prefilled_context_ref.is_some() {
                         OnboardingNextStep::LoadPrefilled
@@ -6530,6 +6550,10 @@ impl Ph1fStore {
             access_engine_instance_id: None,
             voice_artifact_sync_receipt_ref: None,
             wake_artifact_sync_receipt_ref: None,
+            missing_fields: link.missing_required_fields.clone(),
+            asked_missing_fields: Vec::new(),
+            active_missing_field: link.missing_required_fields.first().cloned(),
+            active_missing_attempts: 0,
         };
 
         self.onboarding_sessions
@@ -6537,10 +6561,9 @@ impl Ph1fStore {
         self.onboarding_session_by_link
             .insert(token_id.clone(), onboarding_session_id.clone());
 
-        let next_step =
-            if link.invitee_type == InviteeType::Employee && effective_tenant_id.is_none() {
-                OnboardingNextStep::AskMissing
-            } else if effective_prefilled_context_ref.is_some() {
+        let next_step = if !link.missing_required_fields.is_empty() {
+            OnboardingNextStep::AskMissing
+        } else if effective_prefilled_context_ref.is_some() {
                 OnboardingNextStep::LoadPrefilled
             } else {
                 OnboardingNextStep::Terms
@@ -7784,6 +7807,153 @@ impl Ph1fStore {
 
     pub fn ph1onb_session_rows(&self) -> &BTreeMap<OnboardingSessionId, OnboardingSessionRecord> {
         &self.onboarding_sessions
+    }
+
+    pub fn ph1onb_ask_missing_field_turn(
+        &mut self,
+        now: MonotonicTimeNs,
+        onboarding_session_id: OnboardingSessionId,
+        field_value: Option<String>,
+        idempotency_key: String,
+    ) -> Result<OnbAskMissingOutcome, StorageError> {
+        Self::validate_ph1link_idempotency_key(
+            "ph1onb_ask_missing_field_turn.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let (expected_field, token_id) = {
+            let rec = self
+                .onboarding_sessions
+                .get(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            if rec.status != OnboardingStatus::DraftCreated {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_ask_missing_field_turn.status",
+                        reason: "session must be DRAFT_CREATED",
+                    },
+                ));
+            }
+            if rec.missing_fields.is_empty() {
+                return Ok(OnbAskMissingOutcome {
+                    kind: OnbAskMissingOutcomeKind::Updated,
+                    field_key: None,
+                    attempts: 0,
+                    remaining_missing_fields: Vec::new(),
+                });
+            }
+
+            let expected_field = rec
+                .active_missing_field
+                .clone()
+                .filter(|field| rec.missing_fields.iter().any(|m| m == field))
+                .unwrap_or_else(|| rec.missing_fields[0].clone());
+            (expected_field, rec.token_id.clone())
+        };
+
+        {
+            let rec_mut = self
+                .onboarding_sessions
+                .get_mut(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            if rec_mut.active_missing_field.as_ref() != Some(&expected_field) {
+                rec_mut.active_missing_field = Some(expected_field.clone());
+                rec_mut.active_missing_attempts = 0;
+            }
+        }
+
+        let value = field_value
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+
+        let update_failed = if let Some(value) = value {
+            let draft_id = self
+                .links
+                .get(&token_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "links.token_id",
+                    key: token_id.as_str().to_string(),
+                })?
+                .draft_id
+                .clone();
+            let mut creator_update_fields = BTreeMap::new();
+            creator_update_fields.insert(expected_field.clone(), value);
+            match self.ph1link_invite_draft_update_commit(
+                now,
+                draft_id,
+                creator_update_fields,
+                idempotency_key,
+            ) {
+                Ok((_, _, missing_required_fields)) => {
+                    let rec_mut = self
+                        .onboarding_sessions
+                        .get_mut(&onboarding_session_id)
+                        .ok_or(StorageError::ForeignKeyViolation {
+                            table: "onboarding_sessions.onboarding_session_id",
+                            key: onboarding_session_id.as_str().to_string(),
+                        })?;
+                    rec_mut.missing_fields = missing_required_fields.clone();
+                    if !rec_mut
+                        .asked_missing_fields
+                        .iter()
+                        .any(|asked| asked == &expected_field)
+                    {
+                        rec_mut.asked_missing_fields.push(expected_field.clone());
+                    }
+                    rec_mut.active_missing_field = missing_required_fields.first().cloned();
+                    rec_mut.active_missing_attempts = 0;
+                    rec_mut.updated_at = now;
+                    return Ok(OnbAskMissingOutcome {
+                        kind: OnbAskMissingOutcomeKind::Updated,
+                        field_key: rec_mut.active_missing_field.clone(),
+                        attempts: 0,
+                        remaining_missing_fields: missing_required_fields,
+                    });
+                }
+                Err(StorageError::ContractViolation(_)) => true,
+                Err(other) => return Err(other),
+            }
+        } else {
+            true
+        };
+
+        if update_failed {
+            let rec_mut = self
+                .onboarding_sessions
+                .get_mut(&onboarding_session_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "onboarding_sessions.onboarding_session_id",
+                    key: onboarding_session_id.as_str().to_string(),
+                })?;
+            rec_mut.active_missing_attempts = rec_mut.active_missing_attempts.saturating_add(1);
+            rec_mut.updated_at = now;
+            let attempts = rec_mut.active_missing_attempts;
+            let remaining_missing_fields = rec_mut.missing_fields.clone();
+            let kind = if attempts >= 2 {
+                OnbAskMissingOutcomeKind::Escalated
+            } else {
+                OnbAskMissingOutcomeKind::Prompt
+            };
+            return Ok(OnbAskMissingOutcome {
+                kind,
+                field_key: Some(expected_field),
+                attempts,
+                remaining_missing_fields,
+            });
+        }
+
+        Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "ph1onb_ask_missing_field_turn",
+                reason: "unreachable ask-missing state",
+            },
+        ))
     }
 
     pub fn ph1onb_voice_runtime_mode(
@@ -17485,6 +17655,10 @@ mod tests {
                 access_engine_instance_id: None,
                 voice_artifact_sync_receipt_ref: None,
                 wake_artifact_sync_receipt_ref: None,
+                missing_fields: Vec::new(),
+                asked_missing_fields: Vec::new(),
+                active_missing_field: None,
+                active_missing_attempts: 0,
             },
         );
         onb_id

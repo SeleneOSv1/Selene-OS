@@ -19,7 +19,7 @@ use selene_kernel_contracts::ph1position::{
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
+    DeviceRecord, IdentityRecord, IdentityStatus, OnbAskMissingOutcomeKind, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord, WakeSampleResult,
 };
 use selene_storage::repo::{
@@ -2046,4 +2046,75 @@ fn at_onb_db_11_backfill_fail_closed_on_tenant_scope_and_missing_target() {
         complete_wrong_tenant,
         Err(StorageError::ContractViolation(_))
     ));
+}
+
+#[test]
+fn runc_onb_db_ask_missing_state_round_trip_updates_session_record() {
+    let mut s = Ph1fStore::new_in_memory();
+    let inviter = user("tenant_a:user_roundtrip");
+    let inviter_device = device("tenant_a_device_roundtrip");
+    seed_identity_device(&mut s, inviter.clone(), inviter_device);
+
+    let token_id = seed_activated_link(
+        &mut s,
+        1_500,
+        inviter,
+        InviteeType::Employee,
+        Some("tenant_a".to_string()),
+        None,
+    );
+    let started = s
+        .ph1onb_session_start_draft_row(
+            MonotonicTimeNs(1_501),
+            token_id,
+            None,
+            Some("tenant_a".to_string()),
+            "fp_onb_roundtrip".to_string(),
+            AppPlatform::Ios,
+            "ios_instance_onb_test".to_string(),
+            "nonce_onb_test".to_string(),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+
+    let before = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding session row must exist before ask-missing");
+    assert!(!before.missing_fields.is_empty());
+    let first_field = before
+        .active_missing_field
+        .clone()
+        .expect("active missing field must be set on session start");
+
+    let prompt = s
+        .ph1onb_ask_missing_field_turn(
+            MonotonicTimeNs(1_502),
+            started.onboarding_session_id.clone(),
+            None,
+            "onb-roundtrip-ask-1".to_string(),
+        )
+        .unwrap();
+    assert_eq!(prompt.kind, OnbAskMissingOutcomeKind::Prompt);
+    assert_eq!(prompt.attempts, 1);
+    assert_eq!(prompt.field_key.as_deref(), Some(first_field.as_str()));
+
+    let updated = s
+        .ph1onb_ask_missing_field_turn(
+            MonotonicTimeNs(1_503),
+            started.onboarding_session_id.clone(),
+            Some("roundtrip_value".to_string()),
+            "onb-roundtrip-ask-2".to_string(),
+        )
+        .unwrap();
+    assert_eq!(updated.kind, OnbAskMissingOutcomeKind::Updated);
+
+    let after = s
+        .ph1onb_session_row(&started.onboarding_session_id)
+        .expect("onboarding session row must exist after ask-missing");
+    assert_eq!(after.active_missing_attempts, 0);
+    assert!(after
+        .asked_missing_fields
+        .iter()
+        .any(|asked| asked == &first_field));
+    assert_eq!(after.missing_fields, updated.remaining_missing_fields);
 }

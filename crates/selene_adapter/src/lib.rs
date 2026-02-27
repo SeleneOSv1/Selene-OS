@@ -76,7 +76,7 @@ use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapsh
 use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
-use selene_kernel_contracts::ph1onb::OnboardingNextStep;
+use selene_kernel_contracts::ph1onb::{OnboardingNextStep, OnboardingSessionId};
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
@@ -91,7 +91,8 @@ use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
 use selene_os::app_ingress::{
-    AppInviteLinkOpenRequest, AppServerIngressRuntime, AppVoiceIngressRequest,
+    AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
+    AppOnboardingContinueRequest, AppServerIngressRuntime, AppVoiceIngressRequest,
 };
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -251,6 +252,34 @@ pub struct InviteLinkOpenAdapterResponse {
     pub next_step: Option<String>,
     pub required_fields: Vec<String>,
     pub required_verification_gates: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OnboardingContinueAdapterRequest {
+    pub correlation_id: u64,
+    pub onboarding_session_id: String,
+    pub idempotency_key: String,
+    pub tenant_id: Option<String>,
+    pub action: String,
+    pub field_value: Option<String>,
+    pub terms_version_id: Option<String>,
+    pub accepted: Option<bool>,
+    pub device_id: Option<String>,
+    pub proof_ok: Option<bool>,
+    pub sample_seed: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct OnboardingContinueAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub onboarding_session_id: Option<String>,
+    pub next_step: Option<String>,
+    pub blocking_field: Option<String>,
+    pub blocking_question: Option<String>,
+    pub remaining_missing_fields: Vec<String>,
+    pub voice_artifact_sync_receipt_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -942,6 +971,54 @@ impl AdapterRuntime {
             next_step: Some(onboarding_next_step_to_api_value(outcome.next_step)),
             required_fields: outcome.required_fields,
             required_verification_gates: outcome.required_verification_gates,
+        })
+    }
+
+    pub fn run_onboarding_continue(
+        &self,
+        request: OnboardingContinueAdapterRequest,
+    ) -> Result<OnboardingContinueAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let onboarding_session_id = OnboardingSessionId::new(request.onboarding_session_id)
+            .map_err(|err| format!("invalid onboarding_session_id: {err:?}"))?;
+        let action = parse_onboarding_continue_action(
+            &request.action,
+            request.field_value,
+            request.terms_version_id,
+            request.accepted,
+            request.device_id,
+            request.proof_ok,
+            request.sample_seed,
+        )?;
+        let ingress_request = AppOnboardingContinueRequest::v1(
+            correlation_id,
+            onboarding_session_id,
+            request.idempotency_key,
+            request.tenant_id,
+            action,
+        )
+        .map_err(|err| format!("invalid onboarding_continue request: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let outcome = self
+            .ingress
+            .run_onboarding_continue(&mut store, ingress_request, now)
+            .map_err(storage_error_to_string)?;
+
+        Ok(OnboardingContinueAdapterResponse {
+            status: "ok".to_string(),
+            outcome: "ONBOARDING_CONTINUED".to_string(),
+            reason: None,
+            onboarding_session_id: Some(outcome.onboarding_session_id),
+            next_step: Some(onboarding_continue_next_step_to_api_value(outcome.next_step)),
+            blocking_field: outcome.blocking_field,
+            blocking_question: outcome.blocking_question,
+            remaining_missing_fields: outcome.remaining_missing_fields,
+            voice_artifact_sync_receipt_ref: outcome.voice_artifact_sync_receipt_ref,
         })
     }
 
@@ -3415,6 +3492,69 @@ fn onboarding_next_step_to_api_value(next_step: OnboardingNextStep) -> String {
         OnboardingNextStep::Terms => "TERMS",
         OnboardingNextStep::LoadPrefilled => "LOAD_PREFILLED",
         OnboardingNextStep::AskMissing => "ASK_MISSING",
+    }
+    .to_string()
+}
+
+fn parse_onboarding_continue_action(
+    action: &str,
+    field_value: Option<String>,
+    terms_version_id: Option<String>,
+    accepted: Option<bool>,
+    device_id: Option<String>,
+    proof_ok: Option<bool>,
+    sample_seed: Option<String>,
+) -> Result<AppOnboardingContinueAction, String> {
+    let normalized = action.trim().to_ascii_uppercase();
+    match normalized.as_str() {
+        "ASK_MISSING_SUBMIT" => Ok(AppOnboardingContinueAction::AskMissingSubmit { field_value }),
+        "TERMS_ACCEPT" => {
+            let terms_version_id = terms_version_id
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "terms_version_id is required for TERMS_ACCEPT".to_string())?;
+            Ok(AppOnboardingContinueAction::TermsAccept {
+                terms_version_id,
+                accepted: accepted.unwrap_or(true),
+            })
+        }
+        "PRIMARY_DEVICE_CONFIRM" => {
+            let device_id = device_id
+                .ok_or_else(|| "device_id is required for PRIMARY_DEVICE_CONFIRM".to_string())?;
+            let device_id = DeviceId::new(device_id)
+                .map_err(|err| format!("invalid device_id for PRIMARY_DEVICE_CONFIRM: {err:?}"))?;
+            Ok(AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                device_id,
+                proof_ok: proof_ok.unwrap_or(true),
+            })
+        }
+        "VOICE_ENROLL_LOCK" => {
+            let device_id =
+                device_id.ok_or_else(|| "device_id is required for VOICE_ENROLL_LOCK".to_string())?;
+            let device_id = DeviceId::new(device_id)
+                .map_err(|err| format!("invalid device_id for VOICE_ENROLL_LOCK: {err:?}"))?;
+            let sample_seed = sample_seed
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "sample_seed is required for VOICE_ENROLL_LOCK".to_string())?;
+            Ok(AppOnboardingContinueAction::VoiceEnrollLock {
+                device_id,
+                sample_seed,
+            })
+        }
+        _ => Err(format!(
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK",
+            action
+        )),
+    }
+}
+
+fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNextStep) -> String {
+    match next_step {
+        AppOnboardingContinueNextStep::AskMissing => "ASK_MISSING",
+        AppOnboardingContinueNextStep::Terms => "TERMS",
+        AppOnboardingContinueNextStep::PrimaryDeviceConfirm => "PRIMARY_DEVICE_CONFIRM",
+        AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
+        AppOnboardingContinueNextStep::AccessProvision => "ACCESS_PROVISION",
+        AppOnboardingContinueNextStep::Blocked => "BLOCKED",
     }
     .to_string()
 }
@@ -5907,8 +6047,16 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1link::{InviteeType, LINK_INVITE_OPEN_ACTIVATE_COMMIT};
-    use selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT;
+    use selene_kernel_contracts::ph1_voice_id::{
+        VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
+        VOICE_ID_ENROLL_START_DRAFT,
+    };
+    use selene_kernel_contracts::ph1link::{
+        InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+    };
+    use selene_kernel_contracts::ph1onb::{
+        ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
+    };
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1simcat::{
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
@@ -6202,7 +6350,7 @@ mod tests {
         assert_eq!(response.status, "ok");
         assert_eq!(response.outcome, "ONBOARDING_STARTED");
         assert!(response.onboarding_session_id.is_some());
-        assert_eq!(response.next_step.as_deref(), Some("TERMS"));
+        assert_eq!(response.next_step.as_deref(), Some("ASK_MISSING"));
         assert!(!response.required_fields.is_empty());
     }
 
@@ -6247,6 +6395,162 @@ mod tests {
             })
             .expect_err("bad signature must fail closed");
         assert!(err.contains("TOKEN_SIGNATURE_INVALID"));
+    }
+
+    #[test]
+    fn runc_onboarding_continue_adapter_progresses_terms_device_voice() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runc_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runc_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+                (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+                (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+                (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+                (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut store,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click(&mut store, &inviter_user_id)
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 72_001,
+                idempotency_key: "runc-adapter-start".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "runc_adapter_fp".to_string(),
+                app_instance_id: "ios_instance_runc_adapter".to_string(),
+                deep_link_nonce: "nonce_runc_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+        assert_eq!(start.next_step.as_deref(), Some("ASK_MISSING"));
+        let onboarding_session_id = start
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let ask_prompt = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-adapter-ask-prompt-1".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ASK_MISSING_SUBMIT".to_string(),
+                field_value: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+            })
+            .expect("first ask-missing turn should prompt");
+        assert_eq!(ask_prompt.next_step.as_deref(), Some("ASK_MISSING"));
+
+        let mut ask_out = ask_prompt;
+        for idx in 0..8 {
+            if ask_out.next_step.as_deref() != Some("ASK_MISSING") {
+                break;
+            }
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("blocking field must be returned");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 72_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runc-adapter-ask-value-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "ASK_MISSING_SUBMIT".to_string(),
+                    field_value: Some(field_value.to_string()),
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                })
+                .expect("ask-missing value submit should succeed");
+        }
+        assert_eq!(ask_out.next_step.as_deref(), Some("TERMS"));
+
+        let terms = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-adapter-terms".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "TERMS_ACCEPT".to_string(),
+                field_value: None,
+                terms_version_id: Some("terms_v1".to_string()),
+                accepted: Some(true),
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+            })
+            .expect("terms should succeed");
+        assert_eq!(terms.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
+
+        let device = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-adapter-device".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PRIMARY_DEVICE_CONFIRM".to_string(),
+                field_value: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runc_adapter_inviter_device".to_string()),
+                proof_ok: Some(true),
+                sample_seed: None,
+            })
+            .expect("device confirm should succeed");
+        assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
+
+        let voice = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id,
+                idempotency_key: "runc-adapter-voice".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "VOICE_ENROLL_LOCK".to_string(),
+                field_value: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runc_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: Some("runc_adapter_seed".to_string()),
+            })
+            .expect("voice enroll should succeed");
+        assert_eq!(voice.next_step.as_deref(), Some("ACCESS_PROVISION"));
+        assert!(voice.voice_artifact_sync_receipt_ref.is_some());
     }
 
     fn synthetic_health_for_detail_tests() -> AdapterHealthResponse {

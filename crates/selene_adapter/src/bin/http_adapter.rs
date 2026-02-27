@@ -16,10 +16,11 @@ use axum::{
 };
 use selene_adapter::{
     app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
-    InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, UiChatTranscriptResponse,
-    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
-    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
-    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
+    OnboardingContinueAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
+    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
+    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
+    VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -73,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/ui/chat/transcript", get(ui_chat_transcript))
         .route("/v1/voice/turn", post(run_voice_turn))
         .route("/v1/invite/click", post(run_invite_click))
+        .route("/v1/onboarding/continue", post(run_onboarding_continue))
         .with_state(runtime);
 
     println!(
@@ -375,6 +377,48 @@ async fn run_invite_click(
                 next_step: None,
                 required_fields: Vec::new(),
                 required_verification_gates: Vec::new(),
+            }),
+        ),
+    }
+}
+
+async fn run_onboarding_continue(
+    State(runtime): State<Arc<Mutex<AdapterRuntime>>>,
+    Json(request): Json<OnboardingContinueAdapterRequest>,
+) -> (StatusCode, Json<OnboardingContinueAdapterResponse>) {
+    let runtime = match runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(OnboardingContinueAdapterResponse {
+                    status: "error".to_string(),
+                    outcome: "REJECTED".to_string(),
+                    reason: Some("adapter runtime lock poisoned".to_string()),
+                    onboarding_session_id: None,
+                    next_step: None,
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: Vec::new(),
+                    voice_artifact_sync_receipt_ref: None,
+                }),
+            )
+        }
+    };
+    match runtime.run_onboarding_continue(request) {
+        Ok(response) => (StatusCode::OK, Json(response)),
+        Err(reason) => (
+            StatusCode::BAD_REQUEST,
+            Json(OnboardingContinueAdapterResponse {
+                status: "error".to_string(),
+                outcome: "REJECTED".to_string(),
+                reason: Some(reason),
+                onboarding_session_id: None,
+                next_step: None,
+                blocking_field: None,
+                blocking_question: None,
+                remaining_missing_fields: Vec::new(),
+                voice_artifact_sync_receipt_ref: None,
             }),
         ),
     }
