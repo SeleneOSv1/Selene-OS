@@ -19,7 +19,7 @@ use selene_kernel_contracts::ph1_voice_id::{
 };
 use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1e::ToolResponse;
-use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{AuditEngine, CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
@@ -1803,6 +1803,18 @@ impl AppServerIngressRuntime {
                 reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_ACCESS_PROVISION",
             })
         })?;
+        if !onboarding_has_persona_lock_for_device_since(
+            store,
+            &device_id,
+            session.created_at,
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_ACCESS_PROVISION",
+                },
+            ));
+        }
         let (user_id, _) = ensure_onboarding_persona_subject(
             store,
             &effective_tenant,
@@ -1902,6 +1914,39 @@ impl AppServerIngressRuntime {
                     reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_COMPLETE",
                 })
             })?;
+        let session = store
+            .ph1onb_session_row(&onboarding_session_id)
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        let primary_device_id = session.primary_device_device_id.clone().ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_COMPLETE",
+            })
+        })?;
+        if !onboarding_has_persona_lock_for_device_since(
+            store,
+            &primary_device_id,
+            session.created_at,
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_COMPLETE",
+                },
+            ));
+        }
+        if session.access_engine_instance_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_ACCESS_PROVISION_REQUIRED_BEFORE_COMPLETE",
+                },
+            ));
+        }
         let wake_artifact_sync_receipt_ref =
             store.ph1onb_latest_complete_wake_receipt_ref(&onboarding_session_id);
         let req = Ph1OnbRequest {
@@ -2318,6 +2363,18 @@ fn ensure_onboarding_persona_subject(
         short_hash_hex(&[onboarding_session_id.as_str(), user_id.as_str()])
     );
     Ok((user_id, speaker_id))
+}
+
+fn onboarding_has_persona_lock_for_device_since(
+    store: &Ph1fStore,
+    device_id: &DeviceId,
+    session_created_at: MonotonicTimeNs,
+) -> bool {
+    store.audit_events().iter().any(|event| {
+        event.created_at.0 >= session_created_at.0
+            && event.device_id.as_ref() == Some(device_id)
+            && matches!(&event.engine, AuditEngine::Other(name) if name == "PH1.PERSONA")
+    })
 }
 
 fn emo_signal_bundle_for_onboarding_session(
@@ -3864,6 +3921,50 @@ mod tests {
         assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
 
+        let access_before_emo_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9912),
+                    onboarding_session_id.clone(),
+                    "runc-flow-access-before-emo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AccessProvisionCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(113),
+            )
+            .expect_err("access must fail before emo/persona lock");
+        match access_before_emo_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_ACCESS_PROVISION");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let complete_before_emo_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9913),
+                    onboarding_session_id.clone(),
+                    "runc-flow-complete-before-emo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::CompleteCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(114),
+            )
+            .expect_err("complete must fail before emo/persona lock");
+        match complete_before_emo_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_COMPLETE");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
         let emo = runtime
             .run_onboarding_continue(
                 &mut store,
@@ -3875,10 +3976,33 @@ mod tests {
                     AppOnboardingContinueAction::EmoPersonaLock,
                 )
                 .unwrap(),
-                MonotonicTimeNs(113),
+                MonotonicTimeNs(115),
         )
         .unwrap();
         assert_eq!(emo.next_step, AppOnboardingContinueNextStep::AccessProvision);
+
+        let complete_before_access_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9914),
+                    onboarding_session_id.clone(),
+                    "runc-flow-complete-before-access".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::CompleteCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(116),
+            )
+            .expect_err("complete must fail before access provisioning");
+        match complete_before_access_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_ACCESS_PROVISION_REQUIRED_BEFORE_COMPLETE");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
         let access = runtime
             .run_onboarding_continue(
                 &mut store,
@@ -3890,7 +4014,7 @@ mod tests {
                     AppOnboardingContinueAction::AccessProvisionCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(114),
+                MonotonicTimeNs(117),
             )
             .unwrap();
         assert_eq!(access.next_step, AppOnboardingContinueNextStep::Complete);
@@ -3908,7 +4032,7 @@ mod tests {
                     AppOnboardingContinueAction::CompleteCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(115),
+                MonotonicTimeNs(118),
             )
             .unwrap();
         assert_eq!(complete.next_step, AppOnboardingContinueNextStep::Ready);

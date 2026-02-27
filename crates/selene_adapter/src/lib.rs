@@ -7201,6 +7201,54 @@ mod tests {
             .expect("voice enroll should succeed");
         assert_eq!(voice.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
 
+        let access_before_emo_err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-access-before-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("access should fail before emo/persona lock");
+        assert!(
+            access_before_emo_err.contains("ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_ACCESS_PROVISION")
+        );
+
+        let complete_before_emo_err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-complete-before-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("complete should fail before emo/persona lock");
+        assert!(complete_before_emo_err.contains("ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_COMPLETE"));
+
         let emo = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
                 correlation_id: 73_001,
@@ -7223,6 +7271,29 @@ mod tests {
             })
             .expect("emo/persona lock should succeed");
         assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
+
+        let complete_before_access_err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-complete-before-access".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("complete should fail before access provisioning");
+        assert!(complete_before_access_err.contains("ONB_ACCESS_PROVISION_REQUIRED_BEFORE_COMPLETE"));
 
         let access = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
