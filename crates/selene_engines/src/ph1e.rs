@@ -132,6 +132,27 @@ impl Ph1eRuntime {
                     url: "https://example.com/document-citation".to_string(),
                 }],
             },
+            ToolName::PhotoUnderstand => ToolResult::PhotoUnderstand {
+                summary: format!(
+                    "Photo summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "visible_text".to_string(),
+                        value: "Detected text fragment".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "chart_signal".to_string(),
+                        value: "Upward trend".to_string(),
+                    },
+                ],
+                citations: vec![ToolTextSnippet {
+                    title: "Image region citation".to_string(),
+                    snippet: "Extracted from visible image region".to_string(),
+                    url: "https://example.com/photo-citation".to_string(),
+                }],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -211,6 +232,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::News => "https://example.com/news",
         ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
         ToolName::DocumentUnderstand => "https://example.com/document",
+        ToolName::PhotoUnderstand => "https://example.com/photo",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -349,6 +371,33 @@ mod tests {
                 assert!(!citations.is_empty());
             }
             other => panic!("expected DocumentUnderstand result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_08_photo_understand_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::PhotoUnderstand,
+            "what does this screenshot say?",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected PhotoUnderstand result, got {other:?}"),
         }
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());

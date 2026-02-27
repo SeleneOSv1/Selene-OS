@@ -113,7 +113,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::WebSearchQuery
         | IntentType::NewsQuery
         | IntentType::UrlFetchAndCiteQuery
-        | IntentType::DocumentUnderstandQuery => {
+        | IntentType::DocumentUnderstandQuery
+        | IntentType::PhotoUnderstandQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -220,6 +221,21 @@ fn looks_like_document_understand(lower: &str) -> bool {
             || contains_word(lower, "what does this"))
 }
 
+fn looks_like_photo_understand(lower: &str) -> bool {
+    (contains_word(lower, "photo")
+        || contains_word(lower, "image")
+        || contains_word(lower, "screenshot")
+        || contains_word(lower, "picture")
+        || contains_word(lower, "chart"))
+        && (contains_word(lower, "read")
+            || contains_word(lower, "summarize")
+            || contains_word(lower, "summary")
+            || contains_word(lower, "extract")
+            || contains_word(lower, "analyze")
+            || contains_word(lower, "say")
+            || contains_word(lower, "what does this"))
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -298,6 +314,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_document_understand(s) {
         push(IntentType::DocumentUnderstandQuery);
     }
+    if looks_like_photo_understand(s) {
+        push(IntentType::PhotoUnderstandQuery);
+    }
     if s.contains("remind me") || s.contains("reminder") {
         push(IntentType::SetReminder);
     }
@@ -369,7 +388,8 @@ fn normalize_intent(
         | IntentType::WebSearchQuery
         | IntentType::NewsQuery
         | IntentType::UrlFetchAndCiteQuery
-        | IntentType::DocumentUnderstandQuery => {
+        | IntentType::DocumentUnderstandQuery
+        | IntentType::PhotoUnderstandQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1793,6 +1813,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::NewsQuery => "Get news".to_string(),
         IntentType::UrlFetchAndCiteQuery => "Open URL and cite".to_string(),
         IntentType::DocumentUnderstandQuery => "Read and summarize document".to_string(),
+        IntentType::PhotoUnderstandQuery => "Understand photo or screenshot".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -3006,6 +3027,21 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::DocumentUnderstandQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_22_photo_understand_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene what does this screenshot say?", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::PhotoUnderstandQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
