@@ -6423,6 +6423,119 @@ mod tests {
     }
 
     #[test]
+    fn at_adapter_07b_journal_replay_restores_thread_state_across_runtime_restart() {
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be >= unix epoch")
+            .as_nanos();
+        let journal_path =
+            std::env::temp_dir().join(format!("selene_adapter_thread_state_replay_{seed}.jsonl"));
+
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("first runtime with persistence must construct");
+
+        let mut first = base_request();
+        first.correlation_id = 30_001;
+        first.turn_id = 40_001;
+        first.now_ns = Some(11);
+        first.thread_key = Some("trip_restart".to_string());
+        first.device_id = Some("adapter_ios_device_restart_1".to_string());
+        first.app_platform = "IOS".to_string();
+        first.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+        runtime_one
+            .run_voice_turn(first)
+            .expect("first runtime request must succeed");
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        {
+            let store = runtime_one
+                .store
+                .lock()
+                .expect("first runtime store lock must succeed");
+            let current = store
+                .ph1x_thread_state_current_row(&actor_user_id, "trip_restart")
+                .expect("thread state must be persisted in first runtime");
+            assert_eq!(current.updated_at, MonotonicTimeNs(11));
+            let count = store
+                .ph1x_thread_state_ledger_rows()
+                .iter()
+                .filter(|row| {
+                    row.user_id.as_str() == actor_user_id.as_str()
+                        && row.thread_key == "trip_restart"
+                })
+                .count();
+            assert_eq!(count, 1);
+        }
+
+        let runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("second runtime should replay prior journal");
+
+        {
+            let store = runtime_two
+                .store
+                .lock()
+                .expect("second runtime store lock must succeed");
+            let current = store
+                .ph1x_thread_state_current_row(&actor_user_id, "trip_restart")
+                .expect("thread state must be restored by replay in second runtime");
+            assert_eq!(current.updated_at, MonotonicTimeNs(11));
+            let count = store
+                .ph1x_thread_state_ledger_rows()
+                .iter()
+                .filter(|row| {
+                    row.user_id.as_str() == actor_user_id.as_str()
+                        && row.thread_key == "trip_restart"
+                })
+                .count();
+            assert_eq!(count, 1);
+        }
+
+        let mut second = base_request();
+        second.correlation_id = 30_002;
+        second.turn_id = 40_002;
+        second.now_ns = Some(12);
+        second.thread_key = Some("trip_restart".to_string());
+        second.device_id = Some("adapter_desktop_device_restart_1".to_string());
+        second.app_platform = "DESKTOP".to_string();
+        second.user_text_final = Some("Selene what's the latest news about NVIDIA".to_string());
+        runtime_two
+            .run_voice_turn(second)
+            .expect("second runtime request must succeed");
+
+        {
+            let store = runtime_two
+                .store
+                .lock()
+                .expect("second runtime store lock must succeed after second turn");
+            let current = store
+                .ph1x_thread_state_current_row(&actor_user_id, "trip_restart")
+                .expect("thread state must persist after second runtime request");
+            assert_eq!(current.updated_at, MonotonicTimeNs(12));
+            let count = store
+                .ph1x_thread_state_ledger_rows()
+                .iter()
+                .filter(|row| {
+                    row.user_id.as_str() == actor_user_id.as_str()
+                        && row.thread_key == "trip_restart"
+                })
+                .count();
+            assert_eq!(count, 2);
+        }
+
+        let _ = std::fs::remove_file(journal_path);
+    }
+
+    #[test]
     fn at_adapter_08_sync_worker_pass_runs_after_multi_platform_turns() {
         let runtime = AdapterRuntime::default();
 
