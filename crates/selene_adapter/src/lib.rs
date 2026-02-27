@@ -285,6 +285,8 @@ pub struct OnboardingContinueAdapterResponse {
     pub remaining_missing_fields: Vec<String>,
     pub remaining_platform_receipt_kinds: Vec<String>,
     pub voice_artifact_sync_receipt_ref: Option<String>,
+    pub access_engine_instance_id: Option<String>,
+    pub onboarding_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
@@ -1029,6 +1031,10 @@ impl AdapterRuntime {
             remaining_missing_fields: outcome.remaining_missing_fields,
             remaining_platform_receipt_kinds: outcome.remaining_platform_receipt_kinds,
             voice_artifact_sync_receipt_ref: outcome.voice_artifact_sync_receipt_ref,
+            access_engine_instance_id: outcome.access_engine_instance_id,
+            onboarding_status: outcome
+                .onboarding_status
+                .map(|status| format!("{status:?}").to_ascii_uppercase()),
         })
     }
 
@@ -3575,8 +3581,10 @@ fn parse_onboarding_continue_action(
             })
         }
         "EMO_PERSONA_LOCK" => Ok(AppOnboardingContinueAction::EmoPersonaLock),
+        "ACCESS_PROVISION_COMMIT" => Ok(AppOnboardingContinueAction::AccessProvisionCommit),
+        "COMPLETE_COMMIT" => Ok(AppOnboardingContinueAction::CompleteCommit),
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMO_PERSONA_LOCK",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
             action
         )),
     }
@@ -3591,6 +3599,8 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
         AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
         AppOnboardingContinueNextStep::EmoPersonaLock => "EMO_PERSONA_LOCK",
         AppOnboardingContinueNextStep::AccessProvision => "ACCESS_PROVISION",
+        AppOnboardingContinueNextStep::Complete => "COMPLETE",
+        AppOnboardingContinueNextStep::Ready => "READY",
         AppOnboardingContinueNextStep::Blocked => "BLOCKED",
     }
     .to_string()
@@ -6093,6 +6103,7 @@ mod tests {
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
     use selene_kernel_contracts::ph1onb::{
+        ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
     use selene_kernel_contracts::ph1position::TenantId;
@@ -6252,6 +6263,38 @@ mod tests {
             link.token_id.as_str().to_string(),
             link.token_signature.clone(),
         )
+    }
+
+    fn seed_employee_company_and_position(store: &mut Ph1fStore) {
+        let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
+        store
+            .ph1tenant_company_upsert(selene_storage::ph1f::TenantCompanyRecord {
+                schema_version: selene_kernel_contracts::SchemaVersion(1),
+                tenant_id: tenant_id.clone(),
+                company_id: "company_1".to_string(),
+                legal_name: "Selene Co".to_string(),
+                jurisdiction: "US".to_string(),
+                lifecycle_state: selene_storage::ph1f::TenantCompanyLifecycleState::Active,
+                created_at: MonotonicTimeNs(1),
+                updated_at: MonotonicTimeNs(1),
+            })
+            .unwrap();
+        let position = selene_kernel_contracts::ph1position::PositionRecord::v1(
+            tenant_id.clone(),
+            "company_1".to_string(),
+            selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+            "Operator".to_string(),
+            "Operations".to_string(),
+            "US".to_string(),
+            selene_kernel_contracts::ph1position::PositionScheduleType::FullTime,
+            "profile_ops".to_string(),
+            "band_l2".to_string(),
+            selene_kernel_contracts::ph1position::PositionLifecycleState::Active,
+            MonotonicTimeNs(1),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+        store.ph1position_upsert(position).unwrap();
     }
 
     #[test]
@@ -6444,6 +6487,7 @@ mod tests {
         let (token_id, token_signature) = {
             let mut store = runtime.store.lock().expect("adapter store lock");
             seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_employee_company_and_position(&mut store);
             for (simulation_id, simulation_type) in [
                 (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
                 (ONB_SESSION_START_DRAFT, SimulationType::Draft),
@@ -6454,6 +6498,8 @@ mod tests {
                 (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
                 (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
                 (EMO_SIM_001, SimulationType::Commit),
+                (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+                (ONB_COMPLETE_COMMIT, SimulationType::Commit),
             ] {
                 seed_simulation_catalog_status(
                     &mut store,
@@ -6641,7 +6687,7 @@ mod tests {
         let emo = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
                 correlation_id: 72_001,
-                onboarding_session_id,
+                onboarding_session_id: onboarding_session_id.clone(),
                 idempotency_key: "runc-adapter-emo".to_string(),
                 tenant_id: Some("tenant_1".to_string()),
                 action: "EMO_PERSONA_LOCK".to_string(),
@@ -6658,6 +6704,56 @@ mod tests {
             })
             .expect("emo/persona lock should succeed");
         assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
+
+        let access = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runc-adapter-access".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+            })
+            .expect("access provision should succeed");
+        assert_eq!(access.next_step.as_deref(), Some("COMPLETE"));
+        assert_eq!(
+            access.onboarding_status.as_deref(),
+            Some("ACCESSINSTANCECREATED")
+        );
+        assert!(access.access_engine_instance_id.is_some());
+
+        let complete = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id,
+                idempotency_key: "runc-adapter-complete".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+            })
+            .expect("onboarding complete should succeed");
+        assert_eq!(complete.next_step.as_deref(), Some("READY"));
+        assert_eq!(complete.onboarding_status.as_deref(), Some("COMPLETE"));
+        assert!(complete.access_engine_instance_id.is_some());
+        assert!(complete.voice_artifact_sync_receipt_ref.is_some());
     }
 
     #[test]

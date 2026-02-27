@@ -8189,6 +8189,34 @@ impl Ph1fStore {
         }
     }
 
+    pub fn ph1onb_latest_locked_voice_receipt_ref(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Option<String> {
+        self.voice_enrollment_sessions
+            .values()
+            .filter(|rec| {
+                rec.onboarding_session_id == *onboarding_session_id
+                    && rec.voice_enroll_status == VoiceEnrollStatus::Locked
+            })
+            .max_by_key(|rec| (rec.updated_at.0, rec.created_at.0))
+            .and_then(|rec| rec.voice_artifact_sync_receipt_ref.clone())
+    }
+
+    pub fn ph1onb_latest_complete_wake_receipt_ref(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+    ) -> Option<String> {
+        self.wake_enrollment_sessions
+            .values()
+            .filter(|rec| {
+                rec.onboarding_session_id.as_ref() == Some(onboarding_session_id)
+                    && rec.wake_enroll_status == WakeEnrollStatus::Complete
+            })
+            .max_by_key(|rec| (rec.updated_at.0, rec.created_at.0))
+            .and_then(|rec| rec.wake_artifact_sync_receipt_ref.clone())
+    }
+
     fn summarize_voice_capture_profile(
         &self,
         voice_enrollment_session_id: &str,

@@ -402,6 +402,8 @@ async fn run_onboarding_continue(
                     remaining_missing_fields: Vec::new(),
                     remaining_platform_receipt_kinds: Vec::new(),
                     voice_artifact_sync_receipt_ref: None,
+                    access_engine_instance_id: None,
+                    onboarding_status: None,
                 }),
             )
         }
@@ -421,6 +423,8 @@ async fn run_onboarding_continue(
                 remaining_missing_fields: Vec::new(),
                 remaining_platform_receipt_kinds: Vec::new(),
                 voice_artifact_sync_receipt_ref: None,
+                access_engine_instance_id: None,
+                onboarding_status: None,
             }),
         ),
     }
