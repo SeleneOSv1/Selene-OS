@@ -8,12 +8,18 @@ use selene_kernel_contracts::ph1_voice_id::{
     Ph1VoiceIdSimResponse, VoiceEmbeddingCaptureRef, VoiceIdSimulationRequest,
 };
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
+use selene_kernel_contracts::ph1access::{
+    ACCESS_AP_SCHEMA_ACTIVATE_COMMIT, ACCESS_AP_SCHEMA_CREATE_DRAFT,
+    ACCESS_AP_SCHEMA_RETIRE_COMMIT, ACCESS_AP_SCHEMA_UPDATE_COMMIT, ACCESS_INSTANCE_COMPILE_COMMIT,
+};
 use selene_kernel_contracts::ph1bcast::{
     BcastOutcome, BcastRecipientState, BcastRequest, BcastSimulationType, Ph1BcastRequest,
     Ph1BcastResponse, BCAST_REMINDER_FIRED_COMMIT,
 };
 use selene_kernel_contracts::ph1capreq::{
-    CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest, Ph1CapreqResponse,
+    CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
+    Ph1CapreqResponse, CAPREQ_APPROVE_COMMIT, CAPREQ_CANCEL_REVOKE, CAPREQ_CREATE_DRAFT,
+    CAPREQ_FULFILL_COMMIT, CAPREQ_REJECT_COMMIT, CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT,
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1delivery::{
@@ -25,7 +31,9 @@ use selene_kernel_contracts::ph1k::{
     Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
-use selene_kernel_contracts::ph1link::{AppPlatform, Ph1LinkRequest, Ph1LinkResponse};
+use selene_kernel_contracts::ph1link::{
+    AppPlatform, Ph1LinkRequest, Ph1LinkResponse, LINK_INVITE_GENERATE_DRAFT,
+};
 use selene_kernel_contracts::ph1m::{
     MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryProposedItem, MemoryProvenance,
     MemoryRetentionMode, MemorySensitivityFlag, MemoryValue, Ph1mForgetRequest, Ph1mForgetResponse,
@@ -42,8 +50,9 @@ use selene_kernel_contracts::ph1policy::{
 use selene_kernel_contracts::ph1position::{Ph1PositionRequest, Ph1PositionResponse, TenantId};
 use selene_kernel_contracts::ph1rem::{
     Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode, ReminderPriorityLevel,
-    ReminderType,
+    ReminderType, REMINDER_SCHEDULE_COMMIT,
 };
+use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationStatus};
 use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse, WakeRequest};
 use selene_kernel_contracts::ph1x::{
     AccessStepUpDispatch, DispatchRequest, Ph1xDirective, Ph1xResponse, StepUpChallengeMethod,
@@ -180,6 +189,16 @@ pub enum SimulationDispatchOutcome {
         action: CapabilityRequestAction,
         status: CapabilityRequestStatus,
     },
+}
+
+pub mod reason_codes {
+    use selene_kernel_contracts::ReasonCodeId;
+
+    pub const SIM_DISPATCH_GUARD_ACCESS_REQUIRED: ReasonCodeId = ReasonCodeId(0x5349_0001);
+    pub const SIM_DISPATCH_GUARD_SIMULATION_ID_INVALID: ReasonCodeId = ReasonCodeId(0x5349_0002);
+    pub const SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED: ReasonCodeId =
+        ReasonCodeId(0x5349_0003);
+    pub const SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE: ReasonCodeId = ReasonCodeId(0x5349_0004);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1513,15 +1532,23 @@ impl SimulationExecutor {
         };
 
         match &dispatch.dispatch_request {
-            DispatchRequest::SimulationCandidate(c) => self.execute_simulation_candidate_v1(
-                store,
-                actor_user_id,
-                now,
-                CorrelationId(x.correlation_id),
-                TurnId(x.turn_id),
-                x.idempotency_key.as_deref(),
-                &c.intent_draft,
-            ),
+            DispatchRequest::SimulationCandidate(c) => {
+                self.guard_simulation_candidate_dispatch_v1(
+                    store,
+                    &actor_user_id,
+                    now,
+                    &c.intent_draft,
+                )?;
+                self.execute_simulation_candidate_v1(
+                    store,
+                    actor_user_id,
+                    now,
+                    CorrelationId(x.correlation_id),
+                    TurnId(x.turn_id),
+                    x.idempotency_key.as_deref(),
+                    &c.intent_draft,
+                )
+            }
             DispatchRequest::AccessStepUp(step_up) => self.execute_access_step_up_dispatch_v1(
                 store,
                 actor_user_id,
@@ -1555,6 +1582,67 @@ impl SimulationExecutor {
                     .expect("step-up dispatch outcome must map to valid StepUpResult"),
             ),
             _ => None,
+        }
+    }
+
+    fn guard_simulation_candidate_dispatch_v1(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        now: MonotonicTimeNs,
+        d: &IntentDraft,
+    ) -> Result<(), StorageError> {
+        self.ensure_dispatch_access_allow_v1(store, actor_user_id, now, d)?;
+        let (tenant_id, simulation_id) =
+            simulation_catalog_guard_target_v1(store, actor_user_id, d)?;
+        let Some(sim_row) = store.simulation_catalog_current_row(&tenant_id, &simulation_id) else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                },
+            ));
+        };
+        if sim_row.status != SimulationStatus::Active {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_dispatch_access_allow_v1(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        now: MonotonicTimeNs,
+        d: &IntentDraft,
+    ) -> Result<(), StorageError> {
+        match d.intent_type {
+            IntentType::CreateInviteLink => {
+                let tenant_id = resolve_invite_tenant_id(store, d, actor_user_id)?;
+                self.enforce_link_access_gate(store, actor_user_id, &tenant_id, now)
+            }
+            IntentType::CapreqManage => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_capreq_access_gate(store, actor_user_id, &tenant_id, now)
+            }
+            IntentType::AccessSchemaManage => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_schema_gate(store, actor_user_id, &tenant_id, now)
+            }
+            IntentType::AccessEscalationVote => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_escalation_vote_gate(store, actor_user_id, &tenant_id, now)
+            }
+            IntentType::AccessInstanceCompileRefresh => {
+                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                self.enforce_access_instance_compile_gate(store, actor_user_id, &tenant_id, now)
+            }
+            _ => Ok(()),
         }
     }
 
@@ -1874,7 +1962,7 @@ impl SimulationExecutor {
             IntentType::CreateInviteLink => {
                 let invitee_type =
                     parse_invitee_type(required_field_value(d, FieldKey::InviteeType)?)?;
-                let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
+                let tenant_id = resolve_invite_tenant_id(store, d, &actor_user_id)?;
                 self.enforce_link_access_gate(store, &actor_user_id, &tenant_id, now)?;
                 let tenant_id = Some(tenant_id.as_str().to_string());
 
@@ -2390,6 +2478,11 @@ fn is_legacy_link_delivery_simulation_id(simulation_id: &str) -> bool {
     )
 }
 
+const MEMORY_ATOM_UPSERT_COMMIT: &str = "MEMORY_ATOM_UPSERT_COMMIT";
+const MEMORY_FORGET_COMMIT: &str = "MEMORY_FORGET_COMMIT";
+const MEMORY_RECALL_QUERY_COMMIT: &str = "MEMORY_RECALL_QUERY_COMMIT";
+const ACCESS_BOARD_VOTE_COMMIT: &str = "ACCESS_BOARD_VOTE_COMMIT";
+
 fn field_value<'a>(d: &'a IntentDraft, k: FieldKey) -> Option<&'a FieldValue> {
     d.fields.iter().find(|f| f.key == k).map(|f| &f.value)
 }
@@ -2461,6 +2554,13 @@ fn resolve_reminder_tenant_id(
         return parse_tenant_id(v);
     }
 
+    resolve_runtime_scope_tenant_id(store, actor_user_id)
+}
+
+fn resolve_runtime_scope_tenant_id(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+) -> Result<TenantId, StorageError> {
     if let Some((tenant_scope, _local_user)) = actor_user_id.as_str().split_once(':') {
         if !tenant_scope.trim().is_empty() {
             return TenantId::new(tenant_scope.to_string())
@@ -2494,6 +2594,80 @@ fn resolve_reminder_tenant_id(
     })?;
 
     TenantId::new(tenant).map_err(StorageError::ContractViolation)
+}
+
+fn resolve_invite_tenant_id(
+    store: &Ph1fStore,
+    d: &IntentDraft,
+    actor_user_id: &UserId,
+) -> Result<TenantId, StorageError> {
+    // Runtime scope is authoritative for invite dispatch. Transcript-derived tenant hints never override it.
+    let runtime_tenant_id = resolve_runtime_scope_tenant_id(store, actor_user_id)?;
+    if let Some(v) = optional_field_value(d, FieldKey::TenantId) {
+        if let Ok(tenant_hint) = parse_tenant_id(v) {
+            if tenant_hint == runtime_tenant_id {
+                return Ok(runtime_tenant_id);
+            }
+        }
+    }
+    Ok(runtime_tenant_id)
+}
+
+fn simulation_catalog_guard_target_v1(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    d: &IntentDraft,
+) -> Result<(TenantId, SimulationId), StorageError> {
+    let tenant_id = match d.intent_type {
+        IntentType::CreateInviteLink => resolve_invite_tenant_id(store, d, actor_user_id)?,
+        IntentType::CapreqManage
+        | IntentType::AccessSchemaManage
+        | IntentType::AccessEscalationVote
+        | IntentType::AccessInstanceCompileRefresh => {
+            parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?
+        }
+        _ => resolve_reminder_tenant_id(store, d, actor_user_id)?,
+    };
+    let simulation_id = simulation_id_for_intent_draft_v1(d)?;
+    let simulation_id =
+        SimulationId::new(simulation_id.to_string()).map_err(StorageError::ContractViolation)?;
+    Ok((tenant_id, simulation_id))
+}
+
+fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
+    match d.intent_type {
+        IntentType::SetReminder => Ok(REMINDER_SCHEDULE_COMMIT),
+        IntentType::MemoryRememberRequest => Ok(MEMORY_ATOM_UPSERT_COMMIT),
+        IntentType::MemoryForgetRequest => Ok(MEMORY_FORGET_COMMIT),
+        IntentType::MemoryQuery => Ok(MEMORY_RECALL_QUERY_COMMIT),
+        IntentType::CreateInviteLink => Ok(LINK_INVITE_GENERATE_DRAFT),
+        IntentType::CapreqManage => {
+            match parse_capreq_action(optional_field_value(d, FieldKey::CapreqAction))? {
+                CapabilityRequestAction::CreateDraft => Ok(CAPREQ_CREATE_DRAFT),
+                CapabilityRequestAction::SubmitForApproval => Ok(CAPREQ_SUBMIT_FOR_APPROVAL_COMMIT),
+                CapabilityRequestAction::Approve => Ok(CAPREQ_APPROVE_COMMIT),
+                CapabilityRequestAction::Reject => Ok(CAPREQ_REJECT_COMMIT),
+                CapabilityRequestAction::Fulfill => Ok(CAPREQ_FULFILL_COMMIT),
+                CapabilityRequestAction::Cancel => Ok(CAPREQ_CANCEL_REVOKE),
+            }
+        }
+        IntentType::AccessSchemaManage => {
+            match parse_access_ap_action(required_field_value(d, FieldKey::ApAction)?)? {
+                AccessApAction::CreateDraft => Ok(ACCESS_AP_SCHEMA_CREATE_DRAFT),
+                AccessApAction::Update => Ok(ACCESS_AP_SCHEMA_UPDATE_COMMIT),
+                AccessApAction::Activate => Ok(ACCESS_AP_SCHEMA_ACTIVATE_COMMIT),
+                AccessApAction::Retire => Ok(ACCESS_AP_SCHEMA_RETIRE_COMMIT),
+            }
+        }
+        IntentType::AccessEscalationVote => Ok(ACCESS_BOARD_VOTE_COMMIT),
+        IntentType::AccessInstanceCompileRefresh => Ok(ACCESS_INSTANCE_COMPILE_COMMIT),
+        _ => Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "simulation_candidate_dispatch.intent_draft.intent_type",
+                reason: "SIM_DISPATCH_GUARD_SIMULATION_ID_INVALID",
+            },
+        )),
+    }
 }
 
 fn derive_memory_key_from_subject(subject: &str) -> Result<MemoryKey, StorageError> {
@@ -3200,6 +3374,10 @@ mod tests {
         POSITION_SIM_001_CREATE_DRAFT,
     };
     use selene_kernel_contracts::ph1rem::{Ph1RemResponse, ReminderPriorityLevel};
+    use selene_kernel_contracts::ph1simcat::{
+        SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
+        SimulationVersion,
+    };
     use selene_kernel_contracts::ph1w::{
         Ph1wRequest, Ph1wResponse, WakeEnrollStartDraftRequest, WakeRequest, WakeSimulationType,
         PH1W_CONTRACT_VERSION, WAKE_ENROLL_START_DRAFT,
@@ -3589,6 +3767,32 @@ mod tests {
         );
     }
 
+    fn seed_simulation_catalog_status(
+        store: &mut Ph1fStore,
+        tenant: &str,
+        simulation_id: &str,
+        simulation_type: SimulationType,
+        status: SimulationStatus,
+    ) {
+        let tenant_id = TenantId::new(tenant.to_string()).unwrap();
+        let simulation_id = SimulationId::new(simulation_id.to_string()).unwrap();
+        let event = SimulationCatalogEventInput::v1(
+            MonotonicTimeNs(1),
+            tenant_id,
+            simulation_id,
+            SimulationVersion(1),
+            simulation_type,
+            status,
+            "PH1.X".to_string(),
+            "reads_v1".to_string(),
+            "writes_v1".to_string(),
+            ReasonCodeId(1),
+            None,
+        )
+        .unwrap();
+        store.append_simulation_catalog_event(event).unwrap();
+    }
+
     fn access_field(key: FieldKey, value: &str) -> IntentField {
         IntentField {
             key,
@@ -3672,6 +3876,13 @@ mod tests {
             ))
             .unwrap();
         seed_link_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
 
         let draft = IntentDraft::v1(
             IntentType::CreateInviteLink,
@@ -3726,6 +3937,249 @@ mod tests {
             },
             _ => panic!("expected link outcome"),
         }
+    }
+
+    #[test]
+    fn run2_send_link_tenant_infers_scope_in_dispatch() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("tenant_1:inviter-tenant-infer-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![IntentField {
+                key: FieldKey::InviteeType,
+                value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            }],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        let x = Ph1xResponse::v1(
+            10,
+            23,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-tenant-infer-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(123), &x)
+            .unwrap();
+
+        match out {
+            SimulationDispatchOutcome::Link(Ph1LinkResponse::Ok(ok)) => {
+                assert_eq!(ok.simulation_id, "LINK_INVITE_GENERATE_DRAFT");
+                assert!(ok.link_generate_result.is_some());
+            }
+            _ => panic!("expected link outcome"),
+        }
+    }
+
+    #[test]
+    fn run2_send_link_tenant_hint_is_non_authoritative_in_dispatch() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let actor = UserId::new("tenant_1:inviter-tenant-hint-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_999".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+
+        let x = Ph1xResponse::v1(
+            10,
+            24,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-tenant-hint-nonauthoritative-1".to_string()),
+        )
+        .unwrap();
+
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(123), &x)
+            .unwrap();
+
+        match out {
+            SimulationDispatchOutcome::Link(Ph1LinkResponse::Ok(ok)) => {
+                assert_eq!(ok.simulation_id, "LINK_INVITE_GENERATE_DRAFT");
+                assert!(ok.link_generate_result.is_some());
+            }
+            _ => panic!("expected link outcome"),
+        }
+    }
+
+    #[test]
+    fn at_sim_exec_01_ph1x_sim_candidate_create_invite_link_requires_active_simulation_catalog() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("inviter-1").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_link_access_instance(&mut store, &actor, "tenant_1");
+
+        let draft = IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("employee".to_string(), "employee".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim("tenant_1".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        let x = Ph1xResponse::v1(
+            10,
+            22,
+            Ph1xDirective::Dispatch(DispatchDirective::simulation_candidate_v1(draft).unwrap()),
+            ThreadState::empty_v1(),
+            None,
+            DeliveryHint::AudibleAndText,
+            ReasonCodeId(1),
+            Some("idem-guard-1".to_string()),
+        )
+        .unwrap();
+
+        let missing = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor.clone(),
+            MonotonicTimeNs(123),
+            &x,
+        );
+        assert!(matches!(
+            missing,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                }
+            ))
+        ));
+
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Disabled,
+        );
+        let inactive = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(124),
+            &x,
+        );
+        assert!(matches!(
+            inactive,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.intent_draft.simulation_id",
+                    reason: "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                }
+            ))
+        ));
+        assert_eq!(
+            reason_codes::SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE,
+            ReasonCodeId(0x5349_0004)
+        );
     }
 
     #[test]

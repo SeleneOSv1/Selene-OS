@@ -151,6 +151,20 @@ fn is_greeting(s: &str) -> bool {
     )
 }
 
+fn looks_like_send_or_share_link(lower: &str) -> bool {
+    let has_link = contains_word(lower, "link");
+    let has_send_or_share = contains_word(lower, "send") || contains_word(lower, "share");
+    has_link && has_send_or_share
+}
+
+fn looks_like_generate_link(lower: &str) -> bool {
+    let has_link = contains_word(lower, "link");
+    let has_generate = contains_word(lower, "generate")
+        || contains_word(lower, "create")
+        || contains_word(lower, "make");
+    has_link && has_generate
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -238,7 +252,8 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
         || (s.contains("invite") && s.contains("link"))
         || (s.contains("onboard") && (s.contains("link") || s.contains("invite")))
         || s.contains("send an invite")
-        || s.contains("generate a link")
+        || looks_like_send_or_share_link(s)
+        || looks_like_generate_link(s)
     {
         push(IntentType::CreateInviteLink);
     }
@@ -778,12 +793,34 @@ fn normalize_send_money(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViola
 fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
     let t = &req.transcript_ok.transcript_text;
     let lower = t.to_ascii_lowercase();
+    let delivery_requested = looks_like_send_or_share_link(&lower);
 
-    let invitee_type = extract_invitee_type(&lower, t);
-    let delivery_method = extract_delivery_method(&lower, t);
+    let invitee_type = extract_invitee_type(&lower, t).or_else(|| {
+        let fallback_span = excerpt_from_lower_match(&lower, t, "link")
+            .or_else(|| excerpt_from_lower_match(&lower, t, "invite"))
+            .unwrap_or_else(|| t.to_string());
+        Some((fallback_span, "associate".to_string()))
+    });
+    let delivery_method = extract_delivery_method(&lower, t).or_else(|| {
+        if delivery_requested {
+            let fallback_span = excerpt_from_lower_match(&lower, t, "send")
+                .or_else(|| excerpt_from_lower_match(&lower, t, "share"))
+                .unwrap_or_else(|| "send".to_string());
+            Some((fallback_span, "selene_app".to_string()))
+        } else {
+            None
+        }
+    });
     let recipient_contact = extract_recipient_contact(t)
         // As a last resort, accept a short "to X" span as the "contact" (future slices can tighten this).
         .or_else(|| extract_recipient_after_to(&lower, t));
+    let runtime_tenant_id = req
+        .runtime_tenant_id
+        .as_ref()
+        .map(|tenant| tenant.trim().to_string())
+        .filter(|tenant| !tenant.is_empty());
+    let transcript_tenant_hint = extract_tenant_id(&lower, t);
+    let tenant_id = runtime_tenant_id.clone();
 
     let mut fields = Vec::new();
     let mut evidence = Vec::new();
@@ -795,9 +832,9 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
             value: FieldValue::normalized(orig.clone(), norm)?,
             confidence: OverallConfidence::High,
         });
-        evidence.push(evidence_span(FieldKey::InviteeType, t, &orig)?);
-    } else {
-        missing.push(FieldKey::InviteeType);
+        if excerpt_from_lower_match(&lower, t, &orig.to_ascii_lowercase()).is_some() {
+            evidence.push(evidence_span(FieldKey::InviteeType, t, &orig)?);
+        }
     }
 
     if let Some((orig, norm)) = delivery_method {
@@ -806,9 +843,9 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
             value: FieldValue::normalized(orig.clone(), norm)?,
             confidence: OverallConfidence::High,
         });
-        evidence.push(evidence_span(FieldKey::DeliveryMethod, t, &orig)?);
-    } else {
-        missing.push(FieldKey::DeliveryMethod);
+        if excerpt_from_lower_match(&lower, t, &orig.to_ascii_lowercase()).is_some() {
+            evidence.push(evidence_span(FieldKey::DeliveryMethod, t, &orig)?);
+        }
     }
 
     if let Some(c) = recipient_contact {
@@ -818,15 +855,19 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
             confidence: OverallConfidence::High,
         });
         evidence.push(evidence_span(FieldKey::RecipientContact, t, &c)?);
-    } else {
+    } else if delivery_requested {
         missing.push(FieldKey::RecipientContact);
     }
 
-    if !missing.is_empty() {
-        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
-            intent_type_for_missing(IntentType::CreateInviteLink),
-            &missing,
-        )?));
+    if let Some(tenant) = tenant_id {
+        fields.push(IntentField {
+            key: FieldKey::TenantId,
+            value: FieldValue::verbatim(tenant.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        if transcript_tenant_hint.as_deref() == Some(tenant.as_str()) {
+            evidence.push(evidence_span(FieldKey::TenantId, t, &tenant)?);
+        }
     }
 
     let (sens, confirm) = meta_for_intent(IntentType::CreateInviteLink);
@@ -834,7 +875,7 @@ fn normalize_create_invite_link(req: &Ph1nRequest) -> Result<Ph1nResponse, Contr
         IntentType::CreateInviteLink,
         INTENT_SCHEMA_VERSION_V1,
         fields,
-        vec![],
+        missing,
         OverallConfidence::High,
         evidence,
         reason_codes::N_INTENT_OK,
@@ -2633,6 +2674,63 @@ mod tests {
                 assert!(c.what_is_missing.contains(&FieldKey::Amount));
             }
             _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn run2_send_link_tenant_normalizes_create_invite() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let req = req("Selene send a link to Tom", "en")
+            .with_runtime_tenant_id(Some("tenant_1".to_string()))
+            .unwrap();
+        let out = rt.run(&req).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::CreateInviteLink);
+                assert!(d.required_fields_missing.is_empty());
+                let tenant = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::TenantId)
+                    .expect("tenant field must be present");
+                assert_eq!(tenant.value.original_span, "tenant_1");
+
+                let recipient = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::RecipientContact)
+                    .expect("recipient contact must be present");
+                assert_eq!(recipient.value.original_span, "Tom");
+
+                let method = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::DeliveryMethod)
+                    .expect("delivery method must be present");
+                assert_eq!(method.value.normalized_value.as_deref(), Some("selene_app"));
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn run2_send_link_transcript_tenant_hint_mismatch_is_ignored() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let req = req("Selene send a link to Tom for tenant tenant_999", "en")
+            .with_runtime_tenant_id(Some("tenant_1".to_string()))
+            .unwrap();
+        let out = rt.run(&req).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::CreateInviteLink);
+                let tenant = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::TenantId)
+                    .expect("tenant field must be present from runtime scope");
+                assert_eq!(tenant.value.original_span, "tenant_1");
+            }
+            _ => panic!("expected intent_draft"),
         }
     }
 

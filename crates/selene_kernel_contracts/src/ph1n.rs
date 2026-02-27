@@ -508,6 +508,8 @@ pub struct Ph1nRequest {
     pub uncertain_spans: Vec<UncertainSpan>,
     /// Optional confirmed context from the last confirmed WorkOrder (used for safe reference resolution).
     pub confirmed_context: Option<ConfirmedContext>,
+    /// Optional runtime tenant scope supplied by Selene OS/app ingress; never extracted from transcript.
+    pub runtime_tenant_id: Option<String>,
 }
 
 impl Ph1nRequest {
@@ -522,15 +524,34 @@ impl Ph1nRequest {
             time_context: None,
             uncertain_spans: vec![],
             confirmed_context: None,
+            runtime_tenant_id: None,
         };
         r.validate()?;
         Ok(r)
+    }
+
+    pub fn with_runtime_tenant_id(
+        mut self,
+        runtime_tenant_id: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.runtime_tenant_id = runtime_tenant_id
+            .map(|tenant| tenant.trim().to_string())
+            .filter(|tenant| !tenant.is_empty());
+        self.validate()?;
+        Ok(self)
     }
 }
 
 impl Validate for Ph1nRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1N_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1n_request.schema_version",
+                reason: "must match PH1N_CONTRACT_VERSION",
+            });
+        }
         self.transcript_ok.validate()?;
+        self.session_state_ref.validate()?;
         if self.uncertain_spans.len() > 8 {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1n_request.uncertain_spans",
@@ -539,6 +560,26 @@ impl Validate for Ph1nRequest {
         }
         for s in &self.uncertain_spans {
             s.validate()?;
+            if (s.end_byte as usize) > self.transcript_ok.transcript_text.len() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1n_request.uncertain_spans.end_byte",
+                    reason: "must be <= transcript_ok.transcript_text byte length",
+                });
+            }
+            if !self
+                .transcript_ok
+                .transcript_text
+                .is_char_boundary(s.start_byte as usize)
+                || !self
+                    .transcript_ok
+                    .transcript_text
+                    .is_char_boundary(s.end_byte as usize)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1n_request.uncertain_spans",
+                    reason: "start/end must align to UTF-8 char boundaries",
+                });
+            }
         }
         if let Some(t) = &self.time_context {
             t.validate()?;
@@ -546,8 +587,37 @@ impl Validate for Ph1nRequest {
         if let Some(c) = &self.confirmed_context {
             c.validate()?;
         }
+        if let Some(tenant_id) = &self.runtime_tenant_id {
+            validate_runtime_tenant_id(tenant_id)?;
+        }
         Ok(())
     }
+}
+
+fn validate_runtime_tenant_id(tenant_id: &str) -> Result<(), ContractViolation> {
+    let trimmed = tenant_id.trim();
+    if trimmed.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.runtime_tenant_id",
+            reason: "must not be empty when present",
+        });
+    }
+    if trimmed.len() > 128 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.runtime_tenant_id",
+            reason: "must be <= 128 chars",
+        });
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.runtime_tenant_id",
+            reason: "must contain only [A-Za-z0-9_.-]",
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -589,6 +659,12 @@ impl UncertainSpan {
 
 impl Validate for UncertainSpan {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1N_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "uncertain_span.schema_version",
+                reason: "must match PH1N_CONTRACT_VERSION",
+            });
+        }
         if self.end_byte <= self.start_byte {
             return Err(ContractViolation::InvalidValue {
                 field: "uncertain_span.end_byte",
@@ -628,6 +704,12 @@ impl TimeContext {
 
 impl Validate for TimeContext {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1N_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "time_context.schema_version",
+                reason: "must match PH1N_CONTRACT_VERSION",
+            });
+        }
         // Keep bounds practical.
         if self.tz_offset_minutes < -14 * 60 || self.tz_offset_minutes > 14 * 60 {
             return Err(ContractViolation::InvalidValue {
@@ -663,6 +745,12 @@ impl ConfirmedContext {
 
 impl Validate for ConfirmedContext {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1N_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "confirmed_context.schema_version",
+                reason: "must match PH1N_CONTRACT_VERSION",
+            });
+        }
         if self.last_confirmed_fields.len() > 24 {
             return Err(ContractViolation::InvalidValue {
                 field: "confirmed_context.last_confirmed_fields",
@@ -705,5 +793,51 @@ mod tests {
         .unwrap();
         let req = Ph1nRequest::v1(ok, SessionStateRef::v1(SessionState::Active, false));
         assert!(req.is_ok());
+    }
+
+    #[test]
+    fn request_rejects_schema_drift() {
+        let ok = TranscriptOk::v1(
+            "hello".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        let mut req = Ph1nRequest::v1(ok, SessionStateRef::v1(SessionState::Active, false))
+            .expect("request must construct");
+        req.schema_version = SchemaVersion(999);
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn request_rejects_uncertain_span_outside_transcript_bounds() {
+        let ok = TranscriptOk::v1(
+            "hello".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        let mut req = Ph1nRequest::v1(ok, SessionStateRef::v1(SessionState::Active, false))
+            .expect("request must construct");
+        req.uncertain_spans.push(
+            UncertainSpan::v1(UncertainSpanKind::Unknown, Some(FieldKey::Task), 1, 3).unwrap(),
+        );
+        req.uncertain_spans[0].end_byte = 99;
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn request_accepts_runtime_tenant_id_context() {
+        let ok = TranscriptOk::v1(
+            "hello".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        let req = Ph1nRequest::v1(ok, SessionStateRef::v1(SessionState::Active, false))
+            .expect("request must construct")
+            .with_runtime_tenant_id(Some("tenant_1".to_string()))
+            .expect("runtime tenant context should validate");
+        assert_eq!(req.runtime_tenant_id.as_deref(), Some("tenant_1"));
     }
 }

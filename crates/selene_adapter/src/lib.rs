@@ -10,21 +10,54 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+use selene_engines::ph1c::{
+    reason_codes as ph1c_reason_codes, Ph1cConfig as EnginePh1cConfig, Ph1cLiveProviderContext,
+    Ph1cRuntime as EnginePh1cRuntime, Ph1cStreamCommit,
+};
+use selene_engines::ph1context::{
+    Ph1ContextConfig as EnginePh1ContextConfig, Ph1ContextRuntime as EnginePh1ContextRuntime,
+};
+use selene_engines::ph1d::{
+    reason_codes as ph1d_reason_codes, ModelCallOutcome as Ph1dModelCallOutcome,
+    Ph1dLiveProviderAdapter, Ph1dProviderAdapter, Ph1dRuntime as EnginePh1dRuntime,
+};
 use selene_engines::ph1health::{
     reason_codes as health_reason_codes, Ph1HealthConfig as EngineHealthConfig,
     Ph1HealthRuntime as EngineHealthRuntime,
 };
+use selene_engines::ph1k::{
+    build_duplex_frame, build_interrupt_feedback_signal, build_ph1k_to_ph1c_handoff,
+    default_adaptive_policy_input, evaluate_interrupt_candidate, InterruptFeedbackSignalKind,
+    InterruptInput, InterruptNoiseClass, InterruptPhraseMatcher, PhraseDetection,
+};
+use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
+use selene_engines::ph1vision::{
+    Ph1VisionConfig as EnginePh1VisionConfig, Ph1VisionRuntime as EnginePh1VisionRuntime,
+};
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
 };
 use selene_kernel_contracts::ph1art::{
     ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
 };
+use selene_kernel_contracts::ph1c::{
+    ConfidenceBucket as Ph1cConfidenceBucket, LanguageHint, LanguageHintConfidence, LanguageTag,
+    NoiseLevelHint, Ph1cRequest, Ph1cResponse, Ph1kToPh1cHandoff, RetryAdvice as Ph1cRetryAdvice,
+    SessionStateRef as Ph1cSessionStateRef, SpeakerOverlapClass, SpeakerOverlapHint,
+    TranscriptOk as Ph1cTranscriptOk, VadQualityHint,
+};
+use selene_kernel_contracts::ph1context::{Ph1ContextRequest, Ph1ContextResponse};
+use selene_kernel_contracts::ph1d::{
+    Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
+    PolicyContextRef, SafetyTier,
+};
+use selene_kernel_contracts::ph1e::{ToolCatalogRef, ToolName};
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
+use selene_kernel_contracts::ph1feedback::FeedbackEventType;
 use selene_kernel_contracts::ph1health::{
     HealthAckState, HealthActionResult, HealthCompanyScope, HealthDisplayTarget, HealthIssueEvent,
     HealthIssueStatus, HealthPageAction, HealthReadEnvelope, HealthReportKind,
@@ -33,16 +66,30 @@ use selene_kernel_contracts::ph1health::{
 };
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::{
-    AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
-    Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+    AdvancedAudioQualityMetrics, AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind,
+    AudioStreamRef, ChannelCount, Confidence, DeviceHealth, DeviceReliabilityScoreInput,
+    DeviceRoute, DeviceState, DuplexFrame, FrameDurationMs, InterruptLexiconPolicyBinding,
+    InterruptLocaleTag, InterruptPhraseSetVersion, InterruptPolicyProfileId,
+    InterruptTenantProfileId, PreRollBufferId, PreRollBufferRef, SampleFormat, SampleRateHz,
+    SpeechLikeness, TimingStats as Ph1kTimingStats, TtsPlaybackActiveEvent, VadEvent,
 };
 use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::AppPlatform;
-use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
+use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
+use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
+use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
-use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
+use selene_kernel_contracts::ph1vision::{
+    BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisionRawSourceRef, VisualSourceId,
+    VisualSourceKind, VisualSourceRef, VisualToken,
+};
+use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
+use selene_kernel_contracts::{
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
+};
 use selene_os::app_ingress::{AppServerIngressRuntime, AppVoiceIngressRequest};
 use selene_os::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use selene_os::ph1_voice_id::{
@@ -53,16 +100,30 @@ use selene_os::ph1builder::{
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
-use selene_os::ph1os::{OsVoiceLiveTurnOutcome, OsVoiceTrigger};
+use selene_os::ph1feedback::{
+    build_gold_case_capture_from_ph1c_response, build_gold_case_capture_from_ph1d_response,
+    GoldCaseCaptureContext,
+};
+use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
+use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
+use selene_os::ph1os::{
+    OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsPh1kLiveEvidence,
+    OsVoiceLiveTurnOutcome, OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring,
+    Ph1OsOcrRouteConfig, Ph1OsOcrRouteWiring,
+};
 use selene_os::ph1pattern::Ph1PatternEngine;
 use selene_os::ph1rll::Ph1RllEngine;
+use selene_os::ph1vision::{
+    Ph1VisionEngine, Ph1VisionWiring, Ph1VisionWiringConfig, VisionTurnInput, VisionWiringOutcome,
+};
 use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
 use selene_os::simulation_executor::SimulationExecutor;
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
-    OutcomeUtilizationLedgerRowInput, Ph1fStore, StorageError,
+    OutcomeUtilizationLedgerRowInput, Ph1dCommitEnvelope, Ph1fStore, Ph1kDeviceHealth,
+    Ph1kFeedbackCaptureInput, Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields,
+    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, StorageError,
 };
-
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
 }
@@ -81,6 +142,70 @@ pub mod reason_codes {
     pub const ADAPTER_SYNC_REPLAY_DUE: ReasonCodeId = ReasonCodeId(0xAD70_0003);
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct VoiceTurnAudioCaptureRef {
+    pub stream_id: u128,
+    pub pre_roll_buffer_id: u64,
+    pub t_start_ns: u64,
+    pub t_end_ns: u64,
+    pub t_candidate_start_ns: u64,
+    pub t_confirmed_ns: u64,
+    pub locale_tag: Option<String>,
+    pub device_route: Option<String>,
+    pub selected_mic: Option<String>,
+    pub selected_speaker: Option<String>,
+    pub tts_playback_active: Option<bool>,
+    pub detection_text: Option<String>,
+    pub detection_confidence_bp: Option<u16>,
+    pub vad_confidence_bp: Option<u16>,
+    pub acoustic_confidence_bp: Option<u16>,
+    pub prosody_confidence_bp: Option<u16>,
+    pub speech_likeness_bp: Option<u16>,
+    pub echo_safe_confidence_bp: Option<u16>,
+    pub nearfield_confidence_bp: Option<u16>,
+    pub capture_degraded: Option<bool>,
+    pub stream_gap_detected: Option<bool>,
+    pub aec_unstable: Option<bool>,
+    pub device_changed: Option<bool>,
+    pub snr_db_milli: Option<i32>,
+    pub clipping_ratio_bp: Option<u16>,
+    pub echo_delay_ms_milli: Option<u32>,
+    pub packet_loss_bp: Option<u16>,
+    pub double_talk_bp: Option<u16>,
+    pub erle_db_milli: Option<i32>,
+    pub device_failures_24h: Option<u32>,
+    pub device_recoveries_24h: Option<u32>,
+    pub device_mean_recovery_ms: Option<u32>,
+    pub device_reliability_bp: Option<u16>,
+    pub timing_jitter_ms_milli: Option<u32>,
+    pub timing_drift_ppm_milli: Option<u32>,
+    pub timing_buffer_depth_ms_milli: Option<u32>,
+    pub timing_underruns: Option<u64>,
+    pub timing_overruns: Option<u64>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct VoiceTurnVisualTokenRef {
+    pub token: String,
+    pub x: Option<u32>,
+    pub y: Option<u32>,
+    pub w: Option<u32>,
+    pub h: Option<u32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct VoiceTurnVisualInputRef {
+    pub turn_opt_in_enabled: bool,
+    pub source_id: Option<String>,
+    pub source_kind: Option<String>,
+    pub image_ref: Option<String>,
+    pub blob_ref: Option<String>,
+    pub visible_tokens: Vec<VoiceTurnVisualTokenRef>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VoiceTurnAdapterRequest {
     pub correlation_id: u64,
@@ -95,6 +220,8 @@ pub struct VoiceTurnAdapterRequest {
     pub user_text_final: Option<String>,
     pub selene_text_partial: Option<String>,
     pub selene_text_final: Option<String>,
+    pub audio_capture_ref: Option<VoiceTurnAudioCaptureRef>,
+    pub visual_input_ref: Option<VoiceTurnVisualInputRef>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -331,6 +458,11 @@ pub struct AdapterRuntime {
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
     report_display_target_defaults: Arc<Mutex<BTreeMap<String, String>>>,
     auto_builder_enabled: bool,
+    ph1c_live_enabled: bool,
+    ph1c_streaming_enabled: bool,
+    ph1c_runtime: EnginePh1cRuntime,
+    ph1d_runtime: EnginePh1dRuntime,
+    ph1d_live_adapter: Option<Ph1dLiveProviderAdapter>,
     persistence: Option<AdapterPersistenceConfig>,
 }
 
@@ -470,6 +602,63 @@ impl Ph1RllEngine for AdapterRllEngineRuntime {
     }
 }
 
+#[derive(Debug, Clone)]
+struct AdapterVisionEngineRuntime {
+    runtime: EnginePh1VisionRuntime,
+}
+
+impl AdapterVisionEngineRuntime {
+    fn new() -> Self {
+        Self {
+            runtime: EnginePh1VisionRuntime::new(EnginePh1VisionConfig::mvp_v1()),
+        }
+    }
+}
+
+impl Ph1VisionEngine for AdapterVisionEngineRuntime {
+    fn run(&self, req: &Ph1VisionRequest) -> Ph1VisionResponse {
+        self.runtime.run(req)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AdapterContextEngineRuntime {
+    runtime: EnginePh1ContextRuntime,
+}
+
+impl AdapterContextEngineRuntime {
+    fn new() -> Self {
+        Self {
+            runtime: EnginePh1ContextRuntime::new(EnginePh1ContextConfig::mvp_v1()),
+        }
+    }
+}
+
+impl Ph1ContextEngine for AdapterContextEngineRuntime {
+    fn run(&self, req: &Ph1ContextRequest) -> Ph1ContextResponse {
+        self.runtime.run(req)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AdapterNlpEngineRuntime {
+    runtime: EnginePh1nRuntime,
+}
+
+impl AdapterNlpEngineRuntime {
+    fn new() -> Self {
+        Self {
+            runtime: EnginePh1nRuntime::new(EnginePh1nConfig::mvp_v1()),
+        }
+    }
+}
+
+impl Ph1nEngine for AdapterNlpEngineRuntime {
+    fn run(&self, req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+        self.runtime.run(req)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncIssueKind {
     Retry,
@@ -495,6 +684,65 @@ struct SyncImprovementEmissionResult {
     builder_input_entries: Vec<OsOutcomeUtilizationEntry>,
 }
 
+#[derive(Debug, Clone)]
+struct Ph1cLiveTurnOutcomeSummary {
+    response: Ph1cResponse,
+    partial_text: Option<String>,
+    final_text: Option<String>,
+    finalized: bool,
+    low_latency_commit: bool,
+    provider_call_trace: Vec<Ph1dProviderCallResponse>,
+}
+
+#[derive(Debug, Clone)]
+struct RecordingPh1dProviderAdapter<'a, A>
+where
+    A: Ph1dProviderAdapter,
+{
+    inner: &'a A,
+    records: Arc<Mutex<Vec<Ph1dProviderCallResponse>>>,
+}
+
+impl<'a, A> RecordingPh1dProviderAdapter<'a, A>
+where
+    A: Ph1dProviderAdapter,
+{
+    fn new(inner: &'a A, records: Arc<Mutex<Vec<Ph1dProviderCallResponse>>>) -> Self {
+        Self { inner, records }
+    }
+}
+
+impl<A> Ph1dProviderAdapter for RecordingPh1dProviderAdapter<'_, A>
+where
+    A: Ph1dProviderAdapter,
+{
+    fn execute(
+        &self,
+        req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, selene_engines::ph1d::Ph1dProviderAdapterError> {
+        let out = self.inner.execute(req)?;
+        if let Ok(mut records) = self.records.lock() {
+            records.push(out.clone());
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct Ph1kLiveSignalBundle {
+    locale_tag: InterruptLocaleTag,
+    processed_stream_ref: AudioStreamRef,
+    pre_roll_buffer_ref: PreRollBufferRef,
+    vad_events: Vec<VadEvent>,
+    device_state: DeviceState,
+    timing_stats: Ph1kTimingStats,
+    tts_playback: TtsPlaybackActiveEvent,
+    duplex_frame: DuplexFrame,
+    interrupt_input: InterruptInput,
+    interrupt_decision: selene_engines::ph1k::InterruptDecisionTrace,
+    ph1c_handoff: Ph1kToPh1cHandoff,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BuilderStatusKind {
     RunStarted,
@@ -506,6 +754,12 @@ enum BuilderStatusKind {
 
 impl Default for AdapterRuntime {
     fn default() -> Self {
+        if !cfg!(test) {
+            return Self::default_from_env().unwrap_or_else(|err| {
+                panic!("selene_adapter persistent bootstrap required for runtime: {err}")
+            });
+        }
+        let ph1d_live_adapter = build_ph1d_live_adapter_from_env();
         Self {
             ingress: AppServerIngressRuntime::default(),
             store: Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
@@ -514,6 +768,11 @@ impl Default for AdapterRuntime {
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
+            ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
+            ph1c_streaming_enabled: parse_bool_env("SELENE_PH1C_STREAMING_ENABLED", true),
+            ph1c_runtime: EnginePh1cRuntime::new(EnginePh1cConfig::mvp_desktop_v1()),
+            ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
+            ph1d_live_adapter,
             persistence: None,
         }
     }
@@ -521,6 +780,20 @@ impl Default for AdapterRuntime {
 
 impl AdapterRuntime {
     pub fn new(ingress: AppServerIngressRuntime, store: Arc<Mutex<Ph1fStore>>) -> Self {
+        if !cfg!(test) {
+            let journal_path = env::var("SELENE_ADAPTER_STORE_PATH")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(default_adapter_store_path);
+            let auto_builder_enabled = parse_auto_builder_enabled_from_env();
+            return Self::new_with_persistence(ingress, store, journal_path, auto_builder_enabled)
+                .unwrap_or_else(|err| {
+                    panic!("selene_adapter persistent bootstrap required for runtime: {err}")
+                });
+        }
+        let ph1d_live_adapter = build_ph1d_live_adapter_from_env();
         Self {
             ingress,
             store,
@@ -529,6 +802,11 @@ impl AdapterRuntime {
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled: true,
+            ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
+            ph1c_streaming_enabled: parse_bool_env("SELENE_PH1C_STREAMING_ENABLED", true),
+            ph1c_runtime: EnginePh1cRuntime::new(EnginePh1cConfig::mvp_desktop_v1()),
+            ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
+            ph1d_live_adapter,
             persistence: None,
         }
     }
@@ -539,6 +817,7 @@ impl AdapterRuntime {
         journal_path: PathBuf,
         auto_builder_enabled: bool,
     ) -> Result<Self, String> {
+        let ph1d_live_adapter = build_ph1d_live_adapter_from_env();
         let runtime = Self {
             ingress,
             store,
@@ -547,6 +826,11 @@ impl AdapterRuntime {
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             report_display_target_defaults: Arc::new(Mutex::new(BTreeMap::new())),
             auto_builder_enabled,
+            ph1c_live_enabled: parse_bool_env("SELENE_PH1C_LIVE_ENABLED", true),
+            ph1c_streaming_enabled: parse_bool_env("SELENE_PH1C_STREAMING_ENABLED", true),
+            ph1c_runtime: EnginePh1cRuntime::new(EnginePh1cConfig::mvp_desktop_v1()),
+            ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
+            ph1d_live_adapter,
             persistence: Some(AdapterPersistenceConfig { journal_path }),
         };
         runtime.ensure_persistence_ready()?;
@@ -1556,14 +1840,1111 @@ impl AdapterRuntime {
         Ok(())
     }
 
+    fn run_ph1c_live_turn(
+        &self,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        ph1k: &Ph1kLiveSignalBundle,
+    ) -> Option<Ph1cLiveTurnOutcomeSummary> {
+        if !self.ph1c_live_enabled {
+            return None;
+        }
+        let Some(adapter) = self.ph1d_live_adapter.as_ref() else {
+            return Some(ph1c_live_reject_summary(
+                ph1c_reason_codes::STT_FAIL_PROVIDER_CIRCUIT_OPEN,
+                Ph1cRetryAdvice::SwitchToText,
+            ));
+        };
+        let tenant_id = tenant_id.unwrap_or("tenant_default");
+        let ph1c_request = match build_ph1c_live_request(ph1k) {
+            Ok(req) => req,
+            Err(_) => {
+                return Some(ph1c_live_reject_summary(
+                    ph1c_reason_codes::STT_FAIL_POLICY_RESTRICTED,
+                    Ph1cRetryAdvice::SwitchToText,
+                ));
+            }
+        };
+        let mut live = Ph1cLiveProviderContext::mvp_openai_google_v1(
+            correlation_id_to_u64(correlation_id),
+            turn_id.0.max(1),
+            truncate_ascii(tenant_id, 64),
+        );
+        live.idempotency_key =
+            sanitize_idempotency_token(&format!("ph1c_live_{}_{}", correlation_id.0, turn_id.0));
+        live.tenant_vocabulary_pack_id =
+            Some(format!("tenant_vocab_{}", truncate_ascii(tenant_id, 48)));
+        live.user_vocabulary_pack_id = Some(format!(
+            "user_vocab_{}",
+            truncate_ascii(actor_user_id.as_str(), 48)
+        ));
+        let provider_records = Arc::new(Mutex::new(Vec::<Ph1dProviderCallResponse>::new()));
+        let recording_adapter =
+            RecordingPh1dProviderAdapter::new(adapter, Arc::clone(&provider_records));
+
+        if self.ph1c_streaming_enabled {
+            let stream_commit = self.ph1c_runtime.run_stream_via_live_provider_adapter(
+                &ph1c_request,
+                &live,
+                &recording_adapter,
+            );
+            return Some(summarize_ph1c_stream_commit(
+                stream_commit,
+                snapshot_provider_calls(&provider_records),
+            ));
+        }
+
+        let response = self.ph1c_runtime.run_via_live_provider_adapter(
+            &ph1c_request,
+            &live,
+            &recording_adapter,
+        );
+        let final_text = match &response {
+            Ph1cResponse::TranscriptOk(ok) => Some(ok.transcript_text.clone()),
+            Ph1cResponse::TranscriptReject(_) => None,
+        };
+        Some(Ph1cLiveTurnOutcomeSummary {
+            response,
+            partial_text: None,
+            final_text,
+            finalized: true,
+            low_latency_commit: false,
+            provider_call_trace: snapshot_provider_calls(&provider_records),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_ph1c_live_outcome(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        device_id: Option<&DeviceId>,
+        ph1c: &Ph1cLiveTurnOutcomeSummary,
+    ) -> Result<(), String> {
+        let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
+            return Ok(());
+        };
+
+        match &ph1c.response {
+            Ph1cResponse::TranscriptOk(ok) => {
+                let idempotency_key = sanitize_idempotency_token(&format!(
+                    "ph1c_ok_{}_{}",
+                    correlation_id.0, turn_id.0
+                ));
+                store
+                    .ph1c_transcript_ok_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        ok.transcript_text.clone(),
+                        stable_hash_hex_16(&ok.transcript_text),
+                        ok.language_tag.clone(),
+                        ok.confidence_bucket,
+                        idempotency_key,
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+            Ph1cResponse::TranscriptReject(reject) => {
+                let idempotency_key = sanitize_idempotency_token(&format!(
+                    "ph1c_reject_{}_{}",
+                    correlation_id.0, turn_id.0
+                ));
+                let transcript_hash = ph1c.final_text.as_ref().map(|v| stable_hash_hex_16(v));
+                store
+                    .ph1c_transcript_reject_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        reject.reason_code,
+                        reject.retry_advice,
+                        transcript_hash,
+                        idempotency_key,
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_ph1c_gold_capture_and_learning(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        device_id: Option<&DeviceId>,
+        ph1c: &Ph1cLiveTurnOutcomeSummary,
+    ) -> Result<(), String> {
+        let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
+            return Ok(());
+        };
+        let capture_context = GoldCaseCaptureContext::v1(
+            truncate_ascii(tenant_id, 64),
+            truncate_ascii(actor_user_id.as_str(), 96),
+            truncate_ascii(&format!("speaker_{}", actor_user_id.as_str()), 96),
+            sanitize_idempotency_token(&format!("session_{}_{}", correlation_id.0, turn_id.0)),
+            truncate_ascii(device_id.as_str(), 96),
+            correlation_id,
+            turn_id,
+            sanitize_idempotency_token(&format!(
+                "ph1c_live_gold_{}_{}",
+                correlation_id.0, turn_id.0
+            )),
+        );
+        let Ok(capture_context) = capture_context else {
+            return Ok(());
+        };
+        let capture = build_gold_case_capture_from_ph1c_response(
+            &capture_context,
+            &ph1c.response,
+            None,
+            ph1c.final_text.clone(),
+        )
+        .map_err(|err| format!("ph1c gold-case capture failed: {err:?}"))?;
+        let Some(capture) = capture else {
+            return Ok(());
+        };
+        let Some((feedback_event_type, learn_signal_type)) =
+            feedback_learn_pair_for_ph1c_capture(capture.feedback_event.event_type)
+        else {
+            return Ok(());
+        };
+        let feedback_idem = sanitize_idempotency_token(&format!(
+            "ph1c_gold_feedback_{}_{}_{}",
+            correlation_id.0, turn_id.0, capture.gold_case_id
+        ));
+        store
+            .ph1feedback_event_commit(
+                now,
+                tenant_id.to_string(),
+                correlation_id,
+                turn_id,
+                None,
+                actor_user_id.clone(),
+                device_id.clone(),
+                feedback_event_type.to_string(),
+                learn_signal_type.to_string(),
+                capture.feedback_event.reason_code,
+                feedback_idem,
+            )
+            .map_err(storage_error_to_string)?;
+
+        let ingest_latency_ms = match &ph1c.response {
+            Ph1cResponse::TranscriptOk(ok) => ok
+                .audit_meta
+                .as_ref()
+                .map(|meta| meta.total_latency_ms.min(2_000))
+                .unwrap_or(0),
+            Ph1cResponse::TranscriptReject(reject) => reject
+                .audit_meta
+                .as_ref()
+                .map(|meta| meta.total_latency_ms.min(2_000))
+                .unwrap_or(0),
+        };
+        let learn_idem = sanitize_idempotency_token(&format!(
+            "ph1c_gold_learn_{}_{}_{}",
+            correlation_id.0, turn_id.0, capture.gold_case_id
+        ));
+        store
+            .ph1feedback_learn_signal_bundle_commit(
+                now,
+                tenant_id.to_string(),
+                correlation_id,
+                turn_id,
+                None,
+                actor_user_id.clone(),
+                device_id.clone(),
+                feedback_event_type.to_string(),
+                learn_signal_type.to_string(),
+                capture.feedback_event.reason_code,
+                truncate_ascii(&capture.feedback_event.evidence_ref, 128),
+                truncate_ascii(
+                    &format!(
+                        "ph1c_gold:{}:{}",
+                        capture.gold_case_id, capture.primary_failure_fingerprint
+                    ),
+                    128,
+                ),
+                ingest_latency_ms,
+                learn_idem,
+            )
+            .map_err(storage_error_to_string)?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_ph1d_runtime_outcome(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        device_id: Option<&DeviceId>,
+        transcript_text: Option<&str>,
+        os_outcome: &OsVoiceLiveTurnOutcome,
+    ) -> Result<(), String> {
+        let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
+            return Ok(());
+        };
+
+        let transcript_text = transcript_text
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .unwrap_or("transcript_unavailable");
+        let transcript_ok = Ph1cTranscriptOk::v1(
+            transcript_text.to_string(),
+            LanguageTag::new("en").map_err(|err| format!("invalid ph1d language tag: {err:?}"))?,
+            if transcript_text == "transcript_unavailable" {
+                Ph1cConfidenceBucket::Low
+            } else {
+                Ph1cConfidenceBucket::High
+            },
+        )
+        .map_err(|err| format!("ph1d transcript envelope build failed: {err:?}"))?;
+        let nlp_output = Ph1nResponse::Chat(
+            Ph1nChat::v1(
+                transcript_text.to_string(),
+                ph1d_reason_codes::D_PROVIDER_OK,
+            )
+            .map_err(|err| format!("ph1d nlp envelope build failed: {err:?}"))?,
+        );
+        let request = selene_kernel_contracts::ph1d::Ph1dRequest::v1(
+            transcript_ok,
+            nlp_output,
+            Ph1cSessionStateRef::v1(SessionState::Active, false),
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            ToolCatalogRef::v1(vec![ToolName::Time, ToolName::Weather])
+                .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
+        )
+        .map_err(|err| format!("ph1d request build failed: {err:?}"))?;
+        let response = self
+            .ph1d_runtime
+            .run(&request, ph1d_model_outcome_from_os_outcome(os_outcome));
+        let envelope = Ph1dCommitEnvelope::v1(
+            request.request_id,
+            request.prompt_template_version,
+            request.output_schema_hash,
+            request.tool_catalog_hash,
+            request.policy_context_hash,
+            request.transcript_hash,
+            "ph1d_router_v1".to_string(),
+            "PRIMARY".to_string(),
+            0,
+            256,
+        )
+        .map_err(|err| format!("ph1d envelope invalid: {err:?}"))?;
+
+        match response {
+            Ph1dResponse::Ok(Ph1dOk::Chat(chat)) => {
+                store
+                    .ph1d_chat_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        envelope,
+                        chat.reason_code,
+                        sanitize_idempotency_token(&format!(
+                            "ph1d_chat:{}:{}",
+                            correlation_id.0, turn_id.0
+                        )),
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+            Ph1dResponse::Ok(Ph1dOk::Intent(intent)) => {
+                store
+                    .ph1d_intent_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        envelope,
+                        truncate_ascii(&format!("{:?}", intent.refined_intent_type), 64),
+                        intent.reason_code,
+                        sanitize_idempotency_token(&format!(
+                            "ph1d_intent:{}:{}",
+                            correlation_id.0, turn_id.0
+                        )),
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+            Ph1dResponse::Ok(Ph1dOk::Clarify(clarify)) => {
+                let missing = clarify
+                    .what_is_missing
+                    .first()
+                    .map(|field| format!("{field:?}"))
+                    .unwrap_or_else(|| "Task".to_string());
+                store
+                    .ph1d_clarify_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        envelope,
+                        truncate_ascii(&missing, 64),
+                        clarify.reason_code,
+                        sanitize_idempotency_token(&format!(
+                            "ph1d_clarify:{}:{}",
+                            correlation_id.0, turn_id.0
+                        )),
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+            Ph1dResponse::Ok(Ph1dOk::Analysis(analysis)) => {
+                store
+                    .ph1d_analysis_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        envelope,
+                        truncate_ascii(&analysis.short_analysis, 64),
+                        analysis.reason_code,
+                        sanitize_idempotency_token(&format!(
+                            "ph1d_analysis:{}:{}",
+                            correlation_id.0, turn_id.0
+                        )),
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+            Ph1dResponse::Fail(fail) => {
+                store
+                    .ph1d_fail_closed_commit(
+                        now,
+                        tenant_id.to_string(),
+                        correlation_id,
+                        turn_id,
+                        None,
+                        actor_user_id.clone(),
+                        device_id.clone(),
+                        envelope,
+                        ph1d_fail_code(fail.kind).to_string(),
+                        fail.reason_code,
+                        sanitize_idempotency_token(&format!(
+                            "ph1d_fail:{}:{}",
+                            correlation_id.0, turn_id.0
+                        )),
+                    )
+                    .map_err(storage_error_to_string)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_ph1d_gold_capture_and_learning(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        actor_user_id: &UserId,
+        tenant_id: Option<&str>,
+        device_id: Option<&DeviceId>,
+        provider_calls: &[Ph1dProviderCallResponse],
+        final_transcript: Option<String>,
+        language_locale: Option<String>,
+    ) -> Result<(), String> {
+        let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
+            return Ok(());
+        };
+        for (idx, provider_call) in provider_calls.iter().enumerate() {
+            let capture_context = GoldCaseCaptureContext::v1(
+                truncate_ascii(tenant_id, 64),
+                truncate_ascii(actor_user_id.as_str(), 96),
+                truncate_ascii(&format!("speaker_{}", actor_user_id.as_str()), 96),
+                sanitize_idempotency_token(&format!("session_{}_{}", correlation_id.0, turn_id.0)),
+                truncate_ascii(device_id.as_str(), 96),
+                correlation_id,
+                turn_id,
+                sanitize_idempotency_token(&format!(
+                    "ph1d_live_gold_{}_{}_{}",
+                    correlation_id.0, turn_id.0, idx
+                )),
+            )
+            .map_err(|err| format!("ph1d gold-case context build failed: {err:?}"))?;
+            let capture = build_gold_case_capture_from_ph1d_response(
+                &capture_context,
+                provider_call,
+                None,
+                final_transcript.clone(),
+                language_locale.clone(),
+            )
+            .map_err(|err| format!("ph1d gold-case capture failed: {err:?}"))?;
+            let Some(capture) = capture else {
+                continue;
+            };
+            let Some((feedback_event_type, learn_signal_type)) =
+                feedback_learn_pair_for_ph1d_capture(capture.feedback_event.event_type)
+            else {
+                continue;
+            };
+            let feedback_idem = sanitize_idempotency_token(&format!(
+                "ph1d_gold_feedback_{}_{}_{}_{}",
+                correlation_id.0, turn_id.0, idx, capture.gold_case_id
+            ));
+            store
+                .ph1feedback_event_commit(
+                    now,
+                    tenant_id.to_string(),
+                    correlation_id,
+                    turn_id,
+                    None,
+                    actor_user_id.clone(),
+                    device_id.clone(),
+                    feedback_event_type.to_string(),
+                    learn_signal_type.to_string(),
+                    capture.feedback_event.reason_code,
+                    feedback_idem,
+                )
+                .map_err(storage_error_to_string)?;
+            let learn_idem = sanitize_idempotency_token(&format!(
+                "ph1d_gold_learn_{}_{}_{}_{}",
+                correlation_id.0, turn_id.0, idx, capture.gold_case_id
+            ));
+            store
+                .ph1feedback_learn_signal_bundle_commit(
+                    now,
+                    tenant_id.to_string(),
+                    correlation_id,
+                    turn_id,
+                    None,
+                    actor_user_id.clone(),
+                    device_id.clone(),
+                    feedback_event_type.to_string(),
+                    learn_signal_type.to_string(),
+                    capture.feedback_event.reason_code,
+                    truncate_ascii(&capture.feedback_event.evidence_ref, 128),
+                    truncate_ascii(
+                        &format!(
+                            "ph1d_gold:{}:{}",
+                            capture.gold_case_id, capture.primary_failure_fingerprint
+                        ),
+                        128,
+                    ),
+                    provider_call.provider_latency_ms.min(2_000),
+                    learn_idem,
+                )
+                .map_err(storage_error_to_string)?;
+        }
+        Ok(())
+    }
+
+    fn emit_ph1c_live_telemetry(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        ph1c: &Ph1cLiveTurnOutcomeSummary,
+        tenant_id: Option<&str>,
+    ) -> Result<(), String> {
+        let tenant_id = tenant_id.unwrap_or("tenant_default");
+        let (outcome_type, reason_code, latency_ms, decision_delta) = match &ph1c.response {
+            Ph1cResponse::TranscriptOk(ok) => (
+                if ph1c.low_latency_commit {
+                    "PH1C_LIVE_TRANSCRIPT_OK_LOW_LATENCY"
+                } else if ph1c.finalized {
+                    "PH1C_LIVE_TRANSCRIPT_OK_FINAL"
+                } else {
+                    "PH1C_LIVE_TRANSCRIPT_OK_PARTIAL"
+                },
+                ReasonCodeId(0x4300_5101),
+                ok.audit_meta
+                    .as_ref()
+                    .map(|meta| meta.total_latency_ms)
+                    .unwrap_or(0),
+                true,
+            ),
+            Ph1cResponse::TranscriptReject(reject) => (
+                "PH1C_LIVE_TRANSCRIPT_REJECT",
+                reject.reason_code,
+                reject
+                    .audit_meta
+                    .as_ref()
+                    .map(|meta| meta.total_latency_ms)
+                    .unwrap_or(0),
+                false,
+            ),
+        };
+        let idempotency_key = sanitize_idempotency_token(&format!(
+            "ph1c_live_telemetry:{}:{}:{}:{}",
+            tenant_id, correlation_id.0, turn_id.0, outcome_type
+        ));
+        store
+            .append_outcome_utilization_ledger_row(OutcomeUtilizationLedgerRowInput {
+                created_at: now,
+                correlation_id,
+                turn_id,
+                engine_id: "PH1.C".to_string(),
+                outcome_type: outcome_type.to_string(),
+                action_class: OsOutcomeActionClass::AuditOnly,
+                consumed_by: "PH1.C.SUPERIORITY".to_string(),
+                latency_cost_ms: latency_ms,
+                decision_delta,
+                reason_code,
+                idempotency_key: Some(idempotency_key),
+            })
+            .map_err(storage_error_to_string)?;
+        if let Err(err) = append_ph1c_live_telemetry_csv(
+            now,
+            correlation_id,
+            turn_id,
+            tenant_id,
+            outcome_type,
+            reason_code,
+            latency_ms,
+            decision_delta,
+            ph1c.finalized,
+            ph1c.low_latency_commit,
+        ) {
+            eprintln!("selene_adapter ph1c live telemetry csv append failed: {err}");
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn commit_ph1k_live_runtime_events(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: Option<&str>,
+        device_id: &DeviceId,
+        bundle: &Ph1kLiveSignalBundle,
+    ) -> Result<(), String> {
+        let tenant_id = truncate_ascii(tenant_id.unwrap_or("tenant_default"), 64);
+        let session_id = None;
+        let processed_stream_id = Some(bundle.processed_stream_ref.stream_id.0);
+        let pre_roll_buffer_id = Some(bundle.pre_roll_buffer_ref.buffer_id.0);
+        let device_health = storage_device_health_from_bundle(bundle);
+
+        store
+            .ph1k_runtime_event_commit(
+                now,
+                tenant_id.clone(),
+                device_id.clone(),
+                session_id.clone(),
+                Ph1kRuntimeEventKind::StreamRefs,
+                processed_stream_id,
+                None,
+                pre_roll_buffer_id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                sanitize_idempotency_token(&format!(
+                    "ph1k_runtime:{}:{}:stream_refs",
+                    correlation_id.0, turn_id.0
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+
+        for (idx, vad) in bundle.vad_events.iter().enumerate() {
+            store
+                .ph1k_runtime_event_commit(
+                    now,
+                    tenant_id.clone(),
+                    device_id.clone(),
+                    session_id.clone(),
+                    Ph1kRuntimeEventKind::VadEvent,
+                    Some(vad.stream_id.0),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    sanitize_idempotency_token(&format!(
+                        "ph1k_runtime:{}:{}:vad:{}",
+                        correlation_id.0, turn_id.0, idx
+                    )),
+                )
+                .map_err(storage_error_to_string)?;
+        }
+
+        store
+            .ph1k_runtime_event_commit(
+                now,
+                tenant_id.clone(),
+                device_id.clone(),
+                session_id.clone(),
+                Ph1kRuntimeEventKind::DeviceState,
+                None,
+                None,
+                None,
+                Some(bundle.device_state.selected_mic.as_str().to_string()),
+                Some(bundle.device_state.selected_speaker.as_str().to_string()),
+                Some(device_health),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                sanitize_idempotency_token(&format!(
+                    "ph1k_runtime:{}:{}:device_state",
+                    correlation_id.0, turn_id.0
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+
+        store
+            .ph1k_runtime_event_commit(
+                now,
+                tenant_id.clone(),
+                device_id.clone(),
+                session_id.clone(),
+                Ph1kRuntimeEventKind::TimingStats,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(bundle.timing_stats.jitter_ms),
+                Some(bundle.timing_stats.drift_ppm),
+                Some(bundle.timing_stats.buffer_depth_ms),
+                Some(bundle.timing_stats.underruns),
+                Some(bundle.timing_stats.overruns),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                sanitize_idempotency_token(&format!(
+                    "ph1k_runtime:{}:{}:timing_stats",
+                    correlation_id.0, turn_id.0
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+
+        store
+            .ph1k_runtime_event_commit(
+                now,
+                tenant_id.clone(),
+                device_id.clone(),
+                session_id.clone(),
+                Ph1kRuntimeEventKind::DegradationFlags,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(bundle.interrupt_input.capture_degraded),
+                Some(bundle.interrupt_input.aec_unstable),
+                Some(bundle.interrupt_input.device_changed),
+                Some(bundle.interrupt_input.stream_gap_detected),
+                sanitize_idempotency_token(&format!(
+                    "ph1k_runtime:{}:{}:degradation",
+                    correlation_id.0, turn_id.0
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+
+        store
+            .ph1k_runtime_event_commit(
+                now,
+                tenant_id.clone(),
+                device_id.clone(),
+                session_id.clone(),
+                Ph1kRuntimeEventKind::TtsPlaybackActive,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(bundle.tts_playback.active),
+                None,
+                None,
+                None,
+                None,
+                sanitize_idempotency_token(&format!(
+                    "ph1k_runtime:{}:{}:tts_active",
+                    correlation_id.0, turn_id.0
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+
+        if let Some(candidate) = bundle.interrupt_decision.candidate.as_ref() {
+            let interrupt_extended = Ph1kInterruptCandidateExtendedFields {
+                trigger_phrase_id: candidate.trigger_phrase_id.0,
+                trigger_locale: candidate.trigger_locale.as_str().to_string(),
+                candidate_confidence_band: candidate.candidate_confidence_band,
+                vad_decision_confidence_band: bundle.ph1c_handoff.vad_confidence_band,
+                risk_context_class: candidate.risk_context_class,
+                gate_confidences: candidate.gate_confidences,
+                degradation_context: candidate.degradation_context,
+                quality_metrics: bundle.interrupt_input.adaptive_policy_input.quality_metrics,
+                timing_markers: candidate.timing_markers,
+                speech_window_metrics: candidate.speech_window_metrics,
+                subject_relation_confidence_bundle: candidate.subject_relation_confidence_bundle,
+                interrupt_policy_profile_id: bundle
+                    .interrupt_input
+                    .lexicon_policy_binding
+                    .policy_profile_id
+                    .as_str()
+                    .to_string(),
+                interrupt_tenant_profile_id: bundle
+                    .interrupt_input
+                    .lexicon_policy_binding
+                    .tenant_profile_id
+                    .as_str()
+                    .to_string(),
+                interrupt_locale_tag: bundle
+                    .interrupt_input
+                    .lexicon_policy_binding
+                    .locale_tag
+                    .as_str()
+                    .to_string(),
+                adaptive_device_route: bundle.interrupt_input.adaptive_policy_input.device_route,
+                adaptive_noise_class: interrupt_noise_class_label(
+                    bundle.interrupt_decision.adaptive_noise_class,
+                )
+                .to_string(),
+                adaptive_capture_to_handoff_latency_ms: bundle
+                    .interrupt_input
+                    .adaptive_policy_input
+                    .capture_to_handoff_latency_ms,
+                adaptive_timing_jitter_ms: bundle
+                    .interrupt_input
+                    .adaptive_policy_input
+                    .timing_stats
+                    .jitter_ms,
+                adaptive_timing_drift_ppm: bundle
+                    .interrupt_input
+                    .adaptive_policy_input
+                    .timing_stats
+                    .drift_ppm,
+                adaptive_device_reliability_score: bundle
+                    .interrupt_input
+                    .adaptive_policy_input
+                    .device_reliability
+                    .reliability_score
+                    .0,
+            };
+
+            store
+                .ph1k_runtime_event_commit_extended(
+                    now,
+                    tenant_id,
+                    device_id.clone(),
+                    session_id,
+                    Ph1kRuntimeEventKind::InterruptCandidate,
+                    processed_stream_id,
+                    None,
+                    pre_roll_buffer_id,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(candidate.phrase_id.0),
+                    Some(candidate.phrase_text.clone()),
+                    Some(candidate.reason_code),
+                    Some(interrupt_extended),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    sanitize_idempotency_token(&format!(
+                        "ph1k_runtime:{}:{}:interrupt_candidate:{}",
+                        correlation_id.0, turn_id.0, candidate.phrase_id.0
+                    )),
+                )
+                .map_err(storage_error_to_string)?;
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn emit_ph1k_feedback_capture(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_id: Option<&str>,
+        actor_user_id: &UserId,
+        device_id: &DeviceId,
+        bundle: &Ph1kLiveSignalBundle,
+    ) -> Result<(), String> {
+        let feedback_kind = if let Some(candidate) = bundle.interrupt_decision.candidate.as_ref() {
+            if !bundle.tts_playback.active {
+                Some(InterruptFeedbackSignalKind::FalseLexicalTrigger)
+            } else if matches!(
+                candidate.candidate_confidence_band,
+                selene_kernel_contracts::ph1k::InterruptCandidateConfidenceBand::Low
+            ) {
+                Some(InterruptFeedbackSignalKind::WrongConfidenceBand)
+            } else {
+                None
+            }
+        } else if bundle.tts_playback.active && bundle.interrupt_input.detection.is_some() {
+            Some(InterruptFeedbackSignalKind::MissedLexicalTrigger)
+        } else {
+            None
+        };
+
+        let Some(feedback_kind) = feedback_kind else {
+            return Ok(());
+        };
+
+        let candidate_confidence_band = bundle
+            .interrupt_decision
+            .candidate
+            .as_ref()
+            .map(|candidate| candidate.candidate_confidence_band);
+        let _signal = build_interrupt_feedback_signal(feedback_kind, candidate_confidence_band);
+        let issue_kind = match feedback_kind {
+            InterruptFeedbackSignalKind::FalseLexicalTrigger => {
+                Ph1kFeedbackIssueKind::FalseInterrupt
+            }
+            InterruptFeedbackSignalKind::MissedLexicalTrigger => {
+                Ph1kFeedbackIssueKind::MissedInterrupt
+            }
+            InterruptFeedbackSignalKind::WrongConfidenceBand => {
+                Ph1kFeedbackIssueKind::WrongDegradationClassification
+            }
+        };
+        let capture_input = Ph1kFeedbackCaptureInput {
+            issue_kind,
+            candidate_confidence_band,
+            risk_context_class: bundle
+                .interrupt_decision
+                .candidate
+                .as_ref()
+                .map(|candidate| candidate.risk_context_class),
+            adaptive_device_route: Some(bundle.interrupt_input.adaptive_policy_input.device_route),
+            adaptive_noise_class: Some(
+                interrupt_noise_class_label(bundle.interrupt_decision.adaptive_noise_class)
+                    .to_string(),
+            ),
+            capture_degraded: Some(bundle.interrupt_input.capture_degraded),
+            aec_unstable: Some(bundle.interrupt_input.aec_unstable),
+            device_changed: Some(bundle.interrupt_input.device_changed),
+            stream_gap_detected: Some(bundle.interrupt_input.stream_gap_detected),
+            failover_from_device: None,
+            failover_to_device: None,
+        };
+        let tenant_id = truncate_ascii(tenant_id.unwrap_or("tenant_default"), 64);
+        store
+            .ph1k_feedback_capture_commit(
+                now,
+                tenant_id,
+                correlation_id,
+                turn_id,
+                None,
+                actor_user_id.clone(),
+                device_id.clone(),
+                capture_input,
+                sanitize_idempotency_token(&format!(
+                    "ph1k_feedback:{}:{}:{}",
+                    correlation_id.0,
+                    turn_id.0,
+                    interrupt_feedback_kind_label(feedback_kind)
+                )),
+            )
+            .map_err(storage_error_to_string)?;
+        Ok(())
+    }
+
+    fn run_ph1vision_os_orchestration_step(
+        &self,
+        request: &VoiceTurnAdapterRequest,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        tenant_scope: Option<&str>,
+        base_transcript_text: Option<&str>,
+    ) -> Result<(), String> {
+        let Some(vision_turn_input) =
+            build_vision_turn_input_from_adapter_request(request, correlation_id, turn_id)?
+        else {
+            return Ok(());
+        };
+
+        let vision_wiring = Ph1VisionWiring::new(
+            Ph1VisionWiringConfig::mvp_v1(true),
+            AdapterVisionEngineRuntime::new(),
+        )
+        .map_err(|err| format!("ph1vision wiring bootstrap failed: {err:?}"))?;
+        let vision_outcome = vision_wiring
+            .run_turn(&vision_turn_input)
+            .map_err(|err| format!("ph1vision run_turn failed: {err:?}"))?;
+        let analyzer_bundle = match vision_outcome {
+            VisionWiringOutcome::NotInvokedOptOut => {
+                return Err("PH1.VISION not invoked: opt-in disabled".to_string())
+            }
+            VisionWiringOutcome::NotInvokedNoVisualInput => {
+                return Err("PH1.VISION not invoked: no visual input available".to_string())
+            }
+            VisionWiringOutcome::Refused(refuse) => {
+                return Err(format!(
+                    "ph1vision_refuse reason_code={} message={}",
+                    refuse.reason_code.0, refuse.message
+                ))
+            }
+            VisionWiringOutcome::Forwarded { bundle, .. } => OsOcrAnalyzerForwardBundle::Vision(bundle),
+        };
+
+        let live_adapter = self.ph1d_live_adapter.clone().ok_or_else(|| {
+            "PH1.D live provider adapter unavailable for PH1.VISION OCR path".to_string()
+        })?;
+        let mut ocr_route_config = Ph1OsOcrRouteConfig::openai_default();
+        if let Some(tenant_scope) = tenant_scope {
+            ocr_route_config.tenant_id = truncate_ascii(tenant_scope, 64);
+        }
+        let ocr_route_wiring = Ph1OsOcrRouteWiring::new(ocr_route_config, live_adapter)
+            .map_err(|err| format!("ocr route wiring bootstrap failed: {err:?}"))?;
+        let ocr_route_outcome = ocr_route_wiring
+            .run_handoff(&analyzer_bundle)
+            .map_err(|err| format!("ocr route handoff failed: {err:?}"))?;
+        let ocr_bundle = match ocr_route_outcome {
+            OsOcrRouteOutcome::NotInvokedDisabled => {
+                return Err("PH1.OS OCR route disabled for PH1.VISION handoff".to_string())
+            }
+            OsOcrRouteOutcome::Refused(refuse) => {
+                return Err(format!(
+                    "ph1os_ocr_refuse reason_code={} message={}",
+                    refuse.reason_code.0, refuse.message
+                ))
+            }
+            OsOcrRouteOutcome::Forwarded(bundle) => bundle,
+        };
+
+        let context_wiring = Ph1ContextWiring::new(
+            Ph1ContextWiringConfig::mvp_v1(true),
+            AdapterContextEngineRuntime::new(),
+        )
+        .map_err(|err| format!("ph1context wiring bootstrap failed: {err:?}"))?;
+        let mut nlp_wiring_config = Ph1nWiringConfig::mvp_v1(true);
+        nlp_wiring_config.require_ph1c_handoff = false;
+        let nlp_wiring = Ph1nWiring::new(nlp_wiring_config, AdapterNlpEngineRuntime::new())
+            .map_err(|err| format!("ph1n wiring bootstrap failed: {err:?}"))?;
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .map_err(|err| format!("ocr->context/nlp wiring bootstrap failed: {err:?}"))?;
+        let base_nlp_request =
+            build_base_nlp_request_for_vision_handoff(request, base_transcript_text, tenant_scope)?;
+        let bridge_outcome = bridge
+            .run_handoff(&ocr_bundle, &base_nlp_request)
+            .map_err(|err| format!("ocr->context/nlp handoff failed: {err:?}"))?;
+        match bridge_outcome {
+            OsOcrContextNlpOutcome::NotInvokedDisabled => {
+                Err("PH1.OS OCR->CONTEXT/NLP bridge disabled".to_string())
+            }
+            OsOcrContextNlpOutcome::Refused(refuse) => Err(format!(
+                "ph1os_ocr_context_refuse reason_code={} message={}",
+                refuse.reason_code.0, refuse.message
+            )),
+            OsOcrContextNlpOutcome::Forwarded(_) => Ok(()),
+        }
+    }
+
     fn run_voice_turn_internal(
         &self,
         request: VoiceTurnAdapterRequest,
         persist_on_success: bool,
     ) -> Result<VoiceTurnAdapterResponse, String> {
         let request_for_journal = request.clone();
-        let user_text_partial = sanitize_transcript_text_option(request.user_text_partial.clone());
-        let user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
+        let mut user_text_partial =
+            sanitize_transcript_text_option(request.user_text_partial.clone());
+        let mut user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
+        let upstream_transcript_supplied = user_text_final.is_some();
         let selene_text_partial =
             sanitize_transcript_text_option(request.selene_text_partial.clone());
         let selene_text_final = sanitize_transcript_text_option(request.selene_text_final.clone());
@@ -1571,7 +2952,7 @@ impl AdapterRuntime {
         let trigger = parse_trigger(&request.trigger)?;
         let actor_user_id = UserId::new(request.actor_user_id.clone())
             .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
-        let device_id = request
+        let request_device_id = request
             .device_id
             .as_ref()
             .map(|id| {
@@ -1581,8 +2962,14 @@ impl AdapterRuntime {
         let correlation_id = CorrelationId(request.correlation_id.into());
         let turn_id = TurnId(request.turn_id);
         let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
-        let voice_id_request = build_default_voice_id_request(now, actor_user_id.clone())
-            .map_err(|err| format!("voice request build failed: {err:?}"))?;
+        let runtime_device_id = match request_device_id {
+            Some(id) => id,
+            None => DeviceId::new(format!(
+                "adapter_auto_{}",
+                stable_hash_hex_16(actor_user_id.as_str())
+            ))
+            .map_err(|err| format!("invalid generated runtime device_id: {err:?}"))?,
+        };
 
         let mut store = self
             .store
@@ -1591,40 +2978,189 @@ impl AdapterRuntime {
         ensure_actor_identity_and_device(
             &mut store,
             &actor_user_id,
-            device_id.as_ref(),
+            Some(&runtime_device_id),
             app_platform,
             now,
         )?;
+        let tenant_id_for_ph1c = resolve_tenant_scope(
+            request.tenant_id.clone(),
+            &actor_user_id,
+            Some(&runtime_device_id),
+        );
+        let ph1k_bundle = build_ph1k_live_signal_bundle(
+            &store,
+            &request,
+            now,
+            tenant_id_for_ph1c.as_deref(),
+            Some(&runtime_device_id),
+        )?;
+        let voice_id_request =
+            build_voice_id_request_from_ph1k_bundle(now, actor_user_id.clone(), &ph1k_bundle)
+                .map_err(|err| format!("voice request build failed: {err:?}"))?;
+        let ph1c_live_outcome = if upstream_transcript_supplied {
+            None
+        } else {
+            self.run_ph1c_live_turn(
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                &ph1k_bundle,
+            )
+        };
+        if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+            if user_text_partial.is_none() {
+                user_text_partial = ph1c.partial_text.clone();
+            }
+            if user_text_final.is_none() {
+                user_text_final = ph1c.final_text.clone();
+            }
+            self.commit_ph1c_live_outcome(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+                ph1c,
+            )?;
+        }
+        let mut ingress_transcript_ok = user_text_final
+            .as_ref()
+            .map(|text| !text.trim().is_empty())
+            .unwrap_or(false);
+        let mut ingress_clarify_required = !ingress_transcript_ok;
+        if !ingress_transcript_ok {
+            if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+                match &ph1c.response {
+                    Ph1cResponse::TranscriptOk(_) => {
+                        ingress_transcript_ok = true;
+                        ingress_clarify_required = false;
+                    }
+                    Ph1cResponse::TranscriptReject(_) => {
+                        ingress_transcript_ok = false;
+                        ingress_clarify_required = true;
+                    }
+                }
+            }
+        }
+        self.run_ph1vision_os_orchestration_step(
+            &request,
+            correlation_id,
+            turn_id,
+            tenant_id_for_ph1c.as_deref(),
+            user_text_final.as_deref(),
+        )?;
 
-        let ingress_request = AppVoiceIngressRequest::v1(
+        self.commit_ph1k_live_runtime_events(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            tenant_id_for_ph1c.as_deref(),
+            &runtime_device_id,
+            &ph1k_bundle,
+        )?;
+        self.emit_ph1k_feedback_capture(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            tenant_id_for_ph1c.as_deref(),
+            &actor_user_id,
+            &runtime_device_id,
+            &ph1k_bundle,
+        )?;
+        if let Err(err) = append_ph1k_live_eval_snapshot_csv(
+            &store,
+            now,
+            correlation_id,
+            turn_id,
+            tenant_id_for_ph1c.as_deref().unwrap_or("tenant_default"),
+            &ph1k_bundle,
+        ) {
+            eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
+        }
+
+        let mut ingress_request = AppVoiceIngressRequest::v1(
             correlation_id,
             turn_id,
             app_platform,
             trigger,
+            ingress_transcript_ok,
+            ingress_clarify_required,
             voice_id_request,
             actor_user_id.clone(),
-            request.tenant_id.clone(),
-            device_id.clone(),
+            tenant_id_for_ph1c.clone(),
+            Some(runtime_device_id.clone()),
             Vec::new(),
             empty_observation(),
         )
         .map_err(|err| format!("invalid ingress request: {err:?}"))?;
+        let evidence = build_os_ph1k_live_evidence(&ph1k_bundle);
+        ingress_request = ingress_request
+            .with_ph1k_live_evidence(evidence)
+            .map_err(|err| format!("invalid ph1k live evidence: {err:?}"))?;
         let outcome = self
             .ingress
             .run_voice_turn(&mut store, ingress_request)
             .map_err(storage_error_to_string)?;
+        self.commit_ph1d_runtime_outcome(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            tenant_id_for_ph1c.as_deref(),
+            Some(&runtime_device_id),
+            user_text_final.as_deref(),
+            &outcome,
+        )?;
         self.record_transcript_updates(
             &mut store,
             now,
             correlation_id,
             turn_id,
             &actor_user_id,
-            device_id.as_ref(),
+            Some(&runtime_device_id),
             user_text_partial,
             user_text_final,
             selene_text_partial,
             selene_text_final,
         )?;
+        if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+            self.emit_ph1c_gold_capture_and_learning(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+                ph1c,
+            )?;
+            self.emit_ph1d_gold_capture_and_learning(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+                &ph1c.provider_call_trace,
+                ph1c.final_text.clone(),
+                ph1c_language_locale(&ph1c.response),
+            )?;
+            self.emit_ph1c_live_telemetry(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                ph1c,
+                tenant_id_for_ph1c.as_deref(),
+            )?;
+        }
         let response = outcome_to_adapter_response(outcome);
         if persist_on_success {
             self.append_journal_entry(request_for_journal)?;
@@ -1845,50 +3381,139 @@ fn parse_trigger(value: &str) -> Result<OsVoiceTrigger, String> {
     }
 }
 
-fn build_default_voice_id_request(
-    now: MonotonicTimeNs,
-    actor_user_id: UserId,
-) -> Result<Ph1VoiceIdRequest, selene_kernel_contracts::ContractViolation> {
-    let stream_id = AudioStreamId(1);
-    let processed_stream_ref = AudioStreamRef::v1(
-        stream_id,
-        AudioStreamKind::MicProcessed,
-        AudioFormat {
-            sample_rate_hz: SampleRateHz(16_000),
-            channels: ChannelCount(1),
-            sample_format: SampleFormat::PcmS16LE,
-        },
-        FrameDurationMs::Ms20,
-    );
-    let vad_events = vec![VadEvent::v1(
-        stream_id,
-        MonotonicTimeNs(now.0.saturating_sub(2_000_000)),
-        now,
-        Confidence::new(0.95)?,
-        SpeechLikeness::new(0.95)?,
-    )];
-    let session_snapshot = SessionSnapshot {
-        schema_version: SchemaVersion(1),
-        session_state: SessionState::Active,
-        session_id: Some(SessionId(1)),
-        next_allowed_actions: NextAllowedActions {
-            may_speak: true,
-            must_wait: false,
-            must_rewake: false,
-        },
-    };
-    let device_id = AudioDeviceId::new("adapter_mic_device_1".to_string())?;
-    Ph1VoiceIdRequest::v1(
-        now,
-        processed_stream_ref,
-        vad_events,
-        device_id,
-        session_snapshot,
-        None,
-        false,
-        DeviceTrustLevel::Trusted,
-        Some(actor_user_id),
+fn build_base_nlp_request_for_vision_handoff(
+    request: &VoiceTurnAdapterRequest,
+    base_transcript_text: Option<&str>,
+    runtime_tenant_scope: Option<&str>,
+) -> Result<Ph1nRequest, String> {
+    let transcript_text = sanitize_transcript_text_option(
+        base_transcript_text
+            .map(str::to_string)
+            .or_else(|| request.user_text_final.clone()),
     )
+    .unwrap_or_else(|| "analyze the uploaded visual evidence".to_string());
+    let locale_guess = request
+        .audio_capture_ref
+        .as_ref()
+        .and_then(|capture| capture.locale_tag.as_ref())
+        .map(|value| truncate_ascii(value.trim(), 16))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "en".to_string());
+    let language_tag = LanguageTag::new(locale_guess)
+        .or_else(|_| LanguageTag::new("en".to_string()))
+        .map_err(|err| format!("invalid language tag for vision handoff: {err:?}"))?;
+    let transcript_ok =
+        Ph1cTranscriptOk::v1(transcript_text, language_tag, Ph1cConfidenceBucket::High)
+            .map_err(|err| format!("failed to build transcript for vision handoff: {err:?}"))?;
+    let runtime_tenant_id = runtime_tenant_scope
+        .map(|tenant| truncate_ascii(tenant.trim(), 64))
+        .filter(|tenant| !tenant.is_empty());
+    Ph1nRequest::v1(transcript_ok, Ph1cSessionStateRef::v1(SessionState::Active, false))
+        .map_err(|err| format!("failed to build NLP request for vision handoff: {err:?}"))?
+        .with_runtime_tenant_id(runtime_tenant_id)
+        .map_err(|err| format!("failed to set runtime tenant context for NLP request: {err:?}"))
+}
+
+fn build_vision_turn_input_from_adapter_request(
+    request: &VoiceTurnAdapterRequest,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+) -> Result<Option<VisionTurnInput>, String> {
+    let Some(visual) = request.visual_input_ref.as_ref() else {
+        return Ok(None);
+    };
+    let source_kind = parse_visual_source_kind(visual.source_kind.as_deref())?;
+    let source_id = visual
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_ascii(value, 128))
+        .unwrap_or_else(|| {
+            let seed = format!(
+                "{}:{}:{}:{}",
+                request.correlation_id,
+                request.turn_id,
+                visual.image_ref.as_deref().unwrap_or(""),
+                visual.blob_ref.as_deref().unwrap_or("")
+            );
+            format!("vision_src_{}", stable_hash_hex_16(&seed))
+        });
+    let source_ref = VisualSourceRef::v1(
+        VisualSourceId::new(source_id)
+            .map_err(|err| format!("invalid PH1.VISION source_id: {err:?}"))?,
+        source_kind,
+    )
+    .map_err(|err| format!("invalid PH1.VISION source_ref: {err:?}"))?;
+    let image_ref = visual
+        .image_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_ascii(value, 512));
+    let blob_ref = visual
+        .blob_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_ascii(value, 512));
+    let raw_source_ref = if image_ref.is_some() || blob_ref.is_some() {
+        Some(
+            VisionRawSourceRef::v1(image_ref, blob_ref)
+                .map_err(|err| format!("invalid PH1.VISION raw source refs: {err:?}"))?,
+        )
+    } else {
+        None
+    };
+    let mut visible_tokens = Vec::with_capacity(visual.visible_tokens.len());
+    for token_ref in &visual.visible_tokens {
+        visible_tokens.push(parse_visual_token_ref(token_ref)?);
+    }
+    let turn_input = VisionTurnInput::v1(
+        correlation_id,
+        turn_id,
+        visual.turn_opt_in_enabled,
+        source_ref,
+        raw_source_ref,
+        visible_tokens,
+    )
+    .map_err(|err| format!("invalid PH1.VISION turn input: {err:?}"))?;
+    Ok(Some(turn_input))
+}
+
+fn parse_visual_source_kind(value: Option<&str>) -> Result<VisualSourceKind, String> {
+    let normalized = value
+        .map(|raw| raw.trim().to_ascii_uppercase())
+        .filter(|raw| !raw.is_empty())
+        .unwrap_or_else(|| "IMAGE".to_string());
+    match normalized.as_str() {
+        "IMAGE" => Ok(VisualSourceKind::Image),
+        "SCREENSHOT" => Ok(VisualSourceKind::Screenshot),
+        "DIAGRAM" => Ok(VisualSourceKind::Diagram),
+        _ => Err(format!(
+            "invalid visual source_kind '{}'; expected IMAGE|SCREENSHOT|DIAGRAM",
+            normalized
+        )),
+    }
+}
+
+fn parse_visual_token_ref(token_ref: &VoiceTurnVisualTokenRef) -> Result<VisualToken, String> {
+    let token = truncate_utf8(token_ref.token.trim(), 256);
+    let bbox = match (token_ref.x, token_ref.y, token_ref.w, token_ref.h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some(
+            BoundingBoxPx::new(x, y, w, h)
+                .map_err(|err| format!("invalid PH1.VISION visual token bbox: {err:?}"))?,
+        ),
+        (None, None, None, None) => None,
+        _ => {
+            return Err(
+                "invalid PH1.VISION visual token bbox: x,y,w,h must be provided together"
+                    .to_string(),
+            )
+        }
+    };
+    VisualToken::v1(token, bbox)
+        .map_err(|err| format!("invalid PH1.VISION visual token payload: {err:?}"))
 }
 
 fn ensure_actor_identity_and_device(
@@ -2206,10 +3831,1305 @@ fn truncate_ascii(value: &str, max_len: usize) -> String {
     value.chars().take(max_len).collect::<String>()
 }
 
+fn truncate_utf8(value: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    value.chars().take(max_chars).collect()
+}
+
 fn stable_hash_hex_16(value: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     value.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn parse_bool_env(key: &str, default: bool) -> bool {
+    match env::var(key) {
+        Ok(v) => !matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => default,
+    }
+}
+
+fn build_ph1d_live_adapter_from_env() -> Option<Ph1dLiveProviderAdapter> {
+    if !parse_bool_env("SELENE_PH1D_LIVE_ADAPTER_ENABLED", true) {
+        return None;
+    }
+    match Ph1dLiveProviderAdapter::from_env() {
+        Ok(adapter) => Some(adapter),
+        Err(err) => {
+            eprintln!("selene_adapter ph1d live adapter bootstrap failed: {err:?}");
+            None
+        }
+    }
+}
+
+fn correlation_id_to_u64(correlation_id: CorrelationId) -> u64 {
+    (correlation_id.0 as u64).max(1)
+}
+
+fn resolve_tenant_scope(
+    explicit_tenant_id: Option<String>,
+    actor_user_id: &UserId,
+    device_id: Option<&DeviceId>,
+) -> Option<String> {
+    explicit_tenant_id
+        .map(|v| truncate_ascii(v.trim(), 64))
+        .filter(|v| !v.is_empty())
+        .or_else(|| tenant_scope_from_user_id(actor_user_id).map(str::to_string))
+        .or_else(|| {
+            device_id
+                .map(|d| truncate_ascii(&format!("tenant_{}", stable_hash_hex_16(d.as_str())), 64))
+        })
+}
+
+fn parse_device_route_label(value: &str) -> Option<DeviceRoute> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "BUILT_IN" | "BUILTIN" => Some(DeviceRoute::BuiltIn),
+        "BLUETOOTH" => Some(DeviceRoute::Bluetooth),
+        "USB" => Some(DeviceRoute::Usb),
+        "VIRTUAL" => Some(DeviceRoute::Virtual),
+        "UNKNOWN" => Some(DeviceRoute::Unknown),
+        _ => None,
+    }
+}
+
+fn sanitize_audio_device_token(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    let out = truncate_ascii(&out, 56);
+    if out.trim().is_empty() {
+        "adapter_device".to_string()
+    } else {
+        out
+    }
+}
+
+fn default_interrupt_phrases_for_locale(locale_tag: &str) -> Vec<String> {
+    match locale_tag.to_ascii_lowercase().as_str() {
+        "en-us" | "en" => vec![
+            "wait".to_string(),
+            "selene wait".to_string(),
+            "hold on".to_string(),
+            "stop".to_string(),
+            "pause".to_string(),
+            "cancel that".to_string(),
+            "just a second".to_string(),
+        ],
+        "es-es" | "es" => vec![
+            "espera".to_string(),
+            "selene espera".to_string(),
+            "alto".to_string(),
+            "pausa".to_string(),
+            "cancela eso".to_string(),
+        ],
+        "zh-cn" | "zh" => vec![
+            "等一下".to_string(),
+            "停一下".to_string(),
+            "暂停".to_string(),
+            "先别说".to_string(),
+        ],
+        "tr-tr" | "tr" => vec![
+            "bekle".to_string(),
+            "dur".to_string(),
+            "selene bekle".to_string(),
+            "bir saniye".to_string(),
+        ],
+        _ => vec![
+            "wait".to_string(),
+            "hold on".to_string(),
+            "stop".to_string(),
+            "pause".to_string(),
+        ],
+    }
+}
+
+fn locale_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+fn locale_matches(lhs: &str, rhs: &str) -> bool {
+    let lhs_key = locale_key(lhs);
+    let rhs_key = locale_key(rhs);
+    lhs_key == rhs_key
+        || lhs_key.split('-').next().unwrap_or(lhs_key.as_str())
+            == rhs_key.split('-').next().unwrap_or(rhs_key.as_str())
+}
+
+fn resolve_interrupt_locale_tag_from_capture(
+    capture: &VoiceTurnAudioCaptureRef,
+) -> Result<InterruptLocaleTag, String> {
+    let raw = capture
+        .locale_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "ph1k live capture missing locale_tag".to_string())?;
+    InterruptLocaleTag::new(truncate_ascii(raw, 32))
+        .map_err(|err| format!("ph1k locale_tag invalid: {err:?}"))
+}
+
+fn learned_interrupt_phrases_from_runtime(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    device_id: Option<&DeviceId>,
+    locale_tag: &InterruptLocaleTag,
+) -> Vec<String> {
+    let tenant_scope = tenant_scope
+        .map(|v| truncate_ascii(v, 64))
+        .filter(|v| !v.is_empty());
+    let mut out = Vec::new();
+    for row in store.ph1k_runtime_event_rows().iter().rev() {
+        if row.event_kind != Ph1kRuntimeEventKind::InterruptCandidate {
+            continue;
+        }
+        if let Some(tenant_scope) = tenant_scope.as_ref() {
+            if row.tenant_id != *tenant_scope {
+                continue;
+            }
+        }
+        if let Some(device_id) = device_id {
+            if row.device_id != *device_id {
+                continue;
+            }
+        }
+        let Some(ext) = row.interrupt_extended.as_ref() else {
+            continue;
+        };
+        if !locale_matches(ext.interrupt_locale_tag.as_str(), locale_tag.as_str()) {
+            continue;
+        }
+        let Some(phrase_text) = row.phrase_text.as_ref() else {
+            continue;
+        };
+        let phrase_text = truncate_utf8(phrase_text.trim(), 128);
+        if phrase_text.is_empty() {
+            continue;
+        }
+        if out.iter().any(|item| item == &phrase_text) {
+            continue;
+        }
+        out.push(phrase_text);
+        if out.len() >= 24 {
+            break;
+        }
+    }
+    out
+}
+
+fn resolve_ph1k_pae_mode_from_feedback(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    device_id: Option<&DeviceId>,
+) -> PaeMode {
+    let tenant_scope = tenant_scope
+        .map(|v| truncate_ascii(v, 64))
+        .filter(|v| !v.is_empty());
+    for row in store.ph1k_feedback_capture_rows().iter().rev() {
+        if let Some(tenant_scope) = tenant_scope.as_ref() {
+            if row.tenant_id != *tenant_scope {
+                continue;
+            }
+        }
+        if let Some(device_id) = device_id {
+            if row.device_id != *device_id {
+                continue;
+            }
+        }
+        return row.pae_mode_to;
+    }
+    PaeMode::Shadow
+}
+
+fn ph1k_pae_mode_label(mode: PaeMode) -> &'static str {
+    match mode {
+        PaeMode::Shadow => "shadow",
+        PaeMode::Assist => "assist",
+        PaeMode::Lead => "lead",
+    }
+}
+
+fn build_interrupt_matcher_and_binding(
+    store: &Ph1fStore,
+    tenant_scope: Option<&str>,
+    device_id: Option<&DeviceId>,
+    locale_tag: &InterruptLocaleTag,
+) -> Result<(InterruptPhraseMatcher, InterruptLexiconPolicyBinding), String> {
+    let tenant_seed = tenant_scope
+        .map(|v| truncate_ascii(v, 64))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "tenant_default".to_string());
+    let device_seed = device_id
+        .map(DeviceId::as_str)
+        .map(|v| truncate_ascii(v, 64))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "device_any".to_string());
+    let locale_seed = locale_key(locale_tag.as_str());
+    let pae_mode = resolve_ph1k_pae_mode_from_feedback(store, tenant_scope, device_id);
+    let pae_mode_label = ph1k_pae_mode_label(pae_mode);
+    let mut matcher = InterruptPhraseMatcher::built_in();
+    let mut phrases = default_interrupt_phrases_for_locale(locale_tag.as_str());
+    phrases.extend(learned_interrupt_phrases_from_runtime(
+        store,
+        tenant_scope,
+        device_id,
+        locale_tag,
+    ));
+    phrases.sort();
+    phrases.dedup();
+    if phrases.is_empty() {
+        return Err("ph1k interrupt phrase set is empty".to_string());
+    }
+
+    let policy_profile_id = InterruptPolicyProfileId::new(format!(
+        "interrupt_policy_pae_{}_{}",
+        pae_mode_label,
+        stable_hash_hex_16(&format!(
+            "{tenant_seed}:{device_seed}:{locale_seed}:{pae_mode_label}"
+        ))
+    ))
+    .map_err(|err| format!("ph1k policy profile id invalid: {err:?}"))?;
+    let tenant_profile_id = InterruptTenantProfileId::new(format!(
+        "tenant_interrupt_pae_{}_{}",
+        pae_mode_label,
+        stable_hash_hex_16(&format!("{tenant_seed}:{locale_seed}:{pae_mode_label}"))
+    ))
+    .map_err(|err| format!("ph1k tenant profile id invalid: {err:?}"))?;
+    matcher
+        .register_profile_from_phrases(
+            policy_profile_id.clone(),
+            tenant_profile_id.clone(),
+            InterruptPhraseSetVersion(2),
+            vec![(locale_tag.clone(), phrases)],
+        )
+        .map_err(|err| format!("ph1k dynamic profile registration failed: {err:?}"))?;
+    let binding =
+        InterruptLexiconPolicyBinding::v1(policy_profile_id, tenant_profile_id, locale_tag.clone())
+            .map_err(|err| format!("ph1k binding invalid: {err:?}"))?;
+    Ok((matcher, binding))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_ph1k_live_signal_bundle(
+    store: &Ph1fStore,
+    request: &VoiceTurnAdapterRequest,
+    now: MonotonicTimeNs,
+    tenant_scope: Option<&str>,
+    device_id: Option<&DeviceId>,
+) -> Result<Ph1kLiveSignalBundle, String> {
+    let capture = request
+        .audio_capture_ref
+        .as_ref()
+        .ok_or_else(|| "ph1k live capture bundle is required for voice turns".to_string())?;
+
+    let locale_tag = resolve_interrupt_locale_tag_from_capture(capture)?;
+    let (matcher, binding) =
+        build_interrupt_matcher_and_binding(store, tenant_scope, device_id, &locale_tag)?;
+    let selected_mic_raw = capture
+        .selected_mic
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "ph1k live capture missing selected_mic".to_string())?;
+    let selected_speaker_raw = capture
+        .selected_speaker
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "ph1k live capture missing selected_speaker".to_string())?;
+    let selected_mic = AudioDeviceId::new(sanitize_audio_device_token(selected_mic_raw))
+        .map_err(|err| format!("ph1k selected_mic invalid: {err:?}"))?;
+    let selected_speaker = AudioDeviceId::new(sanitize_audio_device_token(selected_speaker_raw))
+        .map_err(|err| format!("ph1k selected_speaker invalid: {err:?}"))?;
+    let device_route_raw = capture
+        .device_route
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| "ph1k live capture missing device_route".to_string())?;
+    let device_route = parse_device_route_label(device_route_raw)
+        .ok_or_else(|| format!("ph1k live capture device_route invalid: '{device_route_raw}'"))?;
+
+    let t_start = MonotonicTimeNs(capture.t_start_ns.max(1));
+    let t_end = MonotonicTimeNs(capture.t_end_ns.max(capture.t_start_ns.saturating_add(1)));
+    let t_candidate = MonotonicTimeNs(capture.t_candidate_start_ns.max(capture.t_start_ns));
+    let t_confirmed = MonotonicTimeNs(capture.t_confirmed_ns.max(capture.t_candidate_start_ns));
+    let span_ms = ((t_end.0.saturating_sub(t_start.0)) / 1_000_000).max(1);
+    let confirm_delta_ms = ((t_confirmed.0.saturating_sub(t_candidate.0)) / 1_000_000).max(1);
+    let jitter_ms = capture
+        .timing_jitter_ms_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing timing_jitter_ms_milli".to_string())?;
+    let drift_ppm = capture
+        .timing_drift_ppm_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing timing_drift_ppm_milli".to_string())?;
+    let buffer_depth_ms = capture
+        .timing_buffer_depth_ms_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing timing_buffer_depth_ms_milli".to_string())?;
+    let timing_underruns = capture.timing_underruns.unwrap_or(0);
+    let timing_overruns = capture.timing_overruns.unwrap_or(0);
+
+    let timing_stats = Ph1kTimingStats::v1(
+        jitter_ms,
+        drift_ppm,
+        buffer_depth_ms,
+        timing_underruns,
+        timing_overruns,
+    );
+    timing_stats
+        .validate()
+        .map_err(|err| format!("ph1k timing stats invalid: {err:?}"))?;
+
+    let vad_conf = capture
+        .vad_confidence_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing vad_confidence_bp".to_string())?;
+    let speech_likeness = capture
+        .speech_likeness_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing speech_likeness_bp".to_string())?;
+    let vad_events = vec![VadEvent::v1(
+        AudioStreamId(capture.stream_id),
+        t_start,
+        t_end,
+        Confidence::new(vad_conf).map_err(|err| format!("ph1k vad confidence invalid: {err:?}"))?,
+        SpeechLikeness::new(speech_likeness)
+            .map_err(|err| format!("ph1k speech likeness invalid: {err:?}"))?,
+    )];
+
+    let processed_stream_ref = AudioStreamRef::v1(
+        AudioStreamId(capture.stream_id),
+        AudioStreamKind::MicProcessed,
+        AudioFormat {
+            sample_rate_hz: SampleRateHz(16_000),
+            channels: ChannelCount(1),
+            sample_format: SampleFormat::PcmS16LE,
+        },
+        FrameDurationMs::Ms20,
+    );
+    let pre_roll_buffer_ref = PreRollBufferRef::v1(
+        PreRollBufferId(capture.pre_roll_buffer_id),
+        AudioStreamId(capture.stream_id),
+        t_start,
+        t_end,
+    );
+    let tts_playback_active = capture
+        .tts_playback_active
+        .ok_or_else(|| "ph1k live capture missing tts_playback_active".to_string())?;
+    let tts_playback = TtsPlaybackActiveEvent::v1(tts_playback_active, now);
+    let capture_degraded = capture
+        .capture_degraded
+        .ok_or_else(|| "ph1k live capture missing capture_degraded".to_string())?;
+    let stream_gap_detected = capture
+        .stream_gap_detected
+        .ok_or_else(|| "ph1k live capture missing stream_gap_detected".to_string())?;
+    let aec_unstable = capture
+        .aec_unstable
+        .ok_or_else(|| "ph1k live capture missing aec_unstable".to_string())?;
+    let device_changed = capture
+        .device_changed
+        .ok_or_else(|| "ph1k live capture missing device_changed".to_string())?;
+    let snr_db = capture
+        .snr_db_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing snr_db_milli".to_string())?;
+    let clipping_ratio = capture
+        .clipping_ratio_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing clipping_ratio_bp".to_string())?;
+    let echo_delay_ms = capture
+        .echo_delay_ms_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing echo_delay_ms_milli".to_string())?;
+    let packet_loss_pct = capture
+        .packet_loss_bp
+        .map(|v| (v as f32) / 100.0)
+        .ok_or_else(|| "ph1k live capture missing packet_loss_bp".to_string())?;
+    let double_talk_score = capture
+        .double_talk_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing double_talk_bp".to_string())?;
+    let erle_db = capture
+        .erle_db_milli
+        .map(|v| v as f32 / 1000.0)
+        .ok_or_else(|| "ph1k live capture missing erle_db_milli".to_string())?;
+
+    let mut adaptive_policy_input = default_adaptive_policy_input(device_route);
+    adaptive_policy_input.quality_metrics = AdvancedAudioQualityMetrics::v1(
+        snr_db,
+        clipping_ratio,
+        echo_delay_ms,
+        packet_loss_pct,
+        double_talk_score,
+        erle_db,
+    )
+    .map_err(|err| format!("ph1k quality metrics invalid: {err:?}"))?;
+    adaptive_policy_input.device_reliability = DeviceReliabilityScoreInput::v1(
+        capture.device_failures_24h.unwrap_or(0),
+        capture.device_recoveries_24h.unwrap_or(0),
+        capture.device_mean_recovery_ms.unwrap_or(0),
+        Confidence::new(
+            capture
+                .device_reliability_bp
+                .map(|v| (v as f32) / 10_000.0)
+                .ok_or_else(|| "ph1k live capture missing device_reliability_bp".to_string())?,
+        )
+        .map_err(|err| format!("ph1k device reliability score invalid: {err:?}"))?,
+    )
+    .map_err(|err| format!("ph1k device reliability invalid: {err:?}"))?;
+    adaptive_policy_input.timing_stats = timing_stats;
+    adaptive_policy_input.capture_to_handoff_latency_ms = confirm_delta_ms.min(10_000) as u32;
+    let timing_stats_for_bundle = adaptive_policy_input.timing_stats;
+    let capture_to_handoff_latency_ms = adaptive_policy_input.capture_to_handoff_latency_ms;
+    let device_health = if capture_degraded || aec_unstable || stream_gap_detected {
+        DeviceHealth::Degraded
+    } else {
+        DeviceHealth::Healthy
+    };
+    let device_state = DeviceState::v1_with_route(
+        selected_mic,
+        selected_speaker,
+        device_route,
+        device_health,
+        Vec::new(),
+    );
+
+    let detection = match capture
+        .detection_text
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(text) => {
+            let detection_confidence = capture
+                .detection_confidence_bp
+                .map(|v| (v as f32) / 10_000.0)
+                .ok_or_else(|| "ph1k live capture missing detection_confidence_bp".to_string())?;
+            Some(PhraseDetection {
+                text: truncate_utf8(text, 128),
+                confidence: detection_confidence,
+            })
+        }
+        None => None,
+    };
+    let acoustic_confidence = capture
+        .acoustic_confidence_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing acoustic_confidence_bp".to_string())?;
+    let prosody_confidence = capture
+        .prosody_confidence_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing prosody_confidence_bp".to_string())?;
+    let echo_safe_confidence = capture
+        .echo_safe_confidence_bp
+        .map(|v| (v as f32) / 10_000.0)
+        .ok_or_else(|| "ph1k live capture missing echo_safe_confidence_bp".to_string())?;
+    let nearfield_confidence = capture
+        .nearfield_confidence_bp
+        .map(|v| (v as f32) / 10_000.0);
+    let interrupt_input = InterruptInput {
+        lexicon_policy_binding: binding,
+        adaptive_policy_input,
+        tts_playback_active,
+        capture_degraded,
+        stream_gap_detected,
+        aec_unstable,
+        device_changed,
+        voiced_window_ms: span_ms.min(2_000) as u32,
+        vad_confidence: vad_conf,
+        acoustic_confidence,
+        prosody_confidence,
+        speech_likeness,
+        echo_safe_confidence,
+        nearfield_confidence,
+        detection,
+        t_event: now,
+    };
+    let interrupt_decision = evaluate_interrupt_candidate(&matcher, interrupt_input.clone())
+        .map_err(|err| format!("ph1k interrupt decision failed: {err:?}"))?;
+    let ph1c_handoff = build_ph1k_to_ph1c_handoff(&interrupt_input, &interrupt_decision)
+        .map_err(|err| format!("ph1k->ph1c handoff invalid: {err:?}"))?;
+    let t_capture = MonotonicTimeNs(now.0.clamp(t_start.0, t_end.0));
+    let duplex_frame = build_duplex_frame(
+        (capture.stream_id as u64) ^ capture.pre_roll_buffer_id,
+        AudioStreamId(capture.stream_id),
+        PreRollBufferId(capture.pre_roll_buffer_id),
+        t_start,
+        t_end,
+        t_capture,
+        tts_playback_active,
+        capture_to_handoff_latency_ms,
+    )
+    .map_err(|err| format!("ph1k duplex frame invalid: {err:?}"))?;
+
+    Ok(Ph1kLiveSignalBundle {
+        locale_tag,
+        processed_stream_ref,
+        pre_roll_buffer_ref,
+        vad_events,
+        device_state,
+        timing_stats: timing_stats_for_bundle,
+        tts_playback,
+        duplex_frame,
+        interrupt_input,
+        interrupt_decision,
+        ph1c_handoff,
+    })
+}
+
+fn build_voice_id_request_from_ph1k_bundle(
+    now: MonotonicTimeNs,
+    actor_user_id: UserId,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<Ph1VoiceIdRequest, selene_kernel_contracts::ContractViolation> {
+    let session_snapshot = SessionSnapshot {
+        schema_version: SchemaVersion(1),
+        session_state: SessionState::Active,
+        session_id: Some(SessionId(1)),
+        next_allowed_actions: NextAllowedActions {
+            may_speak: true,
+            must_wait: false,
+            must_rewake: false,
+        },
+    };
+    Ph1VoiceIdRequest::v1(
+        now,
+        ph1k.processed_stream_ref,
+        ph1k.vad_events.clone(),
+        ph1k.device_state.selected_mic.clone(),
+        session_snapshot,
+        None,
+        ph1k.tts_playback.active,
+        DeviceTrustLevel::Trusted,
+        Some(actor_user_id),
+    )
+}
+
+fn build_ph1c_live_request(ph1k: &Ph1kLiveSignalBundle) -> Result<Ph1cRequest, String> {
+    let bounded_audio_segment_ref = BoundedAudioSegmentRef::v1(
+        ph1k.processed_stream_ref.stream_id,
+        ph1k.pre_roll_buffer_ref.buffer_id,
+        ph1k.pre_roll_buffer_ref.t_start,
+        ph1k.pre_roll_buffer_ref.t_end,
+        ph1k.pre_roll_buffer_ref.t_start,
+        ph1k.pre_roll_buffer_ref.t_end,
+    )
+    .map_err(|err| format!("ph1c bounded audio segment invalid: {err:?}"))?;
+
+    let language_hint = Some(LanguageHint::v1(
+        LanguageTag::new(ph1k.locale_tag.as_str().to_string())
+            .map_err(|err| format!("ph1c language tag invalid: {err:?}"))?,
+        LanguageHintConfidence::Med,
+    ));
+    let noise_level_hint = Some(
+        NoiseLevelHint::new(
+            (ph1k.ph1c_handoff.quality_metrics.packet_loss_pct / 100.0).clamp(0.0, 1.0),
+        )
+        .map_err(|err| format!("ph1c noise hint invalid: {err:?}"))?,
+    );
+    let vad_quality_hint = Some(
+        VadQualityHint::new(ph1k.interrupt_input.vad_confidence.clamp(0.0, 1.0))
+            .map_err(|err| format!("ph1c vad hint invalid: {err:?}"))?,
+    );
+    let speaker_overlap_hint = Some(
+        SpeakerOverlapHint::v1(
+            if ph1k.tts_playback.active {
+                SpeakerOverlapClass::InterruptionOverlap
+            } else {
+                SpeakerOverlapClass::SingleSpeaker
+            },
+            Confidence::new((0.88 + (ph1k.interrupt_input.vad_confidence * 0.1)).clamp(0.0, 1.0))
+                .map_err(|err| format!("ph1c overlap confidence invalid: {err:?}"))?,
+        )
+        .map_err(|err| format!("ph1c overlap hint invalid: {err:?}"))?,
+    );
+    let req = Ph1cRequest::v1(
+        bounded_audio_segment_ref,
+        Ph1cSessionStateRef::v1(WakeSessionState::Active, ph1k.tts_playback.active),
+        ph1k.device_state.clone(),
+        language_hint,
+        noise_level_hint,
+        vad_quality_hint,
+        Some(ph1k.ph1c_handoff.clone()),
+    )
+    .map_err(|err| format!("ph1c request invalid: {err:?}"))?;
+    req.with_speaker_overlap_hint(speaker_overlap_hint)
+        .map_err(|err| format!("ph1c overlap patch invalid: {err:?}"))
+}
+
+fn build_os_ph1k_live_evidence(bundle: &Ph1kLiveSignalBundle) -> OsPh1kLiveEvidence {
+    OsPh1kLiveEvidence {
+        processed_stream_ref: bundle.processed_stream_ref,
+        pre_roll_buffer_ref: bundle.pre_roll_buffer_ref,
+        vad_events: bundle.vad_events.clone(),
+        device_state: bundle.device_state.clone(),
+        timing_stats: Some(bundle.timing_stats),
+        tts_playback: Some(bundle.tts_playback),
+        interrupt_candidate: bundle.interrupt_decision.candidate.clone(),
+        duplex_frame: Some(bundle.duplex_frame),
+    }
+}
+
+fn storage_device_health_from_bundle(bundle: &Ph1kLiveSignalBundle) -> Ph1kDeviceHealth {
+    if bundle.interrupt_input.capture_degraded
+        || bundle.interrupt_input.aec_unstable
+        || bundle.interrupt_input.stream_gap_detected
+    {
+        return Ph1kDeviceHealth::Degraded;
+    }
+    match bundle.device_state.health {
+        DeviceHealth::Healthy => Ph1kDeviceHealth::Healthy,
+        DeviceHealth::Degraded => Ph1kDeviceHealth::Degraded,
+        DeviceHealth::Failed => Ph1kDeviceHealth::Failed,
+    }
+}
+
+fn interrupt_noise_class_label(noise_class: Option<InterruptNoiseClass>) -> &'static str {
+    match noise_class.unwrap_or(InterruptNoiseClass::Clean) {
+        InterruptNoiseClass::Clean => "CLEAN",
+        InterruptNoiseClass::Elevated => "ELEVATED",
+        InterruptNoiseClass::Severe => "SEVERE",
+    }
+}
+
+fn interrupt_feedback_kind_label(kind: InterruptFeedbackSignalKind) -> &'static str {
+    match kind {
+        InterruptFeedbackSignalKind::FalseLexicalTrigger => "false_lexical",
+        InterruptFeedbackSignalKind::MissedLexicalTrigger => "missed_lexical",
+        InterruptFeedbackSignalKind::WrongConfidenceBand => "wrong_confidence",
+    }
+}
+
+fn normalize_eval_locale_tag(value: &str) -> &'static str {
+    match value.to_ascii_lowercase().as_str() {
+        "en" | "en-us" => "en-US",
+        "es" | "es-es" => "es-ES",
+        "zh" | "zh-cn" => "zh-CN",
+        "tr" | "tr-tr" => "tr-TR",
+        _ => "en-US",
+    }
+}
+
+fn eval_device_route_label(route: DeviceRoute) -> &'static str {
+    match route {
+        DeviceRoute::BuiltIn => "BUILT_IN",
+        DeviceRoute::Bluetooth => "BLUETOOTH",
+        DeviceRoute::Usb => "USB",
+        DeviceRoute::Virtual => "VIRTUAL",
+        DeviceRoute::Unknown => "VIRTUAL",
+    }
+}
+
+fn percentile_p95_u32(values: &[u32]) -> Option<u32> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut ordered = values.to_vec();
+    ordered.sort_unstable();
+    let rank = ((ordered.len() as f64) * 0.95).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(ordered.len().saturating_sub(1));
+    ordered.get(idx).copied()
+}
+
+fn ph1k_device_failover_recovery_samples_ms(runtime_rows: &[&Ph1kRuntimeEventRecord]) -> Vec<u32> {
+    let mut rows = runtime_rows
+        .iter()
+        .copied()
+        .filter(|row| row.event_kind == Ph1kRuntimeEventKind::DeviceState)
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| row.created_at.0);
+
+    let mut outage_start_ns: Option<u64> = None;
+    let mut out = Vec::new();
+    for row in rows {
+        let Some(health) = row.device_health else {
+            continue;
+        };
+        match health {
+            Ph1kDeviceHealth::Failed | Ph1kDeviceHealth::Degraded => {
+                if outage_start_ns.is_none() {
+                    outage_start_ns = Some(row.created_at.0);
+                }
+            }
+            Ph1kDeviceHealth::Healthy => {
+                if let Some(start_ns) = outage_start_ns.take() {
+                    let ms = ((row.created_at.0.saturating_sub(start_ns)) / 1_000_000).max(1);
+                    out.push(ms.min(u32::MAX as u64) as u32);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn eval_commit_hash() -> String {
+    env::var("SELENE_COMMIT_HASH")
+        .ok()
+        .map(|v| truncate_ascii(v.trim(), 40))
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "live_runtime".to_string())
+}
+
+fn resolve_repo_root_from_cwd() -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    for ancestor in cwd.ancestors() {
+        if ancestor.join(".git").exists() {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
+}
+
+fn append_ph1k_live_eval_snapshot_csv(
+    store: &Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    tenant_id: &str,
+    bundle: &Ph1kLiveSignalBundle,
+) -> Result<(), String> {
+    let default_csv_path = resolve_repo_root_from_cwd()
+        .map(|root| root.join(".dev/ph1k_live_eval_snapshot.csv"))
+        .unwrap_or_else(|| PathBuf::from(".dev/ph1k_live_eval_snapshot.csv"));
+    let csv_path = env::var("SELENE_PH1K_LIVE_EVAL_PATH")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(default_csv_path);
+    if let Some(parent) = csv_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!(
+                    "failed to create ph1k eval csv directory '{}': {}",
+                    parent.display(),
+                    err
+                )
+            })?;
+        }
+    }
+    let needs_header = !csv_path.exists()
+        || fs::metadata(&csv_path)
+            .map(|meta| meta.len() == 0)
+            .unwrap_or(true);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&csv_path)
+        .map_err(|err| {
+            format!(
+                "failed to open ph1k eval csv '{}' for append: {}",
+                csv_path.display(),
+                err
+            )
+        })?;
+    if needs_header {
+        file.write_all(b"captured_at_utc,commit_hash,window_min,locale_tag,device_route,noise_class,overlap_speech,active_session_hours,interrupt_events,false_interrupt_count,missed_interrupt_count,false_interrupt_rate_per_hour,missed_interrupt_rate_pct,end_of_speech_p95_ms,capture_to_ph1c_handoff_p95_ms,device_failover_recovery_p95_ms,noisy_recovery_success_pct,multilingual_interrupt_recall_pct,audit_completeness_pct,tenant_isolation_pct\n")
+            .map_err(|err| {
+                format!(
+                    "failed to write ph1k eval csv header '{}': {}",
+                    csv_path.display(),
+                    err
+                )
+            })?;
+    }
+
+    let captured_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs().to_string())
+        .unwrap_or_else(|_| now.0.to_string());
+    let locale_tag = normalize_eval_locale_tag(bundle.locale_tag.as_str());
+    let device_route =
+        eval_device_route_label(bundle.interrupt_input.adaptive_policy_input.device_route);
+    let noise_class = interrupt_noise_class_label(bundle.interrupt_decision.adaptive_noise_class);
+    let overlap_speech = if bundle.tts_playback.active { 1 } else { 0 };
+    let window_start_ns = now.0.saturating_sub(3_600_000_000_000);
+    let tenant = truncate_ascii(tenant_id, 64);
+    let runtime_rows = store
+        .ph1k_runtime_event_rows()
+        .iter()
+        .filter(|row| row.tenant_id == tenant && row.created_at.0 >= window_start_ns)
+        .collect::<Vec<_>>();
+    let feedback_rows = store
+        .ph1k_feedback_capture_rows()
+        .iter()
+        .filter(|row| row.tenant_id == tenant && row.created_at.0 >= window_start_ns)
+        .collect::<Vec<_>>();
+
+    let (min_ns, max_ns) = runtime_rows.iter().fold((u64::MAX, 0_u64), |acc, row| {
+        (acc.0.min(row.created_at.0), acc.1.max(row.created_at.0))
+    });
+    let active_session_hours = if runtime_rows.is_empty() {
+        1.0 / 60.0
+    } else {
+        (((max_ns.saturating_sub(min_ns)).max(60_000_000_000) as f64) / 3_600_000_000_000.0) as f32
+    };
+    let interrupt_events = runtime_rows
+        .iter()
+        .filter(|row| row.event_kind == Ph1kRuntimeEventKind::InterruptCandidate)
+        .count()
+        .max(1) as u32;
+    let false_interrupt_count = feedback_rows
+        .iter()
+        .filter(|row| row.issue_kind == Ph1kFeedbackIssueKind::FalseInterrupt)
+        .count() as u32;
+    let missed_interrupt_count = feedback_rows
+        .iter()
+        .filter(|row| row.issue_kind == Ph1kFeedbackIssueKind::MissedInterrupt)
+        .count() as u32;
+    let false_interrupt_rate_per_hour =
+        false_interrupt_count as f32 / active_session_hours.max(1.0 / 60.0);
+    let missed_interrupt_rate_pct =
+        (missed_interrupt_count as f32 * 100.0) / interrupt_events as f32;
+    let eos_samples_ms = runtime_rows
+        .iter()
+        .filter_map(|row| {
+            row.interrupt_extended.as_ref().map(|ext| {
+                ((ext
+                    .timing_markers
+                    .window_end
+                    .0
+                    .saturating_sub(ext.timing_markers.window_start.0))
+                    / 1_000_000)
+                    .max(1)
+                    .min(2_000) as u32
+            })
+        })
+        .collect::<Vec<_>>();
+    let end_of_speech_p95_ms = percentile_p95_u32(&eos_samples_ms).unwrap_or_else(|| {
+        bundle
+            .vad_events
+            .last()
+            .map(|ev| {
+                ((ev.t_end.0.saturating_sub(ev.t_start.0)) / 1_000_000)
+                    .max(1)
+                    .min(2_000) as u32
+            })
+            .unwrap_or(180)
+    });
+    let handoff_samples_ms = runtime_rows
+        .iter()
+        .filter_map(|row| {
+            row.interrupt_extended
+                .as_ref()
+                .map(|ext| ext.adaptive_capture_to_handoff_latency_ms.max(1))
+        })
+        .collect::<Vec<_>>();
+    let capture_to_ph1c_handoff_p95_ms =
+        percentile_p95_u32(&handoff_samples_ms).unwrap_or_else(|| {
+            bundle
+                .interrupt_input
+                .adaptive_policy_input
+                .capture_to_handoff_latency_ms
+                .max(1)
+        });
+    let failover_samples_ms = ph1k_device_failover_recovery_samples_ms(&runtime_rows);
+    let device_failover_recovery_p95_ms =
+        percentile_p95_u32(&failover_samples_ms).unwrap_or_else(|| {
+            bundle
+                .interrupt_input
+                .adaptive_policy_input
+                .device_reliability
+                .mean_recovery_ms
+                .max(1)
+        });
+    let noisy_attempts = runtime_rows
+        .iter()
+        .filter(|row| {
+            row.event_kind == Ph1kRuntimeEventKind::InterruptCandidate
+                && row
+                    .interrupt_extended
+                    .as_ref()
+                    .map(|ext| ext.adaptive_noise_class.as_str() != "CLEAN")
+                    .unwrap_or(false)
+        })
+        .count()
+        .max(1) as u32;
+    let noisy_failures = feedback_rows
+        .iter()
+        .filter(|row| {
+            row.issue_kind == Ph1kFeedbackIssueKind::WrongDegradationClassification
+                && row
+                    .adaptive_noise_class
+                    .as_deref()
+                    .map(|v| v != "CLEAN")
+                    .unwrap_or(false)
+        })
+        .count() as u32;
+    let noisy_recovery_success_pct =
+        (((noisy_attempts.saturating_sub(noisy_failures)) as f32) * 100.0) / noisy_attempts as f32;
+
+    let multilingual_candidates = runtime_rows
+        .iter()
+        .filter(|row| {
+            row.event_kind == Ph1kRuntimeEventKind::InterruptCandidate
+                && row
+                    .interrupt_extended
+                    .as_ref()
+                    .map(|ext| {
+                        !locale_matches(ext.interrupt_locale_tag.as_str(), "en-US")
+                            && !locale_matches(ext.interrupt_locale_tag.as_str(), "en")
+                    })
+                    .unwrap_or(false)
+        })
+        .count() as u32;
+    let multilingual_denominator = multilingual_candidates
+        .saturating_add(missed_interrupt_count)
+        .max(1);
+    let multilingual_interrupt_recall_pct =
+        (multilingual_candidates as f32 * 100.0) / multilingual_denominator as f32;
+
+    let turn_prefix = format!("ph1k_runtime:{}:{}:", correlation_id.0, turn_id.0);
+    let turn_rows = store
+        .ph1k_runtime_event_rows()
+        .iter()
+        .filter(|row| row.idempotency_key.starts_with(&turn_prefix))
+        .collect::<Vec<_>>();
+    let mut required_kinds = vec![
+        Ph1kRuntimeEventKind::StreamRefs,
+        Ph1kRuntimeEventKind::VadEvent,
+        Ph1kRuntimeEventKind::DeviceState,
+        Ph1kRuntimeEventKind::TimingStats,
+        Ph1kRuntimeEventKind::DegradationFlags,
+        Ph1kRuntimeEventKind::TtsPlaybackActive,
+    ];
+    if bundle.interrupt_decision.candidate.is_some() {
+        required_kinds.push(Ph1kRuntimeEventKind::InterruptCandidate);
+    }
+    required_kinds.sort();
+    required_kinds.dedup();
+    let present_required = required_kinds
+        .iter()
+        .filter(|kind| turn_rows.iter().any(|row| row.event_kind == **kind))
+        .count();
+    let audit_completeness_pct = if required_kinds.is_empty() {
+        100.0
+    } else {
+        (present_required as f32 * 100.0) / required_kinds.len() as f32
+    };
+    let tenant_isolation_pct = if turn_rows.is_empty() {
+        100.0
+    } else {
+        (turn_rows
+            .iter()
+            .filter(|row| row.tenant_id == tenant)
+            .count() as f32
+            * 100.0)
+            / turn_rows.len() as f32
+    };
+    let line = format!(
+        "{},{},{},{},{},{},{},{:.4},{},{},{},{:.4},{:.2},{},{},{},{:.2},{:.2},{:.2},{:.2}\n",
+        captured_at,
+        eval_commit_hash(),
+        60,
+        locale_tag,
+        device_route,
+        noise_class,
+        overlap_speech,
+        active_session_hours,
+        interrupt_events,
+        false_interrupt_count,
+        missed_interrupt_count,
+        false_interrupt_rate_per_hour,
+        missed_interrupt_rate_pct,
+        end_of_speech_p95_ms,
+        capture_to_ph1c_handoff_p95_ms,
+        device_failover_recovery_p95_ms,
+        noisy_recovery_success_pct,
+        multilingual_interrupt_recall_pct,
+        audit_completeness_pct,
+        tenant_isolation_pct,
+    );
+    file.write_all(line.as_bytes()).map_err(|err| {
+        format!(
+            "failed to append ph1k eval csv row '{}': {}",
+            csv_path.display(),
+            err
+        )
+    })?;
+    file.flush().map_err(|err| {
+        format!(
+            "failed to flush ph1k eval csv '{}': {}",
+            csv_path.display(),
+            err
+        )
+    })?;
+
+    let _ = (correlation_id, turn_id);
+    Ok(())
+}
+
+fn ph1c_live_reject_summary(
+    reason_code: ReasonCodeId,
+    retry_advice: Ph1cRetryAdvice,
+) -> Ph1cLiveTurnOutcomeSummary {
+    Ph1cLiveTurnOutcomeSummary {
+        response: Ph1cResponse::TranscriptReject(
+            selene_kernel_contracts::ph1c::TranscriptReject::v1(reason_code, retry_advice),
+        ),
+        partial_text: None,
+        final_text: None,
+        finalized: false,
+        low_latency_commit: false,
+        provider_call_trace: Vec::new(),
+    }
+}
+
+fn summarize_ph1c_stream_commit(
+    stream_commit: Ph1cStreamCommit,
+    provider_call_trace: Vec<Ph1dProviderCallResponse>,
+) -> Ph1cLiveTurnOutcomeSummary {
+    let final_text = match &stream_commit.response {
+        Ph1cResponse::TranscriptOk(ok) => Some(ok.transcript_text.clone()),
+        Ph1cResponse::TranscriptReject(_) => None,
+    };
+    let partial_text = stream_commit.partial_batch.as_ref().and_then(|batch| {
+        batch
+            .partials
+            .last()
+            .map(|partial| partial.text_chunk.clone())
+    });
+    Ph1cLiveTurnOutcomeSummary {
+        response: stream_commit.response,
+        partial_text,
+        final_text,
+        finalized: stream_commit.finalized,
+        low_latency_commit: stream_commit.low_latency_commit,
+        provider_call_trace,
+    }
+}
+
+fn snapshot_provider_calls(
+    records: &Arc<Mutex<Vec<Ph1dProviderCallResponse>>>,
+) -> Vec<Ph1dProviderCallResponse> {
+    records.lock().map(|rows| rows.clone()).unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_ph1c_live_telemetry_csv(
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    tenant_id: &str,
+    outcome_type: &str,
+    reason_code: ReasonCodeId,
+    latency_ms: u32,
+    decision_delta: bool,
+    finalized: bool,
+    low_latency_commit: bool,
+) -> Result<(), String> {
+    let csv_path = env::var("SELENE_PH1C_LIVE_TELEMETRY_PATH")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(".dev/ph1c_live_telemetry.csv"));
+    if let Some(parent) = csv_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|err| {
+                format!(
+                    "failed to create telemetry csv directory '{}': {}",
+                    parent.display(),
+                    err
+                )
+            })?;
+        }
+    }
+    let needs_header = !csv_path.exists()
+        || fs::metadata(&csv_path)
+            .map(|meta| meta.len() == 0)
+            .unwrap_or(true);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&csv_path)
+        .map_err(|err| {
+            format!(
+                "failed to open telemetry csv '{}' for append: {}",
+                csv_path.display(),
+                err
+            )
+        })?;
+    if needs_header {
+        file.write_all(
+            b"captured_at_ns,correlation_id,turn_id,tenant_id,outcome_type,reason_code,latency_ms,decision_delta,finalized,low_latency_commit\n",
+        )
+        .map_err(|err| {
+            format!(
+                "failed to write telemetry csv header '{}': {}",
+                csv_path.display(),
+                err
+            )
+        })?;
+    }
+    let line = format!(
+        "{},{},{},{},{},{},{},{},{},{}\n",
+        now.0,
+        correlation_id.0,
+        turn_id.0,
+        tenant_id,
+        outcome_type,
+        reason_code.0,
+        latency_ms,
+        if decision_delta { "1" } else { "0" },
+        if finalized { "1" } else { "0" },
+        if low_latency_commit { "1" } else { "0" }
+    );
+    file.write_all(line.as_bytes()).map_err(|err| {
+        format!(
+            "failed to append telemetry csv row '{}': {}",
+            csv_path.display(),
+            err
+        )
+    })?;
+    Ok(())
+}
+
+fn ph1d_model_outcome_from_os_outcome(outcome: &OsVoiceLiveTurnOutcome) -> Ph1dModelCallOutcome {
+    match outcome {
+        OsVoiceLiveTurnOutcome::Forwarded(forwarded) => {
+            let next_move = forwarded
+                .top_level_bundle
+                .os_bundle
+                .decision_compute
+                .next_move;
+            if next_move == OsNextMove::Refuse {
+                return Ph1dModelCallOutcome::SafetyBlock;
+            }
+            Ph1dModelCallOutcome::Ok {
+                raw_json: ph1d_model_json_for_next_move(next_move),
+            }
+        }
+        OsVoiceLiveTurnOutcome::Refused(_) => Ph1dModelCallOutcome::SafetyBlock,
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => Ph1dModelCallOutcome::BudgetExceeded,
+    }
+}
+
+fn ph1d_model_json_for_next_move(next_move: OsNextMove) -> String {
+    match next_move {
+        OsNextMove::Clarify => format!(
+            r#"{{"mode":"clarify","question":"Could you clarify?","what_is_missing":["Task"],"accepted_answer_formats":["One short sentence","A few keywords"],"reason_code":{}}}"#,
+            ph1d_reason_codes::D_CLARIFY_EVIDENCE_REQUIRED.0
+        ),
+        OsNextMove::DispatchTool | OsNextMove::DispatchSimulation | OsNextMove::Confirm => format!(
+            r#"{{"mode":"intent","intent_type":"Continue","field_refinements":[],"missing_fields":[],"reason_code":{}}}"#,
+            ph1d_reason_codes::D_PROVIDER_OK.0
+        ),
+        OsNextMove::Explain | OsNextMove::Wait => format!(
+            r#"{{"mode":"analysis","short_analysis":"route:analysis_required","reason_code":{}}}"#,
+            ph1d_reason_codes::D_PROVIDER_OK.0
+        ),
+        OsNextMove::Respond | OsNextMove::Refuse => format!(
+            r#"{{"mode":"chat","response_text":"Acknowledged.","reason_code":{}}}"#,
+            ph1d_reason_codes::D_PROVIDER_OK.0
+        ),
+    }
+}
+
+fn ph1d_fail_code(kind: Ph1dFailureKind) -> &'static str {
+    match kind {
+        Ph1dFailureKind::InvalidSchema => "D_FAIL_INVALID_SCHEMA",
+        Ph1dFailureKind::ForbiddenOutput => "D_FAIL_FORBIDDEN_OUTPUT",
+        Ph1dFailureKind::SafetyBlock => "D_FAIL_SAFETY_BLOCK",
+        Ph1dFailureKind::Timeout => "D_FAIL_TIMEOUT",
+        Ph1dFailureKind::BudgetExceeded => "D_FAIL_BUDGET_EXCEEDED",
+    }
+}
+
+fn ph1c_language_locale(response: &Ph1cResponse) -> Option<String> {
+    match response {
+        Ph1cResponse::TranscriptOk(ok) => Some(ok.language_tag.as_str().to_string()),
+        Ph1cResponse::TranscriptReject(_) => None,
+    }
+}
+
+fn feedback_learn_pair_for_ph1c_capture(
+    event_type: FeedbackEventType,
+) -> Option<(&'static str, &'static str)> {
+    match event_type {
+        FeedbackEventType::SttReject => Some((
+            feedback_event_type_str(FeedbackEventType::SttReject),
+            learn_signal_type_str(LearnSignalType::SttReject),
+        )),
+        // Storage pair-lock currently learns STT retrys through the canonical STT reject signal lane.
+        FeedbackEventType::SttRetry => Some((
+            feedback_event_type_str(FeedbackEventType::SttReject),
+            learn_signal_type_str(LearnSignalType::SttReject),
+        )),
+        _ => None,
+    }
+}
+
+fn feedback_learn_pair_for_ph1d_capture(
+    event_type: FeedbackEventType,
+) -> Option<(&'static str, &'static str)> {
+    match event_type {
+        FeedbackEventType::SttReject => Some((
+            feedback_event_type_str(FeedbackEventType::SttReject),
+            learn_signal_type_str(LearnSignalType::SttReject),
+        )),
+        FeedbackEventType::ToolFail => Some((
+            feedback_event_type_str(FeedbackEventType::ToolFail),
+            learn_signal_type_str(LearnSignalType::ToolFail),
+        )),
+        _ => None,
+    }
+}
+
+fn feedback_event_type_str(event_type: FeedbackEventType) -> &'static str {
+    match event_type {
+        FeedbackEventType::SttReject => "SttReject",
+        FeedbackEventType::SttRetry => "SttRetry",
+        FeedbackEventType::LanguageMismatch => "LanguageMismatch",
+        FeedbackEventType::UserCorrection => "UserCorrection",
+        FeedbackEventType::ClarifyLoop => "ClarifyLoop",
+        FeedbackEventType::ConfirmAbort => "ConfirmAbort",
+        FeedbackEventType::ToolFail => "ToolFail",
+        FeedbackEventType::MemoryOverride => "MemoryOverride",
+        FeedbackEventType::DeliverySwitch => "DeliverySwitch",
+        FeedbackEventType::BargeIn => "BargeIn",
+        FeedbackEventType::VoiceIdFalseReject => "VoiceIdFalseReject",
+        FeedbackEventType::VoiceIdFalseAccept => "VoiceIdFalseAccept",
+        FeedbackEventType::VoiceIdSpoofRisk => "VoiceIdSpoofRisk",
+        FeedbackEventType::VoiceIdMultiSpeaker => "VoiceIdMultiSpeaker",
+        FeedbackEventType::VoiceIdDriftAlert => "VoiceIdDriftAlert",
+        FeedbackEventType::VoiceIdReauthFriction => "VoiceIdReauthFriction",
+        FeedbackEventType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
+        FeedbackEventType::VoiceIdDrift => "VoiceIdDrift",
+        FeedbackEventType::VoiceIdLowQuality => "VoiceIdLowQuality",
+    }
+}
+
+fn learn_signal_type_str(signal_type: LearnSignalType) -> &'static str {
+    match signal_type {
+        LearnSignalType::SttReject => "SttReject",
+        LearnSignalType::UserCorrection => "UserCorrection",
+        LearnSignalType::ClarifyLoop => "ClarifyLoop",
+        LearnSignalType::ToolFail => "ToolFail",
+        LearnSignalType::VocabularyRepeat => "VocabularyRepeat",
+        LearnSignalType::BargeIn => "BargeIn",
+        LearnSignalType::DeliverySwitch => "DeliverySwitch",
+        LearnSignalType::VoiceIdFalseReject => "VoiceIdFalseReject",
+        LearnSignalType::VoiceIdFalseAccept => "VoiceIdFalseAccept",
+        LearnSignalType::VoiceIdSpoofRisk => "VoiceIdSpoofRisk",
+        LearnSignalType::VoiceIdMultiSpeaker => "VoiceIdMultiSpeaker",
+        LearnSignalType::VoiceIdDriftAlert => "VoiceIdDriftAlert",
+        LearnSignalType::VoiceIdReauthFriction => "VoiceIdReauthFriction",
+        LearnSignalType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
+        LearnSignalType::VoiceIdDrift => "VoiceIdDrift",
+        LearnSignalType::VoiceIdLowQuality => "VoiceIdLowQuality",
+    }
 }
 
 fn parse_auto_builder_enabled_from_env() -> bool {
@@ -3056,6 +5976,47 @@ mod tests {
             user_text_final: None,
             selene_text_partial: None,
             selene_text_final: None,
+            audio_capture_ref: Some(VoiceTurnAudioCaptureRef {
+                stream_id: 11,
+                pre_roll_buffer_id: 1,
+                t_start_ns: 1,
+                t_end_ns: 3,
+                t_candidate_start_ns: 2,
+                t_confirmed_ns: 3,
+                locale_tag: Some("en-US".to_string()),
+                device_route: Some("BUILT_IN".to_string()),
+                selected_mic: Some("ios_mic_default".to_string()),
+                selected_speaker: Some("ios_speaker_default".to_string()),
+                tts_playback_active: Some(true),
+                detection_text: Some("stop".to_string()),
+                detection_confidence_bp: Some(9_600),
+                vad_confidence_bp: Some(9_400),
+                acoustic_confidence_bp: Some(9_300),
+                prosody_confidence_bp: Some(9_200),
+                speech_likeness_bp: Some(9_500),
+                echo_safe_confidence_bp: Some(9_100),
+                nearfield_confidence_bp: Some(9_000),
+                capture_degraded: Some(false),
+                stream_gap_detected: Some(false),
+                aec_unstable: Some(false),
+                device_changed: Some(false),
+                snr_db_milli: Some(22_000),
+                clipping_ratio_bp: Some(80),
+                echo_delay_ms_milli: Some(26_000),
+                packet_loss_bp: Some(25),
+                double_talk_bp: Some(400),
+                erle_db_milli: Some(20_000),
+                device_failures_24h: Some(0),
+                device_recoveries_24h: Some(0),
+                device_mean_recovery_ms: Some(100),
+                device_reliability_bp: Some(9_900),
+                timing_jitter_ms_milli: Some(7_000),
+                timing_drift_ppm_milli: Some(3_000),
+                timing_buffer_depth_ms_milli: Some(35_000),
+                timing_underruns: Some(0),
+                timing_overruns: Some(0),
+            }),
+            visual_input_ref: None,
         }
     }
 
@@ -3079,6 +6040,91 @@ mod tests {
             page_cursor: None,
             report_context_id: None,
             page_size: Some(20),
+        }
+    }
+
+    #[test]
+    fn at_adapter_vision_01_build_vision_turn_input_accepts_raw_source_refs() {
+        let mut request = base_request();
+        request.visual_input_ref = Some(VoiceTurnVisualInputRef {
+            turn_opt_in_enabled: true,
+            source_id: Some("vision_source_adapter_1".to_string()),
+            source_kind: Some("IMAGE".to_string()),
+            image_ref: Some("image://invoice_capture_001".to_string()),
+            blob_ref: Some("blob://capture/invoice_001".to_string()),
+            visible_tokens: vec![],
+        });
+        let input = build_vision_turn_input_from_adapter_request(
+            &request,
+            CorrelationId(request.correlation_id as u128),
+            TurnId(request.turn_id),
+        )
+        .unwrap()
+        .expect("vision input should be present");
+        assert!(input.turn_opt_in_enabled);
+        assert!(input.raw_source_ref.is_some());
+        assert!(input.visible_tokens.is_empty());
+    }
+
+    #[test]
+    fn at_adapter_vision_02_refuses_visual_turn_without_opt_in() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.visual_input_ref = Some(VoiceTurnVisualInputRef {
+            turn_opt_in_enabled: false,
+            source_id: Some("vision_source_adapter_2".to_string()),
+            source_kind: Some("IMAGE".to_string()),
+            image_ref: Some("image://invoice_capture_002".to_string()),
+            blob_ref: None,
+            visible_tokens: vec![VoiceTurnVisualTokenRef {
+                token: "invoice".to_string(),
+                x: None,
+                y: None,
+                w: None,
+                h: None,
+            }],
+        });
+        let err = runtime
+            .run_voice_turn(request)
+            .expect_err("visual turn without per-turn opt-in must fail closed");
+        assert!(err.contains("ph1vision_refuse"));
+    }
+
+    #[test]
+    fn run2_desktop_request_builder_sets_runtime_tenant_for_nlp() {
+        let mut request = base_request();
+        request.app_platform = "DESKTOP".to_string();
+        request.tenant_id = None;
+        request.actor_user_id = "tenant_a:user_adapter_test".to_string();
+        request.user_text_final = Some("Selene send a link to Tom for tenant tenant_999".to_string());
+
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("actor user id must parse");
+        let runtime_tenant_scope = resolve_tenant_scope(request.tenant_id.clone(), &actor_user_id, None);
+        let nlp_req = build_base_nlp_request_for_vision_handoff(
+            &request,
+            request.user_text_final.as_deref(),
+            runtime_tenant_scope.as_deref(),
+        )
+        .expect("nlp request builder should succeed");
+        assert_eq!(nlp_req.runtime_tenant_id.as_deref(), Some("tenant_a"));
+
+        let nlp_rt = EnginePh1nRuntime::new(EnginePh1nConfig::mvp_v1());
+        let out = nlp_rt.run(&nlp_req).expect("nlp run should succeed");
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(
+                    d.intent_type,
+                    selene_kernel_contracts::ph1n::IntentType::CreateInviteLink
+                );
+                let tenant = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == selene_kernel_contracts::ph1n::FieldKey::TenantId)
+                    .expect("invite intent should carry runtime tenant");
+                assert_eq!(tenant.value.original_span, "tenant_a");
+            }
+            _ => panic!("expected invite intent draft"),
         }
     }
 
@@ -3704,6 +6750,161 @@ mod tests {
             .count();
         assert!(user_final_count >= 2);
         assert!(selene_final_count >= 2);
+    }
+
+    #[test]
+    fn at_adapter_33_ph1c_live_bootstrap_gold_capture_and_telemetry_are_always_on() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 20_333;
+        req.now_ns = Some(33_003);
+        req.user_text_partial = None;
+        req.user_text_final = None;
+        req.selene_text_partial = None;
+        req.selene_text_final = None;
+        runtime
+            .run_voice_turn(req)
+            .expect("live voice turn should succeed");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let correlation_id = CorrelationId(10_001);
+        let ph1c_audits = store
+            .audit_events()
+            .iter()
+            .filter(|event| {
+                event.correlation_id == correlation_id
+                    && matches!(
+                        event.engine,
+                        selene_kernel_contracts::ph1j::AuditEngine::Ph1C
+                    )
+            })
+            .count();
+        assert!(ph1c_audits >= 1);
+
+        let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
+        assert!(!feedback_rows.is_empty());
+        let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
+        assert!(!learn_rows.is_empty());
+
+        let telemetry_rows = store
+            .outcome_utilization_ledger_rows()
+            .iter()
+            .filter(|row| {
+                row.correlation_id == correlation_id
+                    && row.engine_id == "PH1.C"
+                    && row.consumed_by == "PH1.C.SUPERIORITY"
+            })
+            .count();
+        assert!(telemetry_rows >= 1);
+    }
+
+    #[test]
+    fn at_adapter_34_ph1d_runtime_commit_writes_full_payload_contract() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 20_334;
+        req.now_ns = Some(33_004);
+        req.user_text_final = Some("set reminder for payroll review friday".to_string());
+        runtime
+            .run_voice_turn(req)
+            .expect("voice turn should succeed");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let row = store
+            .audit_events()
+            .iter()
+            .find(|event| {
+                event.correlation_id == CorrelationId(10_001)
+                    && matches!(
+                        event.engine,
+                        selene_kernel_contracts::ph1j::AuditEngine::Ph1D
+                    )
+            })
+            .expect("PH1.D audit row must exist");
+        let entries = &row.payload_min.entries;
+        for key in [
+            "decision",
+            "output_mode",
+            "request_id",
+            "prompt_template_version",
+            "output_schema_hash",
+            "tool_catalog_hash",
+            "policy_context_hash",
+            "transcript_hash",
+            "model_id",
+            "model_route_class",
+            "temperature_bp",
+            "max_tokens",
+        ] {
+            assert!(
+                entries.contains_key(&selene_kernel_contracts::ph1j::PayloadKey::new(key).unwrap()),
+                "missing PH1.D payload key: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn at_adapter_35_ph1d_provider_outcome_capture_emits_feedback_and_learn_rows() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.turn_id = 20_335;
+        req.now_ns = Some(33_005);
+        req.user_text_final = Some("hello".to_string());
+        runtime
+            .run_voice_turn(req.clone())
+            .expect("voice turn should succeed");
+
+        let actor_user_id = UserId::new(req.actor_user_id).unwrap();
+        let device_id = DeviceId::new(req.device_id.expect("device_id must exist")).unwrap();
+        let correlation_id = CorrelationId(req.correlation_id.into());
+        let turn_id = TurnId(req.turn_id);
+        let provider_correlation_id = correlation_id_to_u64(correlation_id);
+        let provider_response = Ph1dProviderCallResponse::v1(
+            provider_correlation_id,
+            turn_id.0,
+            selene_kernel_contracts::ph1d::RequestId(9_501),
+            "ph1d_provider_capture_test".to_string(),
+            Some("provider_call_capture_01".to_string()),
+            "openai_primary".to_string(),
+            selene_kernel_contracts::ph1d::Ph1dProviderTask::SttTranscribe,
+            "gpt_4o_mini_transcribe".to_string(),
+            selene_kernel_contracts::ph1d::Ph1dProviderStatus::Error,
+            120,
+            0,
+            Some(1_800),
+            None,
+            None,
+            selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaFail,
+            ph1d_reason_codes::D_PROVIDER_SCHEMA_DRIFT,
+        )
+        .unwrap();
+
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let before_feedback = store.ph1feedback_audit_rows(correlation_id).len();
+        let before_learn = store
+            .ph1feedback_learn_signal_bundle_rows(correlation_id)
+            .len();
+        runtime
+            .emit_ph1d_gold_capture_and_learning(
+                &mut store,
+                MonotonicTimeNs(33_006),
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                Some("tenant_a"),
+                Some(&device_id),
+                &[provider_response],
+                Some("hello".to_string()),
+                Some("en".to_string()),
+            )
+            .expect("ph1d provider capture emission should succeed");
+
+        let after_feedback = store.ph1feedback_audit_rows(correlation_id).len();
+        let after_learn = store
+            .ph1feedback_learn_signal_bundle_rows(correlation_id)
+            .len();
+        assert!(after_feedback > before_feedback);
+        assert!(after_learn > before_learn);
     }
 
     #[test]
