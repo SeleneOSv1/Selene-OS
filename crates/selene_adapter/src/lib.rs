@@ -39,6 +39,7 @@ use selene_engines::ph1vision::{
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
 };
+use selene_kernel_contracts::ph1art::{ArtifactScopeType, ArtifactStatus, ArtifactType};
 use selene_kernel_contracts::ph1c::{
     ConfidenceBucket as Ph1cConfidenceBucket, LanguageHint, LanguageHintConfidence, LanguageTag,
     NoiseLevelHint, Ph1cRequest, Ph1cResponse, Ph1kToPh1cHandoff, RetryAdvice as Ph1cRetryAdvice,
@@ -2001,6 +2002,7 @@ impl AdapterRuntime {
 
     fn run_ph1c_live_turn(
         &self,
+        store: &Ph1fStore,
         correlation_id: CorrelationId,
         turn_id: TurnId,
         actor_user_id: &UserId,
@@ -2034,7 +2036,9 @@ impl AdapterRuntime {
         live.idempotency_key =
             sanitize_idempotency_token(&format!("ph1c_live_{}_{}", correlation_id.0, turn_id.0));
         live.tenant_vocabulary_pack_id =
-            Some(format!("tenant_vocab_{}", truncate_ascii(tenant_id, 48)));
+            resolve_active_stt_vocab_pack_id_for_tenant(store, tenant_id).or_else(|| {
+                Some(format!("tenant_vocab_{}", truncate_ascii(tenant_id, 48)))
+            });
         live.user_vocabulary_pack_id = Some(format!(
             "user_vocab_{}",
             truncate_ascii(actor_user_id.as_str(), 48)
@@ -3113,6 +3117,7 @@ impl AdapterRuntime {
             None
         } else {
             self.run_ph1c_live_turn(
+                &store,
                 correlation_id,
                 turn_id,
                 &actor_user_id,
@@ -3974,6 +3979,45 @@ fn append_transcript_final_conversation_turn(
 
 fn storage_error_to_string(err: StorageError) -> String {
     format!("{err:?}")
+}
+
+fn resolve_active_stt_vocab_pack_id_for_tenant(
+    store: &Ph1fStore,
+    tenant_id: &str,
+) -> Option<String> {
+    let mut active_rows = store
+        .artifacts_ledger_rows()
+        .iter()
+        .filter(|row| {
+            row.scope_type == ArtifactScopeType::Tenant
+                && row.scope_id == tenant_id
+                && row.artifact_type == ArtifactType::SttVocabPack
+                && row.status == ArtifactStatus::Active
+        })
+        .collect::<Vec<_>>();
+    active_rows.sort_by(|a, b| {
+        b.artifact_version
+            .cmp(&a.artifact_version)
+            .then_with(|| b.artifact_id.cmp(&a.artifact_id))
+    });
+    let row = active_rows.first()?;
+    let payload_ref = truncate_ascii(row.payload_ref.trim(), 128);
+    if is_valid_ph1c_pack_id_token(&payload_ref) {
+        return Some(payload_ref);
+    }
+    Some(format!(
+        "stt_vocab_pack_v{}_{}",
+        row.artifact_version.0, row.artifact_id
+    ))
+}
+
+fn is_valid_ph1c_pack_id_token(value: &str) -> bool {
+    if value.is_empty() || value.len() > 128 {
+        return false;
+    }
+    value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/'))
 }
 
 fn snapshot_sync_queue_counters(
@@ -7649,6 +7693,51 @@ mod tests {
         assert_eq!(store.artifacts_ledger_rows().len(), before_artifact_rows);
         assert!(!store.ph1feedback_audit_rows(correlation_id).is_empty());
         assert!(!store.ph1feedback_learn_signal_bundle_rows(correlation_id).is_empty());
+    }
+
+    #[test]
+    fn at_adapter_38_runtime_resolves_active_stt_vocab_pack_by_highest_version() {
+        let mut store = Ph1fStore::new_in_memory();
+        let tenant_id = "tenant_vocab_runtime";
+        for (version, payload_ref, status) in [
+            (
+                1_u32,
+                "stt_vocab_pack_v1",
+                selene_kernel_contracts::ph1art::ArtifactStatus::Active,
+            ),
+            (
+                2_u32,
+                "stt_vocab_pack_v2_old",
+                selene_kernel_contracts::ph1art::ArtifactStatus::Deprecated,
+            ),
+            (
+                3_u32,
+                "stt_vocab_pack_v3",
+                selene_kernel_contracts::ph1art::ArtifactStatus::Active,
+            ),
+        ] {
+            let input = selene_kernel_contracts::ph1art::ArtifactLedgerRowInput::v1(
+                MonotonicTimeNs(60_000 + version as u64),
+                selene_kernel_contracts::ph1art::ArtifactScopeType::Tenant,
+                tenant_id.to_string(),
+                selene_kernel_contracts::ph1art::ArtifactType::SttVocabPack,
+                selene_kernel_contracts::ph1art::ArtifactVersion(version),
+                format!("pkg_hash_vocab_{version}"),
+                payload_ref.to_string(),
+                "PH1.BUILDER".to_string(),
+                format!("prov_vocab_{version}"),
+                status,
+                Some(format!("idem_vocab_{version}")),
+            )
+            .expect("artifact input must be valid");
+            store
+                .append_artifact_ledger_row(input)
+                .expect("artifact append must succeed");
+        }
+
+        let resolved =
+            resolve_active_stt_vocab_pack_id_for_tenant(&store, tenant_id).expect("pack id");
+        assert_eq!(resolved, "stt_vocab_pack_v3");
     }
 
     #[test]

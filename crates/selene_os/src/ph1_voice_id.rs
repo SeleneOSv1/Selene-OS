@@ -488,7 +488,6 @@ impl Ph1VoiceIdLiveRuntime {
         let mut tenant_ids: BTreeMap<String, ()> = BTreeMap::new();
         for row in store.artifacts_ledger_rows() {
             if row.scope_type == ArtifactScopeType::Tenant
-                && row.created_by == "PH1.LEARN"
                 && row.artifact_type == ArtifactType::VoiceIdThresholdPack
             {
                 tenant_ids.insert(row.scope_id.clone(), ());
@@ -598,7 +597,6 @@ fn select_artifact_pointer_set(
         .filter(|row| {
             row.scope_type == ArtifactScopeType::Tenant
                 && row.scope_id == tenant_id
-                && row.created_by == "PH1.LEARN"
                 && row.artifact_type == artifact_type
         })
         .collect::<Vec<_>>();
@@ -1582,7 +1580,7 @@ mod tests {
         PH1VOICEID_SIM_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1art::{
-        ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
+        ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
     };
     use selene_kernel_contracts::ph1j::{AuditEngine, CorrelationId, DeviceId, PayloadKey, TurnId};
     use selene_kernel_contracts::ph1k::{
@@ -1667,6 +1665,26 @@ mod tests {
         now: u64,
         idempotency_key: &str,
     ) {
+        if status == ArtifactStatus::Active {
+            let input = ArtifactLedgerRowInput::v1(
+                MonotonicTimeNs(now),
+                ArtifactScopeType::Tenant,
+                tenant_id.to_string(),
+                artifact_type,
+                artifact_version,
+                format!("pkg_hash_{}_{}", tenant_id, artifact_version.0),
+                payload_ref,
+                "PH1.BUILDER".to_string(),
+                format!("prov_{}_{}", tenant_id, artifact_version.0),
+                status,
+                Some(idempotency_key.to_string()),
+            )
+            .expect("voice artifact input must be valid");
+            store
+                .append_artifact_ledger_row(input)
+                .expect("voice artifact append must succeed");
+            return;
+        }
         store
             .ph1learn_artifact_commit(
                 MonotonicTimeNs(now),
@@ -1910,21 +1928,16 @@ mod tests {
         let mut override_profiles = VoiceIdentityEmbeddingGateProfiles::mvp_v1_phone_first();
         override_profiles.android_explicit = VoiceIdentityEmbeddingGateProfile::optional();
 
-        store
-            .ph1learn_artifact_commit(
-                MonotonicTimeNs(11),
-                "tenant_relaxed".to_string(),
-                ArtifactScopeType::Tenant,
-                "tenant_relaxed".to_string(),
-                ArtifactType::VoiceIdThresholdPack,
-                ArtifactVersion(1),
-                "pkg_hash_vid_gate_1".to_string(),
-                override_profiles.to_payload_ref_v1(),
-                "prov_vid_gate_1".to_string(),
-                ArtifactStatus::Active,
-                "idem_vid_gate_1".to_string(),
-            )
-            .expect("voice-id threshold pack commit must succeed");
+        commit_voice_artifact(
+            &mut store,
+            "tenant_relaxed",
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(1),
+            override_profiles.to_payload_ref_v1(),
+            ArtifactStatus::Active,
+            11,
+            "idem_vid_gate_1",
+        );
 
         let governed_runtime = runtime.with_governed_threshold_pack_overrides(&store);
         let relaxed_context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
@@ -1959,36 +1972,26 @@ mod tests {
         let mut v2_profiles = VoiceIdentityEmbeddingGateProfiles::mvp_v1_phone_first();
         v2_profiles.android_explicit = VoiceIdentityEmbeddingGateProfile::required();
 
-        store
-            .ph1learn_artifact_commit(
-                MonotonicTimeNs(21),
-                "tenant_rollout".to_string(),
-                ArtifactScopeType::Tenant,
-                "tenant_rollout".to_string(),
-                ArtifactType::VoiceIdThresholdPack,
-                ArtifactVersion(1),
-                "pkg_hash_vid_gate_v1".to_string(),
-                v1_profiles.to_payload_ref_v1(),
-                "prov_vid_gate_v1".to_string(),
-                ArtifactStatus::Active,
-                "idem_vid_gate_v1".to_string(),
-            )
-            .expect("voice-id threshold pack v1 commit must succeed");
-        store
-            .ph1learn_artifact_commit(
-                MonotonicTimeNs(22),
-                "tenant_rollout".to_string(),
-                ArtifactScopeType::Tenant,
-                "tenant_rollout".to_string(),
-                ArtifactType::VoiceIdThresholdPack,
-                ArtifactVersion(2),
-                "pkg_hash_vid_gate_v2".to_string(),
-                v2_profiles.to_payload_ref_v1(),
-                "prov_vid_gate_v2".to_string(),
-                ArtifactStatus::Active,
-                "idem_vid_gate_v2".to_string(),
-            )
-            .expect("voice-id threshold pack v2 commit must succeed");
+        commit_voice_artifact(
+            &mut store,
+            "tenant_rollout",
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(1),
+            v1_profiles.to_payload_ref_v1(),
+            ArtifactStatus::Active,
+            21,
+            "idem_vid_gate_v1",
+        );
+        commit_voice_artifact(
+            &mut store,
+            "tenant_rollout",
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(2),
+            v2_profiles.to_payload_ref_v1(),
+            ArtifactStatus::Active,
+            22,
+            "idem_vid_gate_v2",
+        );
 
         let governed_runtime = runtime.with_governed_threshold_pack_overrides(&store);
         let context = VoiceIdentityRuntimeContext::from_tenant_app_platform(
