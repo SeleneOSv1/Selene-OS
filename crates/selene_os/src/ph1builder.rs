@@ -16,12 +16,14 @@ use selene_kernel_contracts::ph1builder::{
 use selene_kernel_contracts::ph1gov::{GovArtifactKind, GovArtifactVersion, GovRequestedAction};
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
+use selene_kernel_contracts::ph1pae::{PaeMode, PaeProviderSlot};
 use selene_kernel_contracts::ph1pattern::{
     PatternProposalItem, PatternProposalTarget, PatternSignal,
 };
 use selene_kernel_contracts::ph1rll::{
     RllArtifactCandidate, RllOptimizationTarget, RllRecommendationItem,
 };
+use selene_kernel_contracts::ph1selfheal::PromotionDecisionAction;
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{BuilderProposalLedgerRowInput, StorageError};
 use selene_storage::repo::BuilderSeleneRepo;
@@ -69,6 +71,9 @@ pub mod reason_codes {
     pub const PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD: ReasonCodeId =
         ReasonCodeId(0xB13D_0019);
     pub const PH1_BUILDER_PROMOTION_REPORT_GENERATED: ReasonCodeId = ReasonCodeId(0xB13D_001A);
+    pub const PH1_BUILDER_PROVIDER_SCORECARD_PROMOTE: ReasonCodeId = ReasonCodeId(0xB13D_001B);
+    pub const PH1_BUILDER_PROVIDER_SCORECARD_DEMOTE: ReasonCodeId = ReasonCodeId(0xB13D_001C);
+    pub const PH1_BUILDER_PROVIDER_SCORECARD_HOLD: ReasonCodeId = ReasonCodeId(0xB13D_001D);
 }
 
 const DEFAULT_LEARNING_REPORT_OUTPUT_PATH: &str = ".dev/builder_learning_report.md";
@@ -76,6 +81,41 @@ const DEFAULT_CHANGE_BRIEF_OUTPUT_PATH: &str = ".dev/builder_change_brief.md";
 const DEFAULT_PERMISSION_PACKET_OUTPUT_PATH: &str = ".dev/builder_permission_packet.md";
 const LEARNING_BRIDGE_SOURCE_ENGINES: [&str; 4] =
     ["PH1.FEEDBACK", "PH1.LEARN", "PH1.KNOW", "PH1.VOICE.ID"];
+pub const PAE_PROVIDER_SCORE_OUTCOME_PREFIX: &str = "PAE_STT_SCORE_";
+pub const PAE_PROMOTION_DECISION_OUTCOME_PREFIX: &str = "PAE_PROMOTION_";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderProviderScorecard {
+    pub provider_slot: PaeProviderSlot,
+    pub provider_key: String,
+    pub sample_size: u16,
+    pub failure_count: u16,
+    pub schema_fail_count: u16,
+    pub failure_rate_bp: u16,
+    pub avg_latency_ms: u16,
+    pub quality_score_bp: i16,
+    pub latency_penalty_bp: i16,
+    pub total_score_bp: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderProviderPromotionDecision {
+    pub provider_slot: PaeProviderSlot,
+    pub provider_key: String,
+    pub from_mode: PaeMode,
+    pub to_mode: PaeMode,
+    pub decision_action: PromotionDecisionAction,
+    pub sample_size: u16,
+    pub failure_count: u16,
+    pub schema_fail_count: u16,
+    pub failure_rate_bp: u16,
+    pub avg_latency_ms: u16,
+    pub quality_score_bp: i16,
+    pub latency_penalty_bp: i16,
+    pub total_score_bp: i32,
+    pub promotion_eligible: bool,
+    pub reason_code: ReasonCodeId,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1BuilderConfig {
@@ -2810,6 +2850,300 @@ fn metric_key_from_outcome(entry: &OsOutcomeUtilizationEntry) -> String {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderScoreOutcomeStatus {
+    Ok,
+    Error,
+    SchemaFail,
+}
+
+fn provider_slot_label(slot: PaeProviderSlot) -> &'static str {
+    match slot {
+        PaeProviderSlot::Primary => "PRIMARY",
+        PaeProviderSlot::Secondary => "SECONDARY",
+        PaeProviderSlot::Tertiary => "TERTIARY",
+    }
+}
+
+fn provider_mode_label(mode: PaeMode) -> &'static str {
+    match mode {
+        PaeMode::Shadow => "SHADOW",
+        PaeMode::Assist => "ASSIST",
+        PaeMode::Lead => "LEAD",
+    }
+}
+
+fn provider_score_status_label(status: ProviderScoreOutcomeStatus) -> &'static str {
+    match status {
+        ProviderScoreOutcomeStatus::Ok => "OK",
+        ProviderScoreOutcomeStatus::Error => "ERROR",
+        ProviderScoreOutcomeStatus::SchemaFail => "SCHEMA_FAIL",
+    }
+}
+
+fn parse_provider_score_outcome(
+    outcome_type: &str,
+) -> Option<(PaeProviderSlot, String, ProviderScoreOutcomeStatus)> {
+    let suffix = outcome_type.strip_prefix(PAE_PROVIDER_SCORE_OUTCOME_PREFIX)?;
+    let (core, status) = if let Some(v) = suffix.strip_suffix("_SCHEMA_FAIL") {
+        (v, ProviderScoreOutcomeStatus::SchemaFail)
+    } else if let Some(v) = suffix.strip_suffix("_ERROR") {
+        (v, ProviderScoreOutcomeStatus::Error)
+    } else if let Some(v) = suffix.strip_suffix("_OK") {
+        (v, ProviderScoreOutcomeStatus::Ok)
+    } else {
+        return None;
+    };
+
+    let (slot_token, provider_key_raw) = core.split_once('_')?;
+    let provider_slot = match slot_token {
+        "PRIMARY" => PaeProviderSlot::Primary,
+        "SECONDARY" => PaeProviderSlot::Secondary,
+        "TERTIARY" => PaeProviderSlot::Tertiary,
+        _ => return None,
+    };
+    if provider_key_raw.trim().is_empty() {
+        return None;
+    }
+    let provider_key = sanitize_token_component(provider_key_raw, 24);
+    Some((provider_slot, provider_key, status))
+}
+
+pub fn build_provider_score_outcome_type(
+    provider_slot: PaeProviderSlot,
+    provider_key: &str,
+    status: ProviderScoreOutcomeStatus,
+) -> String {
+    let provider_key = sanitize_token_component(provider_key, 24).to_ascii_uppercase();
+    truncate_token(
+        format!(
+            "{}{}_{}_{}",
+            PAE_PROVIDER_SCORE_OUTCOME_PREFIX,
+            provider_slot_label(provider_slot),
+            provider_key,
+            provider_score_status_label(status)
+        ),
+        64,
+    )
+}
+
+pub fn build_provider_promotion_outcome_type(
+    decision: &BuilderProviderPromotionDecision,
+) -> String {
+    let action = match decision.decision_action {
+        PromotionDecisionAction::Promote => "PROMOTE",
+        PromotionDecisionAction::Demote => "DEMOTE",
+        PromotionDecisionAction::Hold => "HOLD",
+        PromotionDecisionAction::Rollback => "ROLLBACK",
+    };
+    truncate_token(
+        format!(
+            "{}{}_{}_{}_{}",
+            PAE_PROMOTION_DECISION_OUTCOME_PREFIX,
+            action,
+            provider_mode_label(decision.to_mode),
+            provider_slot_label(decision.provider_slot),
+            sanitize_token_component(&decision.provider_key, 20).to_ascii_uppercase()
+        ),
+        64,
+    )
+}
+
+pub fn infer_current_mode_from_promotion_outcome_rows(rows: &[OsOutcomeUtilizationEntry]) -> PaeMode {
+    for entry in rows.iter().rev() {
+        let Some(suffix) = entry
+            .outcome_type
+            .strip_prefix(PAE_PROMOTION_DECISION_OUTCOME_PREFIX)
+        else {
+            continue;
+        };
+        let mut parts = suffix.splitn(3, '_');
+        let _action = parts.next();
+        let Some(mode) = parts.next() else {
+            continue;
+        };
+        match mode {
+            "SHADOW" => return PaeMode::Shadow,
+            "ASSIST" => return PaeMode::Assist,
+            "LEAD" => return PaeMode::Lead,
+            _ => {}
+        }
+    }
+    PaeMode::Shadow
+}
+
+pub fn aggregate_provider_scorecards_from_outcome_entries(
+    entries: &[OsOutcomeUtilizationEntry],
+    max_scorecards: usize,
+) -> Vec<BuilderProviderScorecard> {
+    #[derive(Debug, Clone)]
+    struct Acc {
+        provider_slot: PaeProviderSlot,
+        provider_key: String,
+        sample_size: u16,
+        failure_count: u16,
+        schema_fail_count: u16,
+        latency_sum_ms: u64,
+    }
+
+    let mut grouped: BTreeMap<String, Acc> = BTreeMap::new();
+    for entry in entries {
+        if entry.engine_id != "PH1.PAE" {
+            continue;
+        }
+        let Some((provider_slot, provider_key, status)) =
+            parse_provider_score_outcome(&entry.outcome_type)
+        else {
+            continue;
+        };
+        let key = format!("{}|{}", provider_slot_label(provider_slot), provider_key);
+        let acc = grouped.entry(key).or_insert(Acc {
+            provider_slot,
+            provider_key,
+            sample_size: 0,
+            failure_count: 0,
+            schema_fail_count: 0,
+            latency_sum_ms: 0,
+        });
+        acc.sample_size = acc.sample_size.saturating_add(1);
+        if !matches!(status, ProviderScoreOutcomeStatus::Ok) {
+            acc.failure_count = acc.failure_count.saturating_add(1);
+        }
+        if matches!(status, ProviderScoreOutcomeStatus::SchemaFail) {
+            acc.schema_fail_count = acc.schema_fail_count.saturating_add(1);
+        }
+        acc.latency_sum_ms = acc
+            .latency_sum_ms
+            .saturating_add(entry.latency_cost_ms as u64);
+    }
+
+    let mut scorecards = grouped
+        .into_values()
+        .filter_map(|acc| {
+            if acc.sample_size == 0 {
+                return None;
+            }
+            let sample_size = acc.sample_size;
+            let failure_rate_bp = ((acc.failure_count as u32 * 10_000) / sample_size as u32) as u16;
+            let avg_latency_ms = min(
+                acc.latency_sum_ms
+                    .saturating_div(sample_size as u64)
+                    .min(10_000),
+                10_000,
+            ) as u16;
+            let mut quality_score_bp = 10_000_i16 - failure_rate_bp as i16;
+            quality_score_bp = quality_score_bp
+                .saturating_sub((acc.schema_fail_count as i16).saturating_mul(500))
+                .clamp(-10_000, 10_000);
+            let latency_penalty_bp =
+                min(((avg_latency_ms as u32).saturating_mul(12)) / 10, 10_000) as i16;
+            let total_score_bp = quality_score_bp as i32 - latency_penalty_bp as i32;
+            Some(BuilderProviderScorecard {
+                provider_slot: acc.provider_slot,
+                provider_key: acc.provider_key,
+                sample_size,
+                failure_count: acc.failure_count,
+                schema_fail_count: acc.schema_fail_count,
+                failure_rate_bp,
+                avg_latency_ms,
+                quality_score_bp,
+                latency_penalty_bp,
+                total_score_bp,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    scorecards.sort_by(|a, b| {
+        b.total_score_bp
+            .cmp(&a.total_score_bp)
+            .then_with(|| b.sample_size.cmp(&a.sample_size))
+            .then_with(|| a.provider_key.cmp(&b.provider_key))
+            .then_with(|| provider_slot_label(a.provider_slot).cmp(provider_slot_label(b.provider_slot)))
+    });
+    scorecards.truncate(max_scorecards);
+    scorecards
+}
+
+fn promote_mode(mode: PaeMode) -> PaeMode {
+    match mode {
+        PaeMode::Shadow => PaeMode::Assist,
+        PaeMode::Assist => PaeMode::Lead,
+        PaeMode::Lead => PaeMode::Lead,
+    }
+}
+
+fn demote_mode(mode: PaeMode) -> PaeMode {
+    match mode {
+        PaeMode::Lead => PaeMode::Assist,
+        PaeMode::Assist => PaeMode::Shadow,
+        PaeMode::Shadow => PaeMode::Shadow,
+    }
+}
+
+pub fn build_provider_promotion_decision_from_outcomes(
+    current_mode: PaeMode,
+    entries: &[OsOutcomeUtilizationEntry],
+    minimum_sample_size: u16,
+    promotion_threshold_bp: i16,
+    demotion_failure_threshold: u16,
+) -> Option<BuilderProviderPromotionDecision> {
+    if minimum_sample_size == 0 {
+        return None;
+    }
+    let selected = aggregate_provider_scorecards_from_outcome_entries(entries, 1)
+        .into_iter()
+        .next()?;
+    if selected.sample_size < minimum_sample_size {
+        return None;
+    }
+
+    let severe_regression = selected.failure_count >= demotion_failure_threshold
+        || selected.avg_latency_ms > 1_800
+        || selected.schema_fail_count > 0;
+    let strong_promotion_signal = selected.failure_count == 0
+        && selected.schema_fail_count == 0
+        && selected.avg_latency_ms <= 700
+        && selected.quality_score_bp >= promotion_threshold_bp;
+
+    let (decision_action, to_mode, reason_code) = if severe_regression {
+        (
+            PromotionDecisionAction::Demote,
+            demote_mode(current_mode),
+            reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_DEMOTE,
+        )
+    } else if strong_promotion_signal {
+        (
+            PromotionDecisionAction::Promote,
+            promote_mode(current_mode),
+            reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_PROMOTE,
+        )
+    } else {
+        (
+            PromotionDecisionAction::Hold,
+            current_mode,
+            reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_HOLD,
+        )
+    };
+
+    Some(BuilderProviderPromotionDecision {
+        provider_slot: selected.provider_slot,
+        provider_key: selected.provider_key,
+        from_mode: current_mode,
+        to_mode,
+        decision_action,
+        sample_size: selected.sample_size,
+        failure_count: selected.failure_count,
+        schema_fail_count: selected.schema_fail_count,
+        failure_rate_bp: selected.failure_rate_bp,
+        avg_latency_ms: selected.avg_latency_ms,
+        quality_score_bp: selected.quality_score_bp,
+        latency_penalty_bp: selected.latency_penalty_bp,
+        total_score_bp: selected.total_score_bp,
+        promotion_eligible: !matches!(decision_action, PromotionDecisionAction::Hold),
+        reason_code,
+    })
+}
+
 fn pattern_to_rll_candidates(
     proposals: &[PatternProposalItem],
     max_candidates: usize,
@@ -4781,6 +5115,155 @@ mod tests {
         assert_eq!(
             handoff.reason_code,
             reason_codes::PH1_BUILDER_RUNTIME_ACTIVATION_POINTER_WITHHELD
+        );
+    }
+
+    fn provider_score_entry(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        slot: PaeProviderSlot,
+        provider_key: &str,
+        status: ProviderScoreOutcomeStatus,
+        latency_ms: u32,
+        reason_code: ReasonCodeId,
+    ) -> OsOutcomeUtilizationEntry {
+        OsOutcomeUtilizationEntry::v1(
+            "PH1.PAE".to_string(),
+            build_provider_score_outcome_type(slot, provider_key, status),
+            correlation_id,
+            turn_id,
+            OsOutcomeActionClass::QueueLearn,
+            "PH1.BUILDER".to_string(),
+            latency_ms,
+            !matches!(status, ProviderScoreOutcomeStatus::Ok),
+            reason_code,
+        )
+        .expect("provider score entry must be valid")
+    }
+
+    #[test]
+    fn at_builder_os_24_provider_scorecard_aggregation_is_deterministic() {
+        let correlation_id = CorrelationId(8_401);
+        let turn_id = TurnId(8_402);
+        let entries = vec![
+            provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Primary,
+                "openai_main",
+                ProviderScoreOutcomeStatus::Ok,
+                120,
+                ReasonCodeId(0xB13D_2401),
+            ),
+            provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Primary,
+                "openai_main",
+                ProviderScoreOutcomeStatus::SchemaFail,
+                130,
+                ReasonCodeId(0xB13D_2402),
+            ),
+            provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Secondary,
+                "backup_fast",
+                ProviderScoreOutcomeStatus::Ok,
+                90,
+                ReasonCodeId(0xB13D_2403),
+            ),
+            provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Secondary,
+                "backup_fast",
+                ProviderScoreOutcomeStatus::Ok,
+                95,
+                ReasonCodeId(0xB13D_2404),
+            ),
+        ];
+
+        let scorecards_a = aggregate_provider_scorecards_from_outcome_entries(&entries, 8);
+        let scorecards_b = aggregate_provider_scorecards_from_outcome_entries(&entries, 8);
+        assert_eq!(scorecards_a, scorecards_b);
+        assert_eq!(scorecards_a.len(), 2);
+        assert_eq!(scorecards_a[0].provider_key, "BACKUP_FAST");
+        assert_eq!(scorecards_a[0].sample_size, 2);
+        assert_eq!(scorecards_a[0].failure_count, 0);
+        assert_eq!(scorecards_a[1].provider_key, "OPENAI_MAIN");
+        assert_eq!(scorecards_a[1].schema_fail_count, 1);
+    }
+
+    #[test]
+    fn at_builder_os_25_provider_scorecard_decision_promotes_from_shadow() {
+        let correlation_id = CorrelationId(8_501);
+        let turn_id = TurnId(8_502);
+        let mut entries = Vec::new();
+        for idx in 0..3 {
+            entries.push(provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Primary,
+                "openai_main",
+                ProviderScoreOutcomeStatus::Ok,
+                110 + idx,
+                ReasonCodeId(0xB13D_2500 + idx),
+            ));
+        }
+
+        let decision = build_provider_promotion_decision_from_outcomes(
+            PaeMode::Shadow,
+            &entries,
+            3,
+            8_500,
+            3,
+        )
+        .expect("decision must be produced");
+        assert_eq!(decision.decision_action, PromotionDecisionAction::Promote);
+        assert_eq!(decision.from_mode, PaeMode::Shadow);
+        assert_eq!(decision.to_mode, PaeMode::Assist);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_PROMOTE
+        );
+    }
+
+    #[test]
+    fn at_builder_os_26_provider_scorecard_decision_demotes_from_lead_on_failures() {
+        let correlation_id = CorrelationId(8_601);
+        let turn_id = TurnId(8_602);
+        let mut entries = Vec::new();
+        for idx in 0..4 {
+            entries.push(provider_score_entry(
+                correlation_id,
+                turn_id,
+                PaeProviderSlot::Primary,
+                "openai_main",
+                if idx < 3 {
+                    ProviderScoreOutcomeStatus::Error
+                } else {
+                    ProviderScoreOutcomeStatus::SchemaFail
+                },
+                1_920 + idx,
+                ReasonCodeId(0xB13D_2600 + idx),
+            ));
+        }
+
+        let decision = build_provider_promotion_decision_from_outcomes(
+            PaeMode::Lead,
+            &entries,
+            3,
+            8_500,
+            3,
+        )
+        .expect("decision must be produced");
+        assert_eq!(decision.decision_action, PromotionDecisionAction::Demote);
+        assert_eq!(decision.from_mode, PaeMode::Lead);
+        assert_eq!(decision.to_mode, PaeMode::Assist);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_DEMOTE
         );
     }
 

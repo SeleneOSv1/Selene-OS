@@ -48,7 +48,8 @@ use selene_kernel_contracts::ph1c::{
 };
 use selene_kernel_contracts::ph1context::{Ph1ContextRequest, Ph1ContextResponse};
 use selene_kernel_contracts::ph1d::{
-    Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
+    Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse,
+    Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus, Ph1dResponse,
     PolicyContextRef, SafetyTier,
 };
 use selene_kernel_contracts::ph1e::{ToolCatalogRef, ToolName};
@@ -76,7 +77,7 @@ use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{OnboardingNextStep, OnboardingSessionId};
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
-use selene_kernel_contracts::ph1pae::PaeMode;
+use selene_kernel_contracts::ph1pae::{PaeMode, PaeProviderSlot};
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1x::ThreadState;
@@ -100,8 +101,11 @@ use selene_os::ph1_voice_id::{
     VoiceIdentityEmbeddingGateProfile, VoiceIdentityEmbeddingGateProfiles,
 };
 use selene_os::ph1builder::{
+    build_provider_promotion_decision_from_outcomes, build_provider_promotion_outcome_type,
+    build_provider_score_outcome_type, infer_current_mode_from_promotion_outcome_rows,
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
-    Ph1BuilderConfig, Ph1BuilderOrchestrator,
+    PAE_PROMOTION_DECISION_OUTCOME_PREFIX, PAE_PROVIDER_SCORE_OUTCOME_PREFIX,
+    Ph1BuilderConfig, Ph1BuilderOrchestrator, ProviderScoreOutcomeStatus,
 };
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
@@ -2475,6 +2479,181 @@ impl AdapterRuntime {
         Ok(())
     }
 
+    fn emit_ph1d_provider_scorecard_outcomes(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        provider_calls: &[Ph1dProviderCallResponse],
+    ) -> Result<Vec<OsOutcomeUtilizationEntry>, String> {
+        let mut entries = Vec::new();
+        for (idx, provider_call) in provider_calls.iter().enumerate() {
+            if provider_call.provider_task != Ph1dProviderTask::SttTranscribe {
+                continue;
+            }
+            let status = if provider_call.provider_status == Ph1dProviderStatus::Error {
+                ProviderScoreOutcomeStatus::Error
+            } else if provider_call.validation_status == Ph1dProviderValidationStatus::SchemaFail {
+                ProviderScoreOutcomeStatus::SchemaFail
+            } else {
+                ProviderScoreOutcomeStatus::Ok
+            };
+            let provider_slot = {
+                let provider_token = provider_call.provider_id.to_ascii_lowercase();
+                if provider_token.contains("tertiary") || provider_token.contains("fallback2") {
+                    PaeProviderSlot::Tertiary
+                } else if provider_token.contains("secondary")
+                    || provider_token.contains("backup")
+                    || provider_token.contains("fallback")
+                {
+                    PaeProviderSlot::Secondary
+                } else if provider_token.contains("primary") || provider_token.contains("main") {
+                    PaeProviderSlot::Primary
+                } else {
+                    match idx {
+                        0 => PaeProviderSlot::Primary,
+                        1 => PaeProviderSlot::Secondary,
+                        _ => PaeProviderSlot::Tertiary,
+                    }
+                }
+            };
+            let outcome_type =
+                build_provider_score_outcome_type(provider_slot, &provider_call.provider_id, status);
+            let latency_cost_ms = provider_call.provider_latency_ms.min(60_000);
+            let decision_delta = !matches!(status, ProviderScoreOutcomeStatus::Ok);
+            let idempotency_key = sanitize_idempotency_token(&format!(
+                "ph1d_pae_score:{}:{}:{}:{}",
+                correlation_id.0, turn_id.0, idx, outcome_type
+            ));
+            let entry = OsOutcomeUtilizationEntry::v1(
+                "PH1.PAE".to_string(),
+                outcome_type.clone(),
+                correlation_id,
+                turn_id,
+                OsOutcomeActionClass::QueueLearn,
+                "PH1.BUILDER".to_string(),
+                latency_cost_ms,
+                decision_delta,
+                provider_call.reason_code,
+            )
+            .map_err(|err| format!("provider scorecard entry build failed: {err:?}"))?;
+            store
+                .append_outcome_utilization_ledger_row(OutcomeUtilizationLedgerRowInput {
+                    created_at: now,
+                    correlation_id,
+                    turn_id,
+                    engine_id: "PH1.PAE".to_string(),
+                    outcome_type,
+                    action_class: OsOutcomeActionClass::QueueLearn,
+                    consumed_by: "PH1.BUILDER".to_string(),
+                    latency_cost_ms,
+                    decision_delta,
+                    reason_code: provider_call.reason_code,
+                    idempotency_key: Some(idempotency_key),
+                })
+                .map_err(storage_error_to_string)?;
+            entries.push(entry);
+        }
+        Ok(entries)
+    }
+
+    fn maybe_record_builder_provider_promotion_decision(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+    ) -> Result<(), String> {
+        let score_entries = store
+            .outcome_utilization_ledger_rows()
+            .iter()
+            .filter(|row| {
+                row.engine_id == "PH1.PAE"
+                    && row.consumed_by == "PH1.BUILDER"
+                    && row
+                        .outcome_type
+                        .starts_with(PAE_PROVIDER_SCORE_OUTCOME_PREFIX)
+            })
+            .filter_map(|row| {
+                OsOutcomeUtilizationEntry::v1(
+                    row.engine_id.clone(),
+                    row.outcome_type.clone(),
+                    row.correlation_id,
+                    row.turn_id,
+                    row.action_class,
+                    row.consumed_by.clone(),
+                    row.latency_cost_ms,
+                    row.decision_delta,
+                    row.reason_code,
+                )
+                .ok()
+            })
+            .collect::<Vec<_>>();
+        if score_entries.is_empty() {
+            return Ok(());
+        }
+
+        let prior_decisions = store
+            .outcome_utilization_ledger_rows()
+            .iter()
+            .filter(|row| {
+                row.engine_id == "PH1.BUILDER"
+                    && row
+                        .outcome_type
+                        .starts_with(PAE_PROMOTION_DECISION_OUTCOME_PREFIX)
+            })
+            .filter_map(|row| {
+                OsOutcomeUtilizationEntry::v1(
+                    row.engine_id.clone(),
+                    row.outcome_type.clone(),
+                    row.correlation_id,
+                    row.turn_id,
+                    row.action_class,
+                    row.consumed_by.clone(),
+                    row.latency_cost_ms,
+                    row.decision_delta,
+                    row.reason_code,
+                )
+                .ok()
+            })
+            .collect::<Vec<_>>();
+        let current_mode = infer_current_mode_from_promotion_outcome_rows(&prior_decisions);
+        let Some(decision) = build_provider_promotion_decision_from_outcomes(
+            current_mode,
+            &score_entries,
+            3,
+            8_500,
+            3,
+        ) else {
+            return Ok(());
+        };
+        let outcome_type = build_provider_promotion_outcome_type(&decision);
+        let idempotency_key = sanitize_idempotency_token(&format!(
+            "pae_builder_decision:{}:{}:{}",
+            correlation_id.0, turn_id.0, outcome_type
+        ));
+        store
+            .append_outcome_utilization_ledger_row(OutcomeUtilizationLedgerRowInput {
+                created_at: now,
+                correlation_id,
+                turn_id,
+                engine_id: "PH1.BUILDER".to_string(),
+                outcome_type,
+                action_class: OsOutcomeActionClass::QueueLearn,
+                consumed_by: "PH1.PAE".to_string(),
+                latency_cost_ms: decision.avg_latency_ms as u32,
+                decision_delta: !matches!(
+                    decision.decision_action,
+                    selene_kernel_contracts::ph1selfheal::PromotionDecisionAction::Hold
+                ),
+                reason_code: decision.reason_code,
+                idempotency_key: Some(idempotency_key),
+            })
+            .map_err(storage_error_to_string)?;
+        Ok(())
+    }
+
     fn emit_ph1c_live_telemetry(
         &self,
         store: &mut Ph1fStore,
@@ -3250,6 +3429,30 @@ impl AdapterRuntime {
                 ph1c.final_text.clone(),
                 ph1c_language_locale(&ph1c.response),
             )?;
+            let provider_scorecard_rows = self
+                .emit_ph1d_provider_scorecard_outcomes(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &ph1c.provider_call_trace,
+                )
+                .unwrap_or_else(|err| {
+                    eprintln!("selene_adapter ph1d provider scorecard emit failed: {err}");
+                    Vec::new()
+                });
+            if !provider_scorecard_rows.is_empty() {
+                if let Err(err) = self.maybe_record_builder_provider_promotion_decision(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                ) {
+                    eprintln!(
+                        "selene_adapter builder provider promotion decision emit failed: {err}"
+                    );
+                }
+            }
             self.emit_ph1c_live_telemetry(
                 &mut store,
                 now,
@@ -7570,6 +7773,168 @@ mod tests {
             .len();
         assert!(after_feedback > before_feedback);
         assert!(after_learn > before_learn);
+    }
+
+    #[test]
+    fn at_adapter_39_provider_scorecard_outcomes_emit_latency_and_quality_rows() {
+        let runtime = AdapterRuntime::default();
+        let correlation_id = CorrelationId(20_339);
+        let turn_id = TurnId(20_339);
+        let base_provider_correlation = correlation_id_to_u64(correlation_id);
+        let provider_calls = vec![
+            Ph1dProviderCallResponse::v1(
+                base_provider_correlation,
+                turn_id.0,
+                selene_kernel_contracts::ph1d::RequestId(9_601),
+                "ph1d_provider_scorecard".to_string(),
+                Some("provider_score_1".to_string()),
+                "openai_primary".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderTask::SttTranscribe,
+                "gpt_4o_mini_transcribe".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok,
+                140,
+                0,
+                Some(9_200),
+                Some(selene_kernel_contracts::ph1d::SchemaHash(111)),
+                Some("{\"text\":\"hello\"}".to_string()),
+                selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaOk,
+                ph1d_reason_codes::D_PROVIDER_OK,
+            )
+            .unwrap(),
+            Ph1dProviderCallResponse::v1(
+                base_provider_correlation,
+                turn_id.0,
+                selene_kernel_contracts::ph1d::RequestId(9_602),
+                "ph1d_provider_scorecard".to_string(),
+                Some("provider_score_2".to_string()),
+                "openai_primary".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderTask::SttTranscribe,
+                "gpt_4o_mini_transcribe".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderStatus::Error,
+                180,
+                1,
+                None,
+                None,
+                None,
+                selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaFail,
+                ph1d_reason_codes::D_PROVIDER_CONTRACT_MISMATCH,
+            )
+            .unwrap(),
+            Ph1dProviderCallResponse::v1(
+                base_provider_correlation,
+                turn_id.0,
+                selene_kernel_contracts::ph1d::RequestId(9_603),
+                "ph1d_provider_scorecard".to_string(),
+                Some("provider_score_3".to_string()),
+                "openai_primary".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderTask::SttTranscribe,
+                "gpt_4o_mini_transcribe".to_string(),
+                selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok,
+                160,
+                0,
+                None,
+                None,
+                None,
+                selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaFail,
+                ph1d_reason_codes::D_PROVIDER_SCHEMA_DRIFT,
+            )
+            .unwrap(),
+        ];
+
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let emitted = runtime
+            .emit_ph1d_provider_scorecard_outcomes(
+                &mut store,
+                MonotonicTimeNs(33_009),
+                correlation_id,
+                turn_id,
+                &provider_calls,
+            )
+            .expect("provider scorecard outcomes must emit");
+        assert_eq!(emitted.len(), 3);
+
+        let rows = store
+            .outcome_utilization_ledger_rows()
+            .iter()
+            .filter(|row| row.correlation_id == correlation_id && row.engine_id == "PH1.PAE")
+            .collect::<Vec<_>>();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().any(|row| row.outcome_type.ends_with("_OK")));
+        assert!(rows.iter().any(|row| row.outcome_type.ends_with("_ERROR")));
+        assert!(rows.iter().any(|row| row.outcome_type.ends_with("_SCHEMA_FAIL")));
+        assert!(rows.iter().any(|row| !row.decision_delta));
+        assert!(rows.iter().any(|row| row.decision_delta));
+    }
+
+    #[test]
+    fn at_adapter_40_builder_provider_scorecard_decision_emits_promotion_row() {
+        let runtime = AdapterRuntime::default();
+        let correlation_id = CorrelationId(20_340);
+        let turn_id = TurnId(20_340);
+        let base_provider_correlation = correlation_id_to_u64(correlation_id);
+        let mut provider_calls = Vec::new();
+        for idx in 0..3 {
+            provider_calls.push(
+                Ph1dProviderCallResponse::v1(
+                    base_provider_correlation,
+                    turn_id.0,
+                    selene_kernel_contracts::ph1d::RequestId(9_700 + idx),
+                    "ph1d_provider_scorecard".to_string(),
+                    Some(format!("provider_score_promote_{idx}")),
+                    "openai_primary".to_string(),
+                    selene_kernel_contracts::ph1d::Ph1dProviderTask::SttTranscribe,
+                    "gpt_4o_mini_transcribe".to_string(),
+                    selene_kernel_contracts::ph1d::Ph1dProviderStatus::Ok,
+                    120 + idx as u32,
+                    0,
+                    Some(9_400),
+                    Some(selene_kernel_contracts::ph1d::SchemaHash(222 + idx as u64)),
+                    Some("{\"text\":\"hello\"}".to_string()),
+                    selene_kernel_contracts::ph1d::Ph1dProviderValidationStatus::SchemaOk,
+                    ph1d_reason_codes::D_PROVIDER_OK,
+                )
+                .unwrap(),
+            );
+        }
+
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        runtime
+            .emit_ph1d_provider_scorecard_outcomes(
+                &mut store,
+                MonotonicTimeNs(33_010),
+                correlation_id,
+                turn_id,
+                &provider_calls,
+            )
+            .expect("provider scorecard outcomes must emit");
+        runtime
+            .maybe_record_builder_provider_promotion_decision(
+                &mut store,
+                MonotonicTimeNs(33_011),
+                correlation_id,
+                turn_id,
+            )
+            .expect("builder provider promotion decision must emit");
+
+        let decision_rows = store
+            .outcome_utilization_ledger_rows()
+            .iter()
+            .filter(|row| {
+                row.correlation_id == correlation_id
+                    && row.engine_id == "PH1.BUILDER"
+                    && row
+                        .outcome_type
+                        .starts_with(PAE_PROMOTION_DECISION_OUTCOME_PREFIX)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decision_rows.len(), 1);
+        assert!(decision_rows[0]
+            .outcome_type
+            .contains("PAE_PROMOTION_PROMOTE_ASSIST"));
+        assert_eq!(
+            decision_rows[0].reason_code,
+            selene_os::ph1builder::reason_codes::PH1_BUILDER_PROVIDER_SCORECARD_PROMOTE
+        );
     }
 
     #[test]
