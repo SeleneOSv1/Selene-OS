@@ -10,7 +10,7 @@ REQUIRED_PROPOSAL_ID="${REQUIRED_PROPOSAL_ID:-}"
 REQUIRED_RELEASE_STATE_ID="${REQUIRED_RELEASE_STATE_ID:-}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Missing env file: ${ENV_FILE}" >&2
+  echo "NO_CANARY_TELEMETRY: missing_env_file path=${ENV_FILE}" >&2
   echo "Run: ${ROOT_DIR}/scripts/dev_postgres_setup.sh" >&2
   exit 1
 fi
@@ -33,7 +33,7 @@ if [[ ! -x "${PSQL_BIN}" ]]; then
   PSQL_BIN="$(command -v psql || true)"
 fi
 if [[ -z "${PSQL_BIN}" || ! -x "${PSQL_BIN}" ]]; then
-  echo "psql was not found." >&2
+  echo "NO_CANARY_TELEMETRY: psql_not_found" >&2
   exit 1
 fi
 
