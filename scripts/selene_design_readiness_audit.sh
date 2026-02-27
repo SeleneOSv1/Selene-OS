@@ -477,8 +477,30 @@ echo
 echo "--- 3F) ACTIVE blueprints: side_effects!=NONE must not have Simulation Requirements: none ---"
 bad=0
 while read -r f; do
-  has_side=$(awk -F'|' 'BEGIN{x=0} /^\| / && $0 !~ /^\|---/ {se=$7; gsub(/^ +| +$/, "", se); if(se!="side_effects" && se!="NONE"){x=1}} END{print x}' "$f")
-  has_none=$(awk 'BEGIN{s=0;in_sec=0} /^## [0-9]+\) Simulation Requirements/{in_sec=1; next} /^## [0-9]+\)/{in_sec=0} {if(in_sec){line=tolower($0); if(line ~ /^- *none *$/){s=1}}} END{print s}' "$f" || echo 0)
+  has_side=$(awk -F'|' '
+    BEGIN{x=0}
+    /^\| / && $0 !~ /^\|---/ {
+      se=$7;
+      gsub(/^ +| +$/, "", se);
+      if(se!="side_effects" && se!="NONE" && se!="READ_ONLY"){x=1}
+    }
+    END{print x}
+  ' "$f")
+  has_none=$(awk '
+    BEGIN{s=0;in_sec=0}
+    /^## [0-9]+\) Simulation Requirements/{in_sec=1; next}
+    /^## [0-9]+\)/{in_sec=0}
+    {
+      if(in_sec){
+        line=tolower($0);
+        gsub(/^[[:space:]]*-[[:space:]]+/, "", line);
+        sub(/[[:space:]]*\(.*/, "", line);
+        gsub(/[[:space:]]+$/, "", line);
+        if(line=="none"){s=1}
+      }
+    }
+    END{print s}
+  ' "$f" || echo 0)
   if [ "$has_side" = "1" ] && [ "$has_none" = "1" ]; then
     echo "BAD_ACTIVE_SIMREQ_NONE: $f"
     bad=1
@@ -498,10 +520,12 @@ while read -r f; do
     /^## [0-9]+\)/{in_sec=0}
     { if(in_sec && $0 ~ /^- /){
         gsub(/^[[:space:]]*-[[:space:]]+/,"",$0); gsub(/`/,"",$0);
-        if(tolower($0)!="none"){
-          sub(/[[:space:]]*\(.*/,"",$0);
-          if($0 ~ /^[A-Z0-9_]+$/) print $0;
-          else print "NON_SIM_TEXT:"FILENAME":"$0;
+        sim_id=$0;
+        sub(/[[:space:]]*\(.*/, "", sim_id);
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", sim_id);
+        if(tolower(sim_id)!="none"){
+          if(sim_id ~ /^[A-Z0-9_]+$/) print sim_id;
+          else print "NON_SIM_TEXT:"FILENAME":"sim_id;
         }
       }
     }
