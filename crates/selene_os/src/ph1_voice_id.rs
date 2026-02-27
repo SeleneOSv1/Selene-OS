@@ -488,7 +488,7 @@ impl Ph1VoiceIdLiveRuntime {
         let mut tenant_ids: BTreeMap<String, ()> = BTreeMap::new();
         for row in store.artifacts_ledger_rows() {
             if row.scope_type == ArtifactScopeType::Tenant
-                && row.created_by == "PH1.LEARN"
+                && (row.created_by == "PH1.LEARN" || row.created_by == "PH1.BUILDER")
                 && row.artifact_type == ArtifactType::VoiceIdThresholdPack
             {
                 tenant_ids.insert(row.scope_id.clone(), ());
@@ -598,7 +598,7 @@ fn select_artifact_pointer_set(
         .filter(|row| {
             row.scope_type == ArtifactScopeType::Tenant
                 && row.scope_id == tenant_id
-                && row.created_by == "PH1.LEARN"
+                && (row.created_by == "PH1.LEARN" || row.created_by == "PH1.BUILDER")
                 && row.artifact_type == artifact_type
         })
         .collect::<Vec<_>>();
@@ -1667,6 +1667,24 @@ mod tests {
         now: u64,
         idempotency_key: &str,
     ) {
+        if status == ArtifactStatus::Active {
+            store
+                .ph1builder_active_artifact_commit(
+                    MonotonicTimeNs(now),
+                    tenant_id.to_string(),
+                    ArtifactScopeType::Tenant,
+                    tenant_id.to_string(),
+                    artifact_type,
+                    artifact_version,
+                    format!("pkg_hash_{}_{}", tenant_id, artifact_version.0),
+                    payload_ref,
+                    format!("prov_{}_{}", tenant_id, artifact_version.0),
+                    idempotency_key.to_string(),
+                )
+                .expect("voice artifact commit must succeed");
+            return;
+        }
+
         store
             .ph1learn_artifact_commit(
                 MonotonicTimeNs(now),
@@ -1911,7 +1929,7 @@ mod tests {
         override_profiles.android_explicit = VoiceIdentityEmbeddingGateProfile::optional();
 
         store
-            .ph1learn_artifact_commit(
+            .ph1builder_active_artifact_commit(
                 MonotonicTimeNs(11),
                 "tenant_relaxed".to_string(),
                 ArtifactScopeType::Tenant,
@@ -1921,7 +1939,6 @@ mod tests {
                 "pkg_hash_vid_gate_1".to_string(),
                 override_profiles.to_payload_ref_v1(),
                 "prov_vid_gate_1".to_string(),
-                ArtifactStatus::Active,
                 "idem_vid_gate_1".to_string(),
             )
             .expect("voice-id threshold pack commit must succeed");
@@ -1960,7 +1977,7 @@ mod tests {
         v2_profiles.android_explicit = VoiceIdentityEmbeddingGateProfile::required();
 
         store
-            .ph1learn_artifact_commit(
+            .ph1builder_active_artifact_commit(
                 MonotonicTimeNs(21),
                 "tenant_rollout".to_string(),
                 ArtifactScopeType::Tenant,
@@ -1970,12 +1987,11 @@ mod tests {
                 "pkg_hash_vid_gate_v1".to_string(),
                 v1_profiles.to_payload_ref_v1(),
                 "prov_vid_gate_v1".to_string(),
-                ArtifactStatus::Active,
                 "idem_vid_gate_v1".to_string(),
             )
             .expect("voice-id threshold pack v1 commit must succeed");
         store
-            .ph1learn_artifact_commit(
+            .ph1builder_active_artifact_commit(
                 MonotonicTimeNs(22),
                 "tenant_rollout".to_string(),
                 ArtifactScopeType::Tenant,
@@ -1985,7 +2001,6 @@ mod tests {
                 "pkg_hash_vid_gate_v2".to_string(),
                 v2_profiles.to_payload_ref_v1(),
                 "prov_vid_gate_v2".to_string(),
-                ArtifactStatus::Active,
                 "idem_vid_gate_v2".to_string(),
             )
             .expect("voice-id threshold pack v2 commit must succeed");

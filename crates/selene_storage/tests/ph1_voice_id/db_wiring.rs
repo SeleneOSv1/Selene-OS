@@ -2,7 +2,7 @@
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1art::{
-    ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
+    ArtifactScopeType, ArtifactType, ArtifactVersion,
 };
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, LinkStatus};
@@ -845,7 +845,7 @@ fn at_vid_db_10_voice_artifact_manifest_changes_enqueue_sync_rows() {
     ];
 
     for (idx, artifact_type) in artifact_types.into_iter().enumerate() {
-        s.ph1learn_artifact_commit(
+        s.ph1builder_active_artifact_commit(
             MonotonicTimeNs(2_000 + idx as u64),
             tenant_id.clone(),
             ArtifactScopeType::Tenant,
@@ -855,7 +855,6 @@ fn at_vid_db_10_voice_artifact_manifest_changes_enqueue_sync_rows() {
             format!("pkg_hash_voice_manifest_{idx}"),
             format!("payload_ref_voice_manifest_{idx}"),
             format!("prov_voice_manifest_{idx}"),
-            ArtifactStatus::Active,
             format!("idem_voice_manifest_{idx}"),
         )
         .unwrap();
@@ -873,7 +872,7 @@ fn at_vid_db_11_non_voice_artifact_does_not_enqueue_voice_manifest_sync() {
     let mut s = Ph1fStore::new_in_memory();
     let tenant_id = "tenant_a".to_string();
 
-    s.ph1learn_artifact_commit(
+    s.ph1builder_active_artifact_commit(
         MonotonicTimeNs(3_000),
         tenant_id.clone(),
         ArtifactScopeType::Tenant,
@@ -883,7 +882,6 @@ fn at_vid_db_11_non_voice_artifact_does_not_enqueue_voice_manifest_sync() {
         "pkg_hash_non_voice".to_string(),
         "payload_ref_non_voice".to_string(),
         "prov_non_voice".to_string(),
-        ArtifactStatus::Active,
         "idem_non_voice".to_string(),
     )
     .unwrap();
@@ -896,7 +894,7 @@ fn at_vid_db_12_wake_artifact_manifest_changes_enqueue_sync_rows() {
     let mut s = Ph1fStore::new_in_memory();
     let tenant_id = "tenant_a".to_string();
 
-    s.ph1learn_artifact_commit(
+    s.ph1builder_active_artifact_commit(
         MonotonicTimeNs(3_100),
         tenant_id.clone(),
         ArtifactScopeType::Tenant,
@@ -906,7 +904,6 @@ fn at_vid_db_12_wake_artifact_manifest_changes_enqueue_sync_rows() {
         "pkg_hash_wake_manifest".to_string(),
         "payload_ref_wake_manifest".to_string(),
         "prov_wake_manifest".to_string(),
-        ArtifactStatus::Active,
         "idem_wake_manifest".to_string(),
     )
     .unwrap();
@@ -928,7 +925,7 @@ fn at_vid_db_13_emo_artifact_manifest_changes_enqueue_sync_rows() {
         .into_iter()
         .enumerate()
     {
-        s.ph1learn_artifact_commit(
+        s.ph1builder_active_artifact_commit(
             MonotonicTimeNs(3_200 + idx as u64),
             tenant_id.clone(),
             ArtifactScopeType::Tenant,
@@ -938,7 +935,6 @@ fn at_vid_db_13_emo_artifact_manifest_changes_enqueue_sync_rows() {
             format!("pkg_hash_emo_manifest_{idx}"),
             format!("payload_ref_emo_manifest_{idx}"),
             format!("prov_emo_manifest_{idx}"),
-            ArtifactStatus::Active,
             format!("idem_emo_manifest_{idx}"),
         )
         .unwrap();
