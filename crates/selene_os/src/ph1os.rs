@@ -6,7 +6,9 @@ use selene_engines::ph1_voice_id::{
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
 use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
-use selene_kernel_contracts::ph1_voice_id::{Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId};
+use selene_kernel_contracts::ph1_voice_id::{
+    IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
+};
 use selene_kernel_contracts::ph1c::TranscriptOk;
 use selene_kernel_contracts::ph1d::{
     Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderInputPayloadKind,
@@ -1168,6 +1170,16 @@ pub struct OsVoiceLiveForwardBundle {
     pub top_level_bundle: OsTopLevelForwardBundle,
     pub voice_identity_assertion: Ph1VoiceIdResponse,
     pub identity_prompt_scope_key: Option<String>,
+}
+
+impl OsVoiceLiveForwardBundle {
+    pub fn identity_confirmed(&self) -> bool {
+        matches!(
+            &self.voice_identity_assertion,
+            Ph1VoiceIdResponse::SpeakerAssertionOk(ok)
+                if ok.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -9,7 +9,8 @@ use selene_kernel_contracts::ph1m::{
     MemoryCandidate, MemoryConfidence, MemorySensitivityFlag, MemoryUsePolicy,
 };
 use selene_kernel_contracts::ph1n::{
-    AmbiguityFlag, FieldKey, IntentDraft, IntentType, OverallConfidence, Ph1nResponse,
+    AmbiguityFlag, FieldKey, FieldValue, IntentDraft, IntentField, IntentType, OverallConfidence,
+    Ph1nResponse,
 };
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
@@ -540,6 +541,16 @@ impl Ph1xRuntime {
                 delivery_base,
             );
         }
+
+        let identity_v2 = identity_v2_for_context(&req.identity_context);
+        let allow_personalization =
+            identity_allows_personalization(&req.identity_context, identity_v2);
+        let draft_with_memory_context = if allow_personalization {
+            hydrate_invite_link_contact_from_memory(d, &req.memory_candidates, req.now)?
+        } else {
+            d.clone()
+        };
+        let d = &draft_with_memory_context;
 
         if let Some(clarify) = clarify_for_invite_link_recipient_resolution(d)? {
             let missing_field = clarify.what_is_missing[0];
@@ -1949,6 +1960,128 @@ fn clarify_for_invite_link_recipient_resolution(
     Ok(None)
 }
 
+fn hydrate_invite_link_contact_from_memory(
+    draft: &IntentDraft,
+    memory_candidates: &[MemoryCandidate],
+    now: MonotonicTimeNs,
+) -> Result<IntentDraft, ContractViolation> {
+    if draft.intent_type != IntentType::CreateInviteLink {
+        return Ok(draft.clone());
+    }
+    if !has_missing_field(draft, FieldKey::RecipientContact) {
+        return Ok(draft.clone());
+    }
+    let recipient = field_original(draft, FieldKey::Recipient)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_ascii_lowercase());
+    let Some(recipient) = recipient else {
+        return Ok(draft.clone());
+    };
+
+    let safe_memory = filter_fresh_low_risk_candidates(memory_candidates, now);
+    let delivery_channel = invite_delivery_channel_label(draft);
+    let Some(contact) =
+        resolve_invite_link_contact_from_memory(&safe_memory, &recipient, delivery_channel)
+    else {
+        return Ok(draft.clone());
+    };
+
+    let mut hydrated = draft.clone();
+    hydrated
+        .required_fields_missing
+        .retain(|field| *field != FieldKey::RecipientContact);
+    let contact_value = FieldValue::verbatim(contact)?;
+    if let Some(existing) = hydrated
+        .fields
+        .iter_mut()
+        .find(|field| field.key == FieldKey::RecipientContact)
+    {
+        existing.value = contact_value;
+        existing.confidence = OverallConfidence::Med;
+    } else {
+        hydrated.fields.push(IntentField {
+            key: FieldKey::RecipientContact,
+            value: contact_value,
+            confidence: OverallConfidence::Med,
+        });
+    }
+    Ok(hydrated)
+}
+
+fn resolve_invite_link_contact_from_memory(
+    candidates: &[&MemoryCandidate],
+    recipient: &str,
+    delivery_channel: &str,
+) -> Option<String> {
+    let mut selected: Option<String> = None;
+    for candidate in candidates {
+        let key = candidate.memory_key.as_str().to_ascii_lowercase();
+        let value = candidate.memory_value.verbatim.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let value_lower = value.to_ascii_lowercase();
+        let recipient_match = key.contains(recipient) || value_lower.contains(recipient);
+        if !recipient_match {
+            continue;
+        }
+        let key_hints_contact = key.contains("contact")
+            || key.contains("phone")
+            || key.contains("sms")
+            || key.contains("email")
+            || key.contains("handle");
+        if !key_hints_contact && !invite_contact_matches_channel(value, delivery_channel) {
+            continue;
+        }
+        if !invite_contact_matches_channel(value, delivery_channel) {
+            continue;
+        }
+        match &selected {
+            None => selected = Some(value.to_string()),
+            Some(existing) if !existing.eq_ignore_ascii_case(value) => return None,
+            _ => {}
+        }
+    }
+    selected
+}
+
+fn invite_contact_matches_channel(contact: &str, delivery_channel: &str) -> bool {
+    match delivery_channel {
+        "SMS" | "WhatsApp" | "WeChat" => looks_like_phone_number(contact),
+        "email" => looks_like_email_address(contact),
+        "Selene App" => {
+            looks_like_selene_app_handle(contact)
+                || contact.to_ascii_lowercase().contains("selene app")
+        }
+        _ => false,
+    }
+}
+
+fn looks_like_phone_number(value: &str) -> bool {
+    let digit_count = value.chars().filter(|c| c.is_ascii_digit()).count();
+    digit_count >= 7 && digit_count <= 16
+}
+
+fn looks_like_email_address(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return false;
+    };
+    !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+}
+
+fn looks_like_selene_app_handle(value: &str) -> bool {
+    let trimmed = value.trim();
+    let len = trimmed.len();
+    if !(3..=64).contains(&len) || trimmed.contains(char::is_whitespace) {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
 fn has_missing_field(d: &IntentDraft, key: FieldKey) -> bool {
     d.required_fields_missing.contains(&key)
 }
@@ -2446,6 +2579,21 @@ mod tests {
             MemoryProvenance::v1(None, None).unwrap(),
             MemorySensitivityFlag::Sensitive,
             MemoryUsePolicy::UserRequestedOnly,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn mem_invite_contact(key: &str, contact: &str) -> MemoryCandidate {
+        MemoryCandidate::v1(
+            MemoryKey::new(key).unwrap(),
+            MemoryValue::v1(contact.to_string(), None).unwrap(),
+            MemoryConfidence::High,
+            now(1),
+            format!("Contact evidence: {contact}"),
+            MemoryProvenance::v1(None, None).unwrap(),
+            MemorySensitivityFlag::Low,
+            MemoryUsePolicy::AlwaysUsable,
             None,
         )
         .unwrap()
@@ -3343,6 +3491,65 @@ mod tests {
                 attempts: 1
             })
         );
+    }
+
+    #[test]
+    fn run5_invite_link_memory_contact_resolves_without_extra_clarify_when_identity_confirmed() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::CreateInviteLink);
+        d.fields = vec![
+            IntentField {
+                key: FieldKey::InviteeType,
+                value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::DeliveryMethod,
+                value: FieldValue::normalized("send".to_string(), "sms".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+            IntentField {
+                key: FieldKey::Recipient,
+                value: FieldValue::verbatim("Tom".to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            },
+        ];
+        d.required_fields_missing = vec![FieldKey::RecipientContact];
+
+        let req = Ph1xRequest::v1(
+            903,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_voice_ok(),
+            policy_ok(),
+            vec![mem_invite_contact("invite_contact_tom_sms", "+14155550100")],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        assert!(!matches!(out.directive, Ph1xDirective::Clarify(_)));
+        let Some(PendingState::Confirm { intent_draft, .. }) = out.thread_state.pending else {
+            panic!("expected confirm pending state after contact resolved from memory");
+        };
+        let contact = intent_draft
+            .fields
+            .iter()
+            .find(|field| field.key == FieldKey::RecipientContact)
+            .expect("recipient contact should be hydrated from memory");
+        assert_eq!(contact.value.original_span, "+14155550100");
+        assert!(intent_draft
+            .required_fields_missing
+            .iter()
+            .all(|field| *field != FieldKey::RecipientContact));
     }
 
     #[test]

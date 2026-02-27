@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
 use selene_kernel_contracts::ph1_voice_id::{
-    DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, Ph1VoiceIdSimRequest,
+    DeviceTrustLevel, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, Ph1VoiceIdSimRequest,
     Ph1VoiceIdSimResponse, VoiceEmbeddingCaptureRef, VoiceIdSimulationRequest,
 };
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId};
@@ -40,10 +40,10 @@ use selene_kernel_contracts::ph1link::{
     AppPlatform, Ph1LinkRequest, Ph1LinkResponse, LINK_INVITE_GENERATE_DRAFT,
 };
 use selene_kernel_contracts::ph1m::{
-    MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryProposedItem, MemoryProvenance,
-    MemoryRetentionMode, MemorySensitivityFlag, MemoryValue, Ph1mForgetRequest, Ph1mForgetResponse,
-    Ph1mProposeRequest, Ph1mProposeResponse, Ph1mRecallRequest, Ph1mRecallResponse,
-    Ph1mThreadDigestUpsertRequest,
+    MemoryCandidate, MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryProposedItem,
+    MemoryProvenance, MemoryRetentionMode, MemorySensitivityFlag, MemoryValue,
+    Ph1mContextBundleBuildRequest, Ph1mForgetRequest, Ph1mForgetResponse, Ph1mProposeRequest,
+    Ph1mProposeResponse, Ph1mRecallRequest, Ph1mRecallResponse, Ph1mThreadDigestUpsertRequest,
 };
 use selene_kernel_contracts::ph1n::{FieldKey, FieldValue, IntentDraft, IntentType};
 use selene_kernel_contracts::ph1onb::{OnboardingSessionId, Ph1OnbRequest, Ph1OnbResponse};
@@ -119,6 +119,7 @@ pub struct SimulationExecutor {
     delivery_send_idempotency: RefCell<BTreeMap<String, Ph1DeliveryResponse>>,
     link: Ph1LinkRuntime,
     memory: RefCell<Ph1mWiring<Ph1mRuntime>>,
+    memory_context_lookup_count: RefCell<u64>,
     onb: Ph1OnbOrchRuntime,
     position: Ph1PositionRuntime,
     rem: Ph1RemRuntime,
@@ -262,6 +263,7 @@ impl Default for SimulationExecutor {
             delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link: Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1()),
             memory: RefCell::new(new_ph1m_wiring()),
+            memory_context_lookup_count: RefCell::new(0),
             onb: Ph1OnbOrchRuntime::default(),
             position: Ph1PositionRuntime,
             rem: Ph1RemRuntime::default(),
@@ -284,6 +286,7 @@ impl SimulationExecutor {
             delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
+            memory_context_lookup_count: RefCell::new(0),
             onb,
             position: Ph1PositionRuntime,
             rem: Ph1RemRuntime::default(),
@@ -304,6 +307,7 @@ impl SimulationExecutor {
             delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
+            memory_context_lookup_count: RefCell::new(0),
             onb,
             position: Ph1PositionRuntime,
             rem: Ph1RemRuntime::default(),
@@ -329,6 +333,7 @@ impl SimulationExecutor {
             delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
+            memory_context_lookup_count: RefCell::new(0),
             onb,
             position,
             rem: Ph1RemRuntime::default(),
@@ -2505,6 +2510,155 @@ impl SimulationExecutor {
         }
     }
 
+    pub fn collect_context_memory_candidates_for_voice_turn(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        voice_identity_assertion: &Ph1VoiceIdResponse,
+        policy_context_ref: PolicyContextRef,
+        topic_hint: Option<String>,
+    ) -> Result<Vec<MemoryCandidate>, StorageError> {
+        if !voice_identity_is_confirmed(voice_identity_assertion) {
+            return Ok(vec![]);
+        }
+        *self.memory_context_lookup_count.borrow_mut() += 1;
+
+        let topic_hint = topic_hint
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let context_req = Ph1mContextBundleBuildRequest::v1(
+            now,
+            voice_identity_assertion.clone(),
+            policy_context_ref,
+            vec![],
+            vec![],
+            topic_hint,
+            None,
+            None,
+            false,
+            4096,
+            8,
+            0,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let context_input = MemoryTurnInput::v1(
+            correlation_id,
+            turn_id,
+            MemoryOperation::ContextBundleBuild(context_req),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let context_output = self.execute_memory_turn_output(store, &context_input)?;
+        let context = match context_output {
+            MemoryTurnOutput::ContextBundleBuild(resp) => resp,
+            _ => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_executor.ph1m.context_bundle_build",
+                        reason: "expected context bundle build output",
+                    },
+                ))
+            }
+        };
+
+        let mut requested_keys = Vec::new();
+        for item in context.pull_items.iter().chain(context.push_items.iter()) {
+            if requested_keys
+                .iter()
+                .any(|existing: &MemoryKey| existing == &item.memory_key)
+            {
+                continue;
+            }
+            requested_keys.push(item.memory_key.clone());
+            if requested_keys.len() >= 16 {
+                break;
+            }
+        }
+        if requested_keys.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let recall_req = Ph1mRecallRequest::v1(
+            now,
+            voice_identity_assertion.clone(),
+            policy_context_ref,
+            requested_keys,
+            false,
+            16,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let recall_input =
+            MemoryTurnInput::v1(correlation_id, turn_id, MemoryOperation::Recall(recall_req))
+                .map_err(StorageError::ContractViolation)?;
+        let recall_output = self.execute_memory_turn_output(store, &recall_input)?;
+        let recall = match recall_output {
+            MemoryTurnOutput::Recall(resp) => resp,
+            _ => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_executor.ph1m.recall",
+                        reason: "expected recall output",
+                    },
+                ))
+            }
+        };
+        Ok(recall.candidates)
+    }
+
+    pub fn debug_memory_context_lookup_count(&self) -> u64 {
+        *self.memory_context_lookup_count.borrow()
+    }
+
+    #[cfg(test)]
+    pub fn debug_seed_memory_candidate_for_tests(
+        &self,
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        speaker_assertion: Ph1VoiceIdResponse,
+        memory_key: MemoryKey,
+        memory_value: MemoryValue,
+        evidence_quote: String,
+    ) -> Result<(), StorageError> {
+        let proposal = MemoryProposedItem::v1(
+            memory_key,
+            memory_value,
+            MemoryLayer::Working,
+            MemorySensitivityFlag::Low,
+            MemoryConfidence::High,
+            MemoryConsent::ExplicitRemember,
+            evidence_quote,
+            MemoryProvenance::v1(None, Some(format!("test:{}:{}", correlation_id.0, turn_id.0)))
+                .map_err(StorageError::ContractViolation)?,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let propose_req = Ph1mProposeRequest::v1(
+            now,
+            speaker_assertion,
+            PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            vec![proposal],
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let input = MemoryTurnInput::v1(
+            correlation_id,
+            turn_id,
+            MemoryOperation::Propose(propose_req),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let out = self.execute_memory_turn_output(store, &input)?;
+        match out {
+            MemoryTurnOutput::Propose(_) => Ok(()),
+            _ => Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_executor.ph1m.propose",
+                    reason: "expected propose output",
+                },
+            )),
+        }
+    }
+
     // Best-effort PH1.M continuity capture for live simulation dispatches.
     // This must not alter primary simulation outcomes.
     fn best_effort_ph1m_capture_turn_digest(
@@ -3166,6 +3320,14 @@ fn new_os_top_level_wiring() -> Ph1OsTopLevelWiring<EngineBackedOsRuntime> {
         .expect("PH1.OS wiring mvp_v1 config must be valid");
     Ph1OsTopLevelWiring::new(Ph1OsTopLevelConfig::mvp_v1(true), os_wiring)
         .expect("PH1.OS top-level mvp_v1 config must be valid")
+}
+
+fn voice_identity_is_confirmed(assertion: &Ph1VoiceIdResponse) -> bool {
+    matches!(
+        assertion,
+        Ph1VoiceIdResponse::SpeakerAssertionOk(ok)
+            if ok.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed
+    )
 }
 
 #[derive(Debug, Clone)]
