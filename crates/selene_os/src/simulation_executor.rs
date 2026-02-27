@@ -3668,6 +3668,7 @@ fn intent_type_token(intent: IntentType) -> &'static str {
         IntentType::UrlFetchAndCiteQuery => "URL_FETCH_AND_CITE_QUERY",
         IntentType::DocumentUnderstandQuery => "DOCUMENT_UNDERSTAND_QUERY",
         IntentType::PhotoUnderstandQuery => "PHOTO_UNDERSTAND_QUERY",
+        IntentType::DataAnalysisQuery => "DATA_ANALYSIS_QUERY",
         IntentType::Continue => "CONTINUE",
         IntentType::MoreDetail => "MORE_DETAIL",
     }

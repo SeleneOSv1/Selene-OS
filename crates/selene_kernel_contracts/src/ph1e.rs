@@ -56,6 +56,7 @@ pub enum ToolName {
     UrlFetchAndCite,
     DocumentUnderstand,
     PhotoUnderstand,
+    DataAnalysis,
     Other(String),
 }
 
@@ -86,6 +87,7 @@ impl ToolName {
             ToolName::UrlFetchAndCite => "url_fetch_and_cite",
             ToolName::DocumentUnderstand => "document_understand",
             ToolName::PhotoUnderstand => "photo_understand",
+            ToolName::DataAnalysis => "data_analysis",
             ToolName::Other(s) => s.as_str(),
         }
     }
@@ -579,6 +581,11 @@ pub enum ToolResult {
         extracted_fields: Vec<ToolStructuredField>,
         citations: Vec<ToolTextSnippet>,
     },
+    DataAnalysis {
+        summary: String,
+        extracted_fields: Vec<ToolStructuredField>,
+        citations: Vec<ToolTextSnippet>,
+    },
 }
 
 impl Validate for ToolResult {
@@ -707,6 +714,40 @@ impl Validate for ToolResult {
                     field.validate()?;
                 }
                 validate_items("tool_result.photo_understand.citations", citations)?;
+            }
+            ToolResult::DataAnalysis {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                if summary.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.data_analysis.summary",
+                        reason: "must not be empty",
+                    });
+                }
+                if summary.len() > 1024 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.data_analysis.summary",
+                        reason: "must be <= 1024 chars",
+                    });
+                }
+                if extracted_fields.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.data_analysis.extracted_fields",
+                        reason: "must not be empty",
+                    });
+                }
+                if extracted_fields.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.data_analysis.extracted_fields",
+                        reason: "must be <= 20 entries",
+                    });
+                }
+                for field in extracted_fields {
+                    field.validate()?;
+                }
+                validate_items("tool_result.data_analysis.citations", citations)?;
             }
         }
         Ok(())

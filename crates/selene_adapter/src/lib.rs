@@ -2327,7 +2327,16 @@ impl AdapterRuntime {
             nlp_output,
             Ph1cSessionStateRef::v1(SessionState::Active, false),
             PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            ToolCatalogRef::v1(vec![ToolName::Time, ToolName::Weather])
+            ToolCatalogRef::v1(vec![
+                ToolName::Time,
+                ToolName::Weather,
+                ToolName::WebSearch,
+                ToolName::News,
+                ToolName::UrlFetchAndCite,
+                ToolName::DocumentUnderstand,
+                ToolName::PhotoUnderstand,
+                ToolName::DataAnalysis,
+            ])
                 .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
         )
         .map_err(|err| format!("ph1d request build failed: {err:?}"))?;

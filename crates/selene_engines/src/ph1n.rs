@@ -114,7 +114,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::NewsQuery
         | IntentType::UrlFetchAndCiteQuery
         | IntentType::DocumentUnderstandQuery
-        | IntentType::PhotoUnderstandQuery => {
+        | IntentType::PhotoUnderstandQuery
+        | IntentType::DataAnalysisQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -236,6 +237,26 @@ fn looks_like_photo_understand(lower: &str) -> bool {
             || contains_word(lower, "what does this"))
 }
 
+fn looks_like_data_analysis(lower: &str) -> bool {
+    ((contains_word(lower, "analyze")
+        || contains_word(lower, "analysis")
+        || contains_word(lower, "calculate")
+        || contains_word(lower, "stats")
+        || contains_word(lower, "statistics")
+        || contains_word(lower, "transform")
+        || contains_word(lower, "chart")
+        || contains_word(lower, "table"))
+        && (contains_word(lower, "csv")
+            || contains_word(lower, "spreadsheet")
+            || contains_word(lower, "sheet")
+            || contains_word(lower, "file")
+            || contains_word(lower, "data")
+            || contains_word(lower, "dataset")))
+        || lower.starts_with("analyze this file")
+        || lower.starts_with("analyze this csv")
+        || lower.starts_with("analyze this spreadsheet")
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -314,7 +335,10 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_document_understand(s) {
         push(IntentType::DocumentUnderstandQuery);
     }
-    if looks_like_photo_understand(s) {
+    if looks_like_data_analysis(s) {
+        push(IntentType::DataAnalysisQuery);
+    }
+    if looks_like_photo_understand(s) && !looks_like_data_analysis(s) {
         push(IntentType::PhotoUnderstandQuery);
     }
     if s.contains("remind me") || s.contains("reminder") {
@@ -389,7 +413,8 @@ fn normalize_intent(
         | IntentType::NewsQuery
         | IntentType::UrlFetchAndCiteQuery
         | IntentType::DocumentUnderstandQuery
-        | IntentType::PhotoUnderstandQuery => {
+        | IntentType::PhotoUnderstandQuery
+        | IntentType::DataAnalysisQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1814,6 +1839,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::UrlFetchAndCiteQuery => "Open URL and cite".to_string(),
         IntentType::DocumentUnderstandQuery => "Read and summarize document".to_string(),
         IntentType::PhotoUnderstandQuery => "Understand photo or screenshot".to_string(),
+        IntentType::DataAnalysisQuery => "Analyze uploaded data".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -3042,6 +3068,24 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::PhotoUnderstandQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_23_data_analysis_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene analyze this CSV and show summary stats and a chart",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::DataAnalysisQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
