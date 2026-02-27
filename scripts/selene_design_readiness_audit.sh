@@ -471,7 +471,14 @@ echo "ECM CAPABILITIES (unique):"; wc -l "${ECM_CAPS_EXACT_TXT}"
 
 echo
 echo "--- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---"
-comm -23 "${ACTIVE_CAPS_UNIQUE_TXT}" "${ECM_CAPS_EXACT_TXT}" | sed 's/^/MISSING_CAPABILITY_ID: /' || true
+missing_caps="$(comm -23 "${ACTIVE_CAPS_UNIQUE_TXT}" "${ECM_CAPS_EXACT_TXT}" || true)"
+if [ -n "${missing_caps}" ]; then
+  printf "%s\n" "${missing_caps}" | sed 's/^/MISSING_CAPABILITY_ID: /'
+  missing_cap_count="$(printf "%s\n" "${missing_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_capability_parity=fail count=${missing_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_capability_parity=pass"
 
 echo
 echo "--- 3F) ACTIVE blueprints: side_effects!=NONE must not have Simulation Requirements: none ---"
