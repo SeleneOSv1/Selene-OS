@@ -29,26 +29,95 @@ ECM_CAPS_EXACT_TXT="${AUDIT_TMP_DIR}/ecm_caps_exact.txt"
 SIM_IDS_TXT="${AUDIT_TMP_DIR}/sim_ids.txt"
 ACTIVE_SIMREQ_IDS_TXT="${AUDIT_TMP_DIR}/active_simreq_ids.txt"
 ACTIVE_SIMREQ_IDS_UNIQUE_TXT="${AUDIT_TMP_DIR}/active_simreq_ids_unique.txt"
+AUDIT_REQUIRE_CLEAN_TREE="${AUDIT_REQUIRE_CLEAN_TREE:-0}"
+if [ "${AUDIT_REQUIRE_CLEAN_TREE}" != "0" ] && [ "${AUDIT_REQUIRE_CLEAN_TREE}" != "1" ]; then
+  echo "CHECK_FAIL audit_tree_state_policy=fail invalid_mode=${AUDIT_REQUIRE_CLEAN_TREE}"
+  exit 1
+fi
 
 echo "=================================================="
 echo "0) REPO STATE (MUST BE REPORTED EXACTLY)"
 echo "=================================================="
-echo "BRANCH:"; git branch --show-current
-echo "PINNED COMMIT HASH:"; git rev-parse HEAD
+current_branch="$(git branch --show-current)"
+pinned_commit_hash="$(git rev-parse HEAD)"
+last_commit_line="$(git log -1 --oneline)"
+
+echo "BRANCH:"; printf "%s\n" "${current_branch}"
+echo "PINNED COMMIT HASH:"; printf "%s\n" "${pinned_commit_hash}"
 echo
 echo "GIT STATUS (SHORT):"; git status --short
 echo
 echo "GIT DIFF (NAME ONLY):"; git diff --name-only || true
 echo
-echo "LAST COMMIT:"; git log -1 --oneline
+echo "LAST COMMIT:"; printf "%s\n" "${last_commit_line}"
 echo
+repo_state_fail_count=0
+if [ -z "${current_branch}" ]; then
+  echo "REPO_STATE_FAIL: empty_branch_name"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if ! printf "%s\n" "${pinned_commit_hash}" | rg -q '^[0-9a-f]{40}$'; then
+  echo "REPO_STATE_FAIL: invalid_pinned_commit_hash=${pinned_commit_hash}"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if ! git cat-file -e "${pinned_commit_hash}^{commit}" 2>/dev/null; then
+  echo "REPO_STATE_FAIL: pinned_commit_not_visible=${pinned_commit_hash}"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if [ -z "${last_commit_line}" ]; then
+  echo "REPO_STATE_FAIL: missing_last_commit_line"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if [ "${repo_state_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL audit_repo_state_header=fail count=${repo_state_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK audit_repo_state_header=pass"
+
+tree_is_dirty=0
 if [ -n "$(git status --porcelain)" ]; then
+  tree_is_dirty=1
   echo "AUDIT_TREE_STATE: DIRTY"
   echo "AUDIT_VALIDITY_NOTE: closure decisions require pinned commit hash plus this dirty-file listing."
 else
   echo "AUDIT_TREE_STATE: CLEAN"
   echo "AUDIT_VALIDITY_NOTE: closure decisions may use this run directly."
 fi
+if [ "${AUDIT_REQUIRE_CLEAN_TREE}" = "1" ] && [ "${tree_is_dirty}" -eq 1 ]; then
+  echo "CHECK_FAIL audit_tree_state_policy=fail mode=require_clean state=DIRTY"
+  exit 1
+fi
+echo "CHECK_OK audit_tree_state_policy=pass mode=${AUDIT_REQUIRE_CLEAN_TREE} state=$([ "${tree_is_dirty}" -eq 1 ] && echo DIRTY || echo CLEAN)"
+
+guard_tokens=(
+  "CHECK_FAIL blueprint_active_intent_uniqueness"
+  "CHECK_FAIL blueprint_active_paths"
+  "CHECK_FAIL blueprint_active_capability_extract"
+  "CHECK_FAIL ecm_capability_extract"
+  "CHECK_FAIL blueprint_capability_parity"
+  "CHECK_FAIL blueprint_side_effect_simreq_none"
+  "CHECK_FAIL blueprint_side_effect_simreq_missing"
+  "CHECK_FAIL sim_catalog_id_extract"
+  "CHECK_FAIL blueprint_sim_requirements_non_sim_text"
+  "CHECK_FAIL blueprint_sim_catalog_parity"
+  "CHECK_FAIL banned_legacy_token_sweep"
+  "CHECK_FAIL legacy_link_sim_catalog_compliance"
+  "CHECK_FAIL link_enum_contract_parity"
+  "CHECK_FAIL onboarding_draft_contract_parity"
+  "CHECK_FAIL coverage_matrix_status_tokens"
+)
+missing_guard_tokens=0
+for guard_token in "${guard_tokens[@]}"; do
+  if ! rg -Fq "${guard_token}" "${BASH_SOURCE[0]}"; then
+    echo "MISSING_GUARD_TOKEN:${guard_token}"
+    missing_guard_tokens=$((missing_guard_tokens + 1))
+  fi
+done
+if [ "${missing_guard_tokens}" -gt 0 ]; then
+  echo "CHECK_FAIL readiness_guardrail_self_check=fail count=${missing_guard_tokens}"
+  exit 1
+fi
+echo "CHECK_OK readiness_guardrail_self_check=pass count=${#guard_tokens[@]}"
 
 echo
 echo "=================================================="
@@ -695,9 +764,64 @@ echo "SQL onboarding_link_tokens status constraint:"; awk '
 ' crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql || true
 echo "DB_WIRING PH1_LINK lifecycle line:"; rg -n "lifecycle state is bounded" docs/DB_WIRING/PH1_LINK.md -n || true
 
+link_contract_fail_count=0
+if ! rg -q "pub enum InviteeType" crates/selene_kernel_contracts/src/ph1link.rs; then
+  echo "LINK_CONTRACT_FAIL: missing InviteeType enum in ph1link contract"
+  link_contract_fail_count=$((link_contract_fail_count + 1))
+fi
+if ! rg -q "pub enum LinkStatus" crates/selene_kernel_contracts/src/ph1link.rs; then
+  echo "LINK_CONTRACT_FAIL: missing LinkStatus enum in ph1link contract"
+  link_contract_fail_count=$((link_contract_fail_count + 1))
+fi
+
+link_statuses=(DRAFT_CREATED SENT OPENED ACTIVATED CONSUMED REVOKED EXPIRED BLOCKED)
+for status in "${link_statuses[@]}"; do
+  if ! rg -q "'${status}'" crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql; then
+    echo "LINK_CONTRACT_FAIL: migration missing status=${status}"
+    link_contract_fail_count=$((link_contract_fail_count + 1))
+  fi
+  if ! rg -q "\\b${status}\\b" docs/DB_WIRING/PH1_LINK.md; then
+    echo "LINK_CONTRACT_FAIL: db_wiring missing lifecycle token=${status}"
+    link_contract_fail_count=$((link_contract_fail_count + 1))
+  fi
+done
+
+if [ "${link_contract_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL link_enum_contract_parity=fail count=${link_contract_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK link_enum_contract_parity=pass"
+
 echo
 echo "--- 4B) Onboarding draft status keywords + constraints ---"
 rg -n "onboarding_drafts|DRAFT_CREATED|DRAFT_READY|COMMITTED|REVOKED|EXPIRED" docs/04_KERNEL_CONTRACTS.md docs/DB_WIRING/PH1_LINK.md crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql -n || true
+
+onboarding_contract_fail_count=0
+onboarding_contract_files=(
+  "docs/04_KERNEL_CONTRACTS.md"
+  "docs/DB_WIRING/PH1_LINK.md"
+  "crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql"
+)
+onboarding_draft_statuses=(DRAFT_CREATED DRAFT_READY COMMITTED REVOKED EXPIRED)
+
+for contract_file in "${onboarding_contract_files[@]}"; do
+  if ! rg -q "onboarding_drafts" "${contract_file}"; then
+    echo "ONBOARDING_CONTRACT_FAIL: missing onboarding_drafts token in ${contract_file}"
+    onboarding_contract_fail_count=$((onboarding_contract_fail_count + 1))
+  fi
+  for status in "${onboarding_draft_statuses[@]}"; do
+    if ! rg -q "\\b${status}\\b" "${contract_file}"; then
+      echo "ONBOARDING_CONTRACT_FAIL: missing status=${status} in ${contract_file}"
+      onboarding_contract_fail_count=$((onboarding_contract_fail_count + 1))
+    fi
+  done
+done
+
+if [ "${onboarding_contract_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL onboarding_draft_contract_parity=fail count=${onboarding_contract_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK onboarding_draft_contract_parity=pass"
 
 echo
 echo "=================================================="
