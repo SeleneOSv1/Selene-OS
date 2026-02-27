@@ -129,8 +129,8 @@ Locked schema rules:
 | MEMORY_FORGET_COMMIT | COMMIT | Memory | Commit memory forget request with deterministic bounded scope | ACTIVE | v1 | Append forget event + update memory current projection |
 | MEMORY_SUPPRESSION_SET_COMMIT | COMMIT | Memory | Commit memory suppression control update (`DO_NOT_MENTION|DO_NOT_REPEAT|DO_NOT_STORE`) | ACTIVE | v1 | Upsert suppression rule state |
 | MEMORY_ATOM_UPSERT_COMMIT | COMMIT | Memory | Commit one memory atom store/update event deterministically | ACTIVE | v1 | Append atom event + update atom current projection |
-| TOOL_TIME_QUERY_COMMIT | COMMIT | Tool | Commit read-only TIME query outcome as PH1.E audit row | ACTIVE | v1 | Append ToolOk/ToolFail audit row only |
-| TOOL_WEATHER_QUERY_COMMIT | COMMIT | Tool | Commit read-only WEATHER query outcome as PH1.E audit row | ACTIVE | v1 | Append ToolOk/ToolFail audit row only |
+| TOOL_TIME_QUERY_COMMIT | COMMIT | Tool | Legacy-only historical audit simulation for TIME query | DRAFT | v1 | Legacy compatibility only; ACTIVE read-only tool lane does not require simulation commits |
+| TOOL_WEATHER_QUERY_COMMIT | COMMIT | Tool | Legacy-only historical audit simulation for WEATHER query | DRAFT | v1 | Legacy compatibility only; ACTIVE read-only tool lane does not require simulation commits |
 | TENANT_CONTEXT_RESOLVE_DRAFT | DRAFT | Tenant | Resolve tenant and policy context before enterprise execution | DRAFT | v1 | Write context resolution result only |
 | QUOTA_CHECK_DRAFT | DRAFT | Quota | Evaluate deterministic budget/quota gates for a request | DRAFT | v1 | Write quota decision result only |
 | KMS_HANDLE_ISSUE_COMMIT | COMMIT | KMS | Issue short-lived credential handle for approved runtime use | DRAFT | v1 | Write handle issue/audit row |
@@ -3196,8 +3196,8 @@ atom_state: enum (STORED | UPDATED)
 - name: Tool Time Query Commit
 - owning_domain: Tool
 - simulation_type: COMMIT
-- purpose: Commit read-only TIME lookup outcome as PH1.E audit evidence
-- triggers: TOOL_TIME_QUERY (process_id)
+- purpose: Legacy-only historical TIME lookup audit simulation
+- triggers: TOOL_TIME_QUERY (process_id) legacy path only
 - required_roles: authenticated requester within tenant scope
 - required_approvals: none
 - required_confirmations: none
@@ -3219,9 +3219,9 @@ tool_name: TIME
 tool_status: enum (OK | FAIL)
 audit_event_id: string
 ```
-- preconditions: identity verified; tool policy allows TIME query execution
-- postconditions: tool outcome is recorded deterministically as ToolOk/ToolFail audit evidence
-- side_effects: append PH1.E ToolOk/ToolFail audit row only
+- preconditions: legacy compatibility mode only; not used by ACTIVE read-only tool blueprints
+- postconditions: retained for historical replay compatibility only
+- side_effects: legacy-only append PH1.E ToolOk/ToolFail audit row
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (tenant_id + correlation_id + turn_id + query_hash + idempotency_key)
@@ -3232,8 +3232,8 @@ audit_event_id: string
 - name: Tool Weather Query Commit
 - owning_domain: Tool
 - simulation_type: COMMIT
-- purpose: Commit read-only WEATHER lookup outcome as PH1.E audit evidence
-- triggers: TOOL_WEATHER_QUERY (process_id)
+- purpose: Legacy-only historical WEATHER lookup audit simulation
+- triggers: TOOL_WEATHER_QUERY (process_id) legacy path only
 - required_roles: authenticated requester within tenant scope
 - required_approvals: none
 - required_confirmations: none
@@ -3257,9 +3257,9 @@ tool_name: WEATHER
 tool_status: enum (OK | FAIL)
 audit_event_id: string
 ```
-- preconditions: identity verified; location is provided; tool policy allows WEATHER query execution
-- postconditions: tool outcome is recorded deterministically as ToolOk/ToolFail audit evidence
-- side_effects: append PH1.E ToolOk/ToolFail audit row only
+- preconditions: legacy compatibility mode only; not used by ACTIVE read-only tool blueprints
+- postconditions: retained for historical replay compatibility only
+- side_effects: legacy-only append PH1.E ToolOk/ToolFail audit row
 - reads_tables[]: inherited from owning_domain profile (or stricter record override)
 - writes_tables[]: inherited from owning_domain profile (or stricter record override)
 - idempotency_key_rule: idempotent on (tenant_id + correlation_id + turn_id + query_hash + idempotency_key)

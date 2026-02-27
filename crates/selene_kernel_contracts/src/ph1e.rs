@@ -53,6 +53,9 @@ pub enum ToolName {
     Weather,
     WebSearch,
     News,
+    UrlFetchAndCite,
+    DocumentUnderstand,
+    PhotoUnderstand,
     Other(String),
 }
 
@@ -80,6 +83,9 @@ impl ToolName {
             ToolName::Weather => "weather",
             ToolName::WebSearch => "web_search",
             ToolName::News => "news",
+            ToolName::UrlFetchAndCite => "url_fetch_and_cite",
+            ToolName::DocumentUnderstand => "document_understand",
+            ToolName::PhotoUnderstand => "photo_understand",
             ToolName::Other(s) => s.as_str(),
         }
     }
@@ -465,6 +471,48 @@ impl Validate for ToolTextSnippet {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolStructuredField {
+    pub key: String,
+    pub value: String,
+}
+
+impl Validate for ToolStructuredField {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.key.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "tool_structured_field.key",
+                reason: "must not be empty",
+            });
+        }
+        if self.key.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "tool_structured_field.key",
+                reason: "must be <= 128 chars",
+            });
+        }
+        if self.value.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "tool_structured_field.value",
+                reason: "must not be empty",
+            });
+        }
+        if self.value.len() > 1024 {
+            return Err(ContractViolation::InvalidValue {
+                field: "tool_structured_field.value",
+                reason: "must be <= 1024 chars",
+            });
+        }
+        if self.key.chars().any(|c| c.is_control()) || self.value.chars().any(|c| c.is_control()) {
+            return Err(ContractViolation::InvalidValue {
+                field: "tool_structured_field",
+                reason: "must not contain control characters",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructuredAmbiguity {
     pub summary: String,
     pub alternatives: Vec<String>,
@@ -520,10 +568,43 @@ pub enum ToolResult {
     Weather { summary: String },
     WebSearch { items: Vec<ToolTextSnippet> },
     News { items: Vec<ToolTextSnippet> },
+    UrlFetchAndCite { citations: Vec<ToolTextSnippet> },
+    DocumentUnderstand {
+        summary: String,
+        extracted_fields: Vec<ToolStructuredField>,
+        citations: Vec<ToolTextSnippet>,
+    },
+    PhotoUnderstand {
+        summary: String,
+        extracted_fields: Vec<ToolStructuredField>,
+        citations: Vec<ToolTextSnippet>,
+    },
 }
 
 impl Validate for ToolResult {
     fn validate(&self) -> Result<(), ContractViolation> {
+        fn validate_items(
+            field_name: &'static str,
+            items: &[ToolTextSnippet],
+        ) -> Result<(), ContractViolation> {
+            if items.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: field_name,
+                    reason: "must not be empty",
+                });
+            }
+            if items.len() > 20 {
+                return Err(ContractViolation::InvalidValue {
+                    field: field_name,
+                    reason: "must be <= 20 entries",
+                });
+            }
+            for it in items {
+                it.validate()?;
+            }
+            Ok(())
+        }
+
         match self {
             ToolResult::Time { local_time_iso } => {
                 if local_time_iso.trim().is_empty() {
@@ -554,21 +635,78 @@ impl Validate for ToolResult {
                 }
             }
             ToolResult::WebSearch { items } | ToolResult::News { items } => {
-                if items.is_empty() {
+                validate_items("tool_result.items", items)?;
+            }
+            ToolResult::UrlFetchAndCite { citations } => {
+                validate_items("tool_result.citations", citations)?;
+            }
+            ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                if summary.trim().is_empty() {
                     return Err(ContractViolation::InvalidValue {
-                        field: "tool_result.items",
+                        field: "tool_result.document_understand.summary",
                         reason: "must not be empty",
                     });
                 }
-                if items.len() > 20 {
+                if summary.len() > 1024 {
                     return Err(ContractViolation::InvalidValue {
-                        field: "tool_result.items",
+                        field: "tool_result.document_understand.summary",
+                        reason: "must be <= 1024 chars",
+                    });
+                }
+                if extracted_fields.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.document_understand.extracted_fields",
+                        reason: "must not be empty",
+                    });
+                }
+                if extracted_fields.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.document_understand.extracted_fields",
                         reason: "must be <= 20 entries",
                     });
                 }
-                for it in items {
-                    it.validate()?;
+                for field in extracted_fields {
+                    field.validate()?;
                 }
+                validate_items("tool_result.document_understand.citations", citations)?;
+            }
+            ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                if summary.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.photo_understand.summary",
+                        reason: "must not be empty",
+                    });
+                }
+                if summary.len() > 1024 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.photo_understand.summary",
+                        reason: "must be <= 1024 chars",
+                    });
+                }
+                if extracted_fields.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.photo_understand.extracted_fields",
+                        reason: "must not be empty",
+                    });
+                }
+                if extracted_fields.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.photo_understand.extracted_fields",
+                        reason: "must be <= 20 entries",
+                    });
+                }
+                for field in extracted_fields {
+                    field.validate()?;
+                }
+                validate_items("tool_result.photo_understand.citations", citations)?;
             }
         }
         Ok(())

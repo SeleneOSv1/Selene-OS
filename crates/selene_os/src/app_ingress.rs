@@ -4,6 +4,7 @@ use selene_engines::ph1_voice_id::{
     simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
     VoiceIdObservation as EngineVoiceIdObservation,
 };
+use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
     Ph1EmoCoreConfig as EnginePh1EmoCoreConfig, Ph1EmoCoreRuntime as EnginePh1EmoCoreRuntime,
 };
@@ -385,6 +386,7 @@ pub struct AppVoiceTurnExecutionOutcome {
 pub struct AppServerIngressRuntime {
     executor: SimulationExecutor,
     ph1x_runtime: Ph1xRuntime,
+    ph1e_runtime: Ph1eRuntime,
 }
 
 impl Default for AppServerIngressRuntime {
@@ -398,6 +400,7 @@ impl AppServerIngressRuntime {
         Self {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
+            ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
         }
     }
 
@@ -1480,25 +1483,69 @@ impl AppServerIngressRuntime {
                 out.next_move = AppVoiceTurnNextMove::Wait;
                 out.response_text = wait.reason.clone();
             }
-            Ph1xDirective::Dispatch(dispatch) => {
-                if matches!(dispatch.dispatch_request, DispatchRequest::Tool(_)) {
-                    return Err(StorageError::ContractViolation(
-                        ContractViolation::InvalidValue {
-                            field: "ph1x_response.directive.dispatch_request",
-                            reason: "tool dispatch must be handled by PH1.E in desktop voice path",
-                        },
-                    ));
+            Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
+                DispatchRequest::Tool(tool_request) => {
+                    let tool_response = self.ph1e_runtime.run(tool_request);
+                    let tool_followup_request = build_tool_followup_ph1x_request(
+                        out.ph1x_request
+                            .as_ref()
+                            .ok_or(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "app_voice_turn_execution_outcome.ph1x_request",
+                                    reason: "must be present before tool follow-up",
+                                },
+                            ))?,
+                        &ph1x_response,
+                        tool_response,
+                    )?;
+                    let tool_followup_response = self
+                        .ph1x_runtime
+                        .decide(&tool_followup_request)
+                        .map_err(StorageError::ContractViolation)?;
+
+                    out.ph1x_request = Some(tool_followup_request);
+                    out.ph1x_response = Some(tool_followup_response.clone());
+                    out.reason_code = Some(tool_followup_response.reason_code);
+                    match tool_followup_response.directive {
+                        Ph1xDirective::Confirm(confirm) => {
+                            out.next_move = AppVoiceTurnNextMove::Confirm;
+                            out.response_text = Some(confirm.text);
+                        }
+                        Ph1xDirective::Clarify(clarify) => {
+                            out.next_move = AppVoiceTurnNextMove::Clarify;
+                            out.response_text = Some(clarify.question);
+                        }
+                        Ph1xDirective::Respond(respond) => {
+                            out.next_move = AppVoiceTurnNextMove::Respond;
+                            out.response_text = Some(respond.response_text);
+                        }
+                        Ph1xDirective::Wait(wait) => {
+                            out.next_move = AppVoiceTurnNextMove::Wait;
+                            out.response_text = wait.reason;
+                        }
+                        Ph1xDirective::Dispatch(_) => {
+                            return Err(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "ph1x_response.directive.dispatch_request",
+                                    reason: "tool follow-up must complete without another dispatch",
+                                },
+                            ));
+                        }
+                    }
                 }
-                let dispatch_outcome = self.executor.execute_ph1x_dispatch_simulation_candidate(
-                    store,
-                    actor_user_id,
-                    dispatch_now,
-                    &ph1x_response,
-                )?;
-                out.next_move = AppVoiceTurnNextMove::Dispatch;
-                out.response_text = Some(response_text_for_dispatch_outcome(&dispatch_outcome));
-                out.dispatch_outcome = Some(dispatch_outcome);
-            }
+                DispatchRequest::SimulationCandidate(_) | DispatchRequest::AccessStepUp(_) => {
+                    let dispatch_outcome =
+                        self.executor.execute_ph1x_dispatch_simulation_candidate(
+                            store,
+                            actor_user_id,
+                            dispatch_now,
+                            &ph1x_response,
+                        )?;
+                    out.next_move = AppVoiceTurnNextMove::Dispatch;
+                    out.response_text = Some(response_text_for_dispatch_outcome(&dispatch_outcome));
+                    out.dispatch_outcome = Some(dispatch_outcome);
+                }
+            },
         }
 
         Ok(out)
@@ -1945,6 +1992,37 @@ fn build_ph1x_request_from_voice_forward(
     Ok(req)
 }
 
+fn build_tool_followup_ph1x_request(
+    base_request: &Ph1xRequest,
+    dispatch_response: &Ph1xResponse,
+    tool_response: ToolResponse,
+) -> Result<Ph1xRequest, StorageError> {
+    let mut req = Ph1xRequest::v1(
+        base_request.correlation_id,
+        base_request.turn_id,
+        base_request.now,
+        dispatch_response.thread_state.clone(),
+        base_request.session_state,
+        base_request.identity_context.clone(),
+        base_request.policy_context_ref,
+        base_request.memory_candidates.clone(),
+        None,
+        None,
+        Some(tool_response),
+        None,
+        base_request.locale.clone(),
+        None,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    req = req
+        .with_step_up_capabilities(base_request.step_up_capabilities)
+        .map_err(StorageError::ContractViolation)?;
+    req = req
+        .with_identity_prompt_scope_key(base_request.identity_prompt_scope_key.clone())
+        .map_err(StorageError::ContractViolation)?;
+    Ok(req)
+}
+
 fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Option<String> {
     let Ph1nResponse::IntentDraft(draft) = nlp_output? else {
         return None;
@@ -1992,8 +2070,8 @@ mod tests {
         MemoryUsePolicy, MemoryValue,
     };
     use selene_kernel_contracts::ph1n::{
-        Chat, FieldKey, FieldValue, IntentDraft, IntentField, IntentType, OverallConfidence,
-        Ph1nResponse, SensitivityLevel,
+        Chat, EvidenceSpan, FieldKey, FieldValue, IntentDraft, IntentField, IntentType,
+        OverallConfidence, Ph1nResponse, SensitivityLevel, TranscriptHash,
     };
     use selene_kernel_contracts::ph1onb::ONB_SESSION_START_DRAFT;
     use selene_kernel_contracts::ph1position::TenantId;
@@ -2198,6 +2276,131 @@ mod tests {
             vec![],
         )
         .unwrap()
+    }
+
+    fn web_search_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::WebSearchQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn news_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::NewsQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn url_fetch_and_cite_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::UrlFetchAndCiteQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn document_understand_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::DocumentUnderstandQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn photo_understand_draft(query: &str) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::PhotoUnderstandQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: query.len() as u32,
+                    verbatim_excerpt: query.to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
     }
 
     fn seed_link_send_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
@@ -3616,5 +3819,271 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    fn run_a_desktop_voice_turn_end_to_end_dispatches_web_search_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runa_websearch_user").unwrap();
+        let device_id = DeviceId::new("runa_websearch_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9603),
+            TurnId(9703),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(10),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(web_search_draft("search the web for selene tool parity")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("https://example.com/search-result"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_b_desktop_voice_turn_end_to_end_dispatches_news_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runb_news_user").unwrap();
+        let device_id = DeviceId::new("runb_news_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9604),
+            TurnId(9704),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(11),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(news_draft("what's the latest news about selene tools")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("https://example.com/news"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_c_desktop_voice_turn_end_to_end_dispatches_url_fetch_and_cite_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runc_urlfetch_user").unwrap();
+        let device_id = DeviceId::new("runc_urlfetch_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9605),
+            TurnId(9705),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(12),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(url_fetch_and_cite_draft(
+                "open this URL and cite it: https://example.com/spec",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("Citations:"));
+        assert!(response_text.contains("https://example.com"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_d_desktop_voice_turn_end_to_end_dispatches_document_understand_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:rund_doc_user").unwrap();
+        let device_id = DeviceId::new("rund_doc_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9606),
+            TurnId(9706),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(13),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(document_understand_draft(
+                "read this PDF and summarize it",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("Summary:"));
+        assert!(response_text.contains("Extracted fields:"));
+        assert!(response_text.contains("Citations:"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_e_desktop_voice_turn_end_to_end_dispatches_photo_understand_and_returns_provenance() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:rune_photo_user").unwrap();
+        let device_id = DeviceId::new("rune_photo_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9607),
+            TurnId(9707),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(14),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(photo_understand_draft("what does this screenshot say")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("Summary:"));
+        assert!(response_text.contains("Extracted fields:"));
+        assert!(response_text.contains("Citations:"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
     }
 }

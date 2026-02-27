@@ -101,7 +101,7 @@ Deferral/reminder rule (S01/S04 consent/clarify flow):
 - `WAKE_ENROLL_DEFER_COMMIT`
 
 Conditional execution note:
-- `ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT` and `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT` execute only when pinned schema-required verification gates include them.
+`ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT` and `ONB_EMPLOYEE_SENDER_VERIFY_COMMIT` execute only when pinned schema-required verification gates include them.
 
 ## 7) Refusal Conditions
 - Terms declined -> `ONB_TERMS_DECLINED`

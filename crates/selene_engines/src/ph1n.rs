@@ -108,7 +108,15 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
-        IntentType::TimeQuery | IntentType::WeatherQuery => (SensitivityLevel::Public, false),
+        IntentType::TimeQuery
+        | IntentType::WeatherQuery
+        | IntentType::WebSearchQuery
+        | IntentType::NewsQuery
+        | IntentType::UrlFetchAndCiteQuery
+        | IntentType::DocumentUnderstandQuery
+        | IntentType::PhotoUnderstandQuery => {
+            (SensitivityLevel::Public, false)
+        }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
     }
 }
@@ -163,6 +171,69 @@ fn looks_like_generate_link(lower: &str) -> bool {
         || contains_word(lower, "create")
         || contains_word(lower, "make");
     has_link && has_generate
+}
+
+fn looks_like_web_search(lower: &str) -> bool {
+    (contains_word(lower, "search")
+        && (contains_word(lower, "web")
+            || contains_word(lower, "internet")
+            || contains_word(lower, "online")))
+        || lower.starts_with("search for ")
+        || lower.starts_with("look up ")
+        || lower.contains(" look up ")
+        || lower.starts_with("find ")
+        || lower.contains(" find ")
+        || lower.starts_with("google ")
+}
+
+fn looks_like_news_query(lower: &str) -> bool {
+    (contains_word(lower, "news")
+        && (contains_word(lower, "latest")
+            || contains_word(lower, "today")
+            || contains_word(lower, "headlines")
+            || contains_word(lower, "about")))
+        || lower.starts_with("news about ")
+        || lower.starts_with("latest news")
+        || lower.starts_with("headlines")
+}
+
+fn looks_like_url_fetch_and_cite(lower: &str) -> bool {
+    (contains_word(lower, "url")
+        && (contains_word(lower, "open")
+            || contains_word(lower, "fetch")
+            || contains_word(lower, "cite")
+            || contains_word(lower, "citation")))
+        || (lower.contains("http://")
+            || lower.contains("https://")
+            || lower.contains("www."))
+            && (contains_word(lower, "cite") || contains_word(lower, "citation"))
+}
+
+fn looks_like_document_understand(lower: &str) -> bool {
+    (contains_word(lower, "pdf")
+        || contains_word(lower, "document")
+        || contains_word(lower, "doc")
+        || contains_word(lower, "file"))
+        && (contains_word(lower, "read")
+            || contains_word(lower, "summarize")
+            || contains_word(lower, "summary")
+            || contains_word(lower, "extract")
+            || contains_word(lower, "what does this"))
+}
+
+fn looks_like_photo_understand(lower: &str) -> bool {
+    (contains_word(lower, "photo")
+        || contains_word(lower, "image")
+        || contains_word(lower, "screenshot")
+        || contains_word(lower, "picture")
+        || contains_word(lower, "chart"))
+        && (contains_word(lower, "read")
+            || contains_word(lower, "summarize")
+            || contains_word(lower, "summary")
+            || contains_word(lower, "extract")
+            || contains_word(lower, "analyze")
+            || contains_word(lower, "say")
+            || contains_word(lower, "what does this"))
 }
 
 fn detect_intents(lower: &str) -> Vec<IntentType> {
@@ -231,6 +302,21 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     {
         push(IntentType::TimeQuery);
     }
+    if looks_like_web_search(s) {
+        push(IntentType::WebSearchQuery);
+    }
+    if looks_like_news_query(s) {
+        push(IntentType::NewsQuery);
+    }
+    if looks_like_url_fetch_and_cite(s) {
+        push(IntentType::UrlFetchAndCiteQuery);
+    }
+    if looks_like_document_understand(s) {
+        push(IntentType::DocumentUnderstandQuery);
+    }
+    if looks_like_photo_understand(s) {
+        push(IntentType::PhotoUnderstandQuery);
+    }
     if s.contains("remind me") || s.contains("reminder") {
         push(IntentType::SetReminder);
     }
@@ -297,7 +383,13 @@ fn normalize_intent(
     let t = &req.transcript_ok.transcript_text;
 
     match intent_type {
-        IntentType::TimeQuery | IntentType::WeatherQuery => {
+        IntentType::TimeQuery
+        | IntentType::WeatherQuery
+        | IntentType::WebSearchQuery
+        | IntentType::NewsQuery
+        | IntentType::UrlFetchAndCiteQuery
+        | IntentType::DocumentUnderstandQuery
+        | IntentType::PhotoUnderstandQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1717,6 +1809,11 @@ fn intent_label(t: &IntentType) -> String {
     match t {
         IntentType::WeatherQuery => "Weather".to_string(),
         IntentType::TimeQuery => "Time".to_string(),
+        IntentType::WebSearchQuery => "Search the web".to_string(),
+        IntentType::NewsQuery => "Get news".to_string(),
+        IntentType::UrlFetchAndCiteQuery => "Open URL and cite".to_string(),
+        IntentType::DocumentUnderstandQuery => "Read and summarize document".to_string(),
+        IntentType::PhotoUnderstandQuery => "Understand photo or screenshot".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -2862,6 +2959,90 @@ mod tests {
                     .iter()
                     .any(|f| f.key == FieldKey::AccessReviewChannel));
                 assert!(d.fields.iter().any(|f| f.key == FieldKey::AccessRuleAction));
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_18_web_search_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene search the web for PH1 tool routing best practices",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::WebSearchQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_19_news_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene what's the latest news about AI chip policy",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::NewsQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_20_url_fetch_and_cite_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene open this URL and cite it: https://example.com/spec",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::UrlFetchAndCiteQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_21_document_understand_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene read this PDF and summarize it", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::DocumentUnderstandQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_22_photo_understand_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene what does this screenshot say?", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::PhotoUnderstandQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
         }

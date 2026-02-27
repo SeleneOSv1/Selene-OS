@@ -2,7 +2,7 @@
 
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
-    ToolResult, ToolTextSnippet,
+    ToolResult, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
@@ -104,6 +104,55 @@ impl Ph1eRuntime {
                     url: "https://example.com/news-item".to_string(),
                 }],
             },
+            ToolName::UrlFetchAndCite => ToolResult::UrlFetchAndCite {
+                citations: vec![ToolTextSnippet {
+                    title: format!("Source page: {}", truncate_ascii(&req.query, 40)),
+                    snippet: format!("Citation extracted from '{}'", truncate_ascii(&req.query, 80)),
+                    url: "https://example.com/url-fetch-citation".to_string(),
+                }],
+            },
+            ToolName::DocumentUnderstand => ToolResult::DocumentUnderstand {
+                summary: format!(
+                    "Document summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "document_type".to_string(),
+                        value: "pdf".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "key_point".to_string(),
+                        value: "Deterministic extracted statement".to_string(),
+                    },
+                ],
+                citations: vec![ToolTextSnippet {
+                    title: "Document citation".to_string(),
+                    snippet: "Extracted from uploaded document segment".to_string(),
+                    url: "https://example.com/document-citation".to_string(),
+                }],
+            },
+            ToolName::PhotoUnderstand => ToolResult::PhotoUnderstand {
+                summary: format!(
+                    "Photo summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "visible_text".to_string(),
+                        value: "Detected text fragment".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "chart_signal".to_string(),
+                        value: "Upward trend".to_string(),
+                    },
+                ],
+                citations: vec![ToolTextSnippet {
+                    title: "Image region citation".to_string(),
+                    snippet: "Extracted from visible image region".to_string(),
+                    url: "https://example.com/photo-citation".to_string(),
+                }],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -148,7 +197,10 @@ fn budget_exceeded(request_budget: StrictBudget, config: Ph1eConfig) -> bool {
 }
 
 fn policy_blocks(req: &ToolRequest) -> bool {
-    matches!(req.tool_name, ToolName::WebSearch | ToolName::News)
+    matches!(
+        req.tool_name,
+        ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite
+    )
         && (req.policy_context_ref.privacy_mode
             || matches!(
                 req.policy_context_ref.safety_tier,
@@ -178,6 +230,9 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::Weather => "https://example.com/weather",
         ToolName::WebSearch => "https://example.com/search",
         ToolName::News => "https://example.com/news",
+        ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
+        ToolName::DocumentUnderstand => "https://example.com/document",
+        ToolName::PhotoUnderstand => "https://example.com/photo",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -274,5 +329,78 @@ mod tests {
         let out = rt.run(&req);
         assert_eq!(out.tool_status, ToolStatus::Fail);
         assert_eq!(out.reason_code, reason_codes::E_FAIL_BUDGET_EXCEEDED);
+    }
+
+    #[test]
+    fn at_e_06_url_fetch_and_cite_returns_citations_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::UrlFetchAndCite,
+            "open this URL and cite it: https://example.com/spec",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::UrlFetchAndCite { citations } => assert!(!citations.is_empty()),
+            other => panic!("expected UrlFetchAndCite result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_07_document_understand_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::DocumentUnderstand,
+            "read this PDF and summarize it",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::DocumentUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected DocumentUnderstand result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
+    }
+
+    #[test]
+    fn at_e_08_photo_understand_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::PhotoUnderstand,
+            "what does this screenshot say?",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::PhotoUnderstand {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected PhotoUnderstand result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("example.com"));
     }
 }

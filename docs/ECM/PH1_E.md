@@ -23,6 +23,55 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `DECLARED (DB_WRITE)`
 
+### `PH1E_TOOL_TIME_QUERY`
+- `name`: Execute read-only time lookup query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, locale?, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_WEATHER_QUERY`
+- `name`: Execute read-only weather lookup query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, locale?, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_WEB_SEARCH_QUERY`
+- `name`: Execute read-only web search query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, locale?, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_NEWS_QUERY`
+- `name`: Execute read-only news lookup query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, locale?, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_URL_FETCH_AND_CITE_QUERY`
+- `name`: Execute read-only URL fetch and citation query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, url, query?, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_DOCUMENT_UNDERSTAND_QUERY`
+- `name`: Execute read-only document extraction/understand query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, document_ref, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, structured_fields, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
+### `PH1E_TOOL_PHOTO_UNDERSTAND_QUERY`
+- `name`: Execute read-only image/photo understanding query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, image_ref, query, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, answer_text, structured_fields, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
 ### `PH1E_READ_AUDIT_ROWS`
 - `name`: Read PH1.E audit rows for one correlation thread
 - `input_schema`: `correlation_id`

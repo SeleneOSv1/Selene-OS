@@ -29,26 +29,95 @@ ECM_CAPS_EXACT_TXT="${AUDIT_TMP_DIR}/ecm_caps_exact.txt"
 SIM_IDS_TXT="${AUDIT_TMP_DIR}/sim_ids.txt"
 ACTIVE_SIMREQ_IDS_TXT="${AUDIT_TMP_DIR}/active_simreq_ids.txt"
 ACTIVE_SIMREQ_IDS_UNIQUE_TXT="${AUDIT_TMP_DIR}/active_simreq_ids_unique.txt"
+AUDIT_REQUIRE_CLEAN_TREE="${AUDIT_REQUIRE_CLEAN_TREE:-0}"
+if [ "${AUDIT_REQUIRE_CLEAN_TREE}" != "0" ] && [ "${AUDIT_REQUIRE_CLEAN_TREE}" != "1" ]; then
+  echo "CHECK_FAIL audit_tree_state_policy=fail invalid_mode=${AUDIT_REQUIRE_CLEAN_TREE}"
+  exit 1
+fi
 
 echo "=================================================="
 echo "0) REPO STATE (MUST BE REPORTED EXACTLY)"
 echo "=================================================="
-echo "BRANCH:"; git branch --show-current
-echo "PINNED COMMIT HASH:"; git rev-parse HEAD
+current_branch="$(git branch --show-current)"
+pinned_commit_hash="$(git rev-parse HEAD)"
+last_commit_line="$(git log -1 --oneline)"
+
+echo "BRANCH:"; printf "%s\n" "${current_branch}"
+echo "PINNED COMMIT HASH:"; printf "%s\n" "${pinned_commit_hash}"
 echo
 echo "GIT STATUS (SHORT):"; git status --short
 echo
 echo "GIT DIFF (NAME ONLY):"; git diff --name-only || true
 echo
-echo "LAST COMMIT:"; git log -1 --oneline
+echo "LAST COMMIT:"; printf "%s\n" "${last_commit_line}"
 echo
+repo_state_fail_count=0
+if [ -z "${current_branch}" ]; then
+  echo "REPO_STATE_FAIL: empty_branch_name"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if ! printf "%s\n" "${pinned_commit_hash}" | rg -q '^[0-9a-f]{40}$'; then
+  echo "REPO_STATE_FAIL: invalid_pinned_commit_hash=${pinned_commit_hash}"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if ! git cat-file -e "${pinned_commit_hash}^{commit}" 2>/dev/null; then
+  echo "REPO_STATE_FAIL: pinned_commit_not_visible=${pinned_commit_hash}"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if [ -z "${last_commit_line}" ]; then
+  echo "REPO_STATE_FAIL: missing_last_commit_line"
+  repo_state_fail_count=$((repo_state_fail_count + 1))
+fi
+if [ "${repo_state_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL audit_repo_state_header=fail count=${repo_state_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK audit_repo_state_header=pass"
+
+tree_is_dirty=0
 if [ -n "$(git status --porcelain)" ]; then
+  tree_is_dirty=1
   echo "AUDIT_TREE_STATE: DIRTY"
   echo "AUDIT_VALIDITY_NOTE: closure decisions require pinned commit hash plus this dirty-file listing."
 else
   echo "AUDIT_TREE_STATE: CLEAN"
   echo "AUDIT_VALIDITY_NOTE: closure decisions may use this run directly."
 fi
+if [ "${AUDIT_REQUIRE_CLEAN_TREE}" = "1" ] && [ "${tree_is_dirty}" -eq 1 ]; then
+  echo "CHECK_FAIL audit_tree_state_policy=fail mode=require_clean state=DIRTY"
+  exit 1
+fi
+echo "CHECK_OK audit_tree_state_policy=pass mode=${AUDIT_REQUIRE_CLEAN_TREE} state=$([ "${tree_is_dirty}" -eq 1 ] && echo DIRTY || echo CLEAN)"
+
+guard_tokens=(
+  "CHECK_FAIL blueprint_active_intent_uniqueness"
+  "CHECK_FAIL blueprint_active_paths"
+  "CHECK_FAIL blueprint_active_capability_extract"
+  "CHECK_FAIL ecm_capability_extract"
+  "CHECK_FAIL blueprint_capability_parity"
+  "CHECK_FAIL blueprint_side_effect_simreq_none"
+  "CHECK_FAIL blueprint_side_effect_simreq_missing"
+  "CHECK_FAIL sim_catalog_id_extract"
+  "CHECK_FAIL blueprint_sim_requirements_non_sim_text"
+  "CHECK_FAIL blueprint_sim_catalog_parity"
+  "CHECK_FAIL banned_legacy_token_sweep"
+  "CHECK_FAIL legacy_link_sim_catalog_compliance"
+  "CHECK_FAIL link_enum_contract_parity"
+  "CHECK_FAIL onboarding_draft_contract_parity"
+  "CHECK_FAIL coverage_matrix_status_tokens"
+)
+missing_guard_tokens=0
+for guard_token in "${guard_tokens[@]}"; do
+  if ! rg -Fq "${guard_token}" "${BASH_SOURCE[0]}"; then
+    echo "MISSING_GUARD_TOKEN:${guard_token}"
+    missing_guard_tokens=$((missing_guard_tokens + 1))
+  fi
+done
+if [ "${missing_guard_tokens}" -gt 0 ]; then
+  echo "CHECK_FAIL readiness_guardrail_self_check=fail count=${missing_guard_tokens}"
+  exit 1
+fi
+echo "CHECK_OK readiness_guardrail_self_check=pass count=${#guard_tokens[@]}"
 
 echo
 echo "=================================================="
@@ -141,6 +210,12 @@ echo "=================================================="
 echo "1G) LEARNING OWNERSHIP BOUNDARY GUARDRAIL"
 echo "=================================================="
 ./scripts/check_learning_ownership_boundaries.sh
+
+echo
+echo "=================================================="
+echo "1G2) PH1 READ-ONLY TOOL PARITY GUARDRAIL"
+echo "=================================================="
+./scripts/check_ph1_tool_parity.sh
 
 echo
 echo "=================================================="
@@ -409,7 +484,14 @@ echo
 echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
-rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true
+coverage_matrix_hits="$(rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true)"
+if [ -n "${coverage_matrix_hits}" ]; then
+  printf "%s\n" "${coverage_matrix_hits}"
+  coverage_matrix_hit_count="$(printf "%s\n" "${coverage_matrix_hits}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL coverage_matrix_status_tokens=fail count=${coverage_matrix_hit_count}"
+  exit 1
+fi
+echo "CHECK_OK coverage_matrix_status_tokens=pass"
 
 echo
 echo "=================================================="
@@ -419,13 +501,22 @@ echo "   - ACTIVE blueprint must be code-ready: capability_ids resolve + side-ef
 echo "=================================================="
 
 echo "--- 3A) Registry uniqueness: duplicate ACTIVE intents (if any) ---"
-awk -F'|' '
-  /^\|/ && $0 !~ /^\|---/ {
-    for(i=1;i<=NF;i++){gsub(/^ +| +$/, "", $i)}
-    intent=$2; status=$5;
-    if(intent!="intent_type" && status=="ACTIVE"){print intent}
-  }
-' docs/09_BLUEPRINT_REGISTRY.md | sort | uniq -c | awk '$1>1{print "DUP_ACTIVE_INTENT:",$0}' || true
+dup_active_intents="$(
+  awk -F'|' '
+    /^\|/ && $0 !~ /^\|---/ {
+      for(i=1;i<=NF;i++){gsub(/^ +| +$/, "", $i)}
+      intent=$2; status=$5;
+      if(intent!="intent_type" && status=="ACTIVE"){print intent}
+    }
+  ' docs/09_BLUEPRINT_REGISTRY.md | sort | uniq -c | awk '$1>1{print "DUP_ACTIVE_INTENT:",$0}'
+)"
+if [ -n "${dup_active_intents}" ]; then
+  printf "%s\n" "${dup_active_intents}"
+  dup_active_intent_count="$(printf "%s\n" "${dup_active_intents}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_active_intent_uniqueness=fail count=${dup_active_intent_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_intent_uniqueness=pass"
 
 echo
 echo "--- 3B) List ACTIVE blueprint files (for later checks) ---"
@@ -441,6 +532,27 @@ awk -F'|' '
 ' docs/09_BLUEPRINT_REGISTRY.md > "${ACTIVE_BLUEPRINTS_TXT}"
 cat "${ACTIVE_BLUEPRINTS_TXT}"
 
+active_blueprint_count="$(wc -l < "${ACTIVE_BLUEPRINTS_TXT}" | tr -d ' ')"
+if [ "${active_blueprint_count}" -eq 0 ]; then
+  echo "CHECK_FAIL blueprint_active_paths=fail count=0"
+  exit 1
+fi
+
+missing_active_blueprint_count=0
+while read -r f; do
+  [ -n "${f}" ] || continue
+  if [ ! -f "${f}" ]; then
+    echo "MISSING_ACTIVE_BLUEPRINT_PATH: ${f}"
+    missing_active_blueprint_count=$((missing_active_blueprint_count + 1))
+  fi
+done < "${ACTIVE_BLUEPRINTS_TXT}"
+
+if [ "${missing_active_blueprint_count}" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_active_paths=fail missing=${missing_active_blueprint_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_paths=pass count=${active_blueprint_count}"
+
 echo
 echo "--- 3C) Extract capability_ids used by ACTIVE blueprints ---"
 : > "${ACTIVE_CAPS_TXT}"
@@ -454,6 +566,19 @@ while read -r f; do
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 sort -u "${ACTIVE_CAPS_TXT}" > "${ACTIVE_CAPS_UNIQUE_TXT}"
 echo "ACTIVE CAPABILITIES (unique):"; wc -l "${ACTIVE_CAPS_UNIQUE_TXT}"
+active_cap_count="$(wc -l < "${ACTIVE_CAPS_UNIQUE_TXT}" | tr -d ' ')"
+if [ "${active_cap_count}" -eq 0 ]; then
+  echo "CHECK_FAIL blueprint_active_capability_extract=fail count=0"
+  exit 1
+fi
+invalid_active_caps="$(grep -Ev '^[A-Z0-9_]+$' "${ACTIVE_CAPS_UNIQUE_TXT}" || true)"
+if [ -n "${invalid_active_caps}" ]; then
+  printf "%s\n" "${invalid_active_caps}" | sed 's/^/INVALID_ACTIVE_CAPABILITY_ID: /'
+  invalid_active_cap_count="$(printf "%s\n" "${invalid_active_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_active_capability_extract=fail invalid=${invalid_active_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_active_capability_extract=pass count=${active_cap_count}"
 
 echo
 echo "--- 3D) Build ECM capability set (exact tokens) ---"
@@ -462,27 +587,124 @@ echo "--- 3D) Build ECM capability set (exact tokens) ---"
   rg -n '^#+ `[^`]+`$' docs/ECM/*.md -S | awk -F'`' '{if(NF>=3) print $2}';
 } | sort -u > "${ECM_CAPS_EXACT_TXT}"
 echo "ECM CAPABILITIES (unique):"; wc -l "${ECM_CAPS_EXACT_TXT}"
+ecm_cap_count="$(wc -l < "${ECM_CAPS_EXACT_TXT}" | tr -d ' ')"
+if [ "${ecm_cap_count}" -eq 0 ]; then
+  echo "CHECK_FAIL ecm_capability_extract=fail count=0"
+  exit 1
+fi
+invalid_ecm_caps="$(grep -Ev '^[A-Z0-9_]+$' "${ECM_CAPS_EXACT_TXT}" || true)"
+if [ -n "${invalid_ecm_caps}" ]; then
+  printf "%s\n" "${invalid_ecm_caps}" | sed 's/^/INVALID_ECM_CAPABILITY_ID: /'
+  invalid_ecm_cap_count="$(printf "%s\n" "${invalid_ecm_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL ecm_capability_extract=fail invalid=${invalid_ecm_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK ecm_capability_extract=pass count=${ecm_cap_count}"
 
 echo
 echo "--- 3E) Report missing capability_ids (ACTIVE blueprints vs ECM) ---"
-comm -23 "${ACTIVE_CAPS_UNIQUE_TXT}" "${ECM_CAPS_EXACT_TXT}" | sed 's/^/MISSING_CAPABILITY_ID: /' || true
+missing_caps="$(comm -23 "${ACTIVE_CAPS_UNIQUE_TXT}" "${ECM_CAPS_EXACT_TXT}" || true)"
+if [ -n "${missing_caps}" ]; then
+  printf "%s\n" "${missing_caps}" | sed 's/^/MISSING_CAPABILITY_ID: /'
+  missing_cap_count="$(printf "%s\n" "${missing_caps}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_capability_parity=fail count=${missing_cap_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_capability_parity=pass"
 
 echo
 echo "--- 3F) ACTIVE blueprints: side_effects!=NONE must not have Simulation Requirements: none ---"
 bad=0
 while read -r f; do
-  has_side=$(awk -F'|' 'BEGIN{x=0} /^\| / && $0 !~ /^\|---/ {se=$7; gsub(/^ +| +$/, "", se); if(se!="side_effects" && se!="NONE"){x=1}} END{print x}' "$f")
-  has_none=$(awk 'BEGIN{s=0;in_sec=0} /^## [0-9]+\) Simulation Requirements/{in_sec=1; next} /^## [0-9]+\)/{in_sec=0} {if(in_sec){line=tolower($0); if(line ~ /^- *none *$/){s=1}}} END{print s}' "$f" || echo 0)
+  has_side=$(awk -F'|' '
+    BEGIN{x=0}
+    /^\| / && $0 !~ /^\|---/ {
+      se=$7;
+      gsub(/^ +| +$/, "", se);
+      if(se!="side_effects" && se!="NONE" && se!="READ_ONLY"){x=1}
+    }
+    END{print x}
+  ' "$f")
+  has_none=$(awk '
+    BEGIN{s=0;in_sec=0}
+    /^## [0-9]+\) Simulation Requirements/{in_sec=1; next}
+    /^## [0-9]+\)/{in_sec=0}
+    {
+      if(in_sec){
+        line=tolower($0);
+        gsub(/^[[:space:]]*-[[:space:]]+/, "", line);
+        sub(/[[:space:]]*\(.*/, "", line);
+        gsub(/[[:space:]]+$/, "", line);
+        if(line=="none"){s=1}
+      }
+    }
+    END{print s}
+  ' "$f" || echo 0)
   if [ "$has_side" = "1" ] && [ "$has_none" = "1" ]; then
     echo "BAD_ACTIVE_SIMREQ_NONE: $f"
-    bad=1
+    bad=$((bad + 1))
   fi
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 echo "BAD_ACTIVE_SIMREQ_NONE_FOUND:$bad"
+if [ "$bad" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_side_effect_simreq_none=fail count=${bad}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_side_effect_simreq_none=pass"
+
+missing_side_effect_simreq=0
+while read -r f; do
+  has_side=$(awk -F'|' '
+    BEGIN{x=0}
+    /^\| / && $0 !~ /^\|---/ {
+      se=$7;
+      gsub(/^ +| +$/, "", se);
+      if(se!="side_effects" && se!="NONE" && se!="READ_ONLY"){x=1}
+    }
+    END{print x}
+  ' "$f")
+  [ "$has_side" = "1" ] || continue
+
+  sim_declared_count="$(
+    awk '
+      BEGIN{in_sec=0;c=0}
+      /^## [0-9]+\) Simulation Requirements/{in_sec=1; next}
+      /^## [0-9]+\)/{in_sec=0}
+      {
+        if(in_sec && $0 ~ /^- /){
+          sim_id=$0;
+          gsub(/^[[:space:]]*-[[:space:]]+/, "", sim_id);
+          gsub(/`/, "", sim_id);
+          sub(/[[:space:]]*\(.*/, "", sim_id);
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", sim_id);
+          if(tolower(sim_id)!="none" && sim_id ~ /^[A-Z0-9_]+$/){c++}
+        }
+      }
+      END{print c}
+    ' "$f"
+  )"
+
+  if [ "${sim_declared_count}" -eq 0 ]; then
+    echo "MISSING_SIDE_EFFECT_SIMREQ: ${f}"
+    missing_side_effect_simreq=$((missing_side_effect_simreq + 1))
+  fi
+done < "${ACTIVE_BLUEPRINTS_TXT}"
+
+if [ "${missing_side_effect_simreq}" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_side_effect_simreq_missing=fail count=${missing_side_effect_simreq}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_side_effect_simreq_missing=pass"
 
 echo
 echo "--- 3G) Simulation IDs listed by ACTIVE blueprints must exist in sim catalog ---"
 rg -n "^### [A-Z0-9_]+ \(" docs/08_SIMULATION_CATALOG.md | sed 's/^.*### //;s/ (.*$//' | sort -u > "${SIM_IDS_TXT}"
+sim_catalog_id_count="$(wc -l < "${SIM_IDS_TXT}" | tr -d ' ')"
+if [ "${sim_catalog_id_count}" -eq 0 ]; then
+  echo "CHECK_FAIL sim_catalog_id_extract=fail count=0"
+  exit 1
+fi
+echo "CHECK_OK sim_catalog_id_extract=pass count=${sim_catalog_id_count}"
 
 : > "${ACTIVE_SIMREQ_IDS_TXT}"
 while read -r f; do
@@ -492,10 +714,12 @@ while read -r f; do
     /^## [0-9]+\)/{in_sec=0}
     { if(in_sec && $0 ~ /^- /){
         gsub(/^[[:space:]]*-[[:space:]]+/,"",$0); gsub(/`/,"",$0);
-        if(tolower($0)!="none"){
-          sub(/[[:space:]]*\(.*/,"",$0);
-          if($0 ~ /^[A-Z0-9_]+$/) print $0;
-          else print "NON_SIM_TEXT:"FILENAME":"$0;
+        sim_id=$0;
+        sub(/[[:space:]]*\(.*/, "", sim_id);
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", sim_id);
+        if(tolower(sim_id)!="none"){
+          if(sim_id ~ /^[A-Z0-9_]+$/) print sim_id;
+          else print "NON_SIM_TEXT:"FILENAME":"sim_id;
         }
       }
     }
@@ -503,10 +727,24 @@ while read -r f; do
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 
 echo "NON_SIM_TEXT_LINES (if any):"
-rg -n "^NON_SIM_TEXT:" "${ACTIVE_SIMREQ_IDS_TXT}" || true
+non_sim_lines="$(rg -n "^NON_SIM_TEXT:" "${ACTIVE_SIMREQ_IDS_TXT}" || true)"
+if [ -n "${non_sim_lines}" ]; then
+  printf "%s\n" "${non_sim_lines}"
+  non_sim_count="$(printf "%s\n" "${non_sim_lines}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_sim_requirements_non_sim_text=fail count=${non_sim_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_sim_requirements_non_sim_text=pass"
 
 grep -v '^NON_SIM_TEXT:' "${ACTIVE_SIMREQ_IDS_TXT}" | sort -u > "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}"
-comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" | sed 's/^/MISSING_SIM_ID: /' || true
+missing_sim_ids="$(comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" || true)"
+if [ -n "${missing_sim_ids}" ]; then
+  printf "%s\n" "${missing_sim_ids}" | sed 's/^/MISSING_SIM_ID: /'
+  missing_sim_count="$(printf "%s\n" "${missing_sim_ids}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_sim_catalog_parity=fail count=${missing_sim_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_sim_catalog_parity=pass"
 
 echo
 echo "=================================================="
@@ -526,16 +764,78 @@ echo "SQL onboarding_link_tokens status constraint:"; awk '
 ' crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql || true
 echo "DB_WIRING PH1_LINK lifecycle line:"; rg -n "lifecycle state is bounded" docs/DB_WIRING/PH1_LINK.md -n || true
 
+link_contract_fail_count=0
+if ! rg -q "pub enum InviteeType" crates/selene_kernel_contracts/src/ph1link.rs; then
+  echo "LINK_CONTRACT_FAIL: missing InviteeType enum in ph1link contract"
+  link_contract_fail_count=$((link_contract_fail_count + 1))
+fi
+if ! rg -q "pub enum LinkStatus" crates/selene_kernel_contracts/src/ph1link.rs; then
+  echo "LINK_CONTRACT_FAIL: missing LinkStatus enum in ph1link contract"
+  link_contract_fail_count=$((link_contract_fail_count + 1))
+fi
+
+link_statuses=(DRAFT_CREATED SENT OPENED ACTIVATED CONSUMED REVOKED EXPIRED BLOCKED)
+for status in "${link_statuses[@]}"; do
+  if ! rg -q "'${status}'" crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql; then
+    echo "LINK_CONTRACT_FAIL: migration missing status=${status}"
+    link_contract_fail_count=$((link_contract_fail_count + 1))
+  fi
+  if ! rg -q "\\b${status}\\b" docs/DB_WIRING/PH1_LINK.md; then
+    echo "LINK_CONTRACT_FAIL: db_wiring missing lifecycle token=${status}"
+    link_contract_fail_count=$((link_contract_fail_count + 1))
+  fi
+done
+
+if [ "${link_contract_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL link_enum_contract_parity=fail count=${link_contract_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK link_enum_contract_parity=pass"
+
 echo
 echo "--- 4B) Onboarding draft status keywords + constraints ---"
 rg -n "onboarding_drafts|DRAFT_CREATED|DRAFT_READY|COMMITTED|REVOKED|EXPIRED" docs/04_KERNEL_CONTRACTS.md docs/DB_WIRING/PH1_LINK.md crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql -n || true
+
+onboarding_contract_fail_count=0
+onboarding_contract_files=(
+  "docs/04_KERNEL_CONTRACTS.md"
+  "docs/DB_WIRING/PH1_LINK.md"
+  "crates/selene_storage/migrations/0012_ph1link_onboarding_draft_tables.sql"
+)
+onboarding_draft_statuses=(DRAFT_CREATED DRAFT_READY COMMITTED REVOKED EXPIRED)
+
+for contract_file in "${onboarding_contract_files[@]}"; do
+  if ! rg -q "onboarding_drafts" "${contract_file}"; then
+    echo "ONBOARDING_CONTRACT_FAIL: missing onboarding_drafts token in ${contract_file}"
+    onboarding_contract_fail_count=$((onboarding_contract_fail_count + 1))
+  fi
+  for status in "${onboarding_draft_statuses[@]}"; do
+    if ! rg -q "\\b${status}\\b" "${contract_file}"; then
+      echo "ONBOARDING_CONTRACT_FAIL: missing status=${status} in ${contract_file}"
+      onboarding_contract_fail_count=$((onboarding_contract_fail_count + 1))
+    fi
+  done
+done
+
+if [ "${onboarding_contract_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL onboarding_draft_contract_parity=fail count=${onboarding_contract_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK onboarding_draft_contract_parity=pass"
 
 echo
 echo "=================================================="
 echo "5) DRIFT/BANNED LEGACY TOKENS SWEEP (CASE-INSENSITIVE)"
 echo "   (Report any hit with file:line)"
 echo "=================================================="
-rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S --glob '!docs/archive/**' || true
+legacy_token_hits="$(rg -ni "ready_to_send|household|contractor|referral|\blink_id\b|\blinkid\b" docs crates -S --glob '!docs/archive/**' || true)"
+if [ -n "${legacy_token_hits}" ]; then
+  printf "%s\n" "${legacy_token_hits}"
+  legacy_token_hit_count="$(printf "%s\n" "${legacy_token_hits}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL banned_legacy_token_sweep=fail count=${legacy_token_hit_count}"
+  exit 1
+fi
+echo "CHECK_OK banned_legacy_token_sweep=pass"
 
 echo
 echo "=================================================="
@@ -545,6 +845,53 @@ echo "   - Treat as a finding only if status is not LEGACY_DO_NOT_WIRE or wordin
 echo "=================================================="
 rg -n "LINK_INVITE_SEND_COMMIT|LINK_INVITE_RESEND_COMMIT|LINK_DELIVERY_FAILURE_HANDLING_COMMIT|LEGACY_DO_NOT_WIRE" docs/08_SIMULATION_CATALOG.md -n || true
 rg -n "PH1\.LINK" docs/08_SIMULATION_CATALOG.md -n || true
+
+legacy_ids=(
+  "LINK_INVITE_SEND_COMMIT"
+  "LINK_INVITE_RESEND_COMMIT"
+  "LINK_DELIVERY_FAILURE_HANDLING_COMMIT"
+)
+
+legacy_link_fail_count=0
+for legacy_id in "${legacy_ids[@]}"; do
+  row_line="$(rg -n "^\| ${legacy_id} \|" docs/08_SIMULATION_CATALOG.md || true)"
+  if [ -z "${row_line}" ]; then
+    echo "LEGACY_LINK_MISSING_ROW:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+    continue
+  fi
+  if ! printf "%s\n" "${row_line}" | rg -q "LEGACY_DO_NOT_WIRE"; then
+    echo "LEGACY_LINK_BAD_STATUS:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+  if ! printf "%s\n" "${row_line}" | rg -qi "delivery .*LINK_DELIVER_INVITE"; then
+    echo "LEGACY_LINK_BAD_OWNERSHIP_TEXT:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+
+  header_line_raw="$(rg -n "^### ${legacy_id} \(COMMIT\)" docs/08_SIMULATION_CATALOG.md || true)"
+  if [ -z "${header_line_raw}" ]; then
+    echo "LEGACY_LINK_MISSING_SECTION:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+    continue
+  fi
+  header_line="$(printf "%s\n" "${header_line_raw}" | head -n 1 | cut -d: -f1)"
+  section_window="$(sed -n "${header_line},$((header_line+8))p" docs/08_SIMULATION_CATALOG.md)"
+  if ! printf "%s\n" "${section_window}" | rg -q "LEGACY_DO_NOT_WIRE"; then
+    echo "LEGACY_LINK_SECTION_BAD_STATUS:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+  if ! printf "%s\n" "${section_window}" | rg -q "LINK_DELIVER_INVITE"; then
+    echo "LEGACY_LINK_SECTION_BAD_OWNERSHIP:${legacy_id}"
+    legacy_link_fail_count=$((legacy_link_fail_count + 1))
+  fi
+done
+
+if [ "${legacy_link_fail_count}" -gt 0 ]; then
+  echo "CHECK_FAIL legacy_link_sim_catalog_compliance=fail count=${legacy_link_fail_count}"
+  exit 1
+fi
+echo "CHECK_OK legacy_link_sim_catalog_compliance=pass"
 
 echo
 echo "=================================================="
