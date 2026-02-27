@@ -7155,6 +7155,29 @@ mod tests {
             .expect("device confirm should succeed");
         assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
 
+        let access_before_voice_err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-access-before-voice".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("access should fail before voice enrollment");
+        assert!(access_before_voice_err.contains("ONB_VOICE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION"));
+
         let voice = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
                 correlation_id: 73_001,

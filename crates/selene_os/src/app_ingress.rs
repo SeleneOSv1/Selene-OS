@@ -1786,6 +1786,17 @@ impl AppServerIngressRuntime {
                 },
             ));
         }
+        if store
+            .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id)
+            .is_none()
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION",
+                },
+            ));
+        }
         let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_onboarding_continue_request.action",
@@ -3810,6 +3821,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(device_confirm.next_step, AppOnboardingContinueNextStep::VoiceEnroll);
+
+        let access_before_voice_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-access-before-voice".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AccessProvisionCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(133),
+            )
+            .expect_err("access must fail before voice enrollment lock");
+        match access_before_voice_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_VOICE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
 
         let voice = runtime
             .run_onboarding_continue(
