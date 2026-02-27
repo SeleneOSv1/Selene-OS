@@ -15,7 +15,8 @@ use selene_kernel_contracts::ph1link::AppPlatform;
 use selene_kernel_contracts::ph1m::MemoryCandidate;
 use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
 use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, IdentityContext, Ph1xRequest, StepUpCapabilities, ThreadState,
+    ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
+    StepUpCapabilities, ThreadState,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -23,11 +24,12 @@ use selene_kernel_contracts::{
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
+use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::ph1os::{
     OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
 };
-use crate::simulation_executor::SimulationExecutor;
+use crate::simulation_executor::{SimulationDispatchOutcome, SimulationExecutor};
 
 #[derive(Debug, Clone)]
 pub struct AppVoiceIngressRequest {
@@ -92,14 +94,46 @@ pub struct AppVoicePh1xBuildInput {
     pub last_failure_reason_code: Option<ReasonCodeId>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppVoiceTurnNextMove {
+    NotInvokedDisabled,
+    Refused,
+    Confirm,
+    Clarify,
+    Respond,
+    Dispatch,
+    Wait,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppVoiceTurnExecutionOutcome {
+    pub voice_outcome: OsVoiceLiveTurnOutcome,
+    pub next_move: AppVoiceTurnNextMove,
+    pub ph1x_request: Option<Ph1xRequest>,
+    pub ph1x_response: Option<Ph1xResponse>,
+    pub dispatch_outcome: Option<SimulationDispatchOutcome>,
+    pub response_text: Option<String>,
+    pub reason_code: Option<ReasonCodeId>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppServerIngressRuntime {
     executor: SimulationExecutor,
+    ph1x_runtime: Ph1xRuntime,
+}
+
+impl Default for AppServerIngressRuntime {
+    fn default() -> Self {
+        Self::new(SimulationExecutor::default())
+    }
 }
 
 impl AppServerIngressRuntime {
     pub fn new(executor: SimulationExecutor) -> Self {
-        Self { executor }
+        Self {
+            executor,
+            ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
+        }
     }
 
     pub fn run_voice_turn(
@@ -169,6 +203,85 @@ impl AppServerIngressRuntime {
         Ok((outcome, ph1x_request))
     }
 
+    pub fn run_desktop_voice_turn_end_to_end(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        if request.app_platform != AppPlatform::Desktop {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.app_platform",
+                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
+                },
+            ));
+        }
+
+        let actor_user_id = request.actor_user_id.clone();
+        let dispatch_now = x_build.now;
+        let (voice_outcome, ph1x_request) =
+            self.run_voice_turn_and_build_ph1x_request(store, request, x_build)?;
+        let Some(ph1x_request) = ph1x_request else {
+            return Ok(app_voice_turn_execution_outcome_from_voice_only(voice_outcome));
+        };
+
+        let ph1x_response = self
+            .ph1x_runtime
+            .decide(&ph1x_request)
+            .map_err(StorageError::ContractViolation)?;
+
+        let mut out = AppVoiceTurnExecutionOutcome {
+            voice_outcome,
+            next_move: AppVoiceTurnNextMove::Wait,
+            ph1x_request: Some(ph1x_request),
+            ph1x_response: Some(ph1x_response.clone()),
+            dispatch_outcome: None,
+            response_text: None,
+            reason_code: Some(ph1x_response.reason_code),
+        };
+
+        match &ph1x_response.directive {
+            Ph1xDirective::Confirm(confirm) => {
+                out.next_move = AppVoiceTurnNextMove::Confirm;
+                out.response_text = Some(confirm.text.clone());
+            }
+            Ph1xDirective::Clarify(clarify) => {
+                out.next_move = AppVoiceTurnNextMove::Clarify;
+                out.response_text = Some(clarify.question.clone());
+            }
+            Ph1xDirective::Respond(respond) => {
+                out.next_move = AppVoiceTurnNextMove::Respond;
+                out.response_text = Some(respond.response_text.clone());
+            }
+            Ph1xDirective::Wait(wait) => {
+                out.next_move = AppVoiceTurnNextMove::Wait;
+                out.response_text = wait.reason.clone();
+            }
+            Ph1xDirective::Dispatch(dispatch) => {
+                if matches!(dispatch.dispatch_request, DispatchRequest::Tool(_)) {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "ph1x_response.directive.dispatch_request",
+                            reason: "tool dispatch must be handled by PH1.E in desktop voice path",
+                        },
+                    ));
+                }
+                let dispatch_outcome = self.executor.execute_ph1x_dispatch_simulation_candidate(
+                    store,
+                    actor_user_id,
+                    dispatch_now,
+                    &ph1x_response,
+                )?;
+                out.next_move = AppVoiceTurnNextMove::Dispatch;
+                out.response_text = Some(response_text_for_dispatch_outcome(&dispatch_outcome));
+                out.dispatch_outcome = Some(dispatch_outcome);
+            }
+        }
+
+        Ok(out)
+    }
+
     pub fn run_device_artifact_sync_worker_pass(
         &self,
         store: &mut Ph1fStore,
@@ -234,6 +347,60 @@ impl AppServerIngressRuntime {
             x_build,
             runtime_memory_candidates,
         )
+    }
+}
+
+fn app_voice_turn_execution_outcome_from_voice_only(
+    voice_outcome: OsVoiceLiveTurnOutcome,
+) -> AppVoiceTurnExecutionOutcome {
+    match voice_outcome {
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => AppVoiceTurnExecutionOutcome {
+            voice_outcome: OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+            next_move: AppVoiceTurnNextMove::NotInvokedDisabled,
+            ph1x_request: None,
+            ph1x_response: None,
+            dispatch_outcome: None,
+            response_text: None,
+            reason_code: None,
+        },
+        OsVoiceLiveTurnOutcome::Refused(refuse) => AppVoiceTurnExecutionOutcome {
+            voice_outcome: OsVoiceLiveTurnOutcome::Refused(refuse.clone()),
+            next_move: AppVoiceTurnNextMove::Refused,
+            ph1x_request: None,
+            ph1x_response: None,
+            dispatch_outcome: None,
+            response_text: Some(refuse.message.clone()),
+            reason_code: Some(refuse.reason_code),
+        },
+        OsVoiceLiveTurnOutcome::Forwarded(forwarded) => AppVoiceTurnExecutionOutcome {
+            voice_outcome: OsVoiceLiveTurnOutcome::Forwarded(forwarded),
+            next_move: AppVoiceTurnNextMove::Wait,
+            ph1x_request: None,
+            ph1x_response: None,
+            dispatch_outcome: None,
+            response_text: None,
+            reason_code: None,
+        },
+    }
+}
+
+fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> String {
+    match outcome {
+        SimulationDispatchOutcome::LinkDelivered { .. } => "I sent the link.".to_string(),
+        SimulationDispatchOutcome::Link(_) => "I generated the link.".to_string(),
+        SimulationDispatchOutcome::Reminder(_) => "I scheduled that reminder.".to_string(),
+        SimulationDispatchOutcome::AccessStepUp { outcome, .. } => match outcome {
+            selene_kernel_contracts::ph1x::StepUpOutcome::Continue => {
+                "Access verification passed.".to_string()
+            }
+            selene_kernel_contracts::ph1x::StepUpOutcome::Refuse => {
+                "I can't proceed with that request.".to_string()
+            }
+            selene_kernel_contracts::ph1x::StepUpOutcome::Defer => {
+                "I need step-up verification before I continue.".to_string()
+            }
+        },
+        _ => "Done.".to_string(),
     }
 }
 
@@ -430,8 +597,10 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+    use selene_kernel_contracts::ph1bcast::{BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT};
+    use selene_kernel_contracts::ph1delivery::DELIVERY_SEND_COMMIT;
+    use selene_kernel_contracts::ph1link::LINK_INVITE_GENERATE_DRAFT;
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
         MemoryUsePolicy, MemoryValue,
@@ -449,9 +618,19 @@ mod tests {
         Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
-    use selene_kernel_contracts::ph1x::{IdentityContext, ThreadState};
+    use selene_kernel_contracts::ph1position::TenantId;
+    use selene_kernel_contracts::ph1simcat::{
+        SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
+        SimulationVersion,
+    };
+    use selene_kernel_contracts::ph1x::{
+        ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadState,
+    };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
-    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus};
+    use selene_storage::ph1f::{
+        AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
+        DeviceRecord, IdentityRecord, IdentityStatus,
+    };
 
     fn sample_voice_id_request(now: MonotonicTimeNs, owner_user_id: UserId) -> Ph1VoiceIdRequest {
         let stream_id = AudioStreamId(1);
@@ -592,6 +771,97 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    fn invite_link_send_draft(
+        recipient: &str,
+        recipient_contact: &str,
+        tenant_id: &str,
+    ) -> IntentDraft {
+        IntentDraft::v1(
+            IntentType::CreateInviteLink,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::InviteeType,
+                    value: FieldValue::normalized("associate".to_string(), "associate".to_string())
+                        .unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::DeliveryMethod,
+                    value: FieldValue::normalized("send".to_string(), "sms".to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::Recipient,
+                    value: FieldValue::verbatim(recipient.to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::RecipientContact,
+                    value: FieldValue::verbatim(recipient_contact.to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::TenantId,
+                    value: FieldValue::verbatim(tenant_id.to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn seed_link_send_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.link_sender".to_string(),
+                AccessMode::A,
+                "{\"allow\":[\"LINK_INVITE\",\"DELIVERY_SEND\"]}".to_string(),
+                true,
+                AccessVerificationLevel::PasscodeTime,
+                AccessDeviceTrustLevel::Dtl4,
+                AccessLifecycleState::Active,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
+    }
+
+    fn seed_simulation_catalog_status(
+        store: &mut Ph1fStore,
+        tenant: &str,
+        simulation_id: &str,
+        simulation_type: SimulationType,
+        status: SimulationStatus,
+    ) {
+        let event = SimulationCatalogEventInput::v1(
+            MonotonicTimeNs(1),
+            TenantId::new(tenant.to_string()).unwrap(),
+            SimulationId::new(simulation_id.to_string()).unwrap(),
+            SimulationVersion(1),
+            simulation_type,
+            status,
+            "PH1.X".to_string(),
+            "reads_v1".to_string(),
+            "writes_v1".to_string(),
+            ReasonCodeId(1),
+            None,
+        )
+        .unwrap();
+        store.append_simulation_catalog_event(event).unwrap();
     }
 
     fn external_injected_memory_candidate() -> MemoryCandidate {
@@ -884,8 +1154,147 @@ mod tests {
             .any(|candidate| candidate.memory_key.as_str() == "invite_contact_tom_sms"));
         assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 1);
 
-        let x_runtime = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
-        let out = x_runtime.decide(&ph1x_request).unwrap();
+        let out = runtime.ph1x_runtime.decide(&ph1x_request).unwrap();
         assert!(!matches!(out.directive, selene_kernel_contracts::ph1x::Ph1xDirective::Clarify(_)));
+    }
+
+    #[test]
+    fn run6_desktop_voice_turn_end_to_end_returns_clarify_for_missing_recipient_contact() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:run6_clarify_user").unwrap();
+        let device_id = DeviceId::new("run6_clarify_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9601),
+            TurnId(9701),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(8),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
+        assert!(out.dispatch_outcome.is_none());
+        assert!(out
+            .response_text
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Tom"));
+        match out
+            .ph1x_response
+            .expect("clarify outcome must include PH1.X response")
+            .directive
+        {
+            Ph1xDirective::Clarify(clarify) => {
+                assert_eq!(clarify.what_is_missing, vec![FieldKey::RecipientContact]);
+            }
+            _ => panic!("expected PH1.X Clarify directive"),
+        }
+    }
+
+    #[test]
+    fn run6_desktop_voice_turn_end_to_end_dispatches_send_link_with_guarded_executor() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:run6_dispatch_user").unwrap();
+        let device_id = DeviceId::new("run6_dispatch_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9602),
+            TurnId(9702),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(9),
+            thread_state: ThreadState::v1(
+                Some(PendingState::Confirm {
+                    intent_draft: invite_link_send_draft("Tom", "+14155550100", "tenant_1"),
+                    attempts: 1,
+                }),
+                None,
+            ),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Dispatch);
+        assert_eq!(out.response_text.as_deref(), Some("I sent the link."));
+        match out
+            .dispatch_outcome
+            .expect("dispatch outcome is required for dispatch next move")
+        {
+            SimulationDispatchOutcome::LinkDelivered {
+                delivery_emitted, ..
+            } => {
+                assert!(delivery_emitted);
+            }
+            _ => panic!("expected LinkDelivered dispatch outcome"),
+        }
+        assert!(matches!(
+            out.ph1x_response
+                .expect("dispatch outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Dispatch(_)
+        ));
     }
 }
