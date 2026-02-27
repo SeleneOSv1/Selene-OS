@@ -6138,6 +6138,7 @@ mod tests {
     };
     use selene_kernel_contracts::ph1onb::{
         ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+        ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
     use selene_kernel_contracts::ph1position::TenantId;
@@ -6299,6 +6300,39 @@ mod tests {
         )
     }
 
+    fn seed_invite_link_for_click_with_employee_prefilled_context(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+    ) -> (String, String) {
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let prefilled = selene_kernel_contracts::ph1link::PrefilledContext::v1(
+            Some("tenant_1".to_string()),
+            Some("company_1".to_string()),
+            Some("position_1".to_string()),
+            Some("loc_1".to_string()),
+            Some("2026-03-01".to_string()),
+            None,
+            Some("band_l2".to_string()),
+            vec!["US".to_string()],
+        )
+        .unwrap();
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                now,
+                inviter_user_id.clone(),
+                InviteeType::Employee,
+                Some("tenant_1".to_string()),
+                None,
+                Some(prefilled),
+                None,
+            )
+            .unwrap();
+        (
+            link.token_id.as_str().to_string(),
+            link.token_signature.clone(),
+        )
+    }
+
     fn seed_employee_company_and_position(store: &mut Ph1fStore) {
         let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
         store
@@ -6329,6 +6363,62 @@ mod tests {
         )
         .unwrap();
         store.ph1position_upsert(position).unwrap();
+    }
+
+    fn seed_employee_position_schema_requiring_sender_verification(
+        store: &mut Ph1fStore,
+        actor_user_id: &UserId,
+    ) {
+        let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
+        let selector = selene_kernel_contracts::ph1position::PositionSchemaSelectorSnapshot {
+            company_size: Some("SMALL".to_string()),
+            industry_code: Some("LOGISTICS".to_string()),
+            jurisdiction: Some("US".to_string()),
+            position_family: Some("OPS".to_string()),
+        };
+        let field = selene_kernel_contracts::ph1position::PositionRequirementFieldSpec {
+            field_key: "working_hours".to_string(),
+            field_type: selene_kernel_contracts::ph1position::PositionRequirementFieldType::String,
+            required_rule: selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
+            required_predicate_ref: None,
+            validation_ref: None,
+            sensitivity: selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
+            exposure_rule:
+                selene_kernel_contracts::ph1position::PositionRequirementExposureRule::InternalOnly,
+            evidence_mode:
+                selene_kernel_contracts::ph1position::PositionRequirementEvidenceMode::DocRequired,
+            prompt_short: "Provide working hours".to_string(),
+            prompt_long: "Please provide working hours evidence.".to_string(),
+        };
+        store
+            .ph1position_requirements_schema_create_draft(
+                MonotonicTimeNs(2),
+                actor_user_id.clone(),
+                tenant_id.clone(),
+                "company_1".to_string(),
+                selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+                "schema_v1".to_string(),
+                selector,
+                vec![field],
+                "adapter-onb-schema-create".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_CREATE_DRAFT",
+                ReasonCodeId(0x5900_0006),
+            )
+            .unwrap();
+        store
+            .ph1position_requirements_schema_activate_commit(
+                MonotonicTimeNs(3),
+                actor_user_id.clone(),
+                tenant_id,
+                "company_1".to_string(),
+                selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+                "schema_v1".to_string(),
+                selene_kernel_contracts::ph1position::PositionSchemaApplyScope::NewHiresOnly,
+                "adapter-onb-schema-activate".to_string(),
+                "POSITION_REQUIREMENTS_SCHEMA_ACTIVATE_COMMIT",
+                ReasonCodeId(0x5900_0008),
+            )
+            .unwrap();
     }
 
     #[test]
@@ -6806,6 +6896,358 @@ mod tests {
         assert_eq!(complete.onboarding_status.as_deref(), Some("COMPLETE"));
         assert!(complete.access_engine_instance_id.is_some());
         assert!(complete.voice_artifact_sync_receipt_ref.is_some());
+    }
+
+    #[test]
+    fn runh_onboarding_continue_adapter_sender_verification_progresses_to_ready() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runh_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runh_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_employee_company_and_position(&mut store);
+            seed_employee_position_schema_requiring_sender_verification(
+                &mut store,
+                &inviter_user_id,
+            );
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+                (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+                (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+                (ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, SimulationType::Commit),
+                (ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, SimulationType::Commit),
+                (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+                (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (EMO_SIM_001, SimulationType::Commit),
+                (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+                (ONB_COMPLETE_COMMIT, SimulationType::Commit),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut store,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click_with_employee_prefilled_context(&mut store, &inviter_user_id)
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 73_001,
+                idempotency_key: "runh-adapter-start".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "runh_adapter_fp".to_string(),
+                app_instance_id: "ios_instance_runh_adapter".to_string(),
+                deep_link_nonce: "nonce_runh_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+        assert_eq!(start.next_step.as_deref(), Some("ASK_MISSING"));
+        assert!(start
+            .required_verification_gates
+            .contains(&"SENDER_CONFIRMATION".to_string()));
+        let onboarding_session_id = start
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-ask-prompt".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ASK_MISSING_SUBMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("first ask-missing turn should prompt");
+        while ask_out.next_step.as_deref() == Some("ASK_MISSING") {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("blocking field must be returned");
+            let field_value = match field_key.as_str() {
+                "working_hours" => "09:00-17:00",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 73_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runh-adapter-ask-{field_key}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "ASK_MISSING_SUBMIT".to_string(),
+                    field_value: Some(field_value.to_string()),
+                    receipt_kind: None,
+                    receipt_ref: None,
+                    signer: None,
+                    payload_hash: None,
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("ask-missing value submit should succeed");
+        }
+        assert_eq!(ask_out.next_step.as_deref(), Some("PLATFORM_SETUP"));
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 73_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runh-adapter-platform-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "PLATFORM_SETUP_RECEIPT".to_string(),
+                    field_value: None,
+                    receipt_kind: Some(receipt_kind.clone()),
+                    receipt_ref: Some(format!("receipt:runh-adapter:{receipt_kind}")),
+                    signer: Some("selene_mobile_app".to_string()),
+                    payload_hash: Some(format!("{:064x}", idx + 1)),
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("platform setup receipt should succeed");
+        }
+        assert_eq!(platform_out.next_step.as_deref(), Some("TERMS"));
+
+        let terms = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-terms".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "TERMS_ACCEPT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: Some("terms_v1".to_string()),
+                accepted: Some(true),
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("terms should succeed");
+        assert_eq!(terms.next_step.as_deref(), Some("SENDER_VERIFICATION"));
+
+        let access_err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-access-blocked".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("access should fail before sender verification");
+        assert!(access_err.contains("ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_ACCESS_PROVISION"));
+
+        let photo = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-photo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMPLOYEE_PHOTO_CAPTURE_SEND".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: Some("blob:photo:runh:1".to_string()),
+                sender_decision: None,
+            })
+            .expect("photo capture should succeed");
+        assert_eq!(photo.next_step.as_deref(), Some("SENDER_VERIFICATION"));
+
+        let verify = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-verify".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMPLOYEE_SENDER_VERIFY_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: Some("CONFIRM".to_string()),
+            })
+            .expect("sender verify should succeed");
+        assert_eq!(verify.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
+
+        let device = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-device".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PRIMARY_DEVICE_CONFIRM".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runh_adapter_inviter_device".to_string()),
+                proof_ok: Some(true),
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("device confirm should succeed");
+        assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
+
+        let voice = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-voice".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "VOICE_ENROLL_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runh_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: Some("runh_adapter_seed".to_string()),
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("voice enroll should succeed");
+        assert_eq!(voice.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
+
+        let emo = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMO_PERSONA_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("emo/persona lock should succeed");
+        assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
+
+        let access = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runh-adapter-access".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("access provision should succeed");
+        assert_eq!(access.next_step.as_deref(), Some("COMPLETE"));
+        assert!(access.access_engine_instance_id.is_some());
+
+        let complete = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 73_001,
+                onboarding_session_id,
+                idempotency_key: "runh-adapter-complete".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("onboarding complete should succeed");
+        assert_eq!(complete.next_step.as_deref(), Some("READY"));
+        assert_eq!(complete.onboarding_status.as_deref(), Some("COMPLETE"));
     }
 
     #[test]

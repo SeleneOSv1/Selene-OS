@@ -1719,6 +1719,14 @@ impl AppServerIngressRuntime {
                 table: "onboarding_sessions.onboarding_session_id",
                 key: onboarding_session_id.as_str().to_string(),
             })?;
+        if onboarding_sender_verification_pending(store, &onboarding_session_id)? {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_ACCESS_PROVISION",
+                },
+            ));
+        }
         let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_onboarding_continue_request.action",
@@ -1808,6 +1816,14 @@ impl AppServerIngressRuntime {
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
         )?;
+        if onboarding_sender_verification_pending(store, &onboarding_session_id)? {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_COMPLETE",
+                },
+            ));
+        }
         let voice_artifact_sync_receipt_ref = store
             .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id)
             .ok_or_else(|| {
@@ -3854,6 +3870,12 @@ mod tests {
             (ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, SimulationType::Commit),
             (ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, SimulationType::Commit),
             (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+            (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+            (EMO_SIM_001, SimulationType::Commit),
+            (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+            (ONB_COMPLETE_COMMIT, SimulationType::Commit),
         ] {
             seed_simulation_catalog_status(
                 &mut store,
@@ -3983,6 +4005,28 @@ mod tests {
             .unwrap();
         assert_eq!(terms.next_step, AppOnboardingContinueNextStep::SenderVerification);
 
+        let access_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-access-blocked".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AccessProvisionCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(130),
+            )
+            .expect_err("access provision must block before sender verification");
+        match access_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_ACCESS_PROVISION");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
         let photo = runtime
             .run_onboarding_continue(
                 &mut store,
@@ -4026,6 +4070,94 @@ mod tests {
             verify.onboarding_status,
             Some(OnboardingStatus::VerificationConfirmed)
         );
+
+        let device_confirm = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-device".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                        device_id: inviter_device_id,
+                        proof_ok: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(133),
+            )
+            .unwrap();
+        assert_eq!(device_confirm.next_step, AppOnboardingContinueNextStep::VoiceEnroll);
+
+        let voice = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-voice".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::VoiceEnrollLock {
+                        device_id: DeviceId::new("rung_verify_inviter_device").unwrap(),
+                        sample_seed: "rung_verify_seed".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(134),
+            )
+            .unwrap();
+        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
+
+        let emo = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-emo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::EmoPersonaLock,
+                )
+                .unwrap(),
+                MonotonicTimeNs(135),
+            )
+            .unwrap();
+        assert_eq!(emo.next_step, AppOnboardingContinueNextStep::AccessProvision);
+
+        let access = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-access".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AccessProvisionCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(136),
+            )
+            .unwrap();
+        assert_eq!(access.next_step, AppOnboardingContinueNextStep::Complete);
+        assert!(access.access_engine_instance_id.is_some());
+
+        let complete = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9911),
+                    onboarding_session_id.clone(),
+                    "rung-verify-complete".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::CompleteCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(137),
+            )
+            .unwrap();
+        assert_eq!(complete.next_step, AppOnboardingContinueNextStep::Ready);
+        assert_eq!(complete.onboarding_status, Some(OnboardingStatus::Complete));
     }
 
     #[test]
