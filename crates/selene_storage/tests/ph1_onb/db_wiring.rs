@@ -190,6 +190,40 @@ fn complete_locked_voice_enrollment(
         .expect("voice sync receipt should exist after complete")
 }
 
+fn complete_emo_persona_lock(
+    store: &mut Ph1fStore,
+    onboarding_session_id: selene_kernel_contracts::ph1onb::OnboardingSessionId,
+    tenant_id: &str,
+    user_id: UserId,
+    device_id: DeviceId,
+    now_base: u64,
+    id_prefix: &str,
+) {
+    let persona_event_id = store
+        .ph1persona_profile_commit(
+            MonotonicTimeNs(now_base),
+            tenant_id.to_string(),
+            CorrelationId(now_base as u128),
+            TurnId((now_base % 10_000) + 1),
+            None,
+            user_id,
+            device_id,
+            "style_supportive".to_string(),
+            "voice_default".to_string(),
+            format!("prefs:{id_prefix}"),
+            ReasonCodeId(7001),
+            format!("{id_prefix}-emo-lock"),
+        )
+        .unwrap();
+    store
+        .ph1onb_emo_persona_lock_commit(
+            MonotonicTimeNs(now_base + 1),
+            onboarding_session_id,
+            persona_event_id,
+        )
+        .unwrap();
+}
+
 fn seed_company(store: &mut Ph1fStore, tenant_id: &TenantId, company_id: &str) {
     store
         .ph1tenant_company_upsert_row(TenantCompanyRecord {
@@ -665,6 +699,15 @@ fn at_onb_db_04_current_table_no_ledger_rebuild_required() {
         "onb-flow-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        u.clone(),
+        d.clone(),
+        605,
+        "onb-flow",
+    );
 
     let access_created = s
         .ph1onb_access_instance_create_commit_row(
@@ -921,14 +964,36 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
     s.ph1onb_employee_sender_verify_commit_row(
         MonotonicTimeNs(907),
         started.onboarding_session_id.clone(),
-        inviter,
+        inviter.clone(),
         selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
         "onb-required-verify".to_string(),
     )
     .unwrap();
 
-    s.ph1onb_access_instance_create_commit_row(
+    let access_emo_blocked = s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(908),
+        started.onboarding_session_id.clone(),
+        user("tenant_a:hire_1"),
+        Some(tenant_id.clone()),
+        "employee".to_string(),
+        "onb-required-access-emo-blocked".to_string(),
+    );
+    assert!(matches!(
+        access_emo_blocked,
+        Err(StorageError::ContractViolation(_))
+    ));
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        &tenant_id,
+        inviter,
+        inviter_device.clone(),
+        908,
+        "onb-required",
+    );
+
+    s.ph1onb_access_instance_create_commit_row(
+        MonotonicTimeNs(909),
         started.onboarding_session_id.clone(),
         user("tenant_a:hire_1"),
         Some(tenant_id),
@@ -940,12 +1005,12 @@ fn at_onb_db_06_required_sender_verification_blocks_access_and_complete_until_co
         &mut s,
         started.onboarding_session_id.clone(),
         inviter_device,
-        909,
+        910,
         "onb-required",
     );
     let completed = s
         .ph1onb_complete_commit_row(
-            MonotonicTimeNs(913),
+            MonotonicTimeNs(914),
             started.onboarding_session_id,
             "onb-required-complete-ok".to_string(),
             Some(voice_receipt),
@@ -1130,7 +1195,7 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
     let sender_refused = s.ph1onb_employee_sender_verify_commit_row(
         MonotonicTimeNs(1004),
         started.onboarding_session_id.clone(),
-        inviter,
+        inviter.clone(),
         selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
         "onb-no-required-verify".to_string(),
     );
@@ -1148,6 +1213,15 @@ fn at_onb_db_07_photo_sender_commits_refuse_when_schema_gate_not_required() {
         "onb-no-required-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter,
+        inviter_device.clone(),
+        1005,
+        "onb-no-required",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1006),
         started.onboarding_session_id.clone(),
@@ -1224,6 +1298,15 @@ fn at_onb_db_13_ios_complete_allows_missing_wake_receipt_when_voice_locked() {
         "onb-ios-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1013,
+        "onb-ios",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1014),
         started.onboarding_session_id.clone(),
@@ -1349,6 +1432,15 @@ fn at_onb_db_14_android_complete_requires_wake_receipt_when_wake_is_complete() {
         "onb-android-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1023,
+        "onb-android",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1024),
         started.onboarding_session_id.clone(),
@@ -1553,6 +1645,15 @@ fn at_onb_db_14b_desktop_complete_requires_wake_receipt_when_wake_is_complete() 
         "onb-desktop-device".to_string(),
     )
     .unwrap();
+    complete_emo_persona_lock(
+        &mut s,
+        started.onboarding_session_id.clone(),
+        "tenant_a",
+        inviter.clone(),
+        inviter_device.clone(),
+        1063,
+        "onb-desktop",
+    );
     s.ph1onb_access_instance_create_commit_row(
         MonotonicTimeNs(1064),
         started.onboarding_session_id.clone(),

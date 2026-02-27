@@ -7371,6 +7371,7 @@ impl Ph1fStore {
             terms_status,
             token_id,
             existing_tenant_id,
+            emo_persona_lock_audit_event_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
                 StorageError::ForeignKeyViolation {
@@ -7385,6 +7386,7 @@ impl Ph1fStore {
                 rec.terms_status,
                 rec.token_id.clone(),
                 rec.tenant_id.clone(),
+                rec.emo_persona_lock_audit_event_id,
             )
         };
 
@@ -7401,6 +7403,14 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1onb_access_instance_create_commit.primary_device_confirmed",
                     reason: "must be true before creating access instance",
+                },
+            ));
+        }
+        if emo_persona_lock_audit_event_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_access_instance_create_commit.emo_persona_lock_audit_event_id",
+                    reason: "must exist before creating access instance",
                 },
             ));
         }
@@ -7524,6 +7534,7 @@ impl Ph1fStore {
             token_id,
             tenant_id,
             app_platform,
+            emo_persona_lock_audit_event_id,
         ) = {
             let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
                 StorageError::ForeignKeyViolation {
@@ -7539,6 +7550,7 @@ impl Ph1fStore {
                 rec.token_id.clone(),
                 rec.tenant_id.clone(),
                 rec.app_platform,
+                rec.emo_persona_lock_audit_event_id,
             )
         };
 
@@ -7559,6 +7571,14 @@ impl Ph1fStore {
                 ContractViolation::InvalidValue {
                     field: "ph1onb_complete_commit.verification_status",
                     reason: "schema-required sender verification must be CONFIRMED before completing onboarding",
+                },
+            ));
+        }
+        if emo_persona_lock_audit_event_id.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.emo_persona_lock_audit_event_id",
+                    reason: "must exist before completing onboarding",
                 },
             ));
         }
