@@ -3574,8 +3574,9 @@ fn parse_onboarding_continue_action(
                 sample_seed,
             })
         }
+        "EMO_PERSONA_LOCK" => Ok(AppOnboardingContinueAction::EmoPersonaLock),
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMO_PERSONA_LOCK",
             action
         )),
     }
@@ -3588,6 +3589,7 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
         AppOnboardingContinueNextStep::Terms => "TERMS",
         AppOnboardingContinueNextStep::PrimaryDeviceConfirm => "PRIMARY_DEVICE_CONFIRM",
         AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
+        AppOnboardingContinueNextStep::EmoPersonaLock => "EMO_PERSONA_LOCK",
         AppOnboardingContinueNextStep::AccessProvision => "ACCESS_PROVISION",
         AppOnboardingContinueNextStep::Blocked => "BLOCKED",
     }
@@ -6082,6 +6084,7 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
     use selene_kernel_contracts::ph1_voice_id::{
         VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
         VOICE_ID_ENROLL_START_DRAFT,
@@ -6450,6 +6453,7 @@ mod tests {
                 (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
                 (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
                 (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (EMO_SIM_001, SimulationType::Commit),
             ] {
                 seed_simulation_catalog_status(
                     &mut store,
@@ -6615,7 +6619,7 @@ mod tests {
         let voice = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
                 correlation_id: 72_001,
-                onboarding_session_id,
+                onboarding_session_id: onboarding_session_id.clone(),
                 idempotency_key: "runc-adapter-voice".to_string(),
                 tenant_id: Some("tenant_1".to_string()),
                 action: "VOICE_ENROLL_LOCK".to_string(),
@@ -6631,8 +6635,29 @@ mod tests {
                 sample_seed: Some("runc_adapter_seed".to_string()),
             })
             .expect("voice enroll should succeed");
-        assert_eq!(voice.next_step.as_deref(), Some("ACCESS_PROVISION"));
+        assert_eq!(voice.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
+
+        let emo = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 72_001,
+                onboarding_session_id,
+                idempotency_key: "runc-adapter-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMO_PERSONA_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+            })
+            .expect("emo/persona lock should succeed");
+        assert_eq!(emo.next_step.as_deref(), Some("ACCESS_PROVISION"));
     }
 
     #[test]

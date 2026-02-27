@@ -4,6 +4,15 @@ use selene_engines::ph1_voice_id::{
     simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
     VoiceIdObservation as EngineVoiceIdObservation,
 };
+use selene_engines::ph1emocore::{
+    Ph1EmoCoreConfig as EnginePh1EmoCoreConfig, Ph1EmoCoreRuntime as EnginePh1EmoCoreRuntime,
+};
+use selene_engines::ph1emoguide::{
+    Ph1EmoGuideConfig as EnginePh1EmoGuideConfig, Ph1EmoGuideRuntime as EnginePh1EmoGuideRuntime,
+};
+use selene_engines::ph1persona::{
+    Ph1PersonaConfig as EnginePh1PersonaConfig, Ph1PersonaRuntime as EnginePh1PersonaRuntime,
+};
 use selene_kernel_contracts::ph1_voice_id::{
     Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
@@ -18,6 +27,11 @@ use selene_kernel_contracts::ph1link::{
 };
 use selene_kernel_contracts::ph1m::MemoryCandidate;
 use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
+use selene_kernel_contracts::ph1persona::{
+    PersonaDeliveryPolicyRef, PersonaPreferenceKey, PersonaPreferenceSignal,
+    PersonaProfileValidateRequest, PersonaRequestEnvelope, PersonaValidationStatus,
+    Ph1PersonaRequest, Ph1PersonaResponse,
+};
 use selene_kernel_contracts::ph1onb::{
     OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbTermsAcceptCommitRequest,
     OnboardingNextStep, OnboardingSessionId, Ph1OnbRequest, Ph1OnbResponse, ProofType,
@@ -25,14 +39,26 @@ use selene_kernel_contracts::ph1onb::{
     ONB_TERMS_ACCEPT_COMMIT,
 };
 use selene_kernel_contracts::ph1position::TenantId;
+use selene_kernel_contracts::ph1tts::StyleProfileRef;
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
     StepUpCapabilities, ThreadState,
 };
+use selene_kernel_contracts::ph1emocore::{
+    EmoClassifyProfileCommitRequest, EmoCoreOutcome, EmoCoreRequest, EmoCoreSimulationType,
+    EmoPersonalityType, EmoSignalBundle, Ph1EmoCoreRequest, Ph1EmoCoreResponse, EMO_SIM_001,
+    PH1EMOCORE_CONTRACT_VERSION,
+};
+use selene_kernel_contracts::ph1emoguide::{
+    EmoGuideInteractionSignals, EmoGuideProfileBuildRequest, EmoGuideProfileValidateRequest,
+    EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
+};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
-use selene_storage::ph1f::{Ph1fStore, StorageError};
+use selene_storage::ph1f::{
+    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
+};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use crate::ph1os::{
@@ -195,6 +221,7 @@ pub enum AppOnboardingContinueAction {
         device_id: DeviceId,
         sample_seed: String,
     },
+    EmoPersonaLock,
 }
 
 #[derive(Debug, Clone)]
@@ -282,6 +309,7 @@ impl AppOnboardingContinueRequest {
                     64,
                 )?;
             }
+            AppOnboardingContinueAction::EmoPersonaLock => {}
         }
         Ok(Self {
             correlation_id,
@@ -300,6 +328,7 @@ pub enum AppOnboardingContinueNextStep {
     Terms,
     PrimaryDeviceConfirm,
     VoiceEnroll,
+    EmoPersonaLock,
     AccessProvision,
     Blocked,
 }
@@ -983,7 +1012,7 @@ impl AppServerIngressRuntime {
                 }
                 Ok(AppOnboardingContinueOutcome {
                     onboarding_session_id: onboarding_session_id.as_str().to_string(),
-                    next_step: AppOnboardingContinueNextStep::AccessProvision,
+                    next_step: AppOnboardingContinueNextStep::EmoPersonaLock,
                     blocking_field: None,
                     blocking_question: None,
                     remaining_missing_fields: store
@@ -995,7 +1024,375 @@ impl AppServerIngressRuntime {
                     voice_artifact_sync_receipt_ref,
                 })
             }
+            AppOnboardingContinueAction::EmoPersonaLock => self.run_onboarding_emo_persona_lock(
+                store,
+                correlation_id,
+                turn_id,
+                onboarding_session_id,
+                effective_tenant,
+                idempotency_key,
+                now,
+            ),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_onboarding_emo_persona_lock(
+        &self,
+        store: &mut Ph1fStore,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        onboarding_session_id: OnboardingSessionId,
+        effective_tenant: TenantId,
+        idempotency_key: String,
+        now: MonotonicTimeNs,
+    ) -> Result<AppOnboardingContinueOutcome, StorageError> {
+        let session = store
+            .ph1onb_session_row(&onboarding_session_id)
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "onboarding_sessions.onboarding_session_id",
+                key: onboarding_session_id.as_str().to_string(),
+            })?;
+        if !session.missing_fields.is_empty() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_ASK_MISSING_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        let remaining_platform_receipt_kinds =
+            store.ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
+        if !remaining_platform_receipt_kinds.is_empty() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PLATFORM_SETUP_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        if session.terms_status != Some(TermsStatus::Accepted) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_TERMS_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        if !session.primary_device_confirmed {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        self.executor.ensure_simulation_active_for_tenant(
+            store,
+            &effective_tenant,
+            EMO_SIM_001,
+            "app_onboarding_continue_request.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+
+        let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+            })
+        })?;
+        let voice_profile_locked = store
+            .ph1vid_voice_profile_rows()
+            .iter()
+            .any(|profile| profile.device_id == device_id);
+        if !voice_profile_locked {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+                },
+            ));
+        }
+        let (persona_user_id, persona_speaker_id) = ensure_onboarding_persona_subject(
+            store,
+            &effective_tenant,
+            &onboarding_session_id,
+            &device_id,
+            now,
+        )?;
+
+        let emo_signals = emo_signal_bundle_for_onboarding_session(&onboarding_session_id)
+            .map_err(StorageError::ContractViolation)?;
+        let emo_req = Ph1EmoCoreRequest {
+            schema_version: PH1EMOCORE_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: EMO_SIM_001.to_string(),
+            simulation_type: EmoCoreSimulationType::Commit,
+            request: EmoCoreRequest::ClassifyProfileCommit(EmoClassifyProfileCommitRequest {
+                tenant_id: effective_tenant.clone(),
+                requester_user_id: persona_user_id.clone(),
+                session_id: onboarding_session_id.as_str().to_string(),
+                consent_asserted: true,
+                identity_verified: true,
+                signals: emo_signals,
+                idempotency_key: format!("{idempotency_key}-emo-core"),
+            }),
+        };
+        emo_req.validate().map_err(StorageError::ContractViolation)?;
+        let emo_runtime = EnginePh1EmoCoreRuntime::new(EnginePh1EmoCoreConfig::mvp_v1());
+        let emo_ok = match emo_runtime.run(&emo_req) {
+            Ph1EmoCoreResponse::Ok(ok) => ok,
+            Ph1EmoCoreResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_CORE_CLASSIFY_REFUSED",
+                    },
+                ));
+            }
+        };
+        if !emo_ok.tone_only || !emo_ok.no_meaning_drift || !emo_ok.no_execution_authority {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_EMO_CORE_TONE_ONLY_GUARDS_REQUIRED",
+                },
+            ));
+        }
+        let personality_type = match &emo_ok.outcome {
+            EmoCoreOutcome::ClassifyProfile(outcome) => outcome.personality_type,
+            _ => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_CORE_CLASSIFY_OUTCOME_REQUIRED",
+                    },
+                ));
+            }
+        };
+
+        let emo_guide_runtime = EnginePh1EmoGuideRuntime::new(EnginePh1EmoGuideConfig::mvp_v1());
+        let emo_guide_envelope = EmoGuideRequestEnvelope::v1(correlation_id, turn_id, 120, 3, 8)
+            .map_err(StorageError::ContractViolation)?;
+        let emo_guide_signals = emoguide_signals_for_personality(personality_type)
+            .map_err(StorageError::ContractViolation)?;
+        let emo_guide_build_req =
+            Ph1EmoGuideRequest::EmoGuideProfileBuild(EmoGuideProfileBuildRequest::v1(
+                emo_guide_envelope.clone(),
+                persona_speaker_id.clone(),
+                emo_guide_signals.clone(),
+                None,
+            )
+            .map_err(StorageError::ContractViolation)?);
+        let emo_guide_build_ok = match emo_guide_runtime.run(&emo_guide_build_req) {
+            Ph1EmoGuideResponse::EmoGuideProfileBuildOk(ok) => ok,
+            Ph1EmoGuideResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_GUIDE_BUILD_REFUSED",
+                    },
+                ));
+            }
+            Ph1EmoGuideResponse::EmoGuideProfileValidateOk(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_GUIDE_BUILD_OUTCOME_REQUIRED",
+                    },
+                ));
+            }
+        };
+        if !emo_guide_build_ok.tone_only
+            || !emo_guide_build_ok.no_meaning_drift
+            || !emo_guide_build_ok.no_execution_authority
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_EMO_GUIDE_TONE_ONLY_GUARDS_REQUIRED",
+                },
+            ));
+        }
+
+        let emo_guide_validate_req =
+            Ph1EmoGuideRequest::EmoGuideProfileValidate(EmoGuideProfileValidateRequest::v1(
+                emo_guide_envelope,
+                persona_speaker_id.clone(),
+                emo_guide_signals,
+                None,
+                emo_guide_build_ok.profile.clone(),
+            )
+            .map_err(StorageError::ContractViolation)?);
+        let emo_guide_validate_ok = match emo_guide_runtime.run(&emo_guide_validate_req) {
+            Ph1EmoGuideResponse::EmoGuideProfileValidateOk(ok) => ok,
+            Ph1EmoGuideResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_GUIDE_VALIDATE_REFUSED",
+                    },
+                ));
+            }
+            Ph1EmoGuideResponse::EmoGuideProfileBuildOk(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_EMO_GUIDE_VALIDATE_OUTCOME_REQUIRED",
+                    },
+                ));
+            }
+        };
+        if emo_guide_validate_ok.validation_status != EmoGuideValidationStatus::Ok
+            || !emo_guide_validate_ok.tone_only
+            || !emo_guide_validate_ok.no_meaning_drift
+            || !emo_guide_validate_ok.no_execution_authority
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_EMO_GUIDE_VALIDATE_FAILED",
+                },
+            ));
+        }
+
+        let persona_runtime = EnginePh1PersonaRuntime::new(EnginePh1PersonaConfig::mvp_v1());
+        let persona_envelope = PersonaRequestEnvelope::v1(correlation_id, turn_id, 16, 8)
+            .map_err(StorageError::ContractViolation)?;
+        let persona_signals = vec![PersonaPreferenceSignal::v1(
+            PersonaPreferenceKey::ResponseToneTarget,
+            persona_tone_value_for_personality(personality_type).to_string(),
+            format!("emo:{}", onboarding_session_id.as_str()),
+        )
+        .map_err(StorageError::ContractViolation)?];
+        let persona_speaker_id_for_validate = persona_speaker_id.clone();
+        let persona_build_req = Ph1PersonaRequest::PersonaProfileBuild(
+            selene_kernel_contracts::ph1persona::PersonaProfileBuildRequest::v1(
+                persona_envelope.clone(),
+                persona_user_id.as_str().to_string(),
+                persona_speaker_id,
+                persona_signals.clone(),
+                emo_guide_build_ok
+                    .profile
+                    .stability_window_turns
+                    .saturating_sub(3),
+                Some(emo_guide_build_ok.profile.style_profile_ref),
+                None,
+            )
+            .map_err(StorageError::ContractViolation)?,
+        );
+        let persona_build_ok = match persona_runtime.run(&persona_build_req) {
+            Ph1PersonaResponse::PersonaProfileBuildOk(ok) => ok,
+            Ph1PersonaResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_PERSONA_BUILD_REFUSED",
+                    },
+                ));
+            }
+            Ph1PersonaResponse::PersonaProfileValidateOk(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_PERSONA_BUILD_OUTCOME_REQUIRED",
+                    },
+                ));
+            }
+        };
+        if !persona_build_ok.tone_only
+            || !persona_build_ok.no_meaning_drift
+            || !persona_build_ok.no_execution_authority
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PERSONA_BUILD_GUARDS_REQUIRED",
+                },
+            ));
+        }
+
+        let persona_validate_req = Ph1PersonaRequest::PersonaProfileValidate(
+            PersonaProfileValidateRequest::v1(
+                persona_envelope,
+                persona_user_id.as_str().to_string(),
+                persona_speaker_id_for_validate,
+                persona_signals,
+                emo_guide_build_ok
+                    .profile
+                    .stability_window_turns
+                    .saturating_sub(3),
+                Some(emo_guide_build_ok.profile.style_profile_ref),
+                None,
+                persona_build_ok.profile_snapshot.clone(),
+            )
+            .map_err(StorageError::ContractViolation)?,
+        );
+        let persona_validate_ok = match persona_runtime.run(&persona_validate_req) {
+            Ph1PersonaResponse::PersonaProfileValidateOk(ok) => ok,
+            Ph1PersonaResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_PERSONA_VALIDATE_REFUSED",
+                    },
+                ));
+            }
+            Ph1PersonaResponse::PersonaProfileBuildOk(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_onboarding_continue_request.action",
+                        reason: "ONB_PERSONA_VALIDATE_OUTCOME_REQUIRED",
+                    },
+                ));
+            }
+        };
+        if persona_validate_ok.validation_status != PersonaValidationStatus::Ok
+            || !persona_validate_ok.tone_only
+            || !persona_validate_ok.no_meaning_drift
+            || !persona_validate_ok.no_execution_authority
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PERSONA_VALIDATE_FAILED",
+                },
+            ));
+        }
+
+        store.ph1persona_profile_commit(
+            now,
+            effective_tenant.as_str().to_string(),
+            correlation_id,
+            turn_id,
+            None,
+            persona_user_id,
+            device_id,
+            style_profile_ref_token(persona_build_ok.profile_snapshot.style_profile_ref).to_string(),
+            persona_delivery_policy_token(persona_build_ok.profile_snapshot.delivery_policy_ref)
+                .to_string(),
+            persona_build_ok.profile_snapshot.preferences_snapshot_ref,
+            persona_validate_ok.reason_code,
+            format!("{idempotency_key}-persona-commit"),
+        )?;
+
+        Ok(AppOnboardingContinueOutcome {
+            onboarding_session_id: onboarding_session_id.as_str().to_string(),
+            next_step: AppOnboardingContinueNextStep::AccessProvision,
+            blocking_field: None,
+            blocking_question: None,
+            remaining_missing_fields: store
+                .ph1onb_session_row(&onboarding_session_id)
+                .map(|r| r.missing_fields.clone())
+                .unwrap_or_default(),
+            remaining_platform_receipt_kinds: store
+                .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+            voice_artifact_sync_receipt_ref: session.voice_artifact_sync_receipt_ref,
+        })
     }
 
     pub fn run_voice_turn_and_build_ph1x_request(
@@ -1240,6 +1637,118 @@ fn onboarding_missing_field_question(field_key: &str) -> String {
         "compensation_tier_ref" => "What compensation tier should I use?".to_string(),
         "jurisdiction_tags" => "Which jurisdiction tags should I set?".to_string(),
         _ => format!("What value should I use for {field_key}?"),
+    }
+}
+
+fn ensure_onboarding_persona_subject(
+    store: &mut Ph1fStore,
+    tenant_id: &TenantId,
+    onboarding_session_id: &OnboardingSessionId,
+    device_id: &DeviceId,
+    now: MonotonicTimeNs,
+) -> Result<(UserId, String), StorageError> {
+    if let Some(existing_device) = store.get_device(device_id).cloned() {
+        let user_id = existing_device.user_id;
+        if store.get_identity(&user_id).is_none() {
+            store.insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                now,
+                IdentityStatus::Active,
+            ))?;
+        }
+        let speaker_id = store
+            .get_identity(&user_id)
+            .and_then(|record| {
+                record
+                    .speaker_id
+                    .as_ref()
+                    .map(|speaker| speaker.as_str().to_string())
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "spk_onb_{}",
+                    short_hash_hex(&[onboarding_session_id.as_str(), user_id.as_str()])
+                )
+            });
+        return Ok((user_id, speaker_id));
+    }
+
+    let user_id = UserId::new(format!(
+        "{}:onb:{}",
+        tenant_id.as_str(),
+        short_hash_hex(&[onboarding_session_id.as_str(), device_id.as_str()])
+    ))
+    .map_err(StorageError::ContractViolation)?;
+    if store.get_identity(&user_id).is_none() {
+        store.insert_identity(IdentityRecord::v1(
+            user_id.clone(),
+            None,
+            None,
+            now,
+            IdentityStatus::Active,
+        ))?;
+    }
+    if store.get_device(device_id).is_none() {
+        let record = DeviceRecord::v1(
+            device_id.clone(),
+            user_id.clone(),
+            "onboarding_device".to_string(),
+            now,
+            None,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        store.insert_device(record)?;
+    }
+    let speaker_id = format!(
+        "spk_onb_{}",
+        short_hash_hex(&[onboarding_session_id.as_str(), user_id.as_str()])
+    );
+    Ok((user_id, speaker_id))
+}
+
+fn emo_signal_bundle_for_onboarding_session(
+    onboarding_session_id: &OnboardingSessionId,
+) -> Result<EmoSignalBundle, ContractViolation> {
+    let variant = stable_seed_u64(&[onboarding_session_id.as_str()]) % 3;
+    match variant {
+        0 => EmoSignalBundle::v1(74, 22, 30, 40),
+        1 => EmoSignalBundle::v1(38, 18, 10, 80),
+        _ => EmoSignalBundle::v1(54, 20, 18, 54),
+    }
+}
+
+fn emoguide_signals_for_personality(
+    personality_type: EmoPersonalityType,
+) -> Result<EmoGuideInteractionSignals, ContractViolation> {
+    match personality_type {
+        EmoPersonalityType::Domineering => EmoGuideInteractionSignals::v1(24, 3, 4, 16, 6),
+        EmoPersonalityType::Passive => EmoGuideInteractionSignals::v1(24, 2, 1, 5, 16),
+        EmoPersonalityType::Undetermined => EmoGuideInteractionSignals::v1(24, 2, 2, 11, 11),
+    }
+}
+
+fn persona_tone_value_for_personality(personality_type: EmoPersonalityType) -> &'static str {
+    match personality_type {
+        EmoPersonalityType::Domineering => "dominant",
+        EmoPersonalityType::Passive => "gentle",
+        EmoPersonalityType::Undetermined => "balanced",
+    }
+}
+
+fn style_profile_ref_token(style_profile_ref: StyleProfileRef) -> &'static str {
+    match style_profile_ref {
+        StyleProfileRef::Dominant => "dominant",
+        StyleProfileRef::Gentle => "gentle",
+    }
+}
+
+fn persona_delivery_policy_token(delivery_policy_ref: PersonaDeliveryPolicyRef) -> &'static str {
+    match delivery_policy_ref {
+        PersonaDeliveryPolicyRef::VoiceAllowed => "voice",
+        PersonaDeliveryPolicyRef::TextOnly => "text",
+        PersonaDeliveryPolicyRef::Silent => "silent",
     }
 }
 
@@ -2409,6 +2918,7 @@ mod tests {
             (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
             (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
             (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+            (EMO_SIM_001, SimulationType::Commit),
         ] {
             seed_simulation_catalog_status(
                 &mut store,
@@ -2586,8 +3096,25 @@ mod tests {
                 MonotonicTimeNs(112),
             )
             .unwrap();
-        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::AccessProvision);
+        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
+
+        let emo = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9902),
+                    onboarding_session_id.clone(),
+                    "runc-flow-emo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::EmoPersonaLock,
+                )
+                .unwrap(),
+                MonotonicTimeNs(113),
+        )
+        .unwrap();
+        assert_eq!(emo.next_step, AppOnboardingContinueNextStep::AccessProvision);
+        assert_eq!(store.ph1persona_audit_rows(CorrelationId(9902)).len(), 1);
         assert_eq!(
             store
                 .ph1onb_session_row(&onboarding_session_id)
@@ -2596,6 +3123,211 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn rune_onboarding_emo_persona_lock_requires_active_simulation() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:rune_flow_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("rune_flow_inviter_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+            (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+            (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+            (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(114),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9905),
+                    "rune-flow-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "rune-flow-fp".to_string(),
+                    "ios_instance_rune_flow".to_string(),
+                    "nonce_rune_flow".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(115),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9905),
+                    onboarding_session_id.clone(),
+                    "rune-flow-ask-prompt-1".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(116),
+            )
+            .unwrap();
+        for idx in 0..8 {
+            if ask_out.next_step != AppOnboardingContinueNextStep::AskMissing {
+                break;
+            }
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask-missing step must include one blocking field");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9905),
+                        onboarding_session_id.clone(),
+                        format!("rune-flow-ask-value-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(field_value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(117 + idx as u64),
+                )
+                .unwrap();
+        }
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9905),
+                        onboarding_session_id.clone(),
+                        format!("rune-flow-platform-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::PlatformSetupReceipt {
+                            receipt_kind: receipt_kind.clone(),
+                            receipt_ref: format!("receipt:rune-flow:{receipt_kind}"),
+                            signer: "selene_mobile_app".to_string(),
+                            payload_hash: format!("{:064x}", idx + 1),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(125 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(platform_out.next_step, AppOnboardingContinueNextStep::Terms);
+
+        runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9905),
+                    onboarding_session_id.clone(),
+                    "rune-flow-terms".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::TermsAccept {
+                        terms_version_id: "terms_v1".to_string(),
+                        accepted: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(130),
+            )
+            .unwrap();
+        runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9905),
+                    onboarding_session_id.clone(),
+                    "rune-flow-device".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                        device_id: inviter_device_id,
+                        proof_ok: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(131),
+            )
+            .unwrap();
+        let voice = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9905),
+                    onboarding_session_id.clone(),
+                    "rune-flow-voice".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::VoiceEnrollLock {
+                        device_id: DeviceId::new("rune_flow_inviter_device").unwrap(),
+                        sample_seed: "rune_flow_seed".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(132),
+            )
+            .unwrap();
+        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
+
+        let err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9905),
+                    onboarding_session_id,
+                    "rune-flow-emo".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::EmoPersonaLock,
+                )
+                .unwrap(),
+                MonotonicTimeNs(133),
+            )
+            .expect_err("missing emo simulation must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.simulation_id");
+                assert_eq!(reason, "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(store.ph1persona_audit_rows(CorrelationId(9905)).is_empty());
     }
 
     #[test]
