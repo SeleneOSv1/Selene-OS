@@ -19,11 +19,11 @@ use selene_kernel_contracts::ph1_voice_id::{
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1d::PolicyContextRef;
-use selene_kernel_contracts::ph1e::ToolResponse;
+use selene_kernel_contracts::ph1e::{ToolRequest, ToolResponse};
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
-    AppPlatform, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
+    AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
 use selene_kernel_contracts::ph1m::MemoryCandidate;
@@ -34,10 +34,14 @@ use selene_kernel_contracts::ph1persona::{
     Ph1PersonaRequest, Ph1PersonaResponse,
 };
 use selene_kernel_contracts::ph1onb::{
+    OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
+    OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
     OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbTermsAcceptCommitRequest,
     OnboardingNextStep, OnboardingSessionId, Ph1OnbRequest, Ph1OnbResponse, ProofType,
-    SimulationType, TermsStatus, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT,
-    ONB_TERMS_ACCEPT_COMMIT,
+    SenderVerifyDecision, SimulationType, TermsStatus, VerificationStatus,
+    ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+    ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
+    ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
 };
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1tts::StyleProfileRef;
@@ -223,6 +227,9 @@ pub enum AppOnboardingContinueAction {
         sample_seed: String,
     },
     EmoPersonaLock,
+    SenderVerificationCommit,
+    AccessProvisionCommit,
+    CompleteCommit,
 }
 
 #[derive(Debug, Clone)]
@@ -310,7 +317,10 @@ impl AppOnboardingContinueRequest {
                     64,
                 )?;
             }
-            AppOnboardingContinueAction::EmoPersonaLock => {}
+            AppOnboardingContinueAction::EmoPersonaLock
+            | AppOnboardingContinueAction::SenderVerificationCommit
+            | AppOnboardingContinueAction::AccessProvisionCommit
+            | AppOnboardingContinueAction::CompleteCommit => {}
         }
         Ok(Self {
             correlation_id,
@@ -330,8 +340,17 @@ pub enum AppOnboardingContinueNextStep {
     PrimaryDeviceConfirm,
     VoiceEnroll,
     EmoPersonaLock,
+    SenderVerification,
     AccessProvision,
+    Complete,
+    Ready,
     Blocked,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppVoiceToolDispatchOutcome {
+    pub tool_request: ToolRequest,
+    pub tool_response: ToolResponse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,6 +396,7 @@ pub struct AppVoiceTurnExecutionOutcome {
     pub next_move: AppVoiceTurnNextMove,
     pub ph1x_request: Option<Ph1xRequest>,
     pub ph1x_response: Option<Ph1xResponse>,
+    pub tool_dispatch: Option<AppVoiceToolDispatchOutcome>,
     pub dispatch_outcome: Option<SimulationDispatchOutcome>,
     pub response_text: Option<String>,
     pub reason_code: Option<ReasonCodeId>,
@@ -1452,6 +1472,7 @@ impl AppServerIngressRuntime {
             next_move: AppVoiceTurnNextMove::Wait,
             ph1x_request: Some(ph1x_request),
             ph1x_response: Some(ph1x_response.clone()),
+            tool_dispatch: None,
             dispatch_outcome: None,
             response_text: None,
             reason_code: Some(ph1x_response.reason_code),
@@ -1477,6 +1498,10 @@ impl AppServerIngressRuntime {
             Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
                 DispatchRequest::Tool(tool_request) => {
                     let tool_response = self.ph1e_runtime.run(tool_request);
+                    out.tool_dispatch = Some(AppVoiceToolDispatchOutcome {
+                        tool_request: tool_request.clone(),
+                        tool_response: tool_response.clone(),
+                    });
                     let tool_followup_request = build_tool_followup_ph1x_request(
                         out.ph1x_request
                             .as_ref()
@@ -1636,6 +1661,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             next_move: AppVoiceTurnNextMove::NotInvokedDisabled,
             ph1x_request: None,
             ph1x_response: None,
+            tool_dispatch: None,
             dispatch_outcome: None,
             response_text: None,
             reason_code: None,
@@ -1645,6 +1671,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             next_move: AppVoiceTurnNextMove::Refused,
             ph1x_request: None,
             ph1x_response: None,
+            tool_dispatch: None,
             dispatch_outcome: None,
             response_text: Some(refuse.message.clone()),
             reason_code: Some(refuse.reason_code),
@@ -1654,6 +1681,7 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             next_move: AppVoiceTurnNextMove::Wait,
             ph1x_request: None,
             ph1x_response: None,
+            tool_dispatch: None,
             dispatch_outcome: None,
             response_text: None,
             reason_code: None,
