@@ -510,10 +510,15 @@ while read -r f; do
   ' "$f" || echo 0)
   if [ "$has_side" = "1" ] && [ "$has_none" = "1" ]; then
     echo "BAD_ACTIVE_SIMREQ_NONE: $f"
-    bad=1
+    bad=$((bad + 1))
   fi
 done < "${ACTIVE_BLUEPRINTS_TXT}"
 echo "BAD_ACTIVE_SIMREQ_NONE_FOUND:$bad"
+if [ "$bad" -gt 0 ]; then
+  echo "CHECK_FAIL blueprint_side_effect_simreq_none=fail count=${bad}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_side_effect_simreq_none=pass"
 
 echo
 echo "--- 3G) Simulation IDs listed by ACTIVE blueprints must exist in sim catalog ---"
@@ -550,7 +555,14 @@ fi
 echo "CHECK_OK blueprint_sim_requirements_non_sim_text=pass"
 
 grep -v '^NON_SIM_TEXT:' "${ACTIVE_SIMREQ_IDS_TXT}" | sort -u > "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}"
-comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" | sed 's/^/MISSING_SIM_ID: /' || true
+missing_sim_ids="$(comm -23 "${ACTIVE_SIMREQ_IDS_UNIQUE_TXT}" "${SIM_IDS_TXT}" || true)"
+if [ -n "${missing_sim_ids}" ]; then
+  printf "%s\n" "${missing_sim_ids}" | sed 's/^/MISSING_SIM_ID: /'
+  missing_sim_count="$(printf "%s\n" "${missing_sim_ids}" | wc -l | tr -d ' ')"
+  echo "CHECK_FAIL blueprint_sim_catalog_parity=fail count=${missing_sim_count}"
+  exit 1
+fi
+echo "CHECK_OK blueprint_sim_catalog_parity=pass"
 
 echo
 echo "=================================================="
