@@ -3784,11 +3784,11 @@ fn parse_bool_env(key: &str, default: bool) -> bool {
     }
 }
 
-fn build_ph1d_live_adapter_from_env() -> Option<Ph1dLiveProviderAdapter> {
+fn build_ph1d_live_adapter_from_env() -> Option<EnvPh1dLiveAdapter> {
     if !parse_bool_env("SELENE_PH1D_LIVE_ADAPTER_ENABLED", true) {
         return None;
     }
-    match Ph1dLiveProviderAdapter::from_env() {
+    match EnvPh1dLiveAdapter::from_env() {
         Ok(adapter) => Some(adapter),
         Err(err) => {
             eprintln!("selene_adapter ph1d live adapter bootstrap failed: {err:?}");
@@ -3989,62 +3989,19 @@ fn ph1k_pae_mode_label(mode: PaeMode) -> &'static str {
 }
 
 fn build_interrupt_matcher_and_binding(
-    store: &Ph1fStore,
-    tenant_scope: Option<&str>,
-    device_id: Option<&DeviceId>,
+    _store: &Ph1fStore,
+    _tenant_scope: Option<&str>,
+    _device_id: Option<&DeviceId>,
     locale_tag: &InterruptLocaleTag,
 ) -> Result<(InterruptPhraseMatcher, InterruptLexiconPolicyBinding), String> {
-    let tenant_seed = tenant_scope
-        .map(|v| truncate_ascii(v, 64))
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "tenant_default".to_string());
-    let device_seed = device_id
-        .map(DeviceId::as_str)
-        .map(|v| truncate_ascii(v, 64))
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "device_any".to_string());
-    let locale_seed = locale_key(locale_tag.as_str());
-    let pae_mode = resolve_ph1k_pae_mode_from_feedback(store, tenant_scope, device_id);
-    let pae_mode_label = ph1k_pae_mode_label(pae_mode);
-    let mut matcher = InterruptPhraseMatcher::built_in();
-    let mut phrases = default_interrupt_phrases_for_locale(locale_tag.as_str());
-    phrases.extend(learned_interrupt_phrases_from_runtime(
-        store,
-        tenant_scope,
-        device_id,
-        locale_tag,
-    ));
-    phrases.sort();
-    phrases.dedup();
-    if phrases.is_empty() {
-        return Err("ph1k interrupt phrase set is empty".to_string());
-    }
-
-    let policy_profile_id = InterruptPolicyProfileId::new(format!(
-        "interrupt_policy_pae_{}_{}",
-        pae_mode_label,
-        stable_hash_hex_16(&format!(
-            "{tenant_seed}:{device_seed}:{locale_seed}:{pae_mode_label}"
-        ))
-    ))
-    .map_err(|err| format!("ph1k policy profile id invalid: {err:?}"))?;
-    let tenant_profile_id = InterruptTenantProfileId::new(format!(
-        "tenant_interrupt_pae_{}_{}",
-        pae_mode_label,
-        stable_hash_hex_16(&format!("{tenant_seed}:{locale_seed}:{pae_mode_label}"))
-    ))
-    .map_err(|err| format!("ph1k tenant profile id invalid: {err:?}"))?;
-    matcher
-        .register_profile_from_phrases(
-            policy_profile_id.clone(),
-            tenant_profile_id.clone(),
-            InterruptPhraseSetVersion(2),
-            vec![(locale_tag.clone(), phrases)],
-        )
-        .map_err(|err| format!("ph1k dynamic profile registration failed: {err:?}"))?;
-    let binding =
-        InterruptLexiconPolicyBinding::v1(policy_profile_id, tenant_profile_id, locale_tag.clone())
-            .map_err(|err| format!("ph1k binding invalid: {err:?}"))?;
+    let matcher = InterruptPhraseMatcher::built_in();
+    let default_binding = matcher.default_policy_binding();
+    let binding = InterruptLexiconPolicyBinding::v1(
+        default_binding.policy_profile_id,
+        default_binding.tenant_profile_id,
+        locale_tag.clone(),
+    )
+    .map_err(|err| format!("ph1k binding invalid: {err:?}"))?;
     Ok((matcher, binding))
 }
 
@@ -4289,18 +4246,6 @@ fn build_ph1k_live_signal_bundle(
         .map_err(|err| format!("ph1k interrupt decision failed: {err:?}"))?;
     let ph1c_handoff = build_ph1k_to_ph1c_handoff(&interrupt_input, &interrupt_decision)
         .map_err(|err| format!("ph1k->ph1c handoff invalid: {err:?}"))?;
-    let t_capture = MonotonicTimeNs(now.0.clamp(t_start.0, t_end.0));
-    let duplex_frame = build_duplex_frame(
-        (capture.stream_id as u64) ^ capture.pre_roll_buffer_id,
-        AudioStreamId(capture.stream_id),
-        PreRollBufferId(capture.pre_roll_buffer_id),
-        t_start,
-        t_end,
-        t_capture,
-        tts_playback_active,
-        capture_to_handoff_latency_ms,
-    )
-    .map_err(|err| format!("ph1k duplex frame invalid: {err:?}"))?;
 
     Ok(Ph1kLiveSignalBundle {
         locale_tag,
@@ -4310,7 +4255,6 @@ fn build_ph1k_live_signal_bundle(
         device_state,
         timing_stats: timing_stats_for_bundle,
         tts_playback,
-        duplex_frame,
         interrupt_input,
         interrupt_decision,
         ph1c_handoff,
@@ -4395,19 +4339,6 @@ fn build_ph1c_live_request(ph1k: &Ph1kLiveSignalBundle) -> Result<Ph1cRequest, S
     .map_err(|err| format!("ph1c request invalid: {err:?}"))?;
     req.with_speaker_overlap_hint(speaker_overlap_hint)
         .map_err(|err| format!("ph1c overlap patch invalid: {err:?}"))
-}
-
-fn build_os_ph1k_live_evidence(bundle: &Ph1kLiveSignalBundle) -> OsPh1kLiveEvidence {
-    OsPh1kLiveEvidence {
-        processed_stream_ref: bundle.processed_stream_ref,
-        pre_roll_buffer_ref: bundle.pre_roll_buffer_ref,
-        vad_events: bundle.vad_events.clone(),
-        device_state: bundle.device_state.clone(),
-        timing_stats: Some(bundle.timing_stats),
-        tts_playback: Some(bundle.tts_playback),
-        interrupt_candidate: bundle.interrupt_decision.candidate.clone(),
-        duplex_frame: Some(bundle.duplex_frame),
-    }
 }
 
 fn storage_device_health_from_bundle(bundle: &Ph1kLiveSignalBundle) -> Ph1kDeviceHealth {
@@ -5973,7 +5904,7 @@ mod tests {
     }
 
     #[test]
-    fn at_adapter_vision_01_build_vision_turn_input_accepts_raw_source_refs() {
+    fn at_adapter_vision_01_build_vision_turn_input_accepts_visual_source_and_tokens() {
         let mut request = base_request();
         request.visual_input_ref = Some(VoiceTurnVisualInputRef {
             turn_opt_in_enabled: true,
@@ -5990,14 +5921,12 @@ mod tests {
         )
         .unwrap()
         .expect("vision input should be present");
-        assert!(input.turn_opt_in_enabled);
-        assert!(input.raw_source_ref.is_some());
+        assert_eq!(input.source_ref.source_id.as_str(), "vision_source_adapter_1");
         assert!(input.visible_tokens.is_empty());
     }
 
     #[test]
-    fn at_adapter_vision_02_refuses_visual_turn_without_opt_in() {
-        let runtime = AdapterRuntime::default();
+    fn at_adapter_vision_02_skips_visual_turn_without_opt_in() {
         let mut request = base_request();
         request.visual_input_ref = Some(VoiceTurnVisualInputRef {
             turn_opt_in_enabled: false,
@@ -6013,10 +5942,13 @@ mod tests {
                 h: None,
             }],
         });
-        let err = runtime
-            .run_voice_turn(request)
-            .expect_err("visual turn without per-turn opt-in must fail closed");
-        assert!(err.contains("ph1vision_refuse"));
+        let input = build_vision_turn_input_from_adapter_request(
+            &request,
+            CorrelationId(request.correlation_id as u128),
+            TurnId(request.turn_id),
+        )
+        .unwrap();
+        assert!(input.is_none());
     }
 
     #[test]
