@@ -87,7 +87,7 @@ use selene_kernel_contracts::ph1vision::{
     VisualSourceRef, VisualToken,
 };
 use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
-use selene_kernel_contracts::ph1x::ThreadState;
+use selene_kernel_contracts::ph1x::{ThreadPolicyFlags, ThreadState};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -207,6 +207,14 @@ pub struct VoiceTurnVisualInputRef {
     pub visible_tokens: Vec<VoiceTurnVisualTokenRef>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct VoiceTurnThreadPolicyFlags {
+    pub privacy_mode: bool,
+    pub do_not_disturb: bool,
+    pub strict_safety: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VoiceTurnAdapterRequest {
     pub correlation_id: u64,
@@ -218,6 +226,9 @@ pub struct VoiceTurnAdapterRequest {
     pub device_id: Option<String>,
     pub now_ns: Option<u64>,
     pub thread_key: Option<String>,
+    pub project_id: Option<String>,
+    pub pinned_context_refs: Option<Vec<String>>,
+    pub thread_policy_flags: Option<VoiceTurnThreadPolicyFlags>,
     pub user_text_partial: Option<String>,
     pub user_text_final: Option<String>,
     pub selene_text_partial: Option<String>,
@@ -3264,7 +3275,23 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
         )?;
         let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
-        let base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+        let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+        if request.project_id.is_some() || request.pinned_context_refs.is_some() {
+            let project_id = resolve_adapter_project_id(request.project_id.as_deref());
+            let pinned_context_refs =
+                resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
+            base_thread_state = base_thread_state
+                .with_project_context(project_id, pinned_context_refs)
+                .map_err(|err| format!("invalid thread project context: {err:?}"))?;
+        }
+        if let Some(flags) = request.thread_policy_flags.as_ref() {
+            let kernel_flags =
+                ThreadPolicyFlags::v1(flags.privacy_mode, flags.do_not_disturb, flags.strict_safety)
+                    .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
+            base_thread_state = base_thread_state
+                .with_thread_policy_flags(Some(kernel_flags))
+                .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
+        }
         let locale = request
             .audio_capture_ref
             .as_ref()
@@ -4223,6 +4250,53 @@ fn resolve_adapter_thread_key(value: Option<&str>) -> String {
     } else {
         truncate_ascii(&out, 96)
     }
+}
+
+fn resolve_adapter_project_id(value: Option<&str>) -> Option<String> {
+    let raw = value.map(str::trim).filter(|v| !v.is_empty())?;
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/') {
+            out.push(c);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(truncate_ascii(&out, 96))
+    }
+}
+
+fn resolve_adapter_pinned_context_refs(values: Option<&[String]>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let Some(values) = values else {
+        return out;
+    };
+    for value in values {
+        let raw = value.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let mut normalized = String::with_capacity(raw.len());
+        for c in raw.chars() {
+            if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/') {
+                normalized.push(c);
+            } else {
+                normalized.push('_');
+            }
+        }
+        let normalized = truncate_ascii(&normalized, 128);
+        if normalized.is_empty() || out.iter().any(|existing| existing == &normalized) {
+            continue;
+        }
+        out.push(normalized);
+        if out.len() >= 16 {
+            break;
+        }
+    }
+    out
 }
 
 fn load_ph1x_thread_state(
@@ -6330,7 +6404,9 @@ fn build_builder_detail(
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1n::FieldKey;
-    use selene_kernel_contracts::ph1x::{PendingState, ThreadState as KernelThreadState};
+    use selene_kernel_contracts::ph1x::{
+        PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
+    };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
     use selene_kernel_contracts::ph1_voice_id::{
         VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
@@ -6363,6 +6439,9 @@ mod tests {
             device_id: Some("adapter_device_1".to_string()),
             now_ns: Some(3),
             thread_key: None,
+            project_id: None,
+            pinned_context_refs: None,
+            thread_policy_flags: None,
             user_text_partial: None,
             user_text_final: None,
             selene_text_partial: None,
@@ -7816,6 +7895,100 @@ mod tests {
             })
             .count();
         assert_eq!(ledger_count, 2);
+    }
+
+    #[test]
+    fn at_adapter_03e_thread_state_project_context_and_policy_flags_round_trip() {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let thread_key = resolve_adapter_thread_key(Some("proj_scope"));
+
+        {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(1),
+            )
+            .expect("identity + device seed should succeed");
+            let seeded_state = KernelThreadState::empty_v1()
+                .with_project_context(
+                    Some("proj_q3_planning".to_string()),
+                    vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()],
+                )
+                .unwrap()
+                .with_thread_policy_flags(Some(
+                    ThreadPolicyFlags::v1(true, false, true).unwrap(),
+                ))
+                .unwrap();
+            store
+                .ph1x_thread_state_upsert_commit(
+                    MonotonicTimeNs(2),
+                    actor_user_id.clone(),
+                    thread_key.clone(),
+                    seeded_state,
+                    ReasonCodeId(0x5800_7002),
+                    "adapter_thread_state_project_seed".to_string(),
+                )
+                .expect("thread state seed should commit");
+            let loaded = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+            assert_eq!(loaded.project_id.as_deref(), Some("proj_q3_planning"));
+            assert_eq!(
+                loaded.pinned_context_refs,
+                vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()]
+            );
+            let flags = loaded
+                .thread_policy_flags
+                .expect("thread policy flags should round-trip");
+            assert!(flags.force_privacy_mode);
+            assert!(!flags.force_do_not_disturb);
+            assert!(flags.force_strict_safety);
+        }
+    }
+
+    #[test]
+    fn at_adapter_03f_voice_turn_persists_project_context_and_policy_flags() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.thread_key = Some("proj_live".to_string());
+        req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+        req.project_id = Some("proj q3 planning".to_string());
+        req.pinned_context_refs = Some(vec![
+            "ctx budget sheet".to_string(),
+            "ctx-roadmap-notes".to_string(),
+        ]);
+        req.thread_policy_flags = Some(VoiceTurnThreadPolicyFlags {
+            privacy_mode: true,
+            do_not_disturb: false,
+            strict_safety: true,
+        });
+        req.correlation_id = 10_103;
+        req.turn_id = 20_103;
+        req.now_ns = Some(13);
+
+        runtime
+            .run_voice_turn(req)
+            .expect("voice turn with project context should succeed");
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, "proj_live")
+            .expect("thread state should persist for project context");
+        assert_eq!(current.thread_state.project_id.as_deref(), Some("proj_q3_planning"));
+        assert_eq!(
+            current.thread_state.pinned_context_refs,
+            vec!["ctx_budget_sheet".to_string(), "ctx-roadmap-notes".to_string()]
+        );
+        let flags = current
+            .thread_state
+            .thread_policy_flags
+            .expect("thread policy flags should persist");
+        assert!(flags.force_privacy_mode);
+        assert!(!flags.force_do_not_disturb);
+        assert!(flags.force_strict_safety);
     }
 
     #[test]

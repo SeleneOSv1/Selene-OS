@@ -17,6 +17,15 @@ message RunVoiceTurnRequest {
   string device_id = 7;
   uint64 now_ns = 8;
   string thread_key = 9;
+  string project_id = 10;
+  repeated string pinned_context_refs = 11;
+  RunVoiceTurnThreadPolicyFlags thread_policy_flags = 12;
+}
+
+message RunVoiceTurnThreadPolicyFlags {
+  bool privacy_mode = 1;
+  bool do_not_disturb = 2;
+  bool strict_safety = 3;
 }
 
 message RunVoiceTurnResponse {

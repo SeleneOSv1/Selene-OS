@@ -550,22 +550,50 @@ impl Ph1xRuntime {
                 | IntentType::RecordModeQuery
         ) {
             let (tool_name, query) = match d.intent_type {
-                IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
-                IntentType::WeatherQuery => (ToolName::Weather, intent_query_text(d)),
-                IntentType::WebSearchQuery => (ToolName::WebSearch, intent_query_text(d)),
-                IntentType::NewsQuery => (ToolName::News, intent_query_text(d)),
+                IntentType::TimeQuery => {
+                    (ToolName::Time, intent_query_text_with_thread_context(d, &base_thread_state))
+                }
+                IntentType::WeatherQuery => (
+                    ToolName::Weather,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::WebSearchQuery => (
+                    ToolName::WebSearch,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::NewsQuery => {
+                    (ToolName::News, intent_query_text_with_thread_context(d, &base_thread_state))
+                }
                 IntentType::UrlFetchAndCiteQuery => {
-                    (ToolName::UrlFetchAndCite, intent_query_text(d))
+                    (
+                        ToolName::UrlFetchAndCite,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
                 IntentType::DocumentUnderstandQuery => {
-                    (ToolName::DocumentUnderstand, intent_query_text(d))
+                    (
+                        ToolName::DocumentUnderstand,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
                 IntentType::PhotoUnderstandQuery => {
-                    (ToolName::PhotoUnderstand, intent_query_text(d))
+                    (
+                        ToolName::PhotoUnderstand,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
-                IntentType::DataAnalysisQuery => (ToolName::DataAnalysis, intent_query_text(d)),
-                IntentType::DeepResearchQuery => (ToolName::DeepResearch, intent_query_text(d)),
-                IntentType::RecordModeQuery => (ToolName::RecordMode, intent_query_text(d)),
+                IntentType::DataAnalysisQuery => (
+                    ToolName::DataAnalysis,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::DeepResearchQuery => (
+                    ToolName::DeepResearch,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::RecordModeQuery => (
+                    ToolName::RecordMode,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
                 _ => unreachable!("match guarded above"),
             };
 
@@ -1564,6 +1592,19 @@ fn intent_query_text(d: &IntentDraft) -> String {
         .find(|e| e.field == FieldKey::Task)
         .map(|e| e.verbatim_excerpt.clone())
         .unwrap_or_else(|| "query".to_string())
+}
+
+fn intent_query_text_with_thread_context(d: &IntentDraft, thread_state: &ThreadState) -> String {
+    let mut query = intent_query_text(d);
+    if let Some(project_id) = &thread_state.project_id {
+        query.push_str(" | project_id=");
+        query.push_str(project_id);
+    }
+    if !thread_state.pinned_context_refs.is_empty() {
+        query.push_str(" | pinned_context_refs=");
+        query.push_str(&thread_state.pinned_context_refs.join(","));
+    }
+    query
 }
 
 fn confirm_text(d: &IntentDraft) -> String {

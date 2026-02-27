@@ -473,6 +473,49 @@ pub struct ThreadState {
     pub return_check_expires_at: Option<MonotonicTimeNs>,
     /// Optional active speaker user identity carried across turns.
     pub active_speaker_user_id: Option<String>,
+    /// Optional project/workspace scope identifier.
+    pub project_id: Option<String>,
+    /// Optional pinned context references for thread-scoped grounding.
+    pub pinned_context_refs: Vec<String>,
+    /// Optional per-thread policy flags merged into PH1.X policy context.
+    pub thread_policy_flags: Option<ThreadPolicyFlags>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ThreadPolicyFlags {
+    pub schema_version: SchemaVersion,
+    pub force_privacy_mode: bool,
+    pub force_do_not_disturb: bool,
+    pub force_strict_safety: bool,
+}
+
+impl ThreadPolicyFlags {
+    pub fn v1(
+        force_privacy_mode: bool,
+        force_do_not_disturb: bool,
+        force_strict_safety: bool,
+    ) -> Result<Self, ContractViolation> {
+        let flags = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            force_privacy_mode,
+            force_do_not_disturb,
+            force_strict_safety,
+        };
+        flags.validate()?;
+        Ok(flags)
+    }
+}
+
+impl Validate for ThreadPolicyFlags {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "thread_policy_flags.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        Ok(())
+    }
 }
 
 impl ThreadState {
@@ -487,6 +530,9 @@ impl ThreadState {
             return_check_pending: false,
             return_check_expires_at: None,
             active_speaker_user_id: None,
+            project_id: None,
+            pinned_context_refs: Vec::new(),
+            thread_policy_flags: None,
         }
     }
 
@@ -501,6 +547,9 @@ impl ThreadState {
             return_check_pending: false,
             return_check_expires_at: None,
             active_speaker_user_id: None,
+            project_id: None,
+            pinned_context_refs: Vec::new(),
+            thread_policy_flags: None,
         }
     }
 
@@ -511,6 +560,26 @@ impl ThreadState {
     ) -> Result<Self, ContractViolation> {
         self.active_subject_ref = active_subject_ref;
         self.active_speaker_user_id = active_speaker_user_id;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_project_context(
+        mut self,
+        project_id: Option<String>,
+        pinned_context_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.project_id = project_id;
+        self.pinned_context_refs = pinned_context_refs;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_thread_policy_flags(
+        mut self,
+        thread_policy_flags: Option<ThreadPolicyFlags>,
+    ) -> Result<Self, ContractViolation> {
+        self.thread_policy_flags = thread_policy_flags;
         self.validate()?;
         Ok(self)
     }
@@ -620,6 +689,61 @@ impl Validate for ThreadState {
                     reason: "must be <= 128 chars",
                 });
             }
+        }
+        if let Some(project_id) = &self.project_id {
+            if project_id.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.project_id",
+                    reason: "must not be empty when provided",
+                });
+            }
+            if project_id.len() > 96 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.project_id",
+                    reason: "must be <= 96 chars",
+                });
+            }
+            if project_id
+                .chars()
+                .any(|c| c.is_control() || c.is_ascii_whitespace())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.project_id",
+                    reason: "must not contain control chars or whitespace",
+                });
+            }
+        }
+        if self.pinned_context_refs.len() > 16 {
+            return Err(ContractViolation::InvalidValue {
+                field: "thread_state.pinned_context_refs",
+                reason: "must be <= 16 entries",
+            });
+        }
+        for context_ref in &self.pinned_context_refs {
+            if context_ref.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.pinned_context_refs[]",
+                    reason: "must not contain empty entries",
+                });
+            }
+            if context_ref.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.pinned_context_refs[]",
+                    reason: "must be <= 128 chars",
+                });
+            }
+            if context_ref
+                .chars()
+                .any(|c| c.is_control() || c.is_ascii_whitespace())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "thread_state.pinned_context_refs[]",
+                    reason: "must not contain control chars or whitespace",
+                });
+            }
+        }
+        if let Some(thread_policy_flags) = &self.thread_policy_flags {
+            thread_policy_flags.validate()?;
         }
         Ok(())
     }
@@ -1341,6 +1465,9 @@ fn derive_subject_ref(
 ) -> String {
     if let Some(subject_ref) = &thread_state.active_subject_ref {
         return subject_ref.clone();
+    }
+    if let Some(project_id) = &thread_state.project_id {
+        return format!("project:{project_id}");
     }
 
     if let Some(out) = nlp_output {
@@ -2471,6 +2598,43 @@ mod tests {
             Some("prior_topic")
         );
         assert_eq!(state.return_check_expires_at, Some(MonotonicTimeNs(11)));
+    }
+
+    #[test]
+    fn thread_state_accepts_project_context_and_policy_flags() {
+        let state = ThreadState::empty_v1()
+            .with_project_context(
+                Some("proj_q3_planning".to_string()),
+                vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()],
+            )
+            .unwrap()
+            .with_thread_policy_flags(Some(
+                ThreadPolicyFlags::v1(true, false, true).unwrap(),
+            ))
+            .unwrap();
+
+        assert_eq!(state.project_id.as_deref(), Some("proj_q3_planning"));
+        assert_eq!(
+            state.pinned_context_refs,
+            vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()]
+        );
+        assert!(state
+            .thread_policy_flags
+            .expect("thread policy flags should be set")
+            .force_strict_safety);
+    }
+
+    #[test]
+    fn thread_state_rejects_empty_pinned_context_ref() {
+        let err = ThreadState::empty_v1()
+            .with_project_context(Some("proj_q3_planning".to_string()), vec!["".to_string()])
+            .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "thread_state.pinned_context_refs[]");
+            }
+            _ => panic!("expected InvalidValue for pinned context ref"),
+        }
     }
 
     fn intent_draft_with_evidence() -> IntentDraft {

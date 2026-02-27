@@ -198,12 +198,15 @@ impl Ph1xRuntime {
                     &base_thread_state.pending,
                     PendingKind::Clarify(FieldKey::ReferenceTarget),
                 );
-                let next_state = ThreadState::v1(
-                    Some(PendingState::Clarify {
-                        missing_field: FieldKey::ReferenceTarget,
-                        attempts,
-                    }),
-                    base_thread_state.resume_buffer.clone(),
+                let next_state = inherit_thread_scope(
+                    ThreadState::v1(
+                        Some(PendingState::Clarify {
+                            missing_field: FieldKey::ReferenceTarget,
+                            attempts,
+                        }),
+                        base_thread_state.resume_buffer.clone(),
+                    ),
+                    &base_thread_state,
                 )
                 .with_continuity(
                     Some(req.subject_ref.clone()),
@@ -232,12 +235,15 @@ impl Ph1xRuntime {
                     &base_thread_state.pending,
                     PendingKind::Clarify(FieldKey::ReferenceTarget),
                 );
-                let next_state = ThreadState::v1(
-                    Some(PendingState::Clarify {
-                        missing_field: FieldKey::ReferenceTarget,
-                        attempts,
-                    }),
-                    base_thread_state.resume_buffer.clone(),
+                let next_state = inherit_thread_scope(
+                    ThreadState::v1(
+                        Some(PendingState::Clarify {
+                            missing_field: FieldKey::ReferenceTarget,
+                            attempts,
+                        }),
+                        base_thread_state.resume_buffer.clone(),
+                    ),
+                    &base_thread_state,
                 )
                 .with_continuity(
                     Some(req.subject_ref.clone()),
@@ -314,12 +320,15 @@ impl Ph1xRuntime {
                     &base_thread_state.pending,
                     PendingKind::Clarify(missing_field),
                 );
-                let next_state = ThreadState::v1(
-                    Some(PendingState::Clarify {
-                        missing_field,
-                        attempts,
-                    }),
-                    base_thread_state.resume_buffer.clone(),
+                let next_state = inherit_thread_scope(
+                    ThreadState::v1(
+                        Some(PendingState::Clarify {
+                            missing_field,
+                            attempts,
+                        }),
+                        base_thread_state.resume_buffer.clone(),
+                    ),
+                    &base_thread_state,
                 );
 
                 self.out_clarify(
@@ -407,12 +416,15 @@ impl Ph1xRuntime {
                 {
                     let attempts =
                         bump_attempts(&base_thread_state.pending, PendingKind::MemoryPermission);
-                    let next_state = ThreadState::v1(
-                        Some(PendingState::MemoryPermission {
-                            deferred_response_text: truncate_to_char_boundary(text, 32_768),
-                            attempts,
-                        }),
-                        next_thread_state.resume_buffer.clone(),
+                    let next_state = inherit_thread_scope(
+                        ThreadState::v1(
+                            Some(PendingState::MemoryPermission {
+                                deferred_response_text: truncate_to_char_boundary(text, 32_768),
+                                attempts,
+                            }),
+                            next_thread_state.resume_buffer.clone(),
+                        ),
+                        &base_thread_state,
                     );
                     return self.out_respond(
                         req,
@@ -512,12 +524,15 @@ impl Ph1xRuntime {
                 &base_thread_state.pending,
                 PendingKind::Clarify(missing_field),
             );
-            let next_state = ThreadState::v1(
-                Some(PendingState::Clarify {
-                    missing_field,
-                    attempts,
-                }),
-                None,
+            let next_state = inherit_thread_scope(
+                ThreadState::v1(
+                    Some(PendingState::Clarify {
+                        missing_field,
+                        attempts,
+                    }),
+                    None,
+                ),
+                &base_thread_state,
             );
             return self.out_clarify(
                 req,
@@ -558,12 +573,15 @@ impl Ph1xRuntime {
                 &base_thread_state.pending,
                 PendingKind::Clarify(missing_field),
             );
-            let next_state = ThreadState::v1(
-                Some(PendingState::Clarify {
-                    missing_field,
-                    attempts,
-                }),
-                base_thread_state.resume_buffer.clone(),
+            let next_state = inherit_thread_scope(
+                ThreadState::v1(
+                    Some(PendingState::Clarify {
+                        missing_field,
+                        attempts,
+                    }),
+                    base_thread_state.resume_buffer.clone(),
+                ),
+                &base_thread_state,
             );
             return self.out_clarify(
                 req,
@@ -584,12 +602,15 @@ impl Ph1xRuntime {
                 &base_thread_state.pending,
                 PendingKind::Clarify(missing_field),
             );
-            let next_state = ThreadState::v1(
-                Some(PendingState::Clarify {
-                    missing_field,
-                    attempts,
-                }),
-                base_thread_state.resume_buffer.clone(),
+            let next_state = inherit_thread_scope(
+                ThreadState::v1(
+                    Some(PendingState::Clarify {
+                        missing_field,
+                        attempts,
+                    }),
+                    base_thread_state.resume_buffer.clone(),
+                ),
+                &base_thread_state,
             );
             return self.out_clarify(
                 req,
@@ -617,34 +638,65 @@ impl Ph1xRuntime {
                 | IntentType::RecordModeQuery
         ) {
             let (tool_name, query) = match d.intent_type {
-                IntentType::TimeQuery => (ToolName::Time, intent_query_text(d)),
-                IntentType::WeatherQuery => (ToolName::Weather, intent_query_text(d)),
-                IntentType::WebSearchQuery => (ToolName::WebSearch, intent_query_text(d)),
-                IntentType::NewsQuery => (ToolName::News, intent_query_text(d)),
+                IntentType::TimeQuery => {
+                    (ToolName::Time, intent_query_text_with_thread_context(d, &base_thread_state))
+                }
+                IntentType::WeatherQuery => (
+                    ToolName::Weather,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::WebSearchQuery => (
+                    ToolName::WebSearch,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::NewsQuery => {
+                    (ToolName::News, intent_query_text_with_thread_context(d, &base_thread_state))
+                }
                 IntentType::UrlFetchAndCiteQuery => {
-                    (ToolName::UrlFetchAndCite, intent_query_text(d))
+                    (
+                        ToolName::UrlFetchAndCite,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
                 IntentType::DocumentUnderstandQuery => {
-                    (ToolName::DocumentUnderstand, intent_query_text(d))
+                    (
+                        ToolName::DocumentUnderstand,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
                 IntentType::PhotoUnderstandQuery => {
-                    (ToolName::PhotoUnderstand, intent_query_text(d))
+                    (
+                        ToolName::PhotoUnderstand,
+                        intent_query_text_with_thread_context(d, &base_thread_state),
+                    )
                 }
-                IntentType::DataAnalysisQuery => (ToolName::DataAnalysis, intent_query_text(d)),
-                IntentType::DeepResearchQuery => (ToolName::DeepResearch, intent_query_text(d)),
-                IntentType::RecordModeQuery => (ToolName::RecordMode, intent_query_text(d)),
+                IntentType::DataAnalysisQuery => (
+                    ToolName::DataAnalysis,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::DeepResearchQuery => (
+                    ToolName::DeepResearch,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::RecordModeQuery => (
+                    ToolName::RecordMode,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
                 _ => unreachable!("match guarded above"),
             };
 
             let tool_request = self.tool_request(req, tool_name, query)?;
             let request_id = tool_request.request_id;
             let attempts = bump_attempts(&base_thread_state.pending, PendingKind::Tool(request_id));
-            let next_state = ThreadState::v1(
-                Some(PendingState::Tool {
-                    request_id,
-                    attempts,
-                }),
-                base_thread_state.resume_buffer.clone(),
+            let next_state = inherit_thread_scope(
+                ThreadState::v1(
+                    Some(PendingState::Tool {
+                        request_id,
+                        attempts,
+                    }),
+                    base_thread_state.resume_buffer.clone(),
+                ),
+                &base_thread_state,
             );
             return self.out_dispatch_tool(
                 req,
@@ -675,12 +727,15 @@ impl Ph1xRuntime {
             &base_thread_state.pending,
             PendingKind::Confirm(d.intent_type),
         );
-        let next_state = ThreadState::v1(
-            Some(PendingState::Confirm {
-                intent_draft: confirm_snapshot_intent_draft(d),
-                attempts,
-            }),
-            base_thread_state.resume_buffer.clone(),
+        let next_state = inherit_thread_scope(
+            ThreadState::v1(
+                Some(PendingState::Confirm {
+                    intent_draft: confirm_snapshot_intent_draft(d),
+                    attempts,
+                }),
+                base_thread_state.resume_buffer.clone(),
+            ),
+            &base_thread_state,
         );
         self.out_confirm(
             req,
@@ -723,14 +778,17 @@ impl Ph1xRuntime {
                                 &base_thread_state.pending,
                                 PendingKind::StepUp(requested_action),
                             );
-                            let next_state = ThreadState::v1(
-                                Some(PendingState::StepUp {
-                                    intent_draft: step_up_snapshot.clone(),
-                                    requested_action: requested_action.to_string(),
-                                    challenge_method,
-                                    attempts: next_attempts,
-                                }),
-                                base_thread_state.resume_buffer.clone(),
+                            let next_state = inherit_thread_scope(
+                                ThreadState::v1(
+                                    Some(PendingState::StepUp {
+                                        intent_draft: step_up_snapshot.clone(),
+                                        requested_action: requested_action.to_string(),
+                                        challenge_method,
+                                        attempts: next_attempts,
+                                    }),
+                                    base_thread_state.resume_buffer.clone(),
+                                ),
+                                &base_thread_state,
                             );
                             return self.out_dispatch_access_step_up(
                                 req,
@@ -1254,12 +1312,15 @@ impl Ph1xRuntime {
             &base_thread_state.pending,
             PendingKind::Clarify(FieldKey::IntentChoice),
         );
-        let next_state = ThreadState::v1(
-            Some(PendingState::Clarify {
-                missing_field: FieldKey::IntentChoice,
-                attempts,
-            }),
-            base_thread_state.resume_buffer.clone(),
+        let next_state = inherit_thread_scope(
+            ThreadState::v1(
+                Some(PendingState::Clarify {
+                    missing_field: FieldKey::IntentChoice,
+                    attempts,
+                }),
+                base_thread_state.resume_buffer.clone(),
+            ),
+            &base_thread_state,
         );
 
         self.out_clarify(
@@ -1421,6 +1482,13 @@ fn bump_attempts(prev: &Option<PendingState>, next: PendingKind) -> u8 {
 fn clear_pending(mut s: ThreadState) -> ThreadState {
     s.pending = None;
     s
+}
+
+fn inherit_thread_scope(mut next: ThreadState, base: &ThreadState) -> ThreadState {
+    next.project_id = base.project_id.clone();
+    next.pinned_context_refs = base.pinned_context_refs.clone();
+    next.thread_policy_flags = base.thread_policy_flags;
+    next
 }
 
 fn clear_expired_resume_buffer(mut s: ThreadState, now: MonotonicTimeNs) -> ThreadState {
@@ -1889,6 +1957,19 @@ fn intent_query_text(d: &IntentDraft) -> String {
         .find(|e| e.field == FieldKey::Task)
         .map(|e| e.verbatim_excerpt.clone())
         .unwrap_or_else(|| "query".to_string())
+}
+
+fn intent_query_text_with_thread_context(d: &IntentDraft, thread_state: &ThreadState) -> String {
+    let mut query = intent_query_text(d);
+    if let Some(project_id) = &thread_state.project_id {
+        query.push_str(" | project_id=");
+        query.push_str(project_id);
+    }
+    if !thread_state.pinned_context_refs.is_empty() {
+        query.push_str(" | pinned_context_refs=");
+        query.push_str(&thread_state.pinned_context_refs.join(","));
+    }
+    query
 }
 
 fn confirm_text(d: &IntentDraft) -> String {
@@ -3209,6 +3290,50 @@ mod tests {
             _ => panic!("expected Dispatch directive"),
         }
         assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_tool_query_includes_project_and_pinned_context_refs_when_present() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let thread_state = base_thread()
+            .with_project_context(
+                Some("proj_q3_planning".to_string()),
+                vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()],
+            )
+            .unwrap();
+
+        let req = Ph1xRequest::v1(
+            19,
+            1,
+            now(1),
+            thread_state,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::WebSearchQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::Tool(t) => {
+                    assert!(t.query.contains("project_id=proj_q3_planning"));
+                    assert!(t.query.contains("pinned_context_refs=ctx_budget_sheet,ctx_roadmap_notes"));
+                }
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
     }
 
     #[test]

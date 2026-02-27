@@ -13,6 +13,7 @@ use selene_adapter::grpc_api::{
 use selene_adapter::{
     AdapterRuntime, UiHealthReportQueryRequest as AdapterUiHealthReportQueryRequest,
     UiHealthReportQueryResponse as AdapterUiHealthReportQueryResponse, VoiceTurnAdapterRequest,
+    VoiceTurnThreadPolicyFlags as AdapterVoiceTurnThreadPolicyFlags,
 };
 use tonic::{transport::Server, Request, Response, Status};
 
@@ -54,6 +55,23 @@ impl VoiceIngress for GrpcVoiceIngress {
             } else {
                 Some(req.thread_key)
             },
+            project_id: if req.project_id.trim().is_empty() {
+                None
+            } else {
+                Some(req.project_id)
+            },
+            pinned_context_refs: if req.pinned_context_refs.is_empty() {
+                None
+            } else {
+                Some(req.pinned_context_refs)
+            },
+            thread_policy_flags: req
+                .thread_policy_flags
+                .map(|flags| AdapterVoiceTurnThreadPolicyFlags {
+                    privacy_mode: flags.privacy_mode,
+                    do_not_disturb: flags.do_not_disturb,
+                    strict_safety: flags.strict_safety,
+                }),
             user_text_partial: None,
             user_text_final: None,
             selene_text_partial: None,

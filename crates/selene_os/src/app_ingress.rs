@@ -18,7 +18,7 @@ use selene_kernel_contracts::ph1_voice_id::{
     Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
-use selene_kernel_contracts::ph1d::PolicyContextRef;
+use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1e::ToolResponse;
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
@@ -2633,6 +2633,8 @@ fn build_ph1x_request_from_voice_forward(
     x_build: AppVoicePh1xBuildInput,
     runtime_memory_candidates: Vec<MemoryCandidate>,
 ) -> Result<Ph1xRequest, StorageError> {
+    let effective_policy_context_ref =
+        merge_thread_policy_context(x_build.policy_context_ref, &x_build.thread_state);
     let mut req = Ph1xRequest::v1(
         correlation_id.0,
         turn_id.0,
@@ -2640,7 +2642,7 @@ fn build_ph1x_request_from_voice_forward(
         x_build.thread_state,
         x_build.session_state,
         IdentityContext::Voice(forwarded.voice_identity_assertion.clone()),
-        x_build.policy_context_ref,
+        effective_policy_context_ref,
         runtime_memory_candidates,
         x_build.confirm_answer,
         x_build.nlp_output,
@@ -2692,6 +2694,23 @@ fn build_tool_followup_ph1x_request(
         .with_identity_prompt_scope_key(base_request.identity_prompt_scope_key.clone())
         .map_err(StorageError::ContractViolation)?;
     Ok(req)
+}
+
+fn merge_thread_policy_context(
+    base: PolicyContextRef,
+    thread_state: &ThreadState,
+) -> PolicyContextRef {
+    let mut privacy_mode = base.privacy_mode;
+    let mut do_not_disturb = base.do_not_disturb;
+    let mut safety_tier = base.safety_tier;
+    if let Some(flags) = thread_state.thread_policy_flags {
+        privacy_mode |= flags.force_privacy_mode;
+        do_not_disturb |= flags.force_do_not_disturb;
+        if flags.force_strict_safety {
+            safety_tier = SafetyTier::Strict;
+        }
+    }
+    PolicyContextRef::v1(privacy_mode, do_not_disturb, safety_tier)
 }
 
 fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Option<String> {
@@ -2751,7 +2770,8 @@ mod tests {
         SimulationVersion,
     };
     use selene_kernel_contracts::ph1x::{
-        ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadState,
+        ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadPolicyFlags,
+        ThreadState,
     };
     use selene_kernel_contracts::{
         ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState,
@@ -4263,6 +4283,60 @@ mod tests {
                 .expect("respond outcome must include PH1.X response")
                 .directive,
             Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
+    fn run_pr_desktop_voice_turn_applies_thread_policy_flags_to_ph1x_policy_context() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runpr_policy_user").unwrap();
+        let device_id = DeviceId::new("runpr_policy_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9611),
+            TurnId(9711),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let policy_flags = ThreadPolicyFlags::v1(true, true, true).unwrap();
+        let thread_state = ThreadState::empty_v1()
+            .with_thread_policy_flags(Some(policy_flags))
+            .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(18),
+            thread_state,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(web_search_draft("search the web for H100 pricing")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        let ph1x_request = out
+            .ph1x_request
+            .expect("turn should retain final PH1.X follow-up request");
+        assert!(ph1x_request.policy_context_ref.privacy_mode);
+        assert!(ph1x_request.policy_context_ref.do_not_disturb);
+        assert!(matches!(
+            ph1x_request.policy_context_ref.safety_tier,
+            SafetyTier::Strict
         ));
     }
 
