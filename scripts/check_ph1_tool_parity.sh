@@ -89,6 +89,9 @@ BLUEPRINT_IDS=(
   "TOOL_URL_FETCH_AND_CITE"
   "TOOL_DOCUMENT_UNDERSTAND"
   "TOOL_PHOTO_UNDERSTAND"
+  "TOOL_DATA_ANALYSIS"
+  "TOOL_DEEP_RESEARCH"
+  "TOOL_RECORD_MODE"
 )
 INTENT_TYPES=(
   "TimeQuery"
@@ -98,6 +101,9 @@ INTENT_TYPES=(
   "UrlFetchAndCiteQuery"
   "DocumentUnderstandQuery"
   "PhotoUnderstandQuery"
+  "DataAnalysisQuery"
+  "DeepResearchQuery"
+  "RecordModeQuery"
 )
 INTENT_TOKENS=(
   "TIME_QUERY"
@@ -107,6 +113,9 @@ INTENT_TOKENS=(
   "URL_FETCH_AND_CITE_QUERY"
   "DOCUMENT_UNDERSTAND_QUERY"
   "PHOTO_UNDERSTAND_QUERY"
+  "DATA_ANALYSIS_QUERY"
+  "DEEP_RESEARCH_QUERY"
+  "RECORD_MODE_QUERY"
 )
 TOOL_VARIANTS=(
   "Time"
@@ -116,6 +125,9 @@ TOOL_VARIANTS=(
   "UrlFetchAndCite"
   "DocumentUnderstand"
   "PhotoUnderstand"
+  "DataAnalysis"
+  "DeepResearch"
+  "RecordMode"
 )
 TOOL_KEYS=(
   "time"
@@ -125,6 +137,9 @@ TOOL_KEYS=(
   "url_fetch_and_cite"
   "document_understand"
   "photo_understand"
+  "data_analysis"
+  "deep_research"
+  "record_mode"
 )
 
 EXPECTED_BP="$TMP_DIR/expected_blueprints.txt"
@@ -189,6 +204,9 @@ E2E_TESTS=(
   "run_c_desktop_voice_turn_end_to_end_dispatches_url_fetch_and_cite_and_returns_provenance"
   "run_d_desktop_voice_turn_end_to_end_dispatches_document_understand_and_returns_provenance"
   "run_e_desktop_voice_turn_end_to_end_dispatches_photo_understand_and_returns_provenance"
+  "run_da_desktop_voice_turn_end_to_end_dispatches_data_analysis_and_returns_provenance"
+  "run_dr_desktop_voice_turn_end_to_end_dispatches_deep_research_and_returns_provenance"
+  "run_rm_desktop_voice_turn_end_to_end_dispatches_record_mode_and_returns_provenance"
 )
 for test_name in "${E2E_TESTS[@]}"; do
   require_match "fn ${test_name}\\(" "$APP_INGRESS" "missing desktop e2e test ${test_name}"
