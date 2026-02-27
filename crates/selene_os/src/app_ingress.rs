@@ -981,6 +981,66 @@ impl AppServerIngressRuntime {
                 device_id,
                 sample_seed,
             } => {
+                let session = store
+                    .ph1onb_session_row(&onboarding_session_id)
+                    .cloned()
+                    .ok_or(StorageError::ForeignKeyViolation {
+                        table: "onboarding_sessions.onboarding_session_id",
+                        key: onboarding_session_id.as_str().to_string(),
+                    })?;
+                if !session.missing_fields.is_empty() {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_ASK_MISSING_REQUIRED_BEFORE_VOICE_ENROLL",
+                        },
+                    ));
+                }
+                let remaining_platform_receipt_kinds = store
+                    .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
+                if !remaining_platform_receipt_kinds.is_empty() {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_PLATFORM_SETUP_REQUIRED_BEFORE_VOICE_ENROLL",
+                        },
+                    ));
+                }
+                if session.terms_status != Some(TermsStatus::Accepted) {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_TERMS_REQUIRED_BEFORE_VOICE_ENROLL",
+                        },
+                    ));
+                }
+                if !session.primary_device_confirmed {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL",
+                        },
+                    ));
+                }
+                let expected_device_id =
+                    session
+                        .primary_device_device_id
+                        .ok_or(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "app_onboarding_continue_request.action",
+                                reason:
+                                    "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL",
+                            },
+                        ))?;
+                if expected_device_id != device_id {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action.voice_enroll_lock.device_id",
+                            reason:
+                                "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL",
+                        },
+                    ));
+                }
                 if onboarding_sender_verification_pending(store, &onboarding_session_id)? {
                     return Err(StorageError::ContractViolation(
                         ContractViolation::InvalidValue {
@@ -1074,8 +1134,7 @@ impl AppServerIngressRuntime {
                         .ph1onb_session_row(&onboarding_session_id)
                         .map(|r| r.missing_fields.clone())
                         .unwrap_or_default(),
-                    remaining_platform_receipt_kinds: store
-                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+                    remaining_platform_receipt_kinds,
                     voice_artifact_sync_receipt_ref,
                     access_engine_instance_id: None,
                     onboarding_status: None,
@@ -4158,6 +4217,242 @@ mod tests {
             .unwrap();
         assert_eq!(complete.next_step, AppOnboardingContinueNextStep::Ready);
         assert_eq!(complete.onboarding_status, Some(OnboardingStatus::Complete));
+    }
+
+    #[test]
+    fn runi_onboarding_voice_enroll_fail_closed_when_stage_not_ready() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runi_voice_guard_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runi_voice_guard_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+        seed_employee_company_and_position(&mut store, "tenant_1", MonotonicTimeNs(139));
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+            (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+            (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+            (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+            (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) =
+            seed_invite_link_for_click(&mut store, &inviter_user_id, "tenant_1", MonotonicTimeNs(140));
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9921),
+                    "runi-voice-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "runi-voice-fp".to_string(),
+                    "ios_instance_runi_voice".to_string(),
+                    "nonce_runi_voice".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(141),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let early_voice_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-early".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::VoiceEnrollLock {
+                        device_id: DeviceId::new("runi_voice_guard_device").unwrap(),
+                        sample_seed: "runi_voice_seed".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(142),
+            )
+            .expect_err("voice enroll must fail when ask-missing still pending");
+        match early_voice_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_ASK_MISSING_REQUIRED_BEFORE_VOICE_ENROLL");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-ask-prompt".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(143),
+            )
+            .unwrap();
+        while ask_out.next_step == AppOnboardingContinueNextStep::AskMissing {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask step must expose one missing field");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9921),
+                        onboarding_session_id.clone(),
+                        format!("runi-voice-ask-{field_key}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(field_value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(144),
+                )
+                .unwrap();
+        }
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9921),
+                        onboarding_session_id.clone(),
+                        format!("runi-voice-platform-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::PlatformSetupReceipt {
+                            receipt_kind: receipt_kind.clone(),
+                            receipt_ref: format!("receipt:runi-voice:{receipt_kind}"),
+                            signer: "selene_mobile_app".to_string(),
+                            payload_hash: format!("{:064x}", idx + 1),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(145 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(platform_out.next_step, AppOnboardingContinueNextStep::Terms);
+        runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-terms".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::TermsAccept {
+                        terms_version_id: "terms_v1".to_string(),
+                        accepted: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(151),
+            )
+            .unwrap();
+
+        let pre_primary_voice_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-pre-primary".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::VoiceEnrollLock {
+                        device_id: DeviceId::new("runi_voice_guard_device").unwrap(),
+                        sample_seed: "runi_voice_seed".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(152),
+            )
+            .expect_err("voice enroll must fail before primary device confirm");
+        match pre_primary_voice_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-primary".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                        device_id: inviter_device_id,
+                        proof_ok: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(153),
+            )
+            .unwrap();
+
+        let wrong_device_voice_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9921),
+                    onboarding_session_id.clone(),
+                    "runi-voice-wrong-device".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::VoiceEnrollLock {
+                        device_id: DeviceId::new("runi_voice_other_device").unwrap(),
+                        sample_seed: "runi_voice_seed".to_string(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(154),
+            )
+            .expect_err("voice enroll must fail for non-primary device");
+        match wrong_device_voice_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_onboarding_continue_request.action.voice_enroll_lock.device_id"
+                );
+                assert_eq!(reason, "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]
