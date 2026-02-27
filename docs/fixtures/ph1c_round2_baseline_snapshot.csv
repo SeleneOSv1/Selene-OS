@@ -1,0 +1,9 @@
+captured_at_utc,commit_hash,locale,device_route,noise_class,overlap_speech,voice_minutes,stt_turns,tts_turns,stt_provider_primary_success_count,stt_provider_fallback_success_count,stt_terminal_clarify_count,tts_provider_primary_success_count,tts_provider_fallback_success_count,tts_terminal_text_only_count,partial_first_chunk_p95_ms,eos_to_first_token_p95_ms,capture_to_ph1c_handoff_p95_ms,schema_drift_fail_count,kernel_contract_tests_pass,engine_tests_pass,os_tests_pass
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,en-US,desktop_mic,quiet,false,48,160,160,155,4,1,157,2,1,178,252,96,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,en-US,desktop_mic,noisy,true,45,150,150,140,8,2,145,4,1,214,289,112,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,en-US,mobile_mic,quiet,false,42,138,138,131,6,1,134,3,1,186,266,104,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,es-ES,mobile_mic,noisy,true,39,132,132,119,10,3,124,6,2,231,298,118,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,fr-FR,desktop_mic,quiet,true,41,136,136,127,7,2,129,5,2,206,281,109,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,zh-CN,mobile_mic,noisy,false,44,146,146,129,13,4,132,10,4,236,297,119,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,ar-SA,desktop_mic,noisy,true,37,125,125,108,13,4,111,10,4,247,300,120,0,1,1,1
+2026-02-25T19:10:00Z,23affed3ff9b0abdc5eb475921f03128f73c92b9,hi-IN,mobile_mic,quiet,false,40,129,129,118,9,2,121,6,2,223,292,114,0,1,1,1

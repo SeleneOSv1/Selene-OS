@@ -1,5 +1,10 @@
 # PH1.DELIVERY DB Wiring (Design vNext)
 
+## 0) Implementation Status (Current Repo)
+- `status`: `DESIGN_ONLY_NOT_WIRED`
+- `current_state`: Selene storage currently has no PH1.DELIVERY-owned tables or commit wiring in `crates/selene_storage`.
+- `scope_note`: this document describes target ownership/wiring for a future phase, not active row-15 implementation.
+
 ## A) Engine Header
 - engine_id: PH1.DELIVERY
 - layer: Control

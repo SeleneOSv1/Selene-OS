@@ -178,11 +178,12 @@ Locked priority queue:
 |---|---|---|---|
 | 1 | PH1.VISION | DONE | user-confirmed completed in this round |
 | 2 | PH1.K | DONE | step 1-19 complete; release gate passed; closure proof recorded |
-| 3 | PH1.C | NEXT | queue advanced after PH1.K step 19 closure |
-| 4 | PH1.D | QUEUED | executes after PH1.C |
+| 3 | PH1.C | DONE | step 1-15 complete; release gate passed; closure proof recorded |
+| 4 | PH1.D | DONE | 5H step 1-12 complete; builder governance lock revalidated |
 
-Current next engine:
-- `PH1.C`
+Current queue status:
+- `ROUND_3_HARDENING_SWEEP`: `DONE` (`2026-02-26`)
+- Next locked round: `ROUND_4_PRODUCTION_READINESS`
 
 PH1.K strict runbook lock:
 - Active checklist source: `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5A) PH1.K Round-2 Strict Implementation Checklist (Step 1..19)`.
@@ -195,7 +196,13 @@ PH1.K strict runbook lock:
   - PH1.X interruption continuity behavior must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5D`.
   - PH1.K required update deltas must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5E`.
   - Execution order lock: complete `5D` (PH1.X behavior lock) first, then execute `5E` (PH1.K required deltas), then proceed with PH1.K implementation.
-  - Current progress (`2026-02-25`): `5D` Step 1-14 complete; `5E` Step 1-10 complete; `5A` Step 1-19 complete; queue moved to `PH1.C` as next locked engine.
+  - Current progress (`2026-02-25`): `5D` Step 1-14 complete; `5E` Step 1-10 complete; `5A` Step 1-19 complete; `5G` Step 1-15 complete; queue moved to `PH1.D` as next locked engine.
+
+PH1.D strict runbook lock:
+- Active checklist source: `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5H) PH1.D + PH1.C Locked Superiority Plan (Beat ChatGPT on Voice Stack)`.
+- Execution rule: Step order is strict; each step requires code proof + test proof + ledger entry.
+- Current progress (`2026-02-26`): `5H` Step 1-12 complete (live PH1.D HTTP provider path + PH1.C direct live STT consumption + strict primary->secondary breaker lock + true streaming STT path + locale-family normalization lock + calibrated confidence gate + tenant/domain lexicon boost wiring + PH1.SRL/PH1.NLP bounded intent-aware transcript repair lock + PH1.X one-clarify-then-escalate precision lock + FEEDBACK->LEARN->PAE gold-loop determinism lock for miss/correction events + in-house STT/TTS SHADOW comparison lock with governed promotion gate requirement by locale/device/tenant + Builder remediation governance lock with human approval gates for code/launch). Runbook `5H` is complete.
+- Current progress (`2026-02-26`, phase `5I`): Step 1-22 complete (PH1.C superiority lock now implemented with deterministic 22-step runtime gate surface, ChatGPT A/B parity snapshot lane, strict superiority/cost-quality/acceptance gates, and readiness-audit enforcement via `check_ph1c_5i_eval_snapshot.sh` + `check_ph1c_5i_superiority_gate.sh`).
 
 ## Engine 01 Review Log (`PH1.REVIEW`)
 

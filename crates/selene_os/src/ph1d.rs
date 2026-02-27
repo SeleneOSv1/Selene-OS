@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use selene_engines::ph1d::reason_codes as ph1d_reason_codes;
 use selene_kernel_contracts::ph1d::{
     Ph1dFail, Ph1dFailureKind, Ph1dOk, Ph1dRequest, Ph1dResponse, PH1D_CONTRACT_VERSION,
 };
@@ -92,6 +93,19 @@ fn validate_fail(f: &Ph1dFail) -> Result<(), ContractViolation> {
         return Err(ContractViolation::InvalidValue {
             field: "ph1d_fail.reason_code",
             reason: "must be non-zero",
+        });
+    }
+    let expected_reason = match f.kind {
+        Ph1dFailureKind::InvalidSchema => ph1d_reason_codes::D_FAIL_INVALID_SCHEMA,
+        Ph1dFailureKind::ForbiddenOutput => ph1d_reason_codes::D_FAIL_FORBIDDEN_OUTPUT,
+        Ph1dFailureKind::SafetyBlock => ph1d_reason_codes::D_FAIL_SAFETY_BLOCK,
+        Ph1dFailureKind::Timeout => ph1d_reason_codes::D_FAIL_TIMEOUT,
+        Ph1dFailureKind::BudgetExceeded => ph1d_reason_codes::D_FAIL_BUDGET_EXCEEDED,
+    };
+    if f.reason_code != expected_reason {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1d_fail.reason_code",
+            reason: "must match fail kind",
         });
     }
     Ok(())
@@ -211,7 +225,10 @@ mod tests {
         let w = Ph1dWiring::new(
             Ph1dWiringConfig::mvp_v1(true),
             StubEngine {
-                out: Ph1dResponse::Fail(Ph1dFail::v1(ReasonCodeId(1), Ph1dFailureKind::Timeout)),
+                out: Ph1dResponse::Fail(Ph1dFail::v1(
+                    ph1d_reason_codes::D_FAIL_TIMEOUT,
+                    Ph1dFailureKind::Timeout,
+                )),
             },
         )
         .unwrap();
@@ -220,6 +237,26 @@ mod tests {
                 assert_eq!(f.kind, Ph1dFailureKind::Timeout)
             }
             other => panic!("expected forwarded fail response, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_d_wiring_06_fail_reason_mismatch_is_refused() {
+        let w = Ph1dWiring::new(
+            Ph1dWiringConfig::mvp_v1(true),
+            StubEngine {
+                out: Ph1dResponse::Fail(Ph1dFail::v1(
+                    ph1d_reason_codes::D_FAIL_INVALID_SCHEMA,
+                    Ph1dFailureKind::Timeout,
+                )),
+            },
+        )
+        .unwrap();
+        match w.run_turn(&req("hello")).unwrap() {
+            Ph1dWiringOutcome::Refused(f) => {
+                assert_eq!(f.reason_code, reason_codes::PH1_D_INTERNAL_PIPELINE_ERROR)
+            }
+            other => panic!("expected refused output, got: {other:?}"),
         }
     }
 }

@@ -1,11 +1,17 @@
 #![forbid(unsafe_code)]
 
+use std::env;
+use std::io::Read;
+use std::time::{Duration, Instant};
+
 use serde_json::Value;
 
 use selene_kernel_contracts::ph1d::{
     Ph1dAnalysis, Ph1dChat, Ph1dClarify, Ph1dFail, Ph1dFailureKind, Ph1dFieldRefinement,
-    Ph1dIntent, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dRequest,
-    Ph1dResponse,
+    Ph1dIntent, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse,
+    Ph1dProviderNormalizedOutput, Ph1dProviderStatus, Ph1dProviderTask,
+    Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse,
+    PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1n::{
     EvidenceSpan, FieldKey, FieldValue, IntentType, TranscriptHash,
@@ -41,6 +47,249 @@ pub trait Ph1dProviderAdapter {
     ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dLiveProviderAdapterConfig {
+    pub openai_api_key: Option<String>,
+    pub google_api_key: Option<String>,
+    pub openai_ocr_endpoint: String,
+    pub openai_stt_endpoint: String,
+    pub openai_tts_endpoint: String,
+    pub google_ocr_endpoint: String,
+    pub google_stt_endpoint: String,
+    pub google_tts_endpoint: String,
+    pub connect_timeout_ms: u64,
+}
+
+impl Ph1dLiveProviderAdapterConfig {
+    pub fn from_env() -> Self {
+        Self {
+            openai_api_key: env::var("PH1D_OPENAI_API_KEY").ok(),
+            google_api_key: env::var("PH1D_GOOGLE_API_KEY").ok(),
+            openai_ocr_endpoint: env::var("PH1D_OPENAI_OCR_ENDPOINT")
+                .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
+            openai_stt_endpoint: env::var("PH1D_OPENAI_STT_ENDPOINT")
+                .unwrap_or_else(|_| "https://api.openai.com/v1/audio/transcriptions".to_string()),
+            openai_tts_endpoint: env::var("PH1D_OPENAI_TTS_ENDPOINT")
+                .unwrap_or_else(|_| "https://api.openai.com/v1/audio/speech".to_string()),
+            google_ocr_endpoint: env::var("PH1D_GOOGLE_OCR_ENDPOINT")
+                .unwrap_or_else(|_| "https://vision.googleapis.com/v1/images:annotate".to_string()),
+            google_stt_endpoint: env::var("PH1D_GOOGLE_STT_ENDPOINT").unwrap_or_else(|_| {
+                "https://speech.googleapis.com/v1/speech:recognize".to_string()
+            }),
+            google_tts_endpoint: env::var("PH1D_GOOGLE_TTS_ENDPOINT").unwrap_or_else(|_| {
+                "https://texttospeech.googleapis.com/v1/text:synthesize".to_string()
+            }),
+            connect_timeout_ms: env::var("PH1D_PROVIDER_CONNECT_TIMEOUT_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .filter(|v| (100..=120_000).contains(v))
+                .unwrap_or(5_000),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), ContractViolation> {
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.openai_ocr_endpoint",
+            &self.openai_ocr_endpoint,
+        )?;
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.openai_stt_endpoint",
+            &self.openai_stt_endpoint,
+        )?;
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.openai_tts_endpoint",
+            &self.openai_tts_endpoint,
+        )?;
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.google_ocr_endpoint",
+            &self.google_ocr_endpoint,
+        )?;
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.google_stt_endpoint",
+            &self.google_stt_endpoint,
+        )?;
+        validate_endpoint_url(
+            "ph1d_live_provider_adapter_config.google_tts_endpoint",
+            &self.google_tts_endpoint,
+        )?;
+        if !(100..=120_000).contains(&self.connect_timeout_ms) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_live_provider_adapter_config.connect_timeout_ms",
+                reason: "must be within 100..=120000",
+            });
+        }
+        Ok(())
+    }
+
+    fn endpoint_for(&self, vendor: Ph1dSpeechProviderVendor, task: Ph1dProviderTask) -> &str {
+        match (vendor, task) {
+            (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::OcrTextExtract) => {
+                self.openai_ocr_endpoint.as_str()
+            }
+            (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::SttTranscribe) => {
+                self.openai_stt_endpoint.as_str()
+            }
+            (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::TtsSynthesize) => {
+                self.openai_tts_endpoint.as_str()
+            }
+            (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::OcrTextExtract) => {
+                self.google_ocr_endpoint.as_str()
+            }
+            (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::SttTranscribe) => {
+                self.google_stt_endpoint.as_str()
+            }
+            (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::TtsSynthesize) => {
+                self.google_tts_endpoint.as_str()
+            }
+        }
+    }
+
+    fn api_key_for(&self, vendor: Ph1dSpeechProviderVendor) -> Option<&str> {
+        match vendor {
+            Ph1dSpeechProviderVendor::OpenAi => self.openai_api_key.as_deref(),
+            Ph1dSpeechProviderVendor::Google => self.google_api_key.as_deref(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Ph1dLiveProviderAdapter {
+    config: Ph1dLiveProviderAdapterConfig,
+}
+
+impl Ph1dLiveProviderAdapter {
+    pub fn new(config: Ph1dLiveProviderAdapterConfig) -> Result<Self, ContractViolation> {
+        config.validate()?;
+        Ok(Self { config })
+    }
+
+    pub fn from_env() -> Result<Self, ContractViolation> {
+        Self::new(Ph1dLiveProviderAdapterConfig::from_env())
+    }
+
+    fn execute_http_call(
+        &self,
+        req: &Ph1dProviderCallRequest,
+        vendor: Ph1dSpeechProviderVendor,
+    ) -> Result<Ph1dProviderTransportOutcome, Ph1dProviderAdapterError> {
+        let Some(api_key) = self.config.api_key_for(vendor) else {
+            return Ok(Ph1dProviderTransportOutcome::ContractMismatch {
+                provider_call_id: None,
+                provider_latency_ms: 0,
+            });
+        };
+
+        let endpoint = self.config.endpoint_for(vendor, req.provider_task);
+        let payload_json = build_live_provider_payload(req, vendor).map_err(|e| {
+            Ph1dProviderAdapterError::terminal(format!(
+                "ph1d live provider payload build failed: {e:?}"
+            ))
+        })?;
+
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_millis(self.config.connect_timeout_ms))
+            .timeout_read(Duration::from_millis(u64::from(req.timeout_ms)))
+            .timeout_write(Duration::from_millis(u64::from(req.timeout_ms)))
+            .build();
+
+        let started = Instant::now();
+        let mut http = agent
+            .post(endpoint)
+            .set("content-type", "application/json")
+            .set("idempotency-key", req.idempotency_key.as_str())
+            .set("x-selene-provider-task", req.provider_task.as_str())
+            .set("x-selene-provider-route", req.provider_route_class.as_str())
+            .set("x-selene-request-id", &req.request_id.0.to_string());
+        match vendor {
+            Ph1dSpeechProviderVendor::OpenAi => {
+                http = http.set("authorization", &format!("Bearer {}", api_key));
+            }
+            Ph1dSpeechProviderVendor::Google => {
+                http = http.set("x-goog-api-key", api_key);
+            }
+        }
+
+        match http.send_string(&payload_json) {
+            Ok(resp) => {
+                let provider_latency_ms = elapsed_ms(started);
+                let provider_call_id = provider_call_id_from_response(&resp);
+                let status = resp.status();
+                let raw_payload_json = read_response_body(resp);
+                if !(200..=299).contains(&status) {
+                    return Ok(status_to_transport_failure(
+                        status,
+                        provider_call_id,
+                        provider_latency_ms,
+                    ));
+                }
+                Ok(Ph1dProviderTransportOutcome::Ok {
+                    provider_call_id,
+                    provider_confidence_bp: confidence_hint_from_json(&raw_payload_json),
+                    raw_payload_json,
+                    provider_latency_ms,
+                    provider_cost_microunits: 0,
+                })
+            }
+            Err(ureq::Error::Status(status, resp)) => {
+                let provider_latency_ms = elapsed_ms(started);
+                let provider_call_id = provider_call_id_from_response(&resp);
+                let _ = read_response_body(resp);
+                Ok(status_to_transport_failure(
+                    status,
+                    provider_call_id,
+                    provider_latency_ms,
+                ))
+            }
+            Err(ureq::Error::Transport(err)) => match err.kind() {
+                ureq::ErrorKind::Io | ureq::ErrorKind::ConnectionFailed => {
+                    Ok(Ph1dProviderTransportOutcome::Timeout {
+                        provider_call_id: None,
+                        provider_latency_ms: elapsed_ms(started),
+                    })
+                }
+                _ => Err(Ph1dProviderAdapterError::retryable(format!(
+                    "ph1d live provider transport error: {err}"
+                ))),
+            },
+        }
+    }
+}
+
+impl Ph1dProviderAdapter for Ph1dLiveProviderAdapter {
+    fn execute(
+        &self,
+        req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
+        req.validate().map_err(|e| {
+            Ph1dProviderAdapterError::terminal(format!("ph1d live provider request invalid: {e:?}"))
+        })?;
+
+        let vendor = provider_vendor_from_provider_id(&req.provider_id);
+        let Some(vendor) = vendor else {
+            return normalize_provider_transport_outcome(
+                req,
+                Ph1dSpeechProviderVendor::OpenAi,
+                Ph1dProviderTransportOutcome::ContractMismatch {
+                    provider_call_id: None,
+                    provider_latency_ms: 0,
+                },
+            )
+            .map_err(|e| {
+                Ph1dProviderAdapterError::terminal(format!(
+                    "ph1d live provider mismatch normalization failed: {e:?}"
+                ))
+            });
+        };
+
+        let transport = self.execute_http_call(req, vendor)?;
+        normalize_provider_transport_outcome(req, vendor, transport).map_err(|e| {
+            Ph1dProviderAdapterError::terminal(format!(
+                "ph1d live provider normalization failed: {e:?}"
+            ))
+        })
+    }
+}
+
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -52,6 +301,679 @@ pub mod reason_codes {
     pub const D_FAIL_BUDGET_EXCEEDED: ReasonCodeId = ReasonCodeId(0x4400_0005);
 
     pub const D_CLARIFY_EVIDENCE_REQUIRED: ReasonCodeId = ReasonCodeId(0x4400_0100);
+
+    pub const D_PROVIDER_SCHEMA_DRIFT: ReasonCodeId = ReasonCodeId(0x4400_0201);
+    pub const D_PROVIDER_TIMEOUT: ReasonCodeId = ReasonCodeId(0x4400_0202);
+    pub const D_PROVIDER_CONTRACT_MISMATCH: ReasonCodeId = ReasonCodeId(0x4400_0203);
+    pub const D_PROVIDER_OK: ReasonCodeId = ReasonCodeId(0x4400_0204);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ph1dSpeechProviderVendor {
+    OpenAi,
+    Google,
+}
+
+impl Ph1dSpeechProviderVendor {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ph1dSpeechProviderVendor::OpenAi => "OPENAI",
+            Ph1dSpeechProviderVendor::Google => "GOOGLE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ph1dProviderTransportOutcome {
+    Ok {
+        provider_call_id: Option<String>,
+        raw_payload_json: String,
+        provider_latency_ms: u32,
+        provider_cost_microunits: u64,
+        provider_confidence_bp: Option<u16>,
+    },
+    Timeout {
+        provider_call_id: Option<String>,
+        provider_latency_ms: u32,
+    },
+    ContractMismatch {
+        provider_call_id: Option<String>,
+        provider_latency_ms: u32,
+    },
+}
+
+pub fn normalize_provider_transport_outcome(
+    req: &Ph1dProviderCallRequest,
+    vendor: Ph1dSpeechProviderVendor,
+    outcome: Ph1dProviderTransportOutcome,
+) -> Result<Ph1dProviderCallResponse, ContractViolation> {
+    req.validate()?;
+
+    if !vendor_matches_provider_id(vendor, &req.provider_id) {
+        return provider_error_response(
+            req,
+            None,
+            Ph1dProviderValidationStatus::SchemaFail,
+            reason_codes::D_PROVIDER_CONTRACT_MISMATCH,
+            0,
+            0,
+            None,
+        );
+    }
+
+    match outcome {
+        Ph1dProviderTransportOutcome::Timeout {
+            provider_call_id,
+            provider_latency_ms,
+        } => provider_error_response(
+            req,
+            provider_call_id,
+            Ph1dProviderValidationStatus::SchemaFail,
+            reason_codes::D_PROVIDER_TIMEOUT,
+            provider_latency_ms,
+            0,
+            None,
+        ),
+        Ph1dProviderTransportOutcome::ContractMismatch {
+            provider_call_id,
+            provider_latency_ms,
+        } => provider_error_response(
+            req,
+            provider_call_id,
+            Ph1dProviderValidationStatus::SchemaFail,
+            reason_codes::D_PROVIDER_CONTRACT_MISMATCH,
+            provider_latency_ms,
+            0,
+            None,
+        ),
+        Ph1dProviderTransportOutcome::Ok {
+            provider_call_id,
+            raw_payload_json,
+            provider_latency_ms,
+            provider_cost_microunits,
+            provider_confidence_bp,
+        } => {
+            let normalized =
+                match normalize_vendor_payload(vendor, req.provider_task, &raw_payload_json) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return provider_error_response(
+                            req,
+                            provider_call_id,
+                            Ph1dProviderValidationStatus::SchemaFail,
+                            reason_codes::D_PROVIDER_SCHEMA_DRIFT,
+                            provider_latency_ms,
+                            provider_cost_microunits,
+                            provider_confidence_bp,
+                        )
+                    }
+                };
+            let normalized_output_json = normalized_output_to_json(&normalized).map_err(|_| {
+                ContractViolation::InvalidValue {
+                    field: "ph1d_provider_boundary.normalized_output_json",
+                    reason: "failed to serialize normalized output",
+                }
+            })?;
+            Ph1dProviderCallResponse::v1(
+                req.correlation_id,
+                req.turn_id,
+                req.request_id,
+                req.idempotency_key.clone(),
+                provider_call_id,
+                req.provider_id.clone(),
+                req.provider_task,
+                req.model_id.clone(),
+                Ph1dProviderStatus::Ok,
+                provider_latency_ms,
+                provider_cost_microunits,
+                provider_confidence_bp,
+                Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1),
+                Some(normalized_output_json),
+                Ph1dProviderValidationStatus::SchemaOk,
+                reason_codes::D_PROVIDER_OK,
+            )
+        }
+    }
+}
+
+fn provider_error_response(
+    req: &Ph1dProviderCallRequest,
+    provider_call_id: Option<String>,
+    validation_status: Ph1dProviderValidationStatus,
+    reason_code: ReasonCodeId,
+    provider_latency_ms: u32,
+    provider_cost_microunits: u64,
+    provider_confidence_bp: Option<u16>,
+) -> Result<Ph1dProviderCallResponse, ContractViolation> {
+    Ph1dProviderCallResponse::v1(
+        req.correlation_id,
+        req.turn_id,
+        req.request_id,
+        req.idempotency_key.clone(),
+        provider_call_id,
+        req.provider_id.clone(),
+        req.provider_task,
+        req.model_id.clone(),
+        Ph1dProviderStatus::Error,
+        provider_latency_ms,
+        provider_cost_microunits,
+        provider_confidence_bp,
+        None,
+        None,
+        validation_status,
+        reason_code,
+    )
+}
+
+fn validate_endpoint_url(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if trimmed.len() > 1_024 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 1024 chars",
+        });
+    }
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must start with http:// or https://",
+        });
+    }
+    Ok(())
+}
+
+fn provider_vendor_from_provider_id(provider_id: &str) -> Option<Ph1dSpeechProviderVendor> {
+    let normalized = provider_id.trim().to_ascii_lowercase();
+    if normalized.contains("openai") {
+        Some(Ph1dSpeechProviderVendor::OpenAi)
+    } else if normalized.contains("google") || normalized.contains("gcp") {
+        Some(Ph1dSpeechProviderVendor::Google)
+    } else {
+        None
+    }
+}
+
+fn vendor_matches_provider_id(vendor: Ph1dSpeechProviderVendor, provider_id: &str) -> bool {
+    let normalized = provider_id.trim().to_ascii_lowercase();
+    match vendor {
+        Ph1dSpeechProviderVendor::OpenAi => normalized.contains("openai"),
+        Ph1dSpeechProviderVendor::Google => {
+            normalized.contains("google") || normalized.contains("gcp")
+        }
+    }
+}
+
+fn build_live_provider_payload(
+    req: &Ph1dProviderCallRequest,
+    vendor: Ph1dSpeechProviderVendor,
+) -> Result<String, ContractViolation> {
+    let task_label = match (vendor, req.provider_task) {
+        (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::OcrTextExtract) => "ocr.extract",
+        (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::SttTranscribe) => "stt.transcribe",
+        (Ph1dSpeechProviderVendor::OpenAi, Ph1dProviderTask::TtsSynthesize) => "tts.synthesize",
+        (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::OcrTextExtract) => {
+            "vision:text_extract"
+        }
+        (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::SttTranscribe) => "speech:recognize",
+        (Ph1dSpeechProviderVendor::Google, Ph1dProviderTask::TtsSynthesize) => "text:synthesize",
+    };
+
+    let input_payload = match req.input_payload_inline.as_deref() {
+        Some(inline) => {
+            serde_json::from_str::<Value>(inline).unwrap_or(Value::String(inline.to_string()))
+        }
+        None => Value::Null,
+    };
+    let payload = serde_json::json!({
+        "task": task_label,
+        "model": req.model_id,
+        "tenant_id": req.tenant_id,
+        "request_id": req.request_id.0,
+        "idempotency_key": req.idempotency_key,
+        "provider_route_class": req.provider_route_class.as_str(),
+        "input_payload_kind": req.input_payload_kind.as_str(),
+        "input_payload_ref": req.input_payload_ref,
+        "input_content_type": req.input_content_type,
+        "input_payload": input_payload,
+        "prompt_template_ref": req.prompt_template_ref,
+        "transcript_ref": req.transcript_ref,
+        "safety_tier": safety_tier_str(req.safety_tier),
+        "privacy_mode": req.privacy_mode,
+        "do_not_disturb": req.do_not_disturb,
+    });
+    serde_json::to_string(&payload).map_err(|_| ContractViolation::InvalidValue {
+        field: "ph1d_live_provider.payload_json",
+        reason: "failed to serialize outbound provider payload",
+    })
+}
+
+fn elapsed_ms(started: Instant) -> u32 {
+    let elapsed = started.elapsed().as_millis();
+    if elapsed > u128::from(u32::MAX) {
+        u32::MAX
+    } else {
+        elapsed as u32
+    }
+}
+
+fn provider_call_id_from_response(resp: &ureq::Response) -> Option<String> {
+    resp.header("x-request-id")
+        .or_else(|| resp.header("x-goog-request-id"))
+        .or_else(|| resp.header("x-cloud-trace-context"))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+fn read_response_body(resp: ureq::Response) -> String {
+    let mut out = String::new();
+    // Bound body reads for fail-closed robustness.
+    let _ = resp.into_reader().take(262_144).read_to_string(&mut out);
+    out
+}
+
+fn status_to_transport_failure(
+    status: u16,
+    provider_call_id: Option<String>,
+    provider_latency_ms: u32,
+) -> Ph1dProviderTransportOutcome {
+    if status == 408 || status == 429 || status >= 500 {
+        Ph1dProviderTransportOutcome::Timeout {
+            provider_call_id,
+            provider_latency_ms,
+        }
+    } else {
+        Ph1dProviderTransportOutcome::ContractMismatch {
+            provider_call_id,
+            provider_latency_ms,
+        }
+    }
+}
+
+fn confidence_hint_from_json(raw_payload_json: &str) -> Option<u16> {
+    let value = serde_json::from_str::<Value>(raw_payload_json).ok()?;
+    let obj = value.as_object()?;
+    let raw = obj.get("confidence_bp")?.as_u64()?;
+    u16::try_from(raw).ok()
+}
+
+fn safety_tier_str(tier: selene_kernel_contracts::ph1d::SafetyTier) -> &'static str {
+    match tier {
+        selene_kernel_contracts::ph1d::SafetyTier::Standard => "STANDARD",
+        selene_kernel_contracts::ph1d::SafetyTier::Strict => "STRICT",
+    }
+}
+
+fn normalize_vendor_payload(
+    vendor: Ph1dSpeechProviderVendor,
+    provider_task: Ph1dProviderTask,
+    raw_payload_json: &str,
+) -> Result<Ph1dProviderNormalizedOutput, ContractViolation> {
+    let v: Value =
+        serde_json::from_str(raw_payload_json).map_err(|_| ContractViolation::InvalidValue {
+            field: "ph1d_provider_boundary.raw_payload_json",
+            reason: "must be valid json object",
+        })?;
+    let obj = v.as_object().ok_or(ContractViolation::InvalidValue {
+        field: "ph1d_provider_boundary.raw_payload_json",
+        reason: "must be a json object",
+    })?;
+
+    let normalized = match vendor {
+        Ph1dSpeechProviderVendor::OpenAi => normalize_openai_payload(provider_task, obj)?,
+        Ph1dSpeechProviderVendor::Google => normalize_google_payload(provider_task, obj)?,
+    };
+    normalized.validate()?;
+    Ok(normalized)
+}
+
+fn normalize_openai_payload(
+    provider_task: Ph1dProviderTask,
+    obj: &serde_json::Map<String, Value>,
+) -> Result<Ph1dProviderNormalizedOutput, ContractViolation> {
+    let task = required_string("ph1d_provider_boundary.openai.task", obj.get("task"))?;
+    let expected_task = match provider_task {
+        Ph1dProviderTask::OcrTextExtract => "ocr.extract",
+        Ph1dProviderTask::SttTranscribe => "stt.transcribe",
+        Ph1dProviderTask::TtsSynthesize => "tts.synthesize",
+    };
+    if task != expected_task {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1d_provider_boundary.openai.task",
+            reason: "provider task mismatch",
+        });
+    }
+
+    match provider_task {
+        Ph1dProviderTask::OcrTextExtract => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string("ph1d_provider_boundary.openai.text", obj.get("text"))?.to_string(),
+            ),
+            optional_string(obj.get("language")).map(|v| v.to_string()),
+            optional_u16(
+                obj.get("confidence_bp"),
+                "ph1d_provider_boundary.openai.confidence_bp",
+            )?,
+            None,
+            None,
+            None,
+            None,
+        ),
+        Ph1dProviderTask::SttTranscribe => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string("ph1d_provider_boundary.openai.text", obj.get("text"))?.to_string(),
+            ),
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.openai.language",
+                    obj.get("language"),
+                )?
+                .to_string(),
+            ),
+            Some(required_u16(
+                "ph1d_provider_boundary.openai.confidence_bp",
+                obj.get("confidence_bp"),
+            )?),
+            Some(required_bool(
+                "ph1d_provider_boundary.openai.stable",
+                obj.get("stable"),
+            )?),
+            None,
+            None,
+            None,
+        ),
+        Ph1dProviderTask::TtsSynthesize => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.openai.render_text",
+                    obj.get("render_text"),
+                )?
+                .to_string(),
+            ),
+            optional_string(obj.get("language")).map(|v| v.to_string()),
+            None,
+            None,
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.openai.audio_ref",
+                    obj.get("audio_ref"),
+                )?
+                .to_string(),
+            ),
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.openai.audio_content_type",
+                    obj.get("audio_content_type"),
+                )?
+                .to_string(),
+            ),
+            Some(required_u32(
+                "ph1d_provider_boundary.openai.estimated_duration_ms",
+                obj.get("estimated_duration_ms"),
+            )?),
+        ),
+    }
+}
+
+fn normalize_google_payload(
+    provider_task: Ph1dProviderTask,
+    obj: &serde_json::Map<String, Value>,
+) -> Result<Ph1dProviderNormalizedOutput, ContractViolation> {
+    let task = required_string("ph1d_provider_boundary.google.task", obj.get("task"))?;
+    let expected_task = match provider_task {
+        Ph1dProviderTask::OcrTextExtract => "vision:text_extract",
+        Ph1dProviderTask::SttTranscribe => "speech:recognize",
+        Ph1dProviderTask::TtsSynthesize => "text:synthesize",
+    };
+    if task != expected_task {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1d_provider_boundary.google.task",
+            reason: "provider task mismatch",
+        });
+    }
+
+    match provider_task {
+        Ph1dProviderTask::OcrTextExtract => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.google.ocr_text",
+                    obj.get("ocr_text"),
+                )?
+                .to_string(),
+            ),
+            optional_string(obj.get("lang")).map(|v| v.to_string()),
+            optional_u16(
+                obj.get("confidence_bp"),
+                "ph1d_provider_boundary.google.confidence_bp",
+            )?,
+            None,
+            None,
+            None,
+            None,
+        ),
+        Ph1dProviderTask::SttTranscribe => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.google.transcript",
+                    obj.get("transcript"),
+                )?
+                .to_string(),
+            ),
+            Some(
+                required_string("ph1d_provider_boundary.google.lang", obj.get("lang"))?.to_string(),
+            ),
+            Some(required_u16(
+                "ph1d_provider_boundary.google.confidence_bp",
+                obj.get("confidence_bp"),
+            )?),
+            Some(required_bool(
+                "ph1d_provider_boundary.google.is_final",
+                obj.get("is_final"),
+            )?),
+            None,
+            None,
+            None,
+        ),
+        Ph1dProviderTask::TtsSynthesize => Ph1dProviderNormalizedOutput::v1(
+            provider_task,
+            Some(
+                required_string("ph1d_provider_boundary.google.text", obj.get("text"))?.to_string(),
+            ),
+            optional_string(obj.get("lang")).map(|v| v.to_string()),
+            None,
+            None,
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.google.audio_uri",
+                    obj.get("audio_uri"),
+                )?
+                .to_string(),
+            ),
+            Some(
+                required_string(
+                    "ph1d_provider_boundary.google.mime_type",
+                    obj.get("mime_type"),
+                )?
+                .to_string(),
+            ),
+            Some(required_u32(
+                "ph1d_provider_boundary.google.duration_ms",
+                obj.get("duration_ms"),
+            )?),
+        ),
+    }
+}
+
+fn normalized_output_to_json(
+    normalized: &Ph1dProviderNormalizedOutput,
+) -> Result<String, serde_json::Error> {
+    let payload = serde_json::json!({
+        "schema_version": normalized.schema_version.0,
+        "provider_task": normalized.provider_task.as_str(),
+        "text_output": normalized.text_output,
+        "language_tag": normalized.language_tag,
+        "confidence_bp": normalized.confidence_bp,
+        "stable": normalized.stable,
+        "audio_output_ref": normalized.audio_output_ref,
+        "audio_content_type": normalized.audio_content_type,
+        "estimated_duration_ms": normalized.estimated_duration_ms,
+    });
+    serde_json::to_string(&payload)
+}
+
+pub fn decode_normalized_output_json(
+    json_text: &str,
+) -> Result<Ph1dProviderNormalizedOutput, ContractViolation> {
+    let v: Value =
+        serde_json::from_str(json_text).map_err(|_| ContractViolation::InvalidValue {
+            field: "ph1d_provider_boundary.decode_normalized_output_json",
+            reason: "must be valid json object",
+        })?;
+    let obj = v.as_object().ok_or(ContractViolation::InvalidValue {
+        field: "ph1d_provider_boundary.decode_normalized_output_json",
+        reason: "must be a json object",
+    })?;
+
+    let schema_version = required_u32(
+        "ph1d_provider_boundary.decode.schema_version",
+        obj.get("schema_version"),
+    )?;
+    let provider_task_str = required_string(
+        "ph1d_provider_boundary.decode.provider_task",
+        obj.get("provider_task"),
+    )?;
+    let provider_task = provider_task_from_str(provider_task_str)?;
+
+    let text_output = optional_string(obj.get("text_output")).map(|v| v.to_string());
+    let language_tag = optional_string(obj.get("language_tag")).map(|v| v.to_string());
+    let confidence_bp = optional_u16(
+        obj.get("confidence_bp"),
+        "ph1d_provider_boundary.decode.confidence_bp",
+    )?;
+    let stable = optional_bool(obj.get("stable"), "ph1d_provider_boundary.decode.stable")?;
+    let audio_output_ref = optional_string(obj.get("audio_output_ref")).map(|v| v.to_string());
+    let audio_content_type = optional_string(obj.get("audio_content_type")).map(|v| v.to_string());
+    let estimated_duration_ms = optional_u32(
+        obj.get("estimated_duration_ms"),
+        "ph1d_provider_boundary.decode.estimated_duration_ms",
+    )?;
+
+    let normalized = Ph1dProviderNormalizedOutput {
+        schema_version: selene_kernel_contracts::SchemaVersion(schema_version),
+        provider_task,
+        text_output,
+        language_tag,
+        confidence_bp,
+        stable,
+        audio_output_ref,
+        audio_content_type,
+        estimated_duration_ms,
+    };
+    normalized.validate()?;
+    Ok(normalized)
+}
+
+fn provider_task_from_str(task: &str) -> Result<Ph1dProviderTask, ContractViolation> {
+    match task {
+        "OCR_TEXT_EXTRACT" => Ok(Ph1dProviderTask::OcrTextExtract),
+        "STT_TRANSCRIBE" => Ok(Ph1dProviderTask::SttTranscribe),
+        "TTS_SYNTHESIZE" => Ok(Ph1dProviderTask::TtsSynthesize),
+        _ => Err(ContractViolation::InvalidValue {
+            field: "ph1d_provider_boundary.decode.provider_task",
+            reason: "unsupported provider_task",
+        }),
+    }
+}
+
+fn required_string<'a>(
+    field: &'static str,
+    value: Option<&'a Value>,
+) -> Result<&'a str, ContractViolation> {
+    value
+        .and_then(Value::as_str)
+        .ok_or(ContractViolation::InvalidValue {
+            field,
+            reason: "must be a string",
+        })
+}
+
+fn optional_string(value: Option<&Value>) -> Option<&str> {
+    value.and_then(Value::as_str)
+}
+
+fn required_u32(field: &'static str, value: Option<&Value>) -> Result<u32, ContractViolation> {
+    let raw = value
+        .and_then(Value::as_u64)
+        .ok_or(ContractViolation::InvalidValue {
+            field,
+            reason: "must be an unsigned integer",
+        })?;
+    u32::try_from(raw).map_err(|_| ContractViolation::InvalidValue {
+        field,
+        reason: "must fit in u32",
+    })
+}
+
+fn optional_u32(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Option<u32>, ContractViolation> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => required_u32(field, value).map(Some),
+    }
+}
+
+fn required_u16(field: &'static str, value: Option<&Value>) -> Result<u16, ContractViolation> {
+    let raw = value
+        .and_then(Value::as_u64)
+        .ok_or(ContractViolation::InvalidValue {
+            field,
+            reason: "must be an unsigned integer",
+        })?;
+    u16::try_from(raw).map_err(|_| ContractViolation::InvalidValue {
+        field,
+        reason: "must fit in u16",
+    })
+}
+
+fn optional_u16(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Option<u16>, ContractViolation> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => required_u16(field, value).map(Some),
+    }
+}
+
+fn required_bool(field: &'static str, value: Option<&Value>) -> Result<bool, ContractViolation> {
+    value
+        .and_then(Value::as_bool)
+        .ok_or(ContractViolation::InvalidValue {
+            field,
+            reason: "must be a boolean",
+        })
+}
+
+fn optional_bool(
+    value: Option<&Value>,
+    field: &'static str,
+) -> Result<Option<bool>, ContractViolation> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => required_bool(field, value).map(Some),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -833,7 +1755,7 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
 
 fn parse_reason_code(obj: &serde_json::Map<String, Value>) -> Option<ReasonCodeId> {
     let n = obj.get("reason_code")?.as_u64()?;
-    if n > u32::MAX as u64 {
+    if n == 0 || n > u32::MAX as u64 {
         return None;
     }
     Some(ReasonCodeId(n as u32))
@@ -842,6 +1764,11 @@ fn parse_reason_code(obj: &serde_json::Map<String, Value>) -> Option<ReasonCodeI
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
     use selene_kernel_contracts::ph1c::LanguageTag;
     use selene_kernel_contracts::ph1c::{ConfidenceBucket, SessionStateRef, TranscriptOk};
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -866,6 +1793,127 @@ mod tests {
             ToolCatalogRef::v1(vec![ToolName::Time, ToolName::Weather]).unwrap(),
         )
         .unwrap()
+    }
+
+    fn provider_req(provider_task: Ph1dProviderTask, provider_id: &str) -> Ph1dProviderCallRequest {
+        Ph1dProviderCallRequest::v1(
+            4101,
+            7101,
+            "tenant_1".to_string(),
+            selene_kernel_contracts::ph1d::RequestId(9201),
+            "idem_9201".to_string(),
+            provider_task,
+            selene_kernel_contracts::ph1d::Ph1dProviderRouteClass::Primary,
+            provider_id.to_string(),
+            "model_primary".to_string(),
+            4_000,
+            2,
+            None,
+            None,
+            selene_kernel_contracts::SchemaVersion(1),
+            PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
+            selene_kernel_contracts::ph1d::SchemaHash(8101),
+            selene_kernel_contracts::ph1d::SchemaHash(8102),
+            None,
+            "audio_ref_1".to_string(),
+            selene_kernel_contracts::ph1d::Ph1dProviderInputPayloadKind::Audio,
+            selene_kernel_contracts::ph1d::SchemaHash(8103),
+            Some("{\"audio_ref\":\"audio_ref_1\"}".to_string()),
+            Some("application/json".to_string()),
+            SafetyTier::Standard,
+            false,
+            false,
+        )
+        .unwrap()
+    }
+
+    fn spawn_one_shot_http_server(
+        status: u16,
+        response_body: &'static str,
+    ) -> (String, Arc<Mutex<String>>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let request_capture = Arc::new(Mutex::new(String::new()));
+        let request_capture_thread = Arc::clone(&request_capture);
+        let handle = thread::spawn(move || {
+            if let Ok((mut stream, _peer)) = listener.accept() {
+                let mut header_buf = vec![0_u8; 0];
+                let mut chunk = [0_u8; 1024];
+                let mut header_end = None;
+                loop {
+                    let n = stream.read(&mut chunk).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    header_buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = header_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end = Some(pos + 4);
+                        break;
+                    }
+                    if header_buf.len() > 32 * 1024 {
+                        break;
+                    }
+                }
+                let (captured, content_len, consumed_after_header) = if let Some(end) = header_end {
+                    let captured = String::from_utf8_lossy(&header_buf[..end]).to_string();
+                    let content_len = captured
+                        .lines()
+                        .find_map(|line| {
+                            let lower = line.to_ascii_lowercase();
+                            lower
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    let consumed_after_header = header_buf.len().saturating_sub(end);
+                    (captured, content_len, consumed_after_header)
+                } else {
+                    (String::from_utf8_lossy(&header_buf).to_string(), 0, 0)
+                };
+                *request_capture_thread.lock().unwrap() = captured;
+
+                if content_len > consumed_after_header {
+                    let mut remaining = content_len - consumed_after_header;
+                    while remaining > 0 {
+                        let mut body_chunk = [0_u8; 1024];
+                        let n = stream.read(&mut body_chunk).unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        remaining = remaining.saturating_sub(n);
+                    }
+                }
+
+                let status_line = match status {
+                    200 => "HTTP/1.1 200 OK",
+                    503 => "HTTP/1.1 503 Service Unavailable",
+                    429 => "HTTP/1.1 429 Too Many Requests",
+                    _ => "HTTP/1.1 400 Bad Request",
+                };
+                let resp = format!(
+                    "{status_line}\r\ncontent-type: application/json\r\nx-request-id: req_live_1\r\ncontent-length: {}\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        (format!("http://{}", addr), request_capture, handle)
+    }
+
+    fn live_config_for_endpoint(endpoint: String) -> Ph1dLiveProviderAdapterConfig {
+        Ph1dLiveProviderAdapterConfig {
+            openai_api_key: Some("test-openai-key".to_string()),
+            google_api_key: Some("test-google-key".to_string()),
+            openai_ocr_endpoint: endpoint.clone(),
+            openai_stt_endpoint: endpoint.clone(),
+            openai_tts_endpoint: endpoint.clone(),
+            google_ocr_endpoint: endpoint.clone(),
+            google_stt_endpoint: endpoint.clone(),
+            google_tts_endpoint: endpoint,
+            connect_timeout_ms: 1_000,
+        }
     }
 
     #[test]
@@ -961,6 +2009,20 @@ mod tests {
             &req("hello"),
             ModelCallOutcome::Ok {
                 raw_json: r#"{"mode":"chat","response_text":"hi"}"#.to_string(),
+            },
+        );
+        assert!(
+            matches!(out, Ph1dResponse::Fail(f) if f.reason_code == reason_codes::D_FAIL_INVALID_SCHEMA)
+        );
+    }
+
+    #[test]
+    fn at_d_07b_reason_code_zero_is_rejected() {
+        let rt = Ph1dRuntime::new(Ph1dConfig::mvp_v1());
+        let out = rt.run(
+            &req("hello"),
+            ModelCallOutcome::Ok {
+                raw_json: r#"{"mode":"chat","response_text":"hi","reason_code":0}"#.to_string(),
             },
         );
         assert!(
@@ -1102,5 +2164,208 @@ mod tests {
         assert!(
             matches!(out, Ph1dResponse::Fail(f) if f.reason_code == reason_codes::D_FAIL_INVALID_SCHEMA)
         );
+    }
+
+    #[test]
+    fn at_d_provider_boundary_01_openai_stt_normalizes_to_shared_schema() {
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = normalize_provider_transport_outcome(
+            &req,
+            Ph1dSpeechProviderVendor::OpenAi,
+            Ph1dProviderTransportOutcome::Ok {
+                provider_call_id: Some("openai_call_1".to_string()),
+                raw_payload_json: r#"{"task":"stt.transcribe","text":"hello there","language":"en-US","confidence_bp":9500,"stable":true}"#.to_string(),
+                provider_latency_ms: 121,
+                provider_cost_microunits: 17,
+                provider_confidence_bp: Some(9500),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Ok);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaOk
+        );
+        assert_eq!(
+            out.normalized_output_schema_hash,
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1)
+        );
+        let normalized =
+            decode_normalized_output_json(out.normalized_output_json.as_deref().unwrap()).unwrap();
+        assert_eq!(normalized.provider_task, Ph1dProviderTask::SttTranscribe);
+        assert_eq!(normalized.text_output.as_deref(), Some("hello there"));
+        assert_eq!(normalized.language_tag.as_deref(), Some("en-US"));
+        assert_eq!(normalized.stable, Some(true));
+    }
+
+    #[test]
+    fn at_d_provider_boundary_02_google_tts_normalizes_to_shared_schema() {
+        let req = provider_req(Ph1dProviderTask::TtsSynthesize, "google");
+        let out = normalize_provider_transport_outcome(
+            &req,
+            Ph1dSpeechProviderVendor::Google,
+            Ph1dProviderTransportOutcome::Ok {
+                provider_call_id: Some("google_call_1".to_string()),
+                raw_payload_json: r#"{"task":"text:synthesize","audio_uri":"gs://bucket/audio.wav","mime_type":"audio/wav","duration_ms":1400,"text":"ready"}"#.to_string(),
+                provider_latency_ms: 98,
+                provider_cost_microunits: 9,
+                provider_confidence_bp: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Ok);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaOk
+        );
+        let normalized =
+            decode_normalized_output_json(out.normalized_output_json.as_deref().unwrap()).unwrap();
+        assert_eq!(normalized.provider_task, Ph1dProviderTask::TtsSynthesize);
+        assert_eq!(
+            normalized.audio_output_ref.as_deref(),
+            Some("gs://bucket/audio.wav")
+        );
+        assert_eq!(normalized.audio_content_type.as_deref(), Some("audio/wav"));
+        assert_eq!(normalized.estimated_duration_ms, Some(1400));
+    }
+
+    #[test]
+    fn at_d_provider_boundary_03_timeout_fails_closed() {
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = normalize_provider_transport_outcome(
+            &req,
+            Ph1dSpeechProviderVendor::OpenAi,
+            Ph1dProviderTransportOutcome::Timeout {
+                provider_call_id: Some("openai_call_timeout".to_string()),
+                provider_latency_ms: 4_000,
+            },
+        )
+        .unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Error);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaFail
+        );
+        assert_eq!(out.reason_code, reason_codes::D_PROVIDER_TIMEOUT);
+        assert!(out.normalized_output_json.is_none());
+    }
+
+    #[test]
+    fn at_d_provider_boundary_04_vendor_contract_mismatch_fails_closed() {
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "google");
+        let out = normalize_provider_transport_outcome(
+            &req,
+            Ph1dSpeechProviderVendor::OpenAi,
+            Ph1dProviderTransportOutcome::Ok {
+                provider_call_id: Some("call_mismatch".to_string()),
+                raw_payload_json: r#"{"task":"stt.transcribe","text":"hello","language":"en-US","confidence_bp":9000,"stable":true}"#.to_string(),
+                provider_latency_ms: 66,
+                provider_cost_microunits: 3,
+                provider_confidence_bp: Some(9000),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Error);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaFail
+        );
+        assert_eq!(out.reason_code, reason_codes::D_PROVIDER_CONTRACT_MISMATCH);
+    }
+
+    #[test]
+    fn at_d_provider_boundary_05_schema_drift_fails_closed() {
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = normalize_provider_transport_outcome(
+            &req,
+            Ph1dSpeechProviderVendor::OpenAi,
+            Ph1dProviderTransportOutcome::Ok {
+                provider_call_id: Some("openai_call_drift".to_string()),
+                raw_payload_json:
+                    r#"{"task":"stt.transcribe","text":"hello there","language":"en-US"}"#
+                        .to_string(),
+                provider_latency_ms: 101,
+                provider_cost_microunits: 7,
+                provider_confidence_bp: Some(9100),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Error);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaFail
+        );
+        assert_eq!(out.reason_code, reason_codes::D_PROVIDER_SCHEMA_DRIFT);
+        assert!(out.normalized_output_json.is_none());
+    }
+
+    #[test]
+    fn at_d_provider_live_01_http_round_trip_openai_stt_normalizes_output() {
+        let (endpoint, request_capture, server) = spawn_one_shot_http_server(
+            200,
+            r#"{"task":"stt.transcribe","text":"hello from live path","language":"en-US","confidence_bp":9400,"stable":true}"#,
+        );
+        let adapter = Ph1dLiveProviderAdapter::new(live_config_for_endpoint(endpoint)).unwrap();
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = adapter.execute(&req).unwrap();
+        server.join().unwrap();
+
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Ok);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaOk
+        );
+        assert_eq!(
+            out.normalized_output_schema_hash,
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1)
+        );
+        let normalized =
+            decode_normalized_output_json(out.normalized_output_json.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            normalized.text_output.as_deref(),
+            Some("hello from live path")
+        );
+        assert_eq!(normalized.language_tag.as_deref(), Some("en-US"));
+        assert_eq!(normalized.stable, Some(true));
+
+        let captured = request_capture.lock().unwrap().clone();
+        assert!(captured
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-openai-key"));
+        assert!(captured
+            .to_ascii_lowercase()
+            .contains("idempotency-key: idem_9201"));
+    }
+
+    #[test]
+    fn at_d_provider_live_02_missing_provider_key_fails_closed_contract_mismatch() {
+        let endpoint = "http://127.0.0.1:1".to_string();
+        let mut cfg = live_config_for_endpoint(endpoint);
+        cfg.openai_api_key = None;
+        let adapter = Ph1dLiveProviderAdapter::new(cfg).unwrap();
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = adapter.execute(&req).unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Error);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaFail
+        );
+        assert_eq!(out.reason_code, reason_codes::D_PROVIDER_CONTRACT_MISMATCH);
+    }
+
+    #[test]
+    fn at_d_provider_live_03_http_503_maps_to_timeout_fail_closed() {
+        let (endpoint, _request_capture, server) =
+            spawn_one_shot_http_server(503, r#"{"error":"provider unavailable"}"#);
+        let adapter = Ph1dLiveProviderAdapter::new(live_config_for_endpoint(endpoint)).unwrap();
+        let req = provider_req(Ph1dProviderTask::SttTranscribe, "openai");
+        let out = adapter.execute(&req).unwrap();
+        server.join().unwrap();
+        assert_eq!(out.provider_status, Ph1dProviderStatus::Error);
+        assert_eq!(
+            out.validation_status,
+            Ph1dProviderValidationStatus::SchemaFail
+        );
+        assert_eq!(out.reason_code, reason_codes::D_PROVIDER_TIMEOUT);
     }
 }

@@ -3,12 +3,17 @@
 use std::cmp::min;
 use std::collections::BTreeSet;
 
+use crate::ph1feedback::{FeedbackForwardBundle, FeedbackTurnInput};
+use selene_kernel_contracts::ph1feedback::{
+    FeedbackEventType, FeedbackGoldStatus, FeedbackPathType, FeedbackSignalCandidate,
+    FeedbackSignalTarget,
+};
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1learn::{
     LearnArtifactPackageBuildOk, LearnArtifactPackageBuildRequest, LearnArtifactTarget,
-    LearnCapabilityId, LearnRefuse, LearnRequestEnvelope, LearnSignal, LearnSignalAggregateOk,
-    LearnSignalAggregateRequest, LearnSignalType, LearnTargetEngine, LearnValidationStatus,
-    Ph1LearnRequest, Ph1LearnResponse,
+    LearnCapabilityId, LearnCasePath, LearnGoldStatus, LearnRefuse, LearnRequestEnvelope,
+    LearnSignal, LearnSignalAggregateOk, LearnSignalAggregateRequest, LearnSignalType,
+    LearnTargetEngine, LearnValidationStatus, Ph1LearnRequest, Ph1LearnResponse,
 };
 use selene_kernel_contracts::ph1selfheal::{
     stable_card_id, FailureEvent, FixCard, FixKind, FixSource, ProblemCard, ProblemCardState,
@@ -410,6 +415,154 @@ pub enum LearnWiringOutcome {
     NotInvokedNoSignals,
     Refused(LearnRefuse),
     Forwarded(LearnForwardBundle),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FeedbackLearnRouteConfig {
+    pub require_derived_only_global: bool,
+    pub no_runtime_drift_required: bool,
+}
+
+impl FeedbackLearnRouteConfig {
+    pub fn mvp_v1() -> Self {
+        Self {
+            require_derived_only_global: true,
+            no_runtime_drift_required: true,
+        }
+    }
+}
+
+pub fn map_feedback_bundle_to_learn_turn_input(
+    feedback_turn_input: &FeedbackTurnInput,
+    feedback_bundle: &FeedbackForwardBundle,
+    route_config: FeedbackLearnRouteConfig,
+) -> Result<LearnTurnInput, ContractViolation> {
+    feedback_turn_input.validate()?;
+    feedback_bundle.validate()?;
+
+    if feedback_turn_input.correlation_id != feedback_bundle.correlation_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_feedback_bundle_to_learn_turn_input.feedback_bundle.correlation_id",
+            reason: "must match feedback_turn_input.correlation_id",
+        });
+    }
+    if feedback_turn_input.turn_id != feedback_bundle.turn_id {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_feedback_bundle_to_learn_turn_input.feedback_bundle.turn_id",
+            reason: "must match feedback_turn_input.turn_id",
+        });
+    }
+    if feedback_turn_input.events.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_feedback_bundle_to_learn_turn_input.feedback_turn_input.events",
+            reason: "must be non-empty",
+        });
+    }
+
+    let tenant_id = feedback_turn_input.events[0].tenant_id.clone();
+    if feedback_turn_input
+        .events
+        .iter()
+        .any(|event| event.tenant_id != tenant_id)
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_feedback_bundle_to_learn_turn_input.feedback_turn_input.events",
+            reason: "event tenant_id must be identical across feedback turn input",
+        });
+    }
+
+    let mut ordered_candidates = feedback_bundle
+        .event_collect
+        .ordered_signal_candidates
+        .clone();
+    ordered_candidates.sort_by(|a, b| {
+        b.signal_value_bp
+            .cmp(&a.signal_value_bp)
+            .then(a.candidate_id.cmp(&b.candidate_id))
+            .then(a.signal_key.cmp(&b.signal_key))
+    });
+
+    let correlation_id = feedback_turn_input.correlation_id;
+    let turn_id = feedback_turn_input.turn_id;
+    let selected_candidate_id = feedback_bundle.event_collect.selected_candidate_id.as_str();
+    let correlation_id_token = correlation_id.0.to_string();
+    let turn_id_token = turn_id.0.to_string();
+
+    let signals = ordered_candidates
+        .iter()
+        .enumerate()
+        .map(|(idx, candidate)| {
+            let occurrence_count = u16::try_from(candidate.sample_count).map_err(|_| {
+                ContractViolation::InvalidValue {
+                    field: "map_feedback_bundle_to_learn_turn_input.sample_count",
+                    reason: "must be <= 65535",
+                }
+            })?;
+            let idx_token = idx.to_string();
+            let signal_id = stable_card_id(
+                "learn_signal",
+                &[
+                    tenant_id.as_str(),
+                    correlation_id_token.as_str(),
+                    turn_id_token.as_str(),
+                    selected_candidate_id,
+                    candidate.candidate_id.as_str(),
+                    idx_token.as_str(),
+                ],
+            )?;
+            LearnSignal::v2(
+                signal_id,
+                tenant_id.clone(),
+                map_feedback_event_type_to_learn_signal_type(candidate.event_type),
+                selene_kernel_contracts::ph1learn::LearnScope::Tenant,
+                Some(tenant_id.clone()),
+                candidate.signal_key.clone(),
+                candidate.signal_value_bp,
+                occurrence_count,
+                false,
+                false,
+                false,
+                map_feedback_path_to_learn_case_path(candidate.path_type),
+                candidate.gold_case_id.clone(),
+                map_feedback_gold_status_to_learn_gold_status(candidate.gold_status),
+                candidate.evidence_ref.clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let requested_target_engines =
+        infer_requested_targets_from_feedback_candidates(&ordered_candidates);
+
+    LearnTurnInput::v2(
+        correlation_id,
+        turn_id,
+        tenant_id,
+        signals,
+        requested_target_engines,
+        route_config.require_derived_only_global,
+        route_config.no_runtime_drift_required,
+        0,
+        0,
+        0,
+    )
+}
+
+pub fn route_feedback_into_learn_wiring<E>(
+    learn_wiring: &Ph1LearnWiring<E>,
+    feedback_turn_input: &FeedbackTurnInput,
+    feedback_bundle: &FeedbackForwardBundle,
+    route_config: FeedbackLearnRouteConfig,
+) -> Result<(LearnTurnInput, LearnWiringOutcome), ContractViolation>
+where
+    E: Ph1LearnEngine,
+{
+    let learn_turn_input = map_feedback_bundle_to_learn_turn_input(
+        feedback_turn_input,
+        feedback_bundle,
+        route_config,
+    )?;
+    let learn_outcome = learn_wiring.run_turn(&learn_turn_input)?;
+    Ok((learn_turn_input, learn_outcome))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -852,6 +1005,64 @@ where
     }
 }
 
+fn infer_requested_targets_from_feedback_candidates(
+    candidates: &[FeedbackSignalCandidate],
+) -> Vec<LearnTargetEngine> {
+    let mut targets = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for candidate in candidates {
+        if candidate.target == FeedbackSignalTarget::PaeScorecard && seen.insert("PH1.PAE") {
+            targets.push(LearnTargetEngine::Pae);
+        }
+    }
+
+    targets
+}
+
+fn map_feedback_event_type_to_learn_signal_type(event_type: FeedbackEventType) -> LearnSignalType {
+    match event_type {
+        FeedbackEventType::SttReject
+        | FeedbackEventType::SttRetry
+        | FeedbackEventType::LanguageMismatch => LearnSignalType::SttReject,
+        FeedbackEventType::UserCorrection | FeedbackEventType::MemoryOverride => {
+            LearnSignalType::UserCorrection
+        }
+        FeedbackEventType::ClarifyLoop => LearnSignalType::ClarifyLoop,
+        FeedbackEventType::ConfirmAbort | FeedbackEventType::DeliverySwitch => {
+            LearnSignalType::DeliverySwitch
+        }
+        FeedbackEventType::ToolFail => LearnSignalType::ToolFail,
+        FeedbackEventType::BargeIn => LearnSignalType::BargeIn,
+        FeedbackEventType::VoiceIdFalseReject => LearnSignalType::VoiceIdFalseReject,
+        FeedbackEventType::VoiceIdFalseAccept => LearnSignalType::VoiceIdFalseAccept,
+        FeedbackEventType::VoiceIdSpoofRisk => LearnSignalType::VoiceIdSpoofRisk,
+        FeedbackEventType::VoiceIdMultiSpeaker => LearnSignalType::VoiceIdMultiSpeaker,
+        FeedbackEventType::VoiceIdDriftAlert => LearnSignalType::VoiceIdDriftAlert,
+        FeedbackEventType::VoiceIdReauthFriction => LearnSignalType::VoiceIdReauthFriction,
+        FeedbackEventType::VoiceIdConfusionPair => LearnSignalType::VoiceIdConfusionPair,
+        FeedbackEventType::VoiceIdDrift => LearnSignalType::VoiceIdDrift,
+        FeedbackEventType::VoiceIdLowQuality => LearnSignalType::VoiceIdLowQuality,
+    }
+}
+
+fn map_feedback_path_to_learn_case_path(path_type: FeedbackPathType) -> LearnCasePath {
+    match path_type {
+        FeedbackPathType::Defect => LearnCasePath::Defect,
+        FeedbackPathType::Improvement => LearnCasePath::Improvement,
+    }
+}
+
+fn map_feedback_gold_status_to_learn_gold_status(
+    gold_status: FeedbackGoldStatus,
+) -> LearnGoldStatus {
+    match gold_status {
+        FeedbackGoldStatus::NotRequired => LearnGoldStatus::NotRequired,
+        FeedbackGoldStatus::Pending => LearnGoldStatus::Pending,
+        FeedbackGoldStatus::Verified => LearnGoldStatus::Verified,
+    }
+}
+
 fn infer_targets_from_artifacts(
     artifacts: &[selene_kernel_contracts::ph1learn::LearnArtifactCandidate],
 ) -> Vec<LearnTargetEngine> {
@@ -1055,8 +1266,12 @@ fn validate_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ph1feedback::{FeedbackForwardBundle, FeedbackTurnInput};
+    use selene_kernel_contracts::ph1feedback::{FeedbackConfidenceBucket, FeedbackToolStatus};
     use selene_kernel_contracts::ph1feedback::{
-        FeedbackConfidenceBucket, FeedbackEventType, FeedbackPathType, FeedbackToolStatus,
+        FeedbackEventCollectOk, FeedbackEventRecord, FeedbackEventType, FeedbackGoldStatus,
+        FeedbackMetrics, FeedbackPathType, FeedbackSignalCandidate, FeedbackSignalEmitOk,
+        FeedbackSignalTarget, FeedbackValidationStatus,
     };
     use selene_kernel_contracts::ph1learn::{
         LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnScope, LearnSignalAggregateOk,
@@ -1707,6 +1922,254 @@ mod tests {
                 assert_eq!(
                     field,
                     "map_learn_bundle_to_problem_card.turn_input.tenant_id"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    fn feedback_event(
+        event_id: &str,
+        tenant_id: &str,
+        event_type: FeedbackEventType,
+        path_type: FeedbackPathType,
+        gold_case_id: Option<&str>,
+        gold_status: FeedbackGoldStatus,
+        reason_code: ReasonCodeId,
+        evidence_ref: &str,
+    ) -> FeedbackEventRecord {
+        FeedbackEventRecord::v2(
+            event_id.to_string(),
+            tenant_id.to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            CorrelationId(5390),
+            TurnId(590),
+            event_type,
+            path_type,
+            gold_case_id.map(str::to_string),
+            None,
+            gold_status,
+            reason_code,
+            evidence_ref.to_string(),
+            format!("idem:{event_id}"),
+            FeedbackMetrics::v1(
+                210,
+                1,
+                FeedbackConfidenceBucket::Med,
+                vec!["field_a".to_string()],
+                FeedbackToolStatus::Conflict,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn feedback_turn_input_and_bundle() -> (FeedbackTurnInput, FeedbackForwardBundle) {
+        let turn_input = FeedbackTurnInput::v1(
+            CorrelationId(5390),
+            TurnId(590),
+            vec![
+                feedback_event(
+                    "fb_event_1",
+                    "tenant_1",
+                    FeedbackEventType::SttReject,
+                    FeedbackPathType::Defect,
+                    None,
+                    FeedbackGoldStatus::NotRequired,
+                    ReasonCodeId(0x4300_0002),
+                    "evidence:feedback:stt",
+                ),
+                feedback_event(
+                    "fb_event_2",
+                    "tenant_1",
+                    FeedbackEventType::UserCorrection,
+                    FeedbackPathType::Improvement,
+                    Some("gold_case_uc_1"),
+                    FeedbackGoldStatus::Pending,
+                    ReasonCodeId(0x4642_3002),
+                    "evidence:feedback:correction",
+                ),
+                feedback_event(
+                    "fb_event_3",
+                    "tenant_1",
+                    FeedbackEventType::ToolFail,
+                    FeedbackPathType::Defect,
+                    None,
+                    FeedbackGoldStatus::NotRequired,
+                    ReasonCodeId(0x4400_0202),
+                    "evidence:feedback:tool",
+                ),
+            ],
+        )
+        .unwrap();
+
+        let bundle = FeedbackForwardBundle::v1(
+            CorrelationId(5390),
+            TurnId(590),
+            FeedbackEventCollectOk::v1(
+                ReasonCodeId(0x4642_3901),
+                "cand_high".to_string(),
+                vec![
+                    FeedbackSignalCandidate::v2(
+                        "cand_low".to_string(),
+                        FeedbackEventType::SttReject,
+                        "stt_reject_rate".to_string(),
+                        FeedbackSignalTarget::LearnPackage,
+                        FeedbackPathType::Defect,
+                        None,
+                        FeedbackGoldStatus::NotRequired,
+                        -40,
+                        3,
+                        "evidence:feedback:stt".to_string(),
+                    )
+                    .unwrap(),
+                    FeedbackSignalCandidate::v2(
+                        "cand_high".to_string(),
+                        FeedbackEventType::UserCorrection,
+                        "correction_rate_by_intent".to_string(),
+                        FeedbackSignalTarget::LearnPackage,
+                        FeedbackPathType::Improvement,
+                        Some("gold_case_uc_1".to_string()),
+                        FeedbackGoldStatus::Pending,
+                        900,
+                        2,
+                        "evidence:feedback:correction".to_string(),
+                    )
+                    .unwrap(),
+                    FeedbackSignalCandidate::v2(
+                        "cand_pae".to_string(),
+                        FeedbackEventType::ToolFail,
+                        "tool_timeout_rate".to_string(),
+                        FeedbackSignalTarget::PaeScorecard,
+                        FeedbackPathType::Defect,
+                        None,
+                        FeedbackGoldStatus::NotRequired,
+                        250,
+                        5,
+                        "evidence:feedback:tool".to_string(),
+                    )
+                    .unwrap(),
+                ],
+                true,
+                true,
+            )
+            .unwrap(),
+            FeedbackSignalEmitOk::v1(
+                ReasonCodeId(0x4642_3902),
+                FeedbackValidationStatus::Ok,
+                vec![],
+                true,
+                true,
+                true,
+                true,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        (turn_input, bundle)
+    }
+
+    #[test]
+    fn at_learn_11_feedback_to_learn_route_is_deterministic_with_gold_mapping() {
+        let (feedback_turn_input, feedback_bundle) = feedback_turn_input_and_bundle();
+        let route_config = FeedbackLearnRouteConfig::mvp_v1();
+
+        let learn_input_a = map_feedback_bundle_to_learn_turn_input(
+            &feedback_turn_input,
+            &feedback_bundle,
+            route_config,
+        )
+        .unwrap();
+        let learn_input_b = map_feedback_bundle_to_learn_turn_input(
+            &feedback_turn_input,
+            &feedback_bundle,
+            route_config,
+        )
+        .unwrap();
+
+        assert_eq!(learn_input_a, learn_input_b);
+        assert_eq!(learn_input_a.tenant_id, "tenant_1");
+        assert_eq!(learn_input_a.signals.len(), 3);
+        assert_eq!(
+            learn_input_a.signals[0].signal_type,
+            LearnSignalType::UserCorrection
+        );
+        assert_eq!(
+            learn_input_a.signals[0].source_path,
+            LearnCasePath::Improvement
+        );
+        assert_eq!(
+            learn_input_a.signals[0].gold_case_id.as_deref(),
+            Some("gold_case_uc_1")
+        );
+        assert_eq!(
+            learn_input_a.signals[0].gold_status,
+            LearnGoldStatus::Pending
+        );
+        assert_eq!(
+            learn_input_a.requested_target_engines,
+            vec![LearnTargetEngine::Pae]
+        );
+        assert_eq!(
+            learn_input_a.signals[1].signal_type,
+            LearnSignalType::ToolFail
+        );
+        assert_eq!(
+            learn_input_a.signals[2].signal_type,
+            LearnSignalType::SttReject
+        );
+    }
+
+    #[test]
+    fn at_learn_12_feedback_to_learn_route_forwards_advisory_only_package() {
+        let (feedback_turn_input, feedback_bundle) = feedback_turn_input_and_bundle();
+        let wiring =
+            Ph1LearnWiring::new(Ph1LearnWiringConfig::mvp_v1(true), DeterministicLearnEngine)
+                .unwrap();
+
+        let (learn_turn_input, outcome) = route_feedback_into_learn_wiring(
+            &wiring,
+            &feedback_turn_input,
+            &feedback_bundle,
+            FeedbackLearnRouteConfig::mvp_v1(),
+        )
+        .unwrap();
+        assert_eq!(learn_turn_input.correlation_id, CorrelationId(5390));
+        match outcome {
+            LearnWiringOutcome::Forwarded(bundle) => {
+                assert!(bundle.signal_aggregate.advisory_only);
+                assert!(bundle.signal_aggregate.no_execution_authority);
+                assert!(bundle.artifact_package_build.advisory_only);
+                assert!(bundle.artifact_package_build.no_execution_authority);
+                assert_eq!(
+                    bundle.artifact_package_build.validation_status,
+                    LearnValidationStatus::Ok
+                );
+            }
+            _ => panic!("expected forwarded learn bundle"),
+        }
+    }
+
+    #[test]
+    fn at_learn_13_feedback_to_learn_route_fails_closed_on_cross_tenant_feedback_events() {
+        let (mut feedback_turn_input, feedback_bundle) = feedback_turn_input_and_bundle();
+        feedback_turn_input.events[1].tenant_id = "tenant_2".to_string();
+
+        let err = map_feedback_bundle_to_learn_turn_input(
+            &feedback_turn_input,
+            &feedback_bundle,
+            FeedbackLearnRouteConfig::mvp_v1(),
+        )
+        .expect_err("cross-tenant feedback route must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "map_feedback_bundle_to_learn_turn_input.feedback_turn_input.events"
                 );
             }
             _ => panic!("expected invalid-value contract violation"),

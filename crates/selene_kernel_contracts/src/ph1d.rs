@@ -6,6 +6,9 @@ use crate::ph1n::{EvidenceSpan, FieldKey, FieldValue, IntentType, Ph1nResponse, 
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1D_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+pub const PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1: SchemaHash =
+    SchemaHash(0xD001_0001_0000_0001);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(pub u64);
@@ -77,12 +80,16 @@ impl Validate for PolicyContextRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Ph1dProviderTask {
     OcrTextExtract,
+    SttTranscribe,
+    TtsSynthesize,
 }
 
 impl Ph1dProviderTask {
     pub const fn as_str(self) -> &'static str {
         match self {
             Ph1dProviderTask::OcrTextExtract => "OCR_TEXT_EXTRACT",
+            Ph1dProviderTask::SttTranscribe => "STT_TRANSCRIBE",
+            Ph1dProviderTask::TtsSynthesize => "TTS_SYNTHESIZE",
         }
     }
 }
@@ -108,6 +115,8 @@ impl Ph1dProviderRouteClass {
 pub enum Ph1dProviderInputPayloadKind {
     Image,
     Document,
+    Audio,
+    Text,
 }
 
 impl Ph1dProviderInputPayloadKind {
@@ -115,6 +124,8 @@ impl Ph1dProviderInputPayloadKind {
         match self {
             Ph1dProviderInputPayloadKind::Image => "IMAGE",
             Ph1dProviderInputPayloadKind::Document => "DOCUMENT",
+            Ph1dProviderInputPayloadKind::Audio => "AUDIO",
+            Ph1dProviderInputPayloadKind::Text => "TEXT",
         }
     }
 }
@@ -146,6 +157,199 @@ impl Ph1dProviderValidationStatus {
             Ph1dProviderValidationStatus::SchemaOk => "SCHEMA_OK",
             Ph1dProviderValidationStatus::SchemaFail => "SCHEMA_FAIL",
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dProviderNormalizedOutput {
+    pub schema_version: SchemaVersion,
+    pub provider_task: Ph1dProviderTask,
+    pub text_output: Option<String>,
+    pub language_tag: Option<String>,
+    pub confidence_bp: Option<u16>,
+    pub stable: Option<bool>,
+    pub audio_output_ref: Option<String>,
+    pub audio_content_type: Option<String>,
+    pub estimated_duration_ms: Option<u32>,
+}
+
+impl Ph1dProviderNormalizedOutput {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        provider_task: Ph1dProviderTask,
+        text_output: Option<String>,
+        language_tag: Option<String>,
+        confidence_bp: Option<u16>,
+        stable: Option<bool>,
+        audio_output_ref: Option<String>,
+        audio_content_type: Option<String>,
+        estimated_duration_ms: Option<u32>,
+    ) -> Result<Self, ContractViolation> {
+        let v = Self {
+            schema_version: PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_VERSION,
+            provider_task,
+            text_output,
+            language_tag,
+            confidence_bp,
+            stable,
+            audio_output_ref,
+            audio_content_type,
+            estimated_duration_ms,
+        };
+        v.validate()?;
+        Ok(v)
+    }
+}
+
+impl Validate for Ph1dProviderNormalizedOutput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_normalized_output.schema_version",
+                reason: "must match PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_VERSION",
+            });
+        }
+        if let Some(text_output) = &self.text_output {
+            if text_output.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.text_output",
+                    reason: "must not be empty when present",
+                });
+            }
+            if text_output.len() > 65_536 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.text_output",
+                    reason: "must be <= 65536 chars",
+                });
+            }
+        }
+        if let Some(language_tag) = &self.language_tag {
+            validate_language_tag("ph1d_provider_normalized_output.language_tag", language_tag)?;
+        }
+        if let Some(confidence_bp) = self.confidence_bp {
+            if confidence_bp > 10_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.confidence_bp",
+                    reason: "must be <= 10000",
+                });
+            }
+        }
+        validate_opt_provider_token(
+            "ph1d_provider_normalized_output.audio_output_ref",
+            &self.audio_output_ref,
+            256,
+        )?;
+        if let Some(audio_content_type) = &self.audio_content_type {
+            if audio_content_type.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.audio_content_type",
+                    reason: "must not be empty when present",
+                });
+            }
+            if audio_content_type.len() > 64 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.audio_content_type",
+                    reason: "must be <= 64 chars",
+                });
+            }
+            if !audio_content_type
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '+' | '.'))
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.audio_content_type",
+                    reason: "contains unsupported characters",
+                });
+            }
+        }
+        if let Some(estimated_duration_ms) = self.estimated_duration_ms {
+            if estimated_duration_ms == 0 || estimated_duration_ms > 600_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_normalized_output.estimated_duration_ms",
+                    reason: "must be within 1..=600000",
+                });
+            }
+        }
+
+        match self.provider_task {
+            Ph1dProviderTask::OcrTextExtract => {
+                if self.text_output.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.text_output",
+                        reason: "must be Some(...) for OCR_TEXT_EXTRACT",
+                    });
+                }
+                if self.audio_output_ref.is_some()
+                    || self.audio_content_type.is_some()
+                    || self.estimated_duration_ms.is_some()
+                    || self.stable.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.provider_task",
+                        reason: "OCR_TEXT_EXTRACT must not include audio/stable fields",
+                    });
+                }
+            }
+            Ph1dProviderTask::SttTranscribe => {
+                if self.text_output.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.text_output",
+                        reason: "must be Some(...) for STT_TRANSCRIBE",
+                    });
+                }
+                if self.language_tag.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.language_tag",
+                        reason: "must be Some(...) for STT_TRANSCRIBE",
+                    });
+                }
+                if self.confidence_bp.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.confidence_bp",
+                        reason: "must be Some(...) for STT_TRANSCRIBE",
+                    });
+                }
+                if self.stable.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.stable",
+                        reason: "must be Some(...) for STT_TRANSCRIBE",
+                    });
+                }
+                if self.audio_output_ref.is_some()
+                    || self.audio_content_type.is_some()
+                    || self.estimated_duration_ms.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.provider_task",
+                        reason: "STT_TRANSCRIBE must not include audio output fields",
+                    });
+                }
+            }
+            Ph1dProviderTask::TtsSynthesize => {
+                if self.text_output.is_none() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.text_output",
+                        reason: "must be Some(...) for TTS_SYNTHESIZE",
+                    });
+                }
+                if self.audio_output_ref.is_none()
+                    || self.audio_content_type.is_none()
+                    || self.estimated_duration_ms.is_none()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.provider_task",
+                        reason: "TTS_SYNTHESIZE requires audio_output_ref/audio_content_type/estimated_duration_ms",
+                    });
+                }
+                if self.stable.is_some() || self.confidence_bp.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "ph1d_provider_normalized_output.provider_task",
+                        reason: "TTS_SYNTHESIZE must not include stable/confidence fields",
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -489,6 +693,14 @@ impl Validate for Ph1dProviderCallResponse {
                     reason: "must be Some(...) when validation_status=SCHEMA_OK",
                 });
             }
+            if self.normalized_output_schema_hash
+                != Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "ph1d_provider_call_response.normalized_output_schema_hash",
+                    reason: "must match PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1 when validation_status=SCHEMA_OK",
+                });
+            }
         }
         if self.reason_code.0 == 0 {
             return Err(ContractViolation::InvalidValue {
@@ -698,6 +910,31 @@ fn validate_opt_provider_token(
     Ok(())
 }
 
+fn validate_language_tag(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty",
+        });
+    }
+    if value.len() > 32 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 32 chars",
+        });
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "contains unsupported characters",
+        });
+    }
+    Ok(())
+}
+
 fn tool_catalog_bytes(c: &ToolCatalogRef) -> Vec<u8> {
     // Stable order for hashing.
     let mut names = c.tools.iter().map(|t| t.as_str()).collect::<Vec<_>>();
@@ -756,6 +993,12 @@ impl Ph1dChat {
 
 impl Validate for Ph1dChat {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_chat.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
         if self.response_text.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1d_chat.response_text",
@@ -766,6 +1009,12 @@ impl Validate for Ph1dChat {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1d_chat.response_text",
                 reason: "must be <= 8192 chars",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_chat.reason_code",
+                reason: "must be > 0",
             });
         }
         Ok(())
@@ -802,6 +1051,12 @@ impl Ph1dClarify {
 
 impl Validate for Ph1dClarify {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_clarify.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
         if self.question.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1d_clarify.question",
@@ -841,6 +1096,12 @@ impl Validate for Ph1dClarify {
                 });
             }
         }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_clarify.reason_code",
+                reason: "must be > 0",
+            });
+        }
         Ok(())
     }
 }
@@ -870,6 +1131,12 @@ impl Ph1dAnalysis {
 
 impl Validate for Ph1dAnalysis {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_analysis.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
         if self.short_analysis.trim().is_empty() {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1d_analysis.short_analysis",
@@ -880,6 +1147,12 @@ impl Validate for Ph1dAnalysis {
             return Err(ContractViolation::InvalidValue {
                 field: "ph1d_analysis.short_analysis",
                 reason: "must be <= 2048 chars",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_analysis.reason_code",
+                reason: "must be > 0",
             });
         }
         Ok(())
@@ -942,8 +1215,20 @@ impl Ph1dIntent {
 
 impl Validate for Ph1dIntent {
     fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_intent.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
         for r in &self.field_refinements {
             r.validate()?;
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_intent.reason_code",
+                reason: "must be > 0",
+            });
         }
         Ok(())
     }
@@ -1018,5 +1303,99 @@ mod tests {
         // Tamper with a derived field; validation must fail closed.
         r.transcript_hash = TranscriptHash(r.transcript_hash.0.wrapping_add(1));
         assert!(r.validate().is_err());
+    }
+
+    #[test]
+    fn ph1d_provider_normalized_output_accepts_stt_schema_v1() {
+        let out = Ph1dProviderNormalizedOutput::v1(
+            Ph1dProviderTask::SttTranscribe,
+            Some("invoice total due one hundred".to_string()),
+            Some("en-US".to_string()),
+            Some(9400),
+            Some(true),
+            None,
+            None,
+            None,
+        )
+        .expect("stt normalized output must validate");
+        assert_eq!(out.provider_task, Ph1dProviderTask::SttTranscribe);
+    }
+
+    #[test]
+    fn ph1d_provider_normalized_output_rejects_tts_without_audio_fields() {
+        let err = Ph1dProviderNormalizedOutput::v1(
+            Ph1dProviderTask::TtsSynthesize,
+            Some("hello world".to_string()),
+            Some("en-US".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect_err("tts output must fail closed when audio fields are missing");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "ph1d_provider_normalized_output.provider_task")
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ph1d_provider_call_response_schema_ok_requires_normalized_schema_hash_v1() {
+        let err = Ph1dProviderCallResponse::v1(
+            9,
+            11,
+            RequestId(7),
+            "idem_7".to_string(),
+            Some("call_7".to_string()),
+            "openai".to_string(),
+            Ph1dProviderTask::SttTranscribe,
+            "gpt-4o-mini-transcribe".to_string(),
+            Ph1dProviderStatus::Ok,
+            44,
+            12,
+            Some(9300),
+            Some(SchemaHash(7001)),
+            Some("{\"schema_version\":1}".to_string()),
+            Ph1dProviderValidationStatus::SchemaOk,
+            ReasonCodeId(1),
+        )
+        .expect_err("schema-ok response must require normalized schema hash v1");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => assert_eq!(
+                field,
+                "ph1d_provider_call_response.normalized_output_schema_hash"
+            ),
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ph1d_provider_call_response_schema_ok_accepts_normalized_schema_hash_v1() {
+        let out = Ph1dProviderCallResponse::v1(
+            9,
+            11,
+            RequestId(7),
+            "idem_7".to_string(),
+            Some("call_7".to_string()),
+            "openai".to_string(),
+            Ph1dProviderTask::SttTranscribe,
+            "gpt-4o-mini-transcribe".to_string(),
+            Ph1dProviderStatus::Ok,
+            44,
+            12,
+            Some(9300),
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1),
+            Some("{\"schema_version\":1}".to_string()),
+            Ph1dProviderValidationStatus::SchemaOk,
+            ReasonCodeId(1),
+        )
+        .expect("schema-ok response should validate with normalized schema hash v1");
+        assert_eq!(
+            out.normalized_output_schema_hash,
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1)
+        );
     }
 }

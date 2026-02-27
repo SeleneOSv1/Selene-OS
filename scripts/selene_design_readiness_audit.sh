@@ -120,6 +120,48 @@ echo "=================================================="
 
 echo
 echo "=================================================="
+echo "1C7) PH1.C ROUND-2 BENCHMARK/EVAL SNAPSHOT HARNESS"
+echo "=================================================="
+./scripts/check_ph1c_round2_eval_snapshot.sh docs/fixtures/ph1c_round2_eval_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C8) PH1.C ROUND-2 BENCHMARK CATEGORY GATES"
+echo "=================================================="
+./scripts/check_ph1c_round2_eval_gates.sh docs/fixtures/ph1c_round2_eval_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C9) PH1.C ROUND-2 BUILDER REMEDIATION GATE"
+echo "=================================================="
+./scripts/check_ph1c_round2_builder_remediation_gate.sh
+
+echo
+echo "=================================================="
+echo "1C10) PH1.C ROUND-2 ACCEPTANCE TEST LOCK"
+echo "=================================================="
+./scripts/check_ph1c_round2_acceptance_tests.sh
+
+echo
+echo "=================================================="
+echo "1C11) PH1.C ROUND-2 RELEASE THRESHOLD GATE"
+echo "=================================================="
+./scripts/check_ph1c_round2_release_gate.sh docs/fixtures/ph1c_round2_eval_snapshot.csv docs/fixtures/ph1k_round2_eval_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C12) PH1.C 5I SUPERIORITY SNAPSHOT HARNESS"
+echo "=================================================="
+./scripts/check_ph1c_5i_eval_snapshot.sh docs/fixtures/ph1c_5i_superiority_snapshot.csv
+
+echo
+echo "=================================================="
+echo "1C13) PH1.C 5I SUPERIORITY HARD GATE"
+echo "=================================================="
+./scripts/check_ph1c_5i_superiority_gate.sh docs/fixtures/ph1c_5i_superiority_snapshot.csv
+
+echo
+echo "=================================================="
 echo "1D) RUNTIME BOUNDARY GUARDRAIL (OFFLINE/CONTROL-PLANE)"
 echo "=================================================="
 ./scripts/check_runtime_boundary_guards.sh

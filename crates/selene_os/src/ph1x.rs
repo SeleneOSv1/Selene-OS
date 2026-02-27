@@ -60,6 +60,7 @@ pub mod reason_codes {
     pub const X_INTERRUPT_RETURN_CHECK_ASKED: ReasonCodeId = ReasonCodeId(0x5800_001F);
     pub const X_INTERRUPT_RESUME_NOW: ReasonCodeId = ReasonCodeId(0x5800_0020);
     pub const X_INTERRUPT_DISCARD: ReasonCodeId = ReasonCodeId(0x5800_0021);
+    pub const X_CLARIFY_ESCALATED: ReasonCodeId = ReasonCodeId(0x5800_0022);
 }
 
 const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
@@ -1043,6 +1044,22 @@ impl Ph1xRuntime {
         delivery_base: DeliveryHint,
         tts_control: Option<TtsControl>,
     ) -> Result<Ph1xResponse, ContractViolation> {
+        if matches!(
+            thread_state.pending,
+            Some(PendingState::Clarify { attempts, .. }) if attempts > 1
+        ) {
+            return self.out(
+                req,
+                Ph1xDirective::Respond(selene_kernel_contracts::ph1x::RespondDirective::v1(
+                    "I still cannot confirm this safely from one clarify. I am escalating this for human review."
+                        .to_string(),
+                )?),
+                thread_state,
+                tts_control,
+                DeliveryHint::TextOnly,
+                reason_codes::X_CLARIFY_ESCALATED,
+            );
+        }
         let directive = Ph1xDirective::Clarify(ClarifyDirective::v1(
             question,
             accepted_answer_formats,
@@ -2204,12 +2221,11 @@ mod tests {
         CacheStatus, SourceMetadata, SourceRef, ToolQueryHash, ToolRequestId,
     };
     use selene_kernel_contracts::ph1k::{
-        Confidence, DegradationClassBundle, InterruptCandidate,
-        InterruptCandidateConfidenceBand, InterruptDegradationContext,
-        InterruptGateConfidences, InterruptGates, InterruptLocaleTag, InterruptPhraseId,
-        InterruptPhraseSetVersion, InterruptRiskContextClass, InterruptSpeechWindowMetrics,
-        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
-        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
+        Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
+        InterruptDegradationContext, InterruptGateConfidences, InterruptGates, InterruptLocaleTag,
+        InterruptPhraseId, InterruptPhraseSetVersion, InterruptRiskContextClass,
+        InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
+        InterruptTimingMarkers, SpeechLikeness, PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
     use selene_kernel_contracts::ph1m::{
         MemoryCandidate, MemoryConfidence, MemoryKey, MemoryProvenance, MemorySensitivityFlag,
@@ -3262,6 +3278,57 @@ mod tests {
         assert!(matches!(
             out.thread_state.pending,
             Some(PendingState::Clarify { .. })
+        ));
+    }
+
+    #[test]
+    fn at_x_step9_second_clarify_attempt_escalates_instead_of_looping() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let thread = ThreadState::v1(
+            Some(PendingState::Clarify {
+                missing_field: FieldKey::When,
+                attempts: 1,
+            }),
+            None,
+        );
+        let req = Ph1xRequest::v1(
+            9,
+            2,
+            now(2),
+            thread,
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::Clarify(
+                Clarify::v1(
+                    "What day and time?".to_string(),
+                    vec![FieldKey::When],
+                    vec!["Tomorrow 3pm".to_string(), "Friday 10am".to_string()],
+                    ReasonCodeId(1),
+                    SensitivityLevel::Public,
+                    false,
+                    vec![],
+                    vec![],
+                )
+                .unwrap(),
+            )),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out = rt.decide(&req).unwrap();
+        assert_eq!(out.reason_code, reason_codes::X_CLARIFY_ESCALATED);
+        assert!(matches!(out.directive, Ph1xDirective::Respond(_)));
+        assert!(matches!(
+            out.thread_state.pending,
+            Some(PendingState::Clarify {
+                missing_field: FieldKey::When,
+                attempts: 2
+            })
         ));
     }
 

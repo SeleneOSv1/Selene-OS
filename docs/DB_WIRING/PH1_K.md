@@ -145,7 +145,7 @@ State/boundary constraints:
 - `audio_runtime_current` must be derivable from `audio_runtime_events` only.
 - unknown `implementation_id` is fail-closed at runtime dispatch (`ph1_k.implementation_id`).
 - unknown `interrupt_policy_profile_id` is fail-closed at lexical candidate evaluation (`interrupt_input.lexicon_policy_binding.policy_profile_id`).
-- unknown/unauthorized adaptive threshold profile inputs are fail-closed (`adaptive_threshold_policy_input` validation + profile selection by tenant policy binding).
+- invalid adaptive-threshold profile inputs are fail-closed (`adaptive_threshold_policy_input` validation + deterministic profile selection inputs).
 - interrupt candidate emission is noise-safe and fail-closed:
   - lexical phrase match from approved phrase set is mandatory.
   - hybrid lexical+acoustic+prosody safeguards are mandatory (`phrase_confidence`, `acoustic_confidence`, `prosody_confidence`, `vad_confidence`, `speech_likeness`, voiced window, echo-safe gate, optional nearfield gate).
@@ -271,9 +271,9 @@ Routing contract:
   - `normalize_interrupt_phrase_rejects_control_only_input_fail_closed`
 - `AT-K-13` confidence-band mapping to reason codes is deterministic at boundary values
   - `at_k_interrupt_13_confidence_band_and_reason_code_mapping_boundaries_are_locked`
-- `AT-K-14` adaptive threshold profile selection is deterministic and fails closed on unknown tenant profile
+- `AT-K-14` adaptive threshold profile selection is deterministic by route/noise inputs
   - `at_k_interrupt_14_threshold_profile_selection_is_deterministic_by_route_and_noise`
-  - `at_k_interrupt_15_threshold_profile_selection_fails_closed_on_unknown_tenant_profile`
+  - `at_k_interrupt_15_threshold_profile_selection_accepts_valid_dynamic_profile_ids`
 - `AT-K-15` noisy-environment recovery replay is deterministic and only returns to healthy after recovery stability window
   - `at_k_runtime_16_noisy_environment_recovery_replay_is_deterministic`
 - `AT-K-16` overlap-speech interruption path remains deterministic (replay-stable reject/emit behavior by confidence and noise class)

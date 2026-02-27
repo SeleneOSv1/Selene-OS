@@ -211,20 +211,34 @@ impl Ph1PaeRuntime {
             );
         };
 
-        let promotion_eligible = selected.sample_size >= effective_min_sample
+        let base_promotion_eligible = selected.sample_size >= effective_min_sample
             && selected.total_score_bp >= effective_promotion_threshold as i32
             && selected_candidate.regression_risk_bp <= self.config.lead_regression_guard_bp;
+        let threshold_demotion_trigger =
+            req.consecutive_threshold_failures >= req.demotion_failure_threshold;
+        let regression_demotion_trigger = req.current_mode != PaeMode::Shadow
+            && selected_candidate.regression_risk_bp > self.config.lead_regression_guard_bp;
+        let demotion_triggered = threshold_demotion_trigger || regression_demotion_trigger;
+        let promotion_eligible = base_promotion_eligible && !demotion_triggered;
 
         let mut selected_mode = req.current_mode;
         if promotion_eligible {
             selected_mode = bounded_promotion_mode(req.current_mode, selected.mode_applied);
         }
 
-        if req.consecutive_threshold_failures >= req.demotion_failure_threshold {
-            selected_mode = demoted_mode(selected_mode);
+        if demotion_triggered {
+            selected_mode = demoted_mode(req.current_mode);
         }
 
         let rollback_ready = selected_candidate.rollback_to.is_some();
+        if req.current_mode == PaeMode::Lead && selected_mode == PaeMode::Assist && !rollback_ready
+        {
+            return self.refuse(
+                PaeCapabilityId::PaePolicyScoreBuild,
+                reason_codes::PH1_PAE_VALIDATION_FAILED,
+                "rollback pointer required for lead demotion",
+            );
+        }
         if selected_mode == PaeMode::Lead && !rollback_ready {
             selected_mode = PaeMode::Assist;
         }
@@ -698,5 +712,43 @@ mod tests {
             panic!("expected adaptation-hint emit output");
         };
         assert_eq!(ok.validation_status, PaeValidationStatus::Fail);
+    }
+
+    #[test]
+    fn at_pae_05_regression_guard_auto_demotes_without_waiting_failure_counter() {
+        let runtime = Ph1PaeRuntime::new(Ph1PaeConfig::mvp_v1());
+        let req = Ph1PaeRequest::PaePolicyScoreBuild(build_req(
+            PaeMode::Lead,
+            vec![candidate("c1", PaeMode::Lead, 3200, 2200, 260, true)],
+            120,
+            1200,
+            0,
+        ));
+
+        let response = runtime.run(&req);
+        let Ph1PaeResponse::PaePolicyScoreBuildOk(ok) = response else {
+            panic!("expected score build ok");
+        };
+        assert_eq!(ok.selected_mode, PaeMode::Assist);
+        assert!(!ok.promotion_eligible);
+        assert!(ok.rollback_ready);
+    }
+
+    #[test]
+    fn at_pae_06_lead_demotion_without_rollback_pointer_fails_closed() {
+        let runtime = Ph1PaeRuntime::new(Ph1PaeConfig::mvp_v1());
+        let req = Ph1PaeRequest::PaePolicyScoreBuild(build_req(
+            PaeMode::Lead,
+            vec![candidate("c1", PaeMode::Assist, 3200, 2200, 260, false)],
+            120,
+            1200,
+            0,
+        ));
+
+        let response = runtime.run(&req);
+        let Ph1PaeResponse::Refuse(refuse) = response else {
+            panic!("expected fail-closed refusal");
+        };
+        assert_eq!(refuse.reason_code, reason_codes::PH1_PAE_VALIDATION_FAILED);
     }
 }

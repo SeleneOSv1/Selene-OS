@@ -6,6 +6,7 @@ pub mod ph1_voice_id;
 pub mod ph1bcast;
 pub mod ph1builder;
 pub mod ph1c;
+pub mod ph1c_superiority;
 pub mod ph1cache;
 pub mod ph1capreq;
 pub mod ph1context;

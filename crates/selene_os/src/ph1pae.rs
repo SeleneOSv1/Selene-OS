@@ -248,13 +248,33 @@ pub fn map_pae_bundle_to_promotion_decision(
         });
     }
 
-    let decision_action = infer_decision_action(
-        turn_input.current_mode,
-        bundle.score_build.selected_mode,
-        bundle.score_build.promotion_eligible,
-    );
     let from_mode = turn_input.current_mode;
     let to_mode = bundle.score_build.selected_mode;
+    if pae_mode_step_distance(from_mode, to_mode) > 1 {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.score_build.selected_mode",
+            reason: "must be one-step ladder transition only",
+        });
+    }
+
+    if pae_mode_rank(to_mode) > pae_mode_rank(from_mode) && !bundle.score_build.promotion_eligible {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.score_build.promotion_eligible",
+            reason: "must be true when selected_mode is promoted",
+        });
+    }
+    if from_mode == PaeMode::Lead
+        && to_mode == PaeMode::Assist
+        && !bundle.score_build.rollback_ready
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_pae_bundle_to_promotion_decision.bundle.score_build.rollback_ready",
+            reason: "lead demotion requires rollback_ready=true",
+        });
+    }
+
+    let decision_action =
+        infer_decision_action(from_mode, to_mode, bundle.score_build.promotion_eligible);
     let decision_id = stable_card_id(
         "decision",
         &[
@@ -308,15 +328,16 @@ fn infer_decision_action(
     to_mode: PaeMode,
     promotion_eligible: bool,
 ) -> PromotionDecisionAction {
-    if !promotion_eligible {
-        return PromotionDecisionAction::Hold;
-    }
     let from_rank = pae_mode_rank(from_mode);
     let to_rank = pae_mode_rank(to_mode);
-    if to_rank > from_rank {
+    if to_rank < from_rank {
+        if from_mode == PaeMode::Lead {
+            PromotionDecisionAction::Rollback
+        } else {
+            PromotionDecisionAction::Demote
+        }
+    } else if to_rank > from_rank && promotion_eligible {
         PromotionDecisionAction::Promote
-    } else if to_rank < from_rank {
-        PromotionDecisionAction::Demote
     } else {
         PromotionDecisionAction::Hold
     }
@@ -328,6 +349,10 @@ fn pae_mode_rank(mode: PaeMode) -> u8 {
         PaeMode::Assist => 1,
         PaeMode::Lead => 2,
     }
+}
+
+fn pae_mode_step_distance(from_mode: PaeMode, to_mode: PaeMode) -> u8 {
+    pae_mode_rank(from_mode).abs_diff(pae_mode_rank(to_mode))
 }
 
 fn pae_mode_key(mode: PaeMode) -> &'static str {
@@ -846,6 +871,116 @@ mod tests {
                 );
             }
             _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_pae_07_mapper_marks_lead_demotion_as_rollback_action() {
+        let wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            DeterministicPaeEngine {
+                force_emit_fail: false,
+            },
+        )
+        .unwrap();
+        let input = sample_input();
+        let out = wiring.run_turn(&input).unwrap();
+        let PaeWiringOutcome::Forwarded(mut bundle) = out else {
+            panic!("expected forwarded bundle");
+        };
+        let mut decision_input = input.clone();
+        decision_input.current_mode = PaeMode::Lead;
+        bundle.score_build.selected_mode = PaeMode::Assist;
+        bundle.score_build.promotion_eligible = false;
+        bundle.score_build.rollback_ready = true;
+
+        let decision = map_pae_bundle_to_promotion_decision(
+            &sample_fix_card(),
+            &decision_input,
+            &bundle,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            MonotonicTimeNs(1_002),
+        )
+        .expect("lead demotion with rollback-ready must map");
+        assert_eq!(decision.decision_action, PromotionDecisionAction::Rollback);
+    }
+
+    #[test]
+    fn at_pae_08_mapper_fails_closed_on_lead_demotion_without_rollback_ready() {
+        let wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            DeterministicPaeEngine {
+                force_emit_fail: false,
+            },
+        )
+        .unwrap();
+        let input = sample_input();
+        let out = wiring.run_turn(&input).unwrap();
+        let PaeWiringOutcome::Forwarded(mut bundle) = out else {
+            panic!("expected forwarded bundle");
+        };
+        let mut decision_input = input.clone();
+        decision_input.current_mode = PaeMode::Lead;
+        bundle.score_build.selected_mode = PaeMode::Assist;
+        bundle.score_build.promotion_eligible = false;
+        bundle.score_build.rollback_ready = false;
+
+        let err = map_pae_bundle_to_promotion_decision(
+            &sample_fix_card(),
+            &decision_input,
+            &bundle,
+            false,
+            None,
+            None,
+            MonotonicTimeNs(1_003),
+        )
+        .expect_err("lead demotion without rollback pointer must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => assert_eq!(
+                field,
+                "map_pae_bundle_to_promotion_decision.bundle.score_build.rollback_ready"
+            ),
+            other => panic!("expected invalid-value violation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_pae_09_mapper_fails_closed_on_direct_shadow_to_lead_jump() {
+        let wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            DeterministicPaeEngine {
+                force_emit_fail: false,
+            },
+        )
+        .unwrap();
+        let mut input = sample_input();
+        input.current_mode = PaeMode::Shadow;
+        let out = wiring.run_turn(&input).unwrap();
+        let PaeWiringOutcome::Forwarded(mut bundle) = out else {
+            panic!("expected forwarded bundle");
+        };
+        bundle.score_build.selected_mode = PaeMode::Lead;
+        bundle.score_build.promotion_eligible = true;
+        bundle.score_build.rollback_ready = true;
+
+        let err = map_pae_bundle_to_promotion_decision(
+            &sample_fix_card(),
+            &input,
+            &bundle,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            MonotonicTimeNs(1_004),
+        )
+        .expect_err("direct SHADOW->LEAD jump must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => assert_eq!(
+                field,
+                "map_pae_bundle_to_promotion_decision.bundle.score_build.selected_mode"
+            ),
+            other => panic!("expected invalid-value violation, got {other:?}"),
         }
     }
 }

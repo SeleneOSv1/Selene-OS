@@ -65,3 +65,21 @@
 - PH1.LEARN wiring must aggregate FDX signals into versioned, rollbackable artifact packages.
 - FDX artifact targets may include PH1.K/PH1.C/PH1.NLP/PH1.X/PH1.TTS adaptation surfaces only as advisory packages.
 - PH1.LEARN must fail closed on invalid ordering, invalid rollback pointers, or invalid target-engine coverage.
+
+## H) Round-2 Step 9 Lock (Feedback-Driven Learning Package Flow)
+- PH1.LEARN input route from PH1.FEEDBACK is now explicitly locked in Selene OS runtime:
+  - canonical FEEDBACK candidate ordering before LearnSignal creation
+  - stable deterministic `signal_id` projection for replay-safe idempotent processing
+  - strict fail-closed correlation/turn/tenant integrity checks
+- PH1.LEARN package output authority remains unchanged:
+  - advisory-only
+  - no execution authority
+  - any runtime activation remains governed by PH1.PAE promotion path
+
+## I) Round-2 Step 10 Lock (Gold-Loop Verified Packaging)
+- Improvement-path FEEDBACK signals from PH1.C miss/correction gold-cases are accepted into LEARN routing with deterministic signal mapping.
+- PH1.LEARN package-build remains fail-closed unless improvement artifacts are gold-verified:
+  - `gold_status=VERIFIED`
+  - provenance method present
+  - gold-case id present
+- Verified gold-loop outputs must preserve deterministic replay identity and target PAE when FEEDBACK target includes `PaeScorecard`.

@@ -54,3 +54,23 @@
 - PH1.FEEDBACK wiring must capture duplex incident signals with deterministic ordering and bounded evidence refs.
 - Required FDX signal families: false interrupt, missed interrupt, late cancel, low-confidence transcript fallback, continuity clarify fallback.
 - All FDX signals remain advisory-only and flow through Selene OS into PH1.LEARN/PH1.PAE.
+
+## H) Round-2 Step 9 Lock (Feedback -> Learn Route)
+- Selene OS runtime FEEDBACK->LEARN route is now explicit in `crates/selene_os/src/ph1learn.rs`:
+  - `map_feedback_bundle_to_learn_turn_input(...)`
+  - `route_feedback_into_learn_wiring(...)`
+- Route guarantees:
+  - deterministic candidate canonicalization (`signal_value_bp DESC`, `candidate_id ASC`, `signal_key ASC`)
+  - deterministic learn `signal_id` generation for replay/idempotent reprocessing
+  - fail-closed on correlation/turn/tenant mismatch
+  - feedback path/gold fields preserved into learn signal fields
+
+## I) Round-2 Step 10 Lock (Gold-Loop Miss/Correction Path)
+- PH1.C miss/correction captures enter PH1.FEEDBACK as improvement-path events with deterministic `gold_case_id` and idempotent `event_id`.
+- Emit-target lock:
+  - `SttReject` / `SttRetry` gold-loop events must emit `PaeScorecard` targets so LEARN infers `LearnTargetEngine::Pae`.
+- Gold lifecycle boundary:
+  - pending captures are accepted for event capture,
+  - LEARN package flow for improvement artifacts proceeds only after verified-gold state is present.
+- Replay lock:
+  - identical verified miss/correction event bundles must produce deterministic FEEDBACK bundles for downstream LEARN/PAE mapping.

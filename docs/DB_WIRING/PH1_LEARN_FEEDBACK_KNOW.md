@@ -148,3 +148,18 @@ Implementation references:
   - `docs/DB_WIRING/PH1_KNOW.md`
   - `docs/ECM/PH1_KNOW.md`
 - This combined row-25 storage contract remains authoritative for append-only artifact persistence semantics only (`created_by=PH1.KNOW`).
+
+## 12) Feedback -> Learn Routing Lock (Round-2 Step 9)
+
+- Selene OS now exposes deterministic FEEDBACK->LEARN routing in runtime wiring:
+  - `map_feedback_bundle_to_learn_turn_input(...)`
+  - `route_feedback_into_learn_wiring(...)`
+  - implementation: `crates/selene_os/src/ph1learn.rs`
+- Routing invariants:
+  - feedback candidates are canonicalized deterministically (`signal_value_bp DESC`, `candidate_id ASC`, `signal_key ASC`)
+  - emitted learn `signal_id` values are stable deterministic IDs (replay/idempotent)
+  - correlation/turn/tenant mismatch is fail-closed
+  - feedback `path_type`/gold fields are preserved into learn `source_path`/gold fields
+- Package authority boundary remains strict:
+  - PH1.LEARN outputs remain advisory only
+  - no execution authority is granted before governed PH1.PAE activation

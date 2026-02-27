@@ -101,7 +101,7 @@
 ## Runtime Guardrails (Voice Substrate Boundary)
 - Unknown `implementation_id` must fail closed at runtime dispatch (`ph1_k.implementation_id`).
 - Unknown interrupt policy profile binding must fail closed at lexical candidate gating (`interrupt_input.lexicon_policy_binding.policy_profile_id`).
-- Unknown adaptive threshold policy/tenant profile combination must fail closed before gate evaluation.
+- Adaptive-threshold inputs must pass strict bounded validation before gate evaluation; invalid inputs fail closed.
 - Interrupt candidate emission must pass mandatory noise-safe gates:
   - lexical phrase match from approved policy-bound phrase set
   - hybrid lexical+acoustic+prosody safeguards (`phrase_confidence`, `acoustic_confidence`, `prosody_confidence`, `vad_confidence`, `speech_likeness`, voiced window, echo-safe, optional nearfield)
@@ -139,7 +139,7 @@
 - Runtime confidence/profile determinism locks:
   - `at_k_interrupt_13_confidence_band_and_reason_code_mapping_boundaries_are_locked`
   - `at_k_interrupt_14_threshold_profile_selection_is_deterministic_by_route_and_noise`
-  - `at_k_interrupt_15_threshold_profile_selection_fails_closed_on_unknown_tenant_profile`
+  - `at_k_interrupt_15_threshold_profile_selection_accepts_valid_dynamic_profile_ids`
 - Proof commands:
   - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
   - `cargo test -p selene_engines ph1k -- --nocapture`

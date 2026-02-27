@@ -7,6 +7,65 @@ service VoiceIngress {
   rpc UiHealthReportQuery(UiHealthReportQueryRequest) returns (UiHealthReportQueryResponse);
 }
 
+message RunVoiceTurnAudioCaptureRef {
+  uint64 stream_id_hi = 1;
+  uint64 stream_id_lo = 2;
+  uint64 pre_roll_buffer_id = 3;
+  uint64 t_start_ns = 4;
+  uint64 t_end_ns = 5;
+  uint64 t_candidate_start_ns = 6;
+  uint64 t_confirmed_ns = 7;
+  optional string locale_tag = 8;
+  optional string device_route = 9;
+  optional string selected_mic = 10;
+  optional string selected_speaker = 11;
+  optional bool tts_playback_active = 12;
+  optional string detection_text = 13;
+  optional uint32 detection_confidence_bp = 14;
+  optional uint32 vad_confidence_bp = 15;
+  optional uint32 acoustic_confidence_bp = 16;
+  optional uint32 prosody_confidence_bp = 17;
+  optional uint32 speech_likeness_bp = 18;
+  optional uint32 echo_safe_confidence_bp = 19;
+  optional uint32 nearfield_confidence_bp = 20;
+  optional bool capture_degraded = 21;
+  optional bool stream_gap_detected = 22;
+  optional bool aec_unstable = 23;
+  optional bool device_changed = 24;
+  optional sint32 snr_db_milli = 25;
+  optional uint32 clipping_ratio_bp = 26;
+  optional uint32 echo_delay_ms_milli = 27;
+  optional uint32 packet_loss_bp = 28;
+  optional uint32 double_talk_bp = 29;
+  optional sint32 erle_db_milli = 30;
+  optional uint32 device_failures_24h = 31;
+  optional uint32 device_recoveries_24h = 32;
+  optional uint32 device_mean_recovery_ms = 33;
+  optional uint32 device_reliability_bp = 34;
+  optional uint32 timing_jitter_ms_milli = 35;
+  optional uint32 timing_drift_ppm_milli = 36;
+  optional uint32 timing_buffer_depth_ms_milli = 37;
+  optional uint64 timing_underruns = 38;
+  optional uint64 timing_overruns = 39;
+}
+
+message RunVoiceTurnVisualTokenRef {
+  string token = 1;
+  optional uint32 x = 2;
+  optional uint32 y = 3;
+  optional uint32 w = 4;
+  optional uint32 h = 5;
+}
+
+message RunVoiceTurnVisualInputRef {
+  optional bool turn_opt_in_enabled = 1;
+  string source_id = 2;
+  string source_kind = 3;
+  string image_ref = 4;
+  string blob_ref = 5;
+  repeated RunVoiceTurnVisualTokenRef visible_tokens = 6;
+}
+
 message RunVoiceTurnRequest {
   uint64 correlation_id = 1;
   uint64 turn_id = 2;
@@ -16,6 +75,8 @@ message RunVoiceTurnRequest {
   string tenant_id = 6;
   string device_id = 7;
   uint64 now_ns = 8;
+  RunVoiceTurnAudioCaptureRef audio_capture_ref = 9;
+  RunVoiceTurnVisualInputRef visual_input_ref = 10;
 }
 
 message RunVoiceTurnResponse {

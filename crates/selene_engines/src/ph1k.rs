@@ -8,11 +8,12 @@ use selene_kernel_contracts::ph1feedback::{
 };
 use selene_kernel_contracts::ph1k::{
     classify_vad_decision_confidence_band, normalize_interrupt_phrase_for_locale,
-    AdaptiveThresholdPolicyInput, AdvancedAudioQualityMetrics, AudioDeviceId, Confidence,
-    CaptureQualityClass, DegradationClassBundle, DegradationFlags, DeviceError, DeviceHealth,
-    DeviceReliabilityScoreInput, DeviceRoute, DeviceState, EchoRiskClass, InterruptCandidate,
-    InterruptCandidateConfidenceBand, InterruptDegradationContext, InterruptGateConfidences,
-    InterruptGates, InterruptLexiconPolicyBinding, InterruptLocaleTag, InterruptPhraseId,
+    AdaptiveThresholdPolicyInput, AdvancedAudioQualityMetrics, AudioDeviceId, CaptureQualityClass,
+    Confidence, DegradationClassBundle, DegradationFlags, DeviceError, DeviceHealth,
+    DeviceReliabilityScoreInput, DeviceRoute, DeviceState, DuplexFrame, DuplexFrameId,
+    EchoRiskClass, InterruptCandidate, InterruptCandidateConfidenceBand,
+    InterruptDegradationContext, InterruptGateConfidences, InterruptGates,
+    InterruptLexiconPolicyBinding, InterruptLocaleTag, InterruptPhraseId,
     InterruptPhraseSetVersion, InterruptPolicyProfileId, InterruptRiskContextClass,
     InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
     InterruptTenantProfileId, InterruptTimingMarkers, JitterClockRecoveryPolicy,
@@ -881,6 +882,59 @@ impl InterruptPhraseMatcher {
             .copied()
             .map(|phrase_id| (profile.phrase_set_version, phrase_id)))
     }
+
+    pub fn register_profile_from_phrases(
+        &mut self,
+        policy_profile_id: InterruptPolicyProfileId,
+        tenant_profile_id: InterruptTenantProfileId,
+        phrase_set_version: InterruptPhraseSetVersion,
+        locale_phrases: Vec<(InterruptLocaleTag, Vec<String>)>,
+    ) -> Result<(), ContractViolation> {
+        if locale_phrases.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "interrupt_profile.locale_phrases",
+                reason: "must not be empty",
+            });
+        }
+        let mut by_locale: HashMap<InterruptLocaleTag, HashMap<String, InterruptPhraseId>> =
+            HashMap::new();
+        let mut next_phrase_id = 1u32;
+        for (locale_tag, phrases) in locale_phrases {
+            if phrases.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "interrupt_profile.locale_phrases[].phrases",
+                    reason: "must not be empty",
+                });
+            }
+            let mut by_phrase = HashMap::new();
+            for phrase in phrases {
+                let normalized = normalize_interrupt_phrase_for_locale(&locale_tag, &phrase)
+                    .map_err(|_| ContractViolation::InvalidValue {
+                        field: "interrupt_profile.locale_phrases[].phrases[]",
+                        reason: "invalid phrase normalization",
+                    })?;
+                by_phrase.entry(normalized).or_insert_with(|| {
+                    let phrase_id = InterruptPhraseId(next_phrase_id);
+                    next_phrase_id = next_phrase_id.saturating_add(1);
+                    phrase_id
+                });
+            }
+            by_locale.insert(locale_tag, by_phrase);
+        }
+        self.profiles.insert(
+            policy_profile_id,
+            InterruptLexiconPolicyProfile {
+                tenant_profile_id,
+                phrase_set_version,
+                by_locale,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn has_profile(&self, policy_profile_id: &InterruptPolicyProfileId) -> bool {
+        self.profiles.contains_key(policy_profile_id)
+    }
 }
 
 pub const DEFAULT_MIN_INTERRUPT_PHRASE_CONFIDENCE: f32 = 0.85;
@@ -945,19 +999,22 @@ fn derive_degradation_class_bundle(
     device_changed: bool,
     stream_gap_detected: bool,
 ) -> DegradationClassBundle {
-    let capture_quality_class = if capture_degraded || quality.snr_db < 8.0 || quality.clipping_ratio >= 0.15
+    let capture_quality_class =
+        if capture_degraded || quality.snr_db < 8.0 || quality.clipping_ratio >= 0.15 {
+            CaptureQualityClass::Critical
+        } else if quality.snr_db < 14.0 || quality.clipping_ratio >= 0.08 {
+            CaptureQualityClass::Degraded
+        } else if quality.snr_db < 22.0 || quality.clipping_ratio >= 0.04 {
+            CaptureQualityClass::Guarded
+        } else {
+            CaptureQualityClass::Clear
+        };
+    let echo_risk_class = if aec_unstable || quality.echo_delay_ms >= 200.0 || quality.erle_db < 6.0
     {
-        CaptureQualityClass::Critical
-    } else if quality.snr_db < 14.0 || quality.clipping_ratio >= 0.08 {
-        CaptureQualityClass::Degraded
-    } else if quality.snr_db < 22.0 || quality.clipping_ratio >= 0.04 {
-        CaptureQualityClass::Guarded
-    } else {
-        CaptureQualityClass::Clear
-    };
-    let echo_risk_class = if aec_unstable || quality.echo_delay_ms >= 200.0 || quality.erle_db < 6.0 {
         EchoRiskClass::High
-    } else if quality.echo_delay_ms >= 80.0 || quality.erle_db < 12.0 || quality.double_talk_score >= 0.65
+    } else if quality.echo_delay_ms >= 80.0
+        || quality.erle_db < 12.0
+        || quality.double_talk_score >= 0.65
     {
         EchoRiskClass::Elevated
     } else {
@@ -1005,18 +1062,22 @@ fn select_adaptive_threshold_profile(
     input: &AdaptiveThresholdPolicyInput,
     noise_class: InterruptNoiseClass,
 ) -> Result<AdaptiveThresholdProfile, ContractViolation> {
-    if binding.policy_profile_id.as_str() != PH1K_INTERRUPT_POLICY_PROFILE_ID_DEFAULT {
-        return Err(ContractViolation::InvalidValue {
-            field: "interrupt_input.lexicon_policy_binding.policy_profile_id",
-            reason: "unknown interrupt threshold policy profile",
-        });
-    }
-    if binding.tenant_profile_id.as_str() != PH1K_INTERRUPT_TENANT_PROFILE_ID_DEFAULT {
-        return Err(ContractViolation::InvalidValue {
-            field: "interrupt_input.lexicon_policy_binding.tenant_profile_id",
-            reason: "unknown interrupt tenant threshold profile",
-        });
-    }
+    binding.validate()?;
+    let policy_profile_key = binding.policy_profile_id.as_str().to_ascii_lowercase();
+    let governance_penalty: f32 = if policy_profile_key.contains("pae_shadow") {
+        0.03
+    } else if policy_profile_key.contains("pae_assist") {
+        0.015
+    } else {
+        0.0
+    };
+    let governance_window_penalty_ms: u32 = if policy_profile_key.contains("pae_shadow") {
+        20
+    } else if policy_profile_key.contains("pae_assist") {
+        10
+    } else {
+        0
+    };
     let route_penalty: f32 = match input.device_route {
         DeviceRoute::Bluetooth => 0.03,
         DeviceRoute::Virtual => 0.02,
@@ -1028,12 +1089,13 @@ fn select_adaptive_threshold_profile(
         InterruptNoiseClass::Elevated => 0.04,
         InterruptNoiseClass::Severe => 0.10,
     };
-    let strict = (route_penalty + noise_penalty).clamp(0.0, 0.20);
+    let strict = (route_penalty + noise_penalty + governance_penalty).clamp(0.0, 0.20);
     let voiced_window = match noise_class {
         InterruptNoiseClass::Clean => DEFAULT_MIN_INTERRUPT_VOICED_WINDOW_MS,
         InterruptNoiseClass::Elevated => 110,
         InterruptNoiseClass::Severe => 140,
-    };
+    }
+    .saturating_add(governance_window_penalty_ms);
     let clock_recovery_policy = match noise_class {
         InterruptNoiseClass::Clean => JitterClockRecoveryPolicy::v1(28.0, 120.0, 180),
         InterruptNoiseClass::Elevated => JitterClockRecoveryPolicy::v1(20.0, 90.0, 160),
@@ -1440,16 +1502,13 @@ pub fn build_ph1k_to_ph1c_handoff(
             )
         });
 
-    let vad_confidence_band =
-        decision_trace
-            .vad_confidence_band
-            .unwrap_or_else(|| {
-                let vad_confidence = Confidence::new(vad_conf)
-                    .expect("normalized vad confidence must remain bounded");
-                let speech_likeness = SpeechLikeness::new(speech_likeness)
-                    .expect("normalized speech likeness must remain bounded");
-                classify_vad_decision_confidence_band(vad_confidence, speech_likeness)
-            });
+    let vad_confidence_band = decision_trace.vad_confidence_band.unwrap_or_else(|| {
+        let vad_confidence =
+            Confidence::new(vad_conf).expect("normalized vad confidence must remain bounded");
+        let speech_likeness = SpeechLikeness::new(speech_likeness)
+            .expect("normalized speech likeness must remain bounded");
+        classify_vad_decision_confidence_band(vad_confidence, speech_likeness)
+    });
 
     let degradation_class_bundle = decision_trace
         .candidate
@@ -1491,6 +1550,29 @@ pub fn build_ph1k_to_ph1x_handoff(
         .as_ref()
         .map(Ph1kToPh1xInterruptHandoff::from_interrupt_candidate)
         .transpose()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_duplex_frame(
+    frame_id: u64,
+    stream_id: selene_kernel_contracts::ph1k::AudioStreamId,
+    pre_roll_buffer_id: selene_kernel_contracts::ph1k::PreRollBufferId,
+    t_frame_start: MonotonicTimeNs,
+    t_frame_end: MonotonicTimeNs,
+    t_capture: MonotonicTimeNs,
+    tts_playback_active: bool,
+    capture_to_handoff_latency_ms: u32,
+) -> Result<DuplexFrame, ContractViolation> {
+    DuplexFrame::v1(
+        DuplexFrameId(frame_id),
+        stream_id,
+        pre_roll_buffer_id,
+        t_frame_start,
+        t_frame_end,
+        t_capture,
+        tts_playback_active,
+        capture_to_handoff_latency_ms,
+    )
 }
 
 fn normalize_unit_interval(value: f32) -> f32 {
@@ -1736,7 +1818,11 @@ mod tests {
         policy: DevicePolicy,
     ) -> Vec<Vec<Ph1kOutputEvent>> {
         let mut rt = Ph1kRuntime::new(policy);
-        events.iter().cloned().map(|event| rt.handle(event)).collect()
+        events
+            .iter()
+            .cloned()
+            .map(|event| rt.handle(event))
+            .collect()
     }
 
     #[test]
@@ -1914,7 +2000,10 @@ mod tests {
         assert_eq!(profile.mic_gain_db, -6.0);
         assert_eq!(profile.speaker_gain_db, -6.0);
         assert_eq!(profile.tune_steps, 12);
-        assert_eq!(last_code, Some(reason_codes::K_CALIBRATION_AUTO_TUNE_APPLIED));
+        assert_eq!(
+            last_code,
+            Some(reason_codes::K_CALIBRATION_AUTO_TUNE_APPLIED)
+        );
 
         let rollback_out = rt.handle(Ph1kEvent::AecUnstable {
             now: MonotonicTimeNs(100),
@@ -2028,13 +2117,19 @@ mod tests {
             state.class_bundle,
             DegradationClassBundle::from_flags(false, false, false, false)
         );
-        assert_eq!(state.class_bundle.capture_quality_class, CaptureQualityClass::Clear);
+        assert_eq!(
+            state.class_bundle.capture_quality_class,
+            CaptureQualityClass::Clear
+        );
         assert_eq!(state.class_bundle.echo_risk_class, EchoRiskClass::Low);
         assert_eq!(
             state.class_bundle.network_stability_class,
             NetworkStabilityClass::Stable
         );
-        assert_eq!(state.class_bundle.recoverability_class, RecoverabilityClass::Fast);
+        assert_eq!(
+            state.class_bundle.recoverability_class,
+            RecoverabilityClass::Fast
+        );
     }
 
     #[test]
@@ -2515,8 +2610,7 @@ mod tests {
             reason_codes::K_INTERRUPT_CANDIDATE_EMITTED_HIGH
         );
 
-        let medium =
-            classify_candidate_confidence_band(0.90, 0.85, 0.85, 0.82, 0.92, Some(0.70));
+        let medium = classify_candidate_confidence_band(0.90, 0.85, 0.85, 0.82, 0.92, Some(0.70));
         assert_eq!(medium, InterruptCandidateConfidenceBand::Medium);
         assert_eq!(
             reason_code_for_candidate_band(medium),
@@ -2532,7 +2626,10 @@ mod tests {
 
         let high_without_nearfield =
             classify_candidate_confidence_band(0.95, 0.90, 0.92, 0.90, 0.95, None);
-        assert_eq!(high_without_nearfield, InterruptCandidateConfidenceBand::High);
+        assert_eq!(
+            high_without_nearfield,
+            InterruptCandidateConfidenceBand::High
+        );
     }
 
     #[test]
@@ -2550,12 +2647,9 @@ mod tests {
         assert_eq!(clean_a, clean_b);
 
         let severe_input = default_adaptive_policy_input(DeviceRoute::Bluetooth);
-        let severe = select_adaptive_threshold_profile(
-            &binding,
-            &severe_input,
-            InterruptNoiseClass::Severe,
-        )
-        .expect("severe profile selection must pass");
+        let severe =
+            select_adaptive_threshold_profile(&binding, &severe_input, InterruptNoiseClass::Severe)
+                .expect("severe profile selection must pass");
         assert!(severe.min_phrase_confidence > clean_a.min_phrase_confidence);
         assert!(severe.min_vad_confidence > clean_a.min_vad_confidence);
         assert!(severe.min_voiced_window_ms > clean_a.min_voiced_window_ms);
@@ -2566,26 +2660,58 @@ mod tests {
     }
 
     #[test]
-    fn at_k_interrupt_15_threshold_profile_selection_fails_closed_on_unknown_tenant_profile() {
+    fn at_k_interrupt_15_threshold_profile_selection_accepts_valid_dynamic_profile_ids() {
         let bad_binding = InterruptLexiconPolicyBinding::v1(
             InterruptPolicyProfileId::new(PH1K_INTERRUPT_POLICY_PROFILE_ID_DEFAULT).unwrap(),
             InterruptTenantProfileId::new("tenant_interrupt_unknown").unwrap(),
             InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
         )
         .unwrap();
-        let err = select_adaptive_threshold_profile(
+        let profile = select_adaptive_threshold_profile(
             &bad_binding,
             &default_adaptive_policy_input(DeviceRoute::Usb),
             InterruptNoiseClass::Clean,
         )
-        .expect_err("unknown tenant threshold profile must fail closed");
-        assert!(matches!(
-            err,
-            ContractViolation::InvalidValue {
-                field: "interrupt_input.lexicon_policy_binding.tenant_profile_id",
-                reason: "unknown interrupt tenant threshold profile",
-            }
-        ));
+        .expect("valid dynamic tenant profile ids must be accepted");
+        assert!(profile.min_phrase_confidence >= DEFAULT_MIN_INTERRUPT_PHRASE_CONFIDENCE);
+    }
+
+    #[test]
+    fn at_k_interrupt_15a_threshold_profile_is_governed_by_pae_profile_mode() {
+        let shadow_binding = InterruptLexiconPolicyBinding::v1(
+            InterruptPolicyProfileId::new("interrupt_policy_pae_shadow_abcd").unwrap(),
+            InterruptTenantProfileId::new("tenant_interrupt_pae_shadow_abcd").unwrap(),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+        )
+        .unwrap();
+        let assist_binding = InterruptLexiconPolicyBinding::v1(
+            InterruptPolicyProfileId::new("interrupt_policy_pae_assist_abcd").unwrap(),
+            InterruptTenantProfileId::new("tenant_interrupt_pae_assist_abcd").unwrap(),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+        )
+        .unwrap();
+        let lead_binding = InterruptLexiconPolicyBinding::v1(
+            InterruptPolicyProfileId::new("interrupt_policy_pae_lead_abcd").unwrap(),
+            InterruptTenantProfileId::new("tenant_interrupt_pae_lead_abcd").unwrap(),
+            InterruptLocaleTag::new(PH1K_INTERRUPT_LOCALE_TAG_DEFAULT).unwrap(),
+        )
+        .unwrap();
+        let input = default_adaptive_policy_input(DeviceRoute::BuiltIn);
+
+        let shadow =
+            select_adaptive_threshold_profile(&shadow_binding, &input, InterruptNoiseClass::Clean)
+                .expect("shadow profile selection must pass");
+        let assist =
+            select_adaptive_threshold_profile(&assist_binding, &input, InterruptNoiseClass::Clean)
+                .expect("assist profile selection must pass");
+        let lead =
+            select_adaptive_threshold_profile(&lead_binding, &input, InterruptNoiseClass::Clean)
+                .expect("lead profile selection must pass");
+
+        assert!(shadow.min_phrase_confidence > assist.min_phrase_confidence);
+        assert!(assist.min_phrase_confidence > lead.min_phrase_confidence);
+        assert!(shadow.min_voiced_window_ms > assist.min_voiced_window_ms);
+        assert!(assist.min_voiced_window_ms > lead.min_voiced_window_ms);
     }
 
     #[test]
@@ -2654,8 +2780,9 @@ mod tests {
         let binding = default_interrupt_binding(&matcher);
 
         let mut adaptive = default_adaptive_policy_input(DeviceRoute::Bluetooth);
-        adaptive.quality_metrics = AdvancedAudioQualityMetrics::v1(20.0, 0.04, 85.0, 2.0, 0.78, 14.0)
-            .expect("overlap quality metrics must be valid");
+        adaptive.quality_metrics =
+            AdvancedAudioQualityMetrics::v1(20.0, 0.04, 85.0, 2.0, 0.78, 14.0)
+                .expect("overlap quality metrics must be valid");
 
         let uncertain_input = InterruptInput {
             adaptive_policy_input: adaptive,
@@ -2703,7 +2830,10 @@ mod tests {
         };
         let strong = evaluate_interrupt_candidate(&matcher, strong_input)
             .expect("strong overlap decision should evaluate");
-        assert_eq!(strong.adaptive_noise_class, Some(InterruptNoiseClass::Elevated));
+        assert_eq!(
+            strong.adaptive_noise_class,
+            Some(InterruptNoiseClass::Elevated)
+        );
         assert!(strong.candidate.is_some());
         assert_eq!(
             strong.reason_code,
@@ -2844,6 +2974,52 @@ mod tests {
         }];
         let out = rt.run(&req, &attempts);
         assert!(matches!(out, Ph1cResponse::TranscriptOk(_)));
+    }
+
+    #[test]
+    fn interrupt_profile_registration_supports_dynamic_tenant_locale_phrases() {
+        let mut matcher = InterruptPhraseMatcher::built_in();
+        let policy_profile_id = InterruptPolicyProfileId::new("interrupt_policy_tenant_a").unwrap();
+        let tenant_profile_id = InterruptTenantProfileId::new("tenant_interrupt_tenant_a").unwrap();
+        matcher
+            .register_profile_from_phrases(
+                policy_profile_id.clone(),
+                tenant_profile_id.clone(),
+                InterruptPhraseSetVersion(2),
+                vec![(
+                    InterruptLocaleTag::new("en-US").unwrap(),
+                    vec!["please wait now".to_string(), "Selene hold".to_string()],
+                )],
+            )
+            .expect("dynamic profile registration must pass");
+        assert!(matcher.has_profile(&policy_profile_id));
+        let binding = InterruptLexiconPolicyBinding::v1(
+            policy_profile_id,
+            tenant_profile_id,
+            InterruptLocaleTag::new("en-US").unwrap(),
+        )
+        .unwrap();
+        let hit = matcher
+            .match_phrase(&binding, "selene HOLD")
+            .expect("dynamic phrase match should not fail");
+        assert!(hit.is_some());
+    }
+
+    #[test]
+    fn duplex_frame_builder_produces_valid_contract_frame() {
+        let frame = build_duplex_frame(
+            1,
+            AudioStreamId(11),
+            PreRollBufferId(7),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(200),
+            MonotonicTimeNs(150),
+            true,
+            90,
+        )
+        .expect("duplex frame builder must produce valid frame");
+        assert!(frame.tts_playback_active);
+        assert_eq!(frame.capture_to_handoff_latency_ms, 90);
     }
 
     #[test]

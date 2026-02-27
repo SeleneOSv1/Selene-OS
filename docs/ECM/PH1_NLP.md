@@ -91,3 +91,19 @@
 - PH1.NLP must not execute actions or finalize interruption branches.
 - When intent confidence is below threshold, PH1.NLP must preserve clarify-first posture and explicit missing-field outputs.
 - PH1.NLP must keep no-guess behavior during duplex partials and finalization handoff.
+
+## Cross-Engine Handoff Integrity (`PH1.C -> PH1.NLP`) (Round-2 Step 6)
+- PH1.NLP consumes PH1.C transcript envelopes only when the handoff metadata is structurally valid and bounded.
+- Selene OS strict handoff mode (`require_ph1c_handoff=true`) requires:
+  - `transcript_ok.audit_meta` present
+  - `attempt_count > 0`
+  - `selected_slot != NONE`
+- Missing/malformed PH1.C handoff metadata must fail closed before PH1.NLP runtime path with deterministic reason code (`PH1_NLP_HANDOFF_INVALID`).
+
+## Confidence + Clarify Policy Lock (Round-2 Step 7)
+- PH1.NLP low-confidence transcript/hypothesis paths are clarify-only:
+  - transcript confidence not `HIGH`
+  - uncertain spans present
+  - intent draft confidence not `HIGH`
+- Selene OS wiring must block non-clarify outputs under this posture and emit one bounded clarify with deterministic reason code (`PH1_NLP_CLARIFY_REQUIRED`).
+- PH1.NLP must not pass guessed intent completion under low-confidence posture.

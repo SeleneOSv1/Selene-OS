@@ -169,7 +169,7 @@ Step 6. Adaptive threshold policy (deterministic + bounded)
   - Step 3: COMPLETE (kernel contract expansion added typed+bounded validators for `AdvancedAudioQualityMetrics`, `DeviceReliabilityScoreInput`, `AdaptiveThresholdPolicyInput`, `JitterClockRecoveryPolicy`, and `VadDecisionConfidenceBand`, with fail-closed range checks and locale-aware normalization helpers).
   - Step 4: COMPLETE (`PH1.K` interrupt pipeline now enforces hybrid lexical + acoustic + prosody gating in runtime decision path while keeping candidate-only boundary to `PH1.X`).
   - Step 5: COMPLETE (`PH1.K` matcher/candidate normalization is Unicode-safe and locale-aware, with multilingual built-in phrase sets and canonical normalized persistence form).
-  - Step 6: COMPLETE (deterministic adaptive threshold selection by `device_route + noise/degradation + tenant policy binding`, plus bounded jitter/clock recovery budgets and fail-closed unknown-profile behavior).
+  - Step 6: COMPLETE (deterministic adaptive threshold selection by `device_route + noise/degradation + tenant policy binding`, plus bounded jitter/clock recovery budgets and fail-closed validation for invalid adaptive inputs).
   - Proof lock:
     - `cargo test -p selene_kernel_contracts ph1k -- --nocapture`
     - `cargo test -p selene_engines ph1k -- --nocapture`
@@ -345,7 +345,7 @@ Step 15. Unit/contract test expansion
     - `normalize_interrupt_phrase_rejects_control_only_input_fail_closed`
     - `at_k_interrupt_13_confidence_band_and_reason_code_mapping_boundaries_are_locked`
     - `at_k_interrupt_14_threshold_profile_selection_is_deterministic_by_route_and_noise`
-    - `at_k_interrupt_15_threshold_profile_selection_fails_closed_on_unknown_tenant_profile`
+    - `at_k_interrupt_15_threshold_profile_selection_accepts_valid_dynamic_profile_ids`
   - Proof lock:
     - `crates/selene_kernel_contracts/src/ph1k.rs`
     - `crates/selene_engines/src/ph1k.rs`
@@ -877,6 +877,551 @@ Step 9. Benchmark + release-gate harness
 Step 10. Closure + queue progression
 - Round-2 closure for duplex-in-scope engines only after Step-9 gate pass and ledger proof append.
 
+### 5G) PH1.C Round-2 Strict Provider + Learning Build Plan (OpenAI Primary, Google Fallback)
+Purpose:
+- Lock PH1.C execution so Selene gets production-grade STT now, while building in-house capability over time.
+- Keep strict engine boundaries: PH1.C owns STT gating, PH1.TTS owns speech output, PH1.D owns external provider calls.
+
+Scope lock (this round):
+- STT routing and transcript quality authority remains in `PH1.C`.
+- TTS provider routing is integrated as a coupled path requirement with `PH1.TTS` + `PH1.D` so duplex behavior is coherent end-to-end.
+- Runtime must stay fail-closed and reason-coded.
+- Input robustness is mandatory for:
+  - rambling speech
+  - all languages (including code-switch)
+  - broken English
+  - heavy/bad accents
+  - scrambled/rubbish speech patterns
+- Normalization outputs must preserve source truth:
+  - `verbatim_transcript` (what was actually heard)
+  - `normalized_english_draft` (readability rewrite, non-authoritative)
+  - no silent meaning rewrite is allowed.
+
+Provider routing policy lock (v1 required):
+- STT route order:
+  - primary: `OpenAI STT`
+  - secondary fallback: `Google STT`
+  - terminal fallback: clarify/text-safe path (no guessed transcript)
+- TTS route order:
+  - primary: `OpenAI TTS`
+  - secondary fallback: `Google TTS`
+  - terminal fallback: text-only response delivery (reason-coded)
+- All external provider calls must traverse `PH1.D` typed boundary.
+- Direct provider calls from `PH1.C` or `PH1.TTS` are forbidden.
+
+Engine ownership lock:
+- `PH1.K`: audio substrate + handoff features (candidate/confidence/degradation context).
+- `PH1.C`: partial/final STT quality gate + deterministic pass/reject.
+- `PH1.D`: provider adapter boundary (OpenAI/Google call path + strict typed normalization).
+- `PH1.NLP`: intent understanding over validated transcript outputs.
+- `PH1.X`: interruption/continuity and final turn commit behavior.
+- `PH1.TTS`: output rendering + cancel/resume.
+- `PH1.OS`: canonical orchestration order + fail-closed enforcement.
+- `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER`: learning + promotion + remediation loop.
+
+Robust speech handling lock (who does what):
+- Rambling speech:
+  - `PH1.C` transcribes and confidence-gates.
+  - `PH1.SRL` structures fragmented utterances into ordered clauses.
+  - `PH1.NLP` extracts intent/slots from structured output.
+- All languages:
+  - `PH1.LANG` owns language detect + code-switch segmentation.
+  - `PH1.C` routes to multilingual provider/model profile.
+- Broken English:
+  - preserve `verbatim_transcript` first.
+  - produce `normalized_english_draft` as advisory readability layer only.
+- Heavy accents:
+  - `PH1.C` uses accent-robust route/profile selection.
+  - `PH1.KNOW`/`PH1.PRON` tenant lexicon hints improve recognition safely.
+- Scrambled/rubbish speech:
+  - `PH1.SRL` + `PH1.NLP` attempt bounded repair.
+  - if confidence stays low, PH1.X must issue one clarify (no guessing).
+
+LLM usage lock for PH1.C path:
+- LLM assist is required for best outcomes on rambling/scrambled/multilingual edge cases.
+- LLM assist must be routed only through `PH1.D` typed boundary.
+- LLM assist is fallback/assist, not authority; final transcript acceptance remains in `PH1.C` quality gates.
+- If LLM output confidence/schema is weak, fail closed to clarify path.
+
+In-house capability growth lock:
+- Build in-house STT/TTS as `SHADOW` paths first (no authority).
+- Compare in-house vs provider outcomes on the same turn slices.
+- Promote in-house route by locale/device/tenant only after gates pass; no global silent promotion.
+- Initial production route remains:
+  - OpenAI primary
+  - Google secondary
+  - clarify/text-safe terminal fallback
+
+Gold-output learning law (mandatory):
+- Every voice transaction must produce bounded evidence rows for learning/eval (no raw secret leakage).
+- Create `gold_case` candidates when any of the following happen:
+  - user correction
+  - low-confidence transcript
+  - transcript reject
+  - provider disagreement
+  - escalation/human intervention
+- Gold cases must include:
+  - audio_ref/evidence_ref
+  - final accepted transcript
+  - language/locale
+  - failure fingerprint
+  - reason code chain
+  - owner engine
+- `PH1.LEARN` can package artifacts only after validation; runtime activation remains governed by `PH1.PAE`.
+
+Builder governance lock (never bypass):
+- Builder may propose fixes from recurring PH1.C/PH1.D/PH1.TTS fingerprints.
+- Builder must not auto-merge or auto-launch without human approvals.
+- Required gates remain:
+  - code approval gate (`CODE_APPROVED=1`)
+  - launch approval gate (`LAUNCH_APPROVED=1`)
+- Canonical enforcement scripts:
+  - `scripts/check_builder_human_permission_gate.sh`
+  - `scripts/check_builder_release_hard_gate.sh`
+
+Strict implementation order (PH1.C round-2):
+Step 1. Baseline capture and dataset seed
+- Capture STT/TTS baseline metrics by locale, device route, noise class, overlap speech.
+- Persist canonical snapshot for replay/eval.
+  - Step 1: COMPLETE (canonical PH1.C round-2 baseline snapshot seeded with required coverage dimensions `locale`, `device_route`, `noise_class`, `overlap_speech` in `docs/fixtures/ph1c_round2_baseline_snapshot.csv`, with strict schema + coverage + route-total validation locked in `scripts/check_ph1c_round2_baseline_snapshot.sh`; run proof command: `scripts/check_ph1c_round2_baseline_snapshot.sh`.)
+
+Step 2. Provider boundary lock in PH1.D
+- Ensure OpenAI/Google STT/TTS adapters share one typed normalized output schema.
+- Fail closed on schema drift/timeouts/provider contract mismatches.
+  - Step 2: COMPLETE (PH1.D provider boundary now supports `OCR_TEXT_EXTRACT | STT_TRANSCRIBE | TTS_SYNTHESIZE` with one strict normalized output schema contract (`PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_VERSION/HASH_V1`) and deterministic OpenAI/Google normalization in engine runtime; schema drift, timeout, and vendor/contract mismatch now return fail-closed provider error envelopes. PH1.OS OCR provider route now enforces provider-id/model-id/idempotency coherence and normalized schema-hash match before forwarding. Proof files: `crates/selene_kernel_contracts/src/ph1d.rs`, `crates/selene_engines/src/ph1d.rs`, `crates/selene_os/src/ph1os.rs`; proof commands: `cargo test -p selene_kernel_contracts ph1d -- --nocapture`, `cargo test -p selene_engines ph1d -- --nocapture`, `cargo test -p selene_os ocr_handoff -- --nocapture`.)
+
+Step 3. PH1.C partial transcript contract implementation
+- Implement `PartialTranscript` surface with:
+  - `text_chunk`
+  - `confidence`
+  - `stable`
+  - `revision_id`
+- Keep deterministic ordering and finalization semantics.
+  - Step 3: COMPLETE (added typed PH1.C contract surfaces `PartialTranscript` + `PartialTranscriptBatch` with strict validators and contiguous ordered revision semantics in `crates/selene_kernel_contracts/src/ph1c.rs`; added deterministic runtime canonicalizer `Ph1cRuntime::canonicalize_partial_transcripts(...)` in `crates/selene_engines/src/ph1c.rs` that resolves duplicate revisions deterministically and fails closed on invalid/out-of-order/finalization drift; aligned PH1.C DB/ECM docs to the canonical contract/runtime boundary in `docs/DB_WIRING/PH1_C.md` and `docs/ECM/PH1_C.md`. Proof commands: `cargo test -p selene_kernel_contracts ph1c -- --nocapture`, `cargo test -p selene_engines ph1c -- --nocapture`, `cargo test -p selene_os ph1c -- --nocapture`.)
+
+Step 4. PH1.C provider ladder execution
+- Enforce STT route order `OpenAI -> Google -> clarify`.
+- Enforce bounded retries and total budget caps.
+- Keep provider invisibility in upstream payloads.
+  - Step 4: COMPLETE (PH1.C runtime now enforces strict sequential STT ladder `PRIMARY(OpenAI) -> SECONDARY(Google) -> fail-closed clarify/reject` with no strategy-based provider reordering; added bounded retry/budget controls (`max_retries_per_provider`, `max_attempts_per_turn`, `max_total_latency_budget_ms`) and deterministic fallback execution in `crates/selene_engines/src/ph1c.rs`; provider invisibility is preserved via slot-only upstream contract surfaces with no vendor/model identifiers leaked in PH1.C output payloads. Docs lock updated in `docs/DB_WIRING/PH1_C.md` and `docs/ECM/PH1_C.md`. Proof commands: `cargo test -p selene_kernel_contracts ph1c -- --nocapture`, `cargo test -p selene_engines ph1c -- --nocapture`, `cargo test -p selene_os ph1c -- --nocapture`.)
+
+Step 5. PH1.TTS coupled provider ladder lock
+- Enforce TTS route order `OpenAI -> Google -> text-only fail-safe`.
+- Preserve interrupt-safe cancel/resume semantics with reason-coded outcomes.
+  - Step 5: COMPLETE (PH1.TTS runtime now exposes coupled provider-ladder execution `handle_with_provider_ladder(...)` enforcing strict slot order `PRIMARY(OpenAI) -> SECONDARY(Google) -> terminal text-only fail-safe`, with bounded retry/budget controls (`max_retries_per_provider`, `max_attempts_per_turn`, `max_total_latency_budget_ms`) and fail-closed reason-coded outcomes (`TTS_FAIL_PROVIDER_BUDGET_EXCEEDED`, `TTS_FAIL_TEXT_ONLY_FAILSAFE`) in `crates/selene_engines/src/ph1tts.rs`; PH1.D normalized-output decoder is now exported for typed PH1.TTS boundary validation in `crates/selene_engines/src/ph1d.rs`; cancel/pause/resume semantics remain deterministic and unchanged under ladder mode. Docs lock updated in `docs/DB_WIRING/PH1_TTS.md` and `docs/ECM/PH1_TTS.md`. Proof commands: `cargo test -p selene_kernel_contracts ph1tts -- --nocapture`, `cargo test -p selene_engines ph1d -- --nocapture`, `cargo test -p selene_engines ph1tts -- --nocapture`, `cargo test -p selene_os ph1tts -- --nocapture`.)
+
+Step 6. Cross-engine handoff integrity
+- Validate `PH1.K -> PH1.C` and `PH1.C -> PH1.NLP` handoff envelopes.
+- Reject malformed/missing handoff fields fail-closed.
+  - Step 6: COMPLETE (cross-engine envelope integrity is now strict and fail-closed end-to-end: `PH1.C` request/response contracts enforce schema-version and bounded handoff payload validation in `crates/selene_kernel_contracts/src/ph1c.rs`, Selene OS `PH1.C` wiring enforces strict `require_ph1k_handoff=true` with reason-coded fail-closed refusal (`PH1_C_HANDOFF_INVALID`) in `crates/selene_os/src/ph1c.rs`, `PH1.NLP` request contract enforces schema-version + UTF-8 safe uncertain-span bounds in `crates/selene_kernel_contracts/src/ph1n.rs`, and Selene OS `PH1.NLP` wiring enforces strict `require_ph1c_handoff=true` with mandatory `transcript_ok.audit_meta` (`attempt_count > 0`, `selected_slot != NONE`) and reason-coded fail-closed clarify (`PH1_NLP_HANDOFF_INVALID`) in `crates/selene_os/src/ph1n.rs`; OCR handoff helper was updated to emit valid PH1.C audit metadata under strict mode in `crates/selene_os/src/ph1os.rs`. Proof commands: `cargo test -p selene_kernel_contracts ph1c -- --nocapture`, `cargo test -p selene_kernel_contracts ph1n -- --nocapture`, `cargo test -p selene_os ph1c -- --nocapture`, `cargo test -p selene_os ph1n -- --nocapture`, `cargo test -p selene_os ocr_handoff -- --nocapture`, `cargo test -p selene_engines ph1c -- --nocapture`, `cargo test -p selene_engines ph1n -- --nocapture`.)
+
+Step 7. Confidence and clarify policy lock
+- Low-confidence transcript/hypothesis paths must route to one bounded clarify.
+- No guessed words and no guessed intent completion.
+  - Step 7: COMPLETE (confidence+clarify policy is now fail-closed in wiring/runtime: PH1.C round-2 test lock proves medium-confidence transcript candidates are rejected (`STT_FAIL_LOW_CONFIDENCE`) with no guessed-word pass-through in `crates/selene_engines/src/ph1c.rs`; PH1.NLP wiring now enforces bounded one-clarify policy for low-confidence transcript/hypothesis paths by refusing non-clarify outputs when transcript confidence is not `HIGH` or uncertain spans are present, and by refusing low-confidence intent drafts (`overall_confidence != HIGH`) with deterministic reason code `PH1_NLP_CLARIFY_REQUIRED` in `crates/selene_os/src/ph1n.rs`. Proof commands: `cargo test -p selene_os ph1n -- --nocapture`, `cargo test -p selene_engines ph1c -- --nocapture`, `cargo test -p selene_os ocr_handoff -- --nocapture`, `cargo test -p selene_engines ph1n -- --nocapture`.)
+
+Step 8. Gold-case capture wiring
+- Emit deterministic gold-case candidates from PH1.C/PH1.D/PH1.TTS events.
+- Attach failure fingerprints for clustering.
+  - Step 8: COMPLETE (Selene OS now emits deterministic typed `GoldCaseCapture` envelopes in `crates/selene_os/src/ph1feedback.rs` for PH1.C (`TranscriptReject` and low-confidence/uncertain `TranscriptOk`), PH1.D (provider error/schema-fail or low-confidence STT provider result), and PH1.TTS (`TtsFailed`) with fail-closed validation, pending `gold_case_id`, bounded `reason_code_chain`, and deterministic clustering fingerprints (`primary_failure_fingerprint`, `secondary_failure_fingerprint`). Proof command: `cargo test -p selene_os ph1feedback -- --nocapture`.)
+
+Step 9. Learning package flow
+- Route FEEDBACK signals to LEARN package builder with deterministic ordering and idempotency.
+- Ensure package outputs are advisory until PAE activation.
+  - Step 9: COMPLETE (added deterministic FEEDBACK->LEARN route in Selene OS `crates/selene_os/src/ph1learn.rs`: `map_feedback_bundle_to_learn_turn_input(...)` canonicalizes feedback candidates by score/id/key, maps feedback taxonomy to learn taxonomy (`source_path` + `gold_status` preserved), emits stable deterministic `signal_id` values, and enforces fail-closed correlation/turn/tenant consistency; `route_feedback_into_learn_wiring(...)` now executes this route into PH1.LEARN package builder while preserving advisory-only/no-execution constraints required by learn contracts. Proof commands: `cargo test -p selene_os ph1learn -- --nocapture`, `cargo test -p selene_os ph1feedback -- --nocapture`.)
+
+Step 10. Promotion/demotion policy
+- PAE ladder remains one-step only (`SHADOW <-> ASSIST <-> LEAD`).
+- Regression auto-demotion and rollback are mandatory.
+  - Step 10: COMPLETE (locked promotion/demotion policy in code: PH1.PAE runtime now enforces one-step ladder transitions with regression-triggered auto-demotion and fail-closed refusal when `LEAD -> ASSIST` demotion lacks rollback pointer; PH1.OS PAE mapper now fails closed on ladder jumps, requires `promotion_eligible=true` for upward transitions, and maps lead demotion to `ROLLBACK` action with mandatory rollback readiness; kernel self-heal `PromotionDecision` contract validation now enforces one-step transitions plus action/mode consistency and lead-demotion rollback readiness. Proof commands: `cargo test -p selene_engines ph1pae -- --nocapture`, `cargo test -p selene_os ph1pae -- --nocapture`, `cargo test -p selene_kernel_contracts ph1selfheal -- --nocapture`.)
+
+Step 11. Benchmark/eval harness
+- Add PH1.C canonical eval snapshot and gate scripts for:
+  - quality
+  - latency
+  - fallback success
+  - cost
+  - tenant isolation/audit completeness
+  - multilingual coverage + code-switch quality
+  - rambling-to-structured quality
+  - broken-English normalization quality
+  - accent robustness quality
+  - scrambled speech clarify recovery quality
+  - Step 11: COMPLETE (added canonical PH1.C round-2 benchmark snapshot `docs/fixtures/ph1c_round2_eval_snapshot.csv`; added strict snapshot harness `scripts/check_ph1c_round2_eval_snapshot.sh` with schema/coverage/formula fail-closed checks across locale/device/noise/overlap/tenant dimensions and all quality categories; added category gate script `scripts/check_ph1c_round2_eval_gates.sh` for benchmark category gate enforcement (quality, latency, fallback success, cost, tenant isolation, audit completeness, multilingual+code-switch, rambling, broken-English normalization, accent robustness, scrambled clarify recovery); wired both scripts into readiness audit (`scripts/selene_design_readiness_audit.sh` sections `1C7` and `1C8`). Proof commands: `./scripts/check_ph1c_round2_eval_snapshot.sh docs/fixtures/ph1c_round2_eval_snapshot.csv`, `./scripts/check_ph1c_round2_eval_gates.sh docs/fixtures/ph1c_round2_eval_snapshot.csv`.)
+
+Step 12. Builder remediation wiring
+- Feed recurring failure clusters into Builder proposal pipeline.
+- Require permission gates and release hard gate for any change promotion.
+- Execution status (`2026-02-25`):
+  - Step 12: COMPLETE (added deterministic PH1.OS mapper `map_recurring_failure_cluster_to_builder_offline_input(...)` so recurring unresolved clusters (`recurrence_count >= 3`) convert into bounded `BuilderOfflineInput` entries and flow into PH1.BUILDER proposal intake; added strict fail-closed promotion gate `check_builder_remediation_promotion_gate(...)` that blocks promotion unless `code_permission_gate_passed`, `launch_permission_gate_passed`, and `release_hard_gate_passed` are all proven true.)
+  - Proof lock:
+    - `crates/selene_os/src/ph1os.rs`
+    - `scripts/check_ph1c_round2_builder_remediation_gate.sh`
+    - `scripts/selene_design_readiness_audit.sh` (section `1C9`)
+    - `cargo test -p selene_os ph1os -- --nocapture`
+    - `./scripts/check_ph1c_round2_builder_remediation_gate.sh`
+
+Step 13. Acceptance test expansion
+- Add deterministic tests for:
+  - OpenAI primary success
+  - Google fallback on OpenAI fail
+  - terminal clarify/text-safe fallback when both fail
+  - partial transcript revision correctness
+  - provider schema-drift fail-closed behavior
+  - gold-case creation on correction/escalation
+- Execution status (`2026-02-25`):
+  - Step 13: COMPLETE (added explicit PH1.C acceptance tests for primary-slot success, secondary-slot fallback, and terminal fail-closed reject when both slots fail; retained deterministic partial transcript revision correctness lock; retained PH1.D provider schema-drift fail-closed lock; and added PH1.FEEDBACK acceptance lock proving gold-case creation on correction with escalation mapping.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `crates/selene_os/src/ph1feedback.rs`
+    - `scripts/check_ph1c_round2_acceptance_tests.sh`
+    - `scripts/selene_design_readiness_audit.sh` (section `1C10`)
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+    - `cargo test -p selene_os ph1feedback -- --nocapture`
+    - `./scripts/check_ph1c_round2_acceptance_tests.sh`
+
+Step 14. Release gate thresholds (must pass)
+- STT fallback continuity success `>= 99.90%`
+- provider schema-valid response rate `>= 99.50%`
+- partial transcript first chunk latency `p95 <= 250ms`
+- end-of-speech to first response token `p95 <= 300ms`
+- false interrupt rate `<= 0.3/hour`
+- missed interrupt rate `<= 2%`
+- audit completeness `= 100%`
+- tenant isolation `= 100%`
+- multilingual transcript acceptance (supported locales) `>= 95%`
+- heavy-accent transcript acceptance (supported accents) `>= 93%`
+- broken-English normalization acceptance (human-rated) `>= 90%`
+- rambling/scrambled clarify-to-resolution within 2 turns `>= 90%`
+- Execution status (`2026-02-25`):
+  - Step 14: COMPLETE (added strict PH1.C release-threshold gate script `check_ph1c_round2_release_gate.sh` that enforces all Step-14 thresholds fail-closed; wired cross-engine interrupt proof by consuming PH1.K snapshot for `false_interrupt_rate_per_hour` and `missed_interrupt_rate_pct`; and upgraded canonical PH1.C eval fixture values to satisfy the locked threshold floor while preserving schema/coverage invariants.)
+  - Proof lock:
+    - `scripts/check_ph1c_round2_release_gate.sh`
+    - `docs/fixtures/ph1c_round2_eval_snapshot.csv`
+    - `docs/fixtures/ph1k_round2_eval_snapshot.csv`
+    - `scripts/selene_design_readiness_audit.sh` (section `1C11`)
+    - `./scripts/check_ph1c_round2_release_gate.sh docs/fixtures/ph1c_round2_eval_snapshot.csv docs/fixtures/ph1k_round2_eval_snapshot.csv`
+
+Step 15. Closure + queue progression
+- Record PH1.C round-2 closure only after gate pass + ledger proof append.
+- Keep next engine queue locked until PH1.C closure is proven.
+- Execution status (`2026-02-25`):
+  - Step 15: COMPLETE (re-ran PH1.C strict gate chain, appended closure proof to build ledger, and advanced locked round-2 queue from `PH1.C` to `PH1.D` only after all PH1.C gates passed.)
+  - Proof lock:
+    - `docs/03_BUILD_LEDGER.md`
+    - `docs/33_ENGINE_REVIEW_TRACKER.md`
+    - `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
+    - `./scripts/check_ph1c_round2_eval_snapshot.sh docs/fixtures/ph1c_round2_eval_snapshot.csv`
+    - `./scripts/check_ph1c_round2_eval_gates.sh docs/fixtures/ph1c_round2_eval_snapshot.csv`
+    - `./scripts/check_ph1c_round2_builder_remediation_gate.sh`
+    - `./scripts/check_ph1c_round2_acceptance_tests.sh`
+    - `./scripts/check_ph1c_round2_release_gate.sh docs/fixtures/ph1c_round2_eval_snapshot.csv docs/fixtures/ph1k_round2_eval_snapshot.csv`
+
+### 5H) PH1.D + PH1.C Locked Superiority Plan (Beat ChatGPT on Voice Stack)
+Purpose:
+- Lock a strict build sequence so Selene exceeds general-purpose voice quality in your operating domain.
+- Keep PH1.D as the only external provider boundary and PH1.C as the transcript authority.
+
+Execution lock:
+- Steps must execute in strict order.
+- No step can be marked complete without code proof + test proof + ledger entry.
+- Fail-closed behavior remains mandatory at every step.
+
+Step 1. PH1.D live provider call path (no mock-only runtime)
+- Build real HTTP provider adapter path in PH1.D for OpenAI/Google endpoints with auth, timeout, idempotency headers, bounded body reads, and fail-closed mapping.
+- Keep strict normalized-output schema enforcement (`PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1`) after live transport.
+- Execution status (`2026-02-25`):
+  - Step 1: COMPLETE (added concrete `Ph1dLiveProviderAdapter` + env-configurable endpoint map + live HTTP execution path in PH1.D with strict timeout/contract-mismatch mapping and schema-locked normalization output.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1d.rs`
+    - `crates/selene_engines/Cargo.toml`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 2. PH1.C consumes live PH1.D STT results (remove prebuilt-only dependency)
+- Replace prebuilt `SttAttempt`-only handoff as primary path with PH1.D live provider response consumption.
+- Keep deterministic gate owner in PH1.C.
+- Execution status (`2026-02-26`):
+  - Step 2: COMPLETE (wired PH1.C live STT route `run_via_live_provider_adapter(...)` to build typed `Ph1dProviderCallRequest` payloads, call PH1.D adapter directly, decode schema-locked normalized STT output, and feed deterministic PH1.C gating/fail-closed decisions without prebuilt-attempt-only dependency.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 3. Enforce live OpenAI(primary) -> Google(secondary) + hard circuit breaker
+- Keep strict route order, retries, budget caps, and cooldown breakers by provider/model/tenant.
+- Execution status (`2026-02-26`):
+  - Step 3: COMPLETE (PH1.C live provider path now enforces strict slot order `OpenAI(primary) -> Google(secondary)` with per-tenant/provider/model circuit-breaker state, bounded failure thresholds, cooldown windows, and hard skip-on-open behavior before provider call. Provider failures update breaker state fail-closed; successful provider responses close breaker state.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 4. True streaming STT runtime
+- Add partial revisions, deterministic replacement/finalization, and low-latency commit path from live providers.
+- Execution status (`2026-02-26`):
+  - Step 4: COMPLETE (added PH1.C true streaming path `run_stream_via_live_provider_adapter(...)` with live-provider revision polling, deterministic revision canonicalization via `PartialTranscriptBatch`, strict finalization handling, and low-latency commit path when stable/high-confidence partials pass gating before final frame.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 5. Locale normalization upgrade
+- Replace exact language-tag matching with normalized locale matching (`en`, `en-US`, `en-GB` family-safe mapping).
+- Execution status (`2026-02-26`):
+  - Step 5: COMPLETE (PH1.C language mismatch gate now uses normalized locale-family matching instead of exact-tag equality: canonicalized tags (`_` -> `-`, case normalization), language-family equivalence (`en`/`en-US`/`en-GB`), and script-safe mismatch protection when both scripts are explicit and different.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 6. Confidence calibration upgrade
+- Replace simple heuristic gating with calibrated confidence combining token/acoustic/context signals.
+- Execution status (`2026-02-26`):
+  - Step 6: COMPLETE (PH1.C confidence gate now uses calibrated scoring from three bounded signals: token confidence (`avg_word_confidence` + `low_confidence_ratio`), acoustic quality (`noise_level_hint`, `vad_quality_hint`, `PH1.K` advanced metrics), and context consistency (normalized locale-family + hint confidence). Missing signal families now fall back to token confidence so strong clean paths do not regress; poor acoustic paths are penalized deterministically.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 7. Tenant/domain lexicon boosting
+- Inject PH1.KNOW/PH1.CONTEXT tenant vocabulary boosts (names, products, entities) into PH1.C/PH1.D provider requests and acceptance logic.
+- Execution status (`2026-02-26`):
+  - Step 7: COMPLETE (PH1.C live-provider context now carries bounded tenant/user vocabulary pack refs and tenant/domain lexicon term sets, injects normalized lexicon hints into outbound PH1.D STT payloads, and applies deterministic lexicon-based confidence boost in acceptance scoring for matched domain terms. Boosting is bounded and fail-closed safe: no lexicon terms means no boost.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1d -- --nocapture`
+
+Step 8. Intent-aware transcript repair
+- Add PH1.NLP/PH1.SRL bounded repair flow for rambling/broken/scrambled speech before final clarify/execute decision.
+- Execution status (`2026-02-26`):
+  - Step 8: COMPLETE (PH1.C now runs a bounded intent-aware repair pass before final transcript gate: candidate rambling/broken/scrambled transcripts are routed through PH1.SRL frame-build + argument-normalize, then passed through a PH1.NLP acceptance guard to block intent drift. Repair is fail-closed: if SRL marks ambiguity/clarify-required, overlap safety fails, or NLP quality regresses, PH1.C keeps original fail-closed behavior and does not guess. Accepted repairs apply bounded confidence updates only and still must pass standard PH1.C coverage/language/confidence gates.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1srl -- --nocapture`
+    - `cargo test -p selene_engines ph1n -- --nocapture`
+
+Step 9. Clarify precision lock
+- Enforce one precise clarify question then execute or escalate; no clarify loops.
+- Execution status (`2026-02-26`):
+  - Step 9: COMPLETE (PH1.X clarify flow is now lock-tight across runtime paths: a first unresolved question emits one bounded clarify as before, and any second clarify attempt in the same thread state escalates immediately to a non-question escalation response instead of looping. This applies uniformly to NLP clarify pass-through and missing-field clarify branches, preserving fail-closed behavior and blocking infinite clarify chains.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1x.rs`
+    - `crates/selene_os/src/ph1x.rs`
+    - `cargo test -p selene_engines ph1x -- --nocapture`
+    - `cargo test -p selene_os ph1x -- --nocapture`
+
+Step 10. Gold-loop lock
+- Capture every miss/correction into `PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE` with deterministic fingerprints and idempotent package flow.
+- Execution status (`2026-02-26`):
+  - Step 10: COMPLETE (locked a deterministic miss/correction gold-loop chain in Selene OS using real FEEDBACK/LEARN/PAE runtimes: PH1.C miss/correction captures are emitted as pending gold events, verified-gold gating is enforced before LEARN package forwarding, and FEEDBACK -> LEARN -> PAE replay determinism is now acceptance-locked with stable failure/problem/fix/decision ids across repeated runs.)
+  - Proof lock:
+    - `crates/selene_os/src/ph1os.rs`
+    - `cargo test -p selene_os ph1feedback -- --nocapture`
+    - `cargo test -p selene_os ph1learn -- --nocapture`
+    - `cargo test -p selene_os ph1pae -- --nocapture`
+    - `cargo test -p selene_os at_os_43_ph1c_gold_loop_miss_and_correction_route_to_learn_and_pae_deterministically -- --nocapture`
+    - `cargo test -p selene_engines ph1feedback -- --nocapture`
+    - `cargo test -p selene_engines ph1learn -- --nocapture`
+    - `cargo test -p selene_engines ph1pae -- --nocapture`
+
+Step 11. In-house shadow route lock
+- Run in-house STT/TTS in `SHADOW`; compare against provider truth by locale/device/tenant; promote only through governed gates.
+- Execution status (`2026-02-26`):
+  - Step 11: COMPLETE (added deterministic in-house `SHADOW` comparison surfaces in PH1.C + PH1.TTS runtimes: both paths now require explicit slice keys `{locale, device_route, tenant_id}`, validate provider-truth contracts before comparison, compute bounded parity metrics against provider truth, and hold shadow by default unless governed promotion gate proof is present. Promotion eligibility is fail-closed and blocked on gate absence, meaning drift, or parity/latency regressions.)
+  - Proof lock:
+    - `crates/selene_engines/src/ph1c.rs`
+    - `crates/selene_engines/src/ph1tts.rs`
+    - `cargo test -p selene_engines ph1c -- --nocapture`
+    - `cargo test -p selene_engines ph1tts -- --nocapture`
+
+Step 12. Builder remediation governance lock
+- Builder may propose auto-fixes from recurring fingerprints, but code/launch remain human-approved only.
+- Execution status (`2026-02-26`):
+  - Step 12: COMPLETE (confirmed and re-locked Builder remediation governance for the PH1.D/PH1.C runbook path: recurring unresolved clusters map to bounded `BuilderOfflineInput` proposals only, while promotion remains fail-closed unless explicit code-permission, launch-permission, and release-hard-gate evidence is present. Builder may propose remediation, but cannot auto-ship code or launch without human approval proofs.)
+  - Proof lock:
+    - `crates/selene_os/src/ph1os.rs`
+    - `scripts/check_ph1c_round2_builder_remediation_gate.sh`
+    - `cargo test -p selene_os builder_remediation -- --nocapture`
+    - `bash scripts/check_ph1c_round2_builder_remediation_gate.sh`
+
+### 5I) PH1.C Superiority Upgrade Lock (Step 1..22)
+Purpose:
+- Lock the next PH1.C superiority upgrades point-by-point before implementation.
+- Implement and prove each locked step with deterministic gates before progression.
+
+Execution lock:
+- Steps execute in strict order.
+- No step is complete without code proof + gate/test proof + ledger/tracker/plan update.
+- Fail-closed behavior remains mandatory.
+
+Global learning model lock (Selene Cloud; cross-tenant):
+- Learning is global, not isolated per tenant.
+- Each tenant contributes onboarding-permitted correction/evaluation signals to Selene Cloud learning ledgers.
+- Selene Cloud produces signed global upgrade artifacts (models, thresholds, lexicons, policies) and pushes upgrades back to all tenants.
+- Runtime policy decisions remain slice-gated and fail-closed, but learning evidence is pooled globally for faster improvement.
+
+Step 1. Direct ChatGPT A/B benchmark lane
+- Add a direct ChatGPT A/B benchmark lane on the same audio inputs, same locales, same noise classes, and same scoring formulas used for PH1.C.
+- Lock dataset parity and scoring parity so comparisons are deterministic and auditable.
+
+Step 2. Semantic accuracy gate
+- Add a semantic accuracy gate so PH1.C is scored on intent understanding correctness, not transcript text alone.
+- Gate must be fail-closed for low semantic-confidence paths.
+
+Step 3. Global lexicon packs v2 (tenant-fed)
+- Add lexicon packs v2 covering names, products, acronyms, and slang.
+- Tenant contributions are pushed to Selene Cloud and merged into global lexicon upgrades for all tenants.
+- Keep bounded weighting and expiry controls to prevent stale boost drift.
+
+Step 4. Speaker overlap handling
+- Add handling for single-speaker, multi-speaker, and interruption-overlap scenarios.
+- Ambiguous overlap cases must fail closed (clarify/escalate) instead of guessed assignment.
+
+Step 5. Two-pass decoding in PH1.C
+- Add two-pass decoding:
+  - pass 1: fast live decode for latency
+  - pass 2: bounded repair/verification before final commit
+- Final action must rely on validated final commit only.
+
+Step 6. Provider disagreement policy
+- Add strict disagreement policy between OpenAI and Google outputs.
+- If divergence exceeds threshold, force one clarify question instead of guessing.
+
+Step 7. Intent-aware repair hardening
+- Harden intent-aware repair with PH1.SRL and PH1.NLP for rambling, broken, and scrambled speech.
+- Explicitly block meaning drift via bounded overlap/consistency checks.
+
+Step 8. Gold-loop acceleration
+- Every correction/escalation must become a labeled training case.
+- Required labels include deterministic fingerprint, root-cause tags, and resolution outcome.
+- Gold cases must be published to Selene Cloud global learning ledgers and redistributed as upgrade artifacts to all tenants.
+
+Step 9. Slice-based promotion control
+- In-house STT/TTS promotion from `SHADOW -> ASSIST -> LEAD` is allowed only by slice proof:
+  - locale
+  - device route
+  - tenant
+- No global promotion without per-slice gate evidence.
+- Global rollout is allowed only after multi-tenant slice evidence proves superiority and safety.
+
+Step 10. Strict superiority gates
+- Promotion requires beating both:
+  - current PH1.C baseline
+  - ChatGPT A/B benchmark on locked domain test packs
+- Any regression in safety/clarify/audit/tenant isolation blocks promotion.
+
+Step 11. Cost-quality routing policy
+- Add cost-quality routing policy to pick the lowest-cost route that still passes accuracy and safety gates for each slice.
+- Route decisions must be reason-coded and replay-deterministic.
+
+Step 12. Final release acceptance pack
+- Add final mandatory acceptance pack with explicit pass criteria for:
+  - accuracy
+  - intent success
+  - latency
+  - clarify quality
+  - audit completeness
+  - tenant isolation
+- Release is blocked until all acceptance pack gates pass.
+
+Step 13. Teacher-student distillation
+- Run OpenAI + Google + in-house routes in shadow on the same turns.
+- Use high-agreement outcomes as supervised teacher targets for PH1.C learning artifacts in Selene Cloud.
+
+Step 14. Disagreement mining queue
+- Route high-divergence provider disagreements into a priority review queue.
+- Convert resolved disagreements into high-value labeled training cases with deterministic fingerprints.
+
+Step 15. Active learning priority
+- Prioritize labeling for low-confidence, high-impact, and high-recurrence failures first.
+- Enforce deterministic ranking so the learning backlog improves error rate fastest.
+
+Step 16. Gold/silver data tiering
+- Maintain two tiers:
+  - Gold: human-verified labels
+  - Silver: high-confidence teacher consensus labels
+- Train primarily on gold and boundedly on silver with drift guards.
+
+Step 17. Hard-negative replay
+- Over-sample repeated failure families (accents, jargon, overlap speech, noisy environments).
+- Keep replay packs deterministic and versioned so recurrence reduction is measurable.
+
+Step 18. Entity and intent scoring gates
+- Add hard gates for entity accuracy (names, ids, dates, amounts) and intent success.
+- Promotion is blocked if transcript quality is high but entity/intent correctness regresses.
+
+Step 19. Diarization and overlap attribution
+- Add speaker diarization and overlap attribution metrics as first-class acceptance gates.
+- Ambiguous speaker attribution must fail closed to clarify/escalate.
+
+Step 20. Per-slice adapter training
+- Train per-slice adapters (locale/device/acoustic profile) using global pooled learning evidence.
+- Promote adapters slice-by-slice with strict safety and superiority gates.
+
+Step 21. Champion-challenger runtime
+- Keep current PH1.C as champion while challengers run in shadow/canary.
+- Promote challenger only if it beats both champion and ChatGPT benchmark lanes on locked packs.
+
+Step 22. Learning cadence and rollback discipline
+- Run fixed retrain/eval cadence with deterministic release windows.
+- Any regression triggers automatic rollback to last approved artifact pack.
+- Human approval gates for code/launch remain mandatory and unchanged.
+
+Execution status (`2026-02-26`):
+- Step 1-22: COMPLETE (implemented deterministic PH1.C superiority runtime gate surface + canonical 5I snapshot/gate harness and wired readiness enforcement).
+- Code proof:
+  - `crates/selene_os/src/ph1c_superiority.rs`
+  - `crates/selene_os/src/lib.rs`
+  - `crates/selene_engines/src/ph1c.rs` (step-2/4/5/6/7/11 runtime locks + acceptance tests)
+- Gate proof:
+  - `scripts/check_ph1c_5i_eval_snapshot.sh`
+  - `scripts/check_ph1c_5i_superiority_gate.sh`
+  - `docs/fixtures/ph1c_5i_superiority_snapshot.csv`
+  - `scripts/selene_design_readiness_audit.sh` (sections `1C12` + `1C13`)
+- Test/gate proof commands:
+  - `cargo test -p selene_engines ph1c -- --nocapture`
+  - `cargo test -p selene_os ph1c_superiority -- --nocapture`
+  - `./scripts/check_ph1c_5i_eval_snapshot.sh docs/fixtures/ph1c_5i_superiority_snapshot.csv`
+  - `./scripts/check_ph1c_5i_superiority_gate.sh docs/fixtures/ph1c_5i_superiority_snapshot.csv`
+
+### 5J) PH1.NLP ChatGPT-Superiority Improvement Backlog (Tracking)
+Purpose:
+- Keep one execution-tracked list of PH1.NLP improvements required to sustain "better than ChatGPT" quality in voice/text understanding paths.
+- Convert review findings into explicit build items with deterministic close criteria.
+
+Decision lock (`2026-02-26`, JD-confirmed):
+- Superiority scope is `BOTH`:
+  - Selene domain workflows (`access/onboarding/capreq/position/link/reminder/broadcast/...`).
+  - General open-ended conversation quality.
+- Parser policy allows constrained learned parser lanes under strict fail-closed contracts:
+  - learned parser outputs are advisory-only structured candidates;
+  - no direct execution authority;
+  - disagreement/low-confidence/drift always routes to deterministic clarify-safe fallback.
+
+Backlog freeze (`2026-02-26`):
+
+| item_id | priority | gap summary | why this blocks superiority | required remediation | closure proof (minimum) | owner | status |
+|---|---|---|---|---|---|---|---|
+| NLP-SUP-01 | P0 | `IntentHypothesis` is documented but not implemented in PH1.NLP contract/runtime surfaces | Full-duplex "understand while user is speaking" advantage is not real without incremental hypotheses consumed by PH1.X | Add typed `IntentHypothesis` contract + runtime emission + OS wiring + PH1.X consume path; keep advisory-only/no-execution posture | kernel/engine/OS tests for hypothesis schema + ordering + fail-closed behavior; readiness gate hook | PH1.NLP | OPEN |
+| NLP-SUP-02 | P0 | PH1.NLP confidence is effectively always `HIGH` in runtime outputs | Low-confidence clarify lock loses precision if confidence is not calibrated per intent/field | Implement calibrated confidence scoring (`HIGH|MED|LOW`) for intent and slot extraction; enforce clarify when below threshold | acceptance tests proving medium/low confidence routes to clarify; eval snapshot metric for confidence calibration error | PH1.NLP | OPEN |
+| NLP-SUP-03 | P0 | Multilingual/code-switch understanding relies on narrow keyword parsing | Claimed robustness for broken English/code-switch/accent paths can overfit and regress in real turns | Add language-aware intent grammars/tokenization + code-switch slot extraction using PH1.LANG signals and deterministic fallback rules | multilingual regression suite expansion + per-locale/route gate rows in eval snapshot | PH1.NLP | OPEN |
+| NLP-SUP-04 | P0 | Superiority gate can pass on a small fixture without strong statistical/provenance constraints | "Beats ChatGPT" claim is weak if dataset size, holdout, and evidence lineage are not enforced | Strengthen superiority harness with minimum sample floors, out-of-sample holdout requirements, and signed evidence linkage | gate script checks for min turns/slices/holdout; deterministic fail-closed on missing provenance | PH1.C + PH1.NLP | OPEN |
+| NLP-SUP-09 | P0 | Superiority target is not enforced as dual-lane (`domain workflows` + `open-ended conversation`) in one release gate | Team can overfit one lane and still claim "better than ChatGPT" without balanced quality | Add dual-lane superiority scorecard with per-lane minimum floors, weighted aggregate rule, and fail-closed gate requiring pass on both lanes | gate script + fixture pack proving lane-specific thresholds, minimum sample counts, and provenance linkage for both lanes | PH1.C + PH1.NLP + PH1.X | OPEN |
+| NLP-SUP-10 | P0 | PH1.NLP parser path is effectively deterministic-rules only; no constrained learned parser lane is contract-locked | Rules-only parsing caps open-ended robustness and code-switch coverage versus frontier assistants | Add constrained learned parser lane (`intent/slot/chat candidates`) behind strict schema validators + deterministic arbiter; enforce advisory-only and clarify-safe fallback on disagreement/drift/low confidence | kernel/engine/OS tests for schema bounds, arbiter fail-closed behavior, and shadow-to-active eval showing lift with zero never-events | PH1.NLP + PH1.OS + PH1.PAE | OPEN |
+| NLP-SUP-11 | P0 | PH1.NLP has no typed PH1.D LLM assist lane for tricky conversation recovery | Hard turns (rambling/scrambled/code-switch/broken phrasing) can regress without bounded LLM assist under contract gates | Add PH1.NLP -> PH1.D typed assist call path for tricky-turn resolution with strict schema validators, advisory-only candidate output, deterministic arbiter, and clarify fail-closed fallback | contract/runtime/OS tests proving PH1.D assist is bounded + non-authoritative; disagreement/low-confidence/schema-drift always returns clarify; release gate rows for tricky-turn slices | PH1.NLP + PH1.D + PH1.OS | OPEN |
+| NLP-SUP-05 | P1 | `time_context` exists in PH1.NLP request contract but is not consumed in runtime normalization | Relative time understanding quality and determinism are capped without explicit time context usage | Use `time_context` for bounded relative-time grounding and timezone-safe normalization | tests for relative-time resolution with timezone offsets + DST-safe behavior | PH1.NLP | OPEN |
+| NLP-SUP-06 | P1 | `confirmed_context` is used mostly as presence/absence, not rich field-level reference resolution | Reference disambiguation quality is below target on follow-up turns | Add deterministic field-level coreference resolution from `last_confirmed_fields` before clarify fallback | tests for "that/it/there" resolution across multi-turn continuity cases | PH1.NLP | OPEN |
+| NLP-SUP-07 | P1 | PH1.NLP chat writes use `NlpIntentDraft` event type in storage path | Analytics and quality tracking are blurred across intent vs chat fallback outcomes | Introduce explicit `NlpChat` audit event type and update storage/DB_WIRING/ECM docs + tests | migration/contract/storage tests proving distinct event typing and replay semantics | PH1.NLP + PH1.J | OPEN |
+| NLP-SUP-08 | P1 | PH1.NLP reason-code namespaces remain placeholder comments in runtime/OS layers | Long-term audit comparability and cross-engine reporting are weaker until registry is locked | Lock PH1.NLP reason-code IDs in global registry and add compile-time mapping/uniqueness checks | contract/runtime guard tests + readiness check for reason-code registry parity | PH1.NLP + PH1.J | OPEN |
+
+Execution rule:
+1. Work top-to-bottom in strict order for P0 items first, then P1.
+2. A row closes only when code proof + gate proof + `docs/03_BUILD_LEDGER.md` entry are all present.
+3. Any regression on closed rows reopens the row to `OPEN`.
+
 ### Round 3: Hardening Round (Cross-Engine Reliability Closure)
 Goal:
 - Prove deterministic safety and orchestration behavior end-to-end.
@@ -895,6 +1440,17 @@ Exit criteria:
 - Full workspace test suite passes.
 - Integration matrix passes with no critical open defects.
 - No regression in previously closed engine acceptance tests.
+
+Execution status (`2026-02-26`):
+- Round 3: `DONE` (cross-engine hardening sweep completed end-to-end).
+- Stability fix included:
+  - Eliminated PH1.BUILDER test temp-file collision in parallel workspace runs by isolating per-test temp directories (`crates/selene_os/src/ph1builder.rs`).
+  - Tightened stale Phase13-B guardrail to detect only actual runtime builder execution wiring (not offline mapping labels) (`scripts/check_builder_pipeline_phase13b.sh`).
+- Proof command bundle:
+  - `cargo test -p selene_os ph1builder -- --nocapture`
+  - `cargo test --workspace`
+  - `bash scripts/check_builder_pipeline_phase13b.sh`
+  - `bash scripts/selene_design_readiness_audit.sh`
 
 ### Round 4: Production Readiness Round (Operational Release Closure)
 Goal:

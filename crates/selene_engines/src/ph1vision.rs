@@ -5,8 +5,10 @@ use std::collections::BTreeSet;
 
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisionCapabilityId,
-    VisionEvidenceExtractOk, VisionEvidenceExtractRequest, VisionEvidenceItem, VisionRefuse,
+    VisionEvidenceExtractOk, VisionEvidenceExtractRequest, VisionEvidenceItem, VisionRawSourceRef,
+    VisionRefuse,
     VisionValidationStatus, VisionVisibleContentValidateOk, VisionVisibleContentValidateRequest,
+    VisualToken,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
@@ -76,15 +78,24 @@ impl Ph1VisionRuntime {
             );
         }
 
-        if req.visible_tokens.is_empty() {
+        let input_tokens = if req.visible_tokens.is_empty() {
+            match req.raw_source_ref.as_ref() {
+                Some(raw_source_ref) => derive_visible_tokens_from_raw_source(raw_source_ref),
+                None => Vec::new(),
+            }
+        } else {
+            req.visible_tokens.clone()
+        };
+
+        if input_tokens.is_empty() {
             return self.refuse(
                 VisionCapabilityId::EvidenceExtract,
                 reason_codes::PH1_VISION_UPSTREAM_INPUT_MISSING,
-                "no upstream visible tokens were provided",
+                "no upstream visible tokens or raw source were provided",
             );
         }
 
-        if req.visible_tokens.len() > self.config.max_input_tokens {
+        if input_tokens.len() > self.config.max_input_tokens {
             return self.refuse(
                 VisionCapabilityId::EvidenceExtract,
                 reason_codes::PH1_VISION_BUDGET_EXCEEDED,
@@ -107,7 +118,7 @@ impl Ph1VisionRuntime {
         let mut dedupe: BTreeSet<(String, Option<BoundingBoxPx>)> = BTreeSet::new();
         let mut out: Vec<VisionEvidenceItem> = Vec::new();
 
-        for token in &req.visible_tokens {
+        for token in &input_tokens {
             if out.len() >= budget {
                 break;
             }
@@ -260,12 +271,37 @@ fn capability_from_request(req: &Ph1VisionRequest) -> VisionCapabilityId {
 }
 
 fn canonical_text(input: &str) -> String {
-    let lowered = input.trim().to_ascii_lowercase();
+    let lowered = input
+        .trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
     lowered
         .split_whitespace()
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn derive_visible_tokens_from_raw_source(raw_source_ref: &VisionRawSourceRef) -> Vec<VisualToken> {
+    let mut out = Vec::new();
+    if let Some(image_ref) = raw_source_ref.image_ref.as_deref() {
+        out.extend(derive_tokens_from_ref(image_ref));
+    }
+    if let Some(blob_ref) = raw_source_ref.blob_ref.as_deref() {
+        out.extend(derive_tokens_from_ref(blob_ref));
+    }
+    out
+}
+
+fn derive_tokens_from_ref(value: &str) -> Vec<VisualToken> {
+    value
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .take(64)
+        .filter_map(|token| VisualToken::v1(token.to_string(), None).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -302,6 +338,7 @@ mod tests {
             VisionEvidenceExtractRequest::v1(
                 env(true, 4),
                 source(),
+                None,
                 vec![token("Revenue"), token("Cost")],
             )
             .unwrap(),
@@ -325,6 +362,7 @@ mod tests {
             VisionEvidenceExtractRequest::v1(
                 env(true, 8),
                 source(),
+                None,
                 vec![token("B"), token("A"), token("B"), token("C"), token("A")],
             )
             .unwrap(),
@@ -361,6 +399,7 @@ mod tests {
             VisionEvidenceExtractRequest::v1(
                 env(false, 4),
                 source(),
+                None,
                 vec![token("should_not_run")],
             )
             .unwrap(),
@@ -404,5 +443,60 @@ mod tests {
             }
             _ => panic!("expected VisibleContentValidateOk"),
         }
+    }
+
+    #[test]
+    fn at_vision_05_extract_derives_visible_tokens_from_raw_source() {
+        let req = Ph1VisionRequest::EvidenceExtract(
+            VisionEvidenceExtractRequest::v1(
+                env(true, 4),
+                source(),
+                Some(
+                    VisionRawSourceRef::v1(
+                        Some("image://invoice_total_due_123_45".to_string()),
+                        Some("blob://scan/line_items".to_string()),
+                    )
+                    .unwrap(),
+                ),
+                vec![],
+            )
+            .unwrap(),
+        );
+
+        let resp = runtime().run(&req);
+        match resp {
+            Ph1VisionResponse::EvidenceExtractOk(ok) => {
+                assert!(!ok.evidence_items.is_empty());
+                assert!(ok
+                    .evidence_items
+                    .iter()
+                    .any(|item| item.text.eq_ignore_ascii_case("invoice")));
+            }
+            _ => panic!("expected EvidenceExtractOk"),
+        }
+    }
+
+    #[test]
+    fn at_vision_06_canonicalization_is_unicode_safe_for_dedupe() {
+        let req = Ph1VisionRequest::EvidenceExtract(
+            VisionEvidenceExtractRequest::v1(
+                env(true, 8),
+                source(),
+                None,
+                vec![token("Résumé"), token("résumé")],
+            )
+            .unwrap(),
+        );
+
+        let resp = runtime().run(&req);
+        let list = match resp {
+            Ph1VisionResponse::EvidenceExtractOk(ok) => ok
+                .evidence_items
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>(),
+            _ => panic!("expected EvidenceExtractOk"),
+        };
+        assert_eq!(list.len(), 1);
     }
 }

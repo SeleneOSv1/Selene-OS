@@ -5,7 +5,8 @@ use std::cmp::min;
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
 use selene_kernel_contracts::ph1vision::{
     Ph1VisionRequest, Ph1VisionResponse, VisionCapabilityId, VisionEvidenceExtractRequest,
-    VisionEvidenceItem, VisionRefuse, VisionRequestEnvelope, VisionValidationStatus,
+    VisionEvidenceItem, VisionRawSourceRef, VisionRefuse, VisionRequestEnvelope,
+    VisionValidationStatus,
     VisionVisibleContentValidateOk, VisionVisibleContentValidateRequest, VisualSourceRef,
     VisualToken,
 };
@@ -17,6 +18,8 @@ pub mod reason_codes {
     // PH1.VISION OS wiring reason-code namespace. Values are placeholders until registry lock.
     pub const PH1_VISION_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x5649_0201);
     pub const PH1_VISION_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x5649_02F1);
+    pub const PH1_VISION_WIRING_CONTRACT_INVALID: ReasonCodeId = ReasonCodeId(0x5649_02F2);
+    pub const PH1_VISION_OPT_IN_REQUIRED: ReasonCodeId = ReasonCodeId(0x5649_02F3);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +41,9 @@ impl Ph1VisionWiringConfig {
 pub struct VisionTurnInput {
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
+    pub turn_opt_in_enabled: bool,
     pub source_ref: VisualSourceRef,
+    pub raw_source_ref: Option<VisionRawSourceRef>,
     pub visible_tokens: Vec<VisualToken>,
 }
 
@@ -46,13 +51,17 @@ impl VisionTurnInput {
     pub fn v1(
         correlation_id: CorrelationId,
         turn_id: TurnId,
+        turn_opt_in_enabled: bool,
         source_ref: VisualSourceRef,
+        raw_source_ref: Option<VisionRawSourceRef>,
         visible_tokens: Vec<VisualToken>,
     ) -> Result<Self, ContractViolation> {
         let v = Self {
             correlation_id,
             turn_id,
+            turn_opt_in_enabled,
             source_ref,
+            raw_source_ref,
             visible_tokens,
         };
         v.validate()?;
@@ -65,6 +74,15 @@ impl Validate for VisionTurnInput {
         self.correlation_id.validate()?;
         self.turn_id.validate()?;
         self.source_ref.validate()?;
+        if let Some(raw_source_ref) = &self.raw_source_ref {
+            raw_source_ref.validate()?;
+        }
+        if self.visible_tokens.is_empty() && self.raw_source_ref.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "vision_turn_input",
+                reason: "must include visible_tokens or raw_source_ref",
+            });
+        }
         if self.visible_tokens.len() > 256 {
             return Err(ContractViolation::InvalidValue {
                 field: "vision_turn_input.visible_tokens",
@@ -179,28 +197,64 @@ where
         &self,
         input: &VisionTurnInput,
     ) -> Result<VisionWiringOutcome, ContractViolation> {
-        input.validate()?;
-
-        if !self.config.vision_opt_in_enabled {
-            return Ok(VisionWiringOutcome::NotInvokedOptOut);
+        if input.validate().is_err() {
+            return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                VisionCapabilityId::EvidenceExtract,
+                "vision turn input failed contract validation",
+            )?));
         }
 
-        if input.visible_tokens.is_empty() {
+        if !self.config.vision_opt_in_enabled || !input.turn_opt_in_enabled {
+            return Ok(VisionWiringOutcome::Refused(VisionRefuse::v1(
+                VisionCapabilityId::EvidenceExtract,
+                reason_codes::PH1_VISION_OPT_IN_REQUIRED,
+                "vision opt-in is required for this turn".to_string(),
+            )?));
+        }
+
+        let visible_tokens = if input.visible_tokens.is_empty() {
+            derive_visible_tokens_from_raw_source(input.raw_source_ref.as_ref())
+        } else {
+            input.visible_tokens.clone()
+        };
+
+        if visible_tokens.is_empty() {
             return Ok(VisionWiringOutcome::NotInvokedNoVisualInput);
         }
 
         let max_items = min(self.config.max_evidence_items, 64);
-        let envelope =
-            VisionRequestEnvelope::v1(input.correlation_id, input.turn_id, true, max_items)?;
+        let envelope = match VisionRequestEnvelope::v1(input.correlation_id, input.turn_id, true, max_items) {
+            Ok(v) => v,
+            Err(_) => {
+                return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                    VisionCapabilityId::EvidenceExtract,
+                    "failed to construct vision request envelope",
+                )?))
+            }
+        };
 
-        let extract_req = Ph1VisionRequest::EvidenceExtract(VisionEvidenceExtractRequest::v1(
+        let extract_req = match VisionEvidenceExtractRequest::v1(
             envelope.clone(),
             input.source_ref.clone(),
-            input.visible_tokens.clone(),
-        )?);
+            input.raw_source_ref.clone(),
+            visible_tokens.clone(),
+        ) {
+            Ok(req) => Ph1VisionRequest::EvidenceExtract(req),
+            Err(_) => {
+                return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                    VisionCapabilityId::EvidenceExtract,
+                    "failed to construct vision extract request",
+                )?))
+            }
+        };
 
         let extract_resp = self.engine.run(&extract_req);
-        extract_resp.validate()?;
+        if extract_resp.validate().is_err() {
+            return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                VisionCapabilityId::EvidenceExtract,
+                "vision extract response failed contract validation",
+            )?));
+        }
 
         let extract_ok = match extract_resp {
             Ph1VisionResponse::Refuse(r) => return Ok(VisionWiringOutcome::Refused(r)),
@@ -215,16 +269,28 @@ where
             }
         };
 
-        let validate_req =
-            Ph1VisionRequest::VisibleContentValidate(VisionVisibleContentValidateRequest::v1(
-                envelope,
-                input.source_ref.clone(),
-                input.visible_tokens.clone(),
-                extract_ok.evidence_items.clone(),
-            )?);
+        let validate_req = match VisionVisibleContentValidateRequest::v1(
+            envelope,
+            input.source_ref.clone(),
+            visible_tokens,
+            extract_ok.evidence_items.clone(),
+        ) {
+            Ok(req) => Ph1VisionRequest::VisibleContentValidate(req),
+            Err(_) => {
+                return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                    VisionCapabilityId::VisibleContentValidate,
+                    "failed to construct vision validate request",
+                )?))
+            }
+        };
 
         let validate_resp = self.engine.run(&validate_req);
-        validate_resp.validate()?;
+        if validate_resp.validate().is_err() {
+            return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                VisionCapabilityId::VisibleContentValidate,
+                "vision validate response failed contract validation",
+            )?));
+        }
 
         let validate_ok = match validate_resp {
             Ph1VisionResponse::Refuse(r) => return Ok(VisionWiringOutcome::Refused(r)),
@@ -248,19 +314,62 @@ where
             return Ok(VisionWiringOutcome::Refused(r));
         }
 
-        let bundle = VisionForwardBundle::v1(
+        let bundle = match VisionForwardBundle::v1(
             input.correlation_id,
             input.turn_id,
             extract_ok.source_ref,
             extract_ok.evidence_items,
             extract_ok.visible_content_only,
-        )?;
+        ) {
+            Ok(bundle) => bundle,
+            Err(_) => {
+                return Ok(VisionWiringOutcome::Refused(refuse_contract_invalid(
+                    VisionCapabilityId::EvidenceExtract,
+                    "failed to construct PH1.VISION forward bundle",
+                )?))
+            }
+        };
 
         Ok(VisionWiringOutcome::Forwarded {
             bundle,
             validation: validate_ok,
         })
     }
+}
+
+fn refuse_contract_invalid(
+    capability_id: VisionCapabilityId,
+    message: &'static str,
+) -> Result<VisionRefuse, ContractViolation> {
+    VisionRefuse::v1(
+        capability_id,
+        reason_codes::PH1_VISION_WIRING_CONTRACT_INVALID,
+        message.to_string(),
+    )
+}
+
+fn derive_visible_tokens_from_raw_source(raw_source_ref: Option<&VisionRawSourceRef>) -> Vec<VisualToken> {
+    let Some(raw_source_ref) = raw_source_ref else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if let Some(image_ref) = raw_source_ref.image_ref.as_deref() {
+        out.extend(derive_tokens_from_ref(image_ref));
+    }
+    if let Some(blob_ref) = raw_source_ref.blob_ref.as_deref() {
+        out.extend(derive_tokens_from_ref(blob_ref));
+    }
+    out
+}
+
+fn derive_tokens_from_ref(value: &str) -> Vec<VisualToken> {
+    value
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .take(64)
+        .filter_map(|token| VisualToken::v1(token.to_string(), None).ok())
+        .collect()
 }
 
 #[cfg(test)]
@@ -307,11 +416,11 @@ mod tests {
                     let visible = r
                         .visible_tokens
                         .iter()
-                        .map(|t| t.token.to_ascii_lowercase())
+                        .map(|t| t.token.to_lowercase())
                         .collect::<Vec<_>>();
                     let mut bad = vec![];
                     for (idx, e) in r.evidence_items.iter().enumerate() {
-                        if !visible.iter().any(|v| v == &e.text.to_ascii_lowercase()) {
+                        if !visible.iter().any(|v| v == &e.text.to_lowercase()) {
                             bad.push(format!("evidence_index_{idx}_not_visible_content"));
                         }
                     }
@@ -366,11 +475,11 @@ mod tests {
                     let visible = r
                         .visible_tokens
                         .iter()
-                        .map(|t| t.token.to_ascii_lowercase())
+                        .map(|t| t.token.to_lowercase())
                         .collect::<Vec<_>>();
                     let mut bad = vec![];
                     for (idx, e) in r.evidence_items.iter().enumerate() {
-                        if !visible.iter().any(|v| v == &e.text.to_ascii_lowercase()) {
+                        if !visible.iter().any(|v| v == &e.text.to_lowercase()) {
                             bad.push(format!("evidence_index_{idx}_not_visible_content"));
                         }
                     }
@@ -412,7 +521,9 @@ mod tests {
         let input = VisionTurnInput::v1(
             CorrelationId(101),
             TurnId(55),
+            true,
             source(),
+            None,
             vec![token("title"), token("subtotal")],
         )
         .unwrap();
@@ -438,7 +549,9 @@ mod tests {
         let input = VisionTurnInput::v1(
             CorrelationId(102),
             TurnId(56),
+            true,
             source(),
+            None,
             vec![token("first"), token("second"), token("third")],
         )
         .unwrap();
@@ -468,13 +581,18 @@ mod tests {
         let input = VisionTurnInput::v1(
             CorrelationId(103),
             TurnId(57),
+            true,
             source(),
+            None,
             vec![token("anything")],
         )
         .unwrap();
 
         let out = wiring.run_turn(&input).unwrap();
-        assert_eq!(out, VisionWiringOutcome::NotInvokedOptOut);
+        let VisionWiringOutcome::Refused(refuse) = out else {
+            panic!("expected refused outcome when global opt-in disabled");
+        };
+        assert_eq!(refuse.reason_code, reason_codes::PH1_VISION_OPT_IN_REQUIRED);
     }
 
     #[test]
@@ -486,7 +604,9 @@ mod tests {
         let input = VisionTurnInput::v1(
             CorrelationId(104),
             TurnId(58),
+            true,
             source(),
+            None,
             vec![token("visible_only")],
         )
         .unwrap();
@@ -499,5 +619,59 @@ mod tests {
             }
             _ => panic!("expected Refused outcome"),
         }
+    }
+
+    #[test]
+    fn at_vision_05_os_refuses_when_turn_opt_in_not_granted() {
+        let wiring = Ph1VisionWiring::new(
+            Ph1VisionWiringConfig::mvp_v1(true),
+            DeterministicVisionEngine,
+        )
+        .unwrap();
+
+        let input = VisionTurnInput::v1(
+            CorrelationId(105),
+            TurnId(59),
+            false,
+            source(),
+            None,
+            vec![token("anything")],
+        )
+        .unwrap();
+
+        let out = wiring.run_turn(&input).unwrap();
+        let VisionWiringOutcome::Refused(refuse) = out else {
+            panic!("expected refusal when turn opt-in is not granted");
+        };
+        assert_eq!(refuse.reason_code, reason_codes::PH1_VISION_OPT_IN_REQUIRED);
+    }
+
+    #[test]
+    fn at_vision_06_os_supports_raw_source_when_visible_tokens_absent() {
+        let wiring = Ph1VisionWiring::new(
+            Ph1VisionWiringConfig::mvp_v1(true),
+            DeterministicVisionEngine,
+        )
+        .unwrap();
+        let raw_source = VisionRawSourceRef::v1(
+            Some("image://invoice_total".to_string()),
+            Some("blob://capture/line_items".to_string()),
+        )
+        .unwrap();
+        let input = VisionTurnInput::v1(
+            CorrelationId(106),
+            TurnId(60),
+            true,
+            source(),
+            Some(raw_source),
+            vec![],
+        )
+        .unwrap();
+
+        let out = wiring.run_turn(&input).unwrap();
+        let VisionWiringOutcome::Forwarded { bundle, .. } = out else {
+            panic!("expected forwarded outcome");
+        };
+        assert!(!bundle.evidence_items.is_empty());
     }
 }

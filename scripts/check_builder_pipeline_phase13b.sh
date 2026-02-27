@@ -34,8 +34,10 @@ check_contains "crates/selene_os/src/ph1builder.rs" "at_builder_os_01_offline_ru
 check_contains "crates/selene_os/src/ph1builder.rs" "at_builder_os_02_fails_closed_when_gate_collection_is_incomplete" "missing stage13b fail-closed test"
 check_contains "crates/selene_os/src/ph1builder.rs" "at_builder_os_03_idempotent_replay_keeps_single_rows" "missing stage13b idempotency test"
 
-if rg -n "PH1\\.BUILDER" "crates/selene_os/src/ph1os.rs" >/dev/null; then
-  fail "PH1.BUILDER must not be wired into runtime PH1.OS turn path"
+# Runtime PH1.OS must not call PH1.BUILDER orchestrator directly.
+# Offline remediation mapping types/labels are allowed as long as no runtime execute path exists.
+if rg -n "Ph1BuilderOrchestrator|BuilderOrchestrationOutcome|run_offline\\(" "crates/selene_os/src/ph1os.rs" >/dev/null; then
+  fail "PH1.BUILDER must not be executed from runtime PH1.OS turn path"
 fi
 
 echo "CHECK_OK builder_pipeline_phase13b=pass"

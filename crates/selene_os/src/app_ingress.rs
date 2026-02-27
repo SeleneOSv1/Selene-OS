@@ -15,7 +15,7 @@ use selene_kernel_contracts::ph1link::AppPlatform;
 use selene_kernel_contracts::ph1m::MemoryCandidate;
 use selene_kernel_contracts::ph1n::Ph1nResponse;
 use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, IdentityContext, Ph1xRequest, StepUpCapabilities, ThreadState,
+    ConfirmAnswer, IdentityContext, Ph1xRequest, Ph1xResponse, StepUpCapabilities, ThreadState,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -24,10 +24,10 @@ use selene_storage::ph1f::{Ph1fStore, StorageError};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use crate::ph1os::{
-    OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
+    OsPh1kLiveEvidence, OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
 };
-use crate::simulation_executor::SimulationExecutor;
+use crate::simulation_executor::{SimulationDispatchOutcome, SimulationExecutor};
 
 #[derive(Debug, Clone)]
 pub struct AppVoiceIngressRequest {
@@ -35,12 +35,15 @@ pub struct AppVoiceIngressRequest {
     pub turn_id: TurnId,
     pub app_platform: AppPlatform,
     pub trigger: OsVoiceTrigger,
+    pub transcript_ok: bool,
+    pub clarify_required: bool,
     pub voice_id_request: Ph1VoiceIdRequest,
     pub actor_user_id: UserId,
     pub tenant_id: Option<String>,
     pub device_id: Option<DeviceId>,
     pub enrolled_speakers: Vec<EngineEnrolledSpeaker>,
     pub observation: EngineVoiceIdObservation,
+    pub ph1k_live_evidence: Option<OsPh1kLiveEvidence>,
 }
 
 impl AppVoiceIngressRequest {
@@ -50,6 +53,8 @@ impl AppVoiceIngressRequest {
         turn_id: TurnId,
         app_platform: AppPlatform,
         trigger: OsVoiceTrigger,
+        transcript_ok: bool,
+        clarify_required: bool,
         voice_id_request: Ph1VoiceIdRequest,
         actor_user_id: UserId,
         tenant_id: Option<String>,
@@ -62,18 +67,36 @@ impl AppVoiceIngressRequest {
         if let Some(device_id) = device_id.as_ref() {
             device_id.validate()?;
         }
+        if !transcript_ok && !clarify_required {
+            return Err(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.clarify_required",
+                reason: "must be true when transcript_ok=false",
+            });
+        }
         Ok(Self {
             correlation_id,
             turn_id,
             app_platform,
             trigger,
+            transcript_ok,
+            clarify_required,
             voice_id_request,
             actor_user_id,
             tenant_id,
             device_id,
             enrolled_speakers,
             observation,
+            ph1k_live_evidence: None,
         })
+    }
+
+    pub fn with_ph1k_live_evidence(
+        mut self,
+        evidence: OsPh1kLiveEvidence,
+    ) -> Result<Self, ContractViolation> {
+        evidence.validate()?;
+        self.ph1k_live_evidence = Some(evidence);
+        Ok(self)
     }
 }
 
@@ -107,6 +130,15 @@ impl AppServerIngressRuntime {
         store: &mut Ph1fStore,
         request: AppVoiceIngressRequest,
     ) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
+        let ph1k_live_evidence =
+            request
+                .ph1k_live_evidence
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_voice_ingress_request.ph1k_live_evidence",
+                        reason: "is required for app/server voice ingress",
+                    },
+                ))?;
         let resolved_enrolled_speakers =
             locked_enrolled_speakers_from_store(store, request.tenant_id.as_deref())?;
         let top_level_turn_input = OsTopLevelTurnInput::v1(
@@ -120,12 +152,17 @@ impl AppServerIngressRuntime {
             expected_always_on_voice_sequence(request.trigger),
             Vec::new(),
             1,
-            default_os_turn_input(request.correlation_id, request.turn_id)
-                .map_err(StorageError::ContractViolation)?,
+            default_os_turn_input(
+                request.correlation_id,
+                request.turn_id,
+                request.transcript_ok,
+                request.clarify_required,
+            )
+            .map_err(StorageError::ContractViolation)?,
         )
         .map_err(StorageError::ContractViolation)?;
 
-        let live_turn_input = OsVoiceLiveTurnInput::v1(
+        let mut live_turn_input = OsVoiceLiveTurnInput::v1(
             top_level_turn_input,
             request.voice_id_request,
             request.actor_user_id,
@@ -135,6 +172,9 @@ impl AppServerIngressRuntime {
             request.observation,
         )
         .map_err(StorageError::ContractViolation)?;
+        live_turn_input = live_turn_input
+            .with_ph1k_live_evidence(ph1k_live_evidence)
+            .map_err(StorageError::ContractViolation)?;
 
         // Default app/server voice ingress path.
         self.executor
@@ -166,6 +206,17 @@ impl AppServerIngressRuntime {
         };
 
         Ok((outcome, ph1x_request))
+    }
+
+    pub fn dispatch_ph1x_simulation_candidate(
+        &self,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        now: MonotonicTimeNs,
+        x: &Ph1xResponse,
+    ) -> Result<SimulationDispatchOutcome, StorageError> {
+        self.executor
+            .execute_ph1x_dispatch_simulation_candidate(store, actor_user_id, now, x)
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -229,13 +280,15 @@ fn expected_always_on_voice_sequence(trigger: OsVoiceTrigger) -> Vec<String> {
 fn default_os_turn_input(
     correlation_id: CorrelationId,
     turn_id: TurnId,
+    transcript_ok: bool,
+    clarify_required: bool,
 ) -> Result<OsTurnInput, ContractViolation> {
     OsTurnInput::v1(
         correlation_id,
         turn_id,
         true,
-        true,
-        true,
+        transcript_ok,
+        transcript_ok,
         false,
         false,
         true,
@@ -249,7 +302,7 @@ fn default_os_turn_input(
         false,
         true,
         false,
-        false,
+        clarify_required,
         false,
         false,
         false,
@@ -375,7 +428,8 @@ mod tests {
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1k::{
         AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
-        Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+        Confidence, DeviceHealth, DeviceRoute, DeviceState, FrameDurationMs, PreRollBufferId,
+        PreRollBufferRef, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
     use selene_kernel_contracts::ph1n::{Chat, Ph1nResponse};
@@ -461,6 +515,40 @@ mod tests {
         }
     }
 
+    fn sample_ph1k_live_evidence_from_request(request: &Ph1VoiceIdRequest) -> OsPh1kLiveEvidence {
+        let start = request
+            .vad_events
+            .first()
+            .map(|event| event.t_start)
+            .unwrap_or(request.now);
+        let end = request
+            .vad_events
+            .last()
+            .map(|event| event.t_end)
+            .unwrap_or(request.now);
+        OsPh1kLiveEvidence {
+            processed_stream_ref: request.processed_audio_stream_ref,
+            pre_roll_buffer_ref: PreRollBufferRef::v1(
+                PreRollBufferId(4_001),
+                request.processed_audio_stream_ref.stream_id,
+                start,
+                end,
+            ),
+            vad_events: request.vad_events.clone(),
+            device_state: DeviceState::v1_with_route(
+                AudioDeviceId::new("ingress_mic_k").unwrap(),
+                AudioDeviceId::new("ingress_spk_k").unwrap(),
+                DeviceRoute::BuiltIn,
+                DeviceHealth::Healthy,
+                Vec::new(),
+            ),
+            timing_stats: None,
+            tts_playback: None,
+            interrupt_candidate: None,
+            duplex_frame: None,
+        }
+    }
+
     #[test]
     fn at_ingress_01_ios_explicit_routes_through_os_live_default() {
         let runtime = AppServerIngressRuntime::default();
@@ -474,6 +562,8 @@ mod tests {
             TurnId(9201),
             AppPlatform::Ios,
             OsVoiceTrigger::Explicit,
+            true,
+            false,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
             actor_user_id,
             Some("tenant_1".to_string()),
@@ -482,6 +572,8 @@ mod tests {
             no_observation(),
         )
         .unwrap();
+        let ph1k_live_evidence = sample_ph1k_live_evidence_from_request(&request.voice_id_request);
+        let request = request.with_ph1k_live_evidence(ph1k_live_evidence).unwrap();
 
         let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
         let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
@@ -511,6 +603,8 @@ mod tests {
             TurnId(9202),
             AppPlatform::Android,
             OsVoiceTrigger::WakeWord,
+            true,
+            false,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
             actor_user_id,
             Some("tenant_1".to_string()),
@@ -519,6 +613,8 @@ mod tests {
             no_observation(),
         )
         .unwrap();
+        let ph1k_live_evidence = sample_ph1k_live_evidence_from_request(&request.voice_id_request);
+        let request = request.with_ph1k_live_evidence(ph1k_live_evidence).unwrap();
 
         let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
         let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
@@ -543,6 +639,8 @@ mod tests {
             TurnId(9203),
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
+            true,
+            false,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
             actor_user_id,
             Some("tenant_1".to_string()),
@@ -551,6 +649,8 @@ mod tests {
             no_observation(),
         )
         .unwrap();
+        let ph1k_live_evidence = sample_ph1k_live_evidence_from_request(&request.voice_id_request);
+        let request = request.with_ph1k_live_evidence(ph1k_live_evidence).unwrap();
 
         let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
         let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
@@ -576,6 +676,8 @@ mod tests {
             TurnId(9204),
             AppPlatform::Ios,
             OsVoiceTrigger::Explicit,
+            true,
+            false,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
             actor_user_id,
             Some("tenant_1".to_string()),
@@ -584,6 +686,8 @@ mod tests {
             no_observation(),
         )
         .unwrap();
+        let ph1k_live_evidence = sample_ph1k_live_evidence_from_request(&request.voice_id_request);
+        let request = request.with_ph1k_live_evidence(ph1k_live_evidence).unwrap();
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(4),
@@ -617,6 +721,109 @@ mod tests {
         assert!(matches!(
             ph1x_request.identity_context,
             IdentityContext::Voice(_)
+        ));
+    }
+
+    #[test]
+    fn at_ingress_05_failed_transcript_requires_clarify_flag() {
+        let actor_user_id = UserId::new("tenant_1:ingress_bad_transcript_user").unwrap();
+        let device_id = DeviceId::new("ingress_bad_transcript_device_1").unwrap();
+        let err = AppVoiceIngressRequest::v1(
+            CorrelationId(9105),
+            TurnId(9205),
+            AppPlatform::Ios,
+            OsVoiceTrigger::Explicit,
+            false,
+            false,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .expect_err("failed transcript must require clarify");
+        assert!(matches!(
+            err,
+            ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.clarify_required",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn at_ingress_06_clarify_path_is_driven_by_ingress_flags() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_clarify_user").unwrap();
+        let device_id = DeviceId::new("ingress_clarify_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9106),
+            TurnId(9206),
+            AppPlatform::Ios,
+            OsVoiceTrigger::Explicit,
+            false,
+            true,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let ph1k_live_evidence = sample_ph1k_live_evidence_from_request(&request.voice_id_request);
+        let request = request.with_ph1k_live_evidence(ph1k_live_evidence).unwrap();
+
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+            panic!("expected forwarded outcome");
+        };
+        assert_eq!(
+            forwarded
+                .top_level_bundle
+                .os_bundle
+                .decision_compute
+                .next_move,
+            selene_kernel_contracts::ph1os::OsNextMove::Clarify
+        );
+    }
+
+    #[test]
+    fn at_ingress_07_missing_ph1k_live_evidence_fails_closed() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_missing_k_user").unwrap();
+        let device_id = DeviceId::new("ingress_missing_k_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9107),
+            TurnId(9207),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            true,
+            false,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let err = runtime
+            .run_voice_turn(&mut store, request)
+            .expect_err("voice ingress without PH1.K live evidence must fail closed");
+        assert!(matches!(
+            err,
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.ph1k_live_evidence",
+                ..
+            })
         ));
     }
 }

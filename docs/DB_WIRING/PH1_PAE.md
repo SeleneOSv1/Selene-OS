@@ -21,6 +21,7 @@
 - Must never perform side effects, tool execution, or engine-to-engine direct calls.
 - Hard rule: promotion to `LEAD` requires governed artifact + rollback pointer discipline.
 - Hard rule: repeated regression must demote deterministically (`LEAD -> ASSIST -> SHADOW`) instead of drifting silently.
+- Hard rule: `LEAD -> ASSIST` demotion is rollback-governed; if rollback proof is missing, PH1.PAE must fail closed.
 - Hard rule: if selected/ordered score integrity drifts, PH1.PAE must fail closed before downstream handoff.
 
 ## D) Wiring
@@ -66,3 +67,10 @@
 - PH1.PAE wiring must govern FDX adaptation promotion/demotion under one-step ladder constraints.
 - Promotion to `LEAD` requires governed artifact lineage + rollback readiness proof.
 - FDX regression (quality/latency/false-or-missed interrupt gates) must trigger deterministic demotion/rollback posture.
+
+## H) Round-2 Step 10 Lock (Gold-Loop Intake Determinism)
+- PH1.PAE intake from PH1.LEARN must remain deterministic for verified miss/correction gold-loop packages.
+- Required lock:
+  - FEEDBACK miss/correction -> LEARN package -> PAE scoring must preserve replay-safe ids and one-step ladder governance.
+- Authority boundary unchanged:
+  - PH1.PAE outputs remain advisory hints; no execution authority is introduced by gold-loop routing.

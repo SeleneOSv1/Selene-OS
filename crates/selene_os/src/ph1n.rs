@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
+use selene_kernel_contracts::ph1c::{ConfidenceBucket, SelectedSlot};
 use selene_kernel_contracts::ph1n::{
-    Clarify, FieldKey, Ph1nRequest, Ph1nResponse, SensitivityLevel,
+    Clarify, FieldKey, OverallConfidence, Ph1nRequest, Ph1nResponse, SensitivityLevel,
 };
 use selene_kernel_contracts::{ContractViolation, Validate};
 
@@ -10,16 +11,22 @@ pub mod reason_codes {
 
     // PH1.NLP OS wiring reason-code namespace. Values are placeholders until registry lock.
     pub const PH1_NLP_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4E4C_01F1);
+    pub const PH1_NLP_HANDOFF_INVALID: ReasonCodeId = ReasonCodeId(0x4E4C_01F2);
+    pub const PH1_NLP_CLARIFY_REQUIRED: ReasonCodeId = ReasonCodeId(0x4E4C_01F3);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1nWiringConfig {
     pub ph1n_enabled: bool,
+    pub require_ph1c_handoff: bool,
 }
 
 impl Ph1nWiringConfig {
     pub fn mvp_v1(ph1n_enabled: bool) -> Self {
-        Self { ph1n_enabled }
+        Self {
+            ph1n_enabled,
+            require_ph1c_handoff: true,
+        }
     }
 }
 
@@ -52,19 +59,49 @@ where
     }
 
     pub fn run_turn(&self, req: &Ph1nRequest) -> Result<Ph1nWiringOutcome, ContractViolation> {
-        req.validate()?;
+        if req.validate().is_err() {
+            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                reason_codes::PH1_NLP_HANDOFF_INVALID,
+            )?));
+        }
 
         if !self.config.ph1n_enabled {
             return Ok(Ph1nWiringOutcome::NotInvokedDisabled);
         }
 
+        if self.config.require_ph1c_handoff && validate_ph1c_handoff(req).is_err() {
+            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                reason_codes::PH1_NLP_HANDOFF_INVALID,
+            )?));
+        }
+        let clarify_policy_required = requires_clarify_policy(req);
+
         let out = match self.engine.run(req) {
             Ok(out) => out,
-            Err(_) => return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify()?)),
+            Err(_) => {
+                return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                    reason_codes::PH1_NLP_INTERNAL_PIPELINE_ERROR,
+                )?))
+            }
         };
 
         if validate_response(&out).is_err() {
-            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify()?));
+            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                reason_codes::PH1_NLP_INTERNAL_PIPELINE_ERROR,
+            )?));
+        }
+        if clarify_policy_required && !matches!(out, Ph1nResponse::Clarify(_)) {
+            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                reason_codes::PH1_NLP_CLARIFY_REQUIRED,
+            )?));
+        }
+        if matches!(
+            out,
+            Ph1nResponse::IntentDraft(ref draft) if draft.overall_confidence != OverallConfidence::High
+        ) {
+            return Ok(Ph1nWiringOutcome::Refused(fail_closed_clarify(
+                reason_codes::PH1_NLP_CLARIFY_REQUIRED,
+            )?));
         }
 
         Ok(Ph1nWiringOutcome::Forwarded(out))
@@ -79,7 +116,37 @@ fn validate_response(resp: &Ph1nResponse) -> Result<(), ContractViolation> {
     }
 }
 
-fn fail_closed_clarify() -> Result<Ph1nResponse, ContractViolation> {
+fn validate_ph1c_handoff(req: &Ph1nRequest) -> Result<(), ContractViolation> {
+    let Some(meta) = &req.transcript_ok.audit_meta else {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.transcript_ok.audit_meta",
+            reason: "must be present for PH1.C->PH1.NLP handoff",
+        });
+    };
+    if meta.attempt_count == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.transcript_ok.audit_meta.attempt_count",
+            reason: "must be > 0 for PH1.C->PH1.NLP handoff",
+        });
+    }
+    if meta.selected_slot == SelectedSlot::None {
+        return Err(ContractViolation::InvalidValue {
+            field: "ph1n_request.transcript_ok.audit_meta.selected_slot",
+            reason: "must not be NONE for PH1.C->PH1.NLP handoff",
+        });
+    }
+    Ok(())
+}
+
+fn requires_clarify_policy(req: &Ph1nRequest) -> bool {
+    req.transcript_ok.confidence_bucket != ConfidenceBucket::High
+        || !req.uncertain_spans.is_empty()
+        || !req.transcript_ok.uncertain_spans.is_empty()
+}
+
+fn fail_closed_clarify(
+    reason_code: selene_kernel_contracts::ReasonCodeId,
+) -> Result<Ph1nResponse, ContractViolation> {
     Ok(Ph1nResponse::Clarify(Clarify::v1(
         "I need one detail before I continue. What exactly should I use?".to_string(),
         vec![FieldKey::Task],
@@ -87,7 +154,7 @@ fn fail_closed_clarify() -> Result<Ph1nResponse, ContractViolation> {
             "One short sentence".to_string(),
             "A few keywords".to_string(),
         ],
-        reason_codes::PH1_NLP_INTERNAL_PIPELINE_ERROR,
+        reason_code,
         SensitivityLevel::Public,
         false,
         vec![],
@@ -99,7 +166,8 @@ fn fail_closed_clarify() -> Result<Ph1nResponse, ContractViolation> {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1c::{
-        ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk,
+        ConfidenceBucket, LanguageTag, Ph1cAuditMeta, QualityBucket, RouteClassUsed,
+        RoutingModeUsed, SelectedSlot, SessionStateRef, TranscriptOk,
     };
     use selene_kernel_contracts::ph1n::{
         Chat, Clarify, IntentDraft, IntentType, OverallConfidence, UncertainSpan,
@@ -120,10 +188,30 @@ mod tests {
     }
 
     fn req(transcript: &str) -> Ph1nRequest {
-        let ok = TranscriptOk::v1(
+        let ok = TranscriptOk::v1_with_metadata(
             transcript.to_string(),
             LanguageTag::new("en").unwrap(),
             ConfidenceBucket::High,
+            vec![],
+            Some(
+                Ph1cAuditMeta::v1(
+                    RouteClassUsed::OnDevice,
+                    1,
+                    1,
+                    SelectedSlot::Primary,
+                    RoutingModeUsed::Lead,
+                    false,
+                    100,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    None,
+                    None,
+                    Some("ph1k_handoff_standard".to_string()),
+                    Some("openai_google_clarify_v1".to_string()),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap();
         Ph1nRequest::v1(ok, SessionStateRef::v1(SessionState::Active, false)).unwrap()
@@ -137,6 +225,25 @@ mod tests {
                 vec![],
                 vec![],
                 OverallConfidence::High,
+                vec![],
+                ReasonCodeId(1),
+                SensitivityLevel::Public,
+                false,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
+    }
+
+    fn low_intent_response() -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::TimeQuery,
+                SchemaVersion(1),
+                vec![],
+                vec![],
+                OverallConfidence::Low,
                 vec![],
                 ReasonCodeId(1),
                 SensitivityLevel::Public,
@@ -208,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn at_n_wiring_04_invalid_request_contract_is_rejected() {
+    fn at_n_wiring_04_invalid_request_contract_fails_closed() {
         let mut r = req("remind me tomorrow");
         r.uncertain_spans.push(UncertainSpan {
             schema_version: PH1N_CONTRACT_VERSION,
@@ -224,7 +331,12 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(w.run_turn(&r).is_err());
+        match w.run_turn(&r).unwrap() {
+            Ph1nWiringOutcome::Refused(Ph1nResponse::Clarify(c)) => {
+                assert_eq!(c.reason_code, reason_codes::PH1_NLP_HANDOFF_INVALID)
+            }
+            other => panic!("expected fail-closed clarify fallback, got: {other:?}"),
+        }
     }
 
     #[test]
@@ -263,6 +375,118 @@ mod tests {
                 assert_eq!(c.response_text, "Hello.")
             }
             other => panic!("expected forwarded chat response, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_n_wiring_07_missing_ph1c_handoff_meta_fails_closed_when_required() {
+        let transcript = TranscriptOk::v1(
+            "remind me tomorrow".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        let req =
+            Ph1nRequest::v1(transcript, SessionStateRef::v1(SessionState::Active, false)).unwrap();
+        let w = Ph1nWiring::new(
+            Ph1nWiringConfig::mvp_v1(true),
+            StubEngine {
+                out: Ok(ok_intent_response()),
+            },
+        )
+        .unwrap();
+        match w.run_turn(&req).unwrap() {
+            Ph1nWiringOutcome::Refused(Ph1nResponse::Clarify(c)) => {
+                assert_eq!(c.reason_code, reason_codes::PH1_NLP_HANDOFF_INVALID)
+            }
+            other => panic!("expected fail-closed clarify fallback, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_n_wiring_08_missing_handoff_meta_can_be_allowed_for_non_ph1c_paths() {
+        let transcript = TranscriptOk::v1(
+            "remind me tomorrow".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::High,
+        )
+        .unwrap();
+        let req =
+            Ph1nRequest::v1(transcript, SessionStateRef::v1(SessionState::Active, false)).unwrap();
+        let mut cfg = Ph1nWiringConfig::mvp_v1(true);
+        cfg.require_ph1c_handoff = false;
+        let w = Ph1nWiring::new(
+            cfg,
+            StubEngine {
+                out: Ok(ok_intent_response()),
+            },
+        )
+        .unwrap();
+        match w.run_turn(&req).unwrap() {
+            Ph1nWiringOutcome::Forwarded(Ph1nResponse::IntentDraft(_)) => {}
+            other => panic!("expected forwarded intent draft, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_n_wiring_09_low_transcript_confidence_requires_clarify() {
+        let transcript = TranscriptOk::v1_with_metadata(
+            "remind me tomorrow".to_string(),
+            LanguageTag::new("en").unwrap(),
+            ConfidenceBucket::Low,
+            vec![],
+            Some(
+                Ph1cAuditMeta::v1(
+                    RouteClassUsed::OnDevice,
+                    1,
+                    1,
+                    SelectedSlot::Primary,
+                    RoutingModeUsed::Lead,
+                    false,
+                    100,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    None,
+                    None,
+                    Some("ph1k_handoff_standard".to_string()),
+                    Some("openai_google_clarify_v1".to_string()),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let req =
+            Ph1nRequest::v1(transcript, SessionStateRef::v1(SessionState::Active, false)).unwrap();
+        let w = Ph1nWiring::new(
+            Ph1nWiringConfig::mvp_v1(true),
+            StubEngine {
+                out: Ok(ok_intent_response()),
+            },
+        )
+        .unwrap();
+        match w.run_turn(&req).unwrap() {
+            Ph1nWiringOutcome::Refused(Ph1nResponse::Clarify(c)) => {
+                assert_eq!(c.reason_code, reason_codes::PH1_NLP_CLARIFY_REQUIRED)
+            }
+            other => panic!("expected fail-closed clarify fallback, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_n_wiring_10_low_hypothesis_confidence_requires_clarify() {
+        let w = Ph1nWiring::new(
+            Ph1nWiringConfig::mvp_v1(true),
+            StubEngine {
+                out: Ok(low_intent_response()),
+            },
+        )
+        .unwrap();
+        match w.run_turn(&req("what time is it")).unwrap() {
+            Ph1nWiringOutcome::Refused(Ph1nResponse::Clarify(c)) => {
+                assert_eq!(c.reason_code, reason_codes::PH1_NLP_CLARIFY_REQUIRED)
+            }
+            other => panic!("expected fail-closed clarify fallback, got: {other:?}"),
         }
     }
 }

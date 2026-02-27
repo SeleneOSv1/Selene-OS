@@ -157,3 +157,46 @@ Implementation references:
 - PH1.TTS wiring must preserve deterministic start/cancel/fail markers for duplex replay.
 - Cancel markers must include bounded reason coding suitable for barge-in latency verification.
 - PH1.TTS remains rendering-only and must not persist interruption-branch authority fields.
+
+## 12) Round-2 Step 5 Provider Ladder Lock
+
+- Coupled provider ladder order is strict for this round:
+  - `PRIMARY (OpenAI)` -> `SECONDARY (Google)` -> terminal `text-only fail-safe`.
+- PH1.TTS must consume provider outputs through PH1.D normalized response contracts only.
+- PH1.TTS ladder execution must be bounded and fail closed with deterministic reason codes:
+  - `TTS_FAIL_PROVIDER_BUDGET_EXCEEDED`
+  - `TTS_FAIL_TEXT_ONLY_FAILSAFE`
+- Pause/resume/cancel semantics remain deterministic and must not be altered by provider fallback paths.
+
+## 13) Gold-Case Capture Wiring (Round-2 Step 8)
+
+- Selene OS now emits deterministic `GoldCaseCapture` envelopes from PH1.TTS failure outcomes through PH1.FEEDBACK wiring (`crates/selene_os/src/ph1feedback.rs`).
+- PH1.TTS trigger set for gold-case candidate emission:
+  - `Ph1ttsEvent::Failed`
+- Each capture includes:
+  - pending `gold_case_id`
+  - bounded `reason_code_chain`
+  - deterministic clustering keys (`primary_failure_fingerprint`, `secondary_failure_fingerprint`)
+  - owner marker `PH1.TTS`
+- PH1.TTS sourced captures are fail-closed validated and converted into PH1.FEEDBACK improvement-path events with deterministic idempotency and bounded metadata.
+
+## 14) In-House Shadow Route Lock (5H Step 11)
+
+- PH1.TTS now exposes an explicit in-house shadow-compare surface:
+  - `Ph1ttsRuntime::evaluate_inhouse_shadow_route(...)`
+- Mandatory shadow inputs:
+  - provider truth response (must pass PH1.D normalized contract checks)
+  - in-house render attempt
+  - deterministic slice key: `locale`, `device_route`, `tenant_id`
+  - governed gate proof flag (`governed_gate_passed`)
+- Fail-closed guarantees:
+  - invalid shadow inputs fail closed
+  - provider-truth contract mismatch fails closed
+  - shadow remains held when governed gate proof is absent
+- Promotion eligibility is bounded:
+  - text parity with provider truth and request text
+  - locale-family consistency
+  - bounded duration/latency deltas
+  - audio-ready proof from in-house path
+- Authority boundary remains unchanged:
+  - PH1.TTS shadow compare is advisory-only and cannot self-promote playback authority.

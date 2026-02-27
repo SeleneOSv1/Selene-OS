@@ -22,6 +22,7 @@ use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestCurrentRecord, CapabilityRequestLedgerEvent,
     CapabilityRequestLedgerEventInput, CapreqId,
 };
+use selene_kernel_contracts::ph1d::{RequestId, SchemaHash};
 use selene_kernel_contracts::ph1ecm::{
     CapabilityId, CapabilityMapVersion, EngineCapabilityMapCurrentRecord, EngineCapabilityMapEvent,
     EngineCapabilityMapEventInput, EngineId,
@@ -40,12 +41,11 @@ use selene_kernel_contracts::ph1j::{
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
     InterruptDegradationContext, InterruptGateConfidences, InterruptRiskContextClass,
-    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
-    InterruptTimingMarkers, VadDecisionConfidenceBand,
+    InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers,
+    VadDecisionConfidenceBand,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1learn::LearnSignalType;
-use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1link::{
     deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
     DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
@@ -58,6 +58,7 @@ use selene_kernel_contracts::ph1m::{
     MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest, MemoryUsePolicy,
     MemoryValue,
 };
+use selene_kernel_contracts::ph1n::TranscriptHash;
 use selene_kernel_contracts::ph1onb::{
     BackfillCampaignId, BackfillCampaignState, BackfillRolloutScope, BackfillTargetStatus,
     OnbAccessInstanceCreateResult, OnbCompleteResult, OnbEmployeePhotoCaptureSendResult,
@@ -68,6 +69,7 @@ use selene_kernel_contracts::ph1onb::{
     TermsStatus, VerificationStatus,
 };
 use selene_kernel_contracts::ph1os::OsOutcomeActionClass;
+use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pbs::{
     BlueprintRegistryRecord, BlueprintStatus, BlueprintVersion, IntentType, ProcessBlueprintEvent,
     ProcessBlueprintEventInput, ProcessId,
@@ -103,6 +105,109 @@ pub enum StorageError {
 impl From<ContractViolation> for StorageError {
     fn from(v: ContractViolation) -> Self {
         StorageError::ContractViolation(v)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dCommitEnvelope {
+    pub request_id: RequestId,
+    pub prompt_template_version: SchemaVersion,
+    pub output_schema_hash: SchemaHash,
+    pub tool_catalog_hash: SchemaHash,
+    pub policy_context_hash: SchemaHash,
+    pub transcript_hash: TranscriptHash,
+    pub model_id: String,
+    pub model_route_class: String,
+    pub temperature_bp: u16,
+    pub max_tokens: u32,
+}
+
+impl Ph1dCommitEnvelope {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        request_id: RequestId,
+        prompt_template_version: SchemaVersion,
+        output_schema_hash: SchemaHash,
+        tool_catalog_hash: SchemaHash,
+        policy_context_hash: SchemaHash,
+        transcript_hash: TranscriptHash,
+        model_id: String,
+        model_route_class: String,
+        temperature_bp: u16,
+        max_tokens: u32,
+    ) -> Result<Self, ContractViolation> {
+        let envelope = Self {
+            request_id,
+            prompt_template_version,
+            output_schema_hash,
+            tool_catalog_hash,
+            policy_context_hash,
+            transcript_hash,
+            model_id,
+            model_route_class,
+            temperature_bp,
+            max_tokens,
+        };
+        envelope.validate()?;
+        Ok(envelope)
+    }
+}
+
+impl Validate for Ph1dCommitEnvelope {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.request_id.validate()?;
+        self.output_schema_hash.validate()?;
+        self.tool_catalog_hash.validate()?;
+        self.policy_context_hash.validate()?;
+        if self.transcript_hash.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.transcript_hash",
+                reason: "must be > 0",
+            });
+        }
+        if self.prompt_template_version.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.prompt_template_version",
+                reason: "must be > 0",
+            });
+        }
+        if self.model_id.trim().is_empty() || self.model_id.len() > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.model_id",
+                reason: "must be non-empty and <= 128 chars",
+            });
+        }
+        if !is_token_safe_ascii(&self.model_id) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.model_id",
+                reason: "contains unsupported characters",
+            });
+        }
+        if self.model_route_class.trim().is_empty() || self.model_route_class.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.model_route_class",
+                reason: "must be non-empty and <= 64 chars",
+            });
+        }
+        if !is_token_safe_ascii(&self.model_route_class) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.model_route_class",
+                reason: "contains unsupported characters",
+            });
+        }
+        if self.temperature_bp > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.temperature_bp",
+                reason: "must be <= 10000",
+            });
+        }
+        if self.max_tokens == 0 || self.max_tokens > 65_536 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_commit_envelope.max_tokens",
+                reason: "must be within 1..=65536",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -12131,6 +12236,60 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn ph1d_payload_base(
+        decision: &str,
+        output_mode: &str,
+        envelope: &Ph1dCommitEnvelope,
+    ) -> Result<BTreeMap<PayloadKey, PayloadValue>, StorageError> {
+        let mut payload = BTreeMap::new();
+        payload.insert(PayloadKey::new("decision")?, PayloadValue::new(decision)?);
+        payload.insert(
+            PayloadKey::new("output_mode")?,
+            PayloadValue::new(output_mode)?,
+        );
+        payload.insert(
+            PayloadKey::new("request_id")?,
+            PayloadValue::new(envelope.request_id.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("prompt_template_version")?,
+            PayloadValue::new(envelope.prompt_template_version.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("output_schema_hash")?,
+            PayloadValue::new(envelope.output_schema_hash.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("tool_catalog_hash")?,
+            PayloadValue::new(envelope.tool_catalog_hash.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("policy_context_hash")?,
+            PayloadValue::new(envelope.policy_context_hash.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("transcript_hash")?,
+            PayloadValue::new(envelope.transcript_hash.0.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("model_id")?,
+            PayloadValue::new(envelope.model_id.clone())?,
+        );
+        payload.insert(
+            PayloadKey::new("model_route_class")?,
+            PayloadValue::new(envelope.model_route_class.clone())?,
+        );
+        payload.insert(
+            PayloadKey::new("temperature_bp")?,
+            PayloadValue::new(envelope.temperature_bp.to_string())?,
+        );
+        payload.insert(
+            PayloadKey::new("max_tokens")?,
+            PayloadValue::new(envelope.max_tokens.to_string())?,
+        );
+        Ok(payload)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ph1d_chat_commit(
         &mut self,
@@ -12141,17 +12300,18 @@ impl Ph1fStore {
         session_id: Option<SessionId>,
         user_id: UserId,
         device_id: DeviceId,
+        envelope: Ph1dCommitEnvelope,
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<AuditEventId, StorageError> {
         Self::validate_ph1d_tenant_id(&tenant_id)?;
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
+        envelope
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("CHAT")?),
-            (PayloadKey::new("output_mode")?, PayloadValue::new("chat")?),
-        ]))?;
+        let payload = AuditPayloadMin::v1(Self::ph1d_payload_base("CHAT", "chat", &envelope)?)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12184,6 +12344,7 @@ impl Ph1fStore {
         session_id: Option<SessionId>,
         user_id: UserId,
         device_id: DeviceId,
+        envelope: Ph1dCommitEnvelope,
         refined_intent_type: String,
         reason_code: ReasonCodeId,
         idempotency_key: String,
@@ -12191,19 +12352,17 @@ impl Ph1fStore {
         Self::validate_ph1d_tenant_id(&tenant_id)?;
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
         Self::validate_ph1d_bounded_text("ph1d.refined_intent_type", &refined_intent_type, 64)?;
+        envelope
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("INTENT")?),
-            (
-                PayloadKey::new("refined_intent_type")?,
-                PayloadValue::new(refined_intent_type)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("intent")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_payload_base("INTENT", "intent", &envelope)?;
+        payload_entries.insert(
+            PayloadKey::new("refined_intent_type")?,
+            PayloadValue::new(refined_intent_type)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12236,6 +12395,7 @@ impl Ph1fStore {
         session_id: Option<SessionId>,
         user_id: UserId,
         device_id: DeviceId,
+        envelope: Ph1dCommitEnvelope,
         what_is_missing: String,
         reason_code: ReasonCodeId,
         idempotency_key: String,
@@ -12243,19 +12403,17 @@ impl Ph1fStore {
         Self::validate_ph1d_tenant_id(&tenant_id)?;
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
         Self::validate_ph1d_bounded_text("ph1d.what_is_missing", &what_is_missing, 64)?;
+        envelope
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("CLARIFY")?),
-            (
-                PayloadKey::new("what_is_missing")?,
-                PayloadValue::new(what_is_missing)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("clarify")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_payload_base("CLARIFY", "clarify", &envelope)?;
+        payload_entries.insert(
+            PayloadKey::new("what_is_missing")?,
+            PayloadValue::new(what_is_missing)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12288,6 +12446,7 @@ impl Ph1fStore {
         session_id: Option<SessionId>,
         user_id: UserId,
         device_id: DeviceId,
+        envelope: Ph1dCommitEnvelope,
         analysis_kind: String,
         reason_code: ReasonCodeId,
         idempotency_key: String,
@@ -12295,19 +12454,17 @@ impl Ph1fStore {
         Self::validate_ph1d_tenant_id(&tenant_id)?;
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
         Self::validate_ph1d_bounded_text("ph1d.analysis_kind", &analysis_kind, 64)?;
+        envelope
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (PayloadKey::new("decision")?, PayloadValue::new("ANALYSIS")?),
-            (
-                PayloadKey::new("analysis_kind")?,
-                PayloadValue::new(analysis_kind)?,
-            ),
-            (
-                PayloadKey::new("output_mode")?,
-                PayloadValue::new("analysis")?,
-            ),
-        ]))?;
+        let mut payload_entries = Self::ph1d_payload_base("ANALYSIS", "analysis", &envelope)?;
+        payload_entries.insert(
+            PayloadKey::new("analysis_kind")?,
+            PayloadValue::new(analysis_kind)?,
+        );
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -12340,6 +12497,7 @@ impl Ph1fStore {
         session_id: Option<SessionId>,
         user_id: UserId,
         device_id: DeviceId,
+        envelope: Ph1dCommitEnvelope,
         fail_code: String,
         reason_code: ReasonCodeId,
         idempotency_key: String,
@@ -12347,16 +12505,14 @@ impl Ph1fStore {
         Self::validate_ph1d_tenant_id(&tenant_id)?;
         Self::validate_ph1d_idempotency("ph1d.idempotency_key", &idempotency_key)?;
         Self::validate_ph1d_bounded_text("ph1d.fail_code", &fail_code, 64)?;
+        envelope
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let payload = AuditPayloadMin::v1(BTreeMap::from([
-            (
-                PayloadKey::new("decision")?,
-                PayloadValue::new("FAIL_CLOSED")?,
-            ),
-            (PayloadKey::new("fail_code")?, PayloadValue::new(fail_code)?),
-            (PayloadKey::new("output_mode")?, PayloadValue::new("fail")?),
-        ]))?;
+        let mut payload_entries = Self::ph1d_payload_base("FAIL_CLOSED", "fail", &envelope)?;
+        payload_entries.insert(PayloadKey::new("fail_code")?, PayloadValue::new(fail_code)?);
+        let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(
             now,
@@ -14748,15 +14904,21 @@ impl Ph1fStore {
         }
 
         if extended.gate_confidences.phrase_confidence
-            != extended.subject_relation_confidence_bundle.lexical_confidence
+            != extended
+                .subject_relation_confidence_bundle
+                .lexical_confidence
             || extended.gate_confidences.vad_confidence
                 != extended.subject_relation_confidence_bundle.vad_confidence
             || extended.gate_confidences.speech_likeness
                 != extended.subject_relation_confidence_bundle.speech_likeness
             || extended.gate_confidences.echo_safe_confidence
-                != extended.subject_relation_confidence_bundle.echo_safe_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .echo_safe_confidence
             || extended.gate_confidences.nearfield_confidence
-                != extended.subject_relation_confidence_bundle.nearfield_confidence
+                != extended
+                    .subject_relation_confidence_bundle
+                    .nearfield_confidence
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14782,8 +14944,7 @@ impl Ph1fStore {
             || extended.degradation_context.aec_unstable
             || extended.degradation_context.device_changed
             || extended.degradation_context.stream_gap_detected;
-        if has_degradation
-            && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
+        if has_degradation && matches!(extended.risk_context_class, InterruptRiskContextClass::Low)
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14951,12 +15112,15 @@ impl Ph1fStore {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1k_feedback_capture.degradation_flags",
-                    reason: "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
+                    reason:
+                        "all degradation flags are required for WRONG_DEGRADATION_CLASSIFICATION",
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && (input.failover_from_device.is_none() || input.failover_to_device.is_none())
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -14965,8 +15129,10 @@ impl Ph1fStore {
                 },
             ));
         }
-        if matches!(input.issue_kind, Ph1kFeedbackIssueKind::BadFailoverSelection)
-            && input.failover_from_device == input.failover_to_device
+        if matches!(
+            input.issue_kind,
+            Ph1kFeedbackIssueKind::BadFailoverSelection
+        ) && input.failover_from_device == input.failover_to_device
         {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -15092,10 +15258,10 @@ impl Ph1fStore {
         quality_regression: bool,
         false_interrupt_rate_milli_per_hour: u32,
     ) -> (PaeMode, &'static str, bool, bool, bool) {
-        let false_interrupt_regression_triggered = matches!(
-            issue_kind,
-            Ph1kFeedbackIssueKind::FalseInterrupt
-        ) && false_interrupt_rate_milli_per_hour > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
+        let false_interrupt_regression_triggered =
+            matches!(issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt)
+                && false_interrupt_rate_milli_per_hour
+                    > PH1K_STEP14_FALSE_INTERRUPT_LIMIT_MILLI_PER_HOUR;
         let quality_regression_triggered = quality_regression
             || matches!(
                 issue_kind,
@@ -15104,8 +15270,8 @@ impl Ph1fStore {
             );
 
         let should_demote = quality_regression_triggered || false_interrupt_regression_triggered;
-        let should_promote = !should_demote
-            && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
+        let should_promote =
+            !should_demote && matches!(issue_kind, Ph1kFeedbackIssueKind::MissedInterrupt);
         let mode_to = if should_demote {
             Self::ph1k_demoted_mode(mode_from)
         } else if should_promote {
@@ -15122,7 +15288,8 @@ impl Ph1fStore {
             "HOLD"
         };
 
-        let rollback_triggered = quality_regression_triggered || false_interrupt_regression_triggered;
+        let rollback_triggered =
+            quality_regression_triggered || false_interrupt_regression_triggered;
         (
             mode_to,
             action,
@@ -15204,7 +15371,11 @@ impl Ph1fStore {
             ),
             (
                 PayloadKey::new("regression_quality")?,
-                PayloadValue::new(if quality_regression_triggered { "1" } else { "0" })?,
+                PayloadValue::new(if quality_regression_triggered {
+                    "1"
+                } else {
+                    "0"
+                })?,
             ),
             (
                 PayloadKey::new("regression_false_interrupt")?,
@@ -15279,7 +15450,10 @@ impl Ph1fStore {
             "event_kind",
             Self::ph1k_event_kind_label(event.event_kind).to_string(),
         )?;
-        insert("event_name", Self::ph1k_event_name(event.event_kind).to_string())?;
+        insert(
+            "event_name",
+            Self::ph1k_event_name(event.event_kind).to_string(),
+        )?;
         insert("ph1k_event_id", event.event_id.to_string())?;
 
         match event.event_kind {
@@ -15307,7 +15481,10 @@ impl Ph1fStore {
                     insert("selected_speaker", v.clone())?;
                 }
                 if let Some(v) = event.device_health {
-                    insert("device_health", Self::ph1k_device_health_label(v).to_string())?;
+                    insert(
+                        "device_health",
+                        Self::ph1k_device_health_label(v).to_string(),
+                    )?;
                 }
             }
             Ph1kRuntimeEventKind::TimingStats => {
@@ -15384,7 +15561,9 @@ impl Ph1fStore {
                             ext.subject_relation_confidence_bundle.lexical_confidence.0,
                             ext.subject_relation_confidence_bundle.vad_confidence.0,
                             ext.subject_relation_confidence_bundle.speech_likeness.0,
-                            ext.subject_relation_confidence_bundle.echo_safe_confidence.0,
+                            ext.subject_relation_confidence_bundle
+                                .echo_safe_confidence
+                                .0,
                             ext.subject_relation_confidence_bundle
                                 .nearfield_confidence
                                 .map(|v| format!("{:.3}", v.0))
@@ -15420,8 +15599,14 @@ impl Ph1fStore {
                     "capture_degraded",
                     event.capture_degraded.unwrap_or(false).to_string(),
                 )?;
-                insert("aec_unstable", event.aec_unstable.unwrap_or(false).to_string())?;
-                insert("device_changed", event.device_changed.unwrap_or(false).to_string())?;
+                insert(
+                    "aec_unstable",
+                    event.aec_unstable.unwrap_or(false).to_string(),
+                )?;
+                insert(
+                    "device_changed",
+                    event.device_changed.unwrap_or(false).to_string(),
+                )?;
                 insert(
                     "stream_gap_detected",
                     event.stream_gap_detected.unwrap_or(false).to_string(),
@@ -15578,14 +15763,17 @@ impl Ph1fStore {
                         Some(extended.adaptive_capture_to_handoff_latency_ms);
                     row.last_interrupt_snr_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.snr_db));
-                    row.last_interrupt_clipping_ratio_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.clipping_ratio));
+                    row.last_interrupt_clipping_ratio_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.clipping_ratio,
+                    ));
                     row.last_interrupt_echo_delay_ms_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.echo_delay_ms));
-                    row.last_interrupt_packet_loss_pct_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.packet_loss_pct));
-                    row.last_interrupt_double_talk_score_milli =
-                        Some(Self::quantize_milli(extended.quality_metrics.double_talk_score));
+                    row.last_interrupt_packet_loss_pct_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.packet_loss_pct,
+                    ));
+                    row.last_interrupt_double_talk_score_milli = Some(Self::quantize_milli(
+                        extended.quality_metrics.double_talk_score,
+                    ));
                     row.last_interrupt_erle_db_milli =
                         Some(Self::quantize_milli(extended.quality_metrics.erle_db));
                 }
@@ -15827,7 +16015,8 @@ impl Ph1fStore {
                             },
                         ));
                     }
-                    effective_capture_degraded = Some(extended.degradation_context.capture_degraded);
+                    effective_capture_degraded =
+                        Some(extended.degradation_context.capture_degraded);
                     effective_aec_unstable = Some(extended.degradation_context.aec_unstable);
                     effective_device_changed = Some(extended.degradation_context.device_changed);
                     effective_stream_gap_detected =
@@ -15976,7 +16165,10 @@ impl Ph1fStore {
         idempotency_key: String,
     ) -> Result<Ph1kFeedbackCaptureRecord, StorageError> {
         Self::validate_ph1learn_tenant_id(&tenant_id)?;
-        Self::validate_ph1learn_idempotency("ph1k_feedback_capture.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1learn_idempotency(
+            "ph1k_feedback_capture.idempotency_key",
+            &idempotency_key,
+        )?;
         self.validate_ph1feedback_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
         Self::validate_ph1k_feedback_capture_input(&capture_input)?;
 
@@ -16108,7 +16300,10 @@ impl Ph1fStore {
         let false_interrupt_rate_milli_per_hour = self.ph1k_false_interrupt_rate_milli_per_hour(
             &tenant_id,
             now,
-            matches!(capture_input.issue_kind, Ph1kFeedbackIssueKind::FalseInterrupt),
+            matches!(
+                capture_input.issue_kind,
+                Ph1kFeedbackIssueKind::FalseInterrupt
+            ),
         );
         let (
             mode_to,

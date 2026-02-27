@@ -70,3 +70,18 @@
 - PH1.LEARN must aggregate duplex feedback into versioned, rollbackable artifacts.
 - FDX learning outputs may target threshold/routing/question-order improvements for PH1.K/PH1.C/PH1.NLP/PH1.X/PH1.TTS only as advisory artifacts.
 - PH1.LEARN must not directly activate runtime behavior changes; activation remains governance/promotion controlled.
+
+## Round-2 Step 9 Lock (Feedback-Driven Learning Package Flow)
+- FEEDBACK->LEARN routing is now explicitly locked in Selene OS runtime (`crates/selene_os/src/ph1learn.rs`):
+  - deterministic feedback-candidate canonicalization
+  - deterministic/idempotent learn `signal_id` projection
+  - fail-closed correlation/turn/tenant integrity checks
+- PH1.LEARN package outputs remain non-authoritative by contract:
+  - `advisory_only=true`
+  - `no_execution_authority=true`
+- Promotion to active runtime behavior remains governed by PH1.PAE path only.
+
+## Round-2 Step 10 Lock (Gold-Loop Verified Packaging)
+- PH1.C miss/correction gold-loop feedback signals are routed into LEARN deterministically with preserved gold metadata.
+- Improvement artifact packaging is fail-closed unless gold verification is complete (`gold_status=VERIFIED` with provenance + gold_case_id).
+- Verified FEEDBACK inputs must replay to deterministic LEARN outputs and preserve downstream PAE target intent.

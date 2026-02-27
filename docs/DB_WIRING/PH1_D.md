@@ -173,3 +173,31 @@ Implementation references:
 - typed repo: `crates/selene_storage/src/repo.rs`
 - migration: none required for row 15 (`PH1.D` uses existing `audit_events`)
 - tests: `crates/selene_storage/tests/ph1_d/db_wiring.rs`
+
+## 8) Gold-Case Capture Wiring (Round-2 Step 8)
+
+- Selene OS now emits deterministic `GoldCaseCapture` envelopes from PH1.D provider-boundary outcomes through PH1.FEEDBACK wiring (`crates/selene_os/src/ph1feedback.rs`).
+- PH1.D trigger set for gold-case candidate emission:
+  - provider `ERROR`
+  - provider validation `SCHEMA_FAIL`
+  - low-confidence STT provider output (bounded threshold posture)
+- Each capture includes:
+  - pending `gold_case_id`
+  - bounded `reason_code_chain` (provider reason + low-confidence reason when applicable)
+  - deterministic clustering keys (`primary_failure_fingerprint`, `secondary_failure_fingerprint`)
+  - owner marker `PH1.D`
+- PH1.D sourced captures are fail-closed validated and converted into PH1.FEEDBACK improvement-path events with deterministic idempotency and bounded metadata.
+
+## 9) Builder Remediation Governance Lock (5H Step 12)
+
+- PH1.D recurring unresolved/provider-failure fingerprints are eligible for Builder proposal intake only through Selene OS remediation mapping:
+  - `map_recurring_failure_cluster_to_builder_offline_input(...)` in `crates/selene_os/src/ph1os.rs`
+- Promotion fail-closed gate remains mandatory:
+  - `check_builder_remediation_promotion_gate(...)`
+  - required proofs for promotion actions:
+    - `code_permission_gate_passed=true`
+    - `launch_permission_gate_passed=true`
+    - `release_hard_gate_passed=true`
+- Governance boundary:
+  - PH1.D/Builder outputs are advisory/proposal-only until human approval proofs are present.
+  - no automatic code merge or launch is permitted from Builder proposals.

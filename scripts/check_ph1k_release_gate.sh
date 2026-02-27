@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-INPUT_CSV="${1:-docs/fixtures/ph1k_round2_eval_snapshot.csv}"
+INPUT_CSV="${1:-${SELENE_PH1K_EVAL_SNAPSHOT_PATH:-.dev/ph1k_live_eval_snapshot.csv}}"
 
 if [[ ! -f "${INPUT_CSV}" ]]; then
   echo "MISSING_INPUT:${INPUT_CSV}"
@@ -46,8 +46,6 @@ NR > 1 {
   if ($0 == "") {
     next;
   }
-  rows++;
-
   captured = $(col["captured_at_utc"]);
   false_rate = $(col["false_interrupt_rate_per_hour"]) + 0.0;
   missed_pct = $(col["missed_interrupt_rate_pct"]) + 0.0;
@@ -58,6 +56,12 @@ NR > 1 {
   multilingual_recall = $(col["multilingual_interrupt_recall_pct"]) + 0.0;
   audit_pct = $(col["audit_completeness_pct"]) + 0.0;
   tenant_pct = $(col["tenant_isolation_pct"]) + 0.0;
+
+  if (captured == "captured_at_utc") {
+    next;
+  }
+
+  rows++;
 
   if (captured == "") {
     printf("GATE_FAIL:missing_capture_timestamp row=%d\n", NR);

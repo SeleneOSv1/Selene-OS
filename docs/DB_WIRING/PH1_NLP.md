@@ -162,3 +162,23 @@ Implementation references:
 - PH1.NLP wiring must persist incremental intent-hypothesis audit posture as advisory-only outputs.
 - Low-confidence/ambiguous partials must deterministically map to clarify-safe reason codes.
 - PH1.NLP must preserve no-guess invariants in duplex paths and avoid implicit execution posture.
+
+## 13) Cross-Engine Handoff Integrity (`PH1.C -> PH1.NLP`) (Round-2 Step 6)
+
+- PH1.NLP requests sourced from PH1.C transcript flow must include valid `TranscriptOk` envelope metadata from PH1.C.
+- Selene OS strict mode (`require_ph1c_handoff=true`) enforces these minimum handoff requirements:
+  - `transcript_ok.audit_meta` present
+  - `transcript_ok.audit_meta.attempt_count > 0`
+  - `transcript_ok.audit_meta.selected_slot != NONE`
+- If PH1.C handoff metadata is missing or malformed, PH1.NLP invocation is blocked fail-closed and returns deterministic clarify response with reason code `PH1_NLP_HANDOFF_INVALID`.
+- PH1.NLP remains non-authoritative for execution and must treat PH1.C handoff fields as bounded provenance metadata, not execution authority.
+
+## 14) Confidence + Clarify Policy Lock (Round-2 Step 7)
+
+- Low-confidence transcript paths must fail closed to one bounded clarify:
+  - `transcript_ok.confidence_bucket != HIGH`
+  - or `uncertain_spans` present on request/transcript envelope.
+- Low-confidence hypothesis paths must fail closed to one bounded clarify:
+  - PH1.NLP `IntentDraft.overall_confidence != HIGH`.
+- Non-clarify outputs under clarify-required posture are blocked at wiring level and replaced with deterministic clarify output (`PH1_NLP_CLARIFY_REQUIRED`).
+- PH1.NLP must not emit guessed intent completion in low-confidence posture.

@@ -11,23 +11,31 @@ use selene_kernel_contracts::ph1c::TranscriptOk;
 use selene_kernel_contracts::ph1d::{
     Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderInputPayloadKind,
     Ph1dProviderRouteClass, Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus,
-    RequestId, SafetyTier, SchemaHash,
+    RequestId, SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1doc::{DocValidationStatus, DocumentSourceKind};
 use selene_kernel_contracts::ph1feedback::FeedbackEventRecord;
 use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+use selene_kernel_contracts::ph1k::{
+    AudioStreamRef, DeviceHealth as Ph1kDeviceHealth, DeviceState as Ph1kDeviceState, DuplexFrame,
+    InterruptCandidate as Ph1kInterruptCandidate, InterruptCandidateConfidenceBand,
+    InterruptRiskContextClass, PreRollBufferRef, TimingStats as Ph1kTimingStats,
+    TtsPlaybackActiveEvent, VadEvent,
+};
 use selene_kernel_contracts::ph1n::{Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1os::{
     OsCapabilityId, OsDecisionComputeOk, OsDecisionComputeRequest, OsGateDecision, OsNextMove,
-    OsOutcomeUtilizationEntry, OsPolicyEvaluateOk, OsPolicyEvaluateRequest, OsRefuse,
-    OsRequestEnvelope, Ph1OsRequest, Ph1OsResponse, OS_CLARIFY_OWNER_ENGINE_ID,
+    OsOutcomeActionClass, OsOutcomeUtilizationEntry, OsPolicyEvaluateOk, OsPolicyEvaluateRequest,
+    OsRefuse, OsRequestEnvelope, Ph1OsRequest, Ph1OsResponse, OS_CLARIFY_OWNER_ENGINE_ID,
 };
 use selene_kernel_contracts::ph1selfheal::{
-    FailureContainmentAction, FailureProviderContext, ProblemCardState, PromotionDecisionAction,
-    SelfHealCardChain,
+    stable_card_id, FailureContainmentAction, FailureProviderContext, ProblemCardState,
+    PromotionDecisionAction, SelfHealCardChain,
 };
 use selene_kernel_contracts::ph1vision::VisualSourceKind;
-use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, SchemaVersion, Validate};
+use selene_kernel_contracts::{
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate,
+};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 use serde_json::{json, Value};
 
@@ -35,6 +43,10 @@ use crate::device_artifact_sync::{self, DeviceArtifactSyncSenderRuntime};
 use crate::ph1_voice_id::{
     Ph1VoiceIdLiveRuntime, VoiceIdentityChannel, VoiceIdentityPlatform,
     VoiceIdentityRuntimeContext, VoiceIdentitySignalScope,
+};
+use crate::ph1builder::BuilderOfflineInput;
+use crate::ph1c_superiority::{
+    evaluate_ph1c_superiority_pack, SuperiorityEvalPack, SuperiorityGateReport, SuperiorityLane,
 };
 use crate::ph1context::{
     ContextForwardBundle, ContextTurnInput, ContextWiringOutcome, Ph1ContextEngine,
@@ -62,6 +74,9 @@ pub mod reason_codes {
     pub const PH1_OS_TOPLEVEL_RUNTIME_BOUNDARY_VIOLATION: ReasonCodeId = ReasonCodeId(0x4F53_0204);
     pub const PH1_OS_TOPLEVEL_CLARIFY_OWNER_INVALID: ReasonCodeId = ReasonCodeId(0x4F53_0205);
     pub const PH1_OS_TOPLEVEL_OPTIONAL_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4F53_0206);
+    pub const PH1_OS_VOICE_PH1K_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4F53_0207);
+    pub const PH1_OS_VOICE_PH1K_DEVICE_FAILED: ReasonCodeId = ReasonCodeId(0x4F53_0208);
+    pub const PH1_OS_VOICE_PH1K_EVIDENCE_REQUIRED: ReasonCodeId = ReasonCodeId(0x4F53_0209);
     pub const PH1_OS_OCR_ROUTE_INVALID_INPUT: ReasonCodeId = ReasonCodeId(0x4F53_0301);
     pub const PH1_OS_OCR_ROUTE_PROVIDER_ERROR: ReasonCodeId = ReasonCodeId(0x4F53_0302);
     pub const PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x4F53_0303);
@@ -1116,6 +1131,70 @@ where
 }
 
 #[derive(Debug, Clone)]
+pub struct OsPh1kLiveEvidence {
+    pub processed_stream_ref: AudioStreamRef,
+    pub pre_roll_buffer_ref: PreRollBufferRef,
+    pub vad_events: Vec<VadEvent>,
+    pub device_state: Ph1kDeviceState,
+    pub timing_stats: Option<Ph1kTimingStats>,
+    pub tts_playback: Option<TtsPlaybackActiveEvent>,
+    pub interrupt_candidate: Option<Ph1kInterruptCandidate>,
+    pub duplex_frame: Option<DuplexFrame>,
+}
+
+impl Validate for OsPh1kLiveEvidence {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.processed_stream_ref.validate()?;
+        self.pre_roll_buffer_ref.validate()?;
+        if self.pre_roll_buffer_ref.stream_id != self.processed_stream_ref.stream_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ph1k_live_evidence.pre_roll_buffer_ref.stream_id",
+                reason: "must match processed_stream_ref.stream_id",
+            });
+        }
+        if self.vad_events.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_ph1k_live_evidence.vad_events",
+                reason: "must not be empty",
+            });
+        }
+        for event in &self.vad_events {
+            event.validate()?;
+            if event.stream_id != self.processed_stream_ref.stream_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_ph1k_live_evidence.vad_events[].stream_id",
+                    reason: "must match processed_stream_ref.stream_id",
+                });
+            }
+        }
+        self.device_state.validate()?;
+        if let Some(timing_stats) = self.timing_stats {
+            timing_stats.validate()?;
+        }
+        if let Some(interrupt) = &self.interrupt_candidate {
+            interrupt.timing_markers.validate()?;
+            interrupt.speech_window_metrics.validate()?;
+        }
+        if let Some(duplex) = self.duplex_frame {
+            duplex.validate()?;
+            if duplex.stream_id != self.processed_stream_ref.stream_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_ph1k_live_evidence.duplex_frame.stream_id",
+                    reason: "must match processed_stream_ref.stream_id",
+                });
+            }
+            if duplex.pre_roll_buffer_id != self.pre_roll_buffer_ref.buffer_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_ph1k_live_evidence.duplex_frame.pre_roll_buffer_id",
+                    reason: "must match pre_roll_buffer_ref.buffer_id",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct OsVoiceLiveTurnInput {
     pub top_level_turn_input: OsTopLevelTurnInput,
     pub voice_id_request: Ph1VoiceIdRequest,
@@ -1124,6 +1203,7 @@ pub struct OsVoiceLiveTurnInput {
     pub device_id: Option<selene_kernel_contracts::ph1j::DeviceId>,
     pub enrolled_speakers: Vec<EngineEnrolledSpeaker>,
     pub observation: EngineVoiceIdObservation,
+    pub ph1k_live_evidence: Option<OsPh1kLiveEvidence>,
 }
 
 impl OsVoiceLiveTurnInput {
@@ -1159,7 +1239,17 @@ impl OsVoiceLiveTurnInput {
             device_id,
             enrolled_speakers,
             observation,
+            ph1k_live_evidence: None,
         })
+    }
+
+    pub fn with_ph1k_live_evidence(
+        mut self,
+        evidence: OsPh1kLiveEvidence,
+    ) -> Result<Self, ContractViolation> {
+        evidence.validate()?;
+        self.ph1k_live_evidence = Some(evidence);
+        Ok(self)
     }
 }
 
@@ -1185,6 +1275,38 @@ where
     top_level_wiring: Ph1OsTopLevelWiring<E>,
     voice_id_live: Ph1VoiceIdLiveRuntime,
     device_sync_sender: DeviceArtifactSyncSenderRuntime,
+}
+
+fn ph1k_live_policy_block(evidence: &OsPh1kLiveEvidence) -> Option<(ReasonCodeId, String)> {
+    if evidence.device_state.health == Ph1kDeviceHealth::Failed {
+        return Some((
+            reason_codes::PH1_OS_VOICE_PH1K_DEVICE_FAILED,
+            "PH1.K reported failed device health; fail-closed until capture route recovers"
+                .to_string(),
+        ));
+    }
+    let candidate = evidence.interrupt_candidate.as_ref()?;
+    if matches!(
+        candidate.candidate_confidence_band,
+        InterruptCandidateConfidenceBand::Low
+    ) {
+        return Some((
+            reason_codes::PH1_OS_VOICE_PH1K_POLICY_BLOCK,
+            "PH1.K interrupt candidate confidence LOW; clarify required before proceeding"
+                .to_string(),
+        ));
+    }
+    if matches!(
+        candidate.risk_context_class,
+        InterruptRiskContextClass::High
+    ) {
+        return Some((
+            reason_codes::PH1_OS_VOICE_PH1K_POLICY_BLOCK,
+            "PH1.K interrupt candidate risk_context HIGH; fail-closed for policy safety"
+                .to_string(),
+        ));
+    }
+    None
 }
 
 impl<E> Ph1OsVoiceLiveRuntime<E>
@@ -1215,6 +1337,38 @@ where
         let now = input.voice_id_request.now;
         let correlation_id = input.top_level_turn_input.correlation_id;
         let turn_id = input.top_level_turn_input.turn_id;
+        let Some(ph1k_evidence) = input.ph1k_live_evidence.as_ref() else {
+            self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
+            return Ok(OsVoiceLiveTurnOutcome::Refused(
+                OsRefuse::v1(
+                    OsCapabilityId::OsDecisionCompute,
+                    reason_codes::PH1_OS_VOICE_PH1K_EVIDENCE_REQUIRED,
+                    "PH1.K live evidence is required for voice runtime path".to_string(),
+                )
+                .map_err(StorageError::ContractViolation)?,
+            ));
+        };
+        ph1k_evidence
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        if ph1k_evidence.processed_stream_ref.stream_id
+            != input.voice_id_request.processed_audio_stream_ref.stream_id
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field:
+                        "os_voice_live_turn_input.ph1k_live_evidence.processed_stream_ref.stream_id",
+                    reason: "must match voice_id_request.processed_audio_stream_ref.stream_id",
+                },
+            ));
+        }
+        if let Some((reason_code, message)) = ph1k_live_policy_block(ph1k_evidence) {
+            self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
+            return Ok(OsVoiceLiveTurnOutcome::Refused(
+                OsRefuse::v1(OsCapabilityId::OsDecisionCompute, reason_code, message)
+                    .map_err(StorageError::ContractViolation)?,
+            ));
+        }
         let top_level_outcome = self
             .top_level_wiring
             .run_turn(&input.top_level_turn_input)
@@ -1310,6 +1464,7 @@ pub struct OsSelfHealChainInput {
     pub governance_ticket_ref: Option<String>,
     pub approved_by: Option<String>,
     pub evaluated_at: MonotonicTimeNs,
+    pub ph1c_superiority_pack: Option<SuperiorityEvalPack>,
 }
 
 pub fn build_self_heal_chain_from_engine_outputs(
@@ -1353,6 +1508,7 @@ pub fn build_self_heal_chain_from_engine_outputs(
     )?;
 
     let fix_card = map_learn_bundle_to_fix_card(&problem_card, &input.learn_bundle)?;
+    let ph1c_superiority_report = evaluate_ph1c_superiority_gate_for_chain(input)?;
 
     let promotion_decision = map_pae_bundle_to_promotion_decision(
         &fix_card,
@@ -1363,8 +1519,64 @@ pub fn build_self_heal_chain_from_engine_outputs(
         input.approved_by.clone(),
         input.evaluated_at,
     )?;
+    if let Some(report) = ph1c_superiority_report.as_ref() {
+        ensure_ph1c_lane_alignment_with_promotion_decision(
+            &promotion_decision.decision_action,
+            report.recommended_runtime_lane,
+        )?;
+    }
 
     SelfHealCardChain::v1(failure_event, problem_card, fix_card, promotion_decision)
+}
+
+fn evaluate_ph1c_superiority_gate_for_chain(
+    input: &OsSelfHealChainInput,
+) -> Result<Option<SuperiorityGateReport>, ContractViolation> {
+    if input.owner_engine != "PH1.C" {
+        return Ok(None);
+    }
+    let pack = input
+        .ph1c_superiority_pack
+        .as_ref()
+        .ok_or(ContractViolation::InvalidValue {
+            field: "os_self_heal_chain_input.ph1c_superiority_pack",
+            reason: "must be present when owner_engine=PH1.C",
+        })?;
+    let report = evaluate_ph1c_superiority_pack(pack)?;
+    if !report.overall_pass || report.rollback_required {
+        return Err(ContractViolation::InvalidValue {
+            field: "build_self_heal_chain_from_engine_outputs.ph1c_superiority_gate",
+            reason: "ph1c superiority gate must pass with rollback_required=false",
+        });
+    }
+    Ok(Some(report))
+}
+
+fn ensure_ph1c_lane_alignment_with_promotion_decision(
+    decision_action: &PromotionDecisionAction,
+    recommended_lane: SuperiorityLane,
+) -> Result<(), ContractViolation> {
+    match recommended_lane {
+        SuperiorityLane::SeleneBaseline => {
+            if matches!(decision_action, PromotionDecisionAction::Promote) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "build_self_heal_chain_from_engine_outputs.promotion_decision.decision_action",
+                    reason: "PH1.C baseline recommendation forbids promote action",
+                });
+            }
+        }
+        SuperiorityLane::SeleneChallenger => {
+            // Challenger recommendation is advisory for lane preference;
+            // demotion/rollback may still be required by independent PAE safety signals.
+        }
+        SuperiorityLane::ChatgptAb => {
+            return Err(ContractViolation::InvalidValue {
+                field: "build_self_heal_chain_from_engine_outputs.ph1c_superiority_gate",
+                reason: "runtime recommendation lane must be SELENE_BASELINE or SELENE_CHALLENGER",
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1448,6 +1660,226 @@ pub fn check_self_heal_release_gate(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsBuilderRemediationConfig {
+    pub min_recurrence_count: u32,
+}
+
+impl OsBuilderRemediationConfig {
+    pub fn mvp_v1() -> Self {
+        Self {
+            min_recurrence_count: 3,
+        }
+    }
+
+    fn validate(self) -> Result<(), ContractViolation> {
+        if self.min_recurrence_count < 2 || self.min_recurrence_count > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_builder_remediation_config.min_recurrence_count",
+                reason: "must be within 2..=10000",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OsBuilderPromotionGateEvidence {
+    pub code_permission_gate_passed: bool,
+    pub launch_permission_gate_passed: bool,
+    pub release_hard_gate_passed: bool,
+}
+
+impl OsBuilderPromotionGateEvidence {
+    pub fn strict_required_pass() -> Self {
+        Self {
+            code_permission_gate_passed: true,
+            launch_permission_gate_passed: true,
+            release_hard_gate_passed: true,
+        }
+    }
+}
+
+pub fn check_builder_remediation_promotion_gate(
+    chain: &SelfHealCardChain,
+    gate_evidence: OsBuilderPromotionGateEvidence,
+) -> Result<(), ContractViolation> {
+    chain.validate()?;
+
+    if chain.promotion_decision.decision_action != PromotionDecisionAction::Promote {
+        return Ok(());
+    }
+
+    if !gate_evidence.code_permission_gate_passed {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_builder_remediation_promotion_gate.code_permission_gate_passed",
+            reason: "promotion requires code permission gate evidence",
+        });
+    }
+    if !gate_evidence.launch_permission_gate_passed {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_builder_remediation_promotion_gate.launch_permission_gate_passed",
+            reason: "promotion requires launch permission gate evidence",
+        });
+    }
+    if !gate_evidence.release_hard_gate_passed {
+        return Err(ContractViolation::InvalidValue {
+            field: "check_builder_remediation_promotion_gate.release_hard_gate_passed",
+            reason: "promotion requires release hard-gate evidence",
+        });
+    }
+
+    Ok(())
+}
+
+pub fn map_recurring_failure_cluster_to_builder_offline_input(
+    chain: &SelfHealCardChain,
+    now: MonotonicTimeNs,
+    config: OsBuilderRemediationConfig,
+    gate_evidence: OsBuilderPromotionGateEvidence,
+) -> Result<Option<BuilderOfflineInput>, ContractViolation> {
+    chain.validate()?;
+    config.validate()?;
+
+    if chain.problem_card.recurrence_count < config.min_recurrence_count {
+        return Ok(None);
+    }
+    if matches!(chain.problem_card.state, ProblemCardState::Resolved) {
+        return Ok(None);
+    }
+
+    if now.0 < chain.problem_card.last_seen_at.0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "map_recurring_failure_cluster_to_builder_offline_input.now",
+            reason: "must be >= problem_card.last_seen_at",
+        });
+    }
+
+    check_builder_remediation_promotion_gate(chain, gate_evidence)?;
+
+    let correlation_id = chain.failure_event.correlation_id;
+    let turn_id = chain.failure_event.turn_id;
+
+    let feedback_entry = OsOutcomeUtilizationEntry::v1(
+        "PH1.FEEDBACK".to_string(),
+        "FAILURE_CLUSTER_RECURRING".to_string(),
+        correlation_id,
+        turn_id,
+        action_class_for_containment(chain.failure_event.containment_action),
+        "PH1.LEARN".to_string(),
+        chain.failure_event.latency_ms.min(60_000),
+        false,
+        chain.failure_event.reason_code,
+    )?;
+
+    let learn_entry = OsOutcomeUtilizationEntry::v1(
+        "PH1.LEARN".to_string(),
+        "FIX_CARD_CLUSTER_CANDIDATE".to_string(),
+        correlation_id,
+        turn_id,
+        OsOutcomeActionClass::QueueLearn,
+        "PH1.BUILDER".to_string(),
+        quality_impact_proxy_latency_ms(chain.problem_card.quality_impact_bp),
+        true,
+        chain.failure_event.reason_code,
+    )?;
+
+    let pae_entry = OsOutcomeUtilizationEntry::v1(
+        "PH1.PAE".to_string(),
+        format!(
+            "PROMOTION_DECISION_{}",
+            promotion_action_key(chain.promotion_decision.decision_action)
+        ),
+        correlation_id,
+        turn_id,
+        OsOutcomeActionClass::QueueLearn,
+        "PH1.BUILDER".to_string(),
+        1,
+        true,
+        chain.promotion_decision.reason_code,
+    )?;
+
+    let os_entry = OsOutcomeUtilizationEntry::v1(
+        "PH1.OS".to_string(),
+        "BUILDER_REMEDIATION_ENQUEUE".to_string(),
+        correlation_id,
+        turn_id,
+        OsOutcomeActionClass::QueueLearn,
+        "PH1.BUILDER".to_string(),
+        1,
+        true,
+        chain.promotion_decision.reason_code,
+    )?;
+
+    let recurrence_count_token = chain.problem_card.recurrence_count.to_string();
+    let source_signal_hash = stable_card_id(
+        "cluster_hash",
+        &[
+            chain.problem_card.problem_id.as_str(),
+            chain.problem_card.fingerprint.as_str(),
+            chain.problem_card.latest_failure_id.as_str(),
+            recurrence_count_token.as_str(),
+        ],
+    )?;
+    let proposal_idempotency_key = stable_card_id(
+        "builder_prop_idem",
+        &[
+            chain.problem_card.problem_id.as_str(),
+            chain.fix_card.fix_id.as_str(),
+            chain.promotion_decision.decision_id.as_str(),
+        ],
+    )?;
+    let validation_run_idempotency_key = stable_card_id(
+        "builder_run_idem",
+        &[
+            chain.fix_card.fix_id.as_str(),
+            chain.promotion_decision.decision_id.as_str(),
+        ],
+    )?;
+
+    let builder_input = BuilderOfflineInput::v1(
+        correlation_id,
+        turn_id,
+        chain.problem_card.first_seen_at,
+        chain.problem_card.last_seen_at,
+        now,
+        vec![feedback_entry, learn_entry, pae_entry, os_entry],
+        Some(source_signal_hash),
+        Some(proposal_idempotency_key),
+        Some(validation_run_idempotency_key),
+        None,
+        None,
+        None,
+        true,
+    )?;
+
+    Ok(Some(builder_input))
+}
+
+fn action_class_for_containment(action: FailureContainmentAction) -> OsOutcomeActionClass {
+    match action {
+        FailureContainmentAction::ObservedOnly => OsOutcomeActionClass::AuditOnly,
+        FailureContainmentAction::FailClosedRefuse
+        | FailureContainmentAction::ClarifyRequired
+        | FailureContainmentAction::RetryScheduled
+        | FailureContainmentAction::Escalated => OsOutcomeActionClass::QueueLearn,
+    }
+}
+
+fn promotion_action_key(action: PromotionDecisionAction) -> &'static str {
+    match action {
+        PromotionDecisionAction::Promote => "PROMOTE",
+        PromotionDecisionAction::Demote => "DEMOTE",
+        PromotionDecisionAction::Hold => "HOLD",
+        PromotionDecisionAction::Rollback => "ROLLBACK",
+    }
+}
+
+fn quality_impact_proxy_latency_ms(quality_impact_bp: i16) -> u32 {
+    let quality_abs_bp = i32::from(quality_impact_bp).unsigned_abs().min(20_000);
+    (100 + quality_abs_bp).min(60_000)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1666,10 +2098,12 @@ impl Validate for OsOcrProviderForwardBundle {
         }
         if self.provider_call.provider_status != Ph1dProviderStatus::Ok
             || self.provider_call.validation_status != Ph1dProviderValidationStatus::SchemaOk
+            || self.provider_call.normalized_output_schema_hash
+                != Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1)
         {
             return Err(ContractViolation::InvalidValue {
                 field: "os_ocr_provider_forward_bundle.provider_call.validation_status",
-                reason: "provider call must be provider_status=OK and validation_status=SCHEMA_OK",
+                reason: "provider call must be provider_status=OK, validation_status=SCHEMA_OK, and normalized_output_schema_hash=v1",
             });
         }
         if self.extracted_text.trim().is_empty() {
@@ -1746,6 +2180,8 @@ where
             || provider_resp.request_id != provider_req.request_id
             || provider_resp.idempotency_key != provider_req.idempotency_key
             || provider_resp.provider_task != provider_req.provider_task
+            || provider_resp.provider_id != provider_req.provider_id
+            || provider_resp.model_id != provider_req.model_id
         {
             return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
                 reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED,
@@ -1755,11 +2191,11 @@ where
 
         if provider_resp.provider_status != Ph1dProviderStatus::Ok
             || provider_resp.validation_status != Ph1dProviderValidationStatus::SchemaOk
+            || provider_resp.normalized_output_schema_hash != Some(provider_req.output_schema_hash)
         {
             return Ok(OsOcrRouteOutcome::Refused(os_ocr_refuse(
                 reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED,
-                "ocr provider response must be provider_status=OK and validation_status=SCHEMA_OK"
-                    .to_string(),
+                "ocr provider response must be provider_status=OK, validation_status=SCHEMA_OK, and normalized schema hash must match request output schema hash".to_string(),
             )?));
         }
 
@@ -2164,7 +2600,7 @@ fn build_context_turn_input_from_ocr(
     let evidence_ref = format!("ocr_evidence:{provider_call_ref}");
     let source_item = selene_kernel_contracts::ph1context::ContextSourceItem::v1(
         item_id,
-        config.context_source_engine_id.clone(),
+        ocr_bundle.source_engine.as_engine_id().to_string(),
         source_kind,
         config.context_rank_score_bp,
         content_ref,
@@ -2294,7 +2730,7 @@ fn build_ocr_provider_request(
         None,
         None,
         SchemaVersion(1),
-        stable_schema_hash(b"ph1d_ocr_output_schema_v1"),
+        PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
         stable_schema_hash(b"ph1os_ocr_tool_catalog_none"),
         stable_schema_hash(policy_seed.as_bytes()),
         None,
@@ -2320,6 +2756,12 @@ fn extract_ocr_text_from_normalized_json(json_text: &str) -> Option<String> {
     let value: Value = serde_json::from_str(json_text).ok()?;
 
     if let Some(text) = value.get("ocr_text").and_then(Value::as_str) {
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(text) = value.get("text_output").and_then(Value::as_str) {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
             return Some(trimmed.to_string());
@@ -2821,15 +3263,32 @@ fn is_engine_id_token(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ph1c_superiority::{
+        SuperiorityEvalPack, SuperiorityLane, SuperiorityMetricRow, SuperioritySliceKey,
+    };
     use crate::ph1doc::DocForwardBundle;
+    use crate::ph1feedback::{
+        build_gold_case_capture_from_ph1c_response, FeedbackTurnInput, FeedbackWiringOutcome,
+        GoldCaseCaptureContext, Ph1FeedbackEngine, Ph1FeedbackWiring, Ph1FeedbackWiringConfig,
+    };
+    use crate::ph1learn::{
+        route_feedback_into_learn_wiring, FeedbackLearnRouteConfig, LearnWiringOutcome,
+        Ph1LearnEngine, Ph1LearnWiring, Ph1LearnWiringConfig,
+    };
+    use crate::ph1pae::{PaeWiringOutcome, Ph1PaeEngine, Ph1PaeWiring, Ph1PaeWiringConfig};
     use crate::ph1vision::VisionForwardBundle;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
+    use selene_engines::ph1feedback::{Ph1FeedbackConfig, Ph1FeedbackRuntime};
+    use selene_engines::ph1learn::{Ph1LearnConfig, Ph1LearnRuntime};
+    use selene_engines::ph1pae::{Ph1PaeConfig, Ph1PaeRuntime};
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
     };
     use selene_kernel_contracts::ph1c::{
-        ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk as NlpTranscriptOk,
+        ConfidenceBucket, LanguageTag, Ph1cAuditMeta, Ph1cResponse, QualityBucket, RetryAdvice,
+        RouteClassUsed, RoutingModeUsed, SelectedSlot, SessionStateRef,
+        TranscriptOk as NlpTranscriptOk, TranscriptReject,
     };
     use selene_kernel_contracts::ph1context::{
         ContextBundleBuildOk, ContextBundleItem, ContextBundleTrimOk, ContextSourceKind,
@@ -2837,7 +3296,7 @@ mod tests {
     };
     use selene_kernel_contracts::ph1d::{
         Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dProviderInputPayloadKind,
-        Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus, SchemaHash,
+        Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderValidationStatus,
     };
     use selene_kernel_contracts::ph1doc::{
         DocCitationMapBuildOk, DocEvidenceExtractOk, DocEvidenceId, DocEvidenceItem,
@@ -2846,26 +3305,28 @@ mod tests {
     };
     use selene_kernel_contracts::ph1feedback::{
         FeedbackConfidenceBucket, FeedbackEventCollectOk, FeedbackEventRecord, FeedbackEventType,
-        FeedbackMetrics, FeedbackSignalCandidate, FeedbackSignalEmitOk, FeedbackSignalTarget,
-        FeedbackToolStatus, FeedbackValidationStatus,
+        FeedbackGoldProvenanceMethod, FeedbackGoldStatus, FeedbackMetrics, FeedbackSignalCandidate,
+        FeedbackSignalEmitOk, FeedbackSignalTarget, FeedbackToolStatus, FeedbackValidationStatus,
+        Ph1FeedbackRequest, Ph1FeedbackResponse,
     };
     use selene_kernel_contracts::ph1j::{AuditEngine, DeviceId, PayloadKey};
     use selene_kernel_contracts::ph1k::{
         AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
-        Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
+        Confidence, DeviceHealth, DeviceRoute, DeviceState, FrameDurationMs, PreRollBufferId,
+        PreRollBufferRef, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
     };
     use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
     use selene_kernel_contracts::ph1learn::{
         LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnArtifactTarget, LearnScope,
         LearnSignal, LearnSignalAggregateOk, LearnSignalType, LearnTargetEngine,
-        LearnValidationStatus,
+        LearnValidationStatus, Ph1LearnRequest, Ph1LearnResponse,
     };
     use selene_kernel_contracts::ph1n::{Chat, Ph1nRequest, Ph1nResponse};
     use selene_kernel_contracts::ph1os::{OsOutcomeActionClass, OsOutcomeUtilizationEntry};
     use selene_kernel_contracts::ph1pae::{
         PaeAdaptationHint, PaeAdaptationHintEmitOk, PaeMode, PaePolicyCandidate,
         PaePolicyScoreBuildOk, PaeProviderSlot, PaeRouteDomain, PaeScoreEntry, PaeSignalSource,
-        PaeSignalVector, PaeTargetEngine, PaeValidationStatus,
+        PaeSignalVector, PaeTargetEngine, PaeValidationStatus, Ph1PaeRequest, Ph1PaeResponse,
     };
     use selene_kernel_contracts::ph1vision::{
         VisionEvidenceItem, VisualSourceId, VisualSourceKind, VisualSourceRef,
@@ -2918,6 +3379,337 @@ mod tests {
                 Ph1OsRequest::OsDecisionCompute(_) => self.decision_response.clone(),
             }
         }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FeedbackRuntimeEngineAdapter {
+        runtime: Ph1FeedbackRuntime,
+    }
+
+    impl FeedbackRuntimeEngineAdapter {
+        fn mvp_v1() -> Self {
+            Self {
+                runtime: Ph1FeedbackRuntime::new(Ph1FeedbackConfig::mvp_v1()),
+            }
+        }
+    }
+
+    impl Ph1FeedbackEngine for FeedbackRuntimeEngineAdapter {
+        fn run(&self, req: &Ph1FeedbackRequest) -> Ph1FeedbackResponse {
+            self.runtime.run(req)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct LearnRuntimeEngineAdapter {
+        runtime: Ph1LearnRuntime,
+    }
+
+    impl LearnRuntimeEngineAdapter {
+        fn mvp_v1() -> Self {
+            Self {
+                runtime: Ph1LearnRuntime::new(Ph1LearnConfig::mvp_v1()),
+            }
+        }
+    }
+
+    impl Ph1LearnEngine for LearnRuntimeEngineAdapter {
+        fn run(&self, req: &Ph1LearnRequest) -> Ph1LearnResponse {
+            self.runtime.run(req)
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct PaeRuntimeEngineAdapter {
+        runtime: Ph1PaeRuntime,
+    }
+
+    impl PaeRuntimeEngineAdapter {
+        fn mvp_v1() -> Self {
+            Self {
+                runtime: Ph1PaeRuntime::new(Ph1PaeConfig::mvp_v1()),
+            }
+        }
+    }
+
+    impl Ph1PaeEngine for PaeRuntimeEngineAdapter {
+        fn run(&self, req: &Ph1PaeRequest) -> Ph1PaeResponse {
+            self.runtime.run(req)
+        }
+    }
+
+    fn gold_loop_context() -> GoldCaseCaptureContext {
+        GoldCaseCaptureContext::v1(
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            "speaker_1".to_string(),
+            "session_1".to_string(),
+            "device_1".to_string(),
+            CorrelationId(49_101),
+            TurnId(6_101),
+            "idem_gold_loop_1".to_string(),
+        )
+        .unwrap()
+    }
+
+    fn build_ph1c_gold_loop_feedback_turn_input(
+    ) -> (FeedbackEventRecord, FeedbackEventRecord, FeedbackTurnInput) {
+        let context = gold_loop_context();
+        let miss_capture = build_gold_case_capture_from_ph1c_response(
+            &context,
+            &Ph1cResponse::TranscriptReject(TranscriptReject::v1(
+                ReasonCodeId(0x4300_0002),
+                RetryAdvice::SpeakSlower,
+            )),
+            Some("evidence:ph1c:miss_case"),
+            None,
+        )
+        .unwrap()
+        .expect("TranscriptReject must emit gold-case miss capture");
+        let correction_capture = build_gold_case_capture_from_ph1c_response(
+            &context,
+            &Ph1cResponse::TranscriptOk(
+                NlpTranscriptOk::v1(
+                    "invoice total one twenty three".to_string(),
+                    LanguageTag::new("en-US").unwrap(),
+                    ConfidenceBucket::Low,
+                )
+                .unwrap(),
+            ),
+            Some("evidence:ph1c:correction_case"),
+            Some("invoice total 123.45".to_string()),
+        )
+        .unwrap()
+        .expect("low-confidence TranscriptOk with correction must emit gold-case correction");
+        let miss_event = miss_capture.feedback_event.clone();
+        let correction_event = correction_capture.feedback_event.clone();
+        let feedback_input = FeedbackTurnInput::v1(
+            context.correlation_id,
+            context.turn_id,
+            vec![miss_event.clone(), correction_event.clone()],
+        )
+        .unwrap();
+        (miss_event, correction_event, feedback_input)
+    }
+
+    fn build_pae_turn_input_from_learn(
+        learn_turn_input: &LearnTurnInput,
+        learn_bundle: &LearnForwardBundle,
+    ) -> PaeTurnInput {
+        let selected_artifact = learn_bundle
+            .signal_aggregate
+            .ordered_artifacts
+            .iter()
+            .find(|artifact| artifact.target == LearnArtifactTarget::PaeRoutingWeights)
+            .unwrap_or_else(|| &learn_bundle.signal_aggregate.ordered_artifacts[0]);
+        let sample_size = learn_turn_input
+            .signals
+            .iter()
+            .map(|signal| u32::from(signal.occurrence_count))
+            .sum::<u32>()
+            .clamp(10, u32::from(u16::MAX)) as u16;
+        let first_signal = &learn_turn_input.signals[0];
+        let expected_quality_bp = selected_artifact.expected_effect_bp.clamp(-9_500, 9_500);
+        let regression_risk_bp = expected_quality_bp.unsigned_abs().min(9_500);
+        let candidate_id = format!("pae_candidate_{}", selected_artifact.artifact_id);
+        let signal = PaeSignalVector::v1(
+            format!("pae_signal_{}", first_signal.signal_id),
+            PaeSignalSource::Feedback,
+            PaeRouteDomain::Stt,
+            first_signal.metric_key.clone(),
+            first_signal.metric_value_bp,
+            sample_size,
+            true,
+            first_signal.evidence_ref.clone(),
+        )
+        .unwrap();
+        let candidate = PaePolicyCandidate::v1(
+            candidate_id,
+            PaeRouteDomain::Stt,
+            PaeProviderSlot::Primary,
+            PaeMode::Assist,
+            expected_quality_bp,
+            240,
+            120,
+            regression_risk_bp,
+            sample_size,
+            Some(selected_artifact.artifact_id.clone()),
+            selected_artifact.rollback_to.clone(),
+        )
+        .unwrap();
+        PaeTurnInput::v1(
+            learn_turn_input.correlation_id,
+            learn_turn_input.turn_id,
+            learn_turn_input.tenant_id.clone(),
+            "desktop_profile_round2".to_string(),
+            PaeMode::Assist,
+            vec![signal],
+            vec![candidate],
+            vec![PaeTargetEngine::Ph1C],
+            true,
+            10,
+            800,
+            3,
+            0,
+            true,
+        )
+        .unwrap()
+    }
+
+    fn build_gold_loop_chain_input(
+        feedback_event: FeedbackEventRecord,
+        feedback_bundle: FeedbackForwardBundle,
+        learn_turn_input: LearnTurnInput,
+        learn_bundle: LearnForwardBundle,
+        pae_turn_input: PaeTurnInput,
+        pae_bundle: PaeForwardBundle,
+    ) -> OsSelfHealChainInput {
+        OsSelfHealChainInput {
+            feedback_event,
+            feedback_bundle,
+            learn_turn_input,
+            learn_bundle,
+            pae_turn_input,
+            pae_bundle,
+            owner_engine: "PH1.C".to_string(),
+            first_seen_at: MonotonicTimeNs(3_000),
+            last_seen_at: MonotonicTimeNs(3_500),
+            containment_action: FailureContainmentAction::FailClosedRefuse,
+            escalation_required: false,
+            unresolved_reason: None,
+            bcast_id: None,
+            provider_context: Some(
+                FailureProviderContext::v1(
+                    PaeRouteDomain::Stt,
+                    PaeProviderSlot::Primary,
+                    Ph1dProviderTask::SttTranscribe,
+                    4_200,
+                    88,
+                    false,
+                )
+                .unwrap(),
+            ),
+            governance_required: false,
+            governance_ticket_ref: None,
+            approved_by: None,
+            evaluated_at: MonotonicTimeNs(3_700),
+            ph1c_superiority_pack: Some(sample_ph1c_superiority_pack()),
+        }
+    }
+
+    fn sample_ph1c_superiority_pack() -> SuperiorityEvalPack {
+        let slice = SuperioritySliceKey::v1(
+            "en-US".to_string(),
+            "desktop_mic".to_string(),
+            "tenant_1".to_string(),
+        )
+        .unwrap();
+        let baseline = SuperiorityMetricRow::v1(
+            "2026-02-26T12:00:00Z".to_string(),
+            "abc1234".to_string(),
+            slice.clone(),
+            SuperiorityLane::SeleneBaseline,
+            320,
+            9_620,
+            9_540,
+            9_500,
+            9_520,
+            240,
+            295,
+            9_000,
+            10_000,
+            10_000,
+            9_550,
+            9_480,
+            2_600,
+            5_600,
+            9_850,
+            900,
+            9_100,
+            8_000,
+            500,
+            9_000,
+            9_000,
+            9_200,
+            9_000,
+            9_850,
+            10_000,
+            true,
+            false,
+            PaeMode::Shadow,
+        )
+        .unwrap();
+        let chatgpt = SuperiorityMetricRow::v1(
+            "2026-02-26T12:00:00Z".to_string(),
+            "abc1234".to_string(),
+            slice.clone(),
+            SuperiorityLane::ChatgptAb,
+            320,
+            9_700,
+            9_650,
+            9_680,
+            9_710,
+            225,
+            280,
+            9_150,
+            10_000,
+            10_000,
+            9_600,
+            9_500,
+            2_450,
+            0,
+            0,
+            1_200,
+            9_200,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            9_900,
+            10_000,
+            true,
+            false,
+            PaeMode::Shadow,
+        )
+        .unwrap();
+        let challenger = SuperiorityMetricRow::v1(
+            "2026-02-26T12:00:00Z".to_string(),
+            "abc1234".to_string(),
+            slice,
+            SuperiorityLane::SeleneChallenger,
+            320,
+            9_780,
+            9_710,
+            9_735,
+            9_760,
+            230,
+            285,
+            9_250,
+            10_000,
+            10_000,
+            9_660,
+            9_540,
+            2_100,
+            6_200,
+            9_900,
+            1_000,
+            9_400,
+            9_850,
+            150,
+            9_300,
+            9_400,
+            9_300,
+            9_200,
+            9_900,
+            10_000,
+            true,
+            true,
+            PaeMode::Assist,
+        )
+        .unwrap();
+        SuperiorityEvalPack::v1(vec![baseline, chatgpt, challenger]).unwrap()
     }
 
     fn base_input() -> OsTurnInput {
@@ -3031,6 +3823,43 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn sample_ph1k_live_evidence_from_request(
+        request: &Ph1VoiceIdRequest,
+        health: DeviceHealth,
+    ) -> OsPh1kLiveEvidence {
+        let start = request
+            .vad_events
+            .first()
+            .map(|event| event.t_start)
+            .unwrap_or(request.now);
+        let end = request
+            .vad_events
+            .last()
+            .map(|event| event.t_end)
+            .unwrap_or(request.now);
+        OsPh1kLiveEvidence {
+            processed_stream_ref: request.processed_audio_stream_ref,
+            pre_roll_buffer_ref: PreRollBufferRef::v1(
+                PreRollBufferId(9_001),
+                request.processed_audio_stream_ref.stream_id,
+                start,
+                end,
+            ),
+            vad_events: request.vad_events.clone(),
+            device_state: DeviceState::v1_with_route(
+                AudioDeviceId::new("os_live_mic_k").unwrap(),
+                AudioDeviceId::new("os_live_spk_k").unwrap(),
+                DeviceRoute::BuiltIn,
+                health,
+                Vec::new(),
+            ),
+            timing_stats: None,
+            tts_playback: None,
+            interrupt_candidate: None,
+            duplex_frame: None,
+        }
     }
 
     #[test]
@@ -3951,6 +4780,9 @@ mod tests {
             },
         )
         .unwrap();
+        let ph1k_evidence =
+            sample_ph1k_live_evidence_from_request(&input.voice_id_request, DeviceHealth::Healthy);
+        let input = input.with_ph1k_live_evidence(ph1k_evidence).unwrap();
 
         let outcome = runtime.run_turn(&mut store, input).unwrap();
         let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
@@ -4025,6 +4857,175 @@ mod tests {
     }
 
     #[test]
+    fn at_os_22c_voice_live_entrypoint_refuses_when_ph1k_device_health_failed() {
+        let os_wiring = Ph1OsWiring::new(
+            Ph1OsWiringConfig::mvp_v1(true),
+            MockOsEngine {
+                policy_response: Ph1OsResponse::OsPolicyEvaluateOk(policy_ok()),
+                decision_response: Ph1OsResponse::OsDecisionComputeOk(decision_ok(
+                    OsNextMove::Respond,
+                )),
+            },
+        )
+        .unwrap();
+        let top_level_wiring =
+            Ph1OsTopLevelWiring::new(Ph1OsTopLevelConfig::mvp_v1(true), os_wiring).unwrap();
+        let runtime =
+            Ph1OsVoiceLiveRuntime::new(top_level_wiring, Ph1VoiceIdLiveRuntime::default());
+
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_health_failed").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor_user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor_user_id.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let voice_id_request = sample_live_voice_id_request(MonotonicTimeNs(5));
+        let ph1k_evidence =
+            sample_ph1k_live_evidence_from_request(&voice_id_request, DeviceHealth::Failed);
+        let mut os_turn_input = base_input();
+        os_turn_input.correlation_id = CorrelationId(7802);
+        os_turn_input.turn_id = TurnId(8802);
+        let input = OsVoiceLiveTurnInput::v1(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7802),
+                TurnId(8802),
+                OsTopLevelTurnPath::Voice,
+                voice_context_ios_explicit(),
+                always_on_voice_sequence_explicit(),
+                vec![],
+                1,
+                os_turn_input,
+            )
+            .unwrap(),
+            voice_id_request,
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .unwrap()
+        .with_ph1k_live_evidence(ph1k_evidence)
+        .unwrap();
+
+        let outcome = runtime.run_turn(&mut store, input).unwrap();
+        let OsVoiceLiveTurnOutcome::Refused(refused) = outcome else {
+            panic!("expected refusal when PH1.K reports failed device health");
+        };
+        assert_eq!(
+            refused.reason_code,
+            reason_codes::PH1_OS_VOICE_PH1K_DEVICE_FAILED
+        );
+    }
+
+    #[test]
+    fn at_os_22d_voice_live_entrypoint_refuses_when_ph1k_evidence_missing() {
+        let os_wiring = Ph1OsWiring::new(
+            Ph1OsWiringConfig::mvp_v1(true),
+            MockOsEngine {
+                policy_response: Ph1OsResponse::OsPolicyEvaluateOk(policy_ok()),
+                decision_response: Ph1OsResponse::OsDecisionComputeOk(decision_ok(
+                    OsNextMove::Respond,
+                )),
+            },
+        )
+        .unwrap();
+        let top_level_wiring =
+            Ph1OsTopLevelWiring::new(Ph1OsTopLevelConfig::mvp_v1(true), os_wiring).unwrap();
+        let runtime =
+            Ph1OsVoiceLiveRuntime::new(top_level_wiring, Ph1VoiceIdLiveRuntime::default());
+
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_evidence_missing").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor_user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    actor_user_id.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(2),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let mut os_turn_input = base_input();
+        os_turn_input.correlation_id = CorrelationId(7803);
+        os_turn_input.turn_id = TurnId(8803);
+        let input = OsVoiceLiveTurnInput::v1(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7803),
+                TurnId(8803),
+                OsTopLevelTurnPath::Voice,
+                voice_context_ios_explicit(),
+                always_on_voice_sequence_explicit(),
+                vec![],
+                1,
+                os_turn_input,
+            )
+            .unwrap(),
+            sample_live_voice_id_request(MonotonicTimeNs(7)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .unwrap();
+
+        let outcome = runtime.run_turn(&mut store, input).unwrap();
+        let OsVoiceLiveTurnOutcome::Refused(refused) = outcome else {
+            panic!("expected refusal when PH1.K evidence is missing");
+        };
+        assert_eq!(
+            refused.reason_code,
+            reason_codes::PH1_OS_VOICE_PH1K_EVIDENCE_REQUIRED
+        );
+    }
+
+    #[test]
     fn at_os_22b_voice_identity_prompt_scope_key_is_deterministic_and_branch_scoped() {
         let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
         let device_id = DeviceId::new("os_live_voice_device_3").unwrap();
@@ -4064,6 +5065,7 @@ mod tests {
         SchemaFail,
         MediumConfidence,
         LowConfidence,
+        ContractMismatch,
     }
 
     #[derive(Debug, Clone)]
@@ -4114,7 +5116,19 @@ mod tests {
                         Some(1200),
                         ReasonCodeId(0x4F53_3303),
                     ),
+                    OcrAdapterMode::ContractMismatch => (
+                        Ph1dProviderValidationStatus::SchemaOk,
+                        Some(r#"{"ocr_text":"contract mismatch simulation"}"#.to_string()),
+                        Some(9100),
+                        ReasonCodeId(0x4F53_3305),
+                    ),
                 };
+
+            let provider_id = if matches!(self.mode, OcrAdapterMode::ContractMismatch) {
+                "provider_unexpected".to_string()
+            } else {
+                req.provider_id.clone()
+            };
 
             Ph1dProviderCallResponse::v1(
                 req.correlation_id,
@@ -4122,14 +5136,14 @@ mod tests {
                 req.request_id,
                 req.idempotency_key.clone(),
                 Some("provider_call_ocr_1".to_string()),
-                req.provider_id.clone(),
+                provider_id,
                 req.provider_task,
                 req.model_id.clone(),
                 Ph1dProviderStatus::Ok,
                 88,
                 0,
                 confidence_bp,
-                Some(SchemaHash(7001)),
+                Some(req.output_schema_hash),
                 normalized_output_json,
                 validation_status,
                 reason_code,
@@ -4313,6 +5327,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn at_os_26b_ocr_handoff_fails_closed_on_provider_contract_mismatch() {
+        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::ContractMismatch);
+        let wiring =
+            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
+
+        let outcome = wiring
+            .run_handoff(&OsOcrAnalyzerForwardBundle::Vision(
+                sample_vision_forward_bundle(),
+            ))
+            .unwrap();
+        let OsOcrRouteOutcome::Refused(refuse) = outcome else {
+            panic!("expected ocr route refusal");
+        };
+        assert_eq!(
+            refuse.reason_code,
+            reason_codes::PH1_OS_OCR_ROUTE_PROVIDER_VALIDATION_FAILED
+        );
+    }
+
     #[derive(Debug, Clone)]
     struct OcrBridgeContextEngine;
 
@@ -4408,15 +5442,16 @@ mod tests {
 
     fn sample_ocr_provider_bundle_from_route_mode(
         mode: OcrAdapterMode,
+        source_engine: OsOcrSourceEngine,
     ) -> OsOcrProviderForwardBundle {
         let adapter = RecordingOcrAdapter::new(mode);
         let route_wiring =
             Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
-        let out = route_wiring
-            .run_handoff(&OsOcrAnalyzerForwardBundle::Vision(
-                sample_vision_forward_bundle(),
-            ))
-            .unwrap();
+        let analyzer_bundle = match source_engine {
+            OsOcrSourceEngine::Vision => OsOcrAnalyzerForwardBundle::Vision(sample_vision_forward_bundle()),
+            OsOcrSourceEngine::Doc => OsOcrAnalyzerForwardBundle::Doc(sample_doc_forward_bundle()),
+        };
+        let out = route_wiring.run_handoff(&analyzer_bundle).unwrap();
         match out {
             OsOcrRouteOutcome::Forwarded(bundle) => bundle,
             _ => panic!("expected routed OCR forwarded bundle"),
@@ -4424,14 +5459,38 @@ mod tests {
     }
 
     fn sample_ocr_provider_bundle_from_route() -> OsOcrProviderForwardBundle {
-        sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::SchemaOk)
+        sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::SchemaOk, OsOcrSourceEngine::Vision)
+    }
+
+    fn sample_doc_ocr_provider_bundle_from_route() -> OsOcrProviderForwardBundle {
+        sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::SchemaOk, OsOcrSourceEngine::Doc)
     }
 
     fn base_nlp_request_for_ocr() -> Ph1nRequest {
-        let transcript = NlpTranscriptOk::v1(
+        let transcript = NlpTranscriptOk::v1_with_metadata(
             "show me the invoice status".to_string(),
             LanguageTag::new("en").unwrap(),
             ConfidenceBucket::High,
+            vec![],
+            Some(
+                Ph1cAuditMeta::v1(
+                    RouteClassUsed::OnDevice,
+                    1,
+                    1,
+                    SelectedSlot::Primary,
+                    RoutingModeUsed::Lead,
+                    false,
+                    100,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    QualityBucket::High,
+                    None,
+                    None,
+                    Some("ph1k_handoff_standard".to_string()),
+                    Some("openai_google_clarify_v1".to_string()),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap();
         Ph1nRequest::v1(transcript, SessionStateRef::v1(SessionState::Active, false)).unwrap()
@@ -4476,7 +5535,7 @@ mod tests {
             1
         );
         let item = &bundle.context_bundle.bundle_build.ordered_bundle_items[0];
-        assert_eq!(item.source_engine, "PH1.D");
+        assert_eq!(item.source_engine, "PH1.VISION");
         assert_eq!(item.source_kind, ContextSourceKind::VisionEvidence);
 
         let seen = nlp_engine.seen_requests.borrow();
@@ -4489,6 +5548,37 @@ mod tests {
             .transcript_ok
             .transcript_text
             .contains("invoice total due 123.45"));
+    }
+
+    #[test]
+    fn at_os_27b_ocr_context_source_engine_preserves_doc_provenance() {
+        let context_wiring = Ph1ContextWiring::new(
+            crate::ph1context::Ph1ContextWiringConfig::mvp_v1(true),
+            OcrBridgeContextEngine,
+        )
+        .unwrap();
+        let nlp_engine = RecordingNlpEngine::new(OcrBridgeNlpMode::Chat);
+        let nlp_wiring = Ph1nWiring::new(
+            crate::ph1n::Ph1nWiringConfig::mvp_v1(true),
+            nlp_engine,
+        )
+        .unwrap();
+        let bridge = Ph1OsOcrContextNlpWiring::new(
+            Ph1OsOcrContextNlpConfig::mvp_v1(),
+            context_wiring,
+            nlp_wiring,
+        )
+        .unwrap();
+
+        let ocr_bundle = sample_doc_ocr_provider_bundle_from_route();
+        let base_nlp_request = base_nlp_request_for_ocr();
+        let out = bridge.run_handoff(&ocr_bundle, &base_nlp_request).unwrap();
+        let OsOcrContextNlpOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded OCR->CONTEXT/NLP outcome");
+        };
+        let item = &bundle.context_bundle.bundle_build.ordered_bundle_items[0];
+        assert_eq!(item.source_engine, "PH1.DOC");
+        assert_eq!(item.source_kind, ContextSourceKind::DocEvidence);
     }
 
     #[test]
@@ -4613,7 +5703,10 @@ mod tests {
 
         let out = bridge
             .run_handoff(
-                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::MediumConfidence),
+                &sample_ocr_provider_bundle_from_route_mode(
+                    OcrAdapterMode::MediumConfidence,
+                    OsOcrSourceEngine::Vision,
+                ),
                 &base_nlp_request_for_ocr(),
             )
             .unwrap();
@@ -4646,7 +5739,10 @@ mod tests {
 
         let out = bridge
             .run_handoff(
-                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::LowConfidence),
+                &sample_ocr_provider_bundle_from_route_mode(
+                    OcrAdapterMode::LowConfidence,
+                    OsOcrSourceEngine::Vision,
+                ),
                 &base_nlp_request_for_ocr(),
             )
             .unwrap();
@@ -4680,7 +5776,10 @@ mod tests {
 
         let out = bridge
             .run_handoff(
-                &sample_ocr_provider_bundle_from_route_mode(OcrAdapterMode::LowConfidence),
+                &sample_ocr_provider_bundle_from_route_mode(
+                    OcrAdapterMode::LowConfidence,
+                    OsOcrSourceEngine::Vision,
+                ),
                 &base_nlp_request_for_ocr(),
             )
             .unwrap();
@@ -4947,6 +6046,7 @@ mod tests {
             governance_ticket_ref: None,
             approved_by: None,
             evaluated_at: MonotonicTimeNs(2_100),
+            ph1c_superiority_pack: None,
         }
     }
 
@@ -5044,6 +6144,318 @@ mod tests {
                 );
             }
             _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_39_builder_remediation_maps_recurring_cluster_to_offline_input() {
+        let input = sample_self_heal_chain_input(false, None);
+        let chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        assert_eq!(
+            chain.promotion_decision.decision_action,
+            PromotionDecisionAction::Promote
+        );
+
+        let builder_input = map_recurring_failure_cluster_to_builder_offline_input(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsBuilderRemediationConfig::mvp_v1(),
+            OsBuilderPromotionGateEvidence::strict_required_pass(),
+        )
+        .unwrap()
+        .expect("recurring cluster should map to builder offline input");
+
+        builder_input.validate().unwrap();
+        assert_eq!(builder_input.outcome_entries.len(), 4);
+        assert!(builder_input
+            .outcome_entries
+            .iter()
+            .any(|entry| entry.engine_id == "PH1.FEEDBACK"));
+        assert!(builder_input
+            .outcome_entries
+            .iter()
+            .any(|entry| entry.engine_id == "PH1.LEARN"));
+        assert!(builder_input.offline_pipeline_only);
+    }
+
+    #[test]
+    fn at_os_40_builder_remediation_skips_non_recurring_cluster() {
+        let input = sample_self_heal_chain_input(false, None);
+        let mut chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        chain.problem_card.recurrence_count = 1;
+        chain.validate().unwrap();
+
+        let out = map_recurring_failure_cluster_to_builder_offline_input(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsBuilderRemediationConfig::mvp_v1(),
+            OsBuilderPromotionGateEvidence::strict_required_pass(),
+        )
+        .unwrap();
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn at_os_41_builder_remediation_blocks_promote_without_permission_gate_evidence() {
+        let input = sample_self_heal_chain_input(false, None);
+        let chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        assert_eq!(
+            chain.promotion_decision.decision_action,
+            PromotionDecisionAction::Promote
+        );
+
+        let err = map_recurring_failure_cluster_to_builder_offline_input(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsBuilderRemediationConfig::mvp_v1(),
+            OsBuilderPromotionGateEvidence {
+                code_permission_gate_passed: false,
+                launch_permission_gate_passed: true,
+                release_hard_gate_passed: true,
+            },
+        )
+        .expect_err("promote path must fail closed without code permission proof");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "check_builder_remediation_promotion_gate.code_permission_gate_passed"
+                );
+            }
+            _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_42_builder_remediation_allows_non_promote_without_gate_proofs() {
+        let input = sample_self_heal_chain_input(false, None);
+        let mut chain = build_self_heal_chain_from_engine_outputs(&input).unwrap();
+        chain.promotion_decision.decision_action = PromotionDecisionAction::Hold;
+        chain.promotion_decision.to_mode = chain.promotion_decision.from_mode;
+        chain.promotion_decision.promotion_eligible = false;
+        chain.validate().unwrap();
+
+        let out = map_recurring_failure_cluster_to_builder_offline_input(
+            &chain,
+            MonotonicTimeNs(2_300),
+            OsBuilderRemediationConfig::mvp_v1(),
+            OsBuilderPromotionGateEvidence {
+                code_permission_gate_passed: false,
+                launch_permission_gate_passed: false,
+                release_hard_gate_passed: false,
+            },
+        )
+        .unwrap();
+        assert!(out.is_some());
+    }
+
+    #[test]
+    fn at_os_43_ph1c_gold_loop_miss_and_correction_route_to_learn_and_pae_deterministically() {
+        let (miss_event, correction_event, feedback_input) =
+            build_ph1c_gold_loop_feedback_turn_input();
+        assert!(feedback_input
+            .events
+            .iter()
+            .all(|event| event.gold_status == FeedbackGoldStatus::Pending));
+        let mut verified_feedback_input = feedback_input.clone();
+        for event in &mut verified_feedback_input.events {
+            event.gold_status = FeedbackGoldStatus::Verified;
+            event.gold_provenance_method =
+                Some(FeedbackGoldProvenanceMethod::VerifiedHumanCorrection);
+        }
+
+        let feedback_wiring = Ph1FeedbackWiring::new(
+            Ph1FeedbackWiringConfig::mvp_v1(true),
+            FeedbackRuntimeEngineAdapter::mvp_v1(),
+        )
+        .unwrap();
+        let feedback_outcome_a = feedback_wiring.run_turn(&verified_feedback_input).unwrap();
+        let feedback_outcome_b = feedback_wiring.run_turn(&verified_feedback_input).unwrap();
+        let FeedbackWiringOutcome::Forwarded(feedback_bundle_a) = feedback_outcome_a else {
+            panic!("feedback path must forward for gold-loop miss/correction events");
+        };
+        let FeedbackWiringOutcome::Forwarded(feedback_bundle_b) = feedback_outcome_b else {
+            panic!("feedback path replay must forward for deterministic proof");
+        };
+        assert_eq!(feedback_bundle_a, feedback_bundle_b);
+        assert!(feedback_bundle_a
+            .event_collect
+            .ordered_signal_candidates
+            .iter()
+            .all(|candidate| candidate.target == FeedbackSignalTarget::PaeScorecard));
+        assert!(feedback_bundle_a.signal_emit.emits_learn);
+        assert!(feedback_bundle_a.signal_emit.emits_pae);
+
+        let learn_wiring = Ph1LearnWiring::new(
+            Ph1LearnWiringConfig::mvp_v1(true),
+            LearnRuntimeEngineAdapter::mvp_v1(),
+        )
+        .unwrap();
+        let (learn_turn_input_a, learn_outcome_a) = route_feedback_into_learn_wiring(
+            &learn_wiring,
+            &verified_feedback_input,
+            &feedback_bundle_a,
+            FeedbackLearnRouteConfig::mvp_v1(),
+        )
+        .unwrap();
+        let (learn_turn_input_b, learn_outcome_b) = route_feedback_into_learn_wiring(
+            &learn_wiring,
+            &verified_feedback_input,
+            &feedback_bundle_a,
+            FeedbackLearnRouteConfig::mvp_v1(),
+        )
+        .unwrap();
+        assert_eq!(learn_turn_input_a, learn_turn_input_b);
+        assert_eq!(
+            learn_turn_input_a.requested_target_engines,
+            vec![LearnTargetEngine::Pae]
+        );
+        assert!(learn_turn_input_a
+            .signals
+            .iter()
+            .all(|signal| signal.gold_case_id.is_some()));
+        let LearnWiringOutcome::Forwarded(learn_bundle_a) = learn_outcome_a else {
+            panic!(
+                "learn path must forward for feedback gold-loop signals: {:?}",
+                learn_outcome_a
+            );
+        };
+        let LearnWiringOutcome::Forwarded(learn_bundle_b) = learn_outcome_b else {
+            panic!(
+                "learn path replay must forward for deterministic proof: {:?}",
+                learn_outcome_b
+            );
+        };
+        assert_eq!(learn_bundle_a, learn_bundle_b);
+        assert!(learn_bundle_a.signal_aggregate.advisory_only);
+        assert!(learn_bundle_a.signal_aggregate.no_execution_authority);
+        assert!(learn_bundle_a.artifact_package_build.advisory_only);
+        assert!(learn_bundle_a.artifact_package_build.no_execution_authority);
+
+        let pae_turn_input = build_pae_turn_input_from_learn(&learn_turn_input_a, &learn_bundle_a);
+        let pae_wiring = Ph1PaeWiring::new(
+            Ph1PaeWiringConfig::mvp_v1(true),
+            PaeRuntimeEngineAdapter::mvp_v1(),
+        )
+        .unwrap();
+        let pae_outcome_a = pae_wiring.run_turn(&pae_turn_input).unwrap();
+        let pae_outcome_b = pae_wiring.run_turn(&pae_turn_input).unwrap();
+        let PaeWiringOutcome::Forwarded(pae_bundle_a) = pae_outcome_a else {
+            panic!("pae path must forward for learn target=PAE signals");
+        };
+        let PaeWiringOutcome::Forwarded(pae_bundle_b) = pae_outcome_b else {
+            panic!("pae replay must forward for deterministic proof");
+        };
+        assert_eq!(pae_bundle_a, pae_bundle_b);
+
+        let miss_chain_input_a = build_gold_loop_chain_input(
+            miss_event.clone(),
+            feedback_bundle_a.clone(),
+            learn_turn_input_a.clone(),
+            learn_bundle_a.clone(),
+            pae_turn_input.clone(),
+            pae_bundle_a.clone(),
+        );
+        let miss_chain_input_b = build_gold_loop_chain_input(
+            miss_event,
+            feedback_bundle_a.clone(),
+            learn_turn_input_a.clone(),
+            learn_bundle_a.clone(),
+            pae_turn_input.clone(),
+            pae_bundle_a.clone(),
+        );
+        let correction_chain_input_a = build_gold_loop_chain_input(
+            correction_event.clone(),
+            feedback_bundle_a.clone(),
+            learn_turn_input_a.clone(),
+            learn_bundle_a.clone(),
+            pae_turn_input.clone(),
+            pae_bundle_a.clone(),
+        );
+        let correction_chain_input_b = build_gold_loop_chain_input(
+            correction_event,
+            feedback_bundle_a,
+            learn_turn_input_a,
+            learn_bundle_a,
+            pae_turn_input,
+            pae_bundle_a,
+        );
+
+        let miss_chain_a = build_self_heal_chain_from_engine_outputs(&miss_chain_input_a).unwrap();
+        let miss_chain_b = build_self_heal_chain_from_engine_outputs(&miss_chain_input_b).unwrap();
+        assert_eq!(
+            miss_chain_a.failure_event.fingerprint,
+            miss_chain_b.failure_event.fingerprint
+        );
+        assert_eq!(
+            miss_chain_a.problem_card.problem_id,
+            miss_chain_b.problem_card.problem_id
+        );
+        assert_eq!(miss_chain_a.fix_card.fix_id, miss_chain_b.fix_card.fix_id);
+        assert_eq!(
+            miss_chain_a.promotion_decision.decision_id,
+            miss_chain_b.promotion_decision.decision_id
+        );
+
+        let correction_chain_a =
+            build_self_heal_chain_from_engine_outputs(&correction_chain_input_a).unwrap();
+        let correction_chain_b =
+            build_self_heal_chain_from_engine_outputs(&correction_chain_input_b).unwrap();
+        assert_eq!(
+            correction_chain_a.failure_event.fingerprint,
+            correction_chain_b.failure_event.fingerprint
+        );
+        assert_eq!(
+            correction_chain_a.problem_card.problem_id,
+            correction_chain_b.problem_card.problem_id
+        );
+        assert_eq!(
+            correction_chain_a.fix_card.fix_id,
+            correction_chain_b.fix_card.fix_id
+        );
+        assert_eq!(
+            correction_chain_a.promotion_decision.decision_id,
+            correction_chain_b.promotion_decision.decision_id
+        );
+        assert_ne!(
+            miss_chain_a.failure_event.fingerprint,
+            correction_chain_a.failure_event.fingerprint
+        );
+    }
+
+    #[test]
+    fn at_os_44_ph1c_self_heal_chain_requires_superiority_pack() {
+        let mut input = sample_self_heal_chain_input(false, None);
+        input.owner_engine = "PH1.C".to_string();
+        input.ph1c_superiority_pack = None;
+        let err = build_self_heal_chain_from_engine_outputs(&input)
+            .expect_err("ph1c self-heal chain must fail closed without superiority pack");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "os_self_heal_chain_input.ph1c_superiority_pack");
+            }
+            other => panic!("expected invalid-value violation, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_os_45_ph1c_self_heal_chain_blocks_failed_superiority_gate() {
+        let mut input = sample_self_heal_chain_input(false, None);
+        input.owner_engine = "PH1.C".to_string();
+        let mut pack = sample_ph1c_superiority_pack();
+        pack.rows
+            .retain(|row| row.lane != SuperiorityLane::ChatgptAb);
+        input.ph1c_superiority_pack = Some(pack);
+        let err = build_self_heal_chain_from_engine_outputs(&input)
+            .expect_err("ph1c self-heal chain must fail closed when superiority gate fails");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(
+                    field,
+                    "build_self_heal_chain_from_engine_outputs.ph1c_superiority_gate"
+                );
+            }
+            other => panic!("expected invalid-value violation, got: {other:?}"),
         }
     }
 }

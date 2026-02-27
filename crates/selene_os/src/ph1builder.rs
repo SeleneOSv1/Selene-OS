@@ -3278,24 +3278,40 @@ mod tests {
         }
     }
 
+    fn unique_test_temp_dir(label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("unix epoch should be available")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "selene_builder_{}_{}_{}",
+            label,
+            std::process::id(),
+            nanos
+        ));
+        std::fs::create_dir_all(&dir).expect("temp directory should be creatable");
+        dir
+    }
+
     fn input() -> BuilderOfflineInput {
         let correlation_id = CorrelationId(7001);
         let turn_id = TurnId(801);
-        let learning_report_path = std::env::temp_dir()
+        let temp_dir = unique_test_temp_dir("offline_input");
+        let learning_report_path = temp_dir
             .join(format!(
                 "builder_learning_report_{}_{}.md",
                 correlation_id.0, turn_id.0
             ))
             .display()
             .to_string();
-        let change_brief_path = std::env::temp_dir()
+        let change_brief_path = temp_dir
             .join(format!(
                 "builder_change_brief_{}_{}.md",
                 correlation_id.0, turn_id.0
             ))
             .display()
             .to_string();
-        let permission_packet_path = std::env::temp_dir()
+        let permission_packet_path = temp_dir
             .join(format!(
                 "builder_permission_packet_{}_{}.md",
                 correlation_id.0, turn_id.0
@@ -4088,7 +4104,7 @@ mod tests {
         .unwrap();
 
         let mut builder_input = input();
-        let brief_path = std::env::temp_dir()
+        let brief_path = unique_test_temp_dir("change_brief_auto")
             .join("builder_change_brief_auto_generated.md")
             .display()
             .to_string();
@@ -4123,7 +4139,7 @@ mod tests {
         .unwrap();
 
         let mut builder_input = input();
-        let packet_path = std::env::temp_dir()
+        let packet_path = unique_test_temp_dir("permission_packet_auto")
             .join("builder_permission_packet_auto_generated.md")
             .display()
             .to_string();

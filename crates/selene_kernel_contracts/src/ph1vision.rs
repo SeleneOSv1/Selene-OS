@@ -171,6 +171,48 @@ impl Validate for VisualSourceRef {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VisionRawSourceRef {
+    pub schema_version: SchemaVersion,
+    pub image_ref: Option<String>,
+    pub blob_ref: Option<String>,
+}
+
+impl VisionRawSourceRef {
+    pub fn v1(
+        image_ref: Option<String>,
+        blob_ref: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let raw = Self {
+            schema_version: PH1VISION_CONTRACT_VERSION,
+            image_ref,
+            blob_ref,
+        };
+        raw.validate()?;
+        Ok(raw)
+    }
+}
+
+impl Validate for VisionRawSourceRef {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1VISION_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "vision_raw_source_ref.schema_version",
+                reason: "must match PH1VISION_CONTRACT_VERSION",
+            });
+        }
+        validate_optional_ref("vision_raw_source_ref.image_ref", self.image_ref.as_deref())?;
+        validate_optional_ref("vision_raw_source_ref.blob_ref", self.blob_ref.as_deref())?;
+        if self.image_ref.is_none() && self.blob_ref.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "vision_raw_source_ref",
+                reason: "must include image_ref or blob_ref",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BoundingBoxPx {
     pub x: u32,
@@ -262,6 +304,7 @@ pub struct VisionEvidenceExtractRequest {
     pub schema_version: SchemaVersion,
     pub envelope: VisionRequestEnvelope,
     pub source_ref: VisualSourceRef,
+    pub raw_source_ref: Option<VisionRawSourceRef>,
     /// Input token list is the strict visible-content plane. No inference beyond these tokens.
     pub visible_tokens: Vec<VisualToken>,
 }
@@ -270,12 +313,14 @@ impl VisionEvidenceExtractRequest {
     pub fn v1(
         envelope: VisionRequestEnvelope,
         source_ref: VisualSourceRef,
+        raw_source_ref: Option<VisionRawSourceRef>,
         visible_tokens: Vec<VisualToken>,
     ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1VISION_CONTRACT_VERSION,
             envelope,
             source_ref,
+            raw_source_ref,
             visible_tokens,
         };
         r.validate()?;
@@ -293,10 +338,10 @@ impl Validate for VisionEvidenceExtractRequest {
         }
         self.envelope.validate()?;
         self.source_ref.validate()?;
-        if self.visible_tokens.is_empty() {
+        if self.visible_tokens.is_empty() && self.raw_source_ref.is_none() {
             return Err(ContractViolation::InvalidValue {
-                field: "vision_evidence_extract_request.visible_tokens",
-                reason: "must not be empty",
+                field: "vision_evidence_extract_request",
+                reason: "must include visible_tokens or raw_source_ref",
             });
         }
         if self.visible_tokens.len() > 256 {
@@ -307,6 +352,9 @@ impl Validate for VisionEvidenceExtractRequest {
         }
         for token in &self.visible_tokens {
             token.validate()?;
+        }
+        if let Some(raw_source_ref) = &self.raw_source_ref {
+            raw_source_ref.validate()?;
         }
         Ok(())
     }
@@ -686,6 +734,31 @@ impl Validate for Ph1VisionResponse {
     }
 }
 
+fn validate_optional_ref(field: &'static str, value: Option<&str>) -> Result<(), ContractViolation> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty when provided",
+        });
+    }
+    if value.len() > 512 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 512 chars",
+        });
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not contain control characters",
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,7 +787,7 @@ mod tests {
 
     #[test]
     fn extract_request_requires_visible_tokens() {
-        let req = VisionEvidenceExtractRequest::v1(envelope(4, true), source(), vec![]);
+        let req = VisionEvidenceExtractRequest::v1(envelope(4, true), source(), None, vec![]);
         assert!(req.is_err());
     }
 
@@ -730,6 +803,23 @@ mod tests {
             ],
         );
         assert!(req.is_err());
+    }
+
+    #[test]
+    fn extract_request_accepts_raw_source_without_visible_tokens() {
+        let req = VisionEvidenceExtractRequest::v1(
+            envelope(4, true),
+            source(),
+            Some(
+                VisionRawSourceRef::v1(
+                    Some("image://capture_001".to_string()),
+                    Some("blob://vision/0001".to_string()),
+                )
+                .unwrap(),
+            ),
+            vec![],
+        );
+        assert!(req.is_ok());
     }
 
     #[test]

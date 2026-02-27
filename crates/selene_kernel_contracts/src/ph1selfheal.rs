@@ -830,6 +830,14 @@ impl Validate for PromotionDecision {
                 reason: "must be >= minimum_sample_size",
             });
         }
+        let from_rank = pae_mode_rank(self.from_mode);
+        let to_rank = pae_mode_rank(self.to_mode);
+        if from_rank.abs_diff(to_rank) > 1 {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.to_mode",
+                reason: "must be one-step ladder transition from from_mode",
+            });
+        }
         if matches!(self.to_mode, PaeMode::Lead) && !self.rollback_ready {
             return Err(ContractViolation::InvalidValue {
                 field: "promotion_decision.rollback_ready",
@@ -842,6 +850,39 @@ impl Validate for PromotionDecision {
             return Err(ContractViolation::InvalidValue {
                 field: "promotion_decision.promotion_eligible",
                 reason: "must be true for decision_action=PROMOTE",
+            });
+        }
+        if matches!(self.decision_action, PromotionDecisionAction::Promote) && to_rank <= from_rank
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.decision_action",
+                reason: "PROMOTE requires to_mode > from_mode",
+            });
+        }
+        if matches!(self.decision_action, PromotionDecisionAction::Demote) && to_rank >= from_rank {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.decision_action",
+                reason: "DEMOTE requires to_mode < from_mode",
+            });
+        }
+        if matches!(self.decision_action, PromotionDecisionAction::Hold) && to_rank != from_rank {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.decision_action",
+                reason: "HOLD requires to_mode == from_mode",
+            });
+        }
+        if matches!(self.decision_action, PromotionDecisionAction::Rollback)
+            && !(self.from_mode == PaeMode::Lead && self.to_mode == PaeMode::Assist)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.decision_action",
+                reason: "ROLLBACK requires LEAD -> ASSIST transition",
+            });
+        }
+        if self.from_mode == PaeMode::Lead && to_rank < from_rank && !self.rollback_ready {
+            return Err(ContractViolation::InvalidValue {
+                field: "promotion_decision.rollback_ready",
+                reason: "lead demotion requires rollback_ready=true",
             });
         }
         if !self.no_execution_authority {
@@ -1036,6 +1077,14 @@ fn validate_bp(field: &'static str, value: i16, bound: i16) -> Result<(), Contra
         });
     }
     Ok(())
+}
+
+fn pae_mode_rank(mode: PaeMode) -> u8 {
+    match mode {
+        PaeMode::Shadow => 0,
+        PaeMode::Assist => 1,
+        PaeMode::Lead => 2,
+    }
 }
 
 fn validate_engine_id(
@@ -1286,5 +1335,131 @@ mod tests {
         let id_a = stable_card_id("problem", &["tenant_1", "fp_1", "signal_1"]).unwrap();
         let id_b = stable_card_id("problem", &["tenant_1", "fp_1", "signal_1"]).unwrap();
         assert_eq!(id_a, id_b);
+    }
+
+    #[test]
+    fn at_selfheal_04_promotion_decision_rejects_direct_shadow_to_lead_jump() {
+        let err = PromotionDecision::v1(
+            "decision_jump_1".to_string(),
+            "fix_1".to_string(),
+            "tenant_1".to_string(),
+            PaeRouteDomain::Tooling,
+            PaeProviderSlot::Primary,
+            PaeMode::Shadow,
+            PaeMode::Lead,
+            PromotionDecisionAction::Promote,
+            100,
+            800,
+            3,
+            0,
+            "candidate_1".to_string(),
+            1900,
+            2400,
+            180,
+            120,
+            100,
+            180,
+            true,
+            true,
+            ReasonCodeId(44),
+            true,
+            true,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            "idem:decision:jump:1".to_string(),
+            MonotonicTimeNs(10),
+        )
+        .expect_err("direct SHADOW->LEAD jump must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "promotion_decision.to_mode")
+            }
+            other => panic!("expected invalid value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_selfheal_05_lead_demotion_requires_rollback_ready() {
+        let err = PromotionDecision::v1(
+            "decision_rollback_1".to_string(),
+            "fix_1".to_string(),
+            "tenant_1".to_string(),
+            PaeRouteDomain::Tooling,
+            PaeProviderSlot::Primary,
+            PaeMode::Lead,
+            PaeMode::Assist,
+            PromotionDecisionAction::Rollback,
+            100,
+            800,
+            3,
+            3,
+            "candidate_1".to_string(),
+            1400,
+            1800,
+            220,
+            180,
+            900,
+            180,
+            false,
+            false,
+            ReasonCodeId(45),
+            true,
+            true,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            "idem:decision:rollback:1".to_string(),
+            MonotonicTimeNs(11),
+        )
+        .expect_err("lead demotion without rollback pointer must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "promotion_decision.rollback_ready")
+            }
+            other => panic!("expected invalid value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_selfheal_06_hold_action_requires_no_mode_change() {
+        let err = PromotionDecision::v1(
+            "decision_hold_1".to_string(),
+            "fix_1".to_string(),
+            "tenant_1".to_string(),
+            PaeRouteDomain::Tooling,
+            PaeProviderSlot::Primary,
+            PaeMode::Assist,
+            PaeMode::Shadow,
+            PromotionDecisionAction::Hold,
+            100,
+            800,
+            3,
+            1,
+            "candidate_1".to_string(),
+            900,
+            1200,
+            300,
+            200,
+            700,
+            180,
+            false,
+            true,
+            ReasonCodeId(46),
+            true,
+            true,
+            true,
+            Some("gov_ticket_1".to_string()),
+            Some("owner_1".to_string()),
+            "idem:decision:hold:1".to_string(),
+            MonotonicTimeNs(12),
+        )
+        .expect_err("HOLD with a mode change must fail closed");
+        match err {
+            ContractViolation::InvalidValue { field, .. } => {
+                assert_eq!(field, "promotion_decision.decision_action")
+            }
+            other => panic!("expected invalid value, got {other:?}"),
+        }
     }
 }

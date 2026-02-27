@@ -61,6 +61,27 @@
   - false interrupt
   - missed interrupt
   - late cancel
-  - low-confidence transcript fallback
-  - clarify-after-duplex uncertainty
+- low-confidence transcript fallback
+- clarify-after-duplex uncertainty
 - PH1.FEEDBACK outputs remain advisory and must flow only through Selene OS into PH1.LEARN/PH1.PAE.
+
+## Round-2 Step 9 Lock (Feedback -> Learn Routing)
+- Selene OS runtime now provides deterministic FEEDBACK->LEARN route mapping in `crates/selene_os/src/ph1learn.rs`:
+  - `map_feedback_bundle_to_learn_turn_input(...)`
+  - `route_feedback_into_learn_wiring(...)`
+- Mapping preserves FEEDBACK taxonomy and gold metadata into LEARN signals:
+  - `path_type -> source_path`
+  - `gold_case_id/gold_status -> learn gold fields`
+- Deterministic replay guarantees:
+  - canonical candidate ordering
+  - stable deterministic learn `signal_id` generation
+  - fail-closed on correlation/turn/tenant mismatch
+
+## Round-2 Step 10 Lock (Gold-Loop Miss/Correction Flow)
+- PH1.C miss/correction gold captures are represented as PH1.FEEDBACK improvement events with deterministic ids/fingerprints.
+- Event-target lock:
+  - STT miss/retry classes (`SttReject`, `SttRetry`) must emit `PaeScorecard` targets for downstream PAE learning path eligibility.
+- Gold verification lock:
+  - PH1.FEEDBACK may carry pending gold events, but improvement-package promotion downstream requires verified gold state and provenance.
+- Replay lock:
+  - repeated verified FEEDBACK inputs must produce deterministic FEEDBACK bundles for LEARN/PAE.

@@ -1237,7 +1237,8 @@ impl InterruptCandidate {
             )
         {
             return Err(ContractViolation::InvalidValue {
-                field: "interrupt_candidate.degradation_context.class_bundle.network_stability_class",
+                field:
+                    "interrupt_candidate.degradation_context.class_bundle.network_stability_class",
                 reason: "must not be STABLE when stream_gap_detected=true",
             });
         }
@@ -1395,6 +1396,74 @@ impl TtsPlaybackActiveEvent {
             active,
             t_event,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DuplexFrameId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DuplexFrame {
+    pub schema_version: SchemaVersion,
+    pub frame_id: DuplexFrameId,
+    pub stream_id: AudioStreamId,
+    pub pre_roll_buffer_id: PreRollBufferId,
+    pub t_frame_start: MonotonicTimeNs,
+    pub t_frame_end: MonotonicTimeNs,
+    pub t_capture: MonotonicTimeNs,
+    pub tts_playback_active: bool,
+    pub capture_to_handoff_latency_ms: u32,
+}
+
+impl DuplexFrame {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        frame_id: DuplexFrameId,
+        stream_id: AudioStreamId,
+        pre_roll_buffer_id: PreRollBufferId,
+        t_frame_start: MonotonicTimeNs,
+        t_frame_end: MonotonicTimeNs,
+        t_capture: MonotonicTimeNs,
+        tts_playback_active: bool,
+        capture_to_handoff_latency_ms: u32,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1K_CONTRACT_VERSION,
+            frame_id,
+            stream_id,
+            pre_roll_buffer_id,
+            t_frame_start,
+            t_frame_end,
+            t_capture,
+            tts_playback_active,
+            capture_to_handoff_latency_ms,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for DuplexFrame {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.t_frame_end.0 < self.t_frame_start.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "duplex_frame.t_frame_end",
+                reason: "must be >= t_frame_start",
+            });
+        }
+        if self.t_capture.0 < self.t_frame_start.0 || self.t_capture.0 > self.t_frame_end.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "duplex_frame.t_capture",
+                reason: "must be within [t_frame_start, t_frame_end]",
+            });
+        }
+        if self.capture_to_handoff_latency_ms == 0 || self.capture_to_handoff_latency_ms > 10_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "duplex_frame.capture_to_handoff_latency_ms",
+                reason: "must be in 1..=10000",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -1762,7 +1831,8 @@ mod tests {
     #[test]
     fn normalize_interrupt_phrase_strips_controls_and_collapses_whitespace() {
         let en = InterruptLocaleTag::new("en-US").unwrap();
-        let norm = normalize_interrupt_phrase_for_locale(&en, "  ÉCHO\u{0000}\n\t STOP   ").unwrap();
+        let norm =
+            normalize_interrupt_phrase_for_locale(&en, "  ÉCHO\u{0000}\n\t STOP   ").unwrap();
         assert_eq!(norm, "écho stop");
     }
 
@@ -1785,10 +1855,7 @@ mod tests {
         let clean = DegradationClassBundle::from_flags(false, false, false, false);
         assert_eq!(clean.capture_quality_class, CaptureQualityClass::Clear);
         assert_eq!(clean.echo_risk_class, EchoRiskClass::Low);
-        assert_eq!(
-            clean.network_stability_class,
-            NetworkStabilityClass::Stable
-        );
+        assert_eq!(clean.network_stability_class, NetworkStabilityClass::Stable);
         assert_eq!(clean.recoverability_class, RecoverabilityClass::Fast);
 
         let severe = DegradationClassBundle::from_flags(true, true, true, true);
@@ -1863,6 +1930,62 @@ mod tests {
             Err(ContractViolation::InvalidValue {
                 field: "interrupt_candidate.degradation_context.class_bundle.capture_quality_class",
                 ..
+            })
+        ));
+    }
+
+    #[test]
+    fn duplex_frame_accepts_valid_runtime_bounds() {
+        let frame = DuplexFrame::v1(
+            DuplexFrameId(1),
+            AudioStreamId(7),
+            PreRollBufferId(2),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(200),
+            MonotonicTimeNs(150),
+            true,
+            120,
+        )
+        .expect("duplex frame must be valid");
+        assert_eq!(frame.capture_to_handoff_latency_ms, 120);
+        assert!(frame.tts_playback_active);
+    }
+
+    #[test]
+    fn duplex_frame_rejects_invalid_capture_or_latency() {
+        let bad_capture = DuplexFrame::v1(
+            DuplexFrameId(1),
+            AudioStreamId(7),
+            PreRollBufferId(2),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(200),
+            MonotonicTimeNs(90),
+            true,
+            120,
+        );
+        assert!(matches!(
+            bad_capture,
+            Err(ContractViolation::InvalidValue {
+                field: "duplex_frame.t_capture",
+                reason: "must be within [t_frame_start, t_frame_end]",
+            })
+        ));
+
+        let bad_latency = DuplexFrame::v1(
+            DuplexFrameId(1),
+            AudioStreamId(7),
+            PreRollBufferId(2),
+            MonotonicTimeNs(100),
+            MonotonicTimeNs(200),
+            MonotonicTimeNs(150),
+            false,
+            0,
+        );
+        assert!(matches!(
+            bad_latency,
+            Err(ContractViolation::InvalidValue {
+                field: "duplex_frame.capture_to_handoff_latency_ms",
+                reason: "must be in 1..=10000",
             })
         ));
     }

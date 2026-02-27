@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INPUT_CSV="${1:-docs/fixtures/ph1k_round2_eval_snapshot.csv}"
+INPUT_CSV="${1:-${SELENE_PH1K_EVAL_SNAPSHOT_PATH:-.dev/ph1k_live_eval_snapshot.csv}}"
 
 if [[ ! -f "${INPUT_CSV}" ]]; then
   echo "MISSING_INPUT:${INPUT_CSV}"
@@ -52,7 +52,6 @@ NR > 1 {
     next;
   }
 
-  rows++;
   captured = $(col["captured_at_utc"]);
   commit_hash = $(col["commit_hash"]);
   window_min = $(col["window_min"]) + 0;
@@ -73,6 +72,12 @@ NR > 1 {
   multilingual_recall_pct = $(col["multilingual_interrupt_recall_pct"]) + 0.0;
   audit_pct = $(col["audit_completeness_pct"]) + 0.0;
   tenant_pct = $(col["tenant_isolation_pct"]) + 0.0;
+
+  if (captured == "captured_at_utc" || commit_hash == "commit_hash") {
+    next;
+  }
+
+  rows++;
 
   if (captured == "" || commit_hash == "") {
     printf("EVAL_FAIL:missing_capture_or_commit row=%d\n", NR);

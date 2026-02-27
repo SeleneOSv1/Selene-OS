@@ -8,16 +8,21 @@ pub mod reason_codes {
 
     // PH1.C OS wiring reason-code namespace. Values are placeholders until registry lock.
     pub const PH1_C_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4343_01F1);
+    pub const PH1_C_HANDOFF_INVALID: ReasonCodeId = ReasonCodeId(0x4343_01F2);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1cWiringConfig {
     pub ph1c_enabled: bool,
+    pub require_ph1k_handoff: bool,
 }
 
 impl Ph1cWiringConfig {
     pub fn mvp_v1(ph1c_enabled: bool) -> Self {
-        Self { ph1c_enabled }
+        Self {
+            ph1c_enabled,
+            require_ph1k_handoff: true,
+        }
     }
 }
 
@@ -50,15 +55,27 @@ where
     }
 
     pub fn run_turn(&self, req: &Ph1cRequest) -> Result<Ph1cWiringOutcome, ContractViolation> {
-        req.validate()?;
+        if req.validate().is_err() {
+            return Ok(Ph1cWiringOutcome::Refused(fail_closed_reject(
+                reason_codes::PH1_C_HANDOFF_INVALID,
+            )?));
+        }
 
         if !self.config.ph1c_enabled {
             return Ok(Ph1cWiringOutcome::NotInvokedDisabled);
         }
 
+        if self.config.require_ph1k_handoff && req.ph1k_handoff.is_none() {
+            return Ok(Ph1cWiringOutcome::Refused(fail_closed_reject(
+                reason_codes::PH1_C_HANDOFF_INVALID,
+            )?));
+        }
+
         let out = self.engine.run(req);
         if validate_response(&out).is_err() {
-            return Ok(Ph1cWiringOutcome::Refused(fail_closed_reject()?));
+            return Ok(Ph1cWiringOutcome::Refused(fail_closed_reject(
+                reason_codes::PH1_C_INTERNAL_PIPELINE_ERROR,
+            )?));
         }
 
         Ok(Ph1cWiringOutcome::Forwarded(out))
@@ -72,11 +89,10 @@ fn validate_response(resp: &Ph1cResponse) -> Result<(), ContractViolation> {
     }
 }
 
-fn fail_closed_reject() -> Result<TranscriptReject, ContractViolation> {
-    let reject = TranscriptReject::v1(
-        reason_codes::PH1_C_INTERNAL_PIPELINE_ERROR,
-        RetryAdvice::Repeat,
-    );
+fn fail_closed_reject(
+    reason_code: selene_kernel_contracts::ReasonCodeId,
+) -> Result<TranscriptReject, ContractViolation> {
+    let reject = TranscriptReject::v1(reason_code, RetryAdvice::Repeat);
     reject.validate()?;
     Ok(reject)
 }
@@ -85,10 +101,13 @@ fn fail_closed_reject() -> Result<TranscriptReject, ContractViolation> {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1c::{
-        ConfidenceBucket, LanguageTag, SessionStateRef, TranscriptOk, PH1C_CONTRACT_VERSION,
+        ConfidenceBucket, LanguageTag, Ph1kToPh1cHandoff, SessionStateRef, TranscriptOk,
+        PH1C_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1k::{
-        AudioDeviceId, AudioStreamId, DeviceHealth, DeviceState, PreRollBufferId,
+        AdvancedAudioQualityMetrics, AudioDeviceId, AudioStreamId, DegradationClassBundle,
+        DeviceHealth, DeviceState, InterruptCandidateConfidenceBand, PreRollBufferId,
+        VadDecisionConfidenceBand,
     };
     use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState};
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
@@ -125,7 +144,15 @@ mod tests {
             None,
             None,
             None,
-            None,
+            Some(
+                Ph1kToPh1cHandoff::v1(
+                    InterruptCandidateConfidenceBand::Medium,
+                    VadDecisionConfidenceBand::Medium,
+                    AdvancedAudioQualityMetrics::v1(24.0, 0.03, 50.0, 2.0, 0.2, 16.0).unwrap(),
+                    DegradationClassBundle::from_flags(false, true, false, false),
+                )
+                .unwrap(),
+            ),
         )
         .unwrap()
     }
@@ -191,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn at_c_wiring_04_invalid_request_contract_is_rejected() {
+    fn at_c_wiring_04_invalid_request_contract_fails_closed() {
         let mut r = req();
         r.bounded_audio_segment_ref.t_end = MonotonicTimeNs(5);
         let w = Ph1cWiring::new(
@@ -199,7 +226,13 @@ mod tests {
             StubEngine { out: ok_response() },
         )
         .unwrap();
-        assert!(w.run_turn(&r).is_err());
+        match w.run_turn(&r).unwrap() {
+            Ph1cWiringOutcome::Refused(reject) => {
+                assert_eq!(reject.reason_code, reason_codes::PH1_C_HANDOFF_INVALID);
+                assert_eq!(reject.retry_advice, RetryAdvice::Repeat);
+            }
+            other => panic!("expected fail-closed refusal, got: {other:?}"),
+        }
     }
 
     #[test]
@@ -219,6 +252,24 @@ mod tests {
                 assert_eq!(r.retry_advice, RetryAdvice::SpeakSlower)
             }
             other => panic!("expected forwarded transcript_reject, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_c_wiring_06_missing_ph1k_handoff_fails_closed_when_required() {
+        let mut r = req();
+        r.ph1k_handoff = None;
+        let w = Ph1cWiring::new(
+            Ph1cWiringConfig::mvp_v1(true),
+            StubEngine { out: ok_response() },
+        )
+        .unwrap();
+        match w.run_turn(&r).unwrap() {
+            Ph1cWiringOutcome::Refused(reject) => {
+                assert_eq!(reject.reason_code, reason_codes::PH1_C_HANDOFF_INVALID);
+                assert_eq!(reject.retry_advice, RetryAdvice::Repeat);
+            }
+            other => panic!("expected fail-closed refusal, got: {other:?}"),
         }
     }
 }

@@ -57,6 +57,7 @@
 - No execution path and no authority mutation.
 - Promotion discipline is deterministic: no direct `SHADOW -> LEAD` jump in one step.
 - `LEAD` mode requires rollback readiness; missing rollback must fail closed or demote.
+- `LEAD -> ASSIST` demotion is rollback-governed: rollback readiness must be true or PH1.PAE refuses fail-closed.
 - PAE outputs must not include executable directives; they are bounded hints only.
 
 ## Related Engine Boundaries
@@ -70,3 +71,8 @@
 - PH1.PAE must govern duplex adaptation promotion ladder (`SHADOW -> ASSIST -> LEAD`) with one-step transitions only.
 - PH1.PAE must enforce rollback/demotion when FDX gates regress (false interrupt, missed interrupt, latency, or quality).
 - PH1.PAE outputs remain bounded adaptation hints only; no execution authority is introduced.
+
+## Round-2 Step 10 Lock (Gold-Loop Intake)
+- Verified PH1.C miss/correction gold-loop packages routed through PH1.LEARN must be accepted into deterministic PAE scoring.
+- Replay of identical verified inputs must preserve deterministic PAE selection/decision identities and ladder safety constraints.
+- Gold-loop routing does not change authority: PAE remains advisory-only and non-executing.
