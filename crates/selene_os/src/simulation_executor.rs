@@ -168,7 +168,7 @@ pub enum SimulationDispatchOutcome {
     },
     BroadcastMhpAppThreadReplyConcluded {
         bcast: Ph1BcastResponse,
-        wife_forward_ref: String,
+        wife_delivery_proof_ref: String,
         voice_interruption_suppressed: bool,
     },
     MemoryPropose(Ph1mProposeResponse),
@@ -1519,6 +1519,10 @@ impl SimulationExecutor {
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
+        let ack_req = match &req.request {
+            BcastRequest::AckCommit(v) => v,
+            _ => unreachable!("validated above"),
+        };
         let (broadcast_id, recipient_id) = match &bcast_resp {
             Ph1BcastResponse::Ok(ok) => match &ok.outcome {
                 BcastOutcome::AckCommit(v) => {
@@ -1554,21 +1558,71 @@ impl SimulationExecutor {
             }
         };
 
-        let wife_forward_ref = format!(
-            "bcast_wife_forward_{}",
+        let wife_delivery_idempotency_key = format!(
+            "bcast_wife_forward:{}",
             short_hash_hex(&[
                 broadcast_id.as_str(),
                 recipient_id.as_str(),
                 wife_thread_ref,
                 reply_payload_ref,
+                ack_req.idempotency_key.as_str(),
                 &req.simulation_id,
             ])
         );
+        let wife_delivery_req = Ph1DeliveryRequest::send_commit_v1(
+            req.correlation_id,
+            req.turn_id,
+            req.now,
+            ack_req.tenant_id.clone(),
+            format!("bcast_wife_forward:{broadcast_id}:{recipient_id}"),
+            wife_thread_ref.to_string(),
+            DeliveryChannel::AppPush,
+            reply_payload_ref.to_string(),
+            Ph1DeliveryRuntime::default_provider_ref_for_channel(DeliveryChannel::AppPush)
+                .to_string(),
+            format!(
+                "bcast_app_thread_reply:{}",
+                short_hash_hex(&[
+                    broadcast_id.as_str(),
+                    recipient_id.as_str(),
+                    wife_thread_ref,
+                    reply_payload_ref,
+                ])
+            ),
+            wife_delivery_idempotency_key,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let (wife_delivery_resp, _) =
+            self.run_delivery_send_with_store(store, &wife_delivery_req)?;
+        wife_delivery_resp
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        let wife_delivery_proof_ref = match &wife_delivery_resp {
+            Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+                DeliveryOutcome::Send(v) => v.delivery_proof_ref.clone(),
+                _ => {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "broadcast_mhp_app_thread_reply.delivery_outcome",
+                            reason: "must be DeliveryOutcome::Send",
+                        },
+                    ))
+                }
+            },
+            Ph1DeliveryResponse::Refuse(_) => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "broadcast_mhp_app_thread_reply.delivery_response",
+                        reason: "wife-forward DELIVERY_SEND_COMMIT refused",
+                    },
+                ))
+            }
+        };
 
         Ok(
             SimulationDispatchOutcome::BroadcastMhpAppThreadReplyConcluded {
                 bcast: bcast_resp,
-                wife_forward_ref,
+                wife_delivery_proof_ref,
                 voice_interruption_suppressed: true,
             },
         )
@@ -6829,14 +6883,21 @@ mod tests {
                 "reply_payload_1",
             )
             .unwrap();
+        let first_proof_ref = match &out {
+            SimulationDispatchOutcome::BroadcastMhpAppThreadReplyConcluded {
+                wife_delivery_proof_ref,
+                ..
+            } => wife_delivery_proof_ref.clone(),
+            _ => panic!("expected app-thread conclude outcome"),
+        };
         match out {
             SimulationDispatchOutcome::BroadcastMhpAppThreadReplyConcluded {
                 bcast,
-                wife_forward_ref,
+                wife_delivery_proof_ref,
                 voice_interruption_suppressed,
             } => {
                 assert!(voice_interruption_suppressed);
-                assert!(!wife_forward_ref.is_empty());
+                assert!(wife_delivery_proof_ref.contains("kms://delivery/app_push/default"));
                 match bcast {
                     Ph1BcastResponse::Ok(ok) => match ok.outcome {
                         BcastOutcome::AckCommit(v) => {
@@ -6849,6 +6910,30 @@ mod tests {
             }
             _ => panic!("expected app-thread conclude outcome"),
         }
+        assert_eq!(store.delivery_attempts_ledger().len(), 1);
+        assert_eq!(
+            store.delivery_attempts_ledger()[0]
+                .delivery_proof_ref
+                .as_deref(),
+            Some(first_proof_ref.as_str())
+        );
+
+        let retry_out = exec
+            .run_broadcast_mhp_app_thread_reply_conclude(
+                &mut store,
+                &ack_req,
+                "wife_thread_1",
+                "reply_payload_1",
+            )
+            .unwrap();
+        match retry_out {
+            SimulationDispatchOutcome::BroadcastMhpAppThreadReplyConcluded {
+                wife_delivery_proof_ref,
+                ..
+            } => assert_eq!(wife_delivery_proof_ref, first_proof_ref),
+            _ => panic!("expected app-thread conclude outcome"),
+        }
+        assert_eq!(store.delivery_attempts_ledger().len(), 1);
     }
 
     #[test]
