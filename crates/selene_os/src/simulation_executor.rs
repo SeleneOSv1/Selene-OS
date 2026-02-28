@@ -421,7 +421,7 @@ impl SimulationExecutor {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn execute_bcast_wait_policy_update_commit(
+    fn execute_bcast_wait_policy_update_commit(
         &self,
         store: &mut Ph1fStore,
         actor_user_id: UserId,
