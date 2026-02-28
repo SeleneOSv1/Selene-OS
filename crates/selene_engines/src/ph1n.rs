@@ -105,7 +105,11 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::MemoryRememberRequest | IntentType::MemoryQuery => {
             (SensitivityLevel::Private, false)
         }
-        IntentType::SetReminder | IntentType::CreateCalendarEvent | IntentType::BookTable => {
+        IntentType::SetReminder
+        | IntentType::UpdateReminder
+        | IntentType::CancelReminder
+        | IntentType::CreateCalendarEvent
+        | IntentType::BookTable => {
             (SensitivityLevel::Private, true)
         }
         IntentType::TimeQuery
@@ -118,7 +122,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
         | IntentType::RecordModeQuery
-        | IntentType::ConnectorQuery => (SensitivityLevel::Public, false),
+        | IntentType::ConnectorQuery
+        | IntentType::ListReminders => (SensitivityLevel::Public, false),
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
     }
 }
@@ -410,11 +415,46 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if looks_like_photo_understand(s) && !data_analysis {
         push(IntentType::PhotoUnderstandQuery);
     }
-    if s.contains("remind me") || s.contains("reminder") {
+    let reminder_cancel = (contains_word(s, "cancel")
+        || contains_word(s, "delete")
+        || contains_word(s, "remove")
+        || contains_word(s, "stop"))
+        && (contains_word(s, "reminder") || contains_word(s, "reminders"));
+    let reminder_update = (contains_word(s, "update")
+        || contains_word(s, "change")
+        || contains_word(s, "reschedule")
+        || contains_word(s, "move"))
+        && (contains_word(s, "reminder") || contains_word(s, "reminders"));
+    let reminder_list = (contains_word(s, "list")
+        || contains_word(s, "show")
+        || contains_word(s, "what")
+        || contains_word(s, "which"))
+        && (s.contains("my reminders")
+            || s.contains("list reminders")
+            || s.contains("show reminders")
+            || s.contains("upcoming reminders")
+            || s.contains("what reminders"));
+    if reminder_cancel {
+        push(IntentType::CancelReminder);
+    }
+    if reminder_update {
+        push(IntentType::UpdateReminder);
+    }
+    if reminder_list {
+        push(IntentType::ListReminders);
+    }
+    if (s.contains("remind me") || s.contains("reminder"))
+        && !reminder_cancel
+        && !reminder_update
+        && !reminder_list
+    {
         push(IntentType::SetReminder);
     }
     // Generic scheduling / defer-to-later phrasing is treated as "reminder-like" in the skeleton.
-    if (s.contains("set ") && s.contains(" for ")) || s.contains(" later") {
+    if ((s.contains("set ") && s.contains(" for ")) || s.contains(" later"))
+        && !reminder_cancel
+        && !reminder_update
+    {
         push(IntentType::SetReminder);
     }
     if (s.contains("meeting")
@@ -532,6 +572,9 @@ fn normalize_intent(
         }
 
         IntentType::SetReminder => normalize_reminder(req),
+        IntentType::UpdateReminder => normalize_update_reminder(req),
+        IntentType::CancelReminder => normalize_cancel_reminder(req),
+        IntentType::ListReminders => normalize_list_reminders(req),
         IntentType::CreateCalendarEvent => normalize_calendar_event(req),
         IntentType::BookTable => normalize_book_table(req),
         IntentType::SendMoney => normalize_send_money(req),
@@ -770,6 +813,134 @@ fn normalize_reminder(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolati
         vec![],
         OverallConfidence::High,
         evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_update_reminder(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let reminder_id = extract_reminder_id(t);
+    let when = extract_when_span(t);
+    let task = extract_update_reminder_task(t);
+
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some(reminder_id) = reminder_id {
+        fields.push(IntentField {
+            key: FieldKey::ReminderId,
+            value: FieldValue::verbatim(reminder_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::ReminderId, t, &reminder_id)?);
+    } else {
+        missing.push(FieldKey::ReminderId);
+    }
+
+    if let Some((orig, norm)) = when {
+        let value = if let Some(n) = norm {
+            FieldValue::time(orig.clone(), n)?
+        } else {
+            FieldValue::verbatim(orig.clone())?
+        };
+        fields.push(IntentField {
+            key: FieldKey::When,
+            value,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::When, t, &orig)?);
+    } else {
+        missing.push(FieldKey::When);
+    }
+
+    if let Some(task) = task {
+        fields.push(IntentField {
+            key: FieldKey::Task,
+            value: FieldValue::verbatim(task.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::Task, t, &task)?);
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::UpdateReminder),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::UpdateReminder);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::UpdateReminder,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_cancel_reminder(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let reminder_id = extract_reminder_id(t);
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some(reminder_id) = reminder_id {
+        fields.push(IntentField {
+            key: FieldKey::ReminderId,
+            value: FieldValue::verbatim(reminder_id.clone())?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::ReminderId, t, &reminder_id)?);
+    } else {
+        missing.push(FieldKey::ReminderId);
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::CancelReminder),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::CancelReminder);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::CancelReminder,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_list_reminders(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let (sens, confirm) = meta_for_intent(IntentType::ListReminders);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::ListReminders,
+        INTENT_SCHEMA_VERSION_V1,
+        vec![],
+        vec![],
+        OverallConfidence::High,
+        vec![evidence_span(FieldKey::Task, t, t)?],
         reason_codes::N_INTENT_OK,
         sens,
         confirm,
@@ -1573,6 +1744,29 @@ fn clarify_for_missing(
                 "Tonight at 8".to_string(),
             ],
         ),
+        (IntentType::UpdateReminder, FieldKey::ReminderId)
+        | (IntentType::CancelReminder, FieldKey::ReminderId) => (
+            "Which reminder should I use? Please share the reminder ID.".to_string(),
+            vec![
+                "rem_0000000000000001".to_string(),
+                "rem_0000000000000002".to_string(),
+            ],
+        ),
+        (IntentType::UpdateReminder, FieldKey::When) => (
+            "What new time should I set for that reminder?".to_string(),
+            vec![
+                "Tomorrow at 3pm".to_string(),
+                "In 30 minutes".to_string(),
+                "Friday 10am".to_string(),
+            ],
+        ),
+        (_, FieldKey::ReminderId) => (
+            "Which reminder ID should I use?".to_string(),
+            vec![
+                "rem_0000000000000001".to_string(),
+                "rem_0000000000000002".to_string(),
+            ],
+        ),
         (IntentType::CreateCalendarEvent, FieldKey::When) => (
             "When is the meeting?".to_string(),
             vec![
@@ -1821,6 +2015,7 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
         FieldKey::TenantId,
         FieldKey::Amount,
         FieldKey::Recipient,
+        FieldKey::ReminderId,
         FieldKey::Task,
         FieldKey::When,
         FieldKey::Place,
@@ -1921,6 +2116,9 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::RecordModeQuery => "Summarize recording and action items".to_string(),
         IntentType::ConnectorQuery => "Search connected apps".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
+        IntentType::UpdateReminder => "Update a reminder".to_string(),
+        IntentType::CancelReminder => "Cancel a reminder".to_string(),
+        IntentType::ListReminders => "List reminders".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
         IntentType::SendMoney => "Send money".to_string(),
@@ -2092,6 +2290,60 @@ fn extract_memory_subject(lower: &str, original: &str, markers: &[&str]) -> Opti
         }
     }
     None
+}
+
+fn extract_reminder_id(original: &str) -> Option<String> {
+    original.split_whitespace().find_map(|tok| {
+        let cleaned = tok.trim_matches(|c: char| {
+            matches!(
+                c,
+                ',' | ';' | ':' | ')' | ']' | '}' | '!' | '?' | '"' | '\'' | '(' | '[' | '{'
+            )
+        });
+        let lower = cleaned.to_ascii_lowercase();
+        if lower.starts_with("rem_") && lower.len() <= 128 {
+            Some(cleaned.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_update_reminder_task(original: &str) -> Option<String> {
+    let lower = original.to_ascii_lowercase();
+    let idx = lower.find(" to ")?;
+    let start = idx + " to ".len();
+    let tail = original[start..].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    if tail.to_ascii_lowercase().starts_with("rem_") {
+        return None;
+    }
+    let stop = earliest_stop_index(
+        tail,
+        &[
+            " tomorrow",
+            " tmr",
+            " today",
+            " tonight",
+            " monday",
+            " tuesday",
+            " wednesday",
+            " thursday",
+            " friday",
+            " saturday",
+            " sunday",
+        ],
+    );
+    let task = match stop {
+        Some(i) => tail[..i].trim(),
+        None => tail,
+    };
+    if task.is_empty() {
+        return None;
+    }
+    Some(task.to_string())
 }
 
 fn earliest_stop_index(haystack: &str, needles: &[&str]) -> Option<usize> {
@@ -3278,6 +3530,67 @@ mod tests {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::CreateCalendarEvent);
                 assert!(d.fields.iter().any(|f| f.key == FieldKey::When));
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_30_cancel_reminder_missing_id_triggers_clarify() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("Selene cancel reminder", "en")).unwrap();
+        match out {
+            Ph1nResponse::Clarify(c) => {
+                assert_eq!(c.what_is_missing, vec![FieldKey::ReminderId]);
+            }
+            _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn at_n_31_cancel_reminder_normalizes_with_reminder_id() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene cancel reminder rem_0000000000000001", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::CancelReminder);
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::ReminderId));
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_32_update_reminder_normalizes_with_id_and_when() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene update reminder rem_0000000000000001 tomorrow 3pm",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::UpdateReminder);
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::ReminderId));
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::When));
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_33_list_reminders_normalizes_read_only_intent() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("Selene list my reminders", "en")).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::ListReminders);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),

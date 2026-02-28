@@ -53,8 +53,10 @@ use selene_kernel_contracts::ph1policy::{
 };
 use selene_kernel_contracts::ph1position::{Ph1PositionRequest, Ph1PositionResponse, TenantId};
 use selene_kernel_contracts::ph1rem::{
-    Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode, ReminderPriorityLevel,
-    ReminderType, REMINDER_SCHEDULE_COMMIT,
+    Ph1RemRequest, Ph1RemResponse, ReminderCancelCommitRequest, ReminderChannel, ReminderId,
+    ReminderLocalTimeMode, ReminderPriorityLevel, ReminderRequest, ReminderRequestEnvelope,
+    ReminderType, ReminderUpdateCommitRequest, ReminderUpdateFields, REMINDER_CANCEL_COMMIT,
+    REMINDER_SCHEDULE_COMMIT, REMINDER_UPDATE_COMMIT,
 };
 use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationStatus};
 use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse, WakeRequest};
@@ -1788,6 +1790,26 @@ impl SimulationExecutor {
                     now,
                 )
             }
+            IntentType::UpdateReminder => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
+                self.enforce_reminder_mutation_gate(
+                    store,
+                    actor_user_id,
+                    &tenant_id,
+                    "REMINDER_UPDATE",
+                    now,
+                )
+            }
+            IntentType::CancelReminder => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
+                self.enforce_reminder_mutation_gate(
+                    store,
+                    actor_user_id,
+                    &tenant_id,
+                    "REMINDER_CANCEL",
+                    now,
+                )
+            }
             _ => Ok(()),
         }
     }
@@ -1919,6 +1941,88 @@ impl SimulationExecutor {
                     vec![ReminderChannel::Text],
                     idempotency_key,
                 )?;
+                let resp = self.execute_rem(store, &req)?;
+                self.best_effort_ph1m_capture_turn_digest(
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    d,
+                    x_idempotency_key,
+                );
+                Ok(SimulationDispatchOutcome::Reminder(resp))
+            }
+            IntentType::UpdateReminder => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
+                let reminder_id = parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
+                let when = required_field_value(d, FieldKey::When)?;
+                let idempotency_key = x_idempotency_key
+                    .map(|k| format!("reminder_update:{k}"))
+                    .unwrap_or_else(|| {
+                        format!("reminder_update:{}:{}", correlation_id.0, turn_id.0)
+                    });
+                let mut updated_fields = ReminderUpdateFields::empty();
+                updated_fields.desired_time = Some(field_str(when).to_string());
+                if let Some(task) = optional_field_value(d, FieldKey::Task) {
+                    updated_fields.reminder_request_text = Some(field_str(task).to_string());
+                }
+                let req = Ph1RemRequest::v1(
+                    ReminderRequestEnvelope::v1(
+                        correlation_id,
+                        turn_id,
+                        now,
+                        REMINDER_UPDATE_COMMIT.to_string(),
+                    )
+                    .map_err(StorageError::ContractViolation)?,
+                    ReminderRequest::UpdateCommit(ReminderUpdateCommitRequest {
+                        tenant_id,
+                        user_id: actor_user_id.clone(),
+                        reminder_id,
+                        updated_fields,
+                        idempotency_key,
+                    }),
+                )
+                .map_err(StorageError::ContractViolation)?;
+                let resp = self.execute_rem(store, &req)?;
+                self.best_effort_ph1m_capture_turn_digest(
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    d,
+                    x_idempotency_key,
+                );
+                Ok(SimulationDispatchOutcome::Reminder(resp))
+            }
+            IntentType::CancelReminder => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
+                let reminder_id = parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
+                let idempotency_key = x_idempotency_key
+                    .map(|k| format!("reminder_cancel:{k}"))
+                    .unwrap_or_else(|| {
+                        format!("reminder_cancel:{}:{}", correlation_id.0, turn_id.0)
+                    });
+                let cancel_reason = optional_field_value(d, FieldKey::Task)
+                    .map(|v| field_str(v).to_string());
+                let req = Ph1RemRequest::v1(
+                    ReminderRequestEnvelope::v1(
+                        correlation_id,
+                        turn_id,
+                        now,
+                        REMINDER_CANCEL_COMMIT.to_string(),
+                    )
+                    .map_err(StorageError::ContractViolation)?,
+                    ReminderRequest::CancelCommit(ReminderCancelCommitRequest {
+                        tenant_id,
+                        user_id: actor_user_id.clone(),
+                        reminder_id,
+                        cancel_reason,
+                        idempotency_key,
+                    }),
+                )
+                .map_err(StorageError::ContractViolation)?;
                 let resp = self.execute_rem(store, &req)?;
                 self.best_effort_ph1m_capture_turn_digest(
                     store,
@@ -3360,6 +3464,10 @@ fn parse_tenant_id(v: &FieldValue) -> Result<TenantId, StorageError> {
     TenantId::new(field_str(v).to_string()).map_err(StorageError::ContractViolation)
 }
 
+fn parse_reminder_id(v: &FieldValue) -> Result<ReminderId, StorageError> {
+    ReminderId::new(field_str(v).to_string()).map_err(StorageError::ContractViolation)
+}
+
 fn infer_tenant_scope_from_user_id(actor_user_id: &UserId) -> Option<String> {
     let (tenant_scope, _) = actor_user_id.as_str().split_once(':')?;
     let tenant_scope = tenant_scope.trim();
@@ -3461,6 +3569,8 @@ fn simulation_catalog_guard_target_v1(
 fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
     match d.intent_type {
         IntentType::SetReminder => Ok(REMINDER_SCHEDULE_COMMIT),
+        IntentType::UpdateReminder => Ok(REMINDER_UPDATE_COMMIT),
+        IntentType::CancelReminder => Ok(REMINDER_CANCEL_COMMIT),
         IntentType::MemoryRememberRequest => Ok(MEMORY_ATOM_UPSERT_COMMIT),
         IntentType::MemoryForgetRequest => Ok(MEMORY_FORGET_COMMIT),
         IntentType::MemoryQuery => Ok(MEMORY_RECALL_QUERY_COMMIT),
@@ -3833,6 +3943,9 @@ fn build_memory_thread_digest(
 fn intent_type_token(intent: IntentType) -> &'static str {
     match intent {
         IntentType::SetReminder => "SET_REMINDER",
+        IntentType::UpdateReminder => "UPDATE_REMINDER",
+        IntentType::CancelReminder => "CANCEL_REMINDER",
+        IntentType::ListReminders => "LIST_REMINDERS",
         IntentType::MemoryRememberRequest => "MEMORY_REMEMBER_REQUEST",
         IntentType::MemoryForgetRequest => "MEMORY_FORGET_REQUEST",
         IntentType::MemoryQuery => "MEMORY_QUERY",
@@ -3864,6 +3977,7 @@ fn field_key_token(key: FieldKey) -> &'static str {
     match key {
         FieldKey::When => "when",
         FieldKey::Task => "task",
+        FieldKey::ReminderId => "reminder_id",
         FieldKey::Person => "person",
         FieldKey::Place => "place",
         FieldKey::PartySize => "party_size",
@@ -4288,6 +4402,55 @@ mod tests {
         .unwrap()
     }
 
+    fn update_reminder_draft(reminder_id: &str, when: &str) -> IntentDraft {
+        IntentDraft::v1(
+            IntentType::UpdateReminder,
+            SchemaVersion(1),
+            vec![
+                IntentField {
+                    key: FieldKey::ReminderId,
+                    value: FieldValue::verbatim(reminder_id.to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+                IntentField {
+                    key: FieldKey::When,
+                    value: FieldValue::verbatim(when.to_string()).unwrap(),
+                    confidence: OverallConfidence::High,
+                },
+            ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn cancel_reminder_draft(reminder_id: &str) -> IntentDraft {
+        IntentDraft::v1(
+            IntentType::CancelReminder,
+            SchemaVersion(1),
+            vec![IntentField {
+                key: FieldKey::ReminderId,
+                value: FieldValue::verbatim(reminder_id.to_string()).unwrap(),
+                confidence: OverallConfidence::High,
+            }],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
     fn calendar_event_draft(when: &str, person: &str) -> IntentDraft {
         IntentDraft::v1(
             IntentType::CreateCalendarEvent,
@@ -4658,7 +4821,7 @@ mod tests {
             actor,
             tenant,
             "role.reminder_owner",
-            "{\"allow\":[\"REMINDER_SET\"]}",
+            "{\"allow\":[\"REMINDER_SET\",\"REMINDER_UPDATE\",\"REMINDER_CANCEL\"]}",
             AccessMode::A,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -5192,6 +5355,108 @@ mod tests {
             MemoryThreadEventKind::ThreadDigestUpsert
         );
         assert!(thread_rows[0].digest.thread_title.contains("SET_REMINDER"));
+    }
+
+    #[test]
+    fn at_sim_exec_update_reminder_routes_to_ph1rem_update_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_rem_update").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
+        seed_reminder_access_instance(&mut store, &actor, "tenant_1");
+
+        let schedule_draft = reminder_draft("prepare invoices", "in 5 minutes");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &schedule_draft);
+        let schedule_x = access_x(210, schedule_draft, "idem-rem-update-seed");
+        let scheduled = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(100),
+                &schedule_x,
+            )
+            .unwrap();
+        let reminder_id = match scheduled {
+            SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => ok.reminder_id,
+            _ => panic!("expected scheduled reminder"),
+        };
+
+        let update_draft = update_reminder_draft(reminder_id.as_str(), "in 30 minutes");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &update_draft);
+        let update_x = access_x(211, update_draft, "idem-rem-update");
+        let updated = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(120), &update_x)
+            .unwrap();
+        match updated {
+            SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => {
+                assert_eq!(ok.simulation_id, REMINDER_UPDATE_COMMIT);
+                assert_eq!(
+                    ok.state,
+                    selene_kernel_contracts::ph1rem::ReminderState::Scheduled
+                );
+            }
+            _ => panic!("expected update reminder outcome"),
+        }
+    }
+
+    #[test]
+    fn at_sim_exec_cancel_reminder_routes_to_ph1rem_cancel_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_rem_cancel").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
+        seed_reminder_access_instance(&mut store, &actor, "tenant_1");
+
+        let schedule_draft = reminder_draft("review payroll", "in 4 minutes");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &schedule_draft);
+        let schedule_x = access_x(220, schedule_draft, "idem-rem-cancel-seed");
+        let scheduled = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(150),
+                &schedule_x,
+            )
+            .unwrap();
+        let reminder_id = match scheduled {
+            SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => ok.reminder_id,
+            _ => panic!("expected scheduled reminder"),
+        };
+
+        let cancel_draft = cancel_reminder_draft(reminder_id.as_str());
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &cancel_draft);
+        let cancel_x = access_x(221, cancel_draft, "idem-rem-cancel");
+        let canceled = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(151), &cancel_x)
+            .unwrap();
+        match canceled {
+            SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => {
+                assert_eq!(ok.simulation_id, REMINDER_CANCEL_COMMIT);
+                assert_eq!(
+                    ok.state,
+                    selene_kernel_contracts::ph1rem::ReminderState::Canceled
+                );
+            }
+            _ => panic!("expected cancel reminder outcome"),
+        }
     }
 
     #[test]

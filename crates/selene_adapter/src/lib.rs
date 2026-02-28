@@ -6893,7 +6893,11 @@ mod tests {
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
     use selene_kernel_contracts::ph1position::TenantId;
-    use selene_kernel_contracts::ph1rem::{ReminderType, REMINDER_SCHEDULE_COMMIT};
+    use selene_kernel_contracts::ph1rem::{
+        Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode,
+        ReminderPriorityLevel, ReminderState, ReminderType, REMINDER_CANCEL_COMMIT,
+        REMINDER_SCHEDULE_COMMIT,
+    };
     use selene_kernel_contracts::ph1simcat::{
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
         SimulationVersion,
@@ -7062,6 +7066,25 @@ mod tests {
                 "role.owner".to_string(),
                 AccessMode::A,
                 "{\"allow\":[\"CALENDAR_EVENT_CREATE\"]}".to_string(),
+                true,
+                AccessVerificationLevel::PasscodeTime,
+                AccessDeviceTrustLevel::Dtl4,
+                AccessLifecycleState::Active,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
+    }
+
+    fn seed_reminder_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.owner".to_string(),
+                AccessMode::A,
+                "{\"allow\":[\"REMINDER_SET\",\"REMINDER_UPDATE\",\"REMINDER_CANCEL\",\"CALENDAR_EVENT_CREATE\"]}".to_string(),
                 true,
                 AccessVerificationLevel::PasscodeTime,
                 AccessDeviceTrustLevel::Dtl4,
@@ -8401,6 +8424,112 @@ mod tests {
         assert_eq!(reminder.reminder_type, ReminderType::Meeting);
         assert_eq!(reminder.user_id, actor_user_id);
         assert!(store.work_order_ledger().is_empty());
+    }
+
+    #[test]
+    fn at_adapter_03bb_cancel_reminder_confirm_yes_dispatches_sim_and_cancels_row() {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        let reminder_id = {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(1),
+            )
+            .expect("identity + device seed should succeed");
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_a",
+                REMINDER_CANCEL_COMMIT,
+                SimulationType::Commit,
+                SimulationStatus::Active,
+            );
+            seed_reminder_access_instance(&mut store, &actor_user_id, "tenant_a");
+            let seed_req = Ph1RemRequest::schedule_commit_v1(
+                CorrelationId(90_001),
+                TurnId(90_101),
+                MonotonicTimeNs(10),
+                TenantId::new("tenant_a".to_string()).unwrap(),
+                actor_user_id.clone(),
+                None,
+                ReminderType::Task,
+                "review payroll".to_string(),
+                "in 5 minutes".to_string(),
+                "UTC".to_string(),
+                ReminderLocalTimeMode::LocalTime,
+                ReminderPriorityLevel::Normal,
+                None,
+                vec![ReminderChannel::Text],
+                "seed_adapter_cancel".to_string(),
+            )
+            .unwrap();
+            match store.ph1rem_run(&seed_req).expect("seed reminder should schedule") {
+                Ph1RemResponse::Ok(ok) => ok.reminder_id,
+                _ => panic!("expected seeded reminder"),
+            }
+        };
+
+        let mut first = base_request();
+        first.app_platform = "DESKTOP".to_string();
+        first.trigger = "EXPLICIT".to_string();
+        first.device_id = Some("adapter_desktop_cancel_1".to_string());
+        first.thread_key = Some("cancel_reminder_thread".to_string());
+        first.correlation_id = 10_301;
+        first.turn_id = 20_301;
+        first.now_ns = Some(31);
+        first.user_text_final = Some(format!(
+            "Selene cancel reminder {}",
+            reminder_id.as_str()
+        ));
+
+        let out_first = runtime
+            .run_voice_turn(first)
+            .expect("cancel reminder first turn should return confirm");
+        assert_eq!(out_first.status, "ok");
+        assert_eq!(out_first.next_move, "clarify");
+
+        let mut second = base_request();
+        second.app_platform = "DESKTOP".to_string();
+        second.trigger = "EXPLICIT".to_string();
+        second.device_id = Some("adapter_desktop_cancel_1".to_string());
+        second.thread_key = Some("cancel_reminder_thread".to_string());
+        second.correlation_id = 10_302;
+        second.turn_id = 20_302;
+        second.now_ns = Some(32);
+        second.user_text_final = Some("yes".to_string());
+
+        let out_second = runtime
+            .run_voice_turn(second)
+            .expect("cancel reminder confirm turn should dispatch simulation");
+        assert_eq!(out_second.status, "ok");
+        assert_eq!(out_second.outcome, "DISPATCH_SIM");
+        assert_eq!(out_second.next_move, "dispatch_sim");
+        assert_eq!(out_second.response_text, "I canceled that reminder.");
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let reminder = store
+            .reminder_row(&reminder_id)
+            .expect("reminder row should exist");
+        assert_eq!(reminder.state, ReminderState::Canceled);
+    }
+
+    #[test]
+    fn at_adapter_03bc_list_reminders_uses_read_only_tool_lane_with_provenance() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.user_text_final = Some("Selene list my reminders".to_string());
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("list reminders query should succeed");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL_TOOL");
+        assert_eq!(out.next_move, "dispatch_tool");
+        assert!(out.response_text.contains("Summary:"));
+        assert!(out.provenance.is_some());
     }
 
     #[test]

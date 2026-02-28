@@ -49,9 +49,10 @@ mod tests {
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1rem::{
-        ReminderChannel, ReminderDeliverDueCommitRequest, ReminderDeliveryAttemptId,
-        ReminderLocalTimeMode, ReminderPriorityLevel, ReminderRequest, ReminderRequestEnvelope,
-        ReminderType, REMINDER_DELIVER_DUE_COMMIT,
+        ReminderCancelCommitRequest, ReminderChannel, ReminderDeliverDueCommitRequest,
+        ReminderDeliveryAttemptId, ReminderLocalTimeMode, ReminderPriorityLevel, ReminderRequest,
+        ReminderRequestEnvelope, ReminderUpdateCommitRequest, ReminderUpdateFields, ReminderType,
+        REMINDER_DELIVER_DUE_COMMIT, REMINDER_UPDATE_COMMIT,
     };
     use selene_kernel_contracts::MonotonicTimeNs;
     use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, StorageError};
@@ -263,5 +264,128 @@ mod tests {
             .expect("rebuild indexes should succeed");
         let _ = runtime.run(&mut replayed, &deliver_req).unwrap();
         assert_eq!(replayed.reminder_delivery_attempts().len(), 1);
+    }
+
+    #[test]
+    fn at_rem_db_04_schedule_with_recurrence_expands_occurrences() {
+        let mut store = seeded_store();
+        let runtime = Ph1RemRuntime;
+        let mut req = schedule_req("idem_recur_daily", "in 1 minute");
+        if let ReminderRequest::ScheduleCommit(schedule) = &mut req.request {
+            schedule.recurrence_rule = Some("FREQ=DAILY;COUNT=3".to_string());
+        } else {
+            panic!("expected schedule request");
+        }
+
+        let out = runtime.run(&mut store, &req).unwrap();
+        let reminder_id = match out {
+            Ph1RemResponse::Ok(ok) => ok.reminder_id,
+            _ => panic!("expected ok"),
+        };
+
+        let mut times: Vec<u64> = store
+            .reminder_occurrences()
+            .values()
+            .filter(|occ| occ.reminder_id == reminder_id)
+            .map(|occ| occ.scheduled_time.0)
+            .collect();
+        times.sort_unstable();
+        assert_eq!(times.len(), 3);
+        assert_eq!(times[1].saturating_sub(times[0]), 86_400_000_000_000);
+        assert_eq!(times[2].saturating_sub(times[1]), 86_400_000_000_000);
+    }
+
+    #[test]
+    fn at_rem_db_05_update_rebuilds_occurrences_for_recurrence_change() {
+        let mut store = seeded_store();
+        let runtime = Ph1RemRuntime;
+        let schedule = schedule_req("idem_recur_update_seed", "in 5 minutes");
+        let out = runtime.run(&mut store, &schedule).unwrap();
+        let reminder_id = match out {
+            Ph1RemResponse::Ok(ok) => ok.reminder_id,
+            _ => panic!("expected ok"),
+        };
+
+        let mut fields = ReminderUpdateFields::empty();
+        fields.recurrence_rule = Some(Some("FREQ=WEEKLY;COUNT=2".to_string()));
+        fields.desired_time = Some("in 10 minutes".to_string());
+        let update_req = Ph1RemRequest::v1(
+            ReminderRequestEnvelope::v1(
+                CorrelationId(104),
+                TurnId(204),
+                MonotonicTimeNs(1_300_000_000),
+                REMINDER_UPDATE_COMMIT.to_string(),
+            )
+            .unwrap(),
+            ReminderRequest::UpdateCommit(ReminderUpdateCommitRequest {
+                tenant_id: TenantId::new("tenant_demo").unwrap(),
+                user_id: UserId::new("tenant_demo:user_1").unwrap(),
+                reminder_id: reminder_id.clone(),
+                updated_fields: fields,
+                idempotency_key: "idem_recur_update".to_string(),
+            }),
+        )
+        .unwrap();
+        let update_out = runtime.run(&mut store, &update_req).unwrap();
+        let primary_occurrence_id = match update_out {
+            Ph1RemResponse::Ok(ok) => ok.occurrence_id.expect("update should return occurrence"),
+            _ => panic!("expected ok"),
+        };
+
+        let reminder = store
+            .reminder_row(&reminder_id)
+            .expect("reminder row should exist");
+        assert_eq!(reminder.primary_occurrence_id, primary_occurrence_id);
+        let mut times: Vec<u64> = store
+            .reminder_occurrences()
+            .values()
+            .filter(|occ| occ.reminder_id == reminder_id)
+            .map(|occ| occ.scheduled_time.0)
+            .collect();
+        times.sort_unstable();
+        assert_eq!(times.len(), 2);
+        assert_eq!(times[1].saturating_sub(times[0]), 604_800_000_000_000);
+    }
+
+    #[test]
+    fn at_rem_db_06_cancel_marks_all_generated_occurrences_canceled() {
+        let mut store = seeded_store();
+        let runtime = Ph1RemRuntime;
+        let mut schedule = schedule_req("idem_cancel_all", "in 1 minute");
+        if let ReminderRequest::ScheduleCommit(schedule_req) = &mut schedule.request {
+            schedule_req.recurrence_rule = Some("FREQ=DAILY;COUNT=3".to_string());
+        } else {
+            panic!("expected schedule request");
+        }
+        let out = runtime.run(&mut store, &schedule).unwrap();
+        let reminder_id = match out {
+            Ph1RemResponse::Ok(ok) => ok.reminder_id,
+            _ => panic!("expected ok"),
+        };
+        let cancel_req = Ph1RemRequest::v1(
+            ReminderRequestEnvelope::v1(
+                CorrelationId(105),
+                TurnId(205),
+                MonotonicTimeNs(1_400_000_000),
+                "REMINDER_CANCEL_COMMIT".to_string(),
+            )
+            .unwrap(),
+            ReminderRequest::CancelCommit(ReminderCancelCommitRequest {
+                tenant_id: TenantId::new("tenant_demo").unwrap(),
+                user_id: UserId::new("tenant_demo:user_1").unwrap(),
+                reminder_id: reminder_id.clone(),
+                cancel_reason: Some("user request".to_string()),
+                idempotency_key: "idem_cancel_all_occurrences".to_string(),
+            }),
+        )
+        .unwrap();
+        let _ = runtime.run(&mut store, &cancel_req).unwrap();
+        let canceled_count = store
+            .reminder_occurrences()
+            .values()
+            .filter(|occ| occ.reminder_id == reminder_id)
+            .filter(|occ| occ.state == selene_kernel_contracts::ph1rem::ReminderState::Canceled)
+            .count();
+        assert_eq!(canceled_count, 3);
     }
 }

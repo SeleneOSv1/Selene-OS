@@ -362,6 +362,120 @@ fn resolve_reminder_desired_time(now: MonotonicTimeNs, value: &str) -> Option<Mo
     None
 }
 
+const REMINDER_RECURRENCE_MAX_OCCURRENCES: usize = 365;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReminderRecurrenceFrequency {
+    Daily,
+    Weekly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReminderRecurrencePlan {
+    frequency: ReminderRecurrenceFrequency,
+    interval: u64,
+    count: usize,
+}
+
+fn parse_reminder_recurrence_plan(rule: &str) -> Option<ReminderRecurrencePlan> {
+    let trimmed = rule.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "daily" || lower == "every day" {
+        return Some(ReminderRecurrencePlan {
+            frequency: ReminderRecurrenceFrequency::Daily,
+            interval: 1,
+            count: REMINDER_RECURRENCE_MAX_OCCURRENCES,
+        });
+    }
+    if lower == "weekly" || lower == "every week" {
+        return Some(ReminderRecurrencePlan {
+            frequency: ReminderRecurrenceFrequency::Weekly,
+            interval: 1,
+            count: REMINDER_RECURRENCE_MAX_OCCURRENCES,
+        });
+    }
+
+    let body = if lower.starts_with("rrule:") {
+        &trimmed[6..]
+    } else {
+        trimmed
+    };
+
+    let mut frequency: Option<ReminderRecurrenceFrequency> = None;
+    let mut interval: u64 = 1;
+    let mut count: Option<usize> = None;
+    for part in body.split(';') {
+        let (raw_key, raw_value) = part.split_once('=')?;
+        let key = raw_key.trim().to_ascii_uppercase();
+        let value = raw_value.trim().to_ascii_uppercase();
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
+        match key.as_str() {
+            "FREQ" => {
+                frequency = match value.as_str() {
+                    "DAILY" => Some(ReminderRecurrenceFrequency::Daily),
+                    "WEEKLY" => Some(ReminderRecurrenceFrequency::Weekly),
+                    _ => None,
+                };
+            }
+            "INTERVAL" => {
+                let parsed = value.parse::<u64>().ok()?;
+                if parsed == 0 {
+                    return None;
+                }
+                interval = parsed;
+            }
+            "COUNT" => {
+                let parsed = value.parse::<usize>().ok()?;
+                if parsed == 0 {
+                    return None;
+                }
+                count = Some(parsed.min(REMINDER_RECURRENCE_MAX_OCCURRENCES));
+            }
+            _ => {}
+        }
+    }
+    let frequency = frequency?;
+    Some(ReminderRecurrencePlan {
+        frequency,
+        interval,
+        count: count.unwrap_or(REMINDER_RECURRENCE_MAX_OCCURRENCES),
+    })
+}
+
+fn reminder_occurrence_times(
+    resolved_due_at: MonotonicTimeNs,
+    recurrence_rule: Option<&str>,
+) -> Vec<MonotonicTimeNs> {
+    let mut out = vec![resolved_due_at];
+    let Some(rule) = recurrence_rule else {
+        return out;
+    };
+    let Some(plan) = parse_reminder_recurrence_plan(rule) else {
+        return out;
+    };
+    if plan.count <= 1 {
+        return out;
+    }
+    let interval_days = match plan.frequency {
+        ReminderRecurrenceFrequency::Daily => plan.interval,
+        ReminderRecurrenceFrequency::Weekly => plan.interval.saturating_mul(7),
+    };
+    let step_ns = days_to_ns(interval_days);
+    if step_ns == 0 {
+        return out;
+    }
+    for idx in 1..plan.count {
+        let delta = step_ns.saturating_mul(idx as u64);
+        out.push(MonotonicTimeNs(resolved_due_at.0.saturating_add(delta)));
+    }
+    out
+}
+
 mod reminder_reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -5438,13 +5552,42 @@ impl Ph1fStore {
         }
 
         self.next_reminder_seq = self.next_reminder_seq.saturating_add(1);
-        self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
         let reminder_id = ReminderId::new(format!("rem_{:016x}", self.next_reminder_seq))
             .map_err(StorageError::ContractViolation)?;
-        let occurrence_id =
-            ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
-                .map_err(StorageError::ContractViolation)?;
-
+        let occurrence_times = reminder_occurrence_times(resolved_due_at, r.recurrence_rule.as_deref());
+        let mut generated_occurrences: Vec<(ReminderOccurrenceId, ReminderOccurrenceRecord)> =
+            Vec::with_capacity(occurrence_times.len());
+        for scheduled_time in occurrence_times {
+            self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
+            let occurrence_id =
+                ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
+                    .map_err(StorageError::ContractViolation)?;
+            generated_occurrences.push((
+                occurrence_id.clone(),
+                ReminderOccurrenceRecord {
+                    schema_version: SchemaVersion(1),
+                    occurrence_id,
+                    reminder_id: reminder_id.clone(),
+                    scheduled_time,
+                    state: ReminderState::Scheduled,
+                    snooze_until: None,
+                    followup_time: None,
+                    retry_time: None,
+                    completed_at: None,
+                    failure_reason: None,
+                    updated_at: req.envelope.now,
+                },
+            ));
+        }
+        let primary_occurrence_id = generated_occurrences
+            .first()
+            .map(|(id, _)| id.clone())
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.schedule.occurrence_generation",
+                    reason: "must generate at least one occurrence",
+                })
+            })?;
         let row = ReminderRecord {
             schema_version: SchemaVersion(1),
             reminder_id: reminder_id.clone(),
@@ -5461,25 +5604,14 @@ impl Ph1fStore {
             recurrence_rule: r.recurrence_rule.clone(),
             channel_preferences: r.channel_preferences.clone(),
             state: ReminderState::Scheduled,
-            primary_occurrence_id: occurrence_id.clone(),
+            primary_occurrence_id: primary_occurrence_id.clone(),
             created_at: req.envelope.now,
             updated_at: req.envelope.now,
         };
-        let occ = ReminderOccurrenceRecord {
-            schema_version: SchemaVersion(1),
-            occurrence_id: occurrence_id.clone(),
-            reminder_id: reminder_id.clone(),
-            scheduled_time: resolved_due_at,
-            state: ReminderState::Scheduled,
-            snooze_until: None,
-            followup_time: None,
-            retry_time: None,
-            completed_at: None,
-            failure_reason: None,
-            updated_at: req.envelope.now,
-        };
         self.reminders.insert(reminder_id.clone(), row);
-        self.reminder_occurrences.insert(occurrence_id.clone(), occ);
+        for (occurrence_id, occ) in generated_occurrences {
+            self.reminder_occurrences.insert(occurrence_id, occ);
+        }
         self.reminder_schedule_idempotency_index
             .insert(idx, reminder_id.clone());
 
@@ -5487,7 +5619,7 @@ impl Ph1fStore {
             req.envelope.simulation_id.clone(),
             reminder_reason_codes::REMINDER_SCHEDULED,
             reminder_id,
-            Some(occurrence_id),
+            Some(primary_occurrence_id),
             ReminderState::Scheduled,
             Some(resolved_due_at),
             None,
@@ -5547,7 +5679,8 @@ impl Ph1fStore {
             None
         };
 
-        let (reminder_id, primary_occurrence_id, state_after, resolved_due_at) = {
+        let recurrence_changed = r.updated_fields.recurrence_rule.is_some();
+        let (reminder_id, mut primary_occurrence_id, state_after, resolved_due_at, recurrence_rule) = {
             let row = self.reminders.get_mut(&r.reminder_id).ok_or_else(|| {
                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                     field: "ph1rem.update.reminder_id",
@@ -5599,13 +5732,58 @@ impl Ph1fStore {
                 row.primary_occurrence_id.clone(),
                 row.state,
                 row.resolved_due_at,
+                row.recurrence_rule.clone(),
             )
         };
 
-        if let Some((_desired_time_text, parsed)) = parsed_due {
-            if let Some(occ) = self.reminder_occurrences.get_mut(&primary_occurrence_id) {
-                occ.scheduled_time = parsed;
-                occ.updated_at = req.envelope.now;
+        if parsed_due.is_some() || recurrence_changed {
+            let existing_occurrence_ids: Vec<ReminderOccurrenceId> = self
+                .reminder_occurrences
+                .iter()
+                .filter(|(_, occ)| occ.reminder_id == reminder_id)
+                .map(|(occurrence_id, _)| occurrence_id.clone())
+                .collect();
+            for occurrence_id in existing_occurrence_ids {
+                self.reminder_occurrences.remove(&occurrence_id);
+            }
+
+            let occurrence_times =
+                reminder_occurrence_times(resolved_due_at, recurrence_rule.as_deref());
+            let mut new_primary_occurrence_id: Option<ReminderOccurrenceId> = None;
+            for scheduled_time in occurrence_times {
+                self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
+                let occurrence_id =
+                    ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
+                        .map_err(StorageError::ContractViolation)?;
+                if new_primary_occurrence_id.is_none() {
+                    new_primary_occurrence_id = Some(occurrence_id.clone());
+                }
+                let occ = ReminderOccurrenceRecord {
+                    schema_version: SchemaVersion(1),
+                    occurrence_id: occurrence_id.clone(),
+                    reminder_id: reminder_id.clone(),
+                    scheduled_time,
+                    state: ReminderState::Scheduled,
+                    snooze_until: None,
+                    followup_time: None,
+                    retry_time: None,
+                    completed_at: None,
+                    failure_reason: None,
+                    updated_at: req.envelope.now,
+                };
+                self.reminder_occurrences.insert(occurrence_id, occ);
+            }
+
+            let primary = new_primary_occurrence_id.ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.update.occurrence_generation",
+                    reason: "must generate at least one occurrence",
+                })
+            })?;
+            primary_occurrence_id = primary.clone();
+            if let Some(row) = self.reminders.get_mut(&reminder_id) {
+                row.primary_occurrence_id = primary;
+                row.updated_at = req.envelope.now;
             }
         }
 

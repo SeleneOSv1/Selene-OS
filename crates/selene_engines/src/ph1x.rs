@@ -549,6 +549,7 @@ impl Ph1xRuntime {
                 | IntentType::DeepResearchQuery
                 | IntentType::RecordModeQuery
                 | IntentType::ConnectorQuery
+                | IntentType::ListReminders
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => (
@@ -592,6 +593,10 @@ impl Ph1xRuntime {
                     intent_query_text_with_thread_context(d, &base_thread_state),
                 ),
                 IntentType::ConnectorQuery => (
+                    ToolName::ConnectorQuery,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::ListReminders => (
                     ToolName::ConnectorQuery,
                     intent_query_text_with_thread_context(d, &base_thread_state),
                 ),
@@ -1654,6 +1659,16 @@ fn confirm_text(d: &IntentDraft) -> String {
             let when = field_original(d, FieldKey::When).unwrap_or("a time");
             format!("You want a reminder {when}: {task}. Is that right?")
         }
+        IntentType::UpdateReminder => {
+            let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");
+            let when = field_original(d, FieldKey::When).unwrap_or("a new time");
+            format!("You want to update {reminder_id} to {when}. Is that right?")
+        }
+        IntentType::CancelReminder => {
+            let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");
+            format!("You want to cancel {reminder_id}. Is that right?")
+        }
+        IntentType::ListReminders => "You want me to list your reminders. Is that right?".to_string(),
         IntentType::MemoryRememberRequest => {
             let subject = field_original(d, FieldKey::Task).unwrap_or("that detail");
             format!("You want me to remember this: {subject}. Is that right?")
@@ -1798,6 +1813,13 @@ fn clarify_for_missing(
                 "Tomorrow at 3pm".to_string(),
                 "Friday 10am".to_string(),
                 "2026-02-10 15:00".to_string(),
+            ],
+        ),
+        (_, FieldKey::ReminderId) => (
+            "Which reminder ID should I use?".to_string(),
+            vec![
+                "rem_0000000000000001".to_string(),
+                "rem_0000000000000002".to_string(),
             ],
         ),
         (_, FieldKey::Amount) => (
@@ -2040,6 +2062,7 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
         FieldKey::TenantId,
         FieldKey::Amount,
         FieldKey::Recipient,
+        FieldKey::ReminderId,
         FieldKey::Task,
         FieldKey::When,
     ] {
@@ -2507,6 +2530,48 @@ mod tests {
                 ));
                 match d.dispatch_request {
                     DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::PhotoUnderstand),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_dispatches_list_reminders_to_read_only_tool_lane() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            61,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::ListReminders,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::ConnectorQuery),
                     DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
                     DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
                 }
@@ -3315,6 +3380,68 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_confirm_yes_dispatches_simulation_candidate_for_cancel_reminder() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::CancelReminder);
+        d.fields = vec![IntentField {
+            key: FieldKey::ReminderId,
+            value: FieldValue::verbatim("rem_0000000000000001".to_string()).unwrap(),
+            confidence: OverallConfidence::High,
+        }];
+
+        let first = Ph1xRequest::v1(
+            71,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out1 = rt.decide(&first).unwrap();
+        assert!(matches!(out1.directive, Ph1xDirective::Confirm(_)));
+
+        let second = Ph1xRequest::v1(
+            71,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::SimulationCandidate(c) => {
+                    assert_eq!(c.intent_draft.intent_type, IntentType::CancelReminder);
+                    assert!(c.intent_draft.required_fields_missing.is_empty());
+                }
+                DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out2.thread_state.pending.is_none());
     }
 
     #[test]

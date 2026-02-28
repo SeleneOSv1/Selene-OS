@@ -736,6 +736,7 @@ fn field_key_from_str(s: &str) -> Option<FieldKey> {
     match s {
         "When" | "when" => Some(FieldKey::When),
         "Task" | "task" => Some(FieldKey::Task),
+        "ReminderId" | "reminder_id" | "reminderId" => Some(FieldKey::ReminderId),
         "Person" | "person" => Some(FieldKey::Person),
         "Place" | "place" => Some(FieldKey::Place),
         "PartySize" | "party_size" | "partySize" | "party size" => Some(FieldKey::PartySize),
@@ -766,6 +767,9 @@ fn intent_type_from_str(s: &str) -> Option<IntentType> {
     match s {
         "CreateCalendarEvent" | "create_calendar_event" => Some(IntentType::CreateCalendarEvent),
         "SetReminder" | "set_reminder" => Some(IntentType::SetReminder),
+        "UpdateReminder" | "update_reminder" => Some(IntentType::UpdateReminder),
+        "CancelReminder" | "cancel_reminder" => Some(IntentType::CancelReminder),
+        "ListReminders" | "list_reminders" => Some(IntentType::ListReminders),
         "BookTable" | "book_table" => Some(IntentType::BookTable),
         "SendMoney" | "send_money" => Some(IntentType::SendMoney),
         "CreateInviteLink" | "create_invite_link" | "createInviteLink" => {
@@ -826,6 +830,13 @@ fn clarify_for_missing_fields(
                 "Tomorrow at 3pm".to_string(),
                 "Friday 10am".to_string(),
                 "2026-02-10 15:00".to_string(),
+            ],
+        ),
+        FieldKey::ReminderId => (
+            "Which reminder ID should I use?".to_string(),
+            vec![
+                "rem_0000000000000001".to_string(),
+                "rem_0000000000000002".to_string(),
             ],
         ),
         FieldKey::Amount => (
@@ -916,6 +927,7 @@ fn select_primary_missing(missing: &[FieldKey]) -> FieldKey {
         FieldKey::TenantId,
         FieldKey::Amount,
         FieldKey::Recipient,
+        FieldKey::ReminderId,
         FieldKey::Task,
         FieldKey::When,
     ] {

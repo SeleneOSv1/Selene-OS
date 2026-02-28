@@ -167,6 +167,7 @@ fn field_name(k: FieldKey) -> &'static str {
     match k {
         FieldKey::When => "time",
         FieldKey::Task => "task",
+        FieldKey::ReminderId => "reminder ID",
         FieldKey::Person => "person",
         FieldKey::Place => "place",
         FieldKey::PartySize => "party size",

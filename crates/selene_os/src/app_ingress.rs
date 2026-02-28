@@ -2286,7 +2286,17 @@ fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> St
     match outcome {
         SimulationDispatchOutcome::LinkDelivered { .. } => "I sent the link.".to_string(),
         SimulationDispatchOutcome::Link(_) => "I generated the link.".to_string(),
-        SimulationDispatchOutcome::Reminder(_) => "I scheduled that reminder.".to_string(),
+        SimulationDispatchOutcome::Reminder(rem) => match rem {
+            selene_kernel_contracts::ph1rem::Ph1RemResponse::Ok(ok) => match ok.simulation_id.as_str()
+            {
+                "REMINDER_UPDATE_COMMIT" => "I updated that reminder.".to_string(),
+                "REMINDER_CANCEL_COMMIT" => "I canceled that reminder.".to_string(),
+                _ => "I scheduled that reminder.".to_string(),
+            },
+            selene_kernel_contracts::ph1rem::Ph1RemResponse::Refuse(_) => {
+                "I couldn't complete that reminder request.".to_string()
+            }
+        },
         SimulationDispatchOutcome::CalendarDraftCreated { .. } => {
             "Draft created; not sent to external calendar yet.".to_string()
         }
@@ -6165,5 +6175,49 @@ mod tests {
             response,
             "Draft created; not sent to external calendar yet."
         );
+    }
+
+    #[test]
+    fn run_a_response_text_for_reminder_update_is_explicit() {
+        let response = response_text_for_dispatch_outcome(&SimulationDispatchOutcome::Reminder(
+            selene_kernel_contracts::ph1rem::Ph1RemResponse::Ok(
+                selene_kernel_contracts::ph1rem::Ph1RemOk::v1(
+                    "REMINDER_UPDATE_COMMIT".to_string(),
+                    ReasonCodeId(1),
+                    selene_kernel_contracts::ph1rem::ReminderId::new("rem_test").unwrap(),
+                    None,
+                    selene_kernel_contracts::ph1rem::ReminderState::Scheduled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ),
+        ));
+        assert_eq!(response, "I updated that reminder.");
+    }
+
+    #[test]
+    fn run_a_response_text_for_reminder_cancel_is_explicit() {
+        let response = response_text_for_dispatch_outcome(&SimulationDispatchOutcome::Reminder(
+            selene_kernel_contracts::ph1rem::Ph1RemResponse::Ok(
+                selene_kernel_contracts::ph1rem::Ph1RemOk::v1(
+                    "REMINDER_CANCEL_COMMIT".to_string(),
+                    ReasonCodeId(1),
+                    selene_kernel_contracts::ph1rem::ReminderId::new("rem_test").unwrap(),
+                    None,
+                    selene_kernel_contracts::ph1rem::ReminderState::Canceled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ),
+        ));
+        assert_eq!(response, "I canceled that reminder.");
     }
 }

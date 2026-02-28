@@ -16,6 +16,9 @@ pub enum OverallConfidence {
 pub enum IntentType {
     CreateCalendarEvent,
     SetReminder,
+    UpdateReminder,
+    CancelReminder,
+    ListReminders,
     BookTable,
     SendMoney,
     /// Memory control: explicit "remember this" request.
@@ -55,6 +58,7 @@ pub enum IntentType {
 pub enum FieldKey {
     When,
     Task,
+    ReminderId,
     Person,
     Place,
     PartySize,
