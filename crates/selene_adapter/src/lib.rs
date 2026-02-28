@@ -87,7 +87,9 @@ use selene_kernel_contracts::ph1vision::{
     VisualSourceRef, VisualToken,
 };
 use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
-use selene_kernel_contracts::ph1x::{PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState};
+use selene_kernel_contracts::ph1x::{
+    ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
+};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
@@ -3592,6 +3594,8 @@ impl AdapterRuntime {
                 .with_thread_policy_flags(Some(kernel_flags))
                 .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
         }
+        let confirm_answer =
+            infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
         let locale = request
             .audio_capture_ref
             .as_ref()
@@ -3604,7 +3608,7 @@ impl AdapterRuntime {
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: Vec::new(),
-            confirm_answer: None,
+            confirm_answer,
             nlp_output: Some(nlp_output),
             tool_response: None,
             interruption: None,
@@ -4430,6 +4434,44 @@ fn user_text_looks_like_correction(text: &str) -> bool {
     normalized.contains(" i meant ")
         || normalized.contains(" correction ")
         || normalized.contains(" not that")
+}
+
+fn infer_confirm_answer_from_user_text(
+    thread_state: &ThreadState,
+    user_text_final: Option<&str>,
+) -> Option<ConfirmAnswer> {
+    let awaiting_confirm = thread_state.return_check_pending
+        || matches!(
+            thread_state.pending.as_ref(),
+            Some(PendingState::Confirm { .. } | PendingState::MemoryPermission { .. })
+        );
+    if !awaiting_confirm {
+        return None;
+    }
+
+    let normalized = user_text_final?.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    const YES_EXACT: [&str; 8] = ["yes", "y", "yeah", "yep", "confirm", "correct", "ok", "okay"];
+    const NO_EXACT: [&str; 7] = ["no", "n", "nope", "nah", "cancel", "stop", "don't"];
+    const YES_PREFIXES: [&str; 4] = ["yes,", "yes.", "confirm,", "confirm."];
+    const NO_PREFIXES: [&str; 3] = ["no,", "no.", "cancel,"];
+
+    if YES_EXACT.contains(&normalized.as_str())
+        || YES_PREFIXES
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix))
+    {
+        return Some(ConfirmAnswer::Yes);
+    }
+    if NO_EXACT.contains(&normalized.as_str())
+        || NO_PREFIXES.iter().any(|prefix| normalized.starts_with(prefix))
+    {
+        return Some(ConfirmAnswer::No);
+    }
+    None
 }
 
 fn adapter_transcript_role_from_storage(role: ConversationRole) -> AdapterTranscriptRole {
@@ -6835,12 +6877,16 @@ mod tests {
         ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
+    use selene_kernel_contracts::ph1work::WorkOrderStatus;
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1simcat::{
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
         SimulationVersion,
     };
-    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus};
+    use selene_storage::ph1f::{
+        AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
+        DeviceRecord, IdentityRecord, IdentityStatus,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn base_request() -> VoiceTurnAdapterRequest {
@@ -6987,6 +7033,25 @@ mod tests {
         )
         .unwrap();
         store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn seed_calendar_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.owner".to_string(),
+                AccessMode::A,
+                "{\"allow\":[\"CALENDAR_EVENT_CREATE\"]}".to_string(),
+                true,
+                AccessVerificationLevel::PasscodeTime,
+                AccessDeviceTrustLevel::Dtl4,
+                AccessLifecycleState::Active,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
     }
 
     fn seed_invite_link_for_click(
@@ -8234,6 +8299,80 @@ mod tests {
         assert!(!provenance.sources.is_empty());
         assert!(provenance.retrieved_at > 0);
         assert!(!provenance.cache_status.is_empty());
+    }
+
+    #[test]
+    fn at_adapter_03ba_calendar_event_confirm_yes_dispatches_sim_and_persists_work_order_draft() {
+        let runtime = AdapterRuntime::default();
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                None,
+                AppPlatform::Desktop,
+                MonotonicTimeNs(1),
+            )
+            .expect("identity + device seed should succeed");
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_a",
+                "WORK_ORDER_APPEND_COMMIT",
+                SimulationType::Commit,
+                SimulationStatus::Active,
+            );
+            seed_calendar_access_instance(&mut store, &actor_user_id, "tenant_a");
+        }
+
+        let mut first = base_request();
+        first.app_platform = "DESKTOP".to_string();
+        first.trigger = "EXPLICIT".to_string();
+        first.device_id = Some("adapter_desktop_calendar_1".to_string());
+        first.thread_key = Some("calendar_draft_thread".to_string());
+        first.correlation_id = 10_201;
+        first.turn_id = 20_201;
+        first.now_ns = Some(21);
+        first.user_text_final =
+            Some("Selene create a calendar event tomorrow 3pm called demo".to_string());
+
+        let out_first = runtime
+            .run_voice_turn(first)
+            .expect("calendar event first turn should return confirm");
+        assert_eq!(out_first.status, "ok");
+        assert_eq!(out_first.next_move, "clarify");
+
+        let mut second = base_request();
+        second.app_platform = "DESKTOP".to_string();
+        second.trigger = "EXPLICIT".to_string();
+        second.device_id = Some("adapter_desktop_calendar_1".to_string());
+        second.thread_key = Some("calendar_draft_thread".to_string());
+        second.correlation_id = 10_202;
+        second.turn_id = 20_202;
+        second.now_ns = Some(22);
+        second.user_text_final = Some("yes".to_string());
+
+        let out_second = runtime
+            .run_voice_turn(second)
+            .expect("calendar event confirm turn should dispatch simulation");
+        assert_eq!(out_second.status, "ok");
+        assert_eq!(out_second.outcome, "DISPATCH_SIM");
+        assert_eq!(out_second.next_move, "dispatch_sim");
+        assert_eq!(
+            out_second.response_text,
+            "Draft created; not sent to external calendar yet."
+        );
+        assert!(out_second.provenance.is_none());
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let matching_rows = store
+            .work_order_ledger()
+            .iter()
+            .filter(|row| row.correlation_id == CorrelationId(10_202))
+            .collect::<Vec<_>>();
+        assert_eq!(matching_rows.len(), 1);
+        assert_eq!(matching_rows[0].turn_id, TurnId(20_202));
+        assert_eq!(matching_rows[0].work_order_status, WorkOrderStatus::Draft);
     }
 
     #[test]

@@ -4604,6 +4604,71 @@ mod tests {
     }
 
     #[test]
+    fn at_x_confirm_yes_dispatches_simulation_candidate_for_calendar_event() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let d = intent_draft(IntentType::CreateCalendarEvent);
+        let first = Ph1xRequest::v1(
+            9,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        assert!(matches!(out1.directive, Ph1xDirective::Confirm(_)));
+        assert!(matches!(
+            out1.thread_state.pending,
+            Some(PendingState::Confirm { .. })
+        ));
+
+        let second = Ph1xRequest::v1(
+            9,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::SimulationCandidate(c) => {
+                    assert_eq!(c.intent_draft.intent_type, IntentType::CreateCalendarEvent);
+                }
+                DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => {
+                    panic!("expected SimulationCandidate dispatch")
+                }
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out2.thread_state.pending.is_none());
+        assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
     fn at_x_step_up_continue_dispatches_simulation_candidate() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
         let pending = ThreadState::v1(

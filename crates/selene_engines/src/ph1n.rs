@@ -421,7 +421,12 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if (s.contains("set ") && s.contains(" for ")) || s.contains(" later") {
         push(IntentType::SetReminder);
     }
-    if (s.contains("meeting") || s.contains("schedule")) && !record_mode {
+    if (s.contains("meeting")
+        || s.contains("schedule")
+        || s.contains("calendar event")
+        || (s.contains("calendar") && s.contains("create")))
+        && !record_mode
+    {
         push(IntentType::CreateCalendarEvent);
     }
     if s.contains("book a table") || s.contains("book table") {
@@ -2103,7 +2108,7 @@ fn earliest_stop_index(haystack: &str, needles: &[&str]) -> Option<usize> {
 fn extract_when_span(original: &str) -> Option<(String, Option<TimeExpression>)> {
     // Deterministic, bounded patterns. This does NOT guess.
     // - ASCII slang mapping: tmr -> tomorrow
-    // - Explicit tokens: today/tomorrow/tonight + optional time
+    // - Explicit tokens: today/tomorrow/tonight/weekday + optional time
     // - Minimal Chinese mapping: 明天 + "<digit>点"
     let lower = original.to_ascii_lowercase();
 
@@ -2118,6 +2123,13 @@ fn extract_when_span(original: &str) -> Option<(String, Option<TimeExpression>)>
         ("tomorrow", None),
         ("today", None),
         ("tonight", None),
+        ("monday", None),
+        ("tuesday", None),
+        ("wednesday", None),
+        ("thursday", None),
+        ("friday", None),
+        ("saturday", None),
+        ("sunday", None),
     ] {
         if let Some(idx) = lower.find(token) {
             match &best {
@@ -3237,6 +3249,39 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::ConnectorQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_28_calendar_event_normalizes_from_create_calendar_event_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene create a calendar event tomorrow 3pm called demo",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::CreateCalendarEvent);
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::When));
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_29_calendar_event_normalizes_from_schedule_meeting_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("Schedule meeting Friday 10am", "en")).unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::CreateCalendarEvent);
+                assert!(d.fields.iter().any(|f| f.key == FieldKey::When));
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
