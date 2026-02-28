@@ -30,7 +30,6 @@ require_match() {
 KERNEL_PH1OS="crates/selene_kernel_contracts/src/ph1os.rs"
 ENGINE_PH1OS="crates/selene_engines/src/ph1os.rs"
 RUNTIME_PH1OS="crates/selene_os/src/ph1os.rs"
-MAP_DOC="docs/06_ENGINE_MAP.md"
 DBW_DOC="docs/DB_WIRING/PH1_OS.md"
 ECM_DOC="docs/ECM/PH1_OS.md"
 
@@ -58,11 +57,6 @@ require_match "\"PH1\\.PRUNE\" => input\\.clarify_required" "$RUNTIME_PH1OS" \
   "top-level wiring must gate PH1.PRUNE on clarify_required"
 require_match "\"PH1\\.DIAG\" =>" "$RUNTIME_PH1OS" \
   "top-level wiring must gate PH1.DIAG on deterministic posture"
-
-require_match 'Clarify owner lock: only `PH1\.NLP` may own clarify decisions' "$MAP_DOC" \
-  "engine map must document single clarify owner"
-require_match "Optional-assist policy bounds \\(fail-closed\\)" "$MAP_DOC" \
-  "engine map must document optional assist policy bounds"
 
 require_match 'One clarify owner: if `clarify_required=true`, `clarify_owner_engine_id` must be `PH1\.NLP`' "$DBW_DOC" \
   "DB wiring must lock clarify owner precedence"

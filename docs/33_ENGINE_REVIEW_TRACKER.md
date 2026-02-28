@@ -1,15 +1,15 @@
-# Engine Review Tracker (From `32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE`)
+# Engine Review Tracker (Canonical Runtime Inventory)
 
 Execution plan pointer:
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/archive/34_ENGINE_CLOSURE_EXECUTION_PLAN_ARCHIVE_2026-02-19.md`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
 
 Purpose:
-- Lock the full engine inventory from `docs/archive/32_SELENE_MVP_MUST_HAVE_STACK_EXECUTION_GRADE_POINTER_ARCHIVE_2026-02-19.md`.
+- Lock the runtime engine inventory against canonical control docs (`docs/07_ENGINE_REGISTRY.md`, `docs/COVERAGE_MATRIX.md`, `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`).
 - Review one engine at a time against current Selene OS design.
 - Mark completion only after gap analysis + design updates are applied.
 
 Review order rule:
-- Order is fixed: bottom-to-top from the source file.
+- Order is fixed by the tracker table in this file.
 - Round 1 closure cycle ran sequentially from engine 01.
 - Round 2 finalization cycle follows the locked queue in `Round 2 Finalization Lock (Current Cycle)` and then resumes fixed-order traversal for remaining engines.
 
@@ -62,7 +62,7 @@ Tracker normalization notes:
 - Canonical inventory completeness rule: this tracker must include every runtime engine id in `docs/07_ENGINE_REGISTRY.md` as either:
   - a direct row (`DONE`/`EXEMPT`/`TODO`), or
   - a source-history row explicitly merged into a canonical row.
-- Registry-only canonical engines not present in source `docs/32` are tracked as addendum rows:
+- Registry-only canonical engines not present in the original legacy intake list are tracked as addendum rows:
   - `PH1.POLICY` (row 77)
   - `PH1.DELIVERY` (row 78)
   - `PH1.HEALTH` (row 79)
@@ -178,11 +178,11 @@ Locked priority queue:
 |---|---|---|---|
 | 1 | PH1.VISION | DONE | user-confirmed completed in this round |
 | 2 | PH1.K | DONE | step 1-19 complete; release gate passed; closure proof recorded |
-| 3 | PH1.C | NEXT | queue advanced after PH1.K step 19 closure |
-| 4 | PH1.D | QUEUED | executes after PH1.C |
+| 3 | PH1.C | DONE | round-2 finalization completed |
+| 4 | PH1.D | DONE | round-2 finalization completed |
 
 Current next engine:
-- `PH1.C`
+- `NONE` (locked round-2 queue completed)
 
 PH1.K strict runbook lock:
 - Active checklist source: `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5A) PH1.K Round-2 Strict Implementation Checklist (Step 1..19)`.
@@ -195,7 +195,7 @@ PH1.K strict runbook lock:
   - PH1.X interruption continuity behavior must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5D`.
   - PH1.K required update deltas must follow `docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md` section `5E`.
   - Execution order lock: complete `5D` (PH1.X behavior lock) first, then execute `5E` (PH1.K required deltas), then proceed with PH1.K implementation.
-  - Current progress (`2026-02-25`): `5D` Step 1-14 complete; `5E` Step 1-10 complete; `5A` Step 1-19 complete; queue moved to `PH1.C` as next locked engine.
+  - Current progress (`2026-02-25`): `5D` Step 1-14 complete; `5E` Step 1-10 complete; `5A` Step 1-19 complete; queue advanced through `PH1.C` and `PH1.D` with both rows now `DONE`.
 
 ## Engine 01 Review Log (`PH1.REVIEW`)
 

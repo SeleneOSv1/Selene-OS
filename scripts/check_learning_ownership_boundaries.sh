@@ -36,7 +36,6 @@ require_absent() {
   fi
 }
 
-MAP_DOC="docs/06_ENGINE_MAP.md"
 REGISTRY_DOC="docs/07_ENGINE_REGISTRY.md"
 OWNERSHIP_DOC="docs/10_DB_OWNERSHIP_MATRIX.md"
 GROUP_DBW_DOC="docs/DB_WIRING/PH1_LEARN_FEEDBACK_KNOW.md"
@@ -44,11 +43,10 @@ GROUP_ECM_DOC="docs/ECM/PH1_LEARN_FEEDBACK_KNOW.md"
 STORAGE_FILE="crates/selene_storage/src/ph1f.rs"
 STORAGE_TEST="crates/selene_storage/tests/ph1_learn_feedback_know/db_wiring.rs"
 
-require_match 'storage grouping pointer \(non-runtime\): `PH1\.LEARN_FEEDBACK_KNOW`' "$MAP_DOC" \
-  "engine map must keep PH1.LEARN_FEEDBACK_KNOW as non-runtime storage pointer only"
-
 require_absent "^\\| PH1\\.LEARN_FEEDBACK_KNOW \\|" "$REGISTRY_DOC" \
   "engine registry must not list PH1.LEARN_FEEDBACK_KNOW as a runtime engine row"
+require_match '`PH1\.LEARN_FEEDBACK_KNOW` remains canonical as a persistence grouping contract only' "$REGISTRY_DOC" \
+  "engine registry must keep PH1.LEARN_FEEDBACK_KNOW as non-runtime storage grouping only"
 require_match "Storage grouping \\(non-runtime; not a callable engine row\\):" "$REGISTRY_DOC" \
   "engine registry must include explicit storage-group note"
 require_match '`PH1\.FEEDBACK` \(feedback signal audit rows\)' "$REGISTRY_DOC" \

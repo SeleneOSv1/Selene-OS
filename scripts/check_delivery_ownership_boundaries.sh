@@ -43,7 +43,7 @@ PH1_LINK_DOC="docs/DB_WIRING/PH1_LINK.md"
 PH1_BCAST_DOC="docs/DB_WIRING/PH1_BCAST.md"
 PH1_DELIVERY_DOC="docs/DB_WIRING/PH1_DELIVERY.md"
 PH1_REM_DOC="docs/DB_WIRING/PH1_REM.md"
-ENGINE_MAP="docs/06_ENGINE_MAP.md"
+PH1_OS_DOC="docs/DB_WIRING/PH1_OS.md"
 KERNEL_LINK="crates/selene_kernel_contracts/src/ph1link.rs"
 KERNEL_DELIVERY="crates/selene_kernel_contracts/src/ph1delivery.rs"
 PH1_BCAST_RT="crates/selene_os/src/ph1bcast.rs"
@@ -94,8 +94,12 @@ require_match "Outputs_to: Selene OS .* PH1\\.BCAST recipient_state" "$PH1_DELIV
   "PH1.DELIVERY DB wiring must return proofs to Selene OS for PH1.BCAST lifecycle update"
 require_match "PH1\\.REM remains timing-only" "$PH1_REM_DOC" \
   "PH1.REM DB wiring must stay timing-only"
-require_match "Link generation: .*PH1\\.LINK.*link delivery: .*PH1\\.BCAST.*PH1\\.DELIVERY.*LINK_DELIVER_INVITE" "$ENGINE_MAP" \
-  "engine map must keep LINK delivery ownership split"
+require_match '`PH1\.BCAST\.001` owns send/resend/escalation recipient lifecycle state' "$PH1_OS_DOC" \
+  "PH1.OS DB wiring must lock PH1.BCAST lifecycle ownership"
+require_match '`PH1\.DELIVERY` owns provider-attempt execution/proof only' "$PH1_OS_DOC" \
+  "PH1.OS DB wiring must lock PH1.DELIVERY ownership as provider-attempt proof only"
+require_match "AT-OS-16: delivery ownership drift fails guardrails" "$PH1_OS_DOC" \
+  "PH1.OS DB wiring must include explicit delivery ownership guardrail acceptance lock"
 
 require_absent "Ph1Delivery|ph1delivery|Ph1Bcast|ph1bcast" "$PH1_REM_RT" \
   "PH1.REM runtime must not directly call PH1.BCAST/PH1.DELIVERY"

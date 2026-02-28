@@ -38,14 +38,14 @@ extract_function_body() {
 
 FORBIDDEN_REGEX='PH1\.(PATTERN|RLL|GOV|EXPORT|KMS)'
 PH1OS_FILE="crates/selene_os/src/ph1os.rs"
-MAP_FILE="docs/06_ENGINE_MAP.md"
+OS_DBW_DOC="docs/DB_WIRING/PH1_OS.md"
 
 if [ ! -f "$PH1OS_FILE" ]; then
   echo "MISSING_FILE:$PH1OS_FILE"
   exit 2
 fi
-if [ ! -f "$MAP_FILE" ]; then
-  echo "MISSING_FILE:$MAP_FILE"
+if [ ! -f "$OS_DBW_DOC" ]; then
+  echo "MISSING_FILE:$OS_DBW_DOC"
   exit 2
 fi
 
@@ -74,39 +74,25 @@ for engine in PH1.PATTERN PH1.RLL PH1.GOV PH1.EXPORT PH1.KMS; do
   fi
 done
 
-always_on_line="$(rg -n "^- ALWAYS_ON:" "$MAP_FILE" | head -n 1 || true)"
-optional_line="$(rg -n "^- TURN_OPTIONAL:" "$MAP_FILE" | head -n 1 || true)"
-offline_line="$(rg -n "^- OFFLINE_ONLY:" "$MAP_FILE" | head -n 1 || true)"
-enterprise_line="$(rg -n "^- ENTERPRISE_SUPPORT:" "$MAP_FILE" | head -n 1 || true)"
-
-if [ -z "$always_on_line" ] || [ -z "$optional_line" ] || [ -z "$offline_line" ] || [ -z "$enterprise_line" ]; then
-  echo "RUNTIME_BOUNDARY_FAIL:missing runtime class declaration in docs/06_ENGINE_MAP.md"
+if ! rg -n "voice path ALWAYS_ON order lock" "$OS_DBW_DOC" >/dev/null 2>&1; then
+  echo "RUNTIME_BOUNDARY_FAIL:missing voice ALWAYS_ON lock in docs/DB_WIRING/PH1_OS.md"
   exit 1
 fi
-
-if printf '%s\n' "$always_on_line" | rg -n "$FORBIDDEN_REGEX" >/dev/null 2>&1; then
-  echo "RUNTIME_BOUNDARY_FAIL:forbidden engine present in docs ALWAYS_ON"
+if ! rg -n "text path ALWAYS_ON order lock" "$OS_DBW_DOC" >/dev/null 2>&1; then
+  echo "RUNTIME_BOUNDARY_FAIL:missing text ALWAYS_ON lock in docs/DB_WIRING/PH1_OS.md"
   exit 1
 fi
-if printf '%s\n' "$optional_line" | rg -n "$FORBIDDEN_REGEX" >/dev/null 2>&1; then
-  echo "RUNTIME_BOUNDARY_FAIL:forbidden engine present in docs TURN_OPTIONAL"
+if ! rg -n "TURN_OPTIONAL ordering" "$OS_DBW_DOC" >/dev/null 2>&1; then
+  echo "RUNTIME_BOUNDARY_FAIL:missing TURN_OPTIONAL ordering lock in docs/DB_WIRING/PH1_OS.md"
   exit 1
 fi
-
-if ! printf '%s\n' "$offline_line" | grep -F "PH1.PATTERN" >/dev/null 2>&1; then
-  echo "RUNTIME_BOUNDARY_FAIL:PH1.PATTERN missing from docs OFFLINE_ONLY"
+if ! rg -n 'OFFLINE_ONLY engines \(`PH1\.PATTERN`, `PH1\.RLL`\)' "$OS_DBW_DOC" >/dev/null 2>&1; then
+  echo "RUNTIME_BOUNDARY_FAIL:PH1.PATTERN/PH1.RLL OFFLINE_ONLY lock missing in docs/DB_WIRING/PH1_OS.md"
   exit 1
 fi
-if ! printf '%s\n' "$offline_line" | grep -F "PH1.RLL" >/dev/null 2>&1; then
-  echo "RUNTIME_BOUNDARY_FAIL:PH1.RLL missing from docs OFFLINE_ONLY"
+if ! rg -n 'control-plane engines \(`PH1\.GOV`, `PH1\.EXPORT`, `PH1\.KMS`\)' "$OS_DBW_DOC" >/dev/null 2>&1; then
+  echo "RUNTIME_BOUNDARY_FAIL:PH1.GOV/PH1.EXPORT/PH1.KMS control-plane lock missing in docs/DB_WIRING/PH1_OS.md"
   exit 1
 fi
-
-for engine in PH1.GOV PH1.EXPORT PH1.KMS; do
-  if ! printf '%s\n' "$enterprise_line" | grep -F "$engine" >/dev/null 2>&1; then
-    echo "RUNTIME_BOUNDARY_FAIL:$engine missing from docs ENTERPRISE_SUPPORT"
-    exit 1
-  fi
-done
 
 echo "CHECK_OK runtime_boundary_guards=pass"
