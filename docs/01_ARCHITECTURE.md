@@ -18,6 +18,44 @@ Engines are pure workers. Engines return structured results to Selene OS. Only S
 ## Section F: No Simulation → No Execution
 Any operation with side effects is blocked unless an active simulation exists, all required gates pass, and required confirmations are complete.
 
+## Section F1: Execution Boundary Law — Probabilistic Reasoning, Deterministic Execution
+Selene must follow this architectural boundary:
+
+Probabilistic Layer (Allowed):
+- Language generation
+- Reasoning
+- Summarization
+- Research
+- Data analysis
+- Document/photo explanation
+- Connector read-only queries
+- Tone/personality shaping
+
+These may be model-driven and non-deterministic.
+
+Deterministic Boundary (Mandatory):
+- Intent -> dispatch classification
+- Access control decisions
+- Simulation execution
+- State mutation
+- Ledger writes
+- Artifact activation
+- Provider promotion/demotion
+- Onboarding progression
+- Message sending
+- Any irreversible action
+
+All execution must:
+- Pass Access checks
+- Require ACTIVE simulation IDs (when applicable)
+- Be idempotent
+- Be replay-safe
+- Be auditable
+- Fail closed on any inconsistency
+
+Language may be probabilistic.
+Execution must never be probabilistic.
+
 ## Section G: MVP pipeline summary (PH1.K → PH1.W → PH1.VOICE.ID → PH1.C → PH1.NLP → PH1.X → PH1.D/PH1.E → PH1.WRITE → PH1.TTS → PH1.L + PH1.M/F/J/EXPLAIN)
 MVP runtime flow starts with PH1.K voice substrate, PH1.W wake, PH1.VOICE.ID identity binding window, PH1.C transcript quality, PH1.NLP intent draft, PH1.X orchestration, PH1.D/PH1.E constrained phrasing/tool routing, PH1.WRITE final formatting (presentation only), PH1.TTS speech output, and lifecycle/memory/persistence/audit/explain handling through PH1.L and PH1.M/F/J/EXPLAIN.
 
