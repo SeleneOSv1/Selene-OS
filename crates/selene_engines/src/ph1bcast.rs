@@ -223,6 +223,7 @@ impl Ph1BcastRuntime {
         } else {
             BcastRecipientState::Waiting
         };
+        let non_urgent_wait_window_ns = parse_non_urgent_wait_window_ns(&r.simulation_context);
 
         let action_idx = (
             "DELIVER".to_string(),
@@ -293,11 +294,15 @@ impl Ph1BcastRuntime {
 
         let wait_until = if followup_immediate {
             None
+        } else if let Some(existing_wait_until) = existing_recipient
+            .as_ref()
+            .filter(|existing| existing.state == BcastRecipientState::Waiting)
+            .and_then(|existing| existing.wait_until)
+        {
+            Some(existing_wait_until)
         } else {
             Some(MonotonicTimeNs(
-                req.now
-                    .0
-                    .saturating_add(BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS),
+                req.now.0.saturating_add(non_urgent_wait_window_ns),
             ))
         };
         state.recipients.insert(
@@ -860,6 +865,19 @@ fn short_hash_hex(parts: &[&str]) -> String {
         h = h.wrapping_mul(0x1000_0000_01b3);
     }
     format!("{:016x}", h)
+}
+
+fn parse_non_urgent_wait_window_ns(simulation_context: &str) -> u64 {
+    for token in simulation_context.split(';').map(str::trim) {
+        let Some(raw_seconds) = token.strip_prefix("non_urgent_wait_seconds=") else {
+            continue;
+        };
+        let Ok(wait_seconds) = raw_seconds.trim().parse::<u64>() else {
+            continue;
+        };
+        return wait_seconds.saturating_mul(1_000_000_000);
+    }
+    BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS
 }
 
 #[cfg(test)]

@@ -98,6 +98,7 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::SendMoney => (SensitivityLevel::Confidential, true),
         IntentType::MemoryForgetRequest => (SensitivityLevel::Private, true),
         IntentType::CreateInviteLink
+        | IntentType::UpdateBcastWaitPolicy
         | IntentType::CapreqManage
         | IntentType::AccessSchemaManage
         | IntentType::AccessEscalationVote
@@ -109,9 +110,7 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::UpdateReminder
         | IntentType::CancelReminder
         | IntentType::CreateCalendarEvent
-        | IntentType::BookTable => {
-            (SensitivityLevel::Private, true)
-        }
+        | IntentType::BookTable => (SensitivityLevel::Private, true),
         IntentType::TimeQuery
         | IntentType::WeatherQuery
         | IntentType::WebSearchQuery
@@ -178,6 +177,23 @@ fn looks_like_generate_link(lower: &str) -> bool {
         || contains_word(lower, "create")
         || contains_word(lower, "make");
     has_link && has_generate
+}
+
+fn looks_like_bcast_wait_policy_update(lower: &str) -> bool {
+    let has_wait_phrase = (contains_word(lower, "wait")
+        && (contains_word(lower, "time")
+            || contains_word(lower, "window")
+            || contains_word(lower, "followup")
+            || contains_word(lower, "follow-up")))
+        || lower.contains("non urgent wait")
+        || lower.contains("non-urgent wait")
+        || lower.contains("followup wait")
+        || lower.contains("follow-up wait");
+    let has_update_verb = contains_word(lower, "change")
+        || contains_word(lower, "update")
+        || contains_word(lower, "set")
+        || contains_word(lower, "adjust");
+    has_wait_phrase && has_update_verb
 }
 
 fn looks_like_web_search(lower: &str) -> bool {
@@ -412,6 +428,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if connector_query {
         push(IntentType::ConnectorQuery);
     }
+    if looks_like_bcast_wait_policy_update(s) {
+        push(IntentType::UpdateBcastWaitPolicy);
+    }
     if looks_like_photo_understand(s) && !data_analysis {
         push(IntentType::PhotoUnderstandQuery);
     }
@@ -572,6 +591,7 @@ fn normalize_intent(
         }
 
         IntentType::SetReminder => normalize_reminder(req),
+        IntentType::UpdateBcastWaitPolicy => normalize_bcast_wait_policy_update(req),
         IntentType::UpdateReminder => normalize_update_reminder(req),
         IntentType::CancelReminder => normalize_cancel_reminder(req),
         IntentType::ListReminders => normalize_list_reminders(req),
@@ -808,6 +828,51 @@ fn normalize_reminder(req: &Ph1nRequest) -> Result<Ph1nResponse, ContractViolati
     let (sens, confirm) = meta_for_intent(IntentType::SetReminder);
     Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
         IntentType::SetReminder,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_bcast_wait_policy_update(
+    req: &Ph1nRequest,
+) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let duration = extract_wait_duration_seconds(&lower, t);
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some((orig, norm_seconds)) = duration {
+        fields.push(IntentField {
+            key: FieldKey::Amount,
+            value: FieldValue::normalized(orig.clone(), norm_seconds)?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::Amount, t, &orig)?);
+    } else {
+        missing.push(FieldKey::Amount);
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::UpdateBcastWaitPolicy),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::UpdateBcastWaitPolicy);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::UpdateBcastWaitPolicy,
         INTENT_SCHEMA_VERSION_V1,
         fields,
         vec![],
@@ -1799,6 +1864,14 @@ fn clarify_for_missing(
                 "15".to_string(),
             ],
         ),
+        (IntentType::UpdateBcastWaitPolicy, FieldKey::Amount) => (
+            "What non-urgent wait time should I use before follow-up?".to_string(),
+            vec![
+                "2 minutes".to_string(),
+                "300 seconds".to_string(),
+                "10 min".to_string(),
+            ],
+        ),
         (IntentType::SendMoney, FieldKey::Recipient) => (
             "Who should I send it to?".to_string(),
             vec!["To Alex".to_string(), "To John".to_string()],
@@ -2116,6 +2189,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::RecordModeQuery => "Summarize recording and action items".to_string(),
         IntentType::ConnectorQuery => "Search connected apps".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
+        IntentType::UpdateBcastWaitPolicy => "Update BCAST wait policy".to_string(),
         IntentType::UpdateReminder => "Update a reminder".to_string(),
         IntentType::CancelReminder => "Cancel a reminder".to_string(),
         IntentType::ListReminders => "List reminders".to_string(),
@@ -2621,6 +2695,79 @@ fn extract_amount(lower: &str, original: &str) -> Option<(String, Option<String>
         }
     }
     None
+}
+
+fn extract_wait_duration_seconds(lower: &str, original: &str) -> Option<(String, String)> {
+    let tokens: Vec<&str> = lower.split_whitespace().collect();
+    let orig_tokens: Vec<&str> = original.split_whitespace().collect();
+
+    for (i, tok) in tokens.iter().enumerate() {
+        let cleaned = tok.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.' | '!'));
+        if cleaned.is_empty() {
+            continue;
+        }
+
+        if let Some((count, unit_seconds)) = parse_wait_duration_inline_token(cleaned) {
+            let seconds = count.saturating_mul(unit_seconds);
+            let orig_tok = orig_tokens.get(i).copied().unwrap_or(*tok);
+            return Some((orig_tok.to_string(), seconds.to_string()));
+        }
+
+        let Some(count) = parse_wait_duration_count(cleaned) else {
+            continue;
+        };
+        let unit = tokens
+            .get(i + 1)
+            .map(|v| v.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.' | '!')))
+            .and_then(parse_wait_duration_unit_seconds);
+        let Some(unit_seconds) = unit else {
+            continue;
+        };
+        let seconds = count.saturating_mul(unit_seconds);
+        let orig_now = orig_tokens.get(i).copied().unwrap_or(*tok);
+        let orig_next = orig_tokens.get(i + 1).copied().unwrap_or("");
+        let span = if orig_next.is_empty() {
+            orig_now.to_string()
+        } else {
+            format!("{orig_now} {orig_next}")
+        };
+        return Some((span, seconds.to_string()));
+    }
+
+    None
+}
+
+fn parse_wait_duration_count(token: &str) -> Option<u32> {
+    if let Some(v) = digits_only(token) {
+        return Some(v);
+    }
+    number_word_to_digit(token).and_then(|v| digits_only(&v))
+}
+
+fn parse_wait_duration_inline_token(token: &str) -> Option<(u32, u32)> {
+    let mut split_idx = 0usize;
+    for b in token.as_bytes() {
+        if b.is_ascii_digit() {
+            split_idx += 1;
+        } else {
+            break;
+        }
+    }
+    if split_idx == 0 || split_idx >= token.len() {
+        return None;
+    }
+    let count = digits_only(&token[..split_idx])?;
+    let suffix = token[split_idx..].trim();
+    let unit_seconds = parse_wait_duration_unit_seconds(suffix)?;
+    Some((count, unit_seconds))
+}
+
+fn parse_wait_duration_unit_seconds(unit: &str) -> Option<u32> {
+    match unit.to_ascii_lowercase().as_str() {
+        "s" | "sec" | "secs" | "second" | "seconds" => Some(1),
+        "m" | "min" | "mins" | "minute" | "minutes" => Some(60),
+        _ => None,
+    }
 }
 
 fn excerpt_from_lower_match(lower: &str, original: &str, needle: &str) -> Option<String> {
@@ -3594,6 +3741,41 @@ mod tests {
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_34_update_bcast_wait_policy_normalizes_duration_seconds() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene change wait time to 2 minutes", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::UpdateBcastWaitPolicy);
+                let amount = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::Amount)
+                    .expect("duration field should exist");
+                assert_eq!(amount.value.original_span.to_ascii_lowercase(), "2 minutes");
+                assert_eq!(amount.value.normalized_value.as_deref(), Some("120"));
+                assert!(d.requires_confirmation);
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_35_update_bcast_wait_policy_missing_duration_triggers_one_question_clarify() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt.run(&req("Selene change wait time", "en")).unwrap();
+        match out {
+            Ph1nResponse::Clarify(c) => {
+                assert_eq!(c.what_is_missing, vec![FieldKey::Amount]);
+                assert_eq!(c.accepted_answer_formats.len(), 3);
+            }
+            _ => panic!("expected clarify"),
         }
     }
 }

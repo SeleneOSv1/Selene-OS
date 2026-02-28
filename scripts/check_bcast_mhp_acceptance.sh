@@ -16,6 +16,8 @@ tests=(
   at_bcast_mhp_04_app_reply_auto_concludes_and_forwards_to_wife
   at_bcast_mhp_05_reminder_set_and_fired_flow_via_ph1_rem
   at_bcast_mhp_06_fallback_order_only_when_app_unavailable
+  at_bcast_mhp_07_wait_policy_update_access_and_persistence
+  at_bcast_mhp_08_new_threads_use_updated_wait_existing_waiting_unchanged
 )
 
 for test_name in "${tests[@]}"; do

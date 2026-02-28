@@ -17,7 +17,7 @@ use selene_kernel_contracts::ph1bcast::{
     BcastRecipientRegion, BcastRecipientState, BcastRequest, BcastSimulationType,
     BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
     BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
-    PH1BCAST_CONTRACT_VERSION,
+    BCAST_WAIT_POLICY_UPDATE_COMMIT, PH1BCAST_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
@@ -207,6 +207,11 @@ pub enum SimulationDispatchOutcome {
         action: CapabilityRequestAction,
         status: CapabilityRequestStatus,
     },
+    BcastWaitPolicyUpdated {
+        tenant_id: String,
+        non_urgent_wait_seconds: u32,
+        event_id: u64,
+    },
 }
 
 pub mod reason_codes {
@@ -225,6 +230,8 @@ pub mod reason_codes {
         ReasonCodeId(0x5349_0007);
     pub const SIM_DISPATCH_SEND_LINK_DELIVERY_REFUSED: ReasonCodeId = ReasonCodeId(0x5349_0008);
 }
+
+pub const BCAST_WAIT_POLICY_UPDATE_ACTION: &str = "BCAST_WAIT_POLICY_UPDATE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BcastFollowupDeliveryMode {
@@ -411,6 +418,56 @@ impl SimulationExecutor {
         req: &Ph1CapreqRequest,
     ) -> Result<Ph1CapreqResponse, StorageError> {
         self.capreq.run(store, req)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_bcast_wait_policy_update_commit(
+        &self,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        non_urgent_wait_seconds: u32,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        reason_code: ReasonCodeId,
+        x_idempotency_key: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        self.ensure_simulation_active_for_tenant(
+            store,
+            &tenant_id,
+            BCAST_WAIT_POLICY_UPDATE_COMMIT,
+            "simulation_candidate_dispatch.bcast_wait_policy.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+        self.enforce_access_gate(
+            store,
+            &actor_user_id,
+            &tenant_id,
+            BCAST_WAIT_POLICY_UPDATE_ACTION,
+            "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
+            "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
+            now,
+        )?;
+
+        let idempotency_key = x_idempotency_key
+            .map(|k| format!("bcast_wait_policy_update:{k}"))
+            .unwrap_or_else(|| {
+                format!(
+                    "bcast_wait_policy_update:{}:{}",
+                    correlation_id.0, turn_id.0
+                )
+            });
+        store.append_bcast_wait_policy_update_event(
+            tenant_id,
+            non_urgent_wait_seconds,
+            actor_user_id,
+            correlation_id,
+            idempotency_key,
+            now,
+            reason_code,
+        )
     }
 
     pub fn ensure_simulation_active_for_tenant(
@@ -761,11 +818,39 @@ impl SimulationExecutor {
             }
         }
 
-        let response = runtime.run(req);
+        let mut effective_request = req.clone();
+        if let BcastRequest::DeliverCommit(deliver) = &mut effective_request.request {
+            let broadcast_key = (deliver.tenant_id.clone(), deliver.broadcast_id.clone());
+            let is_non_urgent = store
+                .bcast_broadcasts_current()
+                .get(&broadcast_key)
+                .map(|row| row.classification != BroadcastClassification::Emergency)
+                .unwrap_or(false);
+            if is_non_urgent {
+                let recipient_key = (
+                    deliver.tenant_id.clone(),
+                    deliver.broadcast_id.clone(),
+                    deliver.recipient_id.clone(),
+                );
+                let existing_waiting = store
+                    .bcast_recipients_current()
+                    .get(&recipient_key)
+                    .map(|row| row.recipient_state == BcastRecipientState::Waiting)
+                    .unwrap_or(false);
+                if !existing_waiting {
+                    let wait_seconds =
+                        store.bcast_non_urgent_wait_seconds_for_tenant(&deliver.tenant_id);
+                    deliver.simulation_context =
+                        ensure_bcast_wait_policy_context(&deliver.simulation_context, wait_seconds);
+                }
+            }
+        }
+
+        let response = runtime.run(&effective_request);
         response
             .validate()
             .map_err(StorageError::ContractViolation)?;
-        store.append_bcast_recipient_lifecycle_event(req.clone(), response.clone())?;
+        store.append_bcast_recipient_lifecycle_event(effective_request, response.clone())?;
         Ok(response)
     }
 
@@ -785,6 +870,24 @@ impl SimulationExecutor {
             .map_err(StorageError::ContractViolation)?;
         store.append_delivery_attempt_event(req.clone(), response.clone())?;
         Ok((response, true))
+    }
+
+    fn enforce_bcast_wait_policy_dispatch_access(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            BCAST_WAIT_POLICY_UPDATE_ACTION,
+            "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
+            "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
+            now,
+        )
     }
 
     /// Canonical BCAST -> DELIVERY bridge for provider send attempts:
@@ -1861,6 +1964,15 @@ impl SimulationExecutor {
                 let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
                 self.enforce_calendar_event_create_gate(store, actor_user_id, &tenant_id, now)
             }
+            IntentType::UpdateBcastWaitPolicy => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
+                self.enforce_bcast_wait_policy_dispatch_access(
+                    store,
+                    actor_user_id,
+                    &tenant_id,
+                    now,
+                )
+            }
             IntentType::SetReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
                 self.enforce_reminder_mutation_gate(
@@ -1996,6 +2108,37 @@ impl SimulationExecutor {
         d: &IntentDraft,
     ) -> Result<SimulationDispatchOutcome, StorageError> {
         match d.intent_type {
+            IntentType::UpdateBcastWaitPolicy => {
+                const BCAST_WAIT_POLICY_UPDATED: ReasonCodeId = ReasonCodeId(0x4243_00A5);
+                let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
+                let non_urgent_wait_seconds =
+                    parse_non_urgent_wait_seconds(required_field_value(d, FieldKey::Amount)?)?;
+                let event_id = self.execute_bcast_wait_policy_update_commit(
+                    store,
+                    actor_user_id.clone(),
+                    tenant_id.clone(),
+                    non_urgent_wait_seconds,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    BCAST_WAIT_POLICY_UPDATED,
+                    x_idempotency_key,
+                )?;
+                self.best_effort_ph1m_capture_turn_digest(
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    d,
+                    x_idempotency_key,
+                );
+                Ok(SimulationDispatchOutcome::BcastWaitPolicyUpdated {
+                    tenant_id: tenant_id.as_str().to_string(),
+                    non_urgent_wait_seconds,
+                    event_id,
+                })
+            }
             IntentType::SetReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
                 let task = required_field_value(d, FieldKey::Task)?;
@@ -3391,6 +3534,103 @@ fn field_str(v: &FieldValue) -> &str {
         .trim()
 }
 
+fn parse_non_urgent_wait_seconds(v: &FieldValue) -> Result<u32, StorageError> {
+    for candidate in [
+        v.normalized_value.as_deref(),
+        Some(v.original_span.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(seconds) = parse_wait_seconds_candidate(candidate) {
+            if seconds == 0 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.intent_draft.fields.amount",
+                        reason: "BCAST_WAIT_POLICY_INVALID_DURATION",
+                    },
+                ));
+            }
+            return Ok(seconds);
+        }
+    }
+    Err(StorageError::ContractViolation(
+        ContractViolation::InvalidValue {
+            field: "simulation_candidate_dispatch.intent_draft.fields.amount",
+            reason: "BCAST_WAIT_POLICY_INVALID_DURATION",
+        },
+    ))
+}
+
+fn parse_wait_seconds_candidate(raw: &str) -> Option<u32> {
+    let s = raw.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(v) = s.parse::<u32>() {
+        return Some(v);
+    }
+
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    for (i, token) in tokens.iter().enumerate() {
+        let cleaned = token.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.' | '!'));
+        if cleaned.is_empty() {
+            continue;
+        }
+        if let Some((count, unit_seconds)) = parse_wait_duration_inline(cleaned) {
+            return Some(count.saturating_mul(unit_seconds));
+        }
+        let Some(count) = cleaned.parse::<u32>().ok() else {
+            continue;
+        };
+        let unit = tokens
+            .get(i + 1)
+            .map(|v| v.trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '.' | '!')))
+            .and_then(parse_wait_unit_seconds);
+        if let Some(unit_seconds) = unit {
+            return Some(count.saturating_mul(unit_seconds));
+        }
+    }
+    None
+}
+
+fn parse_wait_duration_inline(token: &str) -> Option<(u32, u32)> {
+    let mut split_idx = 0usize;
+    for b in token.as_bytes() {
+        if b.is_ascii_digit() {
+            split_idx += 1;
+        } else {
+            break;
+        }
+    }
+    if split_idx == 0 || split_idx >= token.len() {
+        return None;
+    }
+    let count = token[..split_idx].parse::<u32>().ok()?;
+    let unit_seconds = parse_wait_unit_seconds(token[split_idx..].trim())?;
+    Some((count, unit_seconds))
+}
+
+fn parse_wait_unit_seconds(unit: &str) -> Option<u32> {
+    match unit {
+        "s" | "sec" | "secs" | "second" | "seconds" => Some(1),
+        "m" | "min" | "mins" | "minute" | "minutes" => Some(60),
+        _ => None,
+    }
+}
+
+fn ensure_bcast_wait_policy_context(base_context: &str, wait_seconds: u32) -> String {
+    let mut filtered_parts: Vec<&str> = base_context
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .filter(|part| !part.starts_with("non_urgent_wait_seconds="))
+        .collect();
+    let wait_token = format!("non_urgent_wait_seconds={wait_seconds}");
+    filtered_parts.push(wait_token.as_str());
+    filtered_parts.join(";")
+}
+
 fn parse_invitee_type(
     v: &FieldValue,
 ) -> Result<selene_kernel_contracts::ph1link::InviteeType, StorageError> {
@@ -3666,6 +3906,7 @@ fn simulation_catalog_guard_target_v1(
 
 fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
     match d.intent_type {
+        IntentType::UpdateBcastWaitPolicy => Ok(BCAST_WAIT_POLICY_UPDATE_COMMIT),
         IntentType::SetReminder => Ok(REMINDER_SCHEDULE_COMMIT),
         IntentType::UpdateReminder => Ok(REMINDER_UPDATE_COMMIT),
         IntentType::CancelReminder => Ok(REMINDER_CANCEL_COMMIT),
@@ -4040,6 +4281,7 @@ fn build_memory_thread_digest(
 
 fn intent_type_token(intent: IntentType) -> &'static str {
     match intent {
+        IntentType::UpdateBcastWaitPolicy => "UPDATE_BCAST_WAIT_POLICY",
         IntentType::SetReminder => "SET_REMINDER",
         IntentType::UpdateReminder => "UPDATE_REMINDER",
         IntentType::CancelReminder => "CANCEL_REMINDER",
@@ -4413,7 +4655,7 @@ mod tests {
         BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
         BCAST_ACK_COMMIT, BCAST_CREATE_DRAFT, BCAST_DEFER_COMMIT, BCAST_DELIVER_COMMIT,
         BCAST_ESCALATE_COMMIT, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS, BCAST_REMINDER_FIRED_COMMIT,
-        PH1BCAST_CONTRACT_VERSION,
+        BCAST_WAIT_POLICY_UPDATE_COMMIT, PH1BCAST_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1capreq::{
         CapabilityRequestAction, CapabilityRequestStatus, CapreqId,
@@ -4565,6 +4807,28 @@ mod tests {
                     confidence: OverallConfidence::High,
                 },
             ],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn bcast_wait_policy_update_draft(wait_seconds: &str) -> IntentDraft {
+        IntentDraft::v1(
+            IntentType::UpdateBcastWaitPolicy,
+            SchemaVersion(1),
+            vec![IntentField {
+                key: FieldKey::Amount,
+                value: FieldValue::normalized(wait_seconds.to_string(), wait_seconds.to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            }],
             vec![],
             OverallConfidence::High,
             vec![],
@@ -4949,6 +5213,20 @@ mod tests {
             identity_verified,
             device_trust_level,
             lifecycle_state,
+        );
+    }
+
+    fn seed_bcast_wait_policy_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            "role.bcast_policy_manager",
+            "{\"allow\":[\"BCAST_WAIT_POLICY_UPDATE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
         );
     }
 
@@ -5655,6 +5933,393 @@ mod tests {
                 }
             ))
         ));
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_wait_policy_update_access_deny_blocks_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_wait_policy_deny").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.bcast_policy_viewer",
+            "{\"allow\":[\"LINK_INVITE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+        let draft = bcast_wait_policy_update_draft("420");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9600, draft, "idem-bcast-wait-policy-deny");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(10),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+        assert!(store.bcast_wait_policy_ledger().is_empty());
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_wait_policy_update_access_escalate_blocks_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_wait_policy_escalate").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.bcast_policy_writer",
+            "{\"allow\":[\"BCAST_WAIT_POLICY_UPDATE\"]}",
+            AccessMode::R,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+        let draft = bcast_wait_policy_update_draft("420");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9601, draft, "idem-bcast-wait-policy-escalate");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(11),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
+        assert!(store.bcast_wait_policy_ledger().is_empty());
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_wait_policy_update_allow_and_active_commits_idempotently() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_wait_policy_allow").unwrap();
+        let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_bcast_wait_policy_access_instance(&mut store, &actor, "tenant_1");
+        let draft = bcast_wait_policy_update_draft("420");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9602, draft, "idem-bcast-wait-policy-allow");
+
+        let first = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(12),
+                &x,
+            )
+            .unwrap();
+        let event_id = match first {
+            SimulationDispatchOutcome::BcastWaitPolicyUpdated {
+                event_id,
+                tenant_id,
+                non_urgent_wait_seconds,
+            } => {
+                assert_eq!(tenant_id, "tenant_1");
+                assert_eq!(non_urgent_wait_seconds, 420);
+                event_id
+            }
+            _ => panic!("expected bcast wait policy update outcome"),
+        };
+
+        let second = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(13), &x)
+            .unwrap();
+        let event_id_retry = match second {
+            SimulationDispatchOutcome::BcastWaitPolicyUpdated { event_id, .. } => event_id,
+            _ => panic!("expected bcast wait policy update outcome"),
+        };
+
+        assert_eq!(event_id, event_id_retry);
+        assert_eq!(store.bcast_wait_policy_ledger().len(), 1);
+        let row = store
+            .bcast_wait_policy_row(event_id)
+            .expect("event row should round-trip from store");
+        assert_eq!(row.non_urgent_wait_seconds, 420);
+        let current = store
+            .bcast_wait_policy_current_row(&tenant_id)
+            .expect("current wait policy must exist");
+        assert_eq!(current.non_urgent_wait_seconds, 420);
+        assert_eq!(current.policy_version, 1);
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_wait_policy_new_non_urgent_threads_use_updated_wait_old_waiting_unchanged()
+    {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_wait_policy_apply").unwrap();
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let now = MonotonicTimeNs(7_000_000_000_000);
+
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_bcast_wait_policy_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            BCAST_WAIT_POLICY_UPDATE_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+
+        let old_draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9700),
+            turn_id: TurnId(1),
+            now,
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                audience_spec: "audience_old".to_string(),
+                classification: BroadcastClassification::Priority,
+                content_payload_ref: "payload_old".to_string(),
+                prompt_dedupe_key: Some("pd_old".to_string()),
+                idempotency_key: "idem_bcast_wait_old_draft".to_string(),
+            }),
+        };
+        let old_broadcast_id = match exec
+            .run_bcast_with_store(&mut store, &old_draft_req)
+            .unwrap()
+        {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let old_recipient_id = BroadcastRecipientId::new("recipient_wait_old").unwrap();
+        let old_deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9700),
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(now.0 + 1),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                broadcast_id: old_broadcast_id.clone(),
+                recipient_id: old_recipient_id.clone(),
+                delivery_method: BcastDeliveryMethod::SeleneApp,
+                recipient_region: BcastRecipientRegion::Global,
+                app_unavailable: false,
+                app_unavailable_proof_ref: None,
+                delivery_plan_ref: "delivery_plan_wait_old".to_string(),
+                simulation_context: "sim_ctx_wait_old".to_string(),
+                idempotency_key: "idem_bcast_wait_old_deliver".to_string(),
+            }),
+        };
+        let _old_deliver = exec
+            .run_bcast_with_store(&mut store, &old_deliver_req)
+            .unwrap();
+
+        let _policy_event_id = exec
+            .execute_bcast_wait_policy_update_commit(
+                &mut store,
+                actor.clone(),
+                tenant_id.clone(),
+                420,
+                MonotonicTimeNs(now.0 + 2),
+                CorrelationId(9701),
+                TurnId(1),
+                ReasonCodeId(0x4243_00A6),
+                Some("idem-bcast-wait-apply"),
+            )
+            .unwrap();
+
+        let new_draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9702),
+            turn_id: TurnId(1),
+            now: MonotonicTimeNs(now.0 + 3),
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                audience_spec: "audience_new".to_string(),
+                classification: BroadcastClassification::Priority,
+                content_payload_ref: "payload_new".to_string(),
+                prompt_dedupe_key: Some("pd_new".to_string()),
+                idempotency_key: "idem_bcast_wait_new_draft".to_string(),
+            }),
+        };
+        let new_broadcast_id = match exec
+            .run_bcast_with_store(&mut store, &new_draft_req)
+            .unwrap()
+        {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let new_recipient_id = BroadcastRecipientId::new("recipient_wait_new").unwrap();
+        let new_deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9702),
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(now.0 + 4),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                broadcast_id: new_broadcast_id.clone(),
+                recipient_id: new_recipient_id.clone(),
+                delivery_method: BcastDeliveryMethod::SeleneApp,
+                recipient_region: BcastRecipientRegion::Global,
+                app_unavailable: false,
+                app_unavailable_proof_ref: None,
+                delivery_plan_ref: "delivery_plan_wait_new".to_string(),
+                simulation_context: "sim_ctx_wait_new".to_string(),
+                idempotency_key: "idem_bcast_wait_new_deliver".to_string(),
+            }),
+        };
+        let _new_deliver = exec
+            .run_bcast_with_store(&mut store, &new_deliver_req)
+            .unwrap();
+
+        let old_escalate_after_default = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9700),
+            turn_id: TurnId(3),
+            now: MonotonicTimeNs(now.0 + BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS + 10),
+            simulation_id: BCAST_ESCALATE_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::EscalateCommit(BcastEscalateCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                broadcast_id: old_broadcast_id,
+                recipient_id: old_recipient_id,
+                escalation_reason: "waiting_timeout_old".to_string(),
+                idempotency_key: "idem_bcast_wait_old_escalate".to_string(),
+            }),
+        };
+        let old_escalate_out = exec
+            .run_bcast_with_store(&mut store, &old_escalate_after_default)
+            .unwrap();
+        match old_escalate_out {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::EscalateCommit(_) => {}
+                _ => panic!("expected escalate commit outcome"),
+            },
+            _ => panic!("expected ok response"),
+        }
+
+        let new_escalate_after_default = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9702),
+            turn_id: TurnId(3),
+            now: MonotonicTimeNs(now.0 + BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS + 11),
+            simulation_id: BCAST_ESCALATE_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::EscalateCommit(BcastEscalateCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                broadcast_id: new_broadcast_id.clone(),
+                recipient_id: new_recipient_id.clone(),
+                escalation_reason: "waiting_timeout_new_early".to_string(),
+                idempotency_key: "idem_bcast_wait_new_escalate_early".to_string(),
+            }),
+        };
+        let new_early_out = exec
+            .run_bcast_with_store(&mut store, &new_escalate_after_default)
+            .unwrap();
+        match new_early_out {
+            Ph1BcastResponse::Refuse(refuse) => {
+                assert_eq!(
+                    refuse.reason_code,
+                    selene_engines::ph1bcast::reason_codes::BCAST_FAIL_WAITING_WINDOW_NOT_ELAPSED
+                );
+            }
+            _ => panic!("expected waiting-window refusal"),
+        }
+
+        let new_escalate_after_policy = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9702),
+            turn_id: TurnId(4),
+            now: MonotonicTimeNs(now.0 + (420_u64 * 1_000_000_000) + 12),
+            simulation_id: BCAST_ESCALATE_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::EscalateCommit(BcastEscalateCommitRequest {
+                tenant_id,
+                sender_user_id: actor,
+                broadcast_id: new_broadcast_id,
+                recipient_id: new_recipient_id,
+                escalation_reason: "waiting_timeout_new_late".to_string(),
+                idempotency_key: "idem_bcast_wait_new_escalate_late".to_string(),
+            }),
+        };
+        let new_late_out = exec
+            .run_bcast_with_store(&mut store, &new_escalate_after_policy)
+            .unwrap();
+        match new_late_out {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::EscalateCommit(_) => {}
+                _ => panic!("expected escalate commit outcome"),
+            },
+            _ => panic!("expected ok response"),
+        }
     }
 
     #[test]
@@ -7203,7 +7868,9 @@ mod tests {
                 match delivery {
                     Ph1DeliveryResponse::Ok(ok) => match ok.outcome {
                         DeliveryOutcome::Send(v) => {
-                            assert!(v.delivery_proof_ref.contains("kms://delivery/app_push/default"));
+                            assert!(v
+                                .delivery_proof_ref
+                                .contains("kms://delivery/app_push/default"));
                         }
                         _ => panic!("expected delivery send outcome"),
                     },
@@ -7254,6 +7921,19 @@ mod tests {
     #[test]
     fn at_bcast_mhp_06_fallback_order_only_when_app_unavailable() {
         at_sim_exec_01f_bcast_fallback_order_e2e_global_path_locked();
+    }
+
+    #[test]
+    fn at_bcast_mhp_07_wait_policy_update_access_and_persistence() {
+        at_sim_exec_bcast_wait_policy_update_access_deny_blocks_commit();
+        at_sim_exec_bcast_wait_policy_update_access_escalate_blocks_commit();
+        at_sim_exec_bcast_wait_policy_update_allow_and_active_commits_idempotently();
+    }
+
+    #[test]
+    fn at_bcast_mhp_08_new_threads_use_updated_wait_existing_waiting_unchanged() {
+        at_sim_exec_bcast_wait_policy_new_non_urgent_threads_use_updated_wait_old_waiting_unchanged(
+        );
     }
 
     #[test]

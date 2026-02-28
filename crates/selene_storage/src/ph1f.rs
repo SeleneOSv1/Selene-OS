@@ -14,7 +14,8 @@ use selene_kernel_contracts::ph1art::{
 use selene_kernel_contracts::ph1bcast::{
     BcastAckStatus, BcastCapabilityId, BcastOutcome, BcastRecipientState, BcastRequest,
     BcastSimulationType, BroadcastClassification, BroadcastId, BroadcastRecipientId,
-    Ph1BcastRequest, Ph1BcastResponse, PH1BCAST_CONTRACT_VERSION,
+    Ph1BcastRequest, Ph1BcastResponse, BCAST_DEFAULT_NON_URGENT_WAIT_SECONDS,
+    PH1BCAST_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1builder::{
     BuilderApprovalState, BuilderPatchProposal, BuilderPostDeployJudgeResult, BuilderReleaseState,
@@ -1490,6 +1491,12 @@ pub struct Ph1fStore {
     delivery_send_idempotency_index: BTreeMap<(TenantId, String, String, String), u64>,
     // Primary-key uniqueness: delivery_event_id -> event_idx.
     delivery_attempt_event_lookup: BTreeMap<u64, usize>,
+    bcast_wait_policy_ledger: Vec<BcastWaitPolicyLedgerRow>,
+    bcast_wait_policy_current: BTreeMap<TenantId, BcastWaitPolicyCurrentRecord>,
+    // Idempotency: (tenant_id, idempotency_key) -> bcast_wait_policy_event_id.
+    bcast_wait_policy_idempotency_index: BTreeMap<(TenantId, String), u64>,
+    // Primary-key uniqueness: bcast_wait_policy_event_id -> event_idx.
+    bcast_wait_policy_event_lookup: BTreeMap<u64, usize>,
 
     // ------------------------
     // PH1.REM reminder persistence tables (`reminders`, `reminder_occurrences`,
@@ -1518,6 +1525,7 @@ pub struct Ph1fStore {
     reminder_delivery_attempt_lookup: BTreeMap<ReminderDeliveryAttemptId, usize>,
     next_bcast_event_id: u64,
     next_delivery_event_id: u64,
+    next_bcast_wait_policy_event_id: u64,
     next_reminder_seq: u64,
     next_reminder_occurrence_seq: u64,
 
@@ -2666,6 +2674,34 @@ pub struct DeliveryAttemptCurrentRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BcastWaitPolicyLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub bcast_wait_policy_event_id: u64,
+    pub tenant_id: TenantId,
+    pub non_urgent_wait_seconds: u32,
+    pub updated_by_user_id: UserId,
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub created_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+    pub policy_version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BcastWaitPolicyCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: TenantId,
+    pub non_urgent_wait_seconds: u32,
+    pub updated_by_user_id: UserId,
+    pub correlation_id: CorrelationId,
+    pub idempotency_key: String,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+    pub policy_version: u64,
+    pub last_bcast_wait_policy_event_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReminderRecord {
     pub schema_version: SchemaVersion,
     pub reminder_id: ReminderId,
@@ -2899,6 +2935,10 @@ impl Ph1fStore {
             delivery_attempts_current: BTreeMap::new(),
             delivery_send_idempotency_index: BTreeMap::new(),
             delivery_attempt_event_lookup: BTreeMap::new(),
+            bcast_wait_policy_ledger: Vec::new(),
+            bcast_wait_policy_current: BTreeMap::new(),
+            bcast_wait_policy_idempotency_index: BTreeMap::new(),
+            bcast_wait_policy_event_lookup: BTreeMap::new(),
             reminders: BTreeMap::new(),
             reminder_occurrences: BTreeMap::new(),
             reminder_delivery_attempts: Vec::new(),
@@ -2908,6 +2948,7 @@ impl Ph1fStore {
             reminder_delivery_attempt_lookup: BTreeMap::new(),
             next_bcast_event_id: 1,
             next_delivery_event_id: 1,
+            next_bcast_wait_policy_event_id: 1,
             next_reminder_seq: 1,
             next_reminder_occurrence_seq: 1,
             capreq_ledger_events: Vec::new(),
@@ -6368,6 +6409,195 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         Err(StorageError::AppendOnlyViolation {
             table: "delivery_attempts_ledger",
+        })
+    }
+
+    fn apply_bcast_wait_policy_event_to_current(
+        &mut self,
+        ev: &BcastWaitPolicyLedgerRow,
+    ) -> Result<(), StorageError> {
+        if ev.non_urgent_wait_seconds == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_wait_policy_ledger.non_urgent_wait_seconds",
+                    reason: "must be >= 1",
+                },
+            ));
+        }
+        self.bcast_wait_policy_current.insert(
+            ev.tenant_id.clone(),
+            BcastWaitPolicyCurrentRecord {
+                schema_version: PH1BCAST_CONTRACT_VERSION,
+                tenant_id: ev.tenant_id.clone(),
+                non_urgent_wait_seconds: ev.non_urgent_wait_seconds,
+                updated_by_user_id: ev.updated_by_user_id.clone(),
+                correlation_id: ev.correlation_id,
+                idempotency_key: ev.idempotency_key.clone(),
+                updated_at: ev.created_at,
+                reason_code: ev.reason_code,
+                policy_version: ev.policy_version,
+                last_bcast_wait_policy_event_id: ev.bcast_wait_policy_event_id,
+            },
+        );
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_bcast_wait_policy_update_event(
+        &mut self,
+        tenant_id: TenantId,
+        non_urgent_wait_seconds: u32,
+        updated_by_user_id: UserId,
+        correlation_id: CorrelationId,
+        idempotency_key: String,
+        created_at: MonotonicTimeNs,
+        reason_code: ReasonCodeId,
+    ) -> Result<u64, StorageError> {
+        validate_comms_idempotency_key(
+            "bcast_wait_policy_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+        if non_urgent_wait_seconds == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_wait_policy_ledger.non_urgent_wait_seconds",
+                    reason: "must be >= 1",
+                },
+            ));
+        }
+        let idx = (tenant_id.clone(), idempotency_key.clone());
+        if let Some(existing_event_id) = self.bcast_wait_policy_idempotency_index.get(&idx) {
+            return Ok(*existing_event_id);
+        }
+
+        let event_id = self.next_bcast_wait_policy_event_id;
+        self.next_bcast_wait_policy_event_id =
+            self.next_bcast_wait_policy_event_id.saturating_add(1);
+        let policy_version = self
+            .bcast_wait_policy_current
+            .get(&tenant_id)
+            .map(|v| v.policy_version.saturating_add(1))
+            .unwrap_or(1);
+
+        let row = BcastWaitPolicyLedgerRow {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            bcast_wait_policy_event_id: event_id,
+            tenant_id: tenant_id.clone(),
+            non_urgent_wait_seconds,
+            updated_by_user_id,
+            correlation_id,
+            idempotency_key: idempotency_key.clone(),
+            created_at,
+            reason_code,
+            policy_version,
+        };
+        self.apply_bcast_wait_policy_event_to_current(&row)?;
+
+        let event_idx = self.bcast_wait_policy_ledger.len();
+        self.bcast_wait_policy_event_lookup
+            .insert(event_id, event_idx);
+        self.bcast_wait_policy_idempotency_index
+            .insert(idx, event_id);
+        self.bcast_wait_policy_ledger.push(row);
+        Ok(event_id)
+    }
+
+    pub fn bcast_wait_policy_ledger(&self) -> &[BcastWaitPolicyLedgerRow] {
+        &self.bcast_wait_policy_ledger
+    }
+
+    pub fn bcast_wait_policy_current(&self) -> &BTreeMap<TenantId, BcastWaitPolicyCurrentRecord> {
+        &self.bcast_wait_policy_current
+    }
+
+    pub fn bcast_wait_policy_current_row(
+        &self,
+        tenant_id: &TenantId,
+    ) -> Option<&BcastWaitPolicyCurrentRecord> {
+        self.bcast_wait_policy_current.get(tenant_id)
+    }
+
+    pub fn bcast_wait_policy_row(
+        &self,
+        bcast_wait_policy_event_id: u64,
+    ) -> Option<&BcastWaitPolicyLedgerRow> {
+        let idx = self
+            .bcast_wait_policy_event_lookup
+            .get(&bcast_wait_policy_event_id)
+            .copied()?;
+        self.bcast_wait_policy_ledger.get(idx)
+    }
+
+    pub fn bcast_non_urgent_wait_seconds_for_tenant(&self, tenant_id: &TenantId) -> u32 {
+        self.bcast_wait_policy_current
+            .get(tenant_id)
+            .map(|v| v.non_urgent_wait_seconds)
+            .unwrap_or(BCAST_DEFAULT_NON_URGENT_WAIT_SECONDS)
+    }
+
+    pub fn rebuild_bcast_wait_policy_current_from_ledger(&mut self) -> Result<(), StorageError> {
+        self.bcast_wait_policy_current.clear();
+        self.bcast_wait_policy_idempotency_index.clear();
+        self.bcast_wait_policy_event_lookup.clear();
+
+        for (idx, row) in self.bcast_wait_policy_ledger.iter().enumerate() {
+            if self
+                .bcast_wait_policy_event_lookup
+                .insert(row.bcast_wait_policy_event_id, idx)
+                .is_some()
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "bcast_wait_policy_ledger",
+                    key: row.bcast_wait_policy_event_id.to_string(),
+                });
+            }
+        }
+
+        let mut ordered = self.bcast_wait_policy_ledger.clone();
+        ordered.sort_by_key(|row| row.bcast_wait_policy_event_id);
+        let mut tenant_policy_versions: BTreeMap<TenantId, u64> = BTreeMap::new();
+        for row in ordered {
+            validate_comms_idempotency_key(
+                "bcast_wait_policy_ledger.idempotency_key",
+                &row.idempotency_key,
+            )?;
+            if row.non_urgent_wait_seconds == 0 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "bcast_wait_policy_ledger.non_urgent_wait_seconds",
+                        reason: "must be >= 1",
+                    },
+                ));
+            }
+            let expected_policy_version = tenant_policy_versions
+                .get(&row.tenant_id)
+                .copied()
+                .unwrap_or(0)
+                .saturating_add(1);
+            if row.policy_version != expected_policy_version {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "bcast_wait_policy_ledger.policy_version",
+                        reason: "must increment by 1 per tenant",
+                    },
+                ));
+            }
+            tenant_policy_versions.insert(row.tenant_id.clone(), row.policy_version);
+            self.bcast_wait_policy_idempotency_index.insert(
+                (row.tenant_id.clone(), row.idempotency_key.clone()),
+                row.bcast_wait_policy_event_id,
+            );
+            self.apply_bcast_wait_policy_event_to_current(&row)?;
+        }
+        Ok(())
+    }
+
+    pub fn attempt_overwrite_bcast_wait_policy_event(
+        &mut self,
+        _bcast_wait_policy_event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "bcast_wait_policy_ledger",
         })
     }
 
@@ -21471,6 +21701,86 @@ mod tests {
                 ContractViolation::InvalidValue {
                     field: "bcast_recipient_lifecycle_current.recipient_state",
                     reason: "invalid transition for action",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_f_13_bcast_wait_policy_append_only_idempotent_and_replayable() {
+        let mut s = Ph1fStore::new_in_memory();
+        let tenant_id = tenant();
+        let actor = sender();
+        let event_id = s
+            .append_bcast_wait_policy_update_event(
+                tenant_id.clone(),
+                420,
+                actor.clone(),
+                CorrelationId(9300),
+                "bcast_wait_policy_update_1".to_string(),
+                MonotonicTimeNs(30),
+                ReasonCodeId(0x4243_00A1),
+            )
+            .unwrap();
+        let event_id_retry = s
+            .append_bcast_wait_policy_update_event(
+                tenant_id.clone(),
+                420,
+                actor.clone(),
+                CorrelationId(9300),
+                "bcast_wait_policy_update_1".to_string(),
+                MonotonicTimeNs(30),
+                ReasonCodeId(0x4243_00A1),
+            )
+            .unwrap();
+        assert_eq!(event_id, event_id_retry);
+        assert_eq!(s.bcast_wait_policy_ledger().len(), 1);
+        assert_eq!(s.bcast_non_urgent_wait_seconds_for_tenant(&tenant_id), 420);
+        let current_before = s.bcast_wait_policy_current().clone();
+        s.rebuild_bcast_wait_policy_current_from_ledger().unwrap();
+        assert_eq!(current_before, s.bcast_wait_policy_current().clone());
+        assert!(matches!(
+            s.attempt_overwrite_bcast_wait_policy_event(event_id),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn at_f_14_bcast_wait_policy_rebuild_rejects_invalid_policy_version() {
+        let mut s = Ph1fStore::new_in_memory();
+        let tenant_id = tenant();
+        s.bcast_wait_policy_ledger.push(BcastWaitPolicyLedgerRow {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            bcast_wait_policy_event_id: 1,
+            tenant_id: tenant_id.clone(),
+            non_urgent_wait_seconds: 300,
+            updated_by_user_id: sender(),
+            correlation_id: CorrelationId(9301),
+            idempotency_key: "bcast_wait_policy_update_seed_1".to_string(),
+            created_at: MonotonicTimeNs(31),
+            reason_code: ReasonCodeId(0x4243_00A1),
+            policy_version: 1,
+        });
+        s.bcast_wait_policy_ledger.push(BcastWaitPolicyLedgerRow {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            bcast_wait_policy_event_id: 2,
+            tenant_id: tenant_id.clone(),
+            non_urgent_wait_seconds: 360,
+            updated_by_user_id: sender(),
+            correlation_id: CorrelationId(9302),
+            idempotency_key: "bcast_wait_policy_update_seed_2".to_string(),
+            created_at: MonotonicTimeNs(32),
+            reason_code: ReasonCodeId(0x4243_00A2),
+            policy_version: 3,
+        });
+
+        let rebuild = s.rebuild_bcast_wait_policy_current_from_ledger();
+        assert!(matches!(
+            rebuild,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_wait_policy_ledger.policy_version",
+                    reason: "must increment by 1 per tenant",
                 }
             ))
         ));

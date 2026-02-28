@@ -767,6 +767,9 @@ fn intent_type_from_str(s: &str) -> Option<IntentType> {
     match s {
         "CreateCalendarEvent" | "create_calendar_event" => Some(IntentType::CreateCalendarEvent),
         "SetReminder" | "set_reminder" => Some(IntentType::SetReminder),
+        "UpdateBcastWaitPolicy" | "update_bcast_wait_policy" | "updateBcastWaitPolicy" => {
+            Some(IntentType::UpdateBcastWaitPolicy)
+        }
         "UpdateReminder" | "update_reminder" => Some(IntentType::UpdateReminder),
         "CancelReminder" | "cancel_reminder" => Some(IntentType::CancelReminder),
         "ListReminders" | "list_reminders" => Some(IntentType::ListReminders),

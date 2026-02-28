@@ -15,6 +15,8 @@ pub enum OverallConfidence {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntentType {
     CreateCalendarEvent,
+    /// Governance/control: update tenant BCAST non-urgent follow-up wait policy.
+    UpdateBcastWaitPolicy,
     SetReminder,
     UpdateReminder,
     CancelReminder,

@@ -2024,6 +2024,12 @@ fn confirm_text(d: &IntentDraft) -> String {
             let when = field_original(d, FieldKey::When).unwrap_or("a time");
             format!("You want a reminder {when}: {task}. Is that right?")
         }
+        IntentType::UpdateBcastWaitPolicy => {
+            let amount = field_original(d, FieldKey::Amount).unwrap_or("300 seconds");
+            format!(
+                "You want to change the non-urgent follow-up wait time to {amount}. Is that right?"
+            )
+        }
         IntentType::UpdateReminder => {
             let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");
             let when = field_original(d, FieldKey::When).unwrap_or("a new time");
@@ -2033,7 +2039,9 @@ fn confirm_text(d: &IntentDraft) -> String {
             let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");
             format!("You want to cancel {reminder_id}. Is that right?")
         }
-        IntentType::ListReminders => "You want me to list your reminders. Is that right?".to_string(),
+        IntentType::ListReminders => {
+            "You want me to list your reminders. Is that right?".to_string()
+        }
         IntentType::MemoryRememberRequest => {
             let subject = field_original(d, FieldKey::Task).unwrap_or("that detail");
             format!("You want me to remember this: {subject}. Is that right?")
@@ -2412,6 +2420,14 @@ fn clarify_for_missing(
             vec![
                 "rem_0000000000000001".to_string(),
                 "rem_0000000000000002".to_string(),
+            ],
+        ),
+        (IntentType::UpdateBcastWaitPolicy, FieldKey::Amount) => (
+            "What non-urgent wait time should I set before follow-up?".to_string(),
+            vec![
+                "2 minutes".to_string(),
+                "300 seconds".to_string(),
+                "10 min".to_string(),
             ],
         ),
         (_, FieldKey::Amount) => (
@@ -4798,6 +4814,72 @@ mod tests {
         }
         assert!(out2.thread_state.pending.is_none());
         assert!(out2.idempotency_key.is_some());
+    }
+
+    #[test]
+    fn at_x_confirm_yes_dispatches_simulation_candidate_for_bcast_wait_policy_update() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let mut d = intent_draft(IntentType::UpdateBcastWaitPolicy);
+        d.fields = vec![IntentField {
+            key: FieldKey::Amount,
+            value: FieldValue::normalized("2 minutes".to_string(), "120".to_string()).unwrap(),
+            confidence: OverallConfidence::High,
+        }];
+
+        let first = Ph1xRequest::v1(
+            19,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out1 = rt.decide(&first).unwrap();
+        assert!(matches!(out1.directive, Ph1xDirective::Confirm(_)));
+
+        let second = Ph1xRequest::v1(
+            19,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::SimulationCandidate(c) => {
+                    assert_eq!(
+                        c.intent_draft.intent_type,
+                        IntentType::UpdateBcastWaitPolicy
+                    );
+                    assert!(c.intent_draft.required_fields_missing.is_empty());
+                }
+                DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out2.thread_state.pending.is_none());
     }
 
     #[test]
