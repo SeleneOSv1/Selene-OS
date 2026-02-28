@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 
 use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
 use selene_kernel_contracts::ph1_voice_id::{
@@ -115,9 +114,7 @@ use selene_engines::ph1policy::{Ph1PolicyConfig, Ph1PolicyRuntime};
 /// Other simulations are added incrementally and must be registered in docs/08_SIMULATION_CATALOG.md.
 #[derive(Debug, Clone)]
 pub struct SimulationExecutor {
-    bcast: Ph1BcastRuntime,
     delivery: Ph1DeliveryRuntime,
-    delivery_send_idempotency: RefCell<BTreeMap<String, Ph1DeliveryResponse>>,
     link: Ph1LinkRuntime,
     memory: RefCell<Ph1mWiring<Ph1mRuntime>>,
     memory_context_lookup_count: RefCell<u64>,
@@ -262,9 +259,7 @@ struct BcastFollowupPolicyGateDecision {
 impl Default for SimulationExecutor {
     fn default() -> Self {
         Self {
-            bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
-            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link: Ph1LinkRuntime::new(Ph1LinkConfig::mvp_v1()),
             memory: RefCell::new(new_ph1m_wiring()),
             memory_context_lookup_count: RefCell::new(0),
@@ -285,9 +280,7 @@ impl Default for SimulationExecutor {
 impl SimulationExecutor {
     pub fn new(link: Ph1LinkRuntime, onb: Ph1OnbOrchRuntime) -> Self {
         Self {
-            bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
-            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             memory_context_lookup_count: RefCell::new(0),
@@ -306,9 +299,7 @@ impl SimulationExecutor {
 
     pub fn new_with_wake(link: Ph1LinkRuntime, onb: Ph1OnbOrchRuntime, wake: Ph1wRuntime) -> Self {
         Self {
-            bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
-            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             memory_context_lookup_count: RefCell::new(0),
@@ -332,9 +323,7 @@ impl SimulationExecutor {
         wake: Ph1wRuntime,
     ) -> Self {
         Self {
-            bcast: Ph1BcastRuntime::default(),
             delivery: Ph1DeliveryRuntime::default(),
-            delivery_send_idempotency: RefCell::new(BTreeMap::new()),
             link,
             memory: RefCell::new(new_ph1m_wiring()),
             memory_context_lookup_count: RefCell::new(0),
@@ -747,12 +736,64 @@ impl SimulationExecutor {
         Ok(resp)
     }
 
+    fn run_bcast_with_store(
+        &self,
+        store: &mut Ph1fStore,
+        req: &Ph1BcastRequest,
+    ) -> Result<Ph1BcastResponse, StorageError> {
+        req.validate().map_err(StorageError::ContractViolation)?;
+
+        let runtime = Ph1BcastRuntime::default();
+        let mut ordered = store.bcast_recipient_lifecycle_ledger().to_vec();
+        ordered.sort_by_key(|row| row.bcast_event_id);
+        for row in ordered {
+            let replayed = runtime.run(&row.request);
+            replayed
+                .validate()
+                .map_err(StorageError::ContractViolation)?;
+            if replayed != row.response {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1f.bcast_recipient_lifecycle_ledger",
+                        reason: "replay mismatch; ledger is not deterministic",
+                    },
+                ));
+            }
+        }
+
+        let response = runtime.run(req);
+        response
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        store.append_bcast_recipient_lifecycle_event(req.clone(), response.clone())?;
+        Ok(response)
+    }
+
+    fn run_delivery_send_with_store(
+        &self,
+        store: &mut Ph1fStore,
+        req: &Ph1DeliveryRequest,
+    ) -> Result<(Ph1DeliveryResponse, bool), StorageError> {
+        req.validate().map_err(StorageError::ContractViolation)?;
+        if let Some(existing) = store.delivery_send_response_by_idempotency(req)? {
+            return Ok((existing, false));
+        }
+
+        let response = self.delivery.run(req);
+        response
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        store.append_delivery_attempt_event(req.clone(), response.clone())?;
+        Ok((response, true))
+    }
+
     /// Canonical BCAST -> DELIVERY bridge for provider send attempts:
     /// 1) PH1.BCAST validates lifecycle and emits `delivery_request_ref`.
     /// 2) PH1.DELIVERY performs provider send under the same simulation context.
     /// 3) Returns both responses for deterministic audit/replay and downstream state updates.
     pub fn run_broadcast_deliver_with_delivery(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
     ) -> Result<SimulationDispatchOutcome, StorageError> {
         req.validate().map_err(StorageError::ContractViolation)?;
@@ -777,7 +818,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -827,46 +868,22 @@ impl SimulationExecutor {
             "delivery_send:{}:{}",
             deliver_req.idempotency_key, delivery_request_ref
         );
-        let delivery_cache_key = format!(
-            "{}:{}:{}:{}",
-            deliver_req.tenant_id.as_str(),
+        let delivery_req = Ph1DeliveryRequest::send_commit_v1(
+            req.correlation_id,
+            req.turn_id,
+            req.now,
+            deliver_req.tenant_id.clone(),
             broadcast_id,
-            deliver_req.recipient_id.as_str(),
-            delivery_idempotency_key
-        );
-        let cached_delivery = {
-            self.delivery_send_idempotency
-                .borrow()
-                .get(&delivery_cache_key)
-                .cloned()
-        };
-        let (delivery_resp, delivery_emitted) = if let Some(cached) = cached_delivery {
-            (cached, false)
-        } else {
-            let delivery_req = Ph1DeliveryRequest::send_commit_v1(
-                req.correlation_id,
-                req.turn_id,
-                req.now,
-                deliver_req.tenant_id.clone(),
-                broadcast_id,
-                deliver_req.recipient_id.as_str().to_string(),
-                channel,
-                deliver_req.delivery_plan_ref.clone(),
-                provider_ref,
-                deliver_req.simulation_context.clone(),
-                delivery_idempotency_key,
-            )
-            .map_err(StorageError::ContractViolation)?;
-
-            let delivery_resp = self.delivery.run(&delivery_req);
-            delivery_resp
-                .validate()
-                .map_err(StorageError::ContractViolation)?;
-            self.delivery_send_idempotency
-                .borrow_mut()
-                .insert(delivery_cache_key, delivery_resp.clone());
-            (delivery_resp, true)
-        };
+            deliver_req.recipient_id.as_str().to_string(),
+            channel,
+            deliver_req.delivery_plan_ref.clone(),
+            provider_ref,
+            deliver_req.simulation_context.clone(),
+            delivery_idempotency_key,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let (delivery_resp, delivery_emitted) =
+            self.run_delivery_send_with_store(store, &delivery_req)?;
 
         Ok(SimulationDispatchOutcome::BroadcastDeliverySend {
             bcast: bcast_resp,
@@ -921,7 +938,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -1000,6 +1017,7 @@ impl SimulationExecutor {
     /// Execute delivery and produce urgent follow-up decision when delivery enters FOLLOWUP immediately.
     pub fn run_broadcast_mhp_deliver_and_maybe_followup(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1008,6 +1026,7 @@ impl SimulationExecutor {
         prompt_dedupe_keys: &[String],
     ) -> Result<SimulationDispatchOutcome, StorageError> {
         self.run_broadcast_mhp_deliver_and_maybe_followup_with_delivery_hint(
+            store,
             req,
             tenant_id,
             recipient_user_id,
@@ -1025,6 +1044,7 @@ impl SimulationExecutor {
     /// - TEXT is allowed only when explicitly requested by the user or when the user cannot speak.
     pub fn run_broadcast_mhp_deliver_and_maybe_followup_with_delivery_hint(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1067,7 +1087,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -1169,6 +1189,7 @@ impl SimulationExecutor {
     /// Execute WAITING timeout follow-up transition (`WAITING -> FOLLOWUP`) and gate voice interruption via PH1.POLICY.
     pub fn run_broadcast_mhp_wait_timeout_followup(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1177,6 +1198,7 @@ impl SimulationExecutor {
         prompt_dedupe_keys: &[String],
     ) -> Result<SimulationDispatchOutcome, StorageError> {
         self.run_broadcast_mhp_wait_timeout_followup_with_delivery_hint(
+            store,
             req,
             tenant_id,
             recipient_user_id,
@@ -1194,6 +1216,7 @@ impl SimulationExecutor {
     /// - TEXT is allowed only when explicitly requested by the user or when the user cannot speak.
     pub fn run_broadcast_mhp_wait_timeout_followup_with_delivery_hint(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1236,7 +1259,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -1308,6 +1331,7 @@ impl SimulationExecutor {
     /// Resume BCAST.MHP lifecycle on reminder fire (`REMINDER_SET -> REMINDER_FIRED`).
     pub fn run_broadcast_mhp_mark_reminder_fired(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1316,6 +1340,7 @@ impl SimulationExecutor {
         prompt_dedupe_keys: &[String],
     ) -> Result<SimulationDispatchOutcome, StorageError> {
         self.run_broadcast_mhp_mark_reminder_fired_with_delivery_hint(
+            store,
             req,
             tenant_id,
             recipient_user_id,
@@ -1333,6 +1358,7 @@ impl SimulationExecutor {
     /// - TEXT is allowed only when explicitly requested by the user or when the user cannot speak.
     pub fn run_broadcast_mhp_mark_reminder_fired_with_delivery_hint(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         tenant_id: &str,
         recipient_user_id: &str,
@@ -1383,7 +1409,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -1466,6 +1492,7 @@ impl SimulationExecutor {
     /// Voice interruption is suppressed by design on this path.
     pub fn run_broadcast_mhp_app_thread_reply_conclude(
         &self,
+        store: &mut Ph1fStore,
         req: &Ph1BcastRequest,
         wife_thread_ref: &str,
         reply_payload_ref: &str,
@@ -1488,7 +1515,7 @@ impl SimulationExecutor {
             ));
         }
 
-        let bcast_resp = self.bcast.run(req);
+        let bcast_resp = self.run_bcast_with_store(store, req)?;
         bcast_resp
             .validate()
             .map_err(StorageError::ContractViolation)?;
@@ -1955,7 +1982,8 @@ impl SimulationExecutor {
             }
             IntentType::UpdateReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
-                let reminder_id = parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
+                let reminder_id =
+                    parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
                 let when = required_field_value(d, FieldKey::When)?;
                 let idempotency_key = x_idempotency_key
                     .map(|k| format!("reminder_update:{k}"))
@@ -1998,14 +2026,15 @@ impl SimulationExecutor {
             }
             IntentType::CancelReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
-                let reminder_id = parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
+                let reminder_id =
+                    parse_reminder_id(required_field_value(d, FieldKey::ReminderId)?)?;
                 let idempotency_key = x_idempotency_key
                     .map(|k| format!("reminder_cancel:{k}"))
                     .unwrap_or_else(|| {
                         format!("reminder_cancel:{}:{}", correlation_id.0, turn_id.0)
                     });
-                let cancel_reason = optional_field_value(d, FieldKey::Task)
-                    .map(|v| field_str(v).to_string());
+                let cancel_reason =
+                    optional_field_value(d, FieldKey::Task).map(|v| field_str(v).to_string());
                 let req = Ph1RemRequest::v1(
                     ReminderRequestEnvelope::v1(
                         correlation_id,
@@ -2297,7 +2326,7 @@ impl SimulationExecutor {
                 draft_req
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
-                let draft_resp = self.bcast.run(&draft_req);
+                let draft_resp = self.run_bcast_with_store(store, &draft_req)?;
                 draft_resp
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
@@ -2334,7 +2363,8 @@ impl SimulationExecutor {
                         idempotency_key: deliver_idempotency_key,
                     }),
                 };
-                let delivery_outcome = self.run_broadcast_deliver_with_delivery(&deliver_req)?;
+                let delivery_outcome =
+                    self.run_broadcast_deliver_with_delivery(store, &deliver_req)?;
                 let (bcast_resp, delivery_resp, broadcast_thread_id, delivery_emitted) =
                     match delivery_outcome {
                         SimulationDispatchOutcome::BroadcastDeliverySend {
@@ -5394,7 +5424,12 @@ mod tests {
         seed_active_simulation_for_intent_draft(&mut store, &actor, &update_draft);
         let update_x = access_x(211, update_draft, "idem-rem-update");
         let updated = exec
-            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(120), &update_x)
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(120),
+                &update_x,
+            )
             .unwrap();
         match updated {
             SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => {
@@ -5445,7 +5480,12 @@ mod tests {
         seed_active_simulation_for_intent_draft(&mut store, &actor, &cancel_draft);
         let cancel_x = access_x(221, cancel_draft, "idem-rem-cancel");
         let canceled = exec
-            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(151), &cancel_x)
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor,
+                MonotonicTimeNs(151),
+                &cancel_x,
+            )
             .unwrap();
         match canceled {
             SimulationDispatchOutcome::Reminder(Ph1RemResponse::Ok(ok)) => {
@@ -6021,7 +6061,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_1".to_string(),
             }),
         };
-        let draft_resp = exec.bcast.run(&draft_req);
+        let draft_resp = exec.run_bcast_with_store(&mut store, &draft_req).unwrap();
         let broadcast_id = match draft_resp {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
@@ -6053,7 +6093,7 @@ mod tests {
                 },
             ),
         };
-        let deliver_resp = exec.bcast.run(&deliver_req);
+        let deliver_resp = exec.run_bcast_with_store(&mut store, &deliver_req).unwrap();
         assert!(matches!(deliver_resp, Ph1BcastResponse::Ok(_)));
 
         let defer_req = Ph1BcastRequest {
@@ -6129,6 +6169,7 @@ mod tests {
 
         let fired_out = exec
             .run_broadcast_mhp_mark_reminder_fired(
+                &mut store,
                 &reminder_fired_req,
                 "tenant_1",
                 "tenant_1:recipient_1",
@@ -6217,7 +6258,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_u".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6249,6 +6290,7 @@ mod tests {
         };
         let out = exec
             .run_broadcast_mhp_deliver_and_maybe_followup(
+                &mut store,
                 &deliver_req,
                 "tenant_1",
                 recipient.as_str(),
@@ -6341,7 +6383,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_ut".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6374,6 +6416,7 @@ mod tests {
 
         let out = exec
             .run_broadcast_mhp_deliver_and_maybe_followup_with_delivery_hint(
+                &mut store,
                 &deliver_req,
                 "tenant_1",
                 recipient.as_str(),
@@ -6462,7 +6505,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_um".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6494,6 +6537,7 @@ mod tests {
         };
 
         let out = exec.run_broadcast_mhp_deliver_and_maybe_followup(
+            &mut store,
             &deliver_req,
             "tenant_1",
             recipient.as_str(),
@@ -6552,7 +6596,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_w".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6582,7 +6626,7 @@ mod tests {
                 },
             ),
         };
-        let _deliver = exec.bcast.run(&deliver_req);
+        let _deliver = exec.run_bcast_with_store(&mut store, &deliver_req).unwrap();
 
         let escalate_early = Ph1BcastRequest {
             schema_version: PH1BCAST_CONTRACT_VERSION,
@@ -6602,6 +6646,7 @@ mod tests {
         };
         assert!(exec
             .run_broadcast_mhp_wait_timeout_followup(
+                &mut store,
                 &escalate_early,
                 "tenant_1",
                 recipient.as_str(),
@@ -6629,6 +6674,7 @@ mod tests {
         };
         let out = exec
             .run_broadcast_mhp_wait_timeout_followup(
+                &mut store,
                 &escalate_late,
                 "tenant_1",
                 recipient.as_str(),
@@ -6708,7 +6754,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_a".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6737,7 +6783,7 @@ mod tests {
                 },
             ),
         };
-        let _deliver = exec.bcast.run(&deliver_req);
+        let _deliver = exec.run_bcast_with_store(&mut store, &deliver_req).unwrap();
 
         let ack_req = Ph1BcastRequest {
             schema_version: PH1BCAST_CONTRACT_VERSION,
@@ -6757,6 +6803,7 @@ mod tests {
         };
         let out = exec
             .run_broadcast_mhp_app_thread_reply_conclude(
+                &mut store,
                 &ack_req,
                 "wife_thread_1",
                 "reply_payload_1",
@@ -6822,7 +6869,7 @@ mod tests {
                 idempotency_key: "idem_bcast_draft_f".to_string(),
             }),
         };
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(r) => r.broadcast_id,
                 _ => panic!("expected draft create"),
@@ -6830,52 +6877,62 @@ mod tests {
             _ => panic!("expected draft ok"),
         };
 
-        let sms = exec.bcast.run(&Ph1BcastRequest {
-            schema_version: PH1BCAST_CONTRACT_VERSION,
-            correlation_id,
-            turn_id: TurnId(71),
-            now: MonotonicTimeNs(now.0 + 1),
-            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
-            simulation_type: BcastSimulationType::Commit,
-            request: BcastRequest::DeliverCommit(
-                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
-                    tenant_id: tenant_id.clone(),
-                    sender_user_id: sender.clone(),
-                    broadcast_id: broadcast_id.clone(),
-                    recipient_id: recipient_id.clone(),
-                    delivery_method: BcastDeliveryMethod::Sms,
-                    recipient_region: BcastRecipientRegion::Global,
-                    app_unavailable: true,
-                    delivery_plan_ref: "delivery_sms".to_string(),
-                    simulation_context: "sim_ctx_sms".to_string(),
-                    idempotency_key: "idem_bcast_sms".to_string(),
+        let sms = exec
+            .run_bcast_with_store(
+                &mut store,
+                &Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id: TurnId(71),
+                    now: MonotonicTimeNs(now.0 + 1),
+                    simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+                    simulation_type: BcastSimulationType::Commit,
+                    request: BcastRequest::DeliverCommit(
+                        selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                            tenant_id: tenant_id.clone(),
+                            sender_user_id: sender.clone(),
+                            broadcast_id: broadcast_id.clone(),
+                            recipient_id: recipient_id.clone(),
+                            delivery_method: BcastDeliveryMethod::Sms,
+                            recipient_region: BcastRecipientRegion::Global,
+                            app_unavailable: true,
+                            delivery_plan_ref: "delivery_sms".to_string(),
+                            simulation_context: "sim_ctx_sms".to_string(),
+                            idempotency_key: "idem_bcast_sms".to_string(),
+                        },
+                    ),
                 },
-            ),
-        });
+            )
+            .unwrap();
         assert!(matches!(sms, Ph1BcastResponse::Ok(_)));
 
-        let skip = exec.bcast.run(&Ph1BcastRequest {
-            schema_version: PH1BCAST_CONTRACT_VERSION,
-            correlation_id,
-            turn_id: TurnId(72),
-            now: MonotonicTimeNs(now.0 + 2),
-            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
-            simulation_type: BcastSimulationType::Commit,
-            request: BcastRequest::DeliverCommit(
-                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
-                    tenant_id: tenant_id.clone(),
-                    sender_user_id: sender.clone(),
-                    broadcast_id: broadcast_id.clone(),
-                    recipient_id: recipient_id.clone(),
-                    delivery_method: BcastDeliveryMethod::Email,
-                    recipient_region: BcastRecipientRegion::Global,
-                    app_unavailable: true,
-                    delivery_plan_ref: "delivery_skip".to_string(),
-                    simulation_context: "sim_ctx_skip".to_string(),
-                    idempotency_key: "idem_bcast_skip".to_string(),
+        let skip = exec
+            .run_bcast_with_store(
+                &mut store,
+                &Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id: TurnId(72),
+                    now: MonotonicTimeNs(now.0 + 2),
+                    simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+                    simulation_type: BcastSimulationType::Commit,
+                    request: BcastRequest::DeliverCommit(
+                        selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                            tenant_id: tenant_id.clone(),
+                            sender_user_id: sender.clone(),
+                            broadcast_id: broadcast_id.clone(),
+                            recipient_id: recipient_id.clone(),
+                            delivery_method: BcastDeliveryMethod::Email,
+                            recipient_region: BcastRecipientRegion::Global,
+                            app_unavailable: true,
+                            delivery_plan_ref: "delivery_skip".to_string(),
+                            simulation_context: "sim_ctx_skip".to_string(),
+                            idempotency_key: "idem_bcast_skip".to_string(),
+                        },
+                    ),
                 },
-            ),
-        });
+            )
+            .unwrap();
         match skip {
             Ph1BcastResponse::Refuse(r) => {
                 assert_eq!(
@@ -6886,57 +6943,68 @@ mod tests {
             _ => panic!("expected fallback skip refusal"),
         }
 
-        let whatsapp = exec.bcast.run(&Ph1BcastRequest {
-            schema_version: PH1BCAST_CONTRACT_VERSION,
-            correlation_id,
-            turn_id: TurnId(73),
-            now: MonotonicTimeNs(now.0 + 3),
-            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
-            simulation_type: BcastSimulationType::Commit,
-            request: BcastRequest::DeliverCommit(
-                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
-                    tenant_id: tenant_id.clone(),
-                    sender_user_id: sender.clone(),
-                    broadcast_id: broadcast_id.clone(),
-                    recipient_id: recipient_id.clone(),
-                    delivery_method: BcastDeliveryMethod::Whatsapp,
-                    recipient_region: BcastRecipientRegion::Global,
-                    app_unavailable: true,
-                    delivery_plan_ref: "delivery_whatsapp".to_string(),
-                    simulation_context: "sim_ctx_whatsapp".to_string(),
-                    idempotency_key: "idem_bcast_whatsapp".to_string(),
+        let whatsapp = exec
+            .run_bcast_with_store(
+                &mut store,
+                &Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id: TurnId(73),
+                    now: MonotonicTimeNs(now.0 + 3),
+                    simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+                    simulation_type: BcastSimulationType::Commit,
+                    request: BcastRequest::DeliverCommit(
+                        selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                            tenant_id: tenant_id.clone(),
+                            sender_user_id: sender.clone(),
+                            broadcast_id: broadcast_id.clone(),
+                            recipient_id: recipient_id.clone(),
+                            delivery_method: BcastDeliveryMethod::Whatsapp,
+                            recipient_region: BcastRecipientRegion::Global,
+                            app_unavailable: true,
+                            delivery_plan_ref: "delivery_whatsapp".to_string(),
+                            simulation_context: "sim_ctx_whatsapp".to_string(),
+                            idempotency_key: "idem_bcast_whatsapp".to_string(),
+                        },
+                    ),
                 },
-            ),
-        });
+            )
+            .unwrap();
         assert!(matches!(whatsapp, Ph1BcastResponse::Ok(_)));
 
-        let email = exec.bcast.run(&Ph1BcastRequest {
-            schema_version: PH1BCAST_CONTRACT_VERSION,
-            correlation_id,
-            turn_id: TurnId(74),
-            now: MonotonicTimeNs(now.0 + 4),
-            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
-            simulation_type: BcastSimulationType::Commit,
-            request: BcastRequest::DeliverCommit(
-                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
-                    tenant_id,
-                    sender_user_id: sender,
-                    broadcast_id,
-                    recipient_id,
-                    delivery_method: BcastDeliveryMethod::Email,
-                    recipient_region: BcastRecipientRegion::Global,
-                    app_unavailable: true,
-                    delivery_plan_ref: "delivery_email".to_string(),
-                    simulation_context: "sim_ctx_email".to_string(),
-                    idempotency_key: "idem_bcast_email".to_string(),
+        let email = exec
+            .run_bcast_with_store(
+                &mut store,
+                &Ph1BcastRequest {
+                    schema_version: PH1BCAST_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id: TurnId(74),
+                    now: MonotonicTimeNs(now.0 + 4),
+                    simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+                    simulation_type: BcastSimulationType::Commit,
+                    request: BcastRequest::DeliverCommit(
+                        selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                            tenant_id,
+                            sender_user_id: sender,
+                            broadcast_id,
+                            recipient_id,
+                            delivery_method: BcastDeliveryMethod::Email,
+                            recipient_region: BcastRecipientRegion::Global,
+                            app_unavailable: true,
+                            delivery_plan_ref: "delivery_email".to_string(),
+                            simulation_context: "sim_ctx_email".to_string(),
+                            idempotency_key: "idem_bcast_email".to_string(),
+                        },
+                    ),
                 },
-            ),
-        });
+            )
+            .unwrap();
         assert!(matches!(email, Ph1BcastResponse::Ok(_)));
     }
 
     #[test]
     fn at_sim_exec_01g_bcast_deliver_is_wired_to_ph1_delivery_send() {
+        let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
 
         let correlation_id = CorrelationId(906);
@@ -6963,7 +7031,7 @@ mod tests {
             }),
         };
 
-        let broadcast_id = match exec.bcast.run(&draft_req) {
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
             Ph1BcastResponse::Ok(ok) => match ok.outcome {
                 BcastOutcome::DraftCreate(v) => v.broadcast_id,
                 _ => panic!("expected draft create outcome"),
@@ -6995,7 +7063,7 @@ mod tests {
         };
 
         let out = exec
-            .run_broadcast_deliver_with_delivery(&deliver_req)
+            .run_broadcast_deliver_with_delivery(&mut store, &deliver_req)
             .unwrap();
         match out {
             SimulationDispatchOutcome::BroadcastDeliverySend {
@@ -7535,7 +7603,7 @@ mod tests {
         assert_eq!(attempt_1, attempt_2);
         assert!(emitted_1);
         assert!(!emitted_2);
-        assert_eq!(exec.delivery_send_idempotency.borrow().len(), 1);
+        assert_eq!(store.delivery_attempts_ledger().len(), 1);
     }
 
     #[test]
@@ -7840,7 +7908,7 @@ mod tests {
             })
             .count();
         assert_eq!(send_link_failure_audit_rows, 1);
-        assert_eq!(exec.delivery_send_idempotency.borrow().len(), 1);
+        assert_eq!(store.delivery_attempts_ledger().len(), 1);
     }
 
     #[test]

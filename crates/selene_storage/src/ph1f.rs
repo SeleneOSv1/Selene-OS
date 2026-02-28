@@ -11,6 +11,11 @@ use selene_kernel_contracts::ph1art::{
     ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
     ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
 };
+use selene_kernel_contracts::ph1bcast::{
+    BcastAckStatus, BcastCapabilityId, BcastOutcome, BcastRecipientState, BcastRequest,
+    BcastSimulationType, BroadcastClassification, BroadcastId, BroadcastRecipientId,
+    Ph1BcastRequest, Ph1BcastResponse, PH1BCAST_CONTRACT_VERSION,
+};
 use selene_kernel_contracts::ph1builder::{
     BuilderApprovalState, BuilderPatchProposal, BuilderPostDeployJudgeResult, BuilderReleaseState,
     BuilderValidationGateResult, BuilderValidationRun,
@@ -21,6 +26,10 @@ use selene_kernel_contracts::ph1c::{
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestCurrentRecord, CapabilityRequestLedgerEvent,
     CapabilityRequestLedgerEventInput, CapreqId,
+};
+use selene_kernel_contracts::ph1delivery::{
+    DeliveryChannel, DeliveryOutcome, DeliveryRequest, DeliveryStatus, Ph1DeliveryRequest,
+    Ph1DeliveryResponse, PH1DELIVERY_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1ecm::{
     CapabilityId, CapabilityMapVersion, EngineCapabilityMapCurrentRecord, EngineCapabilityMapEvent,
@@ -518,6 +527,18 @@ fn is_token_safe_ascii(value: &str) -> bool {
 }
 
 fn validate_builder_idempotency_key(field: &'static str, key: &str) -> Result<(), StorageError> {
+    if key.trim().is_empty() || key.len() > 128 || !is_token_safe_ascii(key) {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field,
+                reason: "must be token-safe ASCII and <= 128 chars",
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn validate_comms_idempotency_key(field: &'static str, key: &str) -> Result<(), StorageError> {
     if key.trim().is_empty() || key.len() > 128 || !is_token_safe_ascii(key) {
         return Err(StorageError::ContractViolation(
             ContractViolation::InvalidValue {
@@ -1448,6 +1469,29 @@ pub struct Ph1fStore {
     work_order_ledger_idempotency_index: BTreeMap<(TenantId, WorkOrderId, String), u64>,
 
     // ------------------------
+    // PH1.BCAST + PH1.DELIVERY communication lifecycle persistence:
+    // append-only ledgers + current projections + idempotency indexes.
+    // ------------------------
+    bcast_recipient_lifecycle_ledger: Vec<BcastRecipientLifecycleLedgerRow>,
+    bcast_broadcasts_current: BTreeMap<(TenantId, BroadcastId), BcastBroadcastCurrentRecord>,
+    bcast_recipients_current: BTreeMap<
+        (TenantId, BroadcastId, BroadcastRecipientId),
+        BcastRecipientLifecycleCurrentRecord,
+    >,
+    // Idempotency: (tenant_id, action, broadcast_id_or_empty, recipient_or_actor, idempotency_key) -> event_id.
+    bcast_recipient_lifecycle_idempotency_index:
+        BTreeMap<(TenantId, String, String, String, String), u64>,
+    // Primary-key uniqueness: bcast_event_id -> event_idx.
+    bcast_recipient_lifecycle_event_lookup: BTreeMap<u64, usize>,
+
+    delivery_attempts_ledger: Vec<DeliveryAttemptLedgerRow>,
+    delivery_attempts_current: BTreeMap<String, DeliveryAttemptCurrentRecord>,
+    // Idempotency: (tenant_id, message_id, recipient, idempotency_key) -> delivery_event_id.
+    delivery_send_idempotency_index: BTreeMap<(TenantId, String, String, String), u64>,
+    // Primary-key uniqueness: delivery_event_id -> event_idx.
+    delivery_attempt_event_lookup: BTreeMap<u64, usize>,
+
+    // ------------------------
     // PH1.REM reminder persistence tables (`reminders`, `reminder_occurrences`,
     // `reminder_delivery_attempts`).
     // ------------------------
@@ -1472,6 +1516,8 @@ pub struct Ph1fStore {
     >,
     // Primary-key uniqueness: attempt_id -> attempt_idx.
     reminder_delivery_attempt_lookup: BTreeMap<ReminderDeliveryAttemptId, usize>,
+    next_bcast_event_id: u64,
+    next_delivery_event_id: u64,
     next_reminder_seq: u64,
     next_reminder_occurrence_seq: u64,
 
@@ -2513,6 +2559,112 @@ pub struct MobileArtifactSyncQueueRecord {
     pub idempotency_key: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BcastRecipientLifecycleAction {
+    DraftCreate,
+    DeliverCommit,
+    DeferCommit,
+    ReminderFiredCommit,
+    AckCommit,
+    EscalateCommit,
+    ExpireCommit,
+    CancelCommit,
+}
+
+impl BcastRecipientLifecycleAction {
+    fn as_token(self) -> &'static str {
+        match self {
+            BcastRecipientLifecycleAction::DraftCreate => "DRAFT_CREATE",
+            BcastRecipientLifecycleAction::DeliverCommit => "DELIVER_COMMIT",
+            BcastRecipientLifecycleAction::DeferCommit => "DEFER_COMMIT",
+            BcastRecipientLifecycleAction::ReminderFiredCommit => "REMINDER_FIRED_COMMIT",
+            BcastRecipientLifecycleAction::AckCommit => "ACK_COMMIT",
+            BcastRecipientLifecycleAction::EscalateCommit => "ESCALATE_COMMIT",
+            BcastRecipientLifecycleAction::ExpireCommit => "EXPIRE_COMMIT",
+            BcastRecipientLifecycleAction::CancelCommit => "CANCEL_COMMIT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BcastRecipientLifecycleLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub bcast_event_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub simulation_id: String,
+    pub simulation_type: BcastSimulationType,
+    pub capability_id: BcastCapabilityId,
+    pub action: BcastRecipientLifecycleAction,
+    pub tenant_id: TenantId,
+    pub broadcast_id: Option<BroadcastId>,
+    pub recipient_id: Option<BroadcastRecipientId>,
+    pub recipient_state: Option<BcastRecipientState>,
+    pub reason_code: ReasonCodeId,
+    pub request: Ph1BcastRequest,
+    pub response: Ph1BcastResponse,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BcastBroadcastCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: TenantId,
+    pub broadcast_id: BroadcastId,
+    pub classification: BroadcastClassification,
+    pub state: BcastRecipientState,
+    pub last_bcast_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BcastRecipientLifecycleCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: TenantId,
+    pub broadcast_id: BroadcastId,
+    pub recipient_id: BroadcastRecipientId,
+    pub recipient_state: BcastRecipientState,
+    pub ack_status: Option<BcastAckStatus>,
+    pub last_bcast_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryAttemptLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub delivery_event_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub simulation_id: String,
+    pub tenant_id: TenantId,
+    pub message_id: String,
+    pub recipient: String,
+    pub channel: DeliveryChannel,
+    pub status: DeliveryStatus,
+    pub delivery_attempt_id: Option<String>,
+    pub delivery_proof_ref: Option<String>,
+    pub reason_code: ReasonCodeId,
+    pub request: Ph1DeliveryRequest,
+    pub response: Ph1DeliveryResponse,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryAttemptCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub delivery_attempt_id: String,
+    pub tenant_id: TenantId,
+    pub message_id: String,
+    pub recipient: String,
+    pub channel: DeliveryChannel,
+    pub status: DeliveryStatus,
+    pub delivery_proof_ref: Option<String>,
+    pub provider_message_ref: Option<String>,
+    pub last_delivery_event_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub reason_code: ReasonCodeId,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReminderRecord {
     pub schema_version: SchemaVersion,
@@ -2738,6 +2890,15 @@ impl Ph1fStore {
             work_order_ledger: Vec::new(),
             work_orders_current: BTreeMap::new(),
             work_order_ledger_idempotency_index: BTreeMap::new(),
+            bcast_recipient_lifecycle_ledger: Vec::new(),
+            bcast_broadcasts_current: BTreeMap::new(),
+            bcast_recipients_current: BTreeMap::new(),
+            bcast_recipient_lifecycle_idempotency_index: BTreeMap::new(),
+            bcast_recipient_lifecycle_event_lookup: BTreeMap::new(),
+            delivery_attempts_ledger: Vec::new(),
+            delivery_attempts_current: BTreeMap::new(),
+            delivery_send_idempotency_index: BTreeMap::new(),
+            delivery_attempt_event_lookup: BTreeMap::new(),
             reminders: BTreeMap::new(),
             reminder_occurrences: BTreeMap::new(),
             reminder_delivery_attempts: Vec::new(),
@@ -2745,6 +2906,8 @@ impl Ph1fStore {
             reminder_update_idempotency_index: BTreeMap::new(),
             reminder_delivery_idempotency_index: BTreeMap::new(),
             reminder_delivery_attempt_lookup: BTreeMap::new(),
+            next_bcast_event_id: 1,
+            next_delivery_event_id: 1,
             next_reminder_seq: 1,
             next_reminder_occurrence_seq: 1,
             capreq_ledger_events: Vec::new(),
@@ -5405,6 +5568,806 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         Err(StorageError::AppendOnlyViolation {
             table: "work_order_ledger",
+        })
+    }
+
+    // ------------------------
+    // PH1.BCAST + PH1.DELIVERY persistence (append-only + current projection).
+    // ------------------------
+
+    fn bcast_action_from_request(req: &BcastRequest) -> BcastRecipientLifecycleAction {
+        match req {
+            BcastRequest::DraftCreate(_) => BcastRecipientLifecycleAction::DraftCreate,
+            BcastRequest::DeliverCommit(_) => BcastRecipientLifecycleAction::DeliverCommit,
+            BcastRequest::DeferCommit(_) => BcastRecipientLifecycleAction::DeferCommit,
+            BcastRequest::ReminderFiredCommit(_) => {
+                BcastRecipientLifecycleAction::ReminderFiredCommit
+            }
+            BcastRequest::AckCommit(_) => BcastRecipientLifecycleAction::AckCommit,
+            BcastRequest::EscalateCommit(_) => BcastRecipientLifecycleAction::EscalateCommit,
+            BcastRequest::ExpireCommit(_) => BcastRecipientLifecycleAction::ExpireCommit,
+            BcastRequest::CancelCommit(_) => BcastRecipientLifecycleAction::CancelCommit,
+        }
+    }
+
+    fn bcast_idempotency_components(
+        req: &BcastRequest,
+    ) -> (TenantId, String, String, String, String) {
+        match req {
+            BcastRequest::DraftCreate(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::DraftCreate
+                    .as_token()
+                    .to_string(),
+                String::new(),
+                v.sender_user_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::DeliverCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::DeliverCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.recipient_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::DeferCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::DeferCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.recipient_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::ReminderFiredCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::ReminderFiredCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.recipient_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::AckCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::AckCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.recipient_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::EscalateCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::EscalateCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.recipient_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::ExpireCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::ExpireCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.sender_user_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+            BcastRequest::CancelCommit(v) => (
+                v.tenant_id.clone(),
+                BcastRecipientLifecycleAction::CancelCommit
+                    .as_token()
+                    .to_string(),
+                v.broadcast_id.as_str().to_string(),
+                v.sender_user_id.as_str().to_string(),
+                v.idempotency_key.clone(),
+            ),
+        }
+    }
+
+    fn bcast_response_projection_fields(
+        response: &Ph1BcastResponse,
+    ) -> (
+        Option<BroadcastId>,
+        Option<BroadcastRecipientId>,
+        Option<BcastRecipientState>,
+        Option<BcastAckStatus>,
+        ReasonCodeId,
+    ) {
+        match response {
+            Ph1BcastResponse::Ok(ok) => {
+                let reason_code = ok.reason_code;
+                match &ok.outcome {
+                    BcastOutcome::DraftCreate(v) => (
+                        Some(v.broadcast_id.clone()),
+                        None,
+                        Some(v.state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::DeliverCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        Some(v.recipient_id.clone()),
+                        Some(v.recipient_state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::DeferCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        Some(v.recipient_id.clone()),
+                        Some(v.recipient_state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::ReminderFiredCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        Some(v.recipient_id.clone()),
+                        Some(v.recipient_state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::AckCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        Some(v.recipient_id.clone()),
+                        Some(v.recipient_state),
+                        Some(v.ack_status),
+                        reason_code,
+                    ),
+                    BcastOutcome::EscalateCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        Some(v.recipient_id.clone()),
+                        Some(v.recipient_state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::ExpireCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        None,
+                        Some(v.state),
+                        None,
+                        reason_code,
+                    ),
+                    BcastOutcome::CancelCommit(v) => (
+                        Some(v.broadcast_id.clone()),
+                        None,
+                        Some(v.state),
+                        None,
+                        reason_code,
+                    ),
+                }
+            }
+            Ph1BcastResponse::Refuse(refuse) => (None, None, None, None, refuse.reason_code),
+        }
+    }
+
+    fn ensure_bcast_transition_valid(
+        action: BcastRecipientLifecycleAction,
+        previous: Option<BcastRecipientState>,
+        next: BcastRecipientState,
+        handoff_to_reminder: Option<bool>,
+    ) -> Result<(), StorageError> {
+        let invalid = || {
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_recipient_lifecycle_current.recipient_state",
+                    reason: "invalid transition for action",
+                },
+            ))
+        };
+        match action {
+            BcastRecipientLifecycleAction::DraftCreate => Ok(()),
+            BcastRecipientLifecycleAction::DeliverCommit => {
+                if matches!(
+                    previous,
+                    Some(
+                        BcastRecipientState::Canceled
+                            | BcastRecipientState::Expired
+                            | BcastRecipientState::Concluded
+                    )
+                ) {
+                    return invalid();
+                }
+                if !matches!(
+                    next,
+                    BcastRecipientState::Waiting | BcastRecipientState::Followup
+                ) {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::DeferCommit => {
+                let prev = match previous {
+                    Some(v) => v,
+                    None => return invalid(),
+                };
+                if handoff_to_reminder == Some(true) {
+                    if !matches!(
+                        prev,
+                        BcastRecipientState::Followup | BcastRecipientState::ReminderFired
+                    ) || next != BcastRecipientState::ReminderSet
+                    {
+                        return invalid();
+                    }
+                    return Ok(());
+                }
+                if !matches!(
+                    prev,
+                    BcastRecipientState::Waiting
+                        | BcastRecipientState::Followup
+                        | BcastRecipientState::ReminderFired
+                ) || next != BcastRecipientState::Deferred
+                {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::ReminderFiredCommit => {
+                if !matches!(
+                    previous,
+                    Some(BcastRecipientState::ReminderSet | BcastRecipientState::ReminderFired)
+                ) || next != BcastRecipientState::ReminderFired
+                {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::AckCommit => {
+                let prev = match previous {
+                    Some(v) => v,
+                    None => return invalid(),
+                };
+                if matches!(
+                    prev,
+                    BcastRecipientState::Canceled | BcastRecipientState::Expired
+                ) || next != BcastRecipientState::Concluded
+                {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::EscalateCommit => {
+                if !matches!(
+                    previous,
+                    Some(BcastRecipientState::Waiting | BcastRecipientState::Deferred)
+                ) || next != BcastRecipientState::Followup
+                {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::ExpireCommit => {
+                if next != BcastRecipientState::Expired {
+                    return invalid();
+                }
+                Ok(())
+            }
+            BcastRecipientLifecycleAction::CancelCommit => {
+                if next != BcastRecipientState::Canceled {
+                    return invalid();
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn apply_bcast_lifecycle_event_to_current(
+        &mut self,
+        ev: &BcastRecipientLifecycleLedgerRow,
+    ) -> Result<(), StorageError> {
+        let (broadcast_id, recipient_id, recipient_state, ack_status, reason_code) =
+            Self::bcast_response_projection_fields(&ev.response);
+        let Some(next_state) = recipient_state else {
+            return Ok(());
+        };
+        let Some(broadcast_id) = broadcast_id else {
+            return Ok(());
+        };
+        let broadcast_key = (ev.tenant_id.clone(), broadcast_id.clone());
+        match ev.action {
+            BcastRecipientLifecycleAction::DraftCreate => {
+                let classification = match &ev.request.request {
+                    BcastRequest::DraftCreate(v) => v.classification,
+                    _ => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "bcast_recipient_lifecycle_ledger.request",
+                                reason: "expected draft request",
+                            },
+                        ))
+                    }
+                };
+                self.bcast_broadcasts_current.insert(
+                    broadcast_key,
+                    BcastBroadcastCurrentRecord {
+                        schema_version: PH1BCAST_CONTRACT_VERSION,
+                        tenant_id: ev.tenant_id.clone(),
+                        broadcast_id,
+                        classification,
+                        state: next_state,
+                        last_bcast_event_id: ev.bcast_event_id,
+                        updated_at: ev.created_at,
+                        reason_code,
+                    },
+                );
+                return Ok(());
+            }
+            BcastRecipientLifecycleAction::ExpireCommit
+            | BcastRecipientLifecycleAction::CancelCommit => {
+                let classification = self
+                    .bcast_broadcasts_current
+                    .get(&broadcast_key)
+                    .map(|v| v.classification)
+                    .ok_or(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "bcast_broadcasts_current.broadcast_id",
+                            reason: "broadcast must exist before terminal transition",
+                        },
+                    ))?;
+                self.bcast_broadcasts_current.insert(
+                    broadcast_key.clone(),
+                    BcastBroadcastCurrentRecord {
+                        schema_version: PH1BCAST_CONTRACT_VERSION,
+                        tenant_id: ev.tenant_id.clone(),
+                        broadcast_id: broadcast_id.clone(),
+                        classification,
+                        state: next_state,
+                        last_bcast_event_id: ev.bcast_event_id,
+                        updated_at: ev.created_at,
+                        reason_code,
+                    },
+                );
+
+                let recipient_keys: Vec<(TenantId, BroadcastId, BroadcastRecipientId)> = self
+                    .bcast_recipients_current
+                    .keys()
+                    .filter(|(tenant_id, bid, _)| {
+                        tenant_id == &ev.tenant_id && bid == &broadcast_id
+                    })
+                    .cloned()
+                    .collect();
+                for key in recipient_keys {
+                    if let Some(current) = self.bcast_recipients_current.get_mut(&key) {
+                        current.recipient_state = next_state;
+                        current.last_bcast_event_id = ev.bcast_event_id;
+                        current.updated_at = ev.created_at;
+                        current.reason_code = reason_code;
+                    }
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        let classification = self
+            .bcast_broadcasts_current
+            .get(&broadcast_key)
+            .map(|v| v.classification)
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_broadcasts_current.broadcast_id",
+                    reason: "broadcast must exist before recipient transition",
+                },
+            ))?;
+        self.bcast_broadcasts_current.insert(
+            broadcast_key.clone(),
+            BcastBroadcastCurrentRecord {
+                schema_version: PH1BCAST_CONTRACT_VERSION,
+                tenant_id: ev.tenant_id.clone(),
+                broadcast_id: broadcast_id.clone(),
+                classification,
+                state: next_state,
+                last_bcast_event_id: ev.bcast_event_id,
+                updated_at: ev.created_at,
+                reason_code,
+            },
+        );
+
+        let recipient_id = recipient_id.ok_or(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "bcast_recipient_lifecycle_ledger.response",
+                reason: "recipient_id is required for recipient transition",
+            },
+        ))?;
+        let recipient_key = (
+            ev.tenant_id.clone(),
+            broadcast_id.clone(),
+            recipient_id.clone(),
+        );
+        let previous = self
+            .bcast_recipients_current
+            .get(&recipient_key)
+            .map(|v| v.recipient_state);
+        let handoff_to_reminder = match &ev.response {
+            Ph1BcastResponse::Ok(ok) => match &ok.outcome {
+                BcastOutcome::DeferCommit(v) => Some(v.handoff_to_reminder),
+                _ => None,
+            },
+            Ph1BcastResponse::Refuse(_) => None,
+        };
+        Self::ensure_bcast_transition_valid(ev.action, previous, next_state, handoff_to_reminder)?;
+
+        self.bcast_recipients_current.insert(
+            recipient_key,
+            BcastRecipientLifecycleCurrentRecord {
+                schema_version: PH1BCAST_CONTRACT_VERSION,
+                tenant_id: ev.tenant_id.clone(),
+                broadcast_id,
+                recipient_id,
+                recipient_state: next_state,
+                ack_status,
+                last_bcast_event_id: ev.bcast_event_id,
+                updated_at: ev.created_at,
+                reason_code,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn append_bcast_recipient_lifecycle_event(
+        &mut self,
+        request: Ph1BcastRequest,
+        response: Ph1BcastResponse,
+    ) -> Result<u64, StorageError> {
+        request
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        response
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+
+        let action = Self::bcast_action_from_request(&request.request);
+        let (tenant_id, action_token, broadcast_id, recipient_or_actor, idempotency_key) =
+            Self::bcast_idempotency_components(&request.request);
+        validate_comms_idempotency_key(
+            "bcast_recipient_lifecycle_ledger.idempotency_key",
+            &idempotency_key,
+        )?;
+        let idx = (
+            tenant_id.clone(),
+            action_token,
+            broadcast_id,
+            recipient_or_actor,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .bcast_recipient_lifecycle_idempotency_index
+            .get(&idx)
+            .copied()
+        {
+            return Ok(existing_event_id);
+        }
+
+        let bcast_event_id = self.next_bcast_event_id;
+        self.next_bcast_event_id = self.next_bcast_event_id.saturating_add(1);
+
+        let (projection_broadcast_id, projection_recipient_id, projection_state, _, reason_code) =
+            Self::bcast_response_projection_fields(&response);
+        let row = BcastRecipientLifecycleLedgerRow {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            bcast_event_id,
+            created_at: request.now,
+            simulation_id: request.simulation_id.clone(),
+            simulation_type: request.simulation_type,
+            capability_id: request.request.capability_id(),
+            action,
+            tenant_id,
+            broadcast_id: projection_broadcast_id,
+            recipient_id: projection_recipient_id,
+            recipient_state: projection_state,
+            reason_code,
+            request,
+            response,
+            idempotency_key,
+        };
+
+        self.apply_bcast_lifecycle_event_to_current(&row)?;
+        let next_idx = self.bcast_recipient_lifecycle_ledger.len();
+        self.bcast_recipient_lifecycle_event_lookup
+            .insert(bcast_event_id, next_idx);
+        self.bcast_recipient_lifecycle_idempotency_index
+            .insert(idx, bcast_event_id);
+        self.bcast_recipient_lifecycle_ledger.push(row);
+        Ok(bcast_event_id)
+    }
+
+    pub fn bcast_recipient_lifecycle_ledger(&self) -> &[BcastRecipientLifecycleLedgerRow] {
+        &self.bcast_recipient_lifecycle_ledger
+    }
+
+    pub fn bcast_broadcasts_current(
+        &self,
+    ) -> &BTreeMap<(TenantId, BroadcastId), BcastBroadcastCurrentRecord> {
+        &self.bcast_broadcasts_current
+    }
+
+    pub fn bcast_recipients_current(
+        &self,
+    ) -> &BTreeMap<
+        (TenantId, BroadcastId, BroadcastRecipientId),
+        BcastRecipientLifecycleCurrentRecord,
+    > {
+        &self.bcast_recipients_current
+    }
+
+    pub fn bcast_recipient_lifecycle_row(
+        &self,
+        bcast_event_id: u64,
+    ) -> Option<&BcastRecipientLifecycleLedgerRow> {
+        let idx = self
+            .bcast_recipient_lifecycle_event_lookup
+            .get(&bcast_event_id)
+            .copied()?;
+        self.bcast_recipient_lifecycle_ledger.get(idx)
+    }
+
+    pub fn rebuild_bcast_recipient_lifecycle_current_from_ledger(
+        &mut self,
+    ) -> Result<(), StorageError> {
+        self.bcast_broadcasts_current.clear();
+        self.bcast_recipients_current.clear();
+        self.bcast_recipient_lifecycle_idempotency_index.clear();
+        self.bcast_recipient_lifecycle_event_lookup.clear();
+
+        for (idx, row) in self.bcast_recipient_lifecycle_ledger.iter().enumerate() {
+            if self
+                .bcast_recipient_lifecycle_event_lookup
+                .insert(row.bcast_event_id, idx)
+                .is_some()
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "bcast_recipient_lifecycle_ledger",
+                    key: row.bcast_event_id.to_string(),
+                });
+            }
+        }
+
+        let mut ordered = self.bcast_recipient_lifecycle_ledger.clone();
+        ordered.sort_by_key(|row| row.bcast_event_id);
+        for row in ordered {
+            let (_, action_token, broadcast_id, recipient_or_actor, idempotency_key) =
+                Self::bcast_idempotency_components(&row.request.request);
+            validate_comms_idempotency_key(
+                "bcast_recipient_lifecycle_ledger.idempotency_key",
+                &idempotency_key,
+            )?;
+            let idempotency_idx = (
+                row.tenant_id.clone(),
+                action_token,
+                broadcast_id,
+                recipient_or_actor,
+                idempotency_key,
+            );
+            self.bcast_recipient_lifecycle_idempotency_index
+                .insert(idempotency_idx, row.bcast_event_id);
+            self.apply_bcast_lifecycle_event_to_current(&row)?;
+        }
+        Ok(())
+    }
+
+    pub fn attempt_overwrite_bcast_recipient_lifecycle_event(
+        &mut self,
+        _bcast_event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "bcast_recipient_lifecycle_ledger",
+        })
+    }
+
+    fn delivery_send_idempotency_index(
+        request: &Ph1DeliveryRequest,
+    ) -> Result<(TenantId, String, String, String), StorageError> {
+        request
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        let send = match &request.request {
+            DeliveryRequest::Send(v) => v,
+            _ => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "delivery_attempts_ledger.request",
+                        reason: "must be DeliveryRequest::Send",
+                    },
+                ))
+            }
+        };
+        validate_comms_idempotency_key(
+            "delivery_attempts_ledger.idempotency_key",
+            &send.idempotency_key,
+        )?;
+        Ok((
+            send.tenant_id.clone(),
+            send.message_id.clone(),
+            send.recipient.clone(),
+            send.idempotency_key.clone(),
+        ))
+    }
+
+    fn apply_delivery_attempt_event_to_current(
+        &mut self,
+        ev: &DeliveryAttemptLedgerRow,
+    ) -> Result<(), StorageError> {
+        let Some(delivery_attempt_id) = ev.delivery_attempt_id.clone() else {
+            return Ok(());
+        };
+        self.delivery_attempts_current.insert(
+            delivery_attempt_id.clone(),
+            DeliveryAttemptCurrentRecord {
+                schema_version: PH1DELIVERY_CONTRACT_VERSION,
+                delivery_attempt_id,
+                tenant_id: ev.tenant_id.clone(),
+                message_id: ev.message_id.clone(),
+                recipient: ev.recipient.clone(),
+                channel: ev.channel,
+                status: ev.status,
+                delivery_proof_ref: ev.delivery_proof_ref.clone(),
+                provider_message_ref: match &ev.response {
+                    Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+                        DeliveryOutcome::Send(v) => v.provider_message_ref.clone(),
+                        _ => None,
+                    },
+                    Ph1DeliveryResponse::Refuse(_) => None,
+                },
+                last_delivery_event_id: ev.delivery_event_id,
+                updated_at: ev.created_at,
+                reason_code: ev.reason_code,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn delivery_send_response_by_idempotency(
+        &self,
+        request: &Ph1DeliveryRequest,
+    ) -> Result<Option<Ph1DeliveryResponse>, StorageError> {
+        let idx = Self::delivery_send_idempotency_index(request)?;
+        let Some(event_id) = self.delivery_send_idempotency_index.get(&idx).copied() else {
+            return Ok(None);
+        };
+        let Some(event_idx) = self.delivery_attempt_event_lookup.get(&event_id).copied() else {
+            return Ok(None);
+        };
+        Ok(self
+            .delivery_attempts_ledger
+            .get(event_idx)
+            .map(|row| row.response.clone()))
+    }
+
+    pub fn append_delivery_attempt_event(
+        &mut self,
+        request: Ph1DeliveryRequest,
+        response: Ph1DeliveryResponse,
+    ) -> Result<u64, StorageError> {
+        request
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        response
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
+        let (tenant_id, message_id, recipient, idempotency_key) =
+            Self::delivery_send_idempotency_index(&request)?;
+        let idx = (
+            tenant_id.clone(),
+            message_id.clone(),
+            recipient.clone(),
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self.delivery_send_idempotency_index.get(&idx).copied() {
+            return Ok(existing_event_id);
+        }
+
+        let (channel, status, delivery_attempt_id, delivery_proof_ref, reason_code) =
+            match &response {
+                Ph1DeliveryResponse::Ok(ok) => match &ok.outcome {
+                    DeliveryOutcome::Send(v) => (
+                        match &request.request {
+                            DeliveryRequest::Send(send) => send.channel,
+                            _ => unreachable!(),
+                        },
+                        v.delivery_status,
+                        Some(v.delivery_attempt_id.clone()),
+                        Some(v.delivery_proof_ref.clone()),
+                        v.reason_code,
+                    ),
+                    _ => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "delivery_attempts_ledger.response",
+                                reason: "must be DeliveryOutcome::Send",
+                            },
+                        ))
+                    }
+                },
+                Ph1DeliveryResponse::Refuse(refuse) => (
+                    match &request.request {
+                        DeliveryRequest::Send(send) => send.channel,
+                        _ => unreachable!(),
+                    },
+                    DeliveryStatus::Failed,
+                    None,
+                    None,
+                    refuse.reason_code,
+                ),
+            };
+
+        let delivery_event_id = self.next_delivery_event_id;
+        self.next_delivery_event_id = self.next_delivery_event_id.saturating_add(1);
+        let row = DeliveryAttemptLedgerRow {
+            schema_version: PH1DELIVERY_CONTRACT_VERSION,
+            delivery_event_id,
+            created_at: request.now,
+            simulation_id: request.simulation_id.clone(),
+            tenant_id,
+            message_id,
+            recipient,
+            channel,
+            status,
+            delivery_attempt_id,
+            delivery_proof_ref,
+            reason_code,
+            request,
+            response,
+            idempotency_key,
+        };
+
+        self.apply_delivery_attempt_event_to_current(&row)?;
+        let event_idx = self.delivery_attempts_ledger.len();
+        self.delivery_attempt_event_lookup
+            .insert(delivery_event_id, event_idx);
+        self.delivery_send_idempotency_index
+            .insert(idx, delivery_event_id);
+        self.delivery_attempts_ledger.push(row);
+        Ok(delivery_event_id)
+    }
+
+    pub fn delivery_attempts_ledger(&self) -> &[DeliveryAttemptLedgerRow] {
+        &self.delivery_attempts_ledger
+    }
+
+    pub fn delivery_attempts_current(&self) -> &BTreeMap<String, DeliveryAttemptCurrentRecord> {
+        &self.delivery_attempts_current
+    }
+
+    pub fn rebuild_delivery_attempts_current_from_ledger(&mut self) -> Result<(), StorageError> {
+        self.delivery_attempts_current.clear();
+        self.delivery_send_idempotency_index.clear();
+        self.delivery_attempt_event_lookup.clear();
+
+        for (idx, row) in self.delivery_attempts_ledger.iter().enumerate() {
+            if self
+                .delivery_attempt_event_lookup
+                .insert(row.delivery_event_id, idx)
+                .is_some()
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "delivery_attempts_ledger",
+                    key: row.delivery_event_id.to_string(),
+                });
+            }
+        }
+
+        let mut ordered = self.delivery_attempts_ledger.clone();
+        ordered.sort_by_key(|row| row.delivery_event_id);
+        for row in ordered {
+            let (tenant_id, message_id, recipient, idempotency_key) =
+                Self::delivery_send_idempotency_index(&row.request)?;
+            let idempotency_idx = (tenant_id, message_id, recipient, idempotency_key);
+            self.delivery_send_idempotency_index
+                .insert(idempotency_idx, row.delivery_event_id);
+            self.apply_delivery_attempt_event_to_current(&row)?;
+        }
+        Ok(())
+    }
+
+    pub fn attempt_overwrite_delivery_attempt_event(
+        &mut self,
+        _delivery_event_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "delivery_attempts_ledger",
         })
     }
 
@@ -19570,7 +20533,19 @@ mod tests {
     use selene_kernel_contracts::ph1_voice_id::{
         DiarizationSegment, SpeakerAssertionOk, SpeakerLabel,
     };
+    use selene_kernel_contracts::ph1bcast::{
+        BcastDeliverCommitRequest, BcastDeliverCommitResult, BcastDraftCreateRequest,
+        BcastDraftCreateResult, BcastOutcome, BcastReminderFiredCommitRequest,
+        BcastReminderFiredCommitResult, BcastRequest, BcastSimulationType, BroadcastClassification,
+        BroadcastId, BroadcastRecipientId, Ph1BcastOk, Ph1BcastRequest, Ph1BcastResponse,
+        BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
+        PH1BCAST_CONTRACT_VERSION,
+    };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
+    use selene_kernel_contracts::ph1delivery::{
+        DeliveryChannel, DeliveryOutcome, DeliverySendResult, Ph1DeliveryOk, Ph1DeliveryRequest,
+        Ph1DeliveryResponse,
+    };
     use selene_kernel_contracts::ph1f::{ConversationRole, ConversationSource, PrivacyScope};
     use selene_kernel_contracts::ph1feedback::{FeedbackEventType, FeedbackPathType};
     use selene_kernel_contracts::ph1j::{
@@ -19719,6 +20694,157 @@ mod tests {
             reason_code: ReasonCodeId(101),
             idempotency_key: idempotency_key.map(str::to_string),
         }
+    }
+
+    fn tenant() -> TenantId {
+        TenantId::new("tenant_1").unwrap()
+    }
+
+    fn sender() -> UserId {
+        UserId::new("tenant_1:sender").unwrap()
+    }
+
+    fn recipient_id() -> BroadcastRecipientId {
+        BroadcastRecipientId::new("recipient_1").unwrap()
+    }
+
+    fn draft_req(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        now: MonotonicTimeNs,
+        idempotency_key: &str,
+    ) -> Ph1BcastRequest {
+        Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant(),
+                sender_user_id: sender(),
+                audience_spec: "audience".to_string(),
+                classification: BroadcastClassification::Priority,
+                content_payload_ref: "payload".to_string(),
+                prompt_dedupe_key: None,
+                idempotency_key: idempotency_key.to_string(),
+            }),
+        }
+    }
+
+    fn draft_ok(req: &Ph1BcastRequest, broadcast_id: BroadcastId) -> Ph1BcastResponse {
+        Ph1BcastResponse::Ok(
+            Ph1BcastOk::v1(
+                req.request.capability_id(),
+                req.simulation_id.clone(),
+                ReasonCodeId(0x4243_0001),
+                BcastOutcome::DraftCreate(BcastDraftCreateResult {
+                    broadcast_id,
+                    state: BcastRecipientState::DraftCreated,
+                    reason_code: ReasonCodeId(0x4243_0001),
+                }),
+                true,
+                true,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn deliver_req(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        now: MonotonicTimeNs,
+        broadcast_id: BroadcastId,
+        idempotency_key: &str,
+    ) -> Ph1BcastRequest {
+        Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id,
+            now,
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant(),
+                sender_user_id: sender(),
+                broadcast_id,
+                recipient_id: recipient_id(),
+                delivery_method: selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::SeleneApp,
+                recipient_region: selene_kernel_contracts::ph1bcast::BcastRecipientRegion::Global,
+                app_unavailable: false,
+                delivery_plan_ref: "plan".to_string(),
+                simulation_context: "sim_ctx".to_string(),
+                idempotency_key: idempotency_key.to_string(),
+            }),
+        }
+    }
+
+    fn deliver_ok(req: &Ph1BcastRequest) -> Ph1BcastResponse {
+        let (broadcast_id, recipient_id) = match &req.request {
+            BcastRequest::DeliverCommit(v) => (v.broadcast_id.clone(), v.recipient_id.clone()),
+            _ => panic!("deliver_ok requires deliver request"),
+        };
+        Ph1BcastResponse::Ok(
+            Ph1BcastOk::v1(
+                req.request.capability_id(),
+                req.simulation_id.clone(),
+                ReasonCodeId(0x4243_0002),
+                BcastOutcome::DeliverCommit(BcastDeliverCommitResult {
+                    broadcast_id,
+                    recipient_id,
+                    delivery_request_ref: "delivery_ref_1".to_string(),
+                    recipient_state: BcastRecipientState::Waiting,
+                    followup_immediate: false,
+                    reason_code: ReasonCodeId(0x4243_0002),
+                }),
+                true,
+                true,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn delivery_send_req(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        now: MonotonicTimeNs,
+        message_id: &str,
+        idempotency_key: &str,
+    ) -> Ph1DeliveryRequest {
+        Ph1DeliveryRequest::send_commit_v1(
+            correlation_id,
+            turn_id,
+            now,
+            tenant(),
+            message_id.to_string(),
+            "recipient_1".to_string(),
+            DeliveryChannel::Sms,
+            "payload_ref".to_string(),
+            "provider_ref".to_string(),
+            "sim_ctx_delivery".to_string(),
+            idempotency_key.to_string(),
+        )
+        .unwrap()
+    }
+
+    fn delivery_send_ok(req: &Ph1DeliveryRequest) -> Ph1DeliveryResponse {
+        Ph1DeliveryResponse::Ok(
+            Ph1DeliveryOk::v1(
+                req.request.capability_id(),
+                req.simulation_id.clone(),
+                ReasonCodeId(0x4445_0001),
+                DeliveryOutcome::Send(DeliverySendResult {
+                    delivery_attempt_id: "delivery_attempt_1".to_string(),
+                    delivery_proof_ref: "proof_ref_1".to_string(),
+                    delivery_status: DeliveryStatus::Sent,
+                    provider_message_ref: Some("provider_msg_1".to_string()),
+                    reason_code: ReasonCodeId(0x4445_0001),
+                }),
+                true,
+            )
+            .unwrap(),
+        )
     }
 
     #[test]
@@ -20194,6 +21320,159 @@ mod tests {
             .audit_events_by_correlation(corr)
             .iter()
             .any(|e| e.event_type == AuditEventType::JRedactApplied));
+    }
+
+    #[test]
+    fn at_f_11_bcast_delivery_append_only_idempotent_and_replayable() {
+        let mut s = Ph1fStore::new_in_memory();
+        let corr = CorrelationId(9100);
+
+        let draft = draft_req(corr, TurnId(1), MonotonicTimeNs(10), "bcast_draft_1");
+        let broadcast_id = BroadcastId::new("bcast_0000000000000001").unwrap();
+        let draft_ok = draft_ok(&draft, broadcast_id.clone());
+        let draft_event_id = s
+            .append_bcast_recipient_lifecycle_event(draft.clone(), draft_ok.clone())
+            .unwrap();
+        let draft_event_id_retry = s
+            .append_bcast_recipient_lifecycle_event(draft, draft_ok)
+            .unwrap();
+        assert_eq!(draft_event_id, draft_event_id_retry);
+        assert_eq!(s.bcast_recipient_lifecycle_ledger().len(), 1);
+
+        let deliver = deliver_req(
+            corr,
+            TurnId(2),
+            MonotonicTimeNs(11),
+            broadcast_id.clone(),
+            "bcast_deliver_1",
+        );
+        let deliver_ok = deliver_ok(&deliver);
+        let deliver_event_id = s
+            .append_bcast_recipient_lifecycle_event(deliver.clone(), deliver_ok.clone())
+            .unwrap();
+        let deliver_event_id_retry = s
+            .append_bcast_recipient_lifecycle_event(deliver, deliver_ok)
+            .unwrap();
+        assert_eq!(deliver_event_id, deliver_event_id_retry);
+        assert_eq!(s.bcast_recipient_lifecycle_ledger().len(), 2);
+
+        let recipient_key = (tenant(), broadcast_id.clone(), recipient_id());
+        let current = s
+            .bcast_recipients_current()
+            .get(&recipient_key)
+            .expect("recipient projection must exist");
+        assert_eq!(current.recipient_state, BcastRecipientState::Waiting);
+
+        let send = delivery_send_req(
+            corr,
+            TurnId(3),
+            MonotonicTimeNs(12),
+            broadcast_id.as_str(),
+            "delivery_send_1",
+        );
+        let send_ok = delivery_send_ok(&send);
+        let delivery_event_id = s
+            .append_delivery_attempt_event(send.clone(), send_ok.clone())
+            .unwrap();
+        let delivery_event_id_retry = s.append_delivery_attempt_event(send, send_ok).unwrap();
+        assert_eq!(delivery_event_id, delivery_event_id_retry);
+        assert_eq!(s.delivery_attempts_ledger().len(), 1);
+        assert_eq!(s.delivery_attempts_current().len(), 1);
+
+        let bcast_before = s.bcast_recipients_current().clone();
+        let delivery_before = s.delivery_attempts_current().clone();
+        s.rebuild_bcast_recipient_lifecycle_current_from_ledger()
+            .unwrap();
+        s.rebuild_delivery_attempts_current_from_ledger().unwrap();
+        assert_eq!(bcast_before, s.bcast_recipients_current().clone());
+        assert_eq!(delivery_before, s.delivery_attempts_current().clone());
+
+        assert!(matches!(
+            s.attempt_overwrite_bcast_recipient_lifecycle_event(draft_event_id),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+        assert!(matches!(
+            s.attempt_overwrite_delivery_attempt_event(delivery_event_id),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn at_f_12_bcast_rebuild_rejects_silent_transition() {
+        let mut s = Ph1fStore::new_in_memory();
+        let corr = CorrelationId(9200);
+        let bid = BroadcastId::new("bcast_0000000000000002").unwrap();
+
+        let draft = draft_req(corr, TurnId(1), MonotonicTimeNs(20), "bcast_draft_2");
+        let draft_ok = draft_ok(&draft, bid.clone());
+        s.append_bcast_recipient_lifecycle_event(draft, draft_ok)
+            .unwrap();
+
+        let fired_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: corr,
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(21),
+            simulation_id: BCAST_REMINDER_FIRED_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::ReminderFiredCommit(BcastReminderFiredCommitRequest {
+                tenant_id: tenant(),
+                sender_user_id: sender(),
+                broadcast_id: bid.clone(),
+                recipient_id: recipient_id(),
+                reminder_ref: "reminder_1".to_string(),
+                idempotency_key: "tampered_reminder_fired".to_string(),
+            }),
+        };
+        let fired_resp = Ph1BcastResponse::Ok(
+            Ph1BcastOk::v1(
+                fired_req.request.capability_id(),
+                fired_req.simulation_id.clone(),
+                ReasonCodeId(0x4243_0009),
+                BcastOutcome::ReminderFiredCommit(BcastReminderFiredCommitResult {
+                    broadcast_id: bid,
+                    recipient_id: recipient_id(),
+                    reminder_ref: "reminder_1".to_string(),
+                    recipient_state: BcastRecipientState::ReminderFired,
+                    reason_code: ReasonCodeId(0x4243_0009),
+                }),
+                true,
+                true,
+            )
+            .unwrap(),
+        );
+        s.bcast_recipient_lifecycle_ledger
+            .push(BcastRecipientLifecycleLedgerRow {
+                schema_version: PH1BCAST_CONTRACT_VERSION,
+                bcast_event_id: 999,
+                created_at: MonotonicTimeNs(21),
+                simulation_id: BCAST_REMINDER_FIRED_COMMIT.to_string(),
+                simulation_type: BcastSimulationType::Commit,
+                capability_id: fired_req.request.capability_id(),
+                action: BcastRecipientLifecycleAction::ReminderFiredCommit,
+                tenant_id: tenant(),
+                broadcast_id: Some(match &fired_req.request {
+                    BcastRequest::ReminderFiredCommit(v) => v.broadcast_id.clone(),
+                    _ => unreachable!(),
+                }),
+                recipient_id: Some(recipient_id()),
+                recipient_state: Some(BcastRecipientState::ReminderFired),
+                reason_code: ReasonCodeId(0x4243_0009),
+                request: fired_req,
+                response: fired_resp,
+                idempotency_key: "tampered_reminder_fired".to_string(),
+            });
+
+        let rebuild = s.rebuild_bcast_recipient_lifecycle_current_from_ledger();
+        assert!(matches!(
+            rebuild,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "bcast_recipient_lifecycle_current.recipient_state",
+                    reason: "invalid transition for action",
+                }
+            ))
+        ));
     }
 
     #[test]
