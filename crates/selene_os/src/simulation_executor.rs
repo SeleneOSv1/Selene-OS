@@ -7120,6 +7120,143 @@ mod tests {
     }
 
     #[test]
+    fn at_bcast_mhp_01_selene_app_first() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+
+        let correlation_id = CorrelationId(1001);
+        let now = MonotonicTimeNs(7_000_000_000_000);
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let sender = UserId::new("tenant_1:sender_at01").unwrap();
+        let recipient_id = BroadcastRecipientId::new("recipient_at01").unwrap();
+
+        let draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id: TurnId(100),
+            now,
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: sender.clone(),
+                audience_spec: "jd".to_string(),
+                classification: BroadcastClassification::Priority,
+                content_payload_ref: "payload_at01".to_string(),
+                prompt_dedupe_key: Some("pd_at01".to_string()),
+                idempotency_key: "idem_bcast_draft_at01".to_string(),
+            }),
+        };
+
+        let broadcast_id = match exec.run_bcast_with_store(&mut store, &draft_req).unwrap() {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id,
+            turn_id: TurnId(101),
+            now: MonotonicTimeNs(now.0 + 1),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(
+                selene_kernel_contracts::ph1bcast::BcastDeliverCommitRequest {
+                    tenant_id: tenant_id.clone(),
+                    sender_user_id: sender,
+                    broadcast_id: broadcast_id.clone(),
+                    recipient_id: recipient_id.clone(),
+                    delivery_method: BcastDeliveryMethod::SeleneApp,
+                    recipient_region: BcastRecipientRegion::Global,
+                    app_unavailable: false,
+                    app_unavailable_proof_ref: None,
+                    delivery_plan_ref: "delivery_plan_at01".to_string(),
+                    simulation_context: "sim_ctx_at01".to_string(),
+                    idempotency_key: "idem_bcast_deliver_at01".to_string(),
+                },
+            ),
+        };
+
+        let out = exec
+            .run_broadcast_deliver_with_delivery(&mut store, &deliver_req)
+            .unwrap();
+        match out {
+            SimulationDispatchOutcome::BroadcastDeliverySend {
+                bcast,
+                delivery,
+                delivery_emitted,
+            } => {
+                assert!(delivery_emitted);
+                match bcast {
+                    Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                        BcastOutcome::DeliverCommit(v) => {
+                            assert_eq!(v.recipient_state, BcastRecipientState::Waiting);
+                            assert!(!v.followup_immediate);
+                        }
+                        _ => panic!("expected deliver outcome"),
+                    },
+                    _ => panic!("expected bcast ok"),
+                }
+                match delivery {
+                    Ph1DeliveryResponse::Ok(ok) => match ok.outcome {
+                        DeliveryOutcome::Send(v) => {
+                            assert!(v.delivery_proof_ref.contains("kms://delivery/app_push/default"));
+                        }
+                        _ => panic!("expected delivery send outcome"),
+                    },
+                    _ => panic!("expected delivery ok"),
+                }
+            }
+            _ => panic!("expected BroadcastDeliverySend outcome"),
+        }
+
+        let lifecycle_rows = store.bcast_recipient_lifecycle_ledger();
+        assert_eq!(lifecycle_rows.len(), 2);
+        match &lifecycle_rows[1].request.request {
+            BcastRequest::DeliverCommit(v) => {
+                assert_eq!(v.delivery_method, BcastDeliveryMethod::SeleneApp);
+                assert!(!v.app_unavailable);
+                assert!(v.app_unavailable_proof_ref.is_none());
+            }
+            _ => panic!("expected deliver commit lifecycle event"),
+        }
+        let delivery_rows = store.delivery_attempts_ledger();
+        assert_eq!(delivery_rows.len(), 1);
+        assert_eq!(
+            delivery_rows[0].channel,
+            selene_kernel_contracts::ph1delivery::DeliveryChannel::AppPush
+        );
+    }
+
+    #[test]
+    fn at_bcast_mhp_02_non_urgent_followup_waits_five_minutes() {
+        at_sim_exec_01d_bcast_non_urgent_wait_timeout_followup_is_policy_gated_after_window();
+    }
+
+    #[test]
+    fn at_bcast_mhp_03_urgent_followup_immediate_after_delivery() {
+        at_sim_exec_01c_bcast_urgent_post_delivery_followup_is_policy_gated();
+    }
+
+    #[test]
+    fn at_bcast_mhp_04_app_reply_auto_concludes_and_forwards_to_wife() {
+        at_sim_exec_01e_bcast_app_thread_reply_auto_forwards_and_suppresses_voice_interrupt();
+    }
+
+    #[test]
+    fn at_bcast_mhp_05_reminder_set_and_fired_flow_via_ph1_rem() {
+        at_sim_exec_01b_bcast_mhp_defer_hands_off_to_rem_and_returns_handoff_refs();
+    }
+
+    #[test]
+    fn at_bcast_mhp_06_fallback_order_only_when_app_unavailable() {
+        at_sim_exec_01f_bcast_fallback_order_e2e_global_path_locked();
+    }
+
+    #[test]
     fn at_sim_exec_01g_bcast_deliver_is_wired_to_ph1_delivery_send() {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();

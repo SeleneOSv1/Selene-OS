@@ -32,5 +32,8 @@ jobs:
       - name: PH1 tool parity guardrail
         run: bash scripts/check_ph1_tool_parity.sh
 
+      - name: BCAST.MHP acceptance guardrail
+        run: bash scripts/check_bcast_mhp_acceptance.sh
+
       - name: Selene readiness audit (strict clean tree)
         run: AUDIT_REQUIRE_CLEAN_TREE=1 bash scripts/selene_design_readiness_audit.sh
