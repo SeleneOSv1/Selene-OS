@@ -328,7 +328,7 @@ fn looks_like_record_mode(lower: &str) -> bool {
 }
 
 fn looks_like_connector_query(lower: &str) -> bool {
-    (contains_word(lower, "connector")
+    let connector_lookup = (contains_word(lower, "connector")
         || contains_word(lower, "connectors")
         || lower.contains("connected app")
         || lower.contains("connected apps")
@@ -351,7 +351,18 @@ fn looks_like_connector_query(lower: &str) -> bool {
             || lower.contains("look up")
             || contains_word(lower, "summarize")
             || contains_word(lower, "what")
-            || contains_word(lower, "show"))
+            || contains_word(lower, "show"));
+    let policy_lookup = (lower.contains("message policy")
+        || lower.contains("policy settings")
+        || lower.contains("my policies")
+        || lower.contains("policy change")
+        || lower.contains("policy audit"))
+        && (contains_word(lower, "show")
+            || contains_word(lower, "list")
+            || contains_word(lower, "what")
+            || contains_word(lower, "view")
+            || contains_word(lower, "report"));
+    connector_lookup || policy_lookup
 }
 
 fn detect_intents(lower: &str) -> Vec<IntentType> {
@@ -3755,6 +3766,21 @@ mod tests {
                 "Selene search salesforce and slack for renewal notes",
                 "en",
             ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::ConnectorQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_27a_connector_query_normalizes_message_policy_settings_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene show my message policy settings", "en"))
             .unwrap();
         match out {
             Ph1nResponse::IntentDraft(d) => {

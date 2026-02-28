@@ -19,7 +19,10 @@ use selene_kernel_contracts::ph1_voice_id::{
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
-use selene_kernel_contracts::ph1e::ToolResponse;
+use selene_kernel_contracts::ph1e::{
+    CacheStatus, SourceMetadata, SourceRef, ToolName, ToolRequest, ToolResponse, ToolResult,
+    ToolStructuredField, ToolTextSnippet,
+};
 use selene_kernel_contracts::ph1emocore::{
     EmoClassifyProfileCommitRequest, EmoCoreOutcome, EmoCoreRequest, EmoCoreSimulationType,
     EmoPersonalityType, EmoSignalBundle, Ph1EmoCoreRequest, Ph1EmoCoreResponse, EMO_SIM_001,
@@ -61,7 +64,10 @@ use selene_kernel_contracts::ph1x::{
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
-use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
+use selene_storage::ph1f::{
+    BcastPolicyLedgerRow, BcastPolicySettingKey, DeviceRecord, IdentityRecord, IdentityStatus,
+    Ph1fStore, StorageError,
+};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
 use crate::ph1onb::{OnbVoiceEnrollFinalize, OnbVoiceEnrollLiveRequest, OnbVoiceEnrollSampleStep};
@@ -2092,7 +2098,9 @@ impl AppServerIngressRuntime {
             }
             Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
                 DispatchRequest::Tool(tool_request) => {
-                    let tool_response = self.ph1e_runtime.run(tool_request);
+                    let tool_response =
+                        maybe_build_message_policy_tool_response(store, &actor_user_id, tool_request)?
+                            .unwrap_or_else(|| self.ph1e_runtime.run(tool_request));
                     let tool_response_for_followup = tool_response.clone();
                     let tool_followup_request = build_tool_followup_ph1x_request(
                         out.ph1x_request
@@ -2645,6 +2653,247 @@ fn short_hash_hex(parts: &[&str]) -> String {
     format!("{h:016x}")
 }
 
+fn maybe_build_message_policy_tool_response(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    tool_request: &ToolRequest,
+) -> Result<Option<ToolResponse>, StorageError> {
+    if !matches!(tool_request.tool_name, ToolName::ConnectorQuery) {
+        return Ok(None);
+    }
+    if !is_message_policy_query(tool_request.query.as_str()) {
+        return Ok(None);
+    }
+
+    let tenant_id = resolve_actor_single_tenant(store, actor_user_id)?;
+    let changes = store.bcast_policy_changes_for_tenant(&tenant_id, 10);
+    let non_urgent_wait_seconds = store.bcast_non_urgent_wait_seconds_for_tenant(&tenant_id);
+    let urgent_followup_immediate = store.bcast_urgent_followup_immediate_for_tenant(&tenant_id);
+    let max_followup_attempts = store.bcast_max_followup_attempts_for_tenant(&tenant_id);
+    let reminder_default_time = store
+        .bcast_reminder_default_time_for_tenant(&tenant_id)
+        .unwrap_or("unset")
+        .to_string();
+    let current = store.bcast_policy_current_row(&tenant_id);
+
+    let non_urgent_updated_ns =
+        latest_setting_update_ns(&changes, BcastPolicySettingKey::NonUrgentWaitSeconds);
+    let urgent_updated_ns =
+        latest_setting_update_ns(&changes, BcastPolicySettingKey::UrgentFollowupMode);
+    let max_followup_updated_ns =
+        latest_setting_update_ns(&changes, BcastPolicySettingKey::MaxFollowupAttempts);
+    let reminder_default_updated_ns =
+        latest_setting_update_ns(&changes, BcastPolicySettingKey::ReminderDefaultTime);
+
+    let urgent_mode = if urgent_followup_immediate {
+        "immediate"
+    } else {
+        "wait"
+    };
+    let current_provenance = format!(
+        "ph1f.bcast_policy_current tenant={} path=/ph1f/bcast-policy/{}/current",
+        tenant_id.as_str(),
+        tenant_id.as_str(),
+    );
+    let first_change_summary = changes.first().map(|row| {
+        format!(
+            "setting={} {}->{} by={} at_ns={} reason_code={} idempotency_key={}",
+            row.setting_key.as_str(),
+            row.old_value,
+            row.new_value,
+            row.updated_by_user_id.as_str(),
+            row.created_at.0,
+            row.reason_code.0,
+            row.idempotency_key,
+        )
+    });
+
+    let mut extracted_fields = vec![
+        ToolStructuredField {
+            key: "non_urgent_wait_seconds".to_string(),
+            value: non_urgent_wait_seconds.to_string(),
+        },
+        ToolStructuredField {
+            key: "non_urgent_wait_updated_at_ns".to_string(),
+            value: non_urgent_updated_ns,
+        },
+        ToolStructuredField {
+            key: "urgent_followup_mode".to_string(),
+            value: urgent_mode.to_string(),
+        },
+        ToolStructuredField {
+            key: "urgent_followup_updated_at_ns".to_string(),
+            value: urgent_updated_ns,
+        },
+        ToolStructuredField {
+            key: "max_followup_attempts".to_string(),
+            value: max_followup_attempts.to_string(),
+        },
+        ToolStructuredField {
+            key: "max_followup_attempts_updated_at_ns".to_string(),
+            value: max_followup_updated_ns,
+        },
+        ToolStructuredField {
+            key: "reminder_default_time".to_string(),
+            value: reminder_default_time,
+        },
+        ToolStructuredField {
+            key: "reminder_default_time_updated_at_ns".to_string(),
+            value: reminder_default_updated_ns,
+        },
+        ToolStructuredField {
+            key: "policy_current_provenance".to_string(),
+            value: current_provenance,
+        },
+        ToolStructuredField {
+            key: "policy_change_1".to_string(),
+            value: first_change_summary
+                .unwrap_or_else(|| "no policy change rows recorded".to_string()),
+        },
+    ];
+
+    if let Some(current_row) = current {
+        extracted_fields.push(ToolStructuredField {
+            key: "policy_updated_by_user_id".to_string(),
+            value: current_row.updated_by_user_id.as_str().to_string(),
+        });
+        extracted_fields.push(ToolStructuredField {
+            key: "policy_version".to_string(),
+            value: current_row.policy_version.to_string(),
+        });
+    }
+    extracted_fields.push(ToolStructuredField {
+        key: "policy_change_count".to_string(),
+        value: changes.len().to_string(),
+    });
+
+    let citations = if changes.is_empty() {
+        vec![ToolTextSnippet {
+            title: "No policy changes recorded".to_string(),
+            snippet: format!(
+                "Tenant {} is using default BCAST policy values.",
+                tenant_id.as_str()
+            ),
+            url: format!("https://selene.local/ph1f/bcast-policy/{}/ledger", tenant_id.as_str()),
+        }]
+    } else {
+        changes
+            .iter()
+            .take(5)
+            .map(|row| ToolTextSnippet {
+                title: format!("Policy change {}", row.setting_key.as_str()),
+                snippet: format!(
+                    "{} -> {} | by={} | at_ns={} | reason_code={} | idempotency_key={}",
+                    row.old_value,
+                    row.new_value,
+                    row.updated_by_user_id.as_str(),
+                    row.created_at.0,
+                    row.reason_code.0,
+                    row.idempotency_key,
+                ),
+                url: format!(
+                    "https://selene.local/ph1f/bcast-policy/{}/event/{}",
+                    row.tenant_id.as_str(),
+                    row.bcast_policy_event_id
+                ),
+            })
+            .collect()
+    };
+
+    let source_metadata = SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint: Some("ph1f_bcast_policy_registry".to_string()),
+        retrieved_at_unix_ms: 1_700_000_000_000,
+        sources: vec![
+            SourceRef {
+                title: "PH1.F current policy projection".to_string(),
+                url: format!(
+                    "https://selene.local/ph1f/bcast-policy/{}/current",
+                    tenant_id.as_str()
+                ),
+            },
+            SourceRef {
+                title: "PH1.F policy change ledger".to_string(),
+                url: format!(
+                    "https://selene.local/ph1f/bcast-policy/{}/ledger",
+                    tenant_id.as_str()
+                ),
+            },
+        ],
+    };
+    let tool_result = ToolResult::ConnectorQuery {
+        summary: format!(
+            "Message policy settings for tenant {} with {} recent change rows.",
+            tenant_id.as_str(),
+            changes.len()
+        ),
+        extracted_fields,
+        citations,
+    };
+    let response = ToolResponse::ok_v1(
+        tool_request.request_id,
+        tool_request.query_hash,
+        tool_result,
+        source_metadata,
+        None,
+        ReasonCodeId(0x4500_0001),
+        CacheStatus::Bypassed,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ok(Some(response))
+}
+
+fn latest_setting_update_ns(
+    changes: &[BcastPolicyLedgerRow],
+    setting_key: BcastPolicySettingKey,
+) -> String {
+    changes
+        .iter()
+        .find(|row| row.setting_key == setting_key)
+        .map(|row| row.created_at.0.to_string())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+fn is_message_policy_query(query: &str) -> bool {
+    let lower = query.to_ascii_lowercase();
+    lower.contains("message policy")
+        || lower.contains("policy settings")
+        || lower.contains("list my policies")
+        || lower.contains("policy change")
+        || lower.contains("policy audit")
+}
+
+fn resolve_actor_single_tenant(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+) -> Result<TenantId, StorageError> {
+    let mut inferred: Option<String> = None;
+    for ((tenant_id, user_id), _row) in store.ph2access_instance_rows() {
+        if user_id != actor_user_id {
+            continue;
+        }
+        if let Some(existing) = &inferred {
+            if existing != tenant_id {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_voice_turn_execution_outcome.tool_request.query",
+                        reason: "message policy query requires a single tenant scope",
+                    },
+                ));
+            }
+        } else {
+            inferred = Some(tenant_id.clone());
+        }
+    }
+    let tenant = inferred.ok_or_else(|| {
+        StorageError::ContractViolation(ContractViolation::InvalidValue {
+            field: "app_voice_turn_execution_outcome.tool_request.query",
+            reason: "message policy query requires actor tenant access instance",
+        })
+    })?;
+    TenantId::new(tenant).map_err(StorageError::ContractViolation)
+}
+
 fn build_ph1x_request_from_voice_forward(
     correlation_id: CorrelationId,
     turn_id: TurnId,
@@ -2797,7 +3046,7 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus,
+        BcastPolicyUpdateValue, DeviceRecord, IdentityRecord, IdentityStatus,
     };
 
     fn sample_voice_id_request(now: MonotonicTimeNs, owner_user_id: UserId) -> Ph1VoiceIdRequest {
@@ -4440,6 +4689,94 @@ mod tests {
                 .directive,
             Ph1xDirective::Respond(_)
         ));
+    }
+
+    #[test]
+    fn run_cp_desktop_voice_turn_end_to_end_message_policy_query_returns_settings_and_audit() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runcp_policy_user").unwrap();
+        let device_id = DeviceId::new("runcp_policy_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                "tenant_1".to_string(),
+                actor_user_id.clone(),
+                "role.policy_viewer".to_string(),
+                AccessMode::A,
+                "{\"allow\":[\"BCAST_POLICY_UPDATE\"]}".to_string(),
+                true,
+                AccessVerificationLevel::PasscodeTime,
+                AccessDeviceTrustLevel::Dtl4,
+                AccessLifecycleState::Active,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        store
+            .append_bcast_policy_update_event(
+                tenant_id.clone(),
+                BcastPolicyUpdateValue::NonUrgentWaitSeconds(420),
+                actor_user_id.clone(),
+                CorrelationId(9614),
+                "runcp_policy_update_1".to_string(),
+                MonotonicTimeNs(21),
+                ReasonCodeId(0x4243_00B1),
+            )
+            .unwrap();
+        store
+            .append_bcast_policy_update_event(
+                tenant_id,
+                BcastPolicyUpdateValue::UrgentFollowupMode { immediate: false },
+                actor_user_id.clone(),
+                CorrelationId(9614),
+                "runcp_policy_update_2".to_string(),
+                MonotonicTimeNs(22),
+                ReasonCodeId(0x4243_00B2),
+            )
+            .unwrap();
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9614),
+            TurnId(9714),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(23),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(connector_query_draft("Selene, show my message policy settings")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("non_urgent_wait_seconds"));
+        assert!(response_text.contains("urgent_followup_mode"));
+        assert!(response_text.contains("max_followup_attempts"));
+        assert!(response_text.contains("idempotency_key"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
     }
 
     #[test]

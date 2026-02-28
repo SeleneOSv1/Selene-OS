@@ -16,9 +16,8 @@ use selene_kernel_contracts::ph1bcast::{
     BcastDeliverCommitRequest, BcastDeliveryMethod, BcastDraftCreateRequest, BcastOutcome,
     BcastRecipientRegion, BcastRecipientState, BcastRequest, BcastSimulationType,
     BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
-    BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
-    BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT, BCAST_WAIT_POLICY_UPDATE_COMMIT,
-    PH1BCAST_CONTRACT_VERSION,
+    BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_POLICY_UPDATE_COMMIT,
+    BCAST_REMINDER_FIRED_COMMIT, PH1BCAST_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
@@ -68,7 +67,8 @@ use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
 use selene_storage::ph1f::{
-    AccessDecision, AccessMode, AccessVerificationLevel, Ph1fStore, StorageError,
+    AccessDecision, AccessMode, AccessVerificationLevel, BcastPolicyUpdateValue, Ph1fStore,
+    StorageError,
 };
 
 use crate::device_artifact_sync::{
@@ -237,9 +237,9 @@ pub mod reason_codes {
     pub const SIM_DISPATCH_SEND_LINK_DELIVERY_REFUSED: ReasonCodeId = ReasonCodeId(0x5349_0008);
 }
 
-pub const BCAST_WAIT_POLICY_UPDATE_ACTION: &str = "BCAST_WAIT_POLICY_UPDATE";
-pub const BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION: &str =
-    "BCAST_URGENT_FOLLOWUP_POLICY_UPDATE";
+pub const BCAST_POLICY_UPDATE_ACTION: &str = "BCAST_POLICY_UPDATE";
+pub const BCAST_WAIT_POLICY_UPDATE_ACTION: &str = BCAST_POLICY_UPDATE_ACTION;
+pub const BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION: &str = BCAST_POLICY_UPDATE_ACTION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BcastFollowupDeliveryMode {
@@ -444,7 +444,7 @@ impl SimulationExecutor {
         self.ensure_simulation_active_for_tenant(
             store,
             &tenant_id,
-            BCAST_WAIT_POLICY_UPDATE_COMMIT,
+            BCAST_POLICY_UPDATE_COMMIT,
             "simulation_candidate_dispatch.bcast_wait_policy.simulation_id",
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
@@ -453,23 +453,23 @@ impl SimulationExecutor {
             store,
             &actor_user_id,
             &tenant_id,
-            BCAST_WAIT_POLICY_UPDATE_ACTION,
+            BCAST_POLICY_UPDATE_ACTION,
             "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
             now,
         )?;
 
         let idempotency_key = x_idempotency_key
-            .map(|k| format!("bcast_wait_policy_update:{k}"))
+            .map(|k| format!("bcast_policy_update:non_urgent_wait_seconds:{k}"))
             .unwrap_or_else(|| {
                 format!(
-                    "bcast_wait_policy_update:{}:{}",
+                    "bcast_policy_update:non_urgent_wait_seconds:{}:{}",
                     correlation_id.0, turn_id.0
                 )
             });
-        store.append_bcast_wait_policy_update_event(
+        store.append_bcast_policy_update_event(
             tenant_id,
-            non_urgent_wait_seconds,
+            BcastPolicyUpdateValue::NonUrgentWaitSeconds(non_urgent_wait_seconds),
             actor_user_id,
             correlation_id,
             idempotency_key,
@@ -494,7 +494,7 @@ impl SimulationExecutor {
         self.ensure_simulation_active_for_tenant(
             store,
             &tenant_id,
-            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT,
+            BCAST_POLICY_UPDATE_COMMIT,
             "simulation_candidate_dispatch.bcast_urgent_followup_policy.simulation_id",
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
@@ -503,23 +503,25 @@ impl SimulationExecutor {
             store,
             &actor_user_id,
             &tenant_id,
-            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION,
+            BCAST_POLICY_UPDATE_ACTION,
             "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
             now,
         )?;
 
         let idempotency_key = x_idempotency_key
-            .map(|k| format!("bcast_urgent_followup_policy_update:{k}"))
+            .map(|k| format!("bcast_policy_update:urgent_followup_mode:{k}"))
             .unwrap_or_else(|| {
                 format!(
-                    "bcast_urgent_followup_policy_update:{}:{}",
+                    "bcast_policy_update:urgent_followup_mode:{}:{}",
                     correlation_id.0, turn_id.0
                 )
             });
-        store.append_bcast_urgent_followup_policy_update_event(
+        store.append_bcast_policy_update_event(
             tenant_id,
-            urgent_followup_immediate,
+            BcastPolicyUpdateValue::UrgentFollowupMode {
+                immediate: urgent_followup_immediate,
+            },
             actor_user_id,
             correlation_id,
             idempotency_key,
@@ -4093,10 +4095,9 @@ fn simulation_catalog_guard_target_v1(
 
 fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
     match d.intent_type {
-        IntentType::UpdateBcastUrgentFollowupPolicy => {
-            Ok(BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT)
+        IntentType::UpdateBcastUrgentFollowupPolicy | IntentType::UpdateBcastWaitPolicy => {
+            Ok(BCAST_POLICY_UPDATE_COMMIT)
         }
-        IntentType::UpdateBcastWaitPolicy => Ok(BCAST_WAIT_POLICY_UPDATE_COMMIT),
         IntentType::SetReminder => Ok(REMINDER_SCHEDULE_COMMIT),
         IntentType::UpdateReminder => Ok(REMINDER_UPDATE_COMMIT),
         IntentType::CancelReminder => Ok(REMINDER_CANCEL_COMMIT),
@@ -4845,9 +4846,8 @@ mod tests {
         BcastRecipientState, BcastReminderFiredCommitRequest, BcastRequest, BcastSimulationType,
         BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
         BCAST_ACK_COMMIT, BCAST_CREATE_DRAFT, BCAST_DEFER_COMMIT, BCAST_DELIVER_COMMIT,
-        BCAST_ESCALATE_COMMIT, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS, BCAST_REMINDER_FIRED_COMMIT,
-        BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT, BCAST_WAIT_POLICY_UPDATE_COMMIT,
-        PH1BCAST_CONTRACT_VERSION,
+        BCAST_ESCALATE_COMMIT, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS, BCAST_POLICY_UPDATE_COMMIT,
+        BCAST_REMINDER_FIRED_COMMIT, PH1BCAST_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1capreq::{
         CapabilityRequestAction, CapabilityRequestStatus, CapreqId,
@@ -4877,7 +4877,7 @@ mod tests {
     use selene_kernel_contracts::{ReasonCodeId, SchemaVersion};
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, MemoryThreadEventKind,
+        BcastPolicySettingKey, DeviceRecord, IdentityRecord, IdentityStatus, MemoryThreadEventKind,
         MobileArtifactSyncState, TenantCompanyLifecycleState, TenantCompanyRecord,
     };
 
@@ -5436,7 +5436,7 @@ mod tests {
             actor,
             tenant,
             "role.bcast_policy_manager",
-            "{\"allow\":[\"BCAST_WAIT_POLICY_UPDATE\"]}",
+            "{\"allow\":[\"BCAST_POLICY_UPDATE\"]}",
             AccessMode::A,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -5454,7 +5454,7 @@ mod tests {
             actor,
             tenant,
             "role.bcast_urgent_followup_policy_manager",
-            "{\"allow\":[\"BCAST_URGENT_FOLLOWUP_POLICY_UPDATE\"]}",
+            "{\"allow\":[\"BCAST_POLICY_UPDATE\"]}",
             AccessMode::A,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -6210,7 +6210,7 @@ mod tests {
                 }
             ))
         ));
-        assert!(store.bcast_wait_policy_ledger().is_empty());
+        assert!(store.bcast_policy_ledger().is_empty());
     }
 
     #[test]
@@ -6232,7 +6232,7 @@ mod tests {
             &actor,
             "tenant_1",
             "role.bcast_policy_writer",
-            "{\"allow\":[\"BCAST_WAIT_POLICY_UPDATE\"]}",
+            "{\"allow\":[\"BCAST_POLICY_UPDATE\"]}",
             AccessMode::R,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -6256,7 +6256,7 @@ mod tests {
                 }
             ))
         ));
-        assert!(store.bcast_wait_policy_ledger().is_empty());
+        assert!(store.bcast_policy_ledger().is_empty());
     }
 
     #[test]
@@ -6309,13 +6309,14 @@ mod tests {
         };
 
         assert_eq!(event_id, event_id_retry);
-        assert_eq!(store.bcast_wait_policy_ledger().len(), 1);
+        assert_eq!(store.bcast_policy_ledger().len(), 1);
         let row = store
-            .bcast_wait_policy_row(event_id)
+            .bcast_policy_row(event_id)
             .expect("event row should round-trip from store");
+        assert_eq!(row.setting_key, BcastPolicySettingKey::NonUrgentWaitSeconds);
         assert_eq!(row.non_urgent_wait_seconds, 420);
         let current = store
-            .bcast_wait_policy_current_row(&tenant_id)
+            .bcast_policy_current_row(&tenant_id)
             .expect("current wait policy must exist");
         assert_eq!(current.non_urgent_wait_seconds, 420);
         assert_eq!(current.policy_version, 1);
@@ -6343,7 +6344,7 @@ mod tests {
         seed_simulation_catalog_status(
             &mut store,
             "tenant_1",
-            BCAST_WAIT_POLICY_UPDATE_COMMIT,
+            BCAST_POLICY_UPDATE_COMMIT,
             SimulationType::Commit,
             SimulationStatus::Active,
         );
@@ -6597,7 +6598,7 @@ mod tests {
                 }
             ))
         ));
-        assert!(store.bcast_urgent_followup_policy_ledger().is_empty());
+        assert!(store.bcast_policy_ledger().is_empty());
     }
 
     #[test]
@@ -6619,7 +6620,7 @@ mod tests {
             &actor,
             "tenant_1",
             "role.bcast_urgent_followup_policy_writer",
-            "{\"allow\":[\"BCAST_URGENT_FOLLOWUP_POLICY_UPDATE\"]}",
+            "{\"allow\":[\"BCAST_POLICY_UPDATE\"]}",
             AccessMode::R,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -6643,7 +6644,7 @@ mod tests {
                 }
             ))
         ));
-        assert!(store.bcast_urgent_followup_policy_ledger().is_empty());
+        assert!(store.bcast_policy_ledger().is_empty());
     }
 
     #[test]
@@ -6698,13 +6699,14 @@ mod tests {
         };
 
         assert_eq!(event_id, event_id_retry);
-        assert_eq!(store.bcast_urgent_followup_policy_ledger().len(), 1);
+        assert_eq!(store.bcast_policy_ledger().len(), 1);
         let row = store
-            .bcast_urgent_followup_policy_row(event_id)
+            .bcast_policy_row(event_id)
             .expect("event row should round-trip from store");
+        assert_eq!(row.setting_key, BcastPolicySettingKey::UrgentFollowupMode);
         assert!(!row.urgent_followup_immediate);
         let current = store
-            .bcast_urgent_followup_policy_current_row(&tenant_id)
+            .bcast_policy_current_row(&tenant_id)
             .expect("current policy must exist");
         assert!(!current.urgent_followup_immediate);
         assert_eq!(current.policy_version, 1);
@@ -6732,7 +6734,7 @@ mod tests {
         seed_simulation_catalog_status(
             &mut store,
             "tenant_1",
-            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT,
+            BCAST_POLICY_UPDATE_COMMIT,
             SimulationType::Commit,
             SimulationStatus::Active,
         );
