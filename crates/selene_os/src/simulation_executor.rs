@@ -3671,6 +3671,7 @@ fn intent_type_token(intent: IntentType) -> &'static str {
         IntentType::DataAnalysisQuery => "DATA_ANALYSIS_QUERY",
         IntentType::DeepResearchQuery => "DEEP_RESEARCH_QUERY",
         IntentType::RecordModeQuery => "RECORD_MODE_QUERY",
+        IntentType::ConnectorQuery => "CONNECTOR_QUERY",
         IntentType::Continue => "CONTINUE",
         IntentType::MoreDetail => "MORE_DETAIL",
     }

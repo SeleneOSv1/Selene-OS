@@ -93,6 +93,13 @@
 - `allowed_callers`: `SELENE_OS_ONLY`
 - `side_effects`: `NONE`
 
+### `PH1E_TOOL_CONNECTOR_QUERY`
+- `name`: Execute read-only connected-app lookup query
+- `input_schema`: `(tenant_id, correlation_id, turn_id, user_id, device_id, query, locale?, connector_scope?, idempotency_key)`
+- `output_schema`: `tool_response { tool_name, summary, structured_fields, citations[], provenance { source, retrieved_at } }`
+- `allowed_callers`: `SELENE_OS_ONLY`
+- `side_effects`: `NONE`
+
 ### `PH1E_READ_AUDIT_ROWS`
 - `name`: Read PH1.E audit rows for one correlation thread
 - `input_schema`: `correlation_id`

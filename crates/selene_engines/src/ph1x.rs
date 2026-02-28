@@ -548,6 +548,7 @@ impl Ph1xRuntime {
                 | IntentType::DataAnalysisQuery
                 | IntentType::DeepResearchQuery
                 | IntentType::RecordModeQuery
+                | IntentType::ConnectorQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => {
@@ -592,6 +593,10 @@ impl Ph1xRuntime {
                 ),
                 IntentType::RecordModeQuery => (
                     ToolName::RecordMode,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::ConnectorQuery => (
+                    ToolName::ConnectorQuery,
                     intent_query_text_with_thread_context(d, &base_thread_state),
                 ),
                 _ => unreachable!("match guarded above"),
@@ -1562,6 +1567,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("- {}: {}\n", evidence.key, evidence.value));
                 }
             }
+            ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Extracted fields:\n");
+                for field in extracted_fields.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                }
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
         }
     }
     if let Some(meta) = &tr.source_metadata {
@@ -1742,7 +1764,8 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
-        | IntentType::RecordModeQuery => {
+        | IntentType::RecordModeQuery
+        | IntentType::ConnectorQuery => {
             "Is that right?".to_string()
         }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),

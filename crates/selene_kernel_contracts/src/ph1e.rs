@@ -59,6 +59,7 @@ pub enum ToolName {
     DataAnalysis,
     DeepResearch,
     RecordMode,
+    ConnectorQuery,
     Other(String),
 }
 
@@ -92,6 +93,7 @@ impl ToolName {
             ToolName::DataAnalysis => "data_analysis",
             ToolName::DeepResearch => "deep_research",
             ToolName::RecordMode => "record_mode",
+            ToolName::ConnectorQuery => "connector_query",
             ToolName::Other(s) => s.as_str(),
         }
     }
@@ -600,6 +602,11 @@ pub enum ToolResult {
         action_items: Vec<ToolStructuredField>,
         evidence_refs: Vec<ToolStructuredField>,
     },
+    ConnectorQuery {
+        summary: String,
+        extracted_fields: Vec<ToolStructuredField>,
+        citations: Vec<ToolTextSnippet>,
+    },
 }
 
 impl Validate for ToolResult {
@@ -844,6 +851,40 @@ impl Validate for ToolResult {
                 for field in evidence_refs {
                     field.validate()?;
                 }
+            }
+            ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                if summary.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.connector_query.summary",
+                        reason: "must not be empty",
+                    });
+                }
+                if summary.len() > 1024 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.connector_query.summary",
+                        reason: "must be <= 1024 chars",
+                    });
+                }
+                if extracted_fields.is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.connector_query.extracted_fields",
+                        reason: "must not be empty",
+                    });
+                }
+                if extracted_fields.len() > 20 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_result.connector_query.extracted_fields",
+                        reason: "must be <= 20 entries",
+                    });
+                }
+                for field in extracted_fields {
+                    field.validate()?;
+                }
+                validate_items("tool_result.connector_query.citations", citations)?;
             }
         }
         Ok(())

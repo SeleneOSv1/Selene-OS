@@ -2012,6 +2012,7 @@ impl Validate for SimulationCandidateDispatch {
                 | crate::ph1n::IntentType::DataAnalysisQuery
                 | crate::ph1n::IntentType::DeepResearchQuery
                 | crate::ph1n::IntentType::RecordModeQuery
+                | crate::ph1n::IntentType::ConnectorQuery
                 | crate::ph1n::IntentType::Continue
                 | crate::ph1n::IntentType::MoreDetail
         ) {

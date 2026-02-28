@@ -92,6 +92,7 @@ BLUEPRINT_IDS=(
   "TOOL_DATA_ANALYSIS"
   "TOOL_DEEP_RESEARCH"
   "TOOL_RECORD_MODE"
+  "TOOL_CONNECTOR_QUERY"
 )
 INTENT_TYPES=(
   "TimeQuery"
@@ -104,6 +105,7 @@ INTENT_TYPES=(
   "DataAnalysisQuery"
   "DeepResearchQuery"
   "RecordModeQuery"
+  "ConnectorQuery"
 )
 INTENT_TOKENS=(
   "TIME_QUERY"
@@ -116,6 +118,7 @@ INTENT_TOKENS=(
   "DATA_ANALYSIS_QUERY"
   "DEEP_RESEARCH_QUERY"
   "RECORD_MODE_QUERY"
+  "CONNECTOR_QUERY"
 )
 TOOL_VARIANTS=(
   "Time"
@@ -128,6 +131,7 @@ TOOL_VARIANTS=(
   "DataAnalysis"
   "DeepResearch"
   "RecordMode"
+  "ConnectorQuery"
 )
 TOOL_KEYS=(
   "time"
@@ -140,6 +144,7 @@ TOOL_KEYS=(
   "data_analysis"
   "deep_research"
   "record_mode"
+  "connector_query"
 )
 
 EXPECTED_BP="$TMP_DIR/expected_blueprints.txt"
@@ -207,6 +212,7 @@ E2E_TESTS=(
   "run_da_desktop_voice_turn_end_to_end_dispatches_data_analysis_and_returns_provenance"
   "run_dr_desktop_voice_turn_end_to_end_dispatches_deep_research_and_returns_provenance"
   "run_rm_desktop_voice_turn_end_to_end_dispatches_record_mode_and_returns_provenance"
+  "run_cn_desktop_voice_turn_end_to_end_dispatches_connector_query_and_returns_provenance"
 )
 for test_name in "${E2E_TESTS[@]}"; do
   require_match "fn ${test_name}\\(" "$APP_INGRESS" "missing desktop e2e test ${test_name}"

@@ -228,6 +228,34 @@ impl Ph1eRuntime {
                     },
                 ],
             },
+            ToolName::ConnectorQuery => ToolResult::ConnectorQuery {
+                summary: format!(
+                    "Connector search summary for '{}'",
+                    truncate_ascii(&req.query, 80)
+                ),
+                extracted_fields: vec![
+                    ToolStructuredField {
+                        key: "connector_scope".to_string(),
+                        value: "gmail,calendar,drive".to_string(),
+                    },
+                    ToolStructuredField {
+                        key: "matched_items".to_string(),
+                        value: "3".to_string(),
+                    },
+                ],
+                citations: vec![
+                    ToolTextSnippet {
+                        title: "Gmail thread result".to_string(),
+                        snippet: "Matched decision note from mailbox".to_string(),
+                        url: "https://workspace.example.com/gmail/thread_001".to_string(),
+                    },
+                    ToolTextSnippet {
+                        title: "Drive doc result".to_string(),
+                        snippet: "Matched roadmap line item from document".to_string(),
+                        url: "https://workspace.example.com/drive/doc_019".to_string(),
+                    },
+                ],
+            },
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -311,6 +339,7 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
         ToolName::DataAnalysis => "https://example.com/data-analysis",
         ToolName::DeepResearch => "https://example.com/deep-research",
         ToolName::RecordMode => "recording://session/demo/chunk_001",
+        ToolName::ConnectorQuery => "https://workspace.example.com/connectors",
         ToolName::Other(_) => "https://example.com",
     }
 }
@@ -561,5 +590,32 @@ mod tests {
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.starts_with("recording://"));
+    }
+
+    #[test]
+    fn at_e_12_connector_query_returns_structured_fields_with_provenance() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::ConnectorQuery,
+            "search connectors for q3 roadmap notes",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                assert!(!summary.trim().is_empty());
+                assert!(!extracted_fields.is_empty());
+                assert!(!citations.is_empty());
+            }
+            other => panic!("expected ConnectorQuery result, got {other:?}"),
+        }
+        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        assert!(!meta.sources.is_empty());
+        assert!(meta.sources[0].url.contains("workspace.example.com"));
     }
 }

@@ -636,6 +636,7 @@ impl Ph1xRuntime {
                 | IntentType::DataAnalysisQuery
                 | IntentType::DeepResearchQuery
                 | IntentType::RecordModeQuery
+                | IntentType::ConnectorQuery
         ) {
             let (tool_name, query) = match d.intent_type {
                 IntentType::TimeQuery => {
@@ -680,6 +681,10 @@ impl Ph1xRuntime {
                 ),
                 IntentType::RecordModeQuery => (
                     ToolName::RecordMode,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::ConnectorQuery => (
+                    ToolName::ConnectorQuery,
                     intent_query_text_with_thread_context(d, &base_thread_state),
                 ),
                 _ => unreachable!("match guarded above"),
@@ -1927,6 +1932,23 @@ fn tool_ok_text(tr: &ToolResponse) -> String {
                     out.push_str(&format!("- {}: {}\n", evidence.key, evidence.value));
                 }
             }
+            ToolResult::ConnectorQuery {
+                summary,
+                extracted_fields,
+                citations,
+            } => {
+                out.push_str("Summary: ");
+                out.push_str(summary);
+                out.push('\n');
+                out.push_str("Extracted fields:\n");
+                for field in extracted_fields.iter().take(10) {
+                    out.push_str(&format!("- {}: {}\n", field.key, field.value));
+                }
+                out.push_str("Citations:\n");
+                for (i, it) in citations.iter().enumerate().take(5) {
+                    out.push_str(&format!("{}. {} ({})\n", i + 1, it.title, it.url));
+                }
+            }
         }
     }
     if let Some(meta) = &tr.source_metadata {
@@ -2107,7 +2129,8 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
-        | IntentType::RecordModeQuery => {
+        | IntentType::RecordModeQuery
+        | IntentType::ConnectorQuery => {
             "Is that right?".to_string()
         }
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
@@ -3293,6 +3316,48 @@ mod tests {
     }
 
     #[test]
+    fn at_x_dispatches_read_only_connector_query_to_tool_router_and_sets_pending_tool() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let req = Ph1xRequest::v1(
+            20,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::ConnectorQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out = rt.decide(&req).unwrap();
+        match out.directive {
+            Ph1xDirective::Dispatch(d) => {
+                assert!(matches!(
+                    out.thread_state.pending,
+                    Some(PendingState::Tool { .. })
+                ));
+                match d.dispatch_request {
+                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::ConnectorQuery),
+                    DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                    DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+                }
+            }
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out.idempotency_key.is_some());
+    }
+
+    #[test]
     fn at_x_tool_query_includes_project_and_pinned_context_refs_when_present() {
         let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
         let thread_state = base_thread()
@@ -4155,6 +4220,92 @@ mod tests {
                 assert!(r.response_text.contains("Summary:"));
                 assert!(r.response_text.contains("Action items:"));
                 assert!(r.response_text.contains("Recording evidence refs:"));
+                assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
+            }
+            _ => panic!("expected Respond"),
+        }
+    }
+
+    #[test]
+    fn at_x_tool_ok_connector_query_includes_structured_extraction_and_citations() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+
+        let first = Ph1xRequest::v1(
+            21,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::ConnectorQuery,
+            ))),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out1 = rt.decide(&first).unwrap();
+        let (request_id, query_hash) = match &out1.directive {
+            Ph1xDirective::Dispatch(d) => match &d.dispatch_request {
+                DispatchRequest::Tool(t) => (t.request_id, t.query_hash),
+                DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
+            },
+            _ => panic!("expected Dispatch"),
+        };
+
+        let tool_ok = ToolResponse::ok_v1(
+            request_id,
+            query_hash,
+            ToolResult::ConnectorQuery {
+                summary: "Connector result summary".to_string(),
+                extracted_fields: vec![ToolStructuredField {
+                    key: "matched_items".to_string(),
+                    value: "3".to_string(),
+                }],
+                citations: vec![ToolTextSnippet {
+                    title: "Gmail thread".to_string(),
+                    snippet: "Q3 roadmap decision thread".to_string(),
+                    url: "https://workspace.example.com/gmail/thread_001".to_string(),
+                }],
+            },
+            dummy_source_metadata(),
+            None,
+            ReasonCodeId(1),
+            CacheStatus::Bypassed,
+        )
+        .unwrap();
+
+        let second = Ph1xRequest::v1(
+            21,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            None,
+            Some(tool_ok),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Respond(r) => {
+                assert!(r.response_text.contains("Summary:"));
+                assert!(r.response_text.contains("Extracted fields:"));
+                assert!(r.response_text.contains("Citations:"));
                 assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
             }
             _ => panic!("expected Respond"),

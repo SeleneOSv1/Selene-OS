@@ -21,6 +21,7 @@ pub mod reason_codes {
     pub const E_OK_DATA_ANALYSIS: ReasonCodeId = ReasonCodeId(0x4500_1008);
     pub const E_OK_DEEP_RESEARCH: ReasonCodeId = ReasonCodeId(0x4500_1009);
     pub const E_OK_RECORD_MODE: ReasonCodeId = ReasonCodeId(0x4500_1010);
+    pub const E_OK_CONNECTOR_QUERY: ReasonCodeId = ReasonCodeId(0x4500_1011);
 
     pub const E_FAIL_FORBIDDEN_TOOL: ReasonCodeId = ReasonCodeId(0x4500_0001);
     pub const E_FAIL_FORBIDDEN_ORIGIN: ReasonCodeId = ReasonCodeId(0x4500_0002);
@@ -230,6 +231,7 @@ fn ok_reason_code(tool_name: &str) -> ReasonCodeId {
         "data_analysis" => reason_codes::E_OK_DATA_ANALYSIS,
         "deep_research" => reason_codes::E_OK_DEEP_RESEARCH,
         "record_mode" => reason_codes::E_OK_RECORD_MODE,
+        "connector_query" => reason_codes::E_OK_CONNECTOR_QUERY,
         _ => reason_codes::E_OK_WEB_SEARCH,
     }
 }
@@ -263,6 +265,11 @@ fn clamp_result(mut result: ToolResult, max_results: u8) -> ToolResult {
             }
         }
         ToolResult::DeepResearch { citations, .. } => {
+            if citations.len() > n {
+                citations.truncate(n);
+            }
+        }
+        ToolResult::ConnectorQuery { citations, .. } => {
             if citations.len() > n {
                 citations.truncate(n);
             }
@@ -358,6 +365,19 @@ fn violates_domain_policy(
             false
         }
         ToolResult::DeepResearch { citations, .. } => {
+            for s in &source_metadata.sources {
+                if !url_allowed(allowlist, denylist, &s.url) {
+                    return true;
+                }
+            }
+            for it in citations {
+                if !url_allowed(allowlist, denylist, &it.url) {
+                    return true;
+                }
+            }
+            false
+        }
+        ToolResult::ConnectorQuery { citations, .. } => {
             for s in &source_metadata.sources {
                 if !url_allowed(allowlist, denylist, &s.url) {
                     return true;

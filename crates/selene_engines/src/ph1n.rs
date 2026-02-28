@@ -117,7 +117,8 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
-        | IntentType::RecordModeQuery => {
+        | IntentType::RecordModeQuery
+        | IntentType::ConnectorQuery => {
             (SensitivityLevel::Public, false)
         }
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
@@ -289,6 +290,25 @@ fn looks_like_record_mode(lower: &str) -> bool {
         || lower.starts_with("summarize this meeting")
 }
 
+fn looks_like_connector_query(lower: &str) -> bool {
+    (contains_word(lower, "connector")
+        || contains_word(lower, "connectors")
+        || contains_word(lower, "gmail")
+        || contains_word(lower, "outlook")
+        || contains_word(lower, "calendar")
+        || contains_word(lower, "drive")
+        || contains_word(lower, "dropbox")
+        || contains_word(lower, "slack")
+        || contains_word(lower, "notion"))
+        && (contains_word(lower, "search")
+            || contains_word(lower, "find")
+            || contains_word(lower, "lookup")
+            || lower.contains("look up")
+            || contains_word(lower, "summarize")
+            || contains_word(lower, "what")
+            || contains_word(lower, "show"))
+}
+
 fn detect_intents(lower: &str) -> Vec<IntentType> {
     let s = lower
         .trim()
@@ -296,6 +316,7 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     let data_analysis = looks_like_data_analysis(s);
     let deep_research = looks_like_deep_research(s);
     let record_mode = looks_like_record_mode(s);
+    let connector_query = looks_like_connector_query(s);
     let mut out: Vec<IntentType> = Vec::new();
 
     let mut push = |t: IntentType| {
@@ -379,6 +400,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if record_mode {
         push(IntentType::RecordModeQuery);
     }
+    if connector_query {
+        push(IntentType::ConnectorQuery);
+    }
     if looks_like_photo_understand(s) && !data_analysis {
         push(IntentType::PhotoUnderstandQuery);
     }
@@ -457,7 +481,8 @@ fn normalize_intent(
         | IntentType::PhotoUnderstandQuery
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
-        | IntentType::RecordModeQuery => {
+        | IntentType::RecordModeQuery
+        | IntentType::ConnectorQuery => {
             let (sens, confirm) = meta_for_intent(intent_type);
             Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
                 intent_type,
@@ -1885,6 +1910,7 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::DataAnalysisQuery => "Analyze uploaded data".to_string(),
         IntentType::DeepResearchQuery => "Deep research report".to_string(),
         IntentType::RecordModeQuery => "Summarize recording and action items".to_string(),
+        IntentType::ConnectorQuery => "Search connected apps".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::CreateCalendarEvent => "Schedule a meeting".to_string(),
         IntentType::BookTable => "Book a table".to_string(),
@@ -3167,6 +3193,24 @@ mod tests {
         match out {
             Ph1nResponse::IntentDraft(d) => {
                 assert_eq!(d.intent_type, IntentType::RecordModeQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_26_connector_query_normalizes_from_common_phrase() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene search my connectors for Q3 roadmap notes in Gmail and Drive",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::ConnectorQuery);
                 assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
             }
             _ => panic!("expected intent_draft"),
