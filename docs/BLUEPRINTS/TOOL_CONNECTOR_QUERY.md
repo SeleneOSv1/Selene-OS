@@ -33,6 +33,7 @@ reason_code: string
 
 Notes:
 - Connector query reads user-connected app data (for example: mail/calendar/docs) through PH1.E read-only tooling.
+- PH1.E resolves provider scope from query text (`gmail/outlook/calendar/drive/dropbox/slack/notion/onedrive`), defaults to `gmail,calendar,drive` when scope is absent, and returns scope-aware citations/sources.
 - Output must include provenance (`source urls` + `retrieved_at`) from PH1.E response metadata.
 
 ## 5) Confirmation Points
@@ -44,7 +45,10 @@ Notes:
 ## 7) Refusal Conditions
 - query missing/invalid after clarify budget -> `NLP_CLARIFY_MISSING_FIELD`
 - policy blocks connector query in strict tenant policy mode -> `E_FAIL_POLICY_BLOCK`
+- unsupported connector provider requested (for example `salesforce`, `servicenow`, `zendesk`, `hubspot`) -> `E_FAIL_POLICY_BLOCK`
 
 ## 8) Acceptance Tests
 - `AT-PBS-TOOLCONNECTOR-01`: Connector query routes to PH1.E tool dispatch (not simulation dispatch).
 - `AT-PBS-TOOLCONNECTOR-02`: Response includes extracted fields + citations + provenance metadata.
+- `AT-PBS-TOOLCONNECTOR-03`: Explicit provider scope limits citations/sources to requested connectors.
+- `AT-PBS-TOOLCONNECTOR-04`: Unsupported connector scope fails closed with `E_FAIL_POLICY_BLOCK`.

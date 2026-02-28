@@ -293,13 +293,21 @@ fn looks_like_record_mode(lower: &str) -> bool {
 fn looks_like_connector_query(lower: &str) -> bool {
     (contains_word(lower, "connector")
         || contains_word(lower, "connectors")
+        || lower.contains("connected app")
+        || lower.contains("connected apps")
         || contains_word(lower, "gmail")
         || contains_word(lower, "outlook")
         || contains_word(lower, "calendar")
         || contains_word(lower, "drive")
+        || contains_word(lower, "onedrive")
+        || lower.contains("one drive")
         || contains_word(lower, "dropbox")
         || contains_word(lower, "slack")
-        || contains_word(lower, "notion"))
+        || contains_word(lower, "notion")
+        || contains_word(lower, "salesforce")
+        || contains_word(lower, "servicenow")
+        || contains_word(lower, "zendesk")
+        || contains_word(lower, "hubspot"))
         && (contains_word(lower, "search")
             || contains_word(lower, "find")
             || contains_word(lower, "lookup")
@@ -3205,6 +3213,24 @@ mod tests {
         let out = rt
             .run(&req(
                 "Selene search my connectors for Q3 roadmap notes in Gmail and Drive",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::ConnectorQuery);
+                assert_eq!(d.required_fields_missing, Vec::<FieldKey>::new());
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_27_connector_query_normalizes_for_extended_connector_tokens() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene search salesforce and slack for renewal notes",
                 "en",
             ))
             .unwrap();

@@ -4368,6 +4368,62 @@ mod tests {
     }
 
     #[test]
+    fn run_co_desktop_voice_turn_end_to_end_connector_query_honors_explicit_scope() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:runco_connector_user").unwrap();
+        let device_id = DeviceId::new("runco_connector_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9613),
+            TurnId(9713),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(20),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(connector_query_draft(
+                "search slack and notion for incident notes",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
+        let response_text = out.response_text.expect("respond output must include text");
+        assert!(response_text.contains("/slack/"));
+        assert!(response_text.contains("/notion/"));
+        assert!(!response_text.contains("/gmail/"));
+        assert!(response_text.contains("Retrieved at (unix_ms):"));
+        assert!(out.dispatch_outcome.is_none());
+        assert!(matches!(
+            out.ph1x_response
+                .expect("respond outcome must include PH1.X response")
+                .directive,
+            Ph1xDirective::Respond(_)
+        ));
+    }
+
+    #[test]
     fn run_pr_desktop_voice_turn_applies_thread_policy_flags_to_ph1x_policy_context() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:runpr_policy_user").unwrap();

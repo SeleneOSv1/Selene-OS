@@ -70,6 +70,14 @@ impl Ph1eRuntime {
             );
         }
 
+        if connector_scope_policy_block(req) {
+            return fail_response(
+                req,
+                reason_codes::E_FAIL_POLICY_BLOCK,
+                CacheStatus::Bypassed,
+            );
+        }
+
         if forbidden_domain(req) {
             return fail_response(
                 req,
@@ -228,34 +236,56 @@ impl Ph1eRuntime {
                     },
                 ],
             },
-            ToolName::ConnectorQuery => ToolResult::ConnectorQuery {
-                summary: format!(
-                    "Connector search summary for '{}'",
-                    truncate_ascii(&req.query, 80)
-                ),
-                extracted_fields: vec![
-                    ToolStructuredField {
-                        key: "connector_scope".to_string(),
-                        value: "gmail,calendar,drive".to_string(),
-                    },
-                    ToolStructuredField {
-                        key: "matched_items".to_string(),
-                        value: "3".to_string(),
-                    },
-                ],
-                citations: vec![
-                    ToolTextSnippet {
-                        title: "Gmail thread result".to_string(),
-                        snippet: "Matched decision note from mailbox".to_string(),
-                        url: "https://workspace.example.com/gmail/thread_001".to_string(),
-                    },
-                    ToolTextSnippet {
-                        title: "Drive doc result".to_string(),
-                        snippet: "Matched roadmap line item from document".to_string(),
-                        url: "https://workspace.example.com/drive/doc_019".to_string(),
-                    },
-                ],
-            },
+            ToolName::ConnectorQuery => {
+                let (requested_scope, explicit_scope) = connector_scope_for_query(&req.query);
+                let max_results =
+                    usize::from(req.strict_budget.max_results.min(self.config.max_results));
+                let returned_scope: Vec<&'static str> =
+                    requested_scope.iter().copied().take(max_results).collect();
+                let requested_scope_csv = requested_scope.join(",");
+                let returned_scope_csv = returned_scope.join(",");
+                let citations: Vec<ToolTextSnippet> = returned_scope
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(idx, connector)| connector_citation(connector, &req.query, idx))
+                    .collect();
+
+                ToolResult::ConnectorQuery {
+                    summary: format!(
+                        "Connector search summary for '{}' ({})",
+                        truncate_ascii(&req.query, 80),
+                        if explicit_scope {
+                            "explicit connector scope"
+                        } else {
+                            "default connector scope"
+                        }
+                    ),
+                    extracted_fields: vec![
+                        ToolStructuredField {
+                            key: "connector_scope".to_string(),
+                            value: returned_scope_csv,
+                        },
+                        ToolStructuredField {
+                            key: "connector_scope_requested".to_string(),
+                            value: requested_scope_csv,
+                        },
+                        ToolStructuredField {
+                            key: "scope_mode".to_string(),
+                            value: if explicit_scope {
+                                "explicit".to_string()
+                            } else {
+                                "default".to_string()
+                            },
+                        },
+                        ToolStructuredField {
+                            key: "matched_items".to_string(),
+                            value: citations.len().to_string(),
+                        },
+                    ],
+                    citations,
+                }
+            }
             ToolName::Other(_) => {
                 return fail_response(
                     req,
@@ -269,10 +299,11 @@ impl Ph1eRuntime {
             schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
             provider_hint: Some("ph1e_mock".to_string()),
             retrieved_at_unix_ms: 1_700_000_000_000,
-            sources: vec![SourceRef {
-                title: "Deterministic PH1.E source".to_string(),
-                url: source_url_for_tool(&req.tool_name).to_string(),
-            }],
+            sources: source_refs_for_tool(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
         };
 
         match ToolResponse::ok_v1(
@@ -311,6 +342,24 @@ fn policy_blocks(req: &ToolRequest) -> bool {
             ))
 }
 
+fn connector_scope_policy_block(req: &ToolRequest) -> bool {
+    if !matches!(req.tool_name, ToolName::ConnectorQuery) {
+        return false;
+    }
+    let lower = req.query.to_ascii_lowercase();
+    const UNSUPPORTED_CONNECTORS: &[&str] = &[
+        "salesforce",
+        "servicenow",
+        "zendesk",
+        "hubspot",
+        "atlassian compass",
+        "workday",
+    ];
+    UNSUPPORTED_CONNECTORS
+        .iter()
+        .any(|token| lower.contains(token))
+}
+
 fn forbidden_domain(req: &ToolRequest) -> bool {
     req.query.to_ascii_lowercase().contains("forbidden.example")
 }
@@ -344,6 +393,161 @@ fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
     }
 }
 
+fn source_refs_for_tool(tool_name: &ToolName, query: &str, max_results: u8) -> Vec<SourceRef> {
+    if matches!(tool_name, ToolName::ConnectorQuery) {
+        let (scope, _) = connector_scope_for_query(query);
+        let mut refs: Vec<SourceRef> = scope
+            .into_iter()
+            .take(usize::from(max_results))
+            .map(connector_source_ref)
+            .collect();
+        if refs.is_empty() {
+            refs.push(SourceRef {
+                title: "Connector source".to_string(),
+                url: "https://workspace.example.com/connectors".to_string(),
+            });
+        }
+        return refs;
+    }
+    vec![SourceRef {
+        title: "Deterministic PH1.E source".to_string(),
+        url: source_url_for_tool(tool_name).to_string(),
+    }]
+}
+
+fn connector_scope_for_query(query: &str) -> (Vec<&'static str>, bool) {
+    let lower = query.to_ascii_lowercase();
+    let mut out = Vec::new();
+    for connector in [
+        "gmail",
+        "outlook",
+        "calendar",
+        "drive",
+        "dropbox",
+        "slack",
+        "notion",
+        "onedrive",
+    ] {
+        if connector_aliases(connector)
+            .iter()
+            .any(|alias| lower.contains(alias))
+        {
+            out.push(connector);
+        }
+    }
+    let explicit_scope = !out.is_empty();
+    if out.is_empty() {
+        out.extend(["gmail", "calendar", "drive"]);
+    }
+    (out, explicit_scope)
+}
+
+fn connector_aliases(connector: &str) -> &'static [&'static str] {
+    match connector {
+        "gmail" => &["gmail", "google mail"],
+        "outlook" => &["outlook", "exchange mail"],
+        "calendar" => &["calendar", "gcal", "google calendar", "outlook calendar"],
+        "drive" => &["drive", "google drive", "google docs", "google sheets"],
+        "dropbox" => &["dropbox"],
+        "slack" => &["slack"],
+        "notion" => &["notion"],
+        "onedrive" => &["onedrive", "one drive"],
+        _ => &[],
+    }
+}
+
+fn connector_source_ref(connector: &'static str) -> SourceRef {
+    match connector {
+        "gmail" => SourceRef {
+            title: "Connector source: Gmail".to_string(),
+            url: "https://workspace.example.com/gmail".to_string(),
+        },
+        "outlook" => SourceRef {
+            title: "Connector source: Outlook".to_string(),
+            url: "https://workspace.example.com/outlook".to_string(),
+        },
+        "calendar" => SourceRef {
+            title: "Connector source: Calendar".to_string(),
+            url: "https://workspace.example.com/calendar".to_string(),
+        },
+        "drive" => SourceRef {
+            title: "Connector source: Drive".to_string(),
+            url: "https://workspace.example.com/drive".to_string(),
+        },
+        "dropbox" => SourceRef {
+            title: "Connector source: Dropbox".to_string(),
+            url: "https://workspace.example.com/dropbox".to_string(),
+        },
+        "slack" => SourceRef {
+            title: "Connector source: Slack".to_string(),
+            url: "https://workspace.example.com/slack".to_string(),
+        },
+        "notion" => SourceRef {
+            title: "Connector source: Notion".to_string(),
+            url: "https://workspace.example.com/notion".to_string(),
+        },
+        "onedrive" => SourceRef {
+            title: "Connector source: OneDrive".to_string(),
+            url: "https://workspace.example.com/onedrive".to_string(),
+        },
+        _ => SourceRef {
+            title: "Connector source".to_string(),
+            url: "https://workspace.example.com/connectors".to_string(),
+        },
+    }
+}
+
+fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolTextSnippet {
+    let compact_query = truncate_ascii(query, 60);
+    match connector {
+        "gmail" => ToolTextSnippet {
+            title: "Gmail thread result".to_string(),
+            snippet: format!("Gmail match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/gmail/thread_{:03}", idx + 1),
+        },
+        "outlook" => ToolTextSnippet {
+            title: "Outlook message result".to_string(),
+            snippet: format!("Outlook match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/outlook/message_{:03}", idx + 1),
+        },
+        "calendar" => ToolTextSnippet {
+            title: "Calendar event result".to_string(),
+            snippet: format!("Calendar match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/calendar/event_{:03}", idx + 1),
+        },
+        "drive" => ToolTextSnippet {
+            title: "Drive doc result".to_string(),
+            snippet: format!("Drive match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/drive/doc_{:03}", idx + 1),
+        },
+        "dropbox" => ToolTextSnippet {
+            title: "Dropbox file result".to_string(),
+            snippet: format!("Dropbox match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/dropbox/file_{:03}", idx + 1),
+        },
+        "slack" => ToolTextSnippet {
+            title: "Slack message result".to_string(),
+            snippet: format!("Slack match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/slack/message_{:03}", idx + 1),
+        },
+        "notion" => ToolTextSnippet {
+            title: "Notion page result".to_string(),
+            snippet: format!("Notion match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/notion/page_{:03}", idx + 1),
+        },
+        "onedrive" => ToolTextSnippet {
+            title: "OneDrive file result".to_string(),
+            snippet: format!("OneDrive match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/onedrive/file_{:03}", idx + 1),
+        },
+        _ => ToolTextSnippet {
+            title: "Connector result".to_string(),
+            snippet: format!("Connector match for '{compact_query}'"),
+            url: format!("https://workspace.example.com/connectors/item_{:03}", idx + 1),
+        },
+    }
+}
+
 fn truncate_ascii(input: &str, max_len: usize) -> String {
     input.chars().take(max_len).collect()
 }
@@ -360,12 +564,22 @@ mod tests {
     use selene_kernel_contracts::ph1e::{ToolRequestOrigin, ToolStatus};
 
     fn req(tool_name: ToolName, query: &str, privacy_mode: bool, strict: bool) -> ToolRequest {
+        req_with_budget(tool_name, query, privacy_mode, strict, 3)
+    }
+
+    fn req_with_budget(
+        tool_name: ToolName,
+        query: &str,
+        privacy_mode: bool,
+        strict: bool,
+        max_results: u8,
+    ) -> ToolRequest {
         ToolRequest::v1(
             ToolRequestOrigin::Ph1X,
             tool_name,
             query.to_string(),
             Some("en-US".to_string()),
-            StrictBudget::new(1000, 3).unwrap(),
+            StrictBudget::new(1000, max_results).unwrap(),
             PolicyContextRef::v1(
                 privacy_mode,
                 false,
@@ -597,7 +811,7 @@ mod tests {
         let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
         let out = rt.run(&req(
             ToolName::ConnectorQuery,
-            "search connectors for q3 roadmap notes",
+            "search connectors for q3 roadmap notes in gmail and drive",
             false,
             false,
         ));
@@ -611,11 +825,107 @@ mod tests {
                 assert!(!summary.trim().is_empty());
                 assert!(!extracted_fields.is_empty());
                 assert!(!citations.is_empty());
+                let scope = extracted_fields
+                    .iter()
+                    .find(|field| field.key == "connector_scope")
+                    .map(|field| field.value.as_str())
+                    .expect("connector_scope field missing");
+                assert!(scope.contains("gmail"));
+                assert!(scope.contains("drive"));
+                assert!(!scope.contains("calendar"));
+                assert!(citations.iter().all(|item| {
+                    item.url.contains("/gmail/") || item.url.contains("/drive/")
+                }));
             }
             other => panic!("expected ConnectorQuery result, got {other:?}"),
         }
         let meta = out.source_metadata.as_ref().expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("workspace.example.com"));
+        assert!(meta.sources.iter().any(|s| s.url.contains("/gmail")));
+        assert!(meta.sources.iter().any(|s| s.url.contains("/drive")));
+    }
+
+    #[test]
+    fn at_e_13_connector_query_defaults_scope_when_none_is_requested() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::ConnectorQuery,
+            "search connectors for onboarding checklist notes",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::ConnectorQuery {
+                extracted_fields,
+                citations,
+                ..
+            } => {
+                let scope = extracted_fields
+                    .iter()
+                    .find(|field| field.key == "connector_scope")
+                    .map(|field| field.value.as_str())
+                    .expect("connector_scope field missing");
+                assert_eq!(scope, "gmail,calendar,drive");
+                let mode = extracted_fields
+                    .iter()
+                    .find(|field| field.key == "scope_mode")
+                    .map(|field| field.value.as_str())
+                    .expect("scope_mode field missing");
+                assert_eq!(mode, "default");
+                assert_eq!(citations.len(), 3);
+            }
+            other => panic!("expected ConnectorQuery result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_e_14_connector_query_respects_budget_and_scope_limit() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req_with_budget(
+            ToolName::ConnectorQuery,
+            "search slack and notion for infra postmortems",
+            false,
+            false,
+            1,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Ok);
+        match out.tool_result.as_ref().expect("tool result required for ok") {
+            ToolResult::ConnectorQuery {
+                extracted_fields,
+                citations,
+                ..
+            } => {
+                assert_eq!(citations.len(), 1);
+                let requested = extracted_fields
+                    .iter()
+                    .find(|field| field.key == "connector_scope_requested")
+                    .map(|field| field.value.as_str())
+                    .expect("connector_scope_requested field missing");
+                assert!(requested.contains("slack"));
+                assert!(requested.contains("notion"));
+                let returned = extracted_fields
+                    .iter()
+                    .find(|field| field.key == "connector_scope")
+                    .map(|field| field.value.as_str())
+                    .expect("connector_scope field missing");
+                assert_eq!(returned, "slack");
+                assert!(citations[0].url.contains("/slack/"));
+            }
+            other => panic!("expected ConnectorQuery result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_e_15_connector_query_unsupported_scope_fails_closed() {
+        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let out = rt.run(&req(
+            ToolName::ConnectorQuery,
+            "search salesforce for renewal notes",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(out.reason_code, reason_codes::E_FAIL_POLICY_BLOCK);
     }
 }

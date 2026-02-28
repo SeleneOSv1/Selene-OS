@@ -194,7 +194,9 @@ for i in "${!BLUEPRINT_IDS[@]}"; do
 
   require_match "${tool}," "$KERNEL_E" "kernel ToolName missing ${tool}"
   require_match "ToolName::${tool} => \"${key}\"" "$KERNEL_E" "kernel ToolName.as_str missing ${tool}"
-  require_match "ToolName::${tool} => ToolResult::${tool}" "$ENGINE_E" \
+  require_match "ToolName::${tool} =>" "$ENGINE_E" \
+    "engine PH1.E runtime missing ${tool} branch"
+  require_match "ToolResult::${tool}" "$ENGINE_E" \
     "engine PH1.E runtime missing ${tool} result variant"
   require_match "\"${key}\" => reason_codes::E_OK_" "$TOOLS_E" \
     "tool router ok reason-code mapping missing ${key}"
