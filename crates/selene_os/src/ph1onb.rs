@@ -1396,6 +1396,36 @@ mod tests {
             .expect("voice enrollment complete must return sync receipt")
     }
 
+    fn seed_onboarding_emo_persona_lock(
+        store: &mut Ph1fStore,
+        onboarding_session_id: &OnboardingSessionId,
+        now: MonotonicTimeNs,
+        user_id: UserId,
+        device_id: DeviceId,
+        tenant_id: &str,
+        idempotency_key: &str,
+    ) {
+        let audit_event_id = store
+            .ph1persona_profile_commit(
+                now,
+                tenant_id.to_string(),
+                corr(),
+                turn(),
+                None,
+                user_id,
+                device_id,
+                "style_professional_v1".to_string(),
+                "balanced_v1".to_string(),
+                "prefs_v1".to_string(),
+                ReasonCodeId(1),
+                format!("{idempotency_key}-persona-lock"),
+            )
+            .unwrap();
+        store
+            .ph1onb_emo_persona_lock_commit(now, onboarding_session_id.clone(), audit_event_id)
+            .unwrap();
+    }
+
     fn selector_snapshot() -> PositionSchemaSelectorSnapshot {
         PositionSchemaSelectorSnapshot {
             company_size: Some("SMALL".to_string()),
@@ -1728,6 +1758,16 @@ mod tests {
             _ => panic!("expected ok"),
         }
 
+        seed_onboarding_emo_persona_lock(
+            &mut store,
+            &session_id,
+            MonotonicTimeNs(now().0 + 6),
+            user("inviter"),
+            device("device_1"),
+            "tenant_1",
+            "k4",
+        );
+
         // Access instance create.
         let access = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,
@@ -1852,6 +1892,16 @@ mod tests {
             }),
         };
         let _ = rt.run(&mut store, &dev).unwrap();
+
+        seed_onboarding_emo_persona_lock(
+            &mut store,
+            &session_id,
+            MonotonicTimeNs(now().0 + 4),
+            user("inviter"),
+            device("device_no_sender_verify"),
+            "tenant_1",
+            "schema-gate-device",
+        );
 
         let access = Ph1OnbRequest {
             schema_version: selene_kernel_contracts::ph1onb::PH1ONB_CONTRACT_VERSION,

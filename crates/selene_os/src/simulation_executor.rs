@@ -4317,8 +4317,9 @@ mod tests {
             .map(|f| field_str(&f.value).to_string())
             .expect("capreq tests require FieldKey::TenantId");
         seed_capreq_access_instance(store, actor, &tenant);
-
-        let x = capreq_x(turn_id, capreq_draft(fields), idempotency_key);
+        let draft = capreq_draft(fields);
+        seed_active_simulation_for_intent_draft(store, actor, &draft);
+        let x = capreq_x(turn_id, draft, idempotency_key);
         exec.execute_ph1x_dispatch_simulation_candidate(
             store,
             actor.clone(),
@@ -4463,6 +4464,31 @@ mod tests {
         )
         .unwrap();
         store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn simulation_type_for_dispatch_simulation_id(simulation_id: &str) -> SimulationType {
+        match simulation_id {
+            LINK_INVITE_GENERATE_DRAFT | CAPREQ_CREATE_DRAFT | ACCESS_AP_SCHEMA_CREATE_DRAFT => {
+                SimulationType::Draft
+            }
+            _ => SimulationType::Commit,
+        }
+    }
+
+    fn seed_active_simulation_for_intent_draft(
+        store: &mut Ph1fStore,
+        actor_user_id: &UserId,
+        draft: &IntentDraft,
+    ) {
+        let (tenant_id, simulation_id) = simulation_catalog_guard_target_v1(store, actor_user_id, draft)
+            .expect("test draft should resolve simulation guard target");
+        seed_simulation_catalog_status(
+            store,
+            tenant_id.as_str(),
+            simulation_id.as_str(),
+            simulation_type_for_dispatch_simulation_id(simulation_id.as_str()),
+            SimulationStatus::Active,
+        );
     }
 
     fn access_field(key: FieldKey, value: &str) -> IntentField {
@@ -4654,6 +4680,7 @@ mod tests {
             vec![],
         )
         .unwrap();
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
 
         let x = Ph1xResponse::v1(
             10,
@@ -4872,6 +4899,7 @@ mod tests {
         seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
 
         let draft = reminder_draft("file payroll", "in 5 minutes");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
         let x = Ph1xResponse::v1(
             11,
             23,
@@ -4934,6 +4962,7 @@ mod tests {
             IntentType::MemoryRememberRequest,
             Some("Benji is my preferred name"),
         );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
         let x = Ph1xResponse::v1(
             11,
             2401,
@@ -4987,6 +5016,7 @@ mod tests {
             IntentType::MemoryRememberRequest,
             Some("Parking spot is B12"),
         );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &remember_draft);
         let remember_x = Ph1xResponse::v1(
             11,
             2402,
@@ -5016,6 +5046,7 @@ mod tests {
 
         let forget_draft =
             memory_draft(IntentType::MemoryForgetRequest, Some("Parking spot is B12"));
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &forget_draft);
         let forget_x = Ph1xResponse::v1(
             11,
             2403,
@@ -5073,6 +5104,7 @@ mod tests {
             IntentType::MemoryRememberRequest,
             Some("Trip to Japan in March"),
         );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &remember_draft);
         let remember_x = Ph1xResponse::v1(
             11,
             2404,
@@ -5100,6 +5132,7 @@ mod tests {
         ));
 
         let query_draft = memory_draft(IntentType::MemoryQuery, Some("Trip to Japan in March"));
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &query_draft);
         let query_x = Ph1xResponse::v1(
             11,
             2405,
@@ -5149,6 +5182,7 @@ mod tests {
             IntentType::MemoryRememberRequest,
             Some("This should fail because PH1.M is disabled"),
         );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
         let x = Ph1xResponse::v1(
             11,
             2406,
@@ -5191,6 +5225,7 @@ mod tests {
             IntentType::MemoryRememberRequest,
             Some("This should fail because speaker identity is unknown"),
         );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
         let x = Ph1xResponse::v1(
             11,
             2407,
@@ -6542,7 +6577,7 @@ mod tests {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
 
-        let actor = UserId::new("inviter-link-scope-1").unwrap();
+        let actor = UserId::new("tenant_2:inviter-link-scope-1").unwrap();
         store
             .insert_identity(IdentityRecord::v1(
                 actor.clone(),
@@ -6553,6 +6588,13 @@ mod tests {
             ))
             .unwrap();
         seed_link_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
 
         let draft = IntentDraft::v1(
             IntentType::CreateInviteLink,
@@ -6625,6 +6667,13 @@ mod tests {
             ))
             .unwrap();
         seed_link_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
 
         let mk_x = |turn_id: u64| {
             let draft = IntentDraft::v1(
@@ -7329,6 +7378,7 @@ mod tests {
             vec![],
         )
         .unwrap();
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
 
         let x = Ph1xResponse::v1(
             10,
@@ -7726,17 +7776,20 @@ mod tests {
             _ => panic!("expected capreq lifecycle outcome"),
         };
 
+        let invalid_approve_draft = capreq_draft(vec![
+            capreq_field(FieldKey::TenantId, "tenant_1"),
+            capreq_field(FieldKey::CapreqAction, "approve"),
+            capreq_field(FieldKey::CapreqId, capreq_id.as_str()),
+        ]);
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &invalid_approve_draft);
+
         let out = exec.execute_ph1x_dispatch_simulation_candidate(
             &mut store,
             actor,
             MonotonicTimeNs(141),
             &capreq_x(
                 2,
-                capreq_draft(vec![
-                    capreq_field(FieldKey::TenantId, "tenant_1"),
-                    capreq_field(FieldKey::CapreqAction, "approve"),
-                    capreq_field(FieldKey::CapreqId, capreq_id.as_str()),
-                ]),
+                invalid_approve_draft,
                 "idem-capreq-6-approve-invalid",
             ),
         );
@@ -7932,6 +7985,22 @@ mod tests {
             AccessLifecycleState::Active,
         );
 
+        let allow_draft = access_draft(
+            IntentType::AccessSchemaManage,
+            vec![
+                access_field(FieldKey::TenantId, "tenant_1"),
+                access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                access_field(FieldKey::AccessProfileId, "AP_CLERK"),
+                access_field(FieldKey::SchemaVersionId, "v1"),
+                access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+                access_field(
+                    FieldKey::ProfilePayloadJson,
+                    "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                ),
+            ],
+        );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &allow_draft);
+
         let out = exec
             .execute_ph1x_dispatch_simulation_candidate(
                 &mut store,
@@ -7939,20 +8008,7 @@ mod tests {
                 MonotonicTimeNs(200),
                 &access_x(
                     1,
-                    access_draft(
-                        IntentType::AccessSchemaManage,
-                        vec![
-                            access_field(FieldKey::TenantId, "tenant_1"),
-                            access_field(FieldKey::ApAction, "CREATE_DRAFT"),
-                            access_field(FieldKey::AccessProfileId, "AP_CLERK"),
-                            access_field(FieldKey::SchemaVersionId, "v1"),
-                            access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
-                            access_field(
-                                FieldKey::ProfilePayloadJson,
-                                "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
-                            ),
-                        ],
-                    ),
+                    allow_draft,
                     "idem-access-schema-allow-1",
                 ),
             )
@@ -8094,25 +8150,28 @@ mod tests {
             AccessLifecycleState::Active,
         );
 
+        let missing_channel_draft = access_draft(
+            IntentType::AccessSchemaManage,
+            vec![
+                access_field(FieldKey::TenantId, "tenant_1"),
+                access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                access_field(FieldKey::AccessProfileId, "AP_CLERK"),
+                access_field(FieldKey::SchemaVersionId, "v1"),
+                access_field(
+                    FieldKey::ProfilePayloadJson,
+                    "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                ),
+            ],
+        );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &missing_channel_draft);
+
         let out = exec.execute_ph1x_dispatch_simulation_candidate(
             &mut store,
             actor,
             MonotonicTimeNs(203),
             &access_x(
                 1,
-                access_draft(
-                    IntentType::AccessSchemaManage,
-                    vec![
-                        access_field(FieldKey::TenantId, "tenant_1"),
-                        access_field(FieldKey::ApAction, "CREATE_DRAFT"),
-                        access_field(FieldKey::AccessProfileId, "AP_CLERK"),
-                        access_field(FieldKey::SchemaVersionId, "v1"),
-                        access_field(
-                            FieldKey::ProfilePayloadJson,
-                            "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
-                        ),
-                    ],
-                ),
+                missing_channel_draft,
                 "idem-access-schema-missing-channel-1",
             ),
         );
@@ -8155,6 +8214,22 @@ mod tests {
             AccessLifecycleState::Active,
         );
 
+        let read_out_loud_draft = access_draft(
+            IntentType::AccessSchemaManage,
+            vec![
+                access_field(FieldKey::TenantId, "tenant_1"),
+                access_field(FieldKey::ApAction, "CREATE_DRAFT"),
+                access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                access_field(FieldKey::SchemaVersionId, "v1"),
+                access_field(FieldKey::AccessReviewChannel, "READ_OUT_LOUD"),
+                access_field(
+                    FieldKey::ProfilePayloadJson,
+                    "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
+                ),
+            ],
+        );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &read_out_loud_draft);
+
         let out = exec
             .execute_ph1x_dispatch_simulation_candidate(
                 &mut store,
@@ -8162,20 +8237,7 @@ mod tests {
                 MonotonicTimeNs(204),
                 &access_x(
                     1,
-                    access_draft(
-                        IntentType::AccessSchemaManage,
-                        vec![
-                            access_field(FieldKey::TenantId, "tenant_1"),
-                            access_field(FieldKey::ApAction, "CREATE_DRAFT"),
-                            access_field(FieldKey::AccessProfileId, "AP_CEO"),
-                            access_field(FieldKey::SchemaVersionId, "v1"),
-                            access_field(FieldKey::AccessReviewChannel, "READ_OUT_LOUD"),
-                            access_field(
-                                FieldKey::ProfilePayloadJson,
-                                "{\"allow\":[\"ACCESS_SCHEMA_MANAGE\"]}",
-                            ),
-                        ],
-                    ),
+                    read_out_loud_draft,
                     "idem-access-schema-read-out-loud-1",
                 ),
             )
@@ -8216,22 +8278,25 @@ mod tests {
             AccessLifecycleState::Active,
         );
 
+        let missing_rule_action_draft = access_draft(
+            IntentType::AccessSchemaManage,
+            vec![
+                access_field(FieldKey::TenantId, "tenant_1"),
+                access_field(FieldKey::ApAction, "ACTIVATE"),
+                access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                access_field(FieldKey::SchemaVersionId, "v2"),
+                access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+            ],
+        );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &missing_rule_action_draft);
+
         let out = exec.execute_ph1x_dispatch_simulation_candidate(
             &mut store,
             actor,
             MonotonicTimeNs(205),
             &access_x(
                 1,
-                access_draft(
-                    IntentType::AccessSchemaManage,
-                    vec![
-                        access_field(FieldKey::TenantId, "tenant_1"),
-                        access_field(FieldKey::ApAction, "ACTIVATE"),
-                        access_field(FieldKey::AccessProfileId, "AP_CEO"),
-                        access_field(FieldKey::SchemaVersionId, "v2"),
-                        access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
-                    ],
-                ),
+                missing_rule_action_draft,
                 "idem-access-schema-activate-missing-rule-action-1",
             ),
         );
@@ -8289,6 +8354,18 @@ mod tests {
             } else {
                 "READ_OUT_LOUD"
             };
+            let action_draft = access_draft(
+                IntentType::AccessSchemaManage,
+                vec![
+                    access_field(FieldKey::TenantId, "tenant_1"),
+                    access_field(FieldKey::ApAction, "ACTIVATE"),
+                    access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                    access_field(FieldKey::SchemaVersionId, &format!("v{}", idx + 1)),
+                    access_field(FieldKey::AccessReviewChannel, review_channel),
+                    access_field(FieldKey::AccessRuleAction, action),
+                ],
+            );
+            seed_active_simulation_for_intent_draft(&mut store, &actor, &action_draft);
             let out = exec
                 .execute_ph1x_dispatch_simulation_candidate(
                     &mut store,
@@ -8296,17 +8373,7 @@ mod tests {
                     MonotonicTimeNs(206 + idx as u64),
                     &access_x(
                         idx as u64 + 1,
-                        access_draft(
-                            IntentType::AccessSchemaManage,
-                            vec![
-                                access_field(FieldKey::TenantId, "tenant_1"),
-                                access_field(FieldKey::ApAction, "ACTIVATE"),
-                                access_field(FieldKey::AccessProfileId, "AP_CEO"),
-                                access_field(FieldKey::SchemaVersionId, &format!("v{}", idx + 1)),
-                                access_field(FieldKey::AccessReviewChannel, review_channel),
-                                access_field(FieldKey::AccessRuleAction, action),
-                            ],
-                        ),
+                        action_draft,
                         &format!("idem-access-schema-activate-action-{}", idx + 1),
                     ),
                 )
@@ -8319,23 +8386,26 @@ mod tests {
             ));
         }
 
+        let invalid_action_draft = access_draft(
+            IntentType::AccessSchemaManage,
+            vec![
+                access_field(FieldKey::TenantId, "tenant_1"),
+                access_field(FieldKey::ApAction, "ACTIVATE"),
+                access_field(FieldKey::AccessProfileId, "AP_CEO"),
+                access_field(FieldKey::SchemaVersionId, "v999"),
+                access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
+                access_field(FieldKey::AccessRuleAction, "UNBOUNDED_ACTION"),
+            ],
+        );
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &invalid_action_draft);
+
         let invalid = exec.execute_ph1x_dispatch_simulation_candidate(
             &mut store,
             actor,
             MonotonicTimeNs(213),
             &access_x(
                 999,
-                access_draft(
-                    IntentType::AccessSchemaManage,
-                    vec![
-                        access_field(FieldKey::TenantId, "tenant_1"),
-                        access_field(FieldKey::ApAction, "ACTIVATE"),
-                        access_field(FieldKey::AccessProfileId, "AP_CEO"),
-                        access_field(FieldKey::SchemaVersionId, "v999"),
-                        access_field(FieldKey::AccessReviewChannel, "PHONE_DESKTOP"),
-                        access_field(FieldKey::AccessRuleAction, "UNBOUNDED_ACTION"),
-                    ],
-                ),
+                invalid_action_draft,
                 "idem-access-schema-activate-action-invalid",
             ),
         );
