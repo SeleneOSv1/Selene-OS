@@ -572,11 +572,21 @@ impl Validate for StructuredAmbiguity {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolResult {
-    Time { local_time_iso: String },
-    Weather { summary: String },
-    WebSearch { items: Vec<ToolTextSnippet> },
-    News { items: Vec<ToolTextSnippet> },
-    UrlFetchAndCite { citations: Vec<ToolTextSnippet> },
+    Time {
+        local_time_iso: String,
+    },
+    Weather {
+        summary: String,
+    },
+    WebSearch {
+        items: Vec<ToolTextSnippet>,
+    },
+    News {
+        items: Vec<ToolTextSnippet>,
+    },
+    UrlFetchAndCite {
+        citations: Vec<ToolTextSnippet>,
+    },
     DocumentUnderstand {
         summary: String,
         extracted_fields: Vec<ToolStructuredField>,

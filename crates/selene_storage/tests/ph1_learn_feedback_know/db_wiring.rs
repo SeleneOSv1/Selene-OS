@@ -467,10 +467,7 @@ fn at_learn_db_06_non_builder_active_artifact_write_fails_closed() {
         ArtifactStatus::Active,
         "learn-guard-fail".to_string(),
     );
-    assert!(matches!(
-        out,
-        Err(StorageError::ContractViolation(_))
-    ));
+    assert!(matches!(out, Err(StorageError::ContractViolation(_))));
 }
 
 #[test]

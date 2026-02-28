@@ -20,35 +20,6 @@ use selene_kernel_contracts::ph1_voice_id::{
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1e::ToolResponse;
-use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
-use selene_kernel_contracts::ph1k::InterruptCandidate;
-use selene_kernel_contracts::ph1link::{
-    AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
-    LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
-};
-use selene_kernel_contracts::ph1m::MemoryCandidate;
-use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
-use selene_kernel_contracts::ph1persona::{
-    PersonaDeliveryPolicyRef, PersonaPreferenceKey, PersonaPreferenceSignal,
-    PersonaProfileValidateRequest, PersonaRequestEnvelope, PersonaValidationStatus,
-    Ph1PersonaRequest, Ph1PersonaResponse,
-};
-use selene_kernel_contracts::ph1onb::{
-    OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
-    OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
-    OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbTermsAcceptCommitRequest,
-    OnboardingNextStep, OnboardingSessionId, OnboardingStatus, Ph1OnbRequest, Ph1OnbResponse,
-    ProofType, SenderVerifyDecision, SimulationType, TermsStatus, VerificationStatus,
-    ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
-    ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
-    ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
-};
-use selene_kernel_contracts::ph1position::TenantId;
-use selene_kernel_contracts::ph1tts::StyleProfileRef;
-use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
-    StepUpCapabilities, ThreadState,
-};
 use selene_kernel_contracts::ph1emocore::{
     EmoClassifyProfileCommitRequest, EmoCoreOutcome, EmoCoreRequest, EmoCoreSimulationType,
     EmoPersonalityType, EmoSignalBundle, Ph1EmoCoreRequest, Ph1EmoCoreResponse, EMO_SIM_001,
@@ -58,20 +29,45 @@ use selene_kernel_contracts::ph1emoguide::{
     EmoGuideInteractionSignals, EmoGuideProfileBuildRequest, EmoGuideProfileValidateRequest,
     EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
 };
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1k::InterruptCandidate;
+use selene_kernel_contracts::ph1link::{
+    AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
+    LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+};
+use selene_kernel_contracts::ph1m::MemoryCandidate;
+use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
+use selene_kernel_contracts::ph1onb::{
+    OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
+    OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
+    OnbPrimaryDeviceConfirmCommitRequest, OnbRequest, OnbTermsAcceptCommitRequest,
+    OnboardingNextStep, OnboardingSessionId, OnboardingStatus, Ph1OnbRequest, Ph1OnbResponse,
+    ProofType, SenderVerifyDecision, SimulationType, TermsStatus, VerificationStatus,
+    ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT, ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT,
+    ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT,
+    ONB_TERMS_ACCEPT_COMMIT,
+};
+use selene_kernel_contracts::ph1persona::{
+    PersonaDeliveryPolicyRef, PersonaPreferenceKey, PersonaPreferenceSignal,
+    PersonaProfileValidateRequest, PersonaRequestEnvelope, PersonaValidationStatus,
+    Ph1PersonaRequest, Ph1PersonaResponse,
+};
+use selene_kernel_contracts::ph1position::TenantId;
+use selene_kernel_contracts::ph1tts::StyleProfileRef;
+use selene_kernel_contracts::ph1x::{
+    ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
+    StepUpCapabilities, ThreadState,
+};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
-use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
-};
+use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError};
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
+use crate::ph1onb::{OnbVoiceEnrollFinalize, OnbVoiceEnrollLiveRequest, OnbVoiceEnrollSampleStep};
 use crate::ph1os::{
     OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
-};
-use crate::ph1onb::{
-    OnbVoiceEnrollFinalize, OnbVoiceEnrollLiveRequest, OnbVoiceEnrollSampleStep,
 };
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::simulation_executor::{SimulationDispatchOutcome, SimulationExecutor};
@@ -726,16 +722,17 @@ impl AppServerIngressRuntime {
                         } else {
                             AppOnboardingContinueNextStep::AskMissing
                         };
-                        let blocking_field = if next_step == AppOnboardingContinueNextStep::AskMissing
-                        {
-                            ask.field_key
-                                .clone()
-                                .or_else(|| ask.remaining_missing_fields.first().cloned())
-                        } else {
-                            None
-                        };
-                        let blocking_question =
-                            blocking_field.as_deref().map(onboarding_missing_field_question);
+                        let blocking_field =
+                            if next_step == AppOnboardingContinueNextStep::AskMissing {
+                                ask.field_key
+                                    .clone()
+                                    .or_else(|| ask.remaining_missing_fields.first().cloned())
+                            } else {
+                                None
+                            };
+                        let blocking_question = blocking_field
+                            .as_deref()
+                            .map(onboarding_missing_field_question);
                         Ok(AppOnboardingContinueOutcome {
                             onboarding_session_id: onboarding_session_id.as_str().to_string(),
                             next_step,
@@ -748,14 +745,12 @@ impl AppServerIngressRuntime {
                             onboarding_status: None,
                         })
                     }
-                    selene_storage::ph1f::OnbAskMissingOutcomeKind::Escalated => {
-                        Err(StorageError::ContractViolation(
-                            ContractViolation::InvalidValue {
-                                field: "app_onboarding_continue_request.action",
-                                reason: "ONB_ASK_MISSING_REPEAT_ESCALATION",
-                            },
-                        ))
-                    }
+                    selene_storage::ph1f::OnbAskMissingOutcomeKind::Escalated => Err(
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_ASK_MISSING_REPEAT_ESCALATION",
+                        }),
+                    ),
                 }
             }
             AppOnboardingContinueAction::PlatformSetupReceipt {
@@ -829,8 +824,8 @@ impl AppServerIngressRuntime {
                         },
                     ));
                 }
-                let remaining_platform_receipt_kinds = store
-                    .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
+                let remaining_platform_receipt_kinds =
+                    store.ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
                 if !remaining_platform_receipt_kinds.is_empty() {
                     return Err(StorageError::ContractViolation(
                         ContractViolation::InvalidValue {
@@ -864,15 +859,16 @@ impl AppServerIngressRuntime {
                 req.validate().map_err(StorageError::ContractViolation)?;
                 let out = self.executor.execute_onb(store, &req)?;
                 let terms_status = match out {
-                    Ph1OnbResponse::Ok(ok) => ok
-                        .terms_accept_result
-                        .ok_or_else(|| {
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1onb_response.terms_accept_result",
-                                reason: "terms accept result must be present",
-                            })
-                        })?
-                        .terms_status,
+                    Ph1OnbResponse::Ok(ok) => {
+                        ok.terms_accept_result
+                            .ok_or_else(|| {
+                                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                    field: "ph1onb_response.terms_accept_result",
+                                    reason: "terms accept result must be present",
+                                })
+                            })?
+                            .terms_status
+                    }
                     Ph1OnbResponse::Refuse(_) => {
                         return Err(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
@@ -908,7 +904,10 @@ impl AppServerIngressRuntime {
                     onboarding_status: None,
                 })
             }
-            AppOnboardingContinueAction::PrimaryDeviceConfirm { device_id, proof_ok } => {
+            AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                device_id,
+                proof_ok,
+            } => {
                 self.executor.ensure_simulation_active_for_tenant(
                     store,
                     &effective_tenant,
@@ -937,15 +936,16 @@ impl AppServerIngressRuntime {
                 req.validate().map_err(StorageError::ContractViolation)?;
                 let out = self.executor.execute_onb(store, &req)?;
                 let primary_device_confirmed = match out {
-                    Ph1OnbResponse::Ok(ok) => ok
-                        .primary_device_confirm_result
-                        .ok_or_else(|| {
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1onb_response.primary_device_confirm_result",
-                                reason: "primary device confirm result must be present",
-                            })
-                        })?
-                        .primary_device_confirmed,
+                    Ph1OnbResponse::Ok(ok) => {
+                        ok.primary_device_confirm_result
+                            .ok_or_else(|| {
+                                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                    field: "ph1onb_response.primary_device_confirm_result",
+                                    reason: "primary device confirm result must be present",
+                                })
+                            })?
+                            .primary_device_confirmed
+                    }
                     Ph1OnbResponse::Refuse(_) => {
                         return Err(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
@@ -1000,8 +1000,8 @@ impl AppServerIngressRuntime {
                         },
                     ));
                 }
-                let remaining_platform_receipt_kinds = store
-                    .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
+                let remaining_platform_receipt_kinds =
+                    store.ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?;
                 if !remaining_platform_receipt_kinds.is_empty() {
                     return Err(StorageError::ContractViolation(
                         ContractViolation::InvalidValue {
@@ -1032,16 +1032,15 @@ impl AppServerIngressRuntime {
                         .ok_or(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
                                 field: "app_onboarding_continue_request.action",
-                                reason:
-                                    "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL",
+                                reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL",
                             },
                         ))?;
                 if expected_device_id != device_id {
                     return Err(StorageError::ContractViolation(
                         ContractViolation::InvalidValue {
-                            field: "app_onboarding_continue_request.action.voice_enroll_lock.device_id",
-                            reason:
-                                "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL",
+                            field:
+                                "app_onboarding_continue_request.action.voice_enroll_lock.device_id",
+                            reason: "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL",
                         },
                     ));
                 }
@@ -1119,8 +1118,9 @@ impl AppServerIngressRuntime {
                         },
                     },
                 )?;
-                let voice_artifact_sync_receipt_ref =
-                    voice_out.complete_result.and_then(|r| r.voice_artifact_sync_receipt_ref);
+                let voice_artifact_sync_receipt_ref = voice_out
+                    .complete_result
+                    .and_then(|r| r.voice_artifact_sync_receipt_ref);
                 if voice_artifact_sync_receipt_ref.is_none() {
                     return Err(StorageError::ContractViolation(
                         ContractViolation::InvalidValue {
@@ -1144,8 +1144,8 @@ impl AppServerIngressRuntime {
                     onboarding_status: None,
                 })
             }
-            AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => {
-                self.run_onboarding_employee_photo_capture_send(
+            AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => self
+                .run_onboarding_employee_photo_capture_send(
                     store,
                     correlation_id,
                     turn_id,
@@ -1154,10 +1154,9 @@ impl AppServerIngressRuntime {
                     photo_blob_ref,
                     idempotency_key,
                     now,
-                )
-            }
-            AppOnboardingContinueAction::EmployeeSenderVerifyCommit { decision } => {
-                self.run_onboarding_employee_sender_verify_commit(
+                ),
+            AppOnboardingContinueAction::EmployeeSenderVerifyCommit { decision } => self
+                .run_onboarding_employee_sender_verify_commit(
                     store,
                     correlation_id,
                     turn_id,
@@ -1166,8 +1165,7 @@ impl AppServerIngressRuntime {
                     decision,
                     idempotency_key,
                     now,
-                )
-            }
+                ),
             AppOnboardingContinueAction::EmoPersonaLock => self.run_onboarding_emo_persona_lock(
                 store,
                 correlation_id,
@@ -1177,8 +1175,8 @@ impl AppServerIngressRuntime {
                 idempotency_key,
                 now,
             ),
-            AppOnboardingContinueAction::AccessProvisionCommit => {
-                self.run_onboarding_access_provision(
+            AppOnboardingContinueAction::AccessProvisionCommit => self
+                .run_onboarding_access_provision(
                     store,
                     correlation_id,
                     turn_id,
@@ -1186,8 +1184,7 @@ impl AppServerIngressRuntime {
                     effective_tenant,
                     idempotency_key,
                     now,
-                )
-            }
+                ),
             AppOnboardingContinueAction::CompleteCommit => self.run_onboarding_complete(
                 store,
                 correlation_id,
@@ -1240,15 +1237,16 @@ impl AppServerIngressRuntime {
         req.validate().map_err(StorageError::ContractViolation)?;
         let out = self.executor.execute_onb(store, &req)?;
         let verification_status = match out {
-            Ph1OnbResponse::Ok(ok) => ok
-                .employee_photo_result
-                .ok_or_else(|| {
-                    StorageError::ContractViolation(ContractViolation::InvalidValue {
-                        field: "ph1onb_response.employee_photo_result",
-                        reason: "employee photo result must be present",
-                    })
-                })?
-                .verification_status,
+            Ph1OnbResponse::Ok(ok) => {
+                ok.employee_photo_result
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "ph1onb_response.employee_photo_result",
+                            reason: "employee photo result must be present",
+                        })
+                    })?
+                    .verification_status
+            }
             Ph1OnbResponse::Refuse(_) => {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -1321,15 +1319,16 @@ impl AppServerIngressRuntime {
         req.validate().map_err(StorageError::ContractViolation)?;
         let out = self.executor.execute_onb(store, &req)?;
         let verification_status = match out {
-            Ph1OnbResponse::Ok(ok) => ok
-                .employee_sender_verify_result
-                .ok_or_else(|| {
-                    StorageError::ContractViolation(ContractViolation::InvalidValue {
-                        field: "ph1onb_response.employee_sender_verify_result",
-                        reason: "employee sender verify result must be present",
-                    })
-                })?
-                .verification_status,
+            Ph1OnbResponse::Ok(ok) => {
+                ok.employee_sender_verify_result
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "ph1onb_response.employee_sender_verify_result",
+                            reason: "employee sender verify result must be present",
+                        })
+                    })?
+                    .verification_status
+            }
             Ph1OnbResponse::Refuse(_) => {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -1500,7 +1499,9 @@ impl AppServerIngressRuntime {
                 idempotency_key: format!("{idempotency_key}-emo-core"),
             }),
         };
-        emo_req.validate().map_err(StorageError::ContractViolation)?;
+        emo_req
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         let emo_runtime = EnginePh1EmoCoreRuntime::new(EnginePh1EmoCoreConfig::mvp_v1());
         let emo_ok = match emo_runtime.run(&emo_req) {
             Ph1EmoCoreResponse::Ok(ok) => ok,
@@ -1538,14 +1539,15 @@ impl AppServerIngressRuntime {
             .map_err(StorageError::ContractViolation)?;
         let emo_guide_signals = emoguide_signals_for_personality(personality_type)
             .map_err(StorageError::ContractViolation)?;
-        let emo_guide_build_req =
-            Ph1EmoGuideRequest::EmoGuideProfileBuild(EmoGuideProfileBuildRequest::v1(
+        let emo_guide_build_req = Ph1EmoGuideRequest::EmoGuideProfileBuild(
+            EmoGuideProfileBuildRequest::v1(
                 emo_guide_envelope.clone(),
                 persona_speaker_id.clone(),
                 emo_guide_signals.clone(),
                 None,
             )
-            .map_err(StorageError::ContractViolation)?);
+            .map_err(StorageError::ContractViolation)?,
+        );
         let emo_guide_build_ok = match emo_guide_runtime.run(&emo_guide_build_req) {
             Ph1EmoGuideResponse::EmoGuideProfileBuildOk(ok) => ok,
             Ph1EmoGuideResponse::Refuse(_) => {
@@ -1577,15 +1579,16 @@ impl AppServerIngressRuntime {
             ));
         }
 
-        let emo_guide_validate_req =
-            Ph1EmoGuideRequest::EmoGuideProfileValidate(EmoGuideProfileValidateRequest::v1(
+        let emo_guide_validate_req = Ph1EmoGuideRequest::EmoGuideProfileValidate(
+            EmoGuideProfileValidateRequest::v1(
                 emo_guide_envelope,
                 persona_speaker_id.clone(),
                 emo_guide_signals,
                 None,
                 emo_guide_build_ok.profile.clone(),
             )
-            .map_err(StorageError::ContractViolation)?);
+            .map_err(StorageError::ContractViolation)?,
+        );
         let emo_guide_validate_ok = match emo_guide_runtime.run(&emo_guide_validate_req) {
             Ph1EmoGuideResponse::EmoGuideProfileValidateOk(ok) => ok,
             Ph1EmoGuideResponse::Refuse(_) => {
@@ -1730,7 +1733,8 @@ impl AppServerIngressRuntime {
             None,
             persona_user_id,
             device_id,
-            style_profile_ref_token(persona_build_ok.profile_snapshot.style_profile_ref).to_string(),
+            style_profile_ref_token(persona_build_ok.profile_snapshot.style_profile_ref)
+                .to_string(),
             persona_delivery_policy_token(persona_build_ok.profile_snapshot.delivery_policy_ref)
                 .to_string(),
             persona_build_ok.profile_snapshot.preferences_snapshot_ref,
@@ -1846,15 +1850,16 @@ impl AppServerIngressRuntime {
         req.validate().map_err(StorageError::ContractViolation)?;
         let out = self.executor.execute_onb(store, &req)?;
         let access_engine_instance_id = match out {
-            Ph1OnbResponse::Ok(ok) => ok
-                .access_instance_create_result
-                .ok_or_else(|| {
-                    StorageError::ContractViolation(ContractViolation::InvalidValue {
-                        field: "ph1onb_response.access_instance_create_result",
-                        reason: "access instance create result must be present",
-                    })
-                })?
-                .access_engine_instance_id,
+            Ph1OnbResponse::Ok(ok) => {
+                ok.access_instance_create_result
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "ph1onb_response.access_instance_create_result",
+                            reason: "access instance create result must be present",
+                        })
+                    })?
+                    .access_engine_instance_id
+            }
             Ph1OnbResponse::Refuse(_) => {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -1969,15 +1974,16 @@ impl AppServerIngressRuntime {
         req.validate().map_err(StorageError::ContractViolation)?;
         let out = self.executor.execute_onb(store, &req)?;
         let onboarding_status = match out {
-            Ph1OnbResponse::Ok(ok) => ok
-                .complete_result
-                .ok_or_else(|| {
-                    StorageError::ContractViolation(ContractViolation::InvalidValue {
-                        field: "ph1onb_response.complete_result",
-                        reason: "complete result must be present",
-                    })
-                })?
-                .onboarding_status,
+            Ph1OnbResponse::Ok(ok) => {
+                ok.complete_result
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "ph1onb_response.complete_result",
+                            reason: "complete result must be present",
+                        })
+                    })?
+                    .onboarding_status
+            }
             Ph1OnbResponse::Refuse(_) => {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -2318,12 +2324,12 @@ fn onboarding_sender_verification_pending(
     onboarding_session_id: &OnboardingSessionId,
 ) -> Result<bool, StorageError> {
     const GATE_SENDER_CONFIRMATION: &str = "SENDER_CONFIRMATION";
-    let session = store
-        .ph1onb_session_row(onboarding_session_id)
-        .ok_or(StorageError::ForeignKeyViolation {
+    let session = store.ph1onb_session_row(onboarding_session_id).ok_or(
+        StorageError::ForeignKeyViolation {
             table: "onboarding_sessions.onboarding_session_id",
             key: onboarding_session_id.as_str().to_string(),
-        })?;
+        },
+    )?;
     let required = session
         .required_verification_gates
         .iter()
@@ -2335,18 +2341,19 @@ fn onboarding_sender_user_id_for_session(
     store: &Ph1fStore,
     onboarding_session_id: &OnboardingSessionId,
 ) -> Result<UserId, StorageError> {
-    let session = store
-        .ph1onb_session_row(onboarding_session_id)
-        .ok_or(StorageError::ForeignKeyViolation {
+    let session = store.ph1onb_session_row(onboarding_session_id).ok_or(
+        StorageError::ForeignKeyViolation {
             table: "onboarding_sessions.onboarding_session_id",
             key: onboarding_session_id.as_str().to_string(),
-        })?;
-    let link = store.ph1link_get_link(&session.token_id).ok_or(
-        StorageError::ForeignKeyViolation {
-            table: "links.token_id",
-            key: session.token_id.as_str().to_string(),
         },
     )?;
+    let link =
+        store
+            .ph1link_get_link(&session.token_id)
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "links.token_id",
+                key: session.token_id.as_str().to_string(),
+            })?;
     Ok(link.inviter_user_id.clone())
 }
 
@@ -2773,8 +2780,7 @@ mod tests {
         SimulationVersion,
     };
     use selene_kernel_contracts::ph1x::{
-        ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadPolicyFlags,
-        ThreadState,
+        ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
     };
     use selene_kernel_contracts::{
         ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState,
@@ -3346,10 +3352,12 @@ mod tests {
         let doc_field = selene_kernel_contracts::ph1position::PositionRequirementFieldSpec {
             field_key: "working_hours".to_string(),
             field_type: selene_kernel_contracts::ph1position::PositionRequirementFieldType::String,
-            required_rule: selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
+            required_rule:
+                selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
             required_predicate_ref: None,
             validation_ref: None,
-            sensitivity: selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
+            sensitivity:
+                selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
             exposure_rule:
                 selene_kernel_contracts::ph1position::PositionRequirementExposureRule::InternalOnly,
             evidence_mode:
@@ -4065,9 +4073,7 @@ mod tests {
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: vec![],
             confirm_answer: None,
-            nlp_output: Some(document_understand_draft(
-                "read this PDF and summarize it",
-            )),
+            nlp_output: Some(document_understand_draft("read this PDF and summarize it")),
             tool_response: None,
             interruption: None,
             locale: None,
@@ -4791,7 +4797,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        assert_eq!(
+            ask_out.next_step,
+            AppOnboardingContinueNextStep::PlatformSetup
+        );
         assert!(ask_out.remaining_missing_fields.is_empty());
         assert!(!ask_out.remaining_platform_receipt_kinds.is_empty());
 
@@ -4860,7 +4869,10 @@ mod tests {
                 MonotonicTimeNs(111),
             )
             .unwrap();
-        assert_eq!(device_confirm.next_step, AppOnboardingContinueNextStep::VoiceEnroll);
+        assert_eq!(
+            device_confirm.next_step,
+            AppOnboardingContinueNextStep::VoiceEnroll
+        );
 
         let access_before_voice_err = runtime
             .run_onboarding_continue(
@@ -4901,7 +4913,10 @@ mod tests {
                 MonotonicTimeNs(112),
             )
             .unwrap();
-        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
+        assert_eq!(
+            voice.next_step,
+            AppOnboardingContinueNextStep::EmoPersonaLock
+        );
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
 
         let access_before_emo_err = runtime
@@ -4921,7 +4936,10 @@ mod tests {
         match access_before_emo_err {
             StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
                 assert_eq!(field, "app_onboarding_continue_request.action");
-                assert_eq!(reason, "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_ACCESS_PROVISION");
+                assert_eq!(
+                    reason,
+                    "ONB_EMO_PERSONA_LOCK_REQUIRED_BEFORE_ACCESS_PROVISION"
+                );
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -4960,9 +4978,12 @@ mod tests {
                 )
                 .unwrap(),
                 MonotonicTimeNs(115),
-        )
-        .unwrap();
-        assert_eq!(emo.next_step, AppOnboardingContinueNextStep::AccessProvision);
+            )
+            .unwrap();
+        assert_eq!(
+            emo.next_step,
+            AppOnboardingContinueNextStep::AccessProvision
+        );
 
         let complete_before_access_err = runtime
             .run_onboarding_continue(
@@ -5002,7 +5023,10 @@ mod tests {
             .unwrap();
         assert_eq!(access.next_step, AppOnboardingContinueNextStep::Complete);
         assert!(access.access_engine_instance_id.is_some());
-        assert_eq!(access.onboarding_status, Some(OnboardingStatus::AccessInstanceCreated));
+        assert_eq!(
+            access.onboarding_status,
+            Some(OnboardingStatus::AccessInstanceCreated)
+        );
 
         let complete = runtime
             .run_onboarding_continue(
@@ -5029,9 +5053,7 @@ mod tests {
         assert!(session_row.access_engine_instance_id.is_some());
         assert_eq!(
             store
-                .ph1link_get_link(
-                    &session_row.token_id
-                )
+                .ph1link_get_link(&session_row.token_id)
                 .expect("link must exist")
                 .status,
             LinkStatus::Consumed
@@ -5066,7 +5088,10 @@ mod tests {
             (ONB_SESSION_START_DRAFT, SimulationType::Draft),
             (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
             (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
-            (ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, SimulationType::Commit),
+            (
+                ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT,
+                SimulationType::Commit,
+            ),
             (ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, SimulationType::Commit),
             (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
             (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
@@ -5085,12 +5110,13 @@ mod tests {
             );
         }
 
-        let (token_id, token_signature) = seed_invite_link_for_click_with_employee_prefilled_context(
-            &mut store,
-            &inviter_user_id,
-            "tenant_1",
-            MonotonicTimeNs(121),
-        );
+        let (token_id, token_signature) =
+            seed_invite_link_for_click_with_employee_prefilled_context(
+                &mut store,
+                &inviter_user_id,
+                "tenant_1",
+                MonotonicTimeNs(121),
+            );
         let start = runtime
             .run_invite_link_open_and_start_onboarding(
                 &mut store,
@@ -5109,11 +5135,9 @@ mod tests {
                 MonotonicTimeNs(122),
             )
             .unwrap();
-        assert!(
-            start
-                .required_verification_gates
-                .contains(&"SENDER_CONFIRMATION".to_string())
-        );
+        assert!(start
+            .required_verification_gates
+            .contains(&"SENDER_CONFIRMATION".to_string()));
         let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
 
         let mut ask_out = runtime
@@ -5159,7 +5183,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        assert_eq!(
+            ask_out.next_step,
+            AppOnboardingContinueNextStep::PlatformSetup
+        );
         let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
         let mut platform_out = ask_out;
         for (idx, receipt_kind) in required_receipts.iter().enumerate() {
@@ -5202,7 +5229,10 @@ mod tests {
                 MonotonicTimeNs(130),
             )
             .unwrap();
-        assert_eq!(terms.next_step, AppOnboardingContinueNextStep::SenderVerification);
+        assert_eq!(
+            terms.next_step,
+            AppOnboardingContinueNextStep::SenderVerification
+        );
 
         let access_err = runtime
             .run_onboarding_continue(
@@ -5221,7 +5251,10 @@ mod tests {
         match access_err {
             StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
                 assert_eq!(field, "app_onboarding_continue_request.action");
-                assert_eq!(reason, "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_ACCESS_PROVISION");
+                assert_eq!(
+                    reason,
+                    "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_ACCESS_PROVISION"
+                );
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -5242,8 +5275,14 @@ mod tests {
                 MonotonicTimeNs(131),
             )
             .unwrap();
-        assert_eq!(photo.next_step, AppOnboardingContinueNextStep::SenderVerification);
-        assert_eq!(photo.onboarding_status, Some(OnboardingStatus::VerificationPending));
+        assert_eq!(
+            photo.next_step,
+            AppOnboardingContinueNextStep::SenderVerification
+        );
+        assert_eq!(
+            photo.onboarding_status,
+            Some(OnboardingStatus::VerificationPending)
+        );
 
         let verify = runtime
             .run_onboarding_continue(
@@ -5287,7 +5326,10 @@ mod tests {
                 MonotonicTimeNs(133),
             )
             .unwrap();
-        assert_eq!(device_confirm.next_step, AppOnboardingContinueNextStep::VoiceEnroll);
+        assert_eq!(
+            device_confirm.next_step,
+            AppOnboardingContinueNextStep::VoiceEnroll
+        );
 
         let voice = runtime
             .run_onboarding_continue(
@@ -5306,7 +5348,10 @@ mod tests {
                 MonotonicTimeNs(134),
             )
             .unwrap();
-        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
+        assert_eq!(
+            voice.next_step,
+            AppOnboardingContinueNextStep::EmoPersonaLock
+        );
 
         let emo = runtime
             .run_onboarding_continue(
@@ -5322,7 +5367,10 @@ mod tests {
                 MonotonicTimeNs(135),
             )
             .unwrap();
-        assert_eq!(emo.next_step, AppOnboardingContinueNextStep::AccessProvision);
+        assert_eq!(
+            emo.next_step,
+            AppOnboardingContinueNextStep::AccessProvision
+        );
 
         let access = runtime
             .run_onboarding_continue(
@@ -5387,8 +5435,12 @@ mod tests {
             );
         }
 
-        let (token_id, token_signature) =
-            seed_invite_link_for_click(&mut store, &inviter_user_id, "tenant_1", MonotonicTimeNs(140));
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(140),
+        );
         let start = runtime
             .run_invite_link_open_and_start_onboarding(
                 &mut store,
@@ -5543,7 +5595,10 @@ mod tests {
         match pre_primary_voice_err {
             StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
                 assert_eq!(field, "app_onboarding_continue_request.action");
-                assert_eq!(reason, "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL");
+                assert_eq!(
+                    reason,
+                    "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_VOICE_ENROLL"
+                );
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -5589,7 +5644,10 @@ mod tests {
                     field,
                     "app_onboarding_continue_request.action.voice_enroll_lock.device_id"
                 );
-                assert_eq!(reason, "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL");
+                assert_eq!(
+                    reason,
+                    "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_VOICE_ENROLL"
+                );
             }
             other => panic!("unexpected error: {other:?}"),
         }
@@ -5774,7 +5832,10 @@ mod tests {
                 MonotonicTimeNs(132),
             )
             .unwrap();
-        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::EmoPersonaLock);
+        assert_eq!(
+            voice.next_step,
+            AppOnboardingContinueNextStep::EmoPersonaLock
+        );
 
         let err = runtime
             .run_onboarding_continue(
@@ -5899,7 +5960,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        assert_eq!(
+            ask_out.next_step,
+            AppOnboardingContinueNextStep::PlatformSetup
+        );
         assert!(!ask_out.remaining_platform_receipt_kinds.is_empty());
 
         let err = runtime
@@ -6026,7 +6090,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        assert_eq!(ask_out.next_step, AppOnboardingContinueNextStep::PlatformSetup);
+        assert_eq!(
+            ask_out.next_step,
+            AppOnboardingContinueNextStep::PlatformSetup
+        );
         let receipt_kind = ask_out
             .remaining_platform_receipt_kinds
             .first()
@@ -6092,9 +6159,11 @@ mod tests {
     fn run_a_response_text_for_calendar_draft_is_explicit_draft_only() {
         let response =
             response_text_for_dispatch_outcome(&SimulationDispatchOutcome::CalendarDraftCreated {
-                work_order_id: "wo_cal_test".to_string(),
-                work_order_event_id: 1,
+                reminder_id: "rem_test".to_string(),
             });
-        assert_eq!(response, "Draft created; not sent to external calendar yet.");
+        assert_eq!(
+            response,
+            "Draft created; not sent to external calendar yet."
+        );
     }
 }

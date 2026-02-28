@@ -118,9 +118,7 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
         | IntentType::RecordModeQuery
-        | IntentType::ConnectorQuery => {
-            (SensitivityLevel::Public, false)
-        }
+        | IntentType::ConnectorQuery => (SensitivityLevel::Public, false),
         IntentType::Continue | IntentType::MoreDetail => (SensitivityLevel::Public, false),
     }
 }
@@ -207,9 +205,7 @@ fn looks_like_url_fetch_and_cite(lower: &str) -> bool {
             || contains_word(lower, "fetch")
             || contains_word(lower, "cite")
             || contains_word(lower, "citation")))
-        || (lower.contains("http://")
-            || lower.contains("https://")
-            || lower.contains("www."))
+        || (lower.contains("http://") || lower.contains("https://") || lower.contains("www."))
             && (contains_word(lower, "cite") || contains_word(lower, "citation"))
 }
 

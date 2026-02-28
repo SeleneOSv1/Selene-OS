@@ -980,7 +980,10 @@ pub struct BuilderReviewIssue {
 
 impl BuilderReviewIssue {
     pub fn v1(reason_code: ReasonCodeId, detail: String) -> Result<Self, ContractViolation> {
-        let issue = Self { reason_code, detail };
+        let issue = Self {
+            reason_code,
+            detail,
+        };
         issue.validate()?;
         Ok(issue)
     }
@@ -1317,18 +1320,13 @@ pub fn promote_with_judge_gates(
     now: MonotonicTimeNs,
     idempotency_key: Option<String>,
 ) -> Result<BuilderReleaseState, BuilderRefusal> {
-    let review = run_release_promotion_review(
-        current,
-        approval,
-        judge_gates,
-        prompt_rate_kpis,
-        now,
-    )
-    .map_err(|_| BuilderRefusal {
-        stage: "REVIEW",
-        reason_code: reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
-        message: "review preflight validation failed".to_string(),
-    })?;
+    let review =
+        run_release_promotion_review(current, approval, judge_gates, prompt_rate_kpis, now)
+            .map_err(|_| BuilderRefusal {
+                stage: "REVIEW",
+                reason_code: reason_codes::PH1_BUILDER_RELEASE_PROMOTION_BLOCKED,
+                message: "review preflight validation failed".to_string(),
+            })?;
     if let Some(blocker) = review.blockers.first() {
         return Err(BuilderRefusal {
             stage: "REVIEW",

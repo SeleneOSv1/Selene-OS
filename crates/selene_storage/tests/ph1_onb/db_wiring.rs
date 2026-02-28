@@ -19,8 +19,8 @@ use selene_kernel_contracts::ph1position::{
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 use selene_storage::ph1f::{
-    DeviceRecord, IdentityRecord, IdentityStatus, OnbAskMissingOutcomeKind, Ph1fStore, StorageError,
-    TenantCompanyLifecycleState, TenantCompanyRecord, WakeSampleResult,
+    DeviceRecord, IdentityRecord, IdentityStatus, OnbAskMissingOutcomeKind, Ph1fStore,
+    StorageError, TenantCompanyLifecycleState, TenantCompanyRecord, WakeSampleResult,
 };
 use selene_storage::repo::{
     Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1VidEnrollmentRepo, Ph1fFoundationRepo,

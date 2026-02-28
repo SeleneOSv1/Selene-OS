@@ -597,7 +597,9 @@ fn at_k_db_05_interrupt_extended_fields_persist_and_project() {
         )
         .unwrap();
 
-    let saved = row.interrupt_extended.expect("extended payload must be persisted");
+    let saved = row
+        .interrupt_extended
+        .expect("extended payload must be persisted");
     assert_eq!(
         saved.candidate_confidence_band,
         InterruptCandidateConfidenceBand::High
@@ -622,7 +624,10 @@ fn at_k_db_05_interrupt_extended_fields_persist_and_project() {
     );
     assert_eq!(current.last_interrupt_snr_db_milli, Some(24_000));
     assert_eq!(current.last_interrupt_clipping_ratio_milli, Some(20));
-    assert_eq!(current.last_interrupt_adaptive_noise_class.as_deref(), Some("ELEVATED"));
+    assert_eq!(
+        current.last_interrupt_adaptive_noise_class.as_deref(),
+        Some("ELEVATED")
+    );
 
     let before = current.clone();
     s.rebuild_ph1k_runtime_current_rows();
@@ -1012,14 +1017,21 @@ fn at_k_db_09_feedback_capture_wires_issue_kinds_and_fingerprints() {
     assert_eq!(rows[1].feedback_event_type, FeedbackEventType::BargeIn);
     assert_eq!(rows[1].signal_bucket, LearnSignalType::BargeIn);
     assert_eq!(rows[1].reason_code, ReasonCodeId(0x4B00_0014));
-    assert_eq!(rows[2].feedback_event_type, FeedbackEventType::UserCorrection);
+    assert_eq!(
+        rows[2].feedback_event_type,
+        FeedbackEventType::UserCorrection
+    );
     assert_eq!(rows[2].signal_bucket, LearnSignalType::UserCorrection);
     assert_eq!(rows[2].reason_code, ReasonCodeId(0x4B00_001B));
-    assert_eq!(rows[3].feedback_event_type, FeedbackEventType::DeliverySwitch);
+    assert_eq!(
+        rows[3].feedback_event_type,
+        FeedbackEventType::DeliverySwitch
+    );
     assert_eq!(rows[3].signal_bucket, LearnSignalType::DeliverySwitch);
     assert_eq!(rows[3].reason_code, ReasonCodeId(0x4B00_001C));
 
-    let feedback_rows = s.ph1feedback_audit_rows(selene_kernel_contracts::ph1j::CorrelationId(9901));
+    let feedback_rows =
+        s.ph1feedback_audit_rows(selene_kernel_contracts::ph1j::CorrelationId(9901));
     assert_eq!(feedback_rows.len(), 4);
     for row in feedback_rows {
         assert!(row
@@ -1164,7 +1176,10 @@ fn at_k_db_11_feedback_capture_routes_to_learn_and_governed_pae_ladder() {
     let learn_rows = s.ph1feedback_learn_signal_bundle_rows(correlation_id);
     assert_eq!(learn_rows.len(), 4);
     assert_eq!(learn_rows[0].learn_signal_type, LearnSignalType::BargeIn);
-    assert_eq!(learn_rows[3].learn_signal_type, LearnSignalType::UserCorrection);
+    assert_eq!(
+        learn_rows[3].learn_signal_type,
+        LearnSignalType::UserCorrection
+    );
 
     let pae_audit_rows: Vec<_> = s
         .audit_events_by_tenant("tenant_a")

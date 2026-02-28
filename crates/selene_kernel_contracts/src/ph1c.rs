@@ -737,7 +737,10 @@ pub struct PartialTranscriptBatch {
 }
 
 impl PartialTranscriptBatch {
-    pub fn v1(partials: Vec<PartialTranscript>, finalized: bool) -> Result<Self, ContractViolation> {
+    pub fn v1(
+        partials: Vec<PartialTranscript>,
+        finalized: bool,
+    ) -> Result<Self, ContractViolation> {
         let batch = Self {
             schema_version: PH1C_CONTRACT_VERSION,
             partials,

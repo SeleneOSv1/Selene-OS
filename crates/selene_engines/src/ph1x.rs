@@ -551,9 +551,10 @@ impl Ph1xRuntime {
                 | IntentType::ConnectorQuery
         ) {
             let (tool_name, query) = match d.intent_type {
-                IntentType::TimeQuery => {
-                    (ToolName::Time, intent_query_text_with_thread_context(d, &base_thread_state))
-                }
+                IntentType::TimeQuery => (
+                    ToolName::Time,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
                 IntentType::WeatherQuery => (
                     ToolName::Weather,
                     intent_query_text_with_thread_context(d, &base_thread_state),
@@ -562,27 +563,22 @@ impl Ph1xRuntime {
                     ToolName::WebSearch,
                     intent_query_text_with_thread_context(d, &base_thread_state),
                 ),
-                IntentType::NewsQuery => {
-                    (ToolName::News, intent_query_text_with_thread_context(d, &base_thread_state))
-                }
-                IntentType::UrlFetchAndCiteQuery => {
-                    (
-                        ToolName::UrlFetchAndCite,
-                        intent_query_text_with_thread_context(d, &base_thread_state),
-                    )
-                }
-                IntentType::DocumentUnderstandQuery => {
-                    (
-                        ToolName::DocumentUnderstand,
-                        intent_query_text_with_thread_context(d, &base_thread_state),
-                    )
-                }
-                IntentType::PhotoUnderstandQuery => {
-                    (
-                        ToolName::PhotoUnderstand,
-                        intent_query_text_with_thread_context(d, &base_thread_state),
-                    )
-                }
+                IntentType::NewsQuery => (
+                    ToolName::News,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::UrlFetchAndCiteQuery => (
+                    ToolName::UrlFetchAndCite,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::DocumentUnderstandQuery => (
+                    ToolName::DocumentUnderstand,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
+                IntentType::PhotoUnderstandQuery => (
+                    ToolName::PhotoUnderstand,
+                    intent_query_text_with_thread_context(d, &base_thread_state),
+                ),
                 IntentType::DataAnalysisQuery => (
                     ToolName::DataAnalysis,
                     intent_query_text_with_thread_context(d, &base_thread_state),
@@ -1765,9 +1761,7 @@ fn confirm_text(d: &IntentDraft) -> String {
         | IntentType::DataAnalysisQuery
         | IntentType::DeepResearchQuery
         | IntentType::RecordModeQuery
-        | IntentType::ConnectorQuery => {
-            "Is that right?".to_string()
-        }
+        | IntentType::ConnectorQuery => "Is that right?".to_string(),
         IntentType::Continue | IntentType::MoreDetail => "Is that right?".to_string(),
     }
 }
@@ -2366,7 +2360,9 @@ mod tests {
             policy_ok(),
             vec![],
             None,
-            Some(Ph1nResponse::IntentDraft(intent_draft(IntentType::NewsQuery))),
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::NewsQuery,
+            ))),
             None,
             None,
             None,
@@ -2466,7 +2462,9 @@ mod tests {
                     Some(PendingState::Tool { .. })
                 ));
                 match d.dispatch_request {
-                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::DocumentUnderstand),
+                    DispatchRequest::Tool(t) => {
+                        assert_eq!(t.tool_name, ToolName::DocumentUnderstand)
+                    }
                     DispatchRequest::SimulationCandidate(_) => panic!("expected Tool dispatch"),
                     DispatchRequest::AccessStepUp(_) => panic!("expected Tool dispatch"),
                 }
@@ -2771,7 +2769,9 @@ mod tests {
             policy_ok(),
             vec![],
             None,
-            Some(Ph1nResponse::IntentDraft(intent_draft(IntentType::NewsQuery))),
+            Some(Ph1nResponse::IntentDraft(intent_draft(
+                IntentType::NewsQuery,
+            ))),
             None,
             None,
             None,

@@ -53,7 +53,9 @@ use selene_kernel_contracts::ph1d::{
     Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse, Ph1dResponse,
     PolicyContextRef, SafetyTier,
 };
-use selene_kernel_contracts::ph1e::{CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolStatus};
+use selene_kernel_contracts::ph1e::{
+    CacheStatus, ToolCatalogRef, ToolName, ToolResponse, ToolStatus,
+};
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
 };
@@ -76,7 +78,9 @@ use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapsh
 use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
-use selene_kernel_contracts::ph1onb::{OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision};
+use selene_kernel_contracts::ph1onb::{
+    OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
+};
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
 use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
@@ -1121,7 +1125,9 @@ impl AdapterRuntime {
             outcome: "ONBOARDING_CONTINUED".to_string(),
             reason: None,
             onboarding_session_id: Some(outcome.onboarding_session_id),
-            next_step: Some(onboarding_continue_next_step_to_api_value(outcome.next_step)),
+            next_step: Some(onboarding_continue_next_step_to_api_value(
+                outcome.next_step,
+            )),
             blocking_field: outcome.blocking_field,
             blocking_question: outcome.blocking_question,
             remaining_missing_fields: outcome.remaining_missing_fields,
@@ -2231,9 +2237,7 @@ impl AdapterRuntime {
             ) {
                 Ok(entry) => builder_input_entries.push(entry),
                 Err(err) => {
-                    eprintln!(
-                        "selene_adapter read-only outcome entry build failed: {err:?}"
-                    );
+                    eprintln!("selene_adapter read-only outcome entry build failed: {err:?}");
                 }
             }
         }
@@ -2279,7 +2283,10 @@ impl AdapterRuntime {
             return Ok(());
         }
         if !severe_incident_observed {
-            self.record_builder_status("SKIPPED_NON_SEVERE_READ_ONLY", BuilderStatusKind::NotInvoked)?;
+            self.record_builder_status(
+                "SKIPPED_NON_SEVERE_READ_ONLY",
+                BuilderStatusKind::NotInvoked,
+            )?;
             return Ok(());
         }
 
@@ -2315,7 +2322,10 @@ impl AdapterRuntime {
             }
             Ok(BuilderOrchestrationOutcome::Refused(refuse)) => {
                 self.record_builder_status(
-                    &format!("REFUSED_READ_ONLY:{}:{}", refuse.stage, refuse.reason_code.0),
+                    &format!(
+                        "REFUSED_READ_ONLY:{}:{}",
+                        refuse.stage, refuse.reason_code.0
+                    ),
                     BuilderStatusKind::Refused,
                 )?;
             }
@@ -2652,7 +2662,7 @@ impl AdapterRuntime {
                 ToolName::DeepResearch,
                 ToolName::RecordMode,
             ])
-                .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
+            .map_err(|err| format!("ph1d tool catalog build failed: {err:?}"))?,
         )
         .map_err(|err| format!("ph1d request build failed: {err:?}"))?;
         let response = self
@@ -3587,9 +3597,12 @@ impl AdapterRuntime {
                 .map_err(|err| format!("invalid thread project context: {err:?}"))?;
         }
         if let Some(flags) = request.thread_policy_flags.as_ref() {
-            let kernel_flags =
-                ThreadPolicyFlags::v1(flags.privacy_mode, flags.do_not_disturb, flags.strict_safety)
-                    .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
+            let kernel_flags = ThreadPolicyFlags::v1(
+                flags.privacy_mode,
+                flags.do_not_disturb,
+                flags.strict_safety,
+            )
+            .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
             base_thread_state = base_thread_state
                 .with_thread_policy_flags(Some(kernel_flags))
                 .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
@@ -4389,7 +4402,9 @@ fn provenance_from_tool_response(tool_response: &ToolResponse) -> VoiceTurnProve
     }
 }
 
-fn execution_outcome_to_adapter_response(execution: AppVoiceTurnExecutionOutcome) -> VoiceTurnAdapterResponse {
+fn execution_outcome_to_adapter_response(
+    execution: AppVoiceTurnExecutionOutcome,
+) -> VoiceTurnAdapterResponse {
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
         outcome: outcome_label(&execution).to_string(),
@@ -4454,7 +4469,9 @@ fn infer_confirm_answer_from_user_text(
         return None;
     }
 
-    const YES_EXACT: [&str; 8] = ["yes", "y", "yeah", "yep", "confirm", "correct", "ok", "okay"];
+    const YES_EXACT: [&str; 8] = [
+        "yes", "y", "yeah", "yep", "confirm", "correct", "ok", "okay",
+    ];
     const NO_EXACT: [&str; 7] = ["no", "n", "nope", "nah", "cancel", "stop", "don't"];
     const YES_PREFIXES: [&str; 4] = ["yes,", "yes.", "confirm,", "confirm."];
     const NO_PREFIXES: [&str; 3] = ["no,", "no.", "cancel,"];
@@ -4467,7 +4484,9 @@ fn infer_confirm_answer_from_user_text(
         return Some(ConfirmAnswer::Yes);
     }
     if NO_EXACT.contains(&normalized.as_str())
-        || NO_PREFIXES.iter().any(|prefix| normalized.starts_with(prefix))
+        || NO_PREFIXES
+            .iter()
+            .any(|prefix| normalized.starts_with(prefix))
     {
         return Some(ConfirmAnswer::No);
     }
@@ -6860,28 +6879,27 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1n::FieldKey;
-    use selene_kernel_contracts::ph1x::{
-        PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
+    use selene_kernel_contracts::ph1_voice_id::{
+        VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
-    use selene_kernel_contracts::ph1_voice_id::{
-        VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
-        VOICE_ID_ENROLL_START_DRAFT,
-    };
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
+    use selene_kernel_contracts::ph1n::FieldKey;
     use selene_kernel_contracts::ph1onb::{
         ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
         ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
-    use selene_kernel_contracts::ph1work::WorkOrderStatus;
     use selene_kernel_contracts::ph1position::TenantId;
+    use selene_kernel_contracts::ph1rem::{ReminderType, REMINDER_SCHEDULE_COMMIT};
     use selene_kernel_contracts::ph1simcat::{
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
         SimulationVersion,
+    };
+    use selene_kernel_contracts::ph1x::{
+        PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
@@ -7155,10 +7173,12 @@ mod tests {
         let field = selene_kernel_contracts::ph1position::PositionRequirementFieldSpec {
             field_key: "working_hours".to_string(),
             field_type: selene_kernel_contracts::ph1position::PositionRequirementFieldType::String,
-            required_rule: selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
+            required_rule:
+                selene_kernel_contracts::ph1position::PositionRequirementRuleType::Always,
             required_predicate_ref: None,
             validation_ref: None,
-            sensitivity: selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
+            sensitivity:
+                selene_kernel_contracts::ph1position::PositionRequirementSensitivity::Private,
             exposure_rule:
                 selene_kernel_contracts::ph1position::PositionRequirementExposureRule::InternalOnly,
             evidence_mode:
@@ -7693,7 +7713,10 @@ mod tests {
                 (ONB_SESSION_START_DRAFT, SimulationType::Draft),
                 (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
                 (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
-                (ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, SimulationType::Commit),
+                (
+                    ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT,
+                    SimulationType::Commit,
+                ),
                 (ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, SimulationType::Commit),
                 (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
                 (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
@@ -7952,7 +7975,9 @@ mod tests {
                 sender_decision: None,
             })
             .expect_err("access should fail before voice enrollment");
-        assert!(access_before_voice_err.contains("ONB_VOICE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION"));
+        assert!(
+            access_before_voice_err.contains("ONB_VOICE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION")
+        );
 
         let voice = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
@@ -8069,7 +8094,9 @@ mod tests {
                 sender_decision: None,
             })
             .expect_err("complete should fail before access provisioning");
-        assert!(complete_before_access_err.contains("ONB_ACCESS_PROVISION_REQUIRED_BEFORE_COMPLETE"));
+        assert!(
+            complete_before_access_err.contains("ONB_ACCESS_PROVISION_REQUIRED_BEFORE_COMPLETE")
+        );
 
         let access = runtime
             .run_onboarding_continue(OnboardingContinueAdapterRequest {
@@ -8302,7 +8329,7 @@ mod tests {
     }
 
     #[test]
-    fn at_adapter_03ba_calendar_event_confirm_yes_dispatches_sim_and_persists_work_order_draft() {
+    fn at_adapter_03ba_calendar_event_confirm_yes_dispatches_sim_and_persists_meeting_reminder() {
         let runtime = AdapterRuntime::default();
         let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
         {
@@ -8318,7 +8345,7 @@ mod tests {
             seed_simulation_catalog_status(
                 &mut store,
                 "tenant_a",
-                "WORK_ORDER_APPEND_COMMIT",
+                REMINDER_SCHEDULE_COMMIT,
                 SimulationType::Commit,
                 SimulationStatus::Active,
             );
@@ -8365,14 +8392,15 @@ mod tests {
         assert!(out_second.provenance.is_none());
 
         let store = runtime.store.lock().expect("store lock should succeed");
-        let matching_rows = store
-            .work_order_ledger()
-            .iter()
-            .filter(|row| row.correlation_id == CorrelationId(10_202))
-            .collect::<Vec<_>>();
-        assert_eq!(matching_rows.len(), 1);
-        assert_eq!(matching_rows[0].turn_id, TurnId(20_202));
-        assert_eq!(matching_rows[0].work_order_status, WorkOrderStatus::Draft);
+        let reminders = store.reminders();
+        assert_eq!(reminders.len(), 1);
+        let reminder = reminders
+            .values()
+            .next()
+            .expect("calendar confirm should create reminder row");
+        assert_eq!(reminder.reminder_type, ReminderType::Meeting);
+        assert_eq!(reminder.user_id, actor_user_id);
+        assert!(store.work_order_ledger().is_empty());
     }
 
     #[test]
@@ -8483,12 +8511,13 @@ mod tests {
             let seeded_state = KernelThreadState::empty_v1()
                 .with_project_context(
                     Some("proj_q3_planning".to_string()),
-                    vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()],
+                    vec![
+                        "ctx_budget_sheet".to_string(),
+                        "ctx_roadmap_notes".to_string(),
+                    ],
                 )
                 .unwrap()
-                .with_thread_policy_flags(Some(
-                    ThreadPolicyFlags::v1(true, false, true).unwrap(),
-                ))
+                .with_thread_policy_flags(Some(ThreadPolicyFlags::v1(true, false, true).unwrap()))
                 .unwrap();
             store
                 .ph1x_thread_state_upsert_commit(
@@ -8504,7 +8533,10 @@ mod tests {
             assert_eq!(loaded.project_id.as_deref(), Some("proj_q3_planning"));
             assert_eq!(
                 loaded.pinned_context_refs,
-                vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()]
+                vec![
+                    "ctx_budget_sheet".to_string(),
+                    "ctx_roadmap_notes".to_string()
+                ]
             );
             let flags = loaded
                 .thread_policy_flags
@@ -8544,10 +8576,16 @@ mod tests {
         let current = store
             .ph1x_thread_state_current_row(&actor_user_id, "proj_live")
             .expect("thread state should persist for project context");
-        assert_eq!(current.thread_state.project_id.as_deref(), Some("proj_q3_planning"));
+        assert_eq!(
+            current.thread_state.project_id.as_deref(),
+            Some("proj_q3_planning")
+        );
         assert_eq!(
             current.thread_state.pinned_context_refs,
-            vec!["ctx_budget_sheet".to_string(), "ctx-roadmap-notes".to_string()]
+            vec![
+                "ctx_budget_sheet".to_string(),
+                "ctx-roadmap-notes".to_string()
+            ]
         );
         let flags = current
             .thread_state
@@ -8576,13 +8614,13 @@ mod tests {
         let correlation_id = CorrelationId(10_104);
         let store = runtime.store.lock().expect("store lock should succeed");
         let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
-        assert!(feedback_rows.iter().any(|row| {
-            feedback_event_type_matches(row, "ToolFail")
-        }));
+        assert!(feedback_rows
+            .iter()
+            .any(|row| { feedback_event_type_matches(row, "ToolFail") }));
         let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
-        assert!(learn_rows.iter().any(|row| {
-            row.learn_signal_type == LearnSignalType::ToolFail
-        }));
+        assert!(learn_rows
+            .iter()
+            .any(|row| { row.learn_signal_type == LearnSignalType::ToolFail }));
         drop(store);
 
         let health = runtime
@@ -8620,13 +8658,13 @@ mod tests {
         let correlation_id = CorrelationId(10_106);
         let store = runtime.store.lock().expect("store lock should succeed");
         let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
-        assert!(feedback_rows.iter().any(|row| {
-            feedback_event_type_matches(row, "ClarifyLoop")
-        }));
+        assert!(feedback_rows
+            .iter()
+            .any(|row| { feedback_event_type_matches(row, "ClarifyLoop") }));
         let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
-        assert!(learn_rows.iter().any(|row| {
-            row.learn_signal_type == LearnSignalType::ClarifyLoop
-        }));
+        assert!(learn_rows
+            .iter()
+            .any(|row| { row.learn_signal_type == LearnSignalType::ClarifyLoop }));
     }
 
     #[test]
@@ -8645,13 +8683,13 @@ mod tests {
         let correlation_id = CorrelationId(10_107);
         let store = runtime.store.lock().expect("store lock should succeed");
         let feedback_rows = store.ph1feedback_audit_rows(correlation_id);
-        assert!(feedback_rows.iter().any(|row| {
-            feedback_event_type_matches(row, "UserCorrection")
-        }));
+        assert!(feedback_rows
+            .iter()
+            .any(|row| { feedback_event_type_matches(row, "UserCorrection") }));
         let learn_rows = store.ph1feedback_learn_signal_bundle_rows(correlation_id);
-        assert!(learn_rows.iter().any(|row| {
-            row.learn_signal_type == LearnSignalType::UserCorrection
-        }));
+        assert!(learn_rows
+            .iter()
+            .any(|row| { row.learn_signal_type == LearnSignalType::UserCorrection }));
     }
 
     #[test]

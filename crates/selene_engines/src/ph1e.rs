@@ -115,15 +115,15 @@ impl Ph1eRuntime {
             ToolName::UrlFetchAndCite => ToolResult::UrlFetchAndCite {
                 citations: vec![ToolTextSnippet {
                     title: format!("Source page: {}", truncate_ascii(&req.query, 40)),
-                    snippet: format!("Citation extracted from '{}'", truncate_ascii(&req.query, 80)),
+                    snippet: format!(
+                        "Citation extracted from '{}'",
+                        truncate_ascii(&req.query, 80)
+                    ),
                     url: "https://example.com/url-fetch-citation".to_string(),
                 }],
             },
             ToolName::DocumentUnderstand => ToolResult::DocumentUnderstand {
-                summary: format!(
-                    "Document summary for '{}'",
-                    truncate_ascii(&req.query, 80)
-                ),
+                summary: format!("Document summary for '{}'", truncate_ascii(&req.query, 80)),
                 extracted_fields: vec![
                     ToolStructuredField {
                         key: "document_type".to_string(),
@@ -141,10 +141,7 @@ impl Ph1eRuntime {
                 }],
             },
             ToolName::PhotoUnderstand => ToolResult::PhotoUnderstand {
-                summary: format!(
-                    "Photo summary for '{}'",
-                    truncate_ascii(&req.query, 80)
-                ),
+                summary: format!("Photo summary for '{}'", truncate_ascii(&req.query, 80)),
                 extracted_fields: vec![
                     ToolStructuredField {
                         key: "visible_text".to_string(),
@@ -211,10 +208,7 @@ impl Ph1eRuntime {
                 ],
             },
             ToolName::RecordMode => ToolResult::RecordMode {
-                summary: format!(
-                    "Recording summary for '{}'",
-                    truncate_ascii(&req.query, 80)
-                ),
+                summary: format!("Recording summary for '{}'", truncate_ascii(&req.query, 80)),
                 action_items: vec![
                     ToolStructuredField {
                         key: "action_item_1".to_string(),
@@ -334,12 +328,11 @@ fn policy_blocks(req: &ToolRequest) -> bool {
     matches!(
         req.tool_name,
         ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite | ToolName::DeepResearch
-    )
-        && (req.policy_context_ref.privacy_mode
-            || matches!(
-                req.policy_context_ref.safety_tier,
-                selene_kernel_contracts::ph1d::SafetyTier::Strict
-            ))
+    ) && (req.policy_context_ref.privacy_mode
+        || matches!(
+            req.policy_context_ref.safety_tier,
+            selene_kernel_contracts::ph1d::SafetyTier::Strict
+        ))
 }
 
 fn connector_scope_policy_block(req: &ToolRequest) -> bool {
@@ -419,14 +412,7 @@ fn connector_scope_for_query(query: &str) -> (Vec<&'static str>, bool) {
     let lower = query.to_ascii_lowercase();
     let mut out = Vec::new();
     for connector in [
-        "gmail",
-        "outlook",
-        "calendar",
-        "drive",
-        "dropbox",
-        "slack",
-        "notion",
-        "onedrive",
+        "gmail", "outlook", "calendar", "drive", "dropbox", "slack", "notion", "onedrive",
     ] {
         if connector_aliases(connector)
             .iter()
@@ -508,12 +494,18 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
         "outlook" => ToolTextSnippet {
             title: "Outlook message result".to_string(),
             snippet: format!("Outlook match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/outlook/message_{:03}", idx + 1),
+            url: format!(
+                "https://workspace.example.com/outlook/message_{:03}",
+                idx + 1
+            ),
         },
         "calendar" => ToolTextSnippet {
             title: "Calendar event result".to_string(),
             snippet: format!("Calendar match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/calendar/event_{:03}", idx + 1),
+            url: format!(
+                "https://workspace.example.com/calendar/event_{:03}",
+                idx + 1
+            ),
         },
         "drive" => ToolTextSnippet {
             title: "Drive doc result".to_string(),
@@ -543,7 +535,10 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
         _ => ToolTextSnippet {
             title: "Connector result".to_string(),
             snippet: format!("Connector match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/connectors/item_{:03}", idx + 1),
+            url: format!(
+                "https://workspace.example.com/connectors/item_{:03}",
+                idx + 1
+            ),
         },
     }
 }
@@ -662,11 +657,18 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::UrlFetchAndCite { citations } => assert!(!citations.is_empty()),
             other => panic!("expected UrlFetchAndCite result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
     }
@@ -681,7 +683,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::DocumentUnderstand {
                 summary,
                 extracted_fields,
@@ -693,7 +699,10 @@ mod tests {
             }
             other => panic!("expected DocumentUnderstand result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
     }
@@ -708,7 +717,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::PhotoUnderstand {
                 summary,
                 extracted_fields,
@@ -720,7 +733,10 @@ mod tests {
             }
             other => panic!("expected PhotoUnderstand result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
     }
@@ -735,7 +751,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::DataAnalysis {
                 summary,
                 extracted_fields,
@@ -747,7 +767,10 @@ mod tests {
             }
             other => panic!("expected DataAnalysis result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
     }
@@ -762,7 +785,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::DeepResearch {
                 summary,
                 extracted_fields,
@@ -774,7 +801,10 @@ mod tests {
             }
             other => panic!("expected DeepResearch result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("example.com"));
     }
@@ -789,7 +819,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::RecordMode {
                 summary,
                 action_items,
@@ -801,7 +835,10 @@ mod tests {
             }
             other => panic!("expected RecordMode result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.starts_with("recording://"));
     }
@@ -816,7 +853,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::ConnectorQuery {
                 summary,
                 extracted_fields,
@@ -833,13 +874,16 @@ mod tests {
                 assert!(scope.contains("gmail"));
                 assert!(scope.contains("drive"));
                 assert!(!scope.contains("calendar"));
-                assert!(citations.iter().all(|item| {
-                    item.url.contains("/gmail/") || item.url.contains("/drive/")
-                }));
+                assert!(citations
+                    .iter()
+                    .all(|item| { item.url.contains("/gmail/") || item.url.contains("/drive/") }));
             }
             other => panic!("expected ConnectorQuery result, got {other:?}"),
         }
-        let meta = out.source_metadata.as_ref().expect("source metadata required");
+        let meta = out
+            .source_metadata
+            .as_ref()
+            .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources.iter().any(|s| s.url.contains("/gmail")));
         assert!(meta.sources.iter().any(|s| s.url.contains("/drive")));
@@ -855,7 +899,11 @@ mod tests {
             false,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::ConnectorQuery {
                 extracted_fields,
                 citations,
@@ -890,7 +938,11 @@ mod tests {
             1,
         ));
         assert_eq!(out.tool_status, ToolStatus::Ok);
-        match out.tool_result.as_ref().expect("tool result required for ok") {
+        match out
+            .tool_result
+            .as_ref()
+            .expect("tool result required for ok")
+        {
             ToolResult::ConnectorQuery {
                 extracted_fields,
                 citations,

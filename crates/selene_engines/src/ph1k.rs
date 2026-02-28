@@ -8,8 +8,8 @@ use selene_kernel_contracts::ph1feedback::{
 };
 use selene_kernel_contracts::ph1k::{
     classify_vad_decision_confidence_band, normalize_interrupt_phrase_for_locale,
-    AdaptiveThresholdPolicyInput, AdvancedAudioQualityMetrics, AudioDeviceId, Confidence,
-    CaptureQualityClass, DegradationClassBundle, DegradationFlags, DeviceError, DeviceHealth,
+    AdaptiveThresholdPolicyInput, AdvancedAudioQualityMetrics, AudioDeviceId, CaptureQualityClass,
+    Confidence, DegradationClassBundle, DegradationFlags, DeviceError, DeviceHealth,
     DeviceReliabilityScoreInput, DeviceRoute, DeviceState, EchoRiskClass, InterruptCandidate,
     InterruptCandidateConfidenceBand, InterruptDegradationContext, InterruptGateConfidences,
     InterruptGates, InterruptLexiconPolicyBinding, InterruptLocaleTag, InterruptPhraseId,
@@ -945,19 +945,22 @@ fn derive_degradation_class_bundle(
     device_changed: bool,
     stream_gap_detected: bool,
 ) -> DegradationClassBundle {
-    let capture_quality_class = if capture_degraded || quality.snr_db < 8.0 || quality.clipping_ratio >= 0.15
+    let capture_quality_class =
+        if capture_degraded || quality.snr_db < 8.0 || quality.clipping_ratio >= 0.15 {
+            CaptureQualityClass::Critical
+        } else if quality.snr_db < 14.0 || quality.clipping_ratio >= 0.08 {
+            CaptureQualityClass::Degraded
+        } else if quality.snr_db < 22.0 || quality.clipping_ratio >= 0.04 {
+            CaptureQualityClass::Guarded
+        } else {
+            CaptureQualityClass::Clear
+        };
+    let echo_risk_class = if aec_unstable || quality.echo_delay_ms >= 200.0 || quality.erle_db < 6.0
     {
-        CaptureQualityClass::Critical
-    } else if quality.snr_db < 14.0 || quality.clipping_ratio >= 0.08 {
-        CaptureQualityClass::Degraded
-    } else if quality.snr_db < 22.0 || quality.clipping_ratio >= 0.04 {
-        CaptureQualityClass::Guarded
-    } else {
-        CaptureQualityClass::Clear
-    };
-    let echo_risk_class = if aec_unstable || quality.echo_delay_ms >= 200.0 || quality.erle_db < 6.0 {
         EchoRiskClass::High
-    } else if quality.echo_delay_ms >= 80.0 || quality.erle_db < 12.0 || quality.double_talk_score >= 0.65
+    } else if quality.echo_delay_ms >= 80.0
+        || quality.erle_db < 12.0
+        || quality.double_talk_score >= 0.65
     {
         EchoRiskClass::Elevated
     } else {
@@ -1440,16 +1443,13 @@ pub fn build_ph1k_to_ph1c_handoff(
             )
         });
 
-    let vad_confidence_band =
-        decision_trace
-            .vad_confidence_band
-            .unwrap_or_else(|| {
-                let vad_confidence = Confidence::new(vad_conf)
-                    .expect("normalized vad confidence must remain bounded");
-                let speech_likeness = SpeechLikeness::new(speech_likeness)
-                    .expect("normalized speech likeness must remain bounded");
-                classify_vad_decision_confidence_band(vad_confidence, speech_likeness)
-            });
+    let vad_confidence_band = decision_trace.vad_confidence_band.unwrap_or_else(|| {
+        let vad_confidence =
+            Confidence::new(vad_conf).expect("normalized vad confidence must remain bounded");
+        let speech_likeness = SpeechLikeness::new(speech_likeness)
+            .expect("normalized speech likeness must remain bounded");
+        classify_vad_decision_confidence_band(vad_confidence, speech_likeness)
+    });
 
     let degradation_class_bundle = decision_trace
         .candidate
@@ -1736,7 +1736,11 @@ mod tests {
         policy: DevicePolicy,
     ) -> Vec<Vec<Ph1kOutputEvent>> {
         let mut rt = Ph1kRuntime::new(policy);
-        events.iter().cloned().map(|event| rt.handle(event)).collect()
+        events
+            .iter()
+            .cloned()
+            .map(|event| rt.handle(event))
+            .collect()
     }
 
     #[test]
@@ -1914,7 +1918,10 @@ mod tests {
         assert_eq!(profile.mic_gain_db, -6.0);
         assert_eq!(profile.speaker_gain_db, -6.0);
         assert_eq!(profile.tune_steps, 12);
-        assert_eq!(last_code, Some(reason_codes::K_CALIBRATION_AUTO_TUNE_APPLIED));
+        assert_eq!(
+            last_code,
+            Some(reason_codes::K_CALIBRATION_AUTO_TUNE_APPLIED)
+        );
 
         let rollback_out = rt.handle(Ph1kEvent::AecUnstable {
             now: MonotonicTimeNs(100),
@@ -2028,13 +2035,19 @@ mod tests {
             state.class_bundle,
             DegradationClassBundle::from_flags(false, false, false, false)
         );
-        assert_eq!(state.class_bundle.capture_quality_class, CaptureQualityClass::Clear);
+        assert_eq!(
+            state.class_bundle.capture_quality_class,
+            CaptureQualityClass::Clear
+        );
         assert_eq!(state.class_bundle.echo_risk_class, EchoRiskClass::Low);
         assert_eq!(
             state.class_bundle.network_stability_class,
             NetworkStabilityClass::Stable
         );
-        assert_eq!(state.class_bundle.recoverability_class, RecoverabilityClass::Fast);
+        assert_eq!(
+            state.class_bundle.recoverability_class,
+            RecoverabilityClass::Fast
+        );
     }
 
     #[test]
@@ -2515,8 +2528,7 @@ mod tests {
             reason_codes::K_INTERRUPT_CANDIDATE_EMITTED_HIGH
         );
 
-        let medium =
-            classify_candidate_confidence_band(0.90, 0.85, 0.85, 0.82, 0.92, Some(0.70));
+        let medium = classify_candidate_confidence_band(0.90, 0.85, 0.85, 0.82, 0.92, Some(0.70));
         assert_eq!(medium, InterruptCandidateConfidenceBand::Medium);
         assert_eq!(
             reason_code_for_candidate_band(medium),
@@ -2532,7 +2544,10 @@ mod tests {
 
         let high_without_nearfield =
             classify_candidate_confidence_band(0.95, 0.90, 0.92, 0.90, 0.95, None);
-        assert_eq!(high_without_nearfield, InterruptCandidateConfidenceBand::High);
+        assert_eq!(
+            high_without_nearfield,
+            InterruptCandidateConfidenceBand::High
+        );
     }
 
     #[test]
@@ -2550,12 +2565,9 @@ mod tests {
         assert_eq!(clean_a, clean_b);
 
         let severe_input = default_adaptive_policy_input(DeviceRoute::Bluetooth);
-        let severe = select_adaptive_threshold_profile(
-            &binding,
-            &severe_input,
-            InterruptNoiseClass::Severe,
-        )
-        .expect("severe profile selection must pass");
+        let severe =
+            select_adaptive_threshold_profile(&binding, &severe_input, InterruptNoiseClass::Severe)
+                .expect("severe profile selection must pass");
         assert!(severe.min_phrase_confidence > clean_a.min_phrase_confidence);
         assert!(severe.min_vad_confidence > clean_a.min_vad_confidence);
         assert!(severe.min_voiced_window_ms > clean_a.min_voiced_window_ms);
@@ -2654,8 +2666,9 @@ mod tests {
         let binding = default_interrupt_binding(&matcher);
 
         let mut adaptive = default_adaptive_policy_input(DeviceRoute::Bluetooth);
-        adaptive.quality_metrics = AdvancedAudioQualityMetrics::v1(20.0, 0.04, 85.0, 2.0, 0.78, 14.0)
-            .expect("overlap quality metrics must be valid");
+        adaptive.quality_metrics =
+            AdvancedAudioQualityMetrics::v1(20.0, 0.04, 85.0, 2.0, 0.78, 14.0)
+                .expect("overlap quality metrics must be valid");
 
         let uncertain_input = InterruptInput {
             adaptive_policy_input: adaptive,
@@ -2703,7 +2716,10 @@ mod tests {
         };
         let strong = evaluate_interrupt_candidate(&matcher, strong_input)
             .expect("strong overlap decision should evaluate");
-        assert_eq!(strong.adaptive_noise_class, Some(InterruptNoiseClass::Elevated));
+        assert_eq!(
+            strong.adaptive_noise_class,
+            Some(InterruptNoiseClass::Elevated)
+        );
         assert!(strong.candidate.is_some());
         assert_eq!(
             strong.reason_code,

@@ -80,6 +80,15 @@ use selene_kernel_contracts::ph1position::{
     PositionScheduleType, PositionSchemaApplyScope, PositionSchemaSelectorSnapshot,
     PositionValidationStatus, TenantId,
 };
+use selene_kernel_contracts::ph1rem::{
+    Ph1RemOk, Ph1RemRefuse, Ph1RemRequest, Ph1RemResponse, ReminderCancelCommitRequest,
+    ReminderChannel, ReminderDeliverDueCommitRequest, ReminderDeliverPreCommitRequest,
+    ReminderDeliveryAttemptId, ReminderDeliveryStatus, ReminderEscalateCommitRequest,
+    ReminderFollowupScheduleCommitRequest, ReminderId, ReminderLocalTimeMode,
+    ReminderMarkCompletedCommitRequest, ReminderMarkFailedCommitRequest, ReminderOccurrenceId,
+    ReminderPriorityLevel, ReminderRequest, ReminderScheduleCommitRequest,
+    ReminderSnoozeCommitRequest, ReminderState, ReminderType, ReminderUpdateCommitRequest,
+};
 use selene_kernel_contracts::ph1selfheal::{FailureEvent, FixCard, ProblemCard, PromotionDecision};
 use selene_kernel_contracts::ph1simcat::{
     SimulationCatalogCurrentRecord, SimulationCatalogEvent, SimulationCatalogEventInput,
@@ -299,6 +308,78 @@ fn days_to_ns(days: u64) -> u64 {
         .saturating_mul(60)
         .saturating_mul(60)
         .saturating_mul(1_000_000_000)
+}
+
+fn parse_relative_delay_ns_for_reminder(s: &str) -> Option<u64> {
+    let toks: Vec<&str> = s.split_whitespace().collect();
+    if toks.len() >= 3 && toks[0] == "in" {
+        let n: u64 = toks[1].parse().ok()?;
+        let unit = toks[2];
+        let mult = if unit.starts_with("sec") {
+            1_000_000_000
+        } else if unit.starts_with("min") {
+            60 * 1_000_000_000
+        } else if unit.starts_with("hour") || unit == "hr" || unit == "hrs" {
+            60 * 60 * 1_000_000_000
+        } else if unit.starts_with("day") {
+            24 * 60 * 60 * 1_000_000_000
+        } else {
+            return None;
+        };
+        return n.checked_mul(mult);
+    }
+    None
+}
+
+fn resolve_reminder_desired_time(now: MonotonicTimeNs, value: &str) -> Option<MonotonicTimeNs> {
+    let s = value.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    if s == "now" || s == "today" {
+        return Some(now);
+    }
+    if s.contains("tomorrow") {
+        return Some(MonotonicTimeNs(now.0.saturating_add(86_400_000_000_000)));
+    }
+    if let Some(delta_ns) = parse_relative_delay_ns_for_reminder(&s) {
+        return Some(MonotonicTimeNs(now.0.saturating_add(delta_ns)));
+    }
+    if let Ok(raw) = s.parse::<u64>() {
+        let ns = if s.len() >= 16 {
+            raw
+        } else if s.len() >= 13 {
+            raw.saturating_mul(1_000_000)
+        } else if s.len() >= 10 {
+            raw.saturating_mul(1_000_000_000)
+        } else {
+            return None;
+        };
+        if ns > 0 {
+            return Some(MonotonicTimeNs(ns));
+        }
+    }
+    None
+}
+
+mod reminder_reason_codes {
+    use selene_kernel_contracts::ReasonCodeId;
+
+    pub const REMINDER_SCHEDULED: ReasonCodeId = ReasonCodeId(0x5245_0001);
+    pub const REMINDER_UPDATED: ReasonCodeId = ReasonCodeId(0x5245_0002);
+    pub const REMINDER_CANCELED: ReasonCodeId = ReasonCodeId(0x5245_0003);
+    pub const REMINDER_SNOOZED: ReasonCodeId = ReasonCodeId(0x5245_0004);
+    pub const REMINDER_FOLLOWUP_SCHEDULED: ReasonCodeId = ReasonCodeId(0x5245_0005);
+    pub const REMINDER_RETRY_SCHEDULED: ReasonCodeId = ReasonCodeId(0x5245_0006);
+    pub const REMINDER_DELIVERED_PRE: ReasonCodeId = ReasonCodeId(0x5245_0007);
+    pub const REMINDER_DELIVERED_DUE: ReasonCodeId = ReasonCodeId(0x5245_0008);
+    pub const REMINDER_ESCALATED: ReasonCodeId = ReasonCodeId(0x5245_0009);
+    pub const REMINDER_COMPLETED: ReasonCodeId = ReasonCodeId(0x5245_000A);
+    pub const REMINDER_FAILED: ReasonCodeId = ReasonCodeId(0x5245_000B);
+
+    pub const REM_FAIL_TIME_AMBIGUOUS_NEEDS_CONFIRM: ReasonCodeId = ReasonCodeId(0x5245_00F1);
+    pub const REM_FAIL_SCOPE_VIOLATION: ReasonCodeId = ReasonCodeId(0x5245_00F3);
+    pub const REM_FAIL_STATE_TRANSITION_INVALID: ReasonCodeId = ReasonCodeId(0x5245_00F4);
 }
 
 fn memory_graph_edge_kind_key(
@@ -1007,8 +1088,7 @@ pub struct Ph1fStore {
     onb_sender_verify_idempotency_index:
         BTreeMap<(OnboardingSessionId, String), VerificationStatus>,
     onb_primary_device_idempotency_index: BTreeMap<(OnboardingSessionId, String), bool>,
-    onb_platform_setup_idempotency_index:
-        BTreeMap<(OnboardingSessionId, String), Vec<String>>,
+    onb_platform_setup_idempotency_index: BTreeMap<(OnboardingSessionId, String), Vec<String>>,
     // Idempotency: (user_id + role_id + idempotency_key) for access instance create.
     onb_access_instance_idempotency_index: BTreeMap<(UserId, String, String), String>,
     onb_complete_idempotency_index: BTreeMap<(OnboardingSessionId, String), OnboardingStatus>,
@@ -1248,6 +1328,34 @@ pub struct Ph1fStore {
     work_orders_current: BTreeMap<(TenantId, WorkOrderId), WorkOrderCurrentRecord>,
     // Idempotency dedupe for ledger writes: (tenant_id, work_order_id, idempotency_key).
     work_order_ledger_idempotency_index: BTreeMap<(TenantId, WorkOrderId, String), u64>,
+
+    // ------------------------
+    // PH1.REM reminder persistence tables (`reminders`, `reminder_occurrences`,
+    // `reminder_delivery_attempts`).
+    // ------------------------
+    reminders: BTreeMap<ReminderId, ReminderRecord>,
+    reminder_occurrences: BTreeMap<ReminderOccurrenceId, ReminderOccurrenceRecord>,
+    reminder_delivery_attempts: Vec<ReminderDeliveryAttemptRecord>,
+    // Idempotency: (tenant_id, user_id, resolved_due_at, reminder_type, idempotency_key) -> reminder_id.
+    reminder_schedule_idempotency_index:
+        BTreeMap<(TenantId, UserId, MonotonicTimeNs, ReminderType, String), ReminderId>,
+    // Idempotency: (tenant_id, reminder_id, idempotency_key, action) -> reminder_id.
+    reminder_update_idempotency_index: BTreeMap<(TenantId, ReminderId, String, String), ReminderId>,
+    // Idempotency: (tenant_id, reminder_id, occurrence_id, delivery_attempt_id, action) -> attempt_idx.
+    reminder_delivery_idempotency_index: BTreeMap<
+        (
+            TenantId,
+            ReminderId,
+            ReminderOccurrenceId,
+            ReminderDeliveryAttemptId,
+            String,
+        ),
+        usize,
+    >,
+    // Primary-key uniqueness: attempt_id -> attempt_idx.
+    reminder_delivery_attempt_lookup: BTreeMap<ReminderDeliveryAttemptId, usize>,
+    next_reminder_seq: u64,
+    next_reminder_occurrence_seq: u64,
 
     // ------------------------
     // PH1.CAPREQ tables (`capreq_ledger` ledger + `capreq_current` projection).
@@ -2287,6 +2395,55 @@ pub struct MobileArtifactSyncQueueRecord {
     pub idempotency_key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderRecord {
+    pub schema_version: SchemaVersion,
+    pub reminder_id: ReminderId,
+    pub tenant_id: TenantId,
+    pub user_id: UserId,
+    pub device_id: Option<DeviceId>,
+    pub reminder_type: ReminderType,
+    pub reminder_request_text: String,
+    pub desired_time_text: String,
+    pub resolved_due_at: MonotonicTimeNs,
+    pub user_timezone: String,
+    pub local_time_mode: ReminderLocalTimeMode,
+    pub priority_level: ReminderPriorityLevel,
+    pub recurrence_rule: Option<String>,
+    pub channel_preferences: Vec<ReminderChannel>,
+    pub state: ReminderState,
+    pub primary_occurrence_id: ReminderOccurrenceId,
+    pub created_at: MonotonicTimeNs,
+    pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderOccurrenceRecord {
+    pub schema_version: SchemaVersion,
+    pub occurrence_id: ReminderOccurrenceId,
+    pub reminder_id: ReminderId,
+    pub scheduled_time: MonotonicTimeNs,
+    pub state: ReminderState,
+    pub snooze_until: Option<MonotonicTimeNs>,
+    pub followup_time: Option<MonotonicTimeNs>,
+    pub retry_time: Option<MonotonicTimeNs>,
+    pub completed_at: Option<MonotonicTimeNs>,
+    pub failure_reason: Option<String>,
+    pub updated_at: MonotonicTimeNs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderDeliveryAttemptRecord {
+    pub schema_version: SchemaVersion,
+    pub attempt_id: ReminderDeliveryAttemptId,
+    pub reminder_id: ReminderId,
+    pub occurrence_id: ReminderOccurrenceId,
+    pub channel: ReminderChannel,
+    pub status: ReminderDeliveryStatus,
+    pub proof_ref: Option<String>,
+    pub created_at: MonotonicTimeNs,
+}
+
 impl Ph1fStore {
     pub fn new_in_memory() -> Self {
         Self {
@@ -2463,6 +2620,15 @@ impl Ph1fStore {
             work_order_ledger: Vec::new(),
             work_orders_current: BTreeMap::new(),
             work_order_ledger_idempotency_index: BTreeMap::new(),
+            reminders: BTreeMap::new(),
+            reminder_occurrences: BTreeMap::new(),
+            reminder_delivery_attempts: Vec::new(),
+            reminder_schedule_idempotency_index: BTreeMap::new(),
+            reminder_update_idempotency_index: BTreeMap::new(),
+            reminder_delivery_idempotency_index: BTreeMap::new(),
+            reminder_delivery_attempt_lookup: BTreeMap::new(),
+            next_reminder_seq: 1,
+            next_reminder_occurrence_seq: 1,
             capreq_ledger_events: Vec::new(),
             capreq_current: BTreeMap::new(),
             capreq_idempotency_index: BTreeMap::new(),
@@ -5125,6 +5291,927 @@ impl Ph1fStore {
     }
 
     // ------------------------
+    // PH1.REM persistence (CURRENT reminders/occurrences + append-only delivery attempts).
+    // ------------------------
+
+    pub fn ph1rem_run(&mut self, req: &Ph1RemRequest) -> Result<Ph1RemResponse, StorageError> {
+        req.validate().map_err(StorageError::ContractViolation)?;
+        match &req.request {
+            ReminderRequest::ScheduleCommit(r) => self.ph1rem_schedule(req, r),
+            ReminderRequest::UpdateCommit(r) => self.ph1rem_update(req, r),
+            ReminderRequest::CancelCommit(r) => self.ph1rem_cancel(req, r),
+            ReminderRequest::SnoozeCommit(r) => self.ph1rem_snooze(req, r),
+            ReminderRequest::FollowupScheduleCommit(r) => self.ph1rem_followup(req, r),
+            ReminderRequest::DeliveryRetryScheduleCommit(r) => self.ph1rem_retry(req, r),
+            ReminderRequest::DeliverPreCommit(r) => self.ph1rem_deliver_pre(req, r),
+            ReminderRequest::DeliverDueCommit(r) => self.ph1rem_deliver_due(req, r),
+            ReminderRequest::EscalateCommit(r) => self.ph1rem_escalate(req, r),
+            ReminderRequest::MarkCompletedCommit(r) => self.ph1rem_mark_completed(req, r),
+            ReminderRequest::MarkFailedCommit(r) => self.ph1rem_mark_failed(req, r),
+        }
+    }
+
+    pub fn reminders(&self) -> &BTreeMap<ReminderId, ReminderRecord> {
+        &self.reminders
+    }
+
+    pub fn reminder_occurrences(
+        &self,
+    ) -> &BTreeMap<ReminderOccurrenceId, ReminderOccurrenceRecord> {
+        &self.reminder_occurrences
+    }
+
+    pub fn reminder_delivery_attempts(&self) -> &[ReminderDeliveryAttemptRecord] {
+        &self.reminder_delivery_attempts
+    }
+
+    pub fn reminder_row(&self, reminder_id: &ReminderId) -> Option<&ReminderRecord> {
+        self.reminders.get(reminder_id)
+    }
+
+    pub fn reminder_occurrence_row(
+        &self,
+        occurrence_id: &ReminderOccurrenceId,
+    ) -> Option<&ReminderOccurrenceRecord> {
+        self.reminder_occurrences.get(occurrence_id)
+    }
+
+    pub fn reminder_delivery_attempt_row(
+        &self,
+        attempt_id: &ReminderDeliveryAttemptId,
+    ) -> Option<&ReminderDeliveryAttemptRecord> {
+        let idx = self.reminder_delivery_attempt_lookup.get(attempt_id)?;
+        self.reminder_delivery_attempts.get(*idx)
+    }
+
+    pub fn rebuild_reminder_delivery_attempt_indexes(&mut self) -> Result<(), StorageError> {
+        self.reminder_delivery_attempt_lookup.clear();
+        self.reminder_delivery_idempotency_index.clear();
+        for (idx, row) in self.reminder_delivery_attempts.iter().enumerate() {
+            if self
+                .reminder_delivery_attempt_lookup
+                .insert(row.attempt_id.clone(), idx)
+                .is_some()
+            {
+                return Err(StorageError::DuplicateKey {
+                    table: "reminder_delivery_attempts",
+                    key: row.attempt_id.as_str().to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub fn attempt_overwrite_reminder_delivery_attempt(
+        &mut self,
+        _attempt_id: &ReminderDeliveryAttemptId,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "reminder_delivery_attempts",
+        })
+    }
+
+    fn ph1rem_schedule(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderScheduleCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        if self.get_identity(&r.user_id).is_none() {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                "identity not found for user_id".to_string(),
+            )?));
+        }
+
+        if let Some(device_id) = &r.device_id {
+            if self.get_device(device_id).is_none() {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "device not found for device_id".to_string(),
+                )?));
+            }
+        }
+
+        let resolved_due_at = match resolve_reminder_desired_time(req.envelope.now, &r.desired_time)
+        {
+            Some(t) => t,
+            None => {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_TIME_AMBIGUOUS_NEEDS_CONFIRM,
+                    "desired_time is not deterministically parseable".to_string(),
+                )?))
+            }
+        };
+
+        let idx = (
+            r.tenant_id.clone(),
+            r.user_id.clone(),
+            resolved_due_at,
+            r.reminder_type,
+            r.idempotency_key.clone(),
+        );
+        if let Some(existing_id) = self.reminder_schedule_idempotency_index.get(&idx).cloned() {
+            let row = self
+                .reminders
+                .get(&existing_id)
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1rem.schedule.idempotency",
+                        reason: "existing reminder id missing",
+                    },
+                ))?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REMINDER_SCHEDULED,
+                row.reminder_id.clone(),
+                Some(row.primary_occurrence_id.clone()),
+                row.state,
+                Some(row.resolved_due_at),
+                None,
+                None,
+                None,
+                None,
+            )?));
+        }
+
+        self.next_reminder_seq = self.next_reminder_seq.saturating_add(1);
+        self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
+        let reminder_id = ReminderId::new(format!("rem_{:016x}", self.next_reminder_seq))
+            .map_err(StorageError::ContractViolation)?;
+        let occurrence_id =
+            ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
+                .map_err(StorageError::ContractViolation)?;
+
+        let row = ReminderRecord {
+            schema_version: SchemaVersion(1),
+            reminder_id: reminder_id.clone(),
+            tenant_id: r.tenant_id.clone(),
+            user_id: r.user_id.clone(),
+            device_id: r.device_id.clone(),
+            reminder_type: r.reminder_type,
+            reminder_request_text: r.reminder_request_text.clone(),
+            desired_time_text: r.desired_time.clone(),
+            resolved_due_at,
+            user_timezone: r.user_timezone.clone(),
+            local_time_mode: r.local_time_mode,
+            priority_level: r.priority_level,
+            recurrence_rule: r.recurrence_rule.clone(),
+            channel_preferences: r.channel_preferences.clone(),
+            state: ReminderState::Scheduled,
+            primary_occurrence_id: occurrence_id.clone(),
+            created_at: req.envelope.now,
+            updated_at: req.envelope.now,
+        };
+        let occ = ReminderOccurrenceRecord {
+            schema_version: SchemaVersion(1),
+            occurrence_id: occurrence_id.clone(),
+            reminder_id: reminder_id.clone(),
+            scheduled_time: resolved_due_at,
+            state: ReminderState::Scheduled,
+            snooze_until: None,
+            followup_time: None,
+            retry_time: None,
+            completed_at: None,
+            failure_reason: None,
+            updated_at: req.envelope.now,
+        };
+        self.reminders.insert(reminder_id.clone(), row);
+        self.reminder_occurrences.insert(occurrence_id.clone(), occ);
+        self.reminder_schedule_idempotency_index
+            .insert(idx, reminder_id.clone());
+
+        Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+            req.envelope.simulation_id.clone(),
+            reminder_reason_codes::REMINDER_SCHEDULED,
+            reminder_id,
+            Some(occurrence_id),
+            ReminderState::Scheduled,
+            Some(resolved_due_at),
+            None,
+            None,
+            None,
+            None,
+        )?))
+    }
+
+    fn ph1rem_update(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderUpdateCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        let idx = (
+            r.tenant_id.clone(),
+            r.reminder_id.clone(),
+            r.idempotency_key.clone(),
+            "UPDATE".to_string(),
+        );
+        if let Some(existing_id) = self.reminder_update_idempotency_index.get(&idx).cloned() {
+            let row = self
+                .reminders
+                .get(&existing_id)
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1rem.update.idempotency",
+                        reason: "existing reminder id missing",
+                    },
+                ))?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REMINDER_UPDATED,
+                row.reminder_id.clone(),
+                Some(row.primary_occurrence_id.clone()),
+                row.state,
+                Some(row.resolved_due_at),
+                None,
+                None,
+                None,
+                None,
+            )?));
+        }
+
+        let parsed_due = if let Some(v) = &r.updated_fields.desired_time {
+            match resolve_reminder_desired_time(req.envelope.now, v) {
+                Some(parsed) => Some((v.clone(), parsed)),
+                None => {
+                    return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                        req.envelope.simulation_id.clone(),
+                        reminder_reason_codes::REM_FAIL_TIME_AMBIGUOUS_NEEDS_CONFIRM,
+                        "desired_time is not deterministically parseable".to_string(),
+                    )?))
+                }
+            }
+        } else {
+            None
+        };
+
+        let (reminder_id, primary_occurrence_id, state_after, resolved_due_at) = {
+            let row = self.reminders.get_mut(&r.reminder_id).ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.update.reminder_id",
+                    reason: "not found",
+                })
+            })?;
+            if row.tenant_id != r.tenant_id || row.user_id != r.user_id {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "tenant_id/user_id do not match reminder owner".to_string(),
+                )?));
+            }
+            if row.state == ReminderState::Canceled
+                || row.state == ReminderState::Completed
+                || row.state == ReminderState::Failed
+            {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_STATE_TRANSITION_INVALID,
+                    "cannot update terminal reminder state".to_string(),
+                )?));
+            }
+            if let Some(v) = &r.updated_fields.reminder_request_text {
+                row.reminder_request_text = v.clone();
+            }
+            if let Some(v) = &r.updated_fields.user_timezone {
+                row.user_timezone = v.clone();
+            }
+            if let Some(v) = r.updated_fields.local_time_mode {
+                row.local_time_mode = v;
+            }
+            if let Some(v) = r.updated_fields.priority_level {
+                row.priority_level = v;
+            }
+            if let Some(v) = &r.updated_fields.recurrence_rule {
+                row.recurrence_rule = v.clone();
+            }
+            if let Some(v) = &r.updated_fields.channel_preferences {
+                row.channel_preferences = v.clone();
+            }
+            if let Some((desired_time_text, parsed)) = &parsed_due {
+                row.desired_time_text = desired_time_text.clone();
+                row.resolved_due_at = *parsed;
+            }
+            row.updated_at = req.envelope.now;
+            (
+                row.reminder_id.clone(),
+                row.primary_occurrence_id.clone(),
+                row.state,
+                row.resolved_due_at,
+            )
+        };
+
+        if let Some((_desired_time_text, parsed)) = parsed_due {
+            if let Some(occ) = self.reminder_occurrences.get_mut(&primary_occurrence_id) {
+                occ.scheduled_time = parsed;
+                occ.updated_at = req.envelope.now;
+            }
+        }
+
+        self.reminder_update_idempotency_index
+            .insert(idx, reminder_id.clone());
+
+        Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+            req.envelope.simulation_id.clone(),
+            reminder_reason_codes::REMINDER_UPDATED,
+            reminder_id,
+            Some(primary_occurrence_id),
+            state_after,
+            Some(resolved_due_at),
+            None,
+            None,
+            None,
+            None,
+        )?))
+    }
+
+    fn ph1rem_cancel(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderCancelCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        let idx = (
+            r.tenant_id.clone(),
+            r.reminder_id.clone(),
+            r.idempotency_key.clone(),
+            "CANCEL".to_string(),
+        );
+        if let Some(existing_id) = self.reminder_update_idempotency_index.get(&idx).cloned() {
+            let row = self
+                .reminders
+                .get(&existing_id)
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1rem.cancel.idempotency",
+                        reason: "existing reminder id missing",
+                    },
+                ))?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REMINDER_CANCELED,
+                row.reminder_id.clone(),
+                Some(row.primary_occurrence_id.clone()),
+                row.state,
+                Some(row.resolved_due_at),
+                None,
+                None,
+                None,
+                None,
+            )?));
+        }
+
+        let (reminder_id, primary_occurrence_id, state_after, resolved_due_at) = {
+            let row = self.reminders.get_mut(&r.reminder_id).ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.cancel.reminder_id",
+                    reason: "not found",
+                })
+            })?;
+            if row.tenant_id != r.tenant_id || row.user_id != r.user_id {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "tenant_id/user_id do not match reminder owner".to_string(),
+                )?));
+            }
+            row.state = ReminderState::Canceled;
+            row.updated_at = req.envelope.now;
+            (
+                row.reminder_id.clone(),
+                row.primary_occurrence_id.clone(),
+                row.state,
+                row.resolved_due_at,
+            )
+        };
+
+        for occ in self.reminder_occurrences.values_mut() {
+            if occ.reminder_id == reminder_id
+                && occ.state != ReminderState::Completed
+                && occ.state != ReminderState::Failed
+            {
+                occ.state = ReminderState::Canceled;
+                occ.updated_at = req.envelope.now;
+            }
+        }
+
+        self.reminder_update_idempotency_index
+            .insert(idx, reminder_id.clone());
+
+        Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+            req.envelope.simulation_id.clone(),
+            reminder_reason_codes::REMINDER_CANCELED,
+            reminder_id,
+            Some(primary_occurrence_id),
+            state_after,
+            Some(resolved_due_at),
+            None,
+            None,
+            None,
+            None,
+        )?))
+    }
+
+    fn ph1rem_snooze(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderSnoozeCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        self.ph1rem_occurrence_mutation(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            &r.idempotency_key,
+            "SNOOZE",
+            |row, occ, now| {
+                let snooze_until = MonotonicTimeNs(
+                    now.0
+                        .saturating_add((r.snooze_duration_ms as u64) * 1_000_000),
+                );
+                row.state = ReminderState::Snoozed;
+                row.updated_at = now;
+                occ.state = ReminderState::Snoozed;
+                occ.scheduled_time = snooze_until;
+                occ.snooze_until = Some(snooze_until);
+                occ.updated_at = now;
+                Ok((
+                    reminder_reason_codes::REMINDER_SNOOZED,
+                    ReminderState::Snoozed,
+                    Some(occ.scheduled_time),
+                ))
+            },
+        )
+    }
+
+    fn ph1rem_followup(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderFollowupScheduleCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        self.ph1rem_occurrence_mutation(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            &r.idempotency_key,
+            "FOLLOWUP",
+            |row, occ, now| {
+                let followup_time = MonotonicTimeNs(
+                    now.0
+                        .saturating_add((r.followup_delay_ms as u64) * 1_000_000),
+                );
+                row.state = ReminderState::FollowupPending;
+                row.updated_at = now;
+                occ.state = ReminderState::FollowupPending;
+                occ.followup_time = Some(followup_time);
+                occ.updated_at = now;
+                Ok((
+                    reminder_reason_codes::REMINDER_FOLLOWUP_SCHEDULED,
+                    ReminderState::FollowupPending,
+                    Some(followup_time),
+                ))
+            },
+        )
+    }
+
+    fn ph1rem_retry(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &selene_kernel_contracts::ph1rem::ReminderDeliveryRetryScheduleCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        self.ph1rem_occurrence_mutation(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            &r.idempotency_key,
+            "RETRY",
+            |row, occ, now| {
+                row.updated_at = now;
+                occ.retry_time = Some(r.retry_time);
+                occ.updated_at = now;
+                Ok((
+                    reminder_reason_codes::REMINDER_RETRY_SCHEDULED,
+                    row.state,
+                    Some(r.retry_time),
+                ))
+            },
+        )
+    }
+
+    fn ph1rem_deliver_pre(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderDeliverPreCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        self.ph1rem_delivery_common(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            r.delivery_channel,
+            &r.delivery_attempt_id,
+            &r.idempotency_key,
+            "DELIVER_PRE",
+            ReminderDeliveryStatus::Delivered,
+            reminder_reason_codes::REMINDER_DELIVERED_PRE,
+            None,
+        )
+    }
+
+    fn ph1rem_deliver_due(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderDeliverDueCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        let status = if r.offline_state {
+            ReminderDeliveryStatus::RetryScheduled
+        } else {
+            ReminderDeliveryStatus::Delivered
+        };
+        self.ph1rem_delivery_common(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            r.delivery_channel,
+            &r.delivery_attempt_id,
+            &r.idempotency_key,
+            "DELIVER_DUE",
+            status,
+            reminder_reason_codes::REMINDER_DELIVERED_DUE,
+            None,
+        )
+    }
+
+    fn ph1rem_escalate(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderEscalateCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        if r.from_channel == r.to_channel {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_STATE_TRANSITION_INVALID,
+                "from_channel and to_channel must differ".to_string(),
+            )?));
+        }
+        self.ph1rem_delivery_common(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            r.to_channel,
+            &r.delivery_attempt_id,
+            &r.idempotency_key,
+            "ESCALATE",
+            ReminderDeliveryStatus::Delivered,
+            reminder_reason_codes::REMINDER_ESCALATED,
+            Some(1),
+        )
+    }
+
+    fn ph1rem_mark_completed(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderMarkCompletedCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        let _ = r.ack_source;
+        self.ph1rem_occurrence_mutation(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            &r.idempotency_key,
+            "COMPLETE",
+            |row, occ, now| {
+                row.state = ReminderState::Completed;
+                row.updated_at = now;
+                occ.state = ReminderState::Completed;
+                occ.completed_at = Some(now);
+                occ.updated_at = now;
+                Ok((
+                    reminder_reason_codes::REMINDER_COMPLETED,
+                    ReminderState::Completed,
+                    Some(occ.scheduled_time),
+                ))
+            },
+        )
+    }
+
+    fn ph1rem_mark_failed(
+        &mut self,
+        req: &Ph1RemRequest,
+        r: &ReminderMarkFailedCommitRequest,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        self.ph1rem_occurrence_mutation(
+            req,
+            &r.tenant_id,
+            &r.user_id,
+            &r.reminder_id,
+            &r.occurrence_id,
+            &r.idempotency_key,
+            "FAIL",
+            |row, occ, now| {
+                row.state = ReminderState::Failed;
+                row.updated_at = now;
+                occ.state = ReminderState::Failed;
+                occ.failure_reason = Some(r.failure_reason.clone());
+                occ.updated_at = now;
+                Ok((
+                    reminder_reason_codes::REMINDER_FAILED,
+                    ReminderState::Failed,
+                    Some(occ.scheduled_time),
+                ))
+            },
+        )
+    }
+
+    fn ph1rem_occurrence_mutation<F>(
+        &mut self,
+        req: &Ph1RemRequest,
+        tenant_id: &TenantId,
+        user_id: &UserId,
+        reminder_id: &ReminderId,
+        occurrence_id: &ReminderOccurrenceId,
+        idempotency_key: &str,
+        action: &str,
+        mutator: F,
+    ) -> Result<Ph1RemResponse, StorageError>
+    where
+        F: FnOnce(
+            &mut ReminderRecord,
+            &mut ReminderOccurrenceRecord,
+            MonotonicTimeNs,
+        )
+            -> Result<(ReasonCodeId, ReminderState, Option<MonotonicTimeNs>), StorageError>,
+    {
+        let idx = (
+            tenant_id.clone(),
+            reminder_id.clone(),
+            idempotency_key.to_string(),
+            action.to_string(),
+        );
+        if let Some(existing_id) = self.reminder_update_idempotency_index.get(&idx).cloned() {
+            let row = self
+                .reminders
+                .get(&existing_id)
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1rem.occurrence.idempotency",
+                        reason: "existing reminder id missing",
+                    },
+                ))?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REMINDER_UPDATED,
+                row.reminder_id.clone(),
+                Some(row.primary_occurrence_id.clone()),
+                row.state,
+                Some(row.resolved_due_at),
+                None,
+                None,
+                None,
+                None,
+            )?));
+        }
+
+        let row_snapshot = self.reminders.get(reminder_id).ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1rem.reminder_id",
+                reason: "not found",
+            })
+        })?;
+        if row_snapshot.tenant_id != *tenant_id || row_snapshot.user_id != *user_id {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                "tenant_id/user_id do not match reminder owner".to_string(),
+            )?));
+        }
+
+        let occ_snapshot = self
+            .reminder_occurrences
+            .get(occurrence_id)
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.occurrence_id",
+                    reason: "not found",
+                })
+            })?;
+        if occ_snapshot.reminder_id != row_snapshot.reminder_id {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                "occurrence does not belong to reminder_id".to_string(),
+            )?));
+        }
+        if occ_snapshot.state == ReminderState::Canceled
+            || occ_snapshot.state == ReminderState::Completed
+            || occ_snapshot.state == ReminderState::Failed
+        {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_STATE_TRANSITION_INVALID,
+                "cannot mutate terminal occurrence state".to_string(),
+            )?));
+        }
+
+        let mut row = self.reminders.remove(reminder_id).ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1rem.reminder_id",
+                reason: "not found",
+            })
+        })?;
+        let mut occ = self
+            .reminder_occurrences
+            .remove(occurrence_id)
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.occurrence_id",
+                    reason: "not found",
+                })
+            })?;
+
+        let (reason_code, state_after, scheduled_time) =
+            mutator(&mut row, &mut occ, req.envelope.now)?;
+        let out_reminder_id = row.reminder_id.clone();
+        let out_occurrence_id = occ.occurrence_id.clone();
+
+        self.reminders.insert(reminder_id.clone(), row);
+        self.reminder_occurrences.insert(occurrence_id.clone(), occ);
+        self.reminder_update_idempotency_index
+            .insert(idx, out_reminder_id.clone());
+
+        Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+            req.envelope.simulation_id.clone(),
+            reason_code,
+            out_reminder_id,
+            Some(out_occurrence_id),
+            state_after,
+            scheduled_time,
+            None,
+            None,
+            None,
+            None,
+        )?))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ph1rem_delivery_common(
+        &mut self,
+        req: &Ph1RemRequest,
+        tenant_id: &TenantId,
+        user_id: &UserId,
+        reminder_id: &ReminderId,
+        occurrence_id: &ReminderOccurrenceId,
+        channel: ReminderChannel,
+        delivery_attempt_id: &ReminderDeliveryAttemptId,
+        idempotency_key: &str,
+        action: &str,
+        delivery_status: ReminderDeliveryStatus,
+        reason_code: ReasonCodeId,
+        escalation_level: Option<u8>,
+    ) -> Result<Ph1RemResponse, StorageError> {
+        let (row_state, occ_scheduled_time) = {
+            let row = self.reminders.get(reminder_id).ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.delivery.reminder_id",
+                    reason: "not found",
+                })
+            })?;
+            if row.tenant_id != *tenant_id || row.user_id != *user_id {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "tenant_id/user_id do not match reminder owner".to_string(),
+                )?));
+            }
+            let occ = self
+                .reminder_occurrences
+                .get(occurrence_id)
+                .ok_or_else(|| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1rem.delivery.occurrence_id",
+                        reason: "not found",
+                    })
+                })?;
+            if occ.reminder_id != *reminder_id {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "occurrence does not belong to reminder_id".to_string(),
+                )?));
+            }
+            (row.state, occ.scheduled_time)
+        };
+
+        if let Some(existing_idx) = self
+            .reminder_delivery_attempt_lookup
+            .get(delivery_attempt_id)
+        {
+            let existing = self.reminder_delivery_attempts.get(*existing_idx).ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.delivery.idempotency",
+                    reason: "existing delivery row missing",
+                }),
+            )?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reason_code,
+                reminder_id.clone(),
+                Some(occurrence_id.clone()),
+                row_state,
+                Some(occ_scheduled_time),
+                Some(existing.status),
+                Some(existing.attempt_id.clone()),
+                existing.proof_ref.clone(),
+                escalation_level,
+            )?));
+        }
+
+        let idx = (
+            tenant_id.clone(),
+            reminder_id.clone(),
+            occurrence_id.clone(),
+            delivery_attempt_id.clone(),
+            action.to_string(),
+        );
+        if let Some(existing_idx) = self.reminder_delivery_idempotency_index.get(&idx) {
+            let existing = self.reminder_delivery_attempts.get(*existing_idx).ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.delivery.idempotency",
+                    reason: "existing delivery row missing",
+                }),
+            )?;
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reason_code,
+                reminder_id.clone(),
+                Some(occurrence_id.clone()),
+                row_state,
+                Some(occ_scheduled_time),
+                Some(existing.status),
+                Some(existing.attempt_id.clone()),
+                existing.proof_ref.clone(),
+                escalation_level,
+            )?));
+        }
+
+        let proof_ref = Some(format!(
+            "proof:{}:{}",
+            delivery_attempt_id.as_str(),
+            req.envelope.now.0
+        ));
+        let entry = ReminderDeliveryAttemptRecord {
+            schema_version: SchemaVersion(1),
+            attempt_id: delivery_attempt_id.clone(),
+            reminder_id: reminder_id.clone(),
+            occurrence_id: occurrence_id.clone(),
+            channel,
+            status: delivery_status,
+            proof_ref: proof_ref.clone(),
+            created_at: req.envelope.now,
+        };
+        self.reminder_delivery_attempts.push(entry);
+        let created_idx = self.reminder_delivery_attempts.len() - 1;
+        self.reminder_delivery_attempt_lookup
+            .insert(delivery_attempt_id.clone(), created_idx);
+        self.reminder_delivery_idempotency_index
+            .insert(idx, created_idx);
+        self.reminder_update_idempotency_index.insert(
+            (
+                tenant_id.clone(),
+                reminder_id.clone(),
+                idempotency_key.to_string(),
+                action.to_string(),
+            ),
+            reminder_id.clone(),
+        );
+
+        Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+            req.envelope.simulation_id.clone(),
+            reason_code,
+            reminder_id.clone(),
+            Some(occurrence_id.clone()),
+            row_state,
+            Some(occ_scheduled_time),
+            Some(delivery_status),
+            Some(delivery_attempt_id.clone()),
+            proof_ref,
+            escalation_level,
+        )?))
+    }
+
+    // ------------------------
     // PH1.CAPREQ persistence (append-only ledger + rebuildable current projection).
     // ------------------------
 
@@ -6614,10 +7701,10 @@ impl Ph1fStore {
         let next_step = if !link.missing_required_fields.is_empty() {
             OnboardingNextStep::AskMissing
         } else if effective_prefilled_context_ref.is_some() {
-                OnboardingNextStep::LoadPrefilled
-            } else {
-                OnboardingNextStep::Terms
-            };
+            OnboardingNextStep::LoadPrefilled
+        } else {
+            OnboardingNextStep::Terms
+        };
 
         Ok(OnbSessionStartResult::v1(
             onboarding_session_id,
@@ -6843,7 +7930,9 @@ impl Ph1fStore {
         self.ph1onb_verification_gate_required(onboarding_session_id, GATE_SENDER_CONFIRMATION)
     }
 
-    fn ph1onb_required_platform_receipt_kinds(app_platform: AppPlatform) -> &'static [&'static str] {
+    fn ph1onb_required_platform_receipt_kinds(
+        app_platform: AppPlatform,
+    ) -> &'static [&'static str] {
         match app_platform {
             AppPlatform::Ios => &[
                 "install_launch_handshake",
@@ -6934,7 +8023,9 @@ impl Ph1fStore {
                 key: onboarding_session_id.as_str().to_string(),
             },
         )?;
-        Ok(Self::ph1onb_remaining_platform_receipt_kinds_for_record(rec))
+        Ok(Self::ph1onb_remaining_platform_receipt_kinds_for_record(
+            rec,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6995,7 +8086,10 @@ impl Ph1fStore {
         }
 
         let required = Self::ph1onb_required_platform_receipt_kinds(rec.app_platform);
-        if !required.iter().any(|required_kind| *required_kind == receipt_kind) {
+        if !required
+            .iter()
+            .any(|required_kind| *required_kind == receipt_kind)
+        {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "ph1onb_platform_setup_receipt_commit.receipt_kind",
@@ -8128,13 +9222,12 @@ impl Ph1fStore {
         )?;
 
         let (expected_field, token_id) = {
-            let rec = self
-                .onboarding_sessions
-                .get(&onboarding_session_id)
-                .ok_or(StorageError::ForeignKeyViolation {
+            let rec = self.onboarding_sessions.get(&onboarding_session_id).ok_or(
+                StorageError::ForeignKeyViolation {
                     table: "onboarding_sessions.onboarding_session_id",
                     key: onboarding_session_id.as_str().to_string(),
-                })?;
+                },
+            )?;
             if rec.status != OnboardingStatus::DraftCreated {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -12871,10 +13964,7 @@ impl Ph1fStore {
                 PayloadKey::new("model_route_class")?,
                 PayloadValue::new("deterministic_mock")?,
             ),
-            (
-                PayloadKey::new("temperature_bp")?,
-                PayloadValue::new("0")?,
-            ),
+            (PayloadKey::new("temperature_bp")?, PayloadValue::new("0")?),
             (PayloadKey::new("max_tokens")?, PayloadValue::new("0")?),
         ]);
         entries.insert(
@@ -13085,12 +14175,8 @@ impl Ph1fStore {
         Self::validate_ph1d_bounded_text("ph1d.fail_code", &fail_code, 64)?;
         self.validate_ph1d_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
 
-        let mut payload_entries =
-            Self::ph1d_runtime_payload_entries("FAIL_CLOSED", "fail", None)?;
-        payload_entries.insert(
-            PayloadKey::new("fail_code")?,
-            PayloadValue::new(fail_code)?,
-        );
+        let mut payload_entries = Self::ph1d_runtime_payload_entries("FAIL_CLOSED", "fail", None)?;
+        payload_entries.insert(PayloadKey::new("fail_code")?, PayloadValue::new(fail_code)?);
         let payload = AuditPayloadMin::v1(payload_entries)?;
 
         let input = AuditEventInput::v1(

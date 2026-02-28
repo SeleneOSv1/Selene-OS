@@ -103,9 +103,8 @@ impl ToolRouter {
                 | ToolName::News
                 | ToolName::UrlFetchAndCite
                 | ToolName::DeepResearch
-        )
-            && (req.policy_context_ref.privacy_mode
-                || req.policy_context_ref.safety_tier == SafetyTier::Strict)
+        ) && (req.policy_context_ref.privacy_mode
+            || req.policy_context_ref.safety_tier == SafetyTier::Strict)
         {
             return ToolResponse::fail_v1(
                 request_id,

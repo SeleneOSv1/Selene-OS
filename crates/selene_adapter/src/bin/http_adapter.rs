@@ -19,8 +19,8 @@ use selene_adapter::{
     InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
     OnboardingContinueAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
     UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
-    VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
+    VoiceTurnAdapterResponse,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]

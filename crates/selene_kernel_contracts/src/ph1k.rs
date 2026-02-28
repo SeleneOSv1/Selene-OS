@@ -1237,7 +1237,8 @@ impl InterruptCandidate {
             )
         {
             return Err(ContractViolation::InvalidValue {
-                field: "interrupt_candidate.degradation_context.class_bundle.network_stability_class",
+                field:
+                    "interrupt_candidate.degradation_context.class_bundle.network_stability_class",
                 reason: "must not be STABLE when stream_gap_detected=true",
             });
         }
@@ -1762,7 +1763,8 @@ mod tests {
     #[test]
     fn normalize_interrupt_phrase_strips_controls_and_collapses_whitespace() {
         let en = InterruptLocaleTag::new("en-US").unwrap();
-        let norm = normalize_interrupt_phrase_for_locale(&en, "  ÉCHO\u{0000}\n\t STOP   ").unwrap();
+        let norm =
+            normalize_interrupt_phrase_for_locale(&en, "  ÉCHO\u{0000}\n\t STOP   ").unwrap();
         assert_eq!(norm, "écho stop");
     }
 
@@ -1785,10 +1787,7 @@ mod tests {
         let clean = DegradationClassBundle::from_flags(false, false, false, false);
         assert_eq!(clean.capture_quality_class, CaptureQualityClass::Clear);
         assert_eq!(clean.echo_risk_class, EchoRiskClass::Low);
-        assert_eq!(
-            clean.network_stability_class,
-            NetworkStabilityClass::Stable
-        );
+        assert_eq!(clean.network_stability_class, NetworkStabilityClass::Stable);
         assert_eq!(clean.recoverability_class, RecoverabilityClass::Fast);
 
         let severe = DegradationClassBundle::from_flags(true, true, true, true);

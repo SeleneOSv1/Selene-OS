@@ -65,13 +65,13 @@ impl VoiceIngress for GrpcVoiceIngress {
             } else {
                 Some(req.pinned_context_refs)
             },
-            thread_policy_flags: req
-                .thread_policy_flags
-                .map(|flags| AdapterVoiceTurnThreadPolicyFlags {
+            thread_policy_flags: req.thread_policy_flags.map(|flags| {
+                AdapterVoiceTurnThreadPolicyFlags {
                     privacy_mode: flags.privacy_mode,
                     do_not_disturb: flags.do_not_disturb,
                     strict_safety: flags.strict_safety,
-                }),
+                }
+            }),
             user_text_partial: None,
             user_text_final: None,
             selene_text_partial: None,

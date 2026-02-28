@@ -73,22 +73,22 @@ pub struct DecodedProviderNormalizedOutput {
 pub fn decode_normalized_output_json(
     json_text: &str,
 ) -> Result<DecodedProviderNormalizedOutput, ContractViolation> {
-    let value: Value = serde_json::from_str(json_text).map_err(|_| ContractViolation::InvalidValue {
-        field: "ph1d_provider_normalized_output_json",
-        reason: "must be valid JSON object",
-    })?;
+    let value: Value =
+        serde_json::from_str(json_text).map_err(|_| ContractViolation::InvalidValue {
+            field: "ph1d_provider_normalized_output_json",
+            reason: "must be valid JSON object",
+        })?;
     let obj = value.as_object().ok_or(ContractViolation::InvalidValue {
         field: "ph1d_provider_normalized_output_json",
         reason: "must be a JSON object",
     })?;
 
-    let schema_version = obj
-        .get("schema_version")
-        .and_then(|v| v.as_u64())
-        .ok_or(ContractViolation::InvalidValue {
+    let schema_version = obj.get("schema_version").and_then(|v| v.as_u64()).ok_or(
+        ContractViolation::InvalidValue {
             field: "ph1d_provider_normalized_output_json.schema_version",
             reason: "must be a positive integer",
-        })?;
+        },
+    )?;
     if schema_version == 0 {
         return Err(ContractViolation::InvalidValue {
             field: "ph1d_provider_normalized_output_json.schema_version",
@@ -96,13 +96,12 @@ pub fn decode_normalized_output_json(
         });
     }
 
-    let provider_task = match obj
-        .get("provider_task")
-        .and_then(|v| v.as_str())
-        .ok_or(ContractViolation::InvalidValue {
+    let provider_task = match obj.get("provider_task").and_then(|v| v.as_str()).ok_or(
+        ContractViolation::InvalidValue {
             field: "ph1d_provider_normalized_output_json.provider_task",
             reason: "must be present",
-        })? {
+        },
+    )? {
         "OCR_TEXT_EXTRACT" => Ph1dProviderTask::OcrTextExtract,
         "STT_TRANSCRIBE" => Ph1dProviderTask::SttTranscribe,
         _ => {

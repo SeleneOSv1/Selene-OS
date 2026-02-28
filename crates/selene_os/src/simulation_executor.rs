@@ -57,7 +57,6 @@ use selene_kernel_contracts::ph1rem::{
     ReminderType, REMINDER_SCHEDULE_COMMIT,
 };
 use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationStatus};
-use selene_kernel_contracts::ph1work::{WorkOrderId, WorkOrderLedgerEventInput, WorkOrderStatus};
 use selene_kernel_contracts::ph1w::{Ph1wRequest, Ph1wResponse, WakeRequest};
 use selene_kernel_contracts::ph1x::{
     AccessStepUpDispatch, DispatchRequest, Ph1xDirective, Ph1xResponse, StepUpChallengeMethod,
@@ -188,8 +187,7 @@ pub enum SimulationDispatchOutcome {
     },
     Reminder(Ph1RemResponse),
     CalendarDraftCreated {
-        work_order_id: String,
-        work_order_event_id: u64,
+        reminder_id: String,
     },
     Onboarding(Ph1OnbResponse),
     Position(Ph1PositionResponse),
@@ -1780,6 +1778,16 @@ impl SimulationExecutor {
                 let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
                 self.enforce_calendar_event_create_gate(store, actor_user_id, &tenant_id, now)
             }
+            IntentType::SetReminder => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
+                self.enforce_reminder_mutation_gate(
+                    store,
+                    actor_user_id,
+                    &tenant_id,
+                    "REMINDER_SET",
+                    now,
+                )
+            }
             _ => Ok(()),
         }
     }
@@ -2288,43 +2296,33 @@ impl SimulationExecutor {
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
                 self.enforce_calendar_event_create_gate(store, &actor_user_id, &tenant_id, now)?;
                 let idempotency_key = x_idempotency_key
-                    .map(|k| format!("calendar_event_draft:{k}"))
+                    .map(|k| format!("calendar_event_schedule:{k}"))
                     .unwrap_or_else(|| {
-                        format!("calendar_event_draft:{}:{}", correlation_id.0, turn_id.0)
+                        format!("calendar_event_schedule:{}:{}", correlation_id.0, turn_id.0)
                     });
-                let work_order_id = WorkOrderId::new(format!(
-                    "wo_cal_{}",
-                    short_hash_hex(&[
-                        actor_user_id.as_str(),
-                        tenant_id.as_str(),
-                        &correlation_id.0.to_string(),
-                        &turn_id.0.to_string(),
-                    ])
-                ))
-                .map_err(StorageError::ContractViolation)?;
-                let when = optional_field_value(d, FieldKey::When)
-                    .map(field_str)
-                    .unwrap_or("");
+                let when = field_str(required_field_value(d, FieldKey::When)?).to_string();
                 let person = optional_field_value(d, FieldKey::Person)
                     .map(field_str)
-                    .unwrap_or("");
-                let event = WorkOrderLedgerEventInput::v1(
-                    now,
-                    tenant_id,
-                    work_order_id.clone(),
+                    .unwrap_or("meeting");
+                let req = Ph1RemRequest::schedule_commit_v1(
                     correlation_id,
                     turn_id,
-                    WorkOrderStatus::Draft,
-                    ReasonCodeId(0x4341_0001),
-                    Some("CALENDAR_EVENT_DRAFT".to_string()),
-                    Some(short_hash_hex(&[when, person])),
+                    now,
+                    tenant_id,
+                    actor_user_id.clone(),
                     None,
+                    ReminderType::Meeting,
+                    format!("Calendar event with {person}"),
+                    when,
+                    "UTC".to_string(),
+                    ReminderLocalTimeMode::LocalTime,
+                    ReminderPriorityLevel::Normal,
                     None,
-                    None,
-                    Some(idempotency_key),
+                    vec![ReminderChannel::PhoneApp],
+                    idempotency_key,
                 )
                 .map_err(StorageError::ContractViolation)?;
-                let work_order_event_id = store.append_work_order_ledger_event(event)?;
+                let reminder_resp = self.execute_rem(store, &req)?;
                 self.best_effort_ph1m_capture_turn_digest(
                     store,
                     &actor_user_id,
@@ -2334,10 +2332,12 @@ impl SimulationExecutor {
                     d,
                     x_idempotency_key,
                 );
-                Ok(SimulationDispatchOutcome::CalendarDraftCreated {
-                    work_order_id: work_order_id.as_str().to_string(),
-                    work_order_event_id,
-                })
+                match reminder_resp {
+                    Ph1RemResponse::Ok(ok) => Ok(SimulationDispatchOutcome::CalendarDraftCreated {
+                        reminder_id: ok.reminder_id.as_str().to_string(),
+                    }),
+                    _ => Ok(SimulationDispatchOutcome::Reminder(reminder_resp)),
+                }
             }
             IntentType::CapreqManage => {
                 let tenant_id = parse_tenant_id(required_field_value(d, FieldKey::TenantId)?)?;
@@ -3019,6 +3019,63 @@ impl SimulationExecutor {
         Ok(())
     }
 
+    fn enforce_reminder_mutation_gate(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        requested_action: &str,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        let Some(access_instance) =
+            store.ph2access_get_instance_by_tenant_user(tenant_id.as_str(), actor_user_id)
+        else {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.reminder.access_instance_id",
+                    reason: "missing access instance for actor_user_id + tenant_id",
+                },
+            ));
+        };
+        let gate = store.ph1access_gate_decide(
+            actor_user_id.clone(),
+            access_instance.access_instance_id.clone(),
+            requested_action.to_string(),
+            AccessMode::A,
+            access_instance.device_trust_level,
+            false,
+            now,
+        )?;
+        match gate.access_decision {
+            AccessDecision::Allow => {}
+            AccessDecision::Deny => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.reminder.access_decision",
+                        reason: "ACCESS_SCOPE_VIOLATION",
+                    },
+                ));
+            }
+            AccessDecision::Escalate => {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "simulation_candidate_dispatch.reminder.access_decision",
+                        reason: "ACCESS_AP_REQUIRED",
+                    },
+                ));
+            }
+        }
+        if !role_template_is_owner_or_admin(&access_instance.role_template_id) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.reminder.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                },
+            ));
+        }
+        Ok(())
+    }
+
     fn enforce_access_gate(
         &self,
         store: &Ph1fStore,
@@ -3104,7 +3161,6 @@ const MEMORY_ATOM_UPSERT_COMMIT: &str = "MEMORY_ATOM_UPSERT_COMMIT";
 const MEMORY_FORGET_COMMIT: &str = "MEMORY_FORGET_COMMIT";
 const MEMORY_RECALL_QUERY_COMMIT: &str = "MEMORY_RECALL_QUERY_COMMIT";
 const ACCESS_BOARD_VOTE_COMMIT: &str = "ACCESS_BOARD_VOTE_COMMIT";
-const WORK_ORDER_APPEND_COMMIT: &str = "WORK_ORDER_APPEND_COMMIT";
 
 fn field_value<'a>(d: &'a IntentDraft, k: FieldKey) -> Option<&'a FieldValue> {
     d.fields.iter().find(|f| f.key == k).map(|f| &f.value)
@@ -3409,7 +3465,7 @@ fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, St
         IntentType::MemoryForgetRequest => Ok(MEMORY_FORGET_COMMIT),
         IntentType::MemoryQuery => Ok(MEMORY_RECALL_QUERY_COMMIT),
         IntentType::CreateInviteLink => Ok(LINK_INVITE_GENERATE_DRAFT),
-        IntentType::CreateCalendarEvent => Ok(WORK_ORDER_APPEND_COMMIT),
+        IntentType::CreateCalendarEvent => Ok(REMINDER_SCHEDULE_COMMIT),
         IntentType::CapreqManage => {
             match parse_capreq_action(optional_field_value(d, FieldKey::CapreqAction))? {
                 CapabilityRequestAction::CreateDraft => Ok(CAPREQ_CREATE_DRAFT),
@@ -4596,6 +4652,45 @@ mod tests {
         );
     }
 
+    fn seed_reminder_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        seed_reminder_access_instance_with(
+            store,
+            actor,
+            tenant,
+            "role.reminder_owner",
+            "{\"allow\":[\"REMINDER_SET\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_reminder_access_instance_with(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+        role_template_id: &str,
+        baseline_permissions_json: &str,
+        effective_access_mode: AccessMode,
+        identity_verified: bool,
+        device_trust_level: AccessDeviceTrustLevel,
+        lifecycle_state: AccessLifecycleState,
+    ) {
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            role_template_id,
+            baseline_permissions_json,
+            effective_access_mode,
+            identity_verified,
+            device_trust_level,
+            lifecycle_state,
+        );
+    }
+
     fn seed_simulation_catalog_status(
         store: &mut Ph1fStore,
         tenant: &str,
@@ -4636,8 +4731,9 @@ mod tests {
         actor_user_id: &UserId,
         draft: &IntentDraft,
     ) {
-        let (tenant_id, simulation_id) = simulation_catalog_guard_target_v1(store, actor_user_id, draft)
-            .expect("test draft should resolve simulation guard target");
+        let (tenant_id, simulation_id) =
+            simulation_catalog_guard_target_v1(store, actor_user_id, draft)
+                .expect("test draft should resolve simulation guard target");
         seed_simulation_catalog_status(
             store,
             tenant_id.as_str(),
@@ -5053,6 +5149,7 @@ mod tests {
             ))
             .unwrap();
         seed_locked_voice_profile_for_actor(&mut store, &exec, &actor, "tenant_1");
+        seed_reminder_access_instance(&mut store, &actor, "tenant_1");
 
         let draft = reminder_draft("file payroll", "in 5 minutes");
         seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
@@ -5095,6 +5192,96 @@ mod tests {
             MemoryThreadEventKind::ThreadDigestUpsert
         );
         assert!(thread_rows[0].digest.thread_title.contains("SET_REMINDER"));
+    }
+
+    #[test]
+    fn at_sim_exec_set_reminder_access_scope_violation_when_action_not_allowed() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_rem_access_scope").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_reminder_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.reminder_owner",
+            "{\"allow\":[\"CALENDAR_EVENT_CREATE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let draft = reminder_draft("send invoice", "tomorrow 9am");
+        let x = access_x(80, draft, "idem-rem-access-scope");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(2),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.reminder.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn at_sim_exec_set_reminder_non_owner_requires_ap() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_rem_ap_required").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_reminder_access_instance_with(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.reminder_writer",
+            "{\"allow\":[\"REMINDER_SET\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+
+        let draft = reminder_draft("send invoice", "tomorrow 9am");
+        let x = access_x(81, draft, "idem-rem-ap-required");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(2),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.reminder.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
     }
 
     #[test]
@@ -7943,11 +8130,7 @@ mod tests {
             &mut store,
             actor,
             MonotonicTimeNs(141),
-            &capreq_x(
-                2,
-                invalid_approve_draft,
-                "idem-capreq-6-approve-invalid",
-            ),
+            &capreq_x(2, invalid_approve_draft, "idem-capreq-6-approve-invalid"),
         );
         assert!(matches!(
             out,
@@ -8162,11 +8345,7 @@ mod tests {
                 &mut store,
                 actor,
                 MonotonicTimeNs(200),
-                &access_x(
-                    1,
-                    allow_draft,
-                    "idem-access-schema-allow-1",
-                ),
+                &access_x(1, allow_draft, "idem-access-schema-allow-1"),
             )
             .unwrap();
         assert!(matches!(
@@ -8391,11 +8570,7 @@ mod tests {
                 &mut store,
                 actor,
                 MonotonicTimeNs(204),
-                &access_x(
-                    1,
-                    read_out_loud_draft,
-                    "idem-access-schema-read-out-loud-1",
-                ),
+                &access_x(1, read_out_loud_draft, "idem-access-schema-read-out-loud-1"),
             )
             .unwrap();
 
@@ -9274,7 +9449,7 @@ mod tests {
     }
 
     #[test]
-    fn at_sim_exec_calendar_event_create_appends_draft_work_order_and_is_idempotent() {
+    fn at_sim_exec_calendar_event_schedules_meeting_reminder_and_is_idempotent() {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
         let actor = UserId::new("tenant_1:calendar_owner_1").unwrap();
@@ -9314,25 +9489,29 @@ mod tests {
             .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(250), &x)
             .unwrap();
         assert_eq!(out1, out2);
-        let (work_order_id, work_order_event_id) = match out1 {
-            SimulationDispatchOutcome::CalendarDraftCreated {
-                work_order_id,
-                work_order_event_id,
-            } => (work_order_id, work_order_event_id),
+        let reminder_id = match out1 {
+            SimulationDispatchOutcome::CalendarDraftCreated { reminder_id } => reminder_id,
             _ => panic!("expected CalendarDraftCreated outcome"),
         };
-        assert_eq!(work_order_event_id, 1);
-        assert!(work_order_id.starts_with("wo_cal_"));
+        assert!(reminder_id.starts_with("rem_"));
 
-        let work_orders = store.work_order_ledger();
-        assert_eq!(work_orders.len(), 1);
-        let event = &work_orders[0];
-        assert_eq!(event.work_order_event_id, work_order_event_id);
-        assert_eq!(event.work_order_status, WorkOrderStatus::Draft);
+        let reminders = store.reminders();
+        assert_eq!(reminders.len(), 1);
+        let reminder = reminders
+            .values()
+            .next()
+            .expect("meeting reminder row should exist");
+        assert_eq!(reminder.reminder_type, ReminderType::Meeting);
+        assert_eq!(reminder.reminder_request_text, "Calendar event with Tom");
         assert_eq!(
-            event.idempotency_key.as_deref(),
-            Some("calendar_event_draft:idem-calendar-1")
+            store
+                .reminder_row(&reminder.reminder_id)
+                .expect("reminder row should exist")
+                .reminder_id
+                .as_str(),
+            reminder_id
         );
+        assert!(store.work_order_ledger().is_empty());
     }
 
     #[test]
@@ -9378,7 +9557,7 @@ mod tests {
                 }
             ))
         ));
-        assert!(store.work_order_ledger().is_empty());
+        assert!(store.reminders().is_empty());
     }
 
     #[test]
@@ -9423,5 +9602,6 @@ mod tests {
                 }
             ))
         ));
+        assert!(store.reminders().is_empty());
     }
 }

@@ -1,9 +1,7 @@
 #![forbid(unsafe_code)]
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1art::{
-    ArtifactScopeType, ArtifactType, ArtifactVersion,
-};
+use selene_kernel_contracts::ph1art::{ArtifactScopeType, ArtifactType, ArtifactVersion};
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, LinkStatus};
 use selene_kernel_contracts::ph1onb::OnboardingSessionId;

@@ -1044,7 +1044,9 @@ impl Validate for Ph1kToPh1xInterruptHandoff {
         }
         if self.degradation_context.stream_gap_detected
             && matches!(
-                self.degradation_context.class_bundle.network_stability_class,
+                self.degradation_context
+                    .class_bundle
+                    .network_stability_class,
                 NetworkStabilityClass::Stable
             )
         {
@@ -2355,11 +2357,10 @@ mod tests {
     use crate::ph1d::SafetyTier;
     use crate::ph1k::{
         Confidence, DegradationClassBundle, InterruptCandidate, InterruptCandidateConfidenceBand,
-        InterruptDegradationContext, InterruptGateConfidences, InterruptGates,
-        InterruptLocaleTag, InterruptPhraseId, InterruptPhraseSetVersion,
-        InterruptRiskContextClass, InterruptSpeechWindowMetrics,
-        InterruptSubjectRelationConfidenceBundle, InterruptTimingMarkers, SpeechLikeness,
-        PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
+        InterruptDegradationContext, InterruptGateConfidences, InterruptGates, InterruptLocaleTag,
+        InterruptPhraseId, InterruptPhraseSetVersion, InterruptRiskContextClass,
+        InterruptSpeechWindowMetrics, InterruptSubjectRelationConfidenceBundle,
+        InterruptTimingMarkers, SpeechLikeness, PH1K_INTERRUPT_LOCALE_TAG_DEFAULT,
     };
     use crate::ph1n::{Chat, EvidenceSpan, IntentType, SensitivityLevel, TranscriptHash};
 
@@ -2606,23 +2607,29 @@ mod tests {
         let state = ThreadState::empty_v1()
             .with_project_context(
                 Some("proj_q3_planning".to_string()),
-                vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()],
+                vec![
+                    "ctx_budget_sheet".to_string(),
+                    "ctx_roadmap_notes".to_string(),
+                ],
             )
             .unwrap()
-            .with_thread_policy_flags(Some(
-                ThreadPolicyFlags::v1(true, false, true).unwrap(),
-            ))
+            .with_thread_policy_flags(Some(ThreadPolicyFlags::v1(true, false, true).unwrap()))
             .unwrap();
 
         assert_eq!(state.project_id.as_deref(), Some("proj_q3_planning"));
         assert_eq!(
             state.pinned_context_refs,
-            vec!["ctx_budget_sheet".to_string(), "ctx_roadmap_notes".to_string()]
+            vec![
+                "ctx_budget_sheet".to_string(),
+                "ctx_roadmap_notes".to_string()
+            ]
         );
-        assert!(state
-            .thread_policy_flags
-            .expect("thread policy flags should be set")
-            .force_strict_safety);
+        assert!(
+            state
+                .thread_policy_flags
+                .expect("thread policy flags should be set")
+                .force_strict_safety
+        );
     }
 
     #[test]
@@ -2736,14 +2743,16 @@ mod tests {
     #[test]
     fn ph1k_to_ph1x_interrupt_handoff_maps_required_risk_context_fields() {
         let interruption = interrupt_wait();
-        let handoff =
-            Ph1kToPh1xInterruptHandoff::from_interrupt_candidate(&interruption).unwrap();
+        let handoff = Ph1kToPh1xInterruptHandoff::from_interrupt_candidate(&interruption).unwrap();
         assert_eq!(
             handoff.candidate_confidence_band,
             interruption.candidate_confidence_band
         );
         assert_eq!(handoff.gate_confidences, interruption.gate_confidences);
-        assert_eq!(handoff.degradation_context, interruption.degradation_context);
+        assert_eq!(
+            handoff.degradation_context,
+            interruption.degradation_context
+        );
         assert_eq!(handoff.risk_context_class, interruption.risk_context_class);
     }
 
