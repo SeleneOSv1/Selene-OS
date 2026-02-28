@@ -18,6 +18,8 @@ tests=(
   at_bcast_mhp_06_fallback_order_only_when_app_unavailable
   at_bcast_mhp_07_wait_policy_update_access_and_persistence
   at_bcast_mhp_08_new_threads_use_updated_wait_existing_waiting_unchanged
+  at_bcast_mhp_09_urgent_followup_policy_update_access_and_persistence
+  at_bcast_mhp_10_new_threads_use_updated_urgent_behavior_existing_thread_unchanged
 )
 
 for test_name in "${tests[@]}"; do

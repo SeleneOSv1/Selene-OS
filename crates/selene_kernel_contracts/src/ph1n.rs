@@ -17,6 +17,8 @@ pub enum IntentType {
     CreateCalendarEvent,
     /// Governance/control: update tenant BCAST non-urgent follow-up wait policy.
     UpdateBcastWaitPolicy,
+    /// Governance/control: update tenant BCAST urgent follow-up behavior policy.
+    UpdateBcastUrgentFollowupPolicy,
     SetReminder,
     UpdateReminder,
     CancelReminder,

@@ -99,6 +99,7 @@ fn meta_for_intent(intent_type: IntentType) -> (SensitivityLevel, bool) {
         IntentType::MemoryForgetRequest => (SensitivityLevel::Private, true),
         IntentType::CreateInviteLink
         | IntentType::UpdateBcastWaitPolicy
+        | IntentType::UpdateBcastUrgentFollowupPolicy
         | IntentType::CapreqManage
         | IntentType::AccessSchemaManage
         | IntentType::AccessEscalationVote
@@ -180,6 +181,7 @@ fn looks_like_generate_link(lower: &str) -> bool {
 }
 
 fn looks_like_bcast_wait_policy_update(lower: &str) -> bool {
+    let mentions_urgent = contains_word(lower, "urgent") || contains_word(lower, "emergency");
     let has_wait_phrase = (contains_word(lower, "wait")
         && (contains_word(lower, "time")
             || contains_word(lower, "window")
@@ -193,7 +195,25 @@ fn looks_like_bcast_wait_policy_update(lower: &str) -> bool {
         || contains_word(lower, "update")
         || contains_word(lower, "set")
         || contains_word(lower, "adjust");
-    has_wait_phrase && has_update_verb
+    has_wait_phrase && has_update_verb && !mentions_urgent
+}
+
+fn looks_like_bcast_urgent_followup_policy_update(lower: &str) -> bool {
+    let has_urgent = contains_word(lower, "urgent") || contains_word(lower, "emergency");
+    let has_followup = contains_word(lower, "followup")
+        || contains_word(lower, "follow-up")
+        || (contains_word(lower, "follow") && contains_word(lower, "up"));
+    let has_update_verb = contains_word(lower, "change")
+        || contains_word(lower, "update")
+        || contains_word(lower, "set")
+        || contains_word(lower, "adjust");
+    let has_behavior_hint = contains_word(lower, "immediate")
+        || contains_word(lower, "delay")
+        || contains_word(lower, "wait")
+        || lower.contains("right away")
+        || contains_word(lower, "behavior")
+        || contains_word(lower, "policy");
+    has_urgent && has_followup && has_update_verb && has_behavior_hint
 }
 
 fn looks_like_web_search(lower: &str) -> bool {
@@ -428,6 +448,9 @@ fn detect_intents(lower: &str) -> Vec<IntentType> {
     if connector_query {
         push(IntentType::ConnectorQuery);
     }
+    if looks_like_bcast_urgent_followup_policy_update(s) {
+        push(IntentType::UpdateBcastUrgentFollowupPolicy);
+    }
     if looks_like_bcast_wait_policy_update(s) {
         push(IntentType::UpdateBcastWaitPolicy);
     }
@@ -591,6 +614,9 @@ fn normalize_intent(
         }
 
         IntentType::SetReminder => normalize_reminder(req),
+        IntentType::UpdateBcastUrgentFollowupPolicy => {
+            normalize_bcast_urgent_followup_policy_update(req)
+        }
         IntentType::UpdateBcastWaitPolicy => normalize_bcast_wait_policy_update(req),
         IntentType::UpdateReminder => normalize_update_reminder(req),
         IntentType::CancelReminder => normalize_cancel_reminder(req),
@@ -873,6 +899,51 @@ fn normalize_bcast_wait_policy_update(
     let (sens, confirm) = meta_for_intent(IntentType::UpdateBcastWaitPolicy);
     Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
         IntentType::UpdateBcastWaitPolicy,
+        INTENT_SCHEMA_VERSION_V1,
+        fields,
+        vec![],
+        OverallConfidence::High,
+        evidence,
+        reason_codes::N_INTENT_OK,
+        sens,
+        confirm,
+        vec![],
+        vec![],
+    )?))
+}
+
+fn normalize_bcast_urgent_followup_policy_update(
+    req: &Ph1nRequest,
+) -> Result<Ph1nResponse, ContractViolation> {
+    let t = &req.transcript_ok.transcript_text;
+    let lower = t.to_ascii_lowercase();
+
+    let behavior = extract_urgent_followup_behavior(&lower);
+    let mut fields = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    if let Some((orig, normalized)) = behavior {
+        fields.push(IntentField {
+            key: FieldKey::Task,
+            value: FieldValue::normalized(orig, normalized)?,
+            confidence: OverallConfidence::High,
+        });
+        evidence.push(evidence_span(FieldKey::Task, t, t)?);
+    } else {
+        missing.push(FieldKey::Task);
+    }
+
+    if !missing.is_empty() {
+        return Ok(Ph1nResponse::Clarify(clarify_for_missing(
+            intent_type_for_missing(IntentType::UpdateBcastUrgentFollowupPolicy),
+            &missing,
+        )?));
+    }
+
+    let (sens, confirm) = meta_for_intent(IntentType::UpdateBcastUrgentFollowupPolicy);
+    Ok(Ph1nResponse::IntentDraft(IntentDraft::v1(
+        IntentType::UpdateBcastUrgentFollowupPolicy,
         INTENT_SCHEMA_VERSION_V1,
         fields,
         vec![],
@@ -1872,6 +1943,14 @@ fn clarify_for_missing(
                 "10 min".to_string(),
             ],
         ),
+        (IntentType::UpdateBcastUrgentFollowupPolicy, FieldKey::Task) => (
+            "For urgent broadcasts, should follow-up be immediate or wait?".to_string(),
+            vec![
+                "Immediate".to_string(),
+                "Wait".to_string(),
+                "Delay urgent follow-up".to_string(),
+            ],
+        ),
         (IntentType::SendMoney, FieldKey::Recipient) => (
             "Who should I send it to?".to_string(),
             vec!["To Alex".to_string(), "To John".to_string()],
@@ -2190,6 +2269,9 @@ fn intent_label(t: &IntentType) -> String {
         IntentType::ConnectorQuery => "Search connected apps".to_string(),
         IntentType::SetReminder => "Set a reminder".to_string(),
         IntentType::UpdateBcastWaitPolicy => "Update BCAST wait policy".to_string(),
+        IntentType::UpdateBcastUrgentFollowupPolicy => {
+            "Update BCAST urgent follow-up behavior".to_string()
+        }
         IntentType::UpdateReminder => "Update a reminder".to_string(),
         IntentType::CancelReminder => "Cancel a reminder".to_string(),
         IntentType::ListReminders => "List reminders".to_string(),
@@ -2734,6 +2816,39 @@ fn extract_wait_duration_seconds(lower: &str, original: &str) -> Option<(String,
         return Some((span, seconds.to_string()));
     }
 
+    None
+}
+
+fn extract_urgent_followup_behavior(lower: &str) -> Option<(String, String)> {
+    for marker in [
+        "do not interrupt immediately",
+        "don't interrupt immediately",
+        "dont interrupt immediately",
+        "not immediate",
+        "no immediate followup",
+        "no immediate follow-up",
+        "delay",
+        "after wait",
+        "with wait",
+        "wait",
+    ] {
+        if lower.contains(marker) {
+            return Some((marker.to_string(), "wait".to_string()));
+        }
+    }
+    for marker in [
+        "right away",
+        "immediately",
+        "immediate",
+        "no wait",
+        "without wait",
+        "instant",
+        "instantly",
+    ] {
+        if lower.contains(marker) {
+            return Some((marker.to_string(), "immediate".to_string()));
+        }
+    }
     None
 }
 
@@ -3773,6 +3888,45 @@ mod tests {
         match out {
             Ph1nResponse::Clarify(c) => {
                 assert_eq!(c.what_is_missing, vec![FieldKey::Amount]);
+                assert_eq!(c.accepted_answer_formats.len(), 3);
+            }
+            _ => panic!("expected clarify"),
+        }
+    }
+
+    #[test]
+    fn at_n_36_update_bcast_urgent_followup_policy_normalizes_behavior() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req(
+                "Selene change urgent follow-up behavior to wait",
+                "en",
+            ))
+            .unwrap();
+        match out {
+            Ph1nResponse::IntentDraft(d) => {
+                assert_eq!(d.intent_type, IntentType::UpdateBcastUrgentFollowupPolicy);
+                let task = d
+                    .fields
+                    .iter()
+                    .find(|f| f.key == FieldKey::Task)
+                    .expect("behavior field should exist");
+                assert_eq!(task.value.normalized_value.as_deref(), Some("wait"));
+                assert!(d.requires_confirmation);
+            }
+            _ => panic!("expected intent_draft"),
+        }
+    }
+
+    #[test]
+    fn at_n_37_update_bcast_urgent_followup_policy_missing_behavior_triggers_clarify() {
+        let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
+        let out = rt
+            .run(&req("Selene update urgent follow-up policy", "en"))
+            .unwrap();
+        match out {
+            Ph1nResponse::Clarify(c) => {
+                assert_eq!(c.what_is_missing, vec![FieldKey::Task]);
                 assert_eq!(c.accepted_answer_formats.len(), 3);
             }
             _ => panic!("expected clarify"),

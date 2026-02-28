@@ -17,7 +17,8 @@ use selene_kernel_contracts::ph1bcast::{
     BcastRecipientRegion, BcastRecipientState, BcastRequest, BcastSimulationType,
     BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
     BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT, BCAST_REMINDER_FIRED_COMMIT,
-    BCAST_WAIT_POLICY_UPDATE_COMMIT, PH1BCAST_CONTRACT_VERSION,
+    BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT, BCAST_WAIT_POLICY_UPDATE_COMMIT,
+    PH1BCAST_CONTRACT_VERSION,
 };
 use selene_kernel_contracts::ph1capreq::{
     CapabilityRequestAction, CapabilityRequestStatus, CapreqId, Ph1CapreqRequest,
@@ -212,6 +213,11 @@ pub enum SimulationDispatchOutcome {
         non_urgent_wait_seconds: u32,
         event_id: u64,
     },
+    BcastUrgentFollowupPolicyUpdated {
+        tenant_id: String,
+        urgent_followup_immediate: bool,
+        event_id: u64,
+    },
 }
 
 pub mod reason_codes {
@@ -232,6 +238,8 @@ pub mod reason_codes {
 }
 
 pub const BCAST_WAIT_POLICY_UPDATE_ACTION: &str = "BCAST_WAIT_POLICY_UPDATE";
+pub const BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION: &str =
+    "BCAST_URGENT_FOLLOWUP_POLICY_UPDATE";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BcastFollowupDeliveryMode {
@@ -462,6 +470,56 @@ impl SimulationExecutor {
         store.append_bcast_wait_policy_update_event(
             tenant_id,
             non_urgent_wait_seconds,
+            actor_user_id,
+            correlation_id,
+            idempotency_key,
+            now,
+            reason_code,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn execute_bcast_urgent_followup_policy_update_commit(
+        &self,
+        store: &mut Ph1fStore,
+        actor_user_id: UserId,
+        tenant_id: TenantId,
+        urgent_followup_immediate: bool,
+        now: MonotonicTimeNs,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        reason_code: ReasonCodeId,
+        x_idempotency_key: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        self.ensure_simulation_active_for_tenant(
+            store,
+            &tenant_id,
+            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT,
+            "simulation_candidate_dispatch.bcast_urgent_followup_policy.simulation_id",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        )?;
+        self.enforce_access_gate(
+            store,
+            &actor_user_id,
+            &tenant_id,
+            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION,
+            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_instance_id",
+            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
+            now,
+        )?;
+
+        let idempotency_key = x_idempotency_key
+            .map(|k| format!("bcast_urgent_followup_policy_update:{k}"))
+            .unwrap_or_else(|| {
+                format!(
+                    "bcast_urgent_followup_policy_update:{}:{}",
+                    correlation_id.0, turn_id.0
+                )
+            });
+        store.append_bcast_urgent_followup_policy_update_event(
+            tenant_id,
+            urgent_followup_immediate,
             actor_user_id,
             correlation_id,
             idempotency_key,
@@ -821,22 +879,35 @@ impl SimulationExecutor {
         let mut effective_request = req.clone();
         if let BcastRequest::DeliverCommit(deliver) = &mut effective_request.request {
             let broadcast_key = (deliver.tenant_id.clone(), deliver.broadcast_id.clone());
-            let is_non_urgent = store
+            let classification = store
                 .bcast_broadcasts_current()
                 .get(&broadcast_key)
-                .map(|row| row.classification != BroadcastClassification::Emergency)
-                .unwrap_or(false);
-            if is_non_urgent {
-                let recipient_key = (
-                    deliver.tenant_id.clone(),
-                    deliver.broadcast_id.clone(),
-                    deliver.recipient_id.clone(),
+                .map(|row| row.classification);
+            let recipient_key = (
+                deliver.tenant_id.clone(),
+                deliver.broadcast_id.clone(),
+                deliver.recipient_id.clone(),
+            );
+            let existing_recipient_state = store
+                .bcast_recipients_current()
+                .get(&recipient_key)
+                .map(|row| row.recipient_state);
+            if matches!(classification, Some(BroadcastClassification::Emergency)) {
+                let urgent_followup_immediate = match existing_recipient_state {
+                    Some(BcastRecipientState::Followup) => true,
+                    Some(BcastRecipientState::Waiting) => false,
+                    _ => store.bcast_urgent_followup_immediate_for_tenant(&deliver.tenant_id),
+                };
+                deliver.simulation_context = ensure_bcast_urgent_followup_policy_context(
+                    &deliver.simulation_context,
+                    urgent_followup_immediate,
                 );
-                let existing_waiting = store
-                    .bcast_recipients_current()
-                    .get(&recipient_key)
-                    .map(|row| row.recipient_state == BcastRecipientState::Waiting)
-                    .unwrap_or(false);
+            } else if matches!(
+                classification,
+                Some(BroadcastClassification::Simple | BroadcastClassification::Priority)
+            ) {
+                let existing_waiting =
+                    matches!(existing_recipient_state, Some(BcastRecipientState::Waiting));
                 if !existing_waiting {
                     let wait_seconds =
                         store.bcast_non_urgent_wait_seconds_for_tenant(&deliver.tenant_id);
@@ -886,6 +957,24 @@ impl SimulationExecutor {
             BCAST_WAIT_POLICY_UPDATE_ACTION,
             "simulation_candidate_dispatch.bcast_wait_policy.access_instance_id",
             "simulation_candidate_dispatch.bcast_wait_policy.access_decision",
+            now,
+        )
+    }
+
+    fn enforce_bcast_urgent_followup_policy_dispatch_access(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        tenant_id: &TenantId,
+        now: MonotonicTimeNs,
+    ) -> Result<(), StorageError> {
+        self.enforce_access_gate(
+            store,
+            actor_user_id,
+            tenant_id,
+            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_ACTION,
+            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_instance_id",
+            "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
             now,
         )
     }
@@ -1973,6 +2062,15 @@ impl SimulationExecutor {
                     now,
                 )
             }
+            IntentType::UpdateBcastUrgentFollowupPolicy => {
+                let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
+                self.enforce_bcast_urgent_followup_policy_dispatch_access(
+                    store,
+                    actor_user_id,
+                    &tenant_id,
+                    now,
+                )
+            }
             IntentType::SetReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, actor_user_id)?;
                 self.enforce_reminder_mutation_gate(
@@ -2136,6 +2234,38 @@ impl SimulationExecutor {
                 Ok(SimulationDispatchOutcome::BcastWaitPolicyUpdated {
                     tenant_id: tenant_id.as_str().to_string(),
                     non_urgent_wait_seconds,
+                    event_id,
+                })
+            }
+            IntentType::UpdateBcastUrgentFollowupPolicy => {
+                const BCAST_URGENT_FOLLOWUP_POLICY_UPDATED: ReasonCodeId = ReasonCodeId(0x4243_00A7);
+                let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
+                let urgent_followup_immediate = parse_urgent_followup_immediate_behavior(
+                    required_field_value(d, FieldKey::Task)?,
+                )?;
+                let event_id = self.execute_bcast_urgent_followup_policy_update_commit(
+                    store,
+                    actor_user_id.clone(),
+                    tenant_id.clone(),
+                    urgent_followup_immediate,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    BCAST_URGENT_FOLLOWUP_POLICY_UPDATED,
+                    x_idempotency_key,
+                )?;
+                self.best_effort_ph1m_capture_turn_digest(
+                    store,
+                    &actor_user_id,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    d,
+                    x_idempotency_key,
+                );
+                Ok(SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated {
+                    tenant_id: tenant_id.as_str().to_string(),
+                    urgent_followup_immediate,
                     event_id,
                 })
             }
@@ -3562,6 +3692,48 @@ fn parse_non_urgent_wait_seconds(v: &FieldValue) -> Result<u32, StorageError> {
     ))
 }
 
+fn parse_urgent_followup_immediate_behavior(v: &FieldValue) -> Result<bool, StorageError> {
+    for candidate in [
+        v.normalized_value.as_deref(),
+        Some(v.original_span.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let s = candidate.trim().to_ascii_lowercase();
+        if s.is_empty() {
+            continue;
+        }
+        if matches!(
+            s.as_str(),
+            "immediate"
+                | "immediately"
+                | "right away"
+                | "instant"
+                | "instantly"
+                | "no wait"
+        ) {
+            return Ok(true);
+        }
+        if matches!(
+            s.as_str(),
+            "wait"
+                | "delay"
+                | "not immediate"
+                | "no immediate followup"
+                | "no immediate follow-up"
+        ) {
+            return Ok(false);
+        }
+    }
+    Err(StorageError::ContractViolation(
+        ContractViolation::InvalidValue {
+            field: "simulation_candidate_dispatch.intent_draft.fields.task",
+            reason: "BCAST_URGENT_FOLLOWUP_POLICY_INVALID_BEHAVIOR",
+        },
+    ))
+}
+
 fn parse_wait_seconds_candidate(raw: &str) -> Option<u32> {
     let s = raw.trim().to_ascii_lowercase();
     if s.is_empty() {
@@ -3628,6 +3800,21 @@ fn ensure_bcast_wait_policy_context(base_context: &str, wait_seconds: u32) -> St
         .collect();
     let wait_token = format!("non_urgent_wait_seconds={wait_seconds}");
     filtered_parts.push(wait_token.as_str());
+    filtered_parts.join(";")
+}
+
+fn ensure_bcast_urgent_followup_policy_context(
+    base_context: &str,
+    urgent_followup_immediate: bool,
+) -> String {
+    let mut filtered_parts: Vec<&str> = base_context
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .filter(|part| !part.starts_with("urgent_followup_immediate="))
+        .collect();
+    let token = format!("urgent_followup_immediate={urgent_followup_immediate}");
+    filtered_parts.push(token.as_str());
     filtered_parts.join(";")
 }
 
@@ -3906,6 +4093,9 @@ fn simulation_catalog_guard_target_v1(
 
 fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
     match d.intent_type {
+        IntentType::UpdateBcastUrgentFollowupPolicy => {
+            Ok(BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT)
+        }
         IntentType::UpdateBcastWaitPolicy => Ok(BCAST_WAIT_POLICY_UPDATE_COMMIT),
         IntentType::SetReminder => Ok(REMINDER_SCHEDULE_COMMIT),
         IntentType::UpdateReminder => Ok(REMINDER_UPDATE_COMMIT),
@@ -4281,6 +4471,7 @@ fn build_memory_thread_digest(
 
 fn intent_type_token(intent: IntentType) -> &'static str {
     match intent {
+        IntentType::UpdateBcastUrgentFollowupPolicy => "UPDATE_BCAST_URGENT_FOLLOWUP_POLICY",
         IntentType::UpdateBcastWaitPolicy => "UPDATE_BCAST_WAIT_POLICY",
         IntentType::SetReminder => "SET_REMINDER",
         IntentType::UpdateReminder => "UPDATE_REMINDER",
@@ -4655,7 +4846,8 @@ mod tests {
         BroadcastClassification, BroadcastRecipientId, Ph1BcastRequest, Ph1BcastResponse,
         BCAST_ACK_COMMIT, BCAST_CREATE_DRAFT, BCAST_DEFER_COMMIT, BCAST_DELIVER_COMMIT,
         BCAST_ESCALATE_COMMIT, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS, BCAST_REMINDER_FIRED_COMMIT,
-        BCAST_WAIT_POLICY_UPDATE_COMMIT, PH1BCAST_CONTRACT_VERSION,
+        BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT, BCAST_WAIT_POLICY_UPDATE_COMMIT,
+        PH1BCAST_CONTRACT_VERSION,
     };
     use selene_kernel_contracts::ph1capreq::{
         CapabilityRequestAction, CapabilityRequestStatus, CapreqId,
@@ -4826,6 +5018,28 @@ mod tests {
             vec![IntentField {
                 key: FieldKey::Amount,
                 value: FieldValue::normalized(wait_seconds.to_string(), wait_seconds.to_string())
+                    .unwrap(),
+                confidence: OverallConfidence::High,
+            }],
+            vec![],
+            OverallConfidence::High,
+            vec![],
+            ReasonCodeId(1),
+            SensitivityLevel::Private,
+            true,
+            vec![],
+            vec![],
+        )
+        .unwrap()
+    }
+
+    fn bcast_urgent_followup_policy_update_draft(behavior: &str) -> IntentDraft {
+        IntentDraft::v1(
+            IntentType::UpdateBcastUrgentFollowupPolicy,
+            SchemaVersion(1),
+            vec![IntentField {
+                key: FieldKey::Task,
+                value: FieldValue::normalized(behavior.to_string(), behavior.to_string())
                     .unwrap(),
                 confidence: OverallConfidence::High,
             }],
@@ -5223,6 +5437,24 @@ mod tests {
             tenant,
             "role.bcast_policy_manager",
             "{\"allow\":[\"BCAST_WAIT_POLICY_UPDATE\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+    }
+
+    fn seed_bcast_urgent_followup_policy_access_instance(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        tenant: &str,
+    ) {
+        seed_access_instance_with_permissions(
+            store,
+            actor,
+            tenant,
+            "role.bcast_urgent_followup_policy_manager",
+            "{\"allow\":[\"BCAST_URGENT_FOLLOWUP_POLICY_UPDATE\"]}",
             AccessMode::A,
             true,
             AccessDeviceTrustLevel::Dtl4,
@@ -6319,6 +6551,351 @@ mod tests {
                 _ => panic!("expected escalate commit outcome"),
             },
             _ => panic!("expected ok response"),
+        }
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_urgent_followup_policy_update_access_deny_blocks_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_urgent_followup_policy_deny").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.bcast_urgent_followup_policy_viewer",
+            "{\"allow\":[\"REMINDER_SET\"]}",
+            AccessMode::A,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+        let draft = bcast_urgent_followup_policy_update_draft("wait");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9700, draft, "idem-bcast-urgent-followup-policy-deny");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(10),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
+                    reason: "ACCESS_SCOPE_VIOLATION",
+                }
+            ))
+        ));
+        assert!(store.bcast_urgent_followup_policy_ledger().is_empty());
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_urgent_followup_policy_update_access_escalate_blocks_commit() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_urgent_followup_policy_escalate").unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_access_instance_with_permissions(
+            &mut store,
+            &actor,
+            "tenant_1",
+            "role.bcast_urgent_followup_policy_writer",
+            "{\"allow\":[\"BCAST_URGENT_FOLLOWUP_POLICY_UPDATE\"]}",
+            AccessMode::R,
+            true,
+            AccessDeviceTrustLevel::Dtl4,
+            AccessLifecycleState::Active,
+        );
+        let draft = bcast_urgent_followup_policy_update_draft("wait");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9701, draft, "idem-bcast-urgent-followup-policy-escalate");
+        let out = exec.execute_ph1x_dispatch_simulation_candidate(
+            &mut store,
+            actor,
+            MonotonicTimeNs(11),
+            &x,
+        );
+        assert!(matches!(
+            out,
+            Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
+                    reason: "ACCESS_AP_REQUIRED",
+                }
+            ))
+        ));
+        assert!(store.bcast_urgent_followup_policy_ledger().is_empty());
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_urgent_followup_policy_update_allow_and_active_commits_idempotently() {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_urgent_followup_policy_allow").unwrap();
+        let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_bcast_urgent_followup_policy_access_instance(&mut store, &actor, "tenant_1");
+        let draft = bcast_urgent_followup_policy_update_draft("wait");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9702, draft, "idem-bcast-urgent-followup-policy-allow");
+
+        let first = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(12),
+                &x,
+            )
+            .unwrap();
+        let event_id = match first {
+            SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated {
+                event_id,
+                tenant_id,
+                urgent_followup_immediate,
+            } => {
+                assert_eq!(tenant_id, "tenant_1");
+                assert!(!urgent_followup_immediate);
+                event_id
+            }
+            _ => panic!("expected bcast urgent followup policy update outcome"),
+        };
+
+        let second = exec
+            .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(13), &x)
+            .unwrap();
+        let event_id_retry = match second {
+            SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated { event_id, .. } => {
+                event_id
+            }
+            _ => panic!("expected bcast urgent followup policy update outcome"),
+        };
+
+        assert_eq!(event_id, event_id_retry);
+        assert_eq!(store.bcast_urgent_followup_policy_ledger().len(), 1);
+        let row = store
+            .bcast_urgent_followup_policy_row(event_id)
+            .expect("event row should round-trip from store");
+        assert!(!row.urgent_followup_immediate);
+        let current = store
+            .bcast_urgent_followup_policy_current_row(&tenant_id)
+            .expect("current policy must exist");
+        assert!(!current.urgent_followup_immediate);
+        assert_eq!(current.policy_version, 1);
+    }
+
+    #[test]
+    fn at_sim_exec_bcast_urgent_followup_policy_new_threads_use_updated_behavior_old_urgent_thread_unchanged()
+     {
+        let mut store = Ph1fStore::new_in_memory();
+        let exec = SimulationExecutor::default();
+        let actor = UserId::new("tenant_1:user_bcast_urgent_followup_policy_apply").unwrap();
+        let tenant_id = TenantId::new("tenant_1").unwrap();
+        let now = MonotonicTimeNs(8_000_000_000_000);
+
+        store
+            .insert_identity(IdentityRecord::v1(
+                actor.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        seed_bcast_urgent_followup_policy_access_instance(&mut store, &actor, "tenant_1");
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            BCAST_URGENT_FOLLOWUP_POLICY_UPDATE_COMMIT,
+            SimulationType::Commit,
+            SimulationStatus::Active,
+        );
+
+        let old_draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9800),
+            turn_id: TurnId(1),
+            now,
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                audience_spec: "audience_old_urgent".to_string(),
+                classification: BroadcastClassification::Emergency,
+                content_payload_ref: "payload_old_urgent".to_string(),
+                prompt_dedupe_key: Some("pd_old_urgent".to_string()),
+                idempotency_key: "idem_bcast_urgent_old_draft".to_string(),
+            }),
+        };
+        let old_broadcast_id = match exec
+            .run_bcast_with_store(&mut store, &old_draft_req)
+            .unwrap()
+        {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let old_recipient_id = BroadcastRecipientId::new("recipient_urgent_old").unwrap();
+        let old_deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9800),
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(now.0 + 1),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                broadcast_id: old_broadcast_id.clone(),
+                recipient_id: old_recipient_id.clone(),
+                delivery_method: BcastDeliveryMethod::SeleneApp,
+                recipient_region: BcastRecipientRegion::Global,
+                app_unavailable: false,
+                app_unavailable_proof_ref: None,
+                delivery_plan_ref: "delivery_plan_urgent_old".to_string(),
+                simulation_context: "sim_ctx_urgent_old".to_string(),
+                idempotency_key: "idem_bcast_urgent_old_deliver".to_string(),
+            }),
+        };
+        let old_deliver = exec
+            .run_bcast_with_store(&mut store, &old_deliver_req)
+            .unwrap();
+        match old_deliver {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DeliverCommit(v) => {
+                    assert!(v.followup_immediate);
+                    assert_eq!(v.recipient_state, BcastRecipientState::Followup);
+                }
+                _ => panic!("expected deliver commit outcome"),
+            },
+            _ => panic!("expected deliver ok"),
+        }
+
+        let draft = bcast_urgent_followup_policy_update_draft("wait");
+        seed_active_simulation_for_intent_draft(&mut store, &actor, &draft);
+        let x = access_x(9801, draft, "idem-bcast-urgent-followup-policy-apply");
+        let out = exec
+            .execute_ph1x_dispatch_simulation_candidate(
+                &mut store,
+                actor.clone(),
+                MonotonicTimeNs(now.0 + 2),
+                &x,
+            )
+            .unwrap();
+        match out {
+            SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated {
+                urgent_followup_immediate,
+                ..
+            } => assert!(!urgent_followup_immediate),
+            _ => panic!("expected bcast urgent followup policy update outcome"),
+        }
+
+        let old_retry = exec
+            .run_bcast_with_store(&mut store, &old_deliver_req)
+            .unwrap();
+        match old_retry {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DeliverCommit(v) => {
+                    assert!(v.followup_immediate);
+                    assert_eq!(v.recipient_state, BcastRecipientState::Followup);
+                }
+                _ => panic!("expected deliver commit outcome"),
+            },
+            _ => panic!("expected deliver ok"),
+        }
+
+        let new_draft_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9802),
+            turn_id: TurnId(1),
+            now: MonotonicTimeNs(now.0 + 3),
+            simulation_id: BCAST_CREATE_DRAFT.to_string(),
+            simulation_type: BcastSimulationType::Draft,
+            request: BcastRequest::DraftCreate(BcastDraftCreateRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor.clone(),
+                audience_spec: "audience_new_urgent".to_string(),
+                classification: BroadcastClassification::Emergency,
+                content_payload_ref: "payload_new_urgent".to_string(),
+                prompt_dedupe_key: Some("pd_new_urgent".to_string()),
+                idempotency_key: "idem_bcast_urgent_new_draft".to_string(),
+            }),
+        };
+        let new_broadcast_id = match exec
+            .run_bcast_with_store(&mut store, &new_draft_req)
+            .unwrap()
+        {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DraftCreate(v) => v.broadcast_id,
+                _ => panic!("expected draft create outcome"),
+            },
+            _ => panic!("expected draft create response"),
+        };
+
+        let new_recipient_id = BroadcastRecipientId::new("recipient_urgent_new").unwrap();
+        let new_deliver_req = Ph1BcastRequest {
+            schema_version: PH1BCAST_CONTRACT_VERSION,
+            correlation_id: CorrelationId(9802),
+            turn_id: TurnId(2),
+            now: MonotonicTimeNs(now.0 + 4),
+            simulation_id: BCAST_DELIVER_COMMIT.to_string(),
+            simulation_type: BcastSimulationType::Commit,
+            request: BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant_id.clone(),
+                sender_user_id: actor,
+                broadcast_id: new_broadcast_id,
+                recipient_id: new_recipient_id,
+                delivery_method: BcastDeliveryMethod::SeleneApp,
+                recipient_region: BcastRecipientRegion::Global,
+                app_unavailable: false,
+                app_unavailable_proof_ref: None,
+                delivery_plan_ref: "delivery_plan_urgent_new".to_string(),
+                simulation_context: "sim_ctx_urgent_new".to_string(),
+                idempotency_key: "idem_bcast_urgent_new_deliver".to_string(),
+            }),
+        };
+        let new_deliver = exec
+            .run_bcast_with_store(&mut store, &new_deliver_req)
+            .unwrap();
+        match new_deliver {
+            Ph1BcastResponse::Ok(ok) => match ok.outcome {
+                BcastOutcome::DeliverCommit(v) => {
+                    assert!(!v.followup_immediate);
+                    assert_eq!(v.recipient_state, BcastRecipientState::Waiting);
+                }
+                _ => panic!("expected deliver commit outcome"),
+            },
+            _ => panic!("expected deliver ok"),
         }
     }
 
@@ -7933,6 +8510,19 @@ mod tests {
     #[test]
     fn at_bcast_mhp_08_new_threads_use_updated_wait_existing_waiting_unchanged() {
         at_sim_exec_bcast_wait_policy_new_non_urgent_threads_use_updated_wait_old_waiting_unchanged(
+        );
+    }
+
+    #[test]
+    fn at_bcast_mhp_09_urgent_followup_policy_update_access_and_persistence() {
+        at_sim_exec_bcast_urgent_followup_policy_update_access_deny_blocks_commit();
+        at_sim_exec_bcast_urgent_followup_policy_update_access_escalate_blocks_commit();
+        at_sim_exec_bcast_urgent_followup_policy_update_allow_and_active_commits_idempotently();
+    }
+
+    #[test]
+    fn at_bcast_mhp_10_new_threads_use_updated_urgent_behavior_existing_thread_unchanged() {
+        at_sim_exec_bcast_urgent_followup_policy_new_threads_use_updated_behavior_old_urgent_thread_unchanged(
         );
     }
 

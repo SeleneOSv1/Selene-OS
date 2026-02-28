@@ -11,7 +11,8 @@ use selene_kernel_contracts::ph1bcast::{
     BcastExpireCommitResult, BcastOutcome, BcastRecipientRegion, BcastRecipientState,
     BcastReminderFiredCommitRequest, BcastReminderFiredCommitResult, BcastRequest,
     BroadcastClassification, BroadcastId, BroadcastRecipientId, Ph1BcastOk, Ph1BcastRefuse,
-    Ph1BcastRequest, Ph1BcastResponse, BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS,
+    Ph1BcastRequest, Ph1BcastResponse, BCAST_DEFAULT_URGENT_FOLLOWUP_IMMEDIATE,
+    BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS,
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
 
@@ -212,7 +213,9 @@ impl Ph1BcastRuntime {
                 )
             }
         };
-        let followup_immediate = classification == BroadcastClassification::Emergency;
+        let urgent_followup_immediate = parse_urgent_followup_immediate(&r.simulation_context);
+        let followup_immediate =
+            classification == BroadcastClassification::Emergency && urgent_followup_immediate;
         let deliver_reason_code = if followup_immediate {
             reason_codes::BCAST_FOLLOWUP_IMMEDIATE_URGENT
         } else {
@@ -880,6 +883,20 @@ fn parse_non_urgent_wait_window_ns(simulation_context: &str) -> u64 {
     BCAST_NON_URGENT_FOLLOWUP_WINDOW_NS
 }
 
+fn parse_urgent_followup_immediate(simulation_context: &str) -> bool {
+    for token in simulation_context.split(';').map(str::trim) {
+        let Some(raw) = token.strip_prefix("urgent_followup_immediate=") else {
+            continue;
+        };
+        return match raw.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "immediate" => true,
+            "false" | "0" | "no" | "wait" | "delay" => false,
+            _ => BCAST_DEFAULT_URGENT_FOLLOWUP_IMMEDIATE,
+        };
+    }
+    BCAST_DEFAULT_URGENT_FOLLOWUP_IMMEDIATE
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -955,6 +972,7 @@ mod tests {
         delivery_method: BcastDeliveryMethod,
         recipient_region: BcastRecipientRegion,
         app_unavailable: bool,
+        simulation_context: &str,
     ) -> Ph1BcastRequest {
         req(
             BCAST_DELIVER_COMMIT,
@@ -973,7 +991,7 @@ mod tests {
                     None
                 },
                 delivery_plan_ref: "plan_1".to_string(),
-                simulation_context: "sim_ctx".to_string(),
+                simulation_context: simulation_context.to_string(),
                 idempotency_key: idem.to_string(),
             }),
         )
@@ -986,6 +1004,7 @@ mod tests {
             BcastDeliveryMethod::SeleneApp,
             BcastRecipientRegion::Global,
             false,
+            "sim_ctx",
         )
     }
 
@@ -1357,7 +1376,44 @@ mod tests {
     }
 
     #[test]
-    fn at_bcast_09_fallback_order_is_locked_and_app_unavailable_gated() {
+    fn at_bcast_09_urgent_followup_policy_can_disable_immediate_followup() {
+        let rt = Ph1BcastRuntime::default();
+        let draft = rt.run(&draft_req_with_classification(
+            "idem_draft_9",
+            BroadcastClassification::Emergency,
+        ));
+        let broadcast_id = match draft {
+            Ph1BcastResponse::Ok(v) => match v.outcome {
+                BcastOutcome::DraftCreate(r) => r.broadcast_id,
+                _ => panic!("expected draft create result"),
+            },
+            _ => panic!("expected draft ok"),
+        };
+
+        let deliver = rt.run(&deliver_req_with_options(
+            broadcast_id,
+            "idem_deliver_9",
+            BcastDeliveryMethod::SeleneApp,
+            BcastRecipientRegion::Global,
+            false,
+            "sim_ctx;urgent_followup_immediate=false",
+        ));
+        assert!(deliver.validate().is_ok());
+        match deliver {
+            Ph1BcastResponse::Ok(v) => match v.outcome {
+                BcastOutcome::DeliverCommit(r) => {
+                    assert_eq!(r.recipient_state, BcastRecipientState::Waiting);
+                    assert!(!r.followup_immediate);
+                    assert_eq!(r.reason_code, reason_codes::BCAST_DELIVERED);
+                }
+                _ => panic!("expected deliver result"),
+            },
+            _ => panic!("expected deliver ok"),
+        }
+    }
+
+    #[test]
+    fn at_bcast_10_fallback_order_is_locked_and_app_unavailable_gated() {
         let rt = Ph1BcastRuntime::default();
         let draft = rt.run(&draft_req("idem_draft_9"));
         let broadcast_id = match draft {
@@ -1374,6 +1430,7 @@ mod tests {
             BcastDeliveryMethod::Sms,
             BcastRecipientRegion::Global,
             false,
+            "sim_ctx",
         ));
         assert!(invalid_no_unavailable.validate().is_ok());
         assert!(matches!(
@@ -1412,6 +1469,7 @@ mod tests {
             BcastDeliveryMethod::Sms,
             BcastRecipientRegion::Global,
             true,
+            "sim_ctx",
         ));
         assert!(sms_ok.validate().is_ok());
         assert!(matches!(sms_ok, Ph1BcastResponse::Ok(_)));
@@ -1422,6 +1480,7 @@ mod tests {
             BcastDeliveryMethod::Email,
             BcastRecipientRegion::Global,
             true,
+            "sim_ctx",
         ));
         assert!(invalid_skip.validate().is_ok());
         match invalid_skip {
@@ -1437,6 +1496,7 @@ mod tests {
             BcastDeliveryMethod::Whatsapp,
             BcastRecipientRegion::Global,
             true,
+            "sim_ctx",
         ));
         assert!(whatsapp_ok.validate().is_ok());
         assert!(matches!(whatsapp_ok, Ph1BcastResponse::Ok(_)));
@@ -1447,6 +1507,7 @@ mod tests {
             BcastDeliveryMethod::Email,
             BcastRecipientRegion::Global,
             true,
+            "sim_ctx",
         ));
         assert!(email_ok.validate().is_ok());
         assert!(matches!(email_ok, Ph1BcastResponse::Ok(_)));

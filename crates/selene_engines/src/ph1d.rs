@@ -770,6 +770,9 @@ fn intent_type_from_str(s: &str) -> Option<IntentType> {
         "UpdateBcastWaitPolicy" | "update_bcast_wait_policy" | "updateBcastWaitPolicy" => {
             Some(IntentType::UpdateBcastWaitPolicy)
         }
+        "UpdateBcastUrgentFollowupPolicy"
+        | "update_bcast_urgent_followup_policy"
+        | "updateBcastUrgentFollowupPolicy" => Some(IntentType::UpdateBcastUrgentFollowupPolicy),
         "UpdateReminder" | "update_reminder" => Some(IntentType::UpdateReminder),
         "CancelReminder" | "cancel_reminder" => Some(IntentType::CancelReminder),
         "ListReminders" | "list_reminders" => Some(IntentType::ListReminders),

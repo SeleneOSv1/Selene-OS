@@ -1665,6 +1665,12 @@ fn confirm_text(d: &IntentDraft) -> String {
                 "You want to change the non-urgent follow-up wait time to {amount}. Is that right?"
             )
         }
+        IntentType::UpdateBcastUrgentFollowupPolicy => {
+            let behavior = field_original(d, FieldKey::Task).unwrap_or("immediate");
+            format!(
+                "You want urgent follow-up behavior to be {behavior}. Is that right?"
+            )
+        }
         IntentType::UpdateReminder => {
             let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");
             let when = field_original(d, FieldKey::When).unwrap_or("a new time");
@@ -1836,6 +1842,14 @@ fn clarify_for_missing(
                 "2 minutes".to_string(),
                 "300 seconds".to_string(),
                 "10 min".to_string(),
+            ],
+        ),
+        (IntentType::UpdateBcastUrgentFollowupPolicy, FieldKey::Task) => (
+            "For urgent broadcasts, should follow-up be immediate or wait?".to_string(),
+            vec![
+                "Immediate".to_string(),
+                "Wait".to_string(),
+                "Delay urgent follow-up".to_string(),
             ],
         ),
         (_, FieldKey::Amount) => (
@@ -3514,6 +3528,71 @@ mod tests {
                     assert_eq!(
                         c.intent_draft.intent_type,
                         IntentType::UpdateBcastWaitPolicy
+                    );
+                    assert!(c.intent_draft.required_fields_missing.is_empty());
+                }
+                DispatchRequest::Tool(_) => panic!("expected SimulationCandidate dispatch"),
+                DispatchRequest::AccessStepUp(_) => panic!("expected SimulationCandidate dispatch"),
+            },
+            _ => panic!("expected Dispatch directive"),
+        }
+        assert!(out2.thread_state.pending.is_none());
+    }
+
+    #[test]
+    fn at_x_confirm_yes_dispatches_simulation_candidate_for_bcast_urgent_followup_policy_update() {
+        let rt = Ph1xRuntime::new(Ph1xConfig::mvp_v1());
+        let mut d = intent_draft(IntentType::UpdateBcastUrgentFollowupPolicy);
+        d.fields = vec![IntentField {
+            key: FieldKey::Task,
+            value: FieldValue::normalized("wait".to_string(), "wait".to_string()).unwrap(),
+            confidence: OverallConfidence::High,
+        }];
+
+        let first = Ph1xRequest::v1(
+            74,
+            1,
+            now(1),
+            base_thread(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            None,
+            Some(Ph1nResponse::IntentDraft(d)),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out1 = rt.decide(&first).unwrap();
+        assert!(matches!(out1.directive, Ph1xDirective::Confirm(_)));
+
+        let second = Ph1xRequest::v1(
+            74,
+            2,
+            now(2),
+            out1.thread_state.clone(),
+            SessionState::Active,
+            id_text(),
+            policy_ok(),
+            vec![],
+            Some(ConfirmAnswer::Yes),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let out2 = rt.decide(&second).unwrap();
+        match out2.directive {
+            Ph1xDirective::Dispatch(d) => match d.dispatch_request {
+                DispatchRequest::SimulationCandidate(c) => {
+                    assert_eq!(
+                        c.intent_draft.intent_type,
+                        IntentType::UpdateBcastUrgentFollowupPolicy
                     );
                     assert!(c.intent_draft.required_fields_missing.is_empty());
                 }
