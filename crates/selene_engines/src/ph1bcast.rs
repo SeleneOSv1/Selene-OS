@@ -949,6 +949,11 @@ mod tests {
                 delivery_method,
                 recipient_region,
                 app_unavailable,
+                app_unavailable_proof_ref: if app_unavailable {
+                    Some("app_unavailable_proof:test".to_string())
+                } else {
+                    None
+                },
                 delivery_plan_ref: "plan_1".to_string(),
                 simulation_context: "sim_ctx".to_string(),
                 idempotency_key: idem.to_string(),
@@ -1357,6 +1362,31 @@ mod tests {
             invalid_no_unavailable,
             Ph1BcastResponse::Refuse(_)
         ));
+
+        let invalid_no_proof = rt.run(&req(
+            BCAST_DELIVER_COMMIT,
+            BcastSimulationType::Commit,
+            BcastRequest::DeliverCommit(BcastDeliverCommitRequest {
+                tenant_id: tenant(),
+                sender_user_id: sender(),
+                broadcast_id: broadcast_id.clone(),
+                recipient_id: recipient_id(),
+                delivery_method: BcastDeliveryMethod::Sms,
+                recipient_region: BcastRecipientRegion::Global,
+                app_unavailable: true,
+                app_unavailable_proof_ref: None,
+                delivery_plan_ref: "plan_1".to_string(),
+                simulation_context: "sim_ctx".to_string(),
+                idempotency_key: "idem_deliver_9_missing_proof".to_string(),
+            }),
+        ));
+        assert!(invalid_no_proof.validate().is_ok());
+        match invalid_no_proof {
+            Ph1BcastResponse::Refuse(r) => {
+                assert_eq!(r.reason_code, reason_codes::BCAST_FAIL_SCHEMA_INVALID);
+            }
+            _ => panic!("expected missing app-unavailable proof refusal"),
+        }
 
         let sms_ok = rt.run(&deliver_req_with_options(
             broadcast_id.clone(),

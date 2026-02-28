@@ -222,6 +222,7 @@ pub struct BcastDeliverCommitRequest {
     pub delivery_method: BcastDeliveryMethod,
     pub recipient_region: BcastRecipientRegion,
     pub app_unavailable: bool,
+    pub app_unavailable_proof_ref: Option<String>,
     pub delivery_plan_ref: String,
     pub simulation_context: String,
     pub idempotency_key: String,
@@ -242,6 +243,11 @@ impl Validate for BcastDeliverCommitRequest {
             &self.delivery_plan_ref,
             256,
         )?;
+        validate_opt_token(
+            "bcast_deliver.app_unavailable_proof_ref",
+            &self.app_unavailable_proof_ref,
+            256,
+        )?;
         validate_token(
             "bcast_deliver.simulation_context",
             &self.simulation_context,
@@ -254,10 +260,26 @@ impl Validate for BcastDeliverCommitRequest {
                 reason: "must be false when delivery_method is SeleneApp",
             });
         }
+        if self.delivery_method == BcastDeliveryMethod::SeleneApp
+            && self.app_unavailable_proof_ref.is_some()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "bcast_deliver.app_unavailable_proof_ref",
+                reason: "must be omitted when delivery_method is SeleneApp",
+            });
+        }
         if self.delivery_method != BcastDeliveryMethod::SeleneApp && !self.app_unavailable {
             return Err(ContractViolation::InvalidValue {
                 field: "bcast_deliver.app_unavailable",
                 reason: "fallback delivery requires app_unavailable=true",
+            });
+        }
+        if self.delivery_method != BcastDeliveryMethod::SeleneApp
+            && self.app_unavailable_proof_ref.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "bcast_deliver.app_unavailable_proof_ref",
+                reason: "fallback delivery requires explicit app-unavailable proof reference",
             });
         }
         Ok(())
@@ -1012,6 +1034,7 @@ mod tests {
                 delivery_method: BcastDeliveryMethod::SeleneApp,
                 recipient_region: BcastRecipientRegion::Global,
                 app_unavailable: false,
+                app_unavailable_proof_ref: None,
                 delivery_plan_ref: "plan_1".to_string(),
                 simulation_context: "".to_string(),
                 idempotency_key: "idem_2".to_string(),
@@ -1030,9 +1053,28 @@ mod tests {
             delivery_method: BcastDeliveryMethod::Sms,
             recipient_region: BcastRecipientRegion::Global,
             app_unavailable: false,
+            app_unavailable_proof_ref: None,
             delivery_plan_ref: "plan_fallback".to_string(),
             simulation_context: "ctx".to_string(),
             idempotency_key: "idem_2a".to_string(),
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn at_bcast_contract_02b_fallback_requires_app_unavailable_proof_ref() {
+        let req = BcastDeliverCommitRequest {
+            tenant_id: tenant(),
+            sender_user_id: sender(),
+            broadcast_id: broadcast_id(),
+            recipient_id: recipient_id(),
+            delivery_method: BcastDeliveryMethod::Sms,
+            recipient_region: BcastRecipientRegion::Global,
+            app_unavailable: true,
+            app_unavailable_proof_ref: None,
+            delivery_plan_ref: "plan_fallback".to_string(),
+            simulation_context: "ctx".to_string(),
+            idempotency_key: "idem_2b".to_string(),
         };
         assert!(req.validate().is_err());
     }

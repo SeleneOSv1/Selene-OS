@@ -20773,6 +20773,7 @@ mod tests {
                 delivery_method: selene_kernel_contracts::ph1bcast::BcastDeliveryMethod::SeleneApp,
                 recipient_region: selene_kernel_contracts::ph1bcast::BcastRecipientRegion::Global,
                 app_unavailable: false,
+                app_unavailable_proof_ref: None,
                 delivery_plan_ref: "plan".to_string(),
                 simulation_context: "sim_ctx".to_string(),
                 idempotency_key: idempotency_key.to_string(),

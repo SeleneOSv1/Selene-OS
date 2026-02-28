@@ -2347,6 +2347,20 @@ impl SimulationExecutor {
                         delivery_method,
                         recipient_region: bcast_recipient_region_for_method(delivery_method),
                         app_unavailable: delivery_method != BcastDeliveryMethod::SeleneApp,
+                        app_unavailable_proof_ref: if delivery_method
+                            != BcastDeliveryMethod::SeleneApp
+                        {
+                            Some(format!(
+                                "app_unavailable_proof:{}",
+                                short_hash_hex(&[
+                                    link_token_ref.as_str(),
+                                    recipient_id.as_str(),
+                                    bcast_delivery_method_token(delivery_method),
+                                ])
+                            ))
+                        } else {
+                            None
+                        },
                         delivery_plan_ref: resolve_link_delivery_plan_ref(
                             d,
                             delivery_method,
@@ -6087,6 +6101,7 @@ mod tests {
                     recipient_region:
                         selene_kernel_contracts::ph1bcast::BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_1".to_string(),
                     simulation_context: "sim_ctx_1".to_string(),
                     idempotency_key: "idem_bcast_deliver_1".to_string(),
@@ -6282,6 +6297,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::SeleneApp,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_u".to_string(),
                     simulation_context: "sim_ctx_u".to_string(),
                     idempotency_key: "idem_bcast_deliver_u".to_string(),
@@ -6407,6 +6423,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::SeleneApp,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_ut".to_string(),
                     simulation_context: "sim_ctx_ut".to_string(),
                     idempotency_key: "idem_bcast_deliver_ut".to_string(),
@@ -6529,6 +6546,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::SeleneApp,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_um".to_string(),
                     simulation_context: "sim_ctx_um".to_string(),
                     idempotency_key: "idem_bcast_deliver_um".to_string(),
@@ -6620,6 +6638,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::SeleneApp,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_w".to_string(),
                     simulation_context: "sim_ctx_w".to_string(),
                     idempotency_key: "idem_bcast_deliver_w".to_string(),
@@ -6777,6 +6796,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::SeleneApp,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: false,
+                    app_unavailable_proof_ref: None,
                     delivery_plan_ref: "delivery_plan_a".to_string(),
                     simulation_context: "sim_ctx_a".to_string(),
                     idempotency_key: "idem_bcast_deliver_a".to_string(),
@@ -6896,6 +6916,9 @@ mod tests {
                             delivery_method: BcastDeliveryMethod::Sms,
                             recipient_region: BcastRecipientRegion::Global,
                             app_unavailable: true,
+                            app_unavailable_proof_ref: Some(
+                                "app_unavailable_proof:sms".to_string(),
+                            ),
                             delivery_plan_ref: "delivery_sms".to_string(),
                             simulation_context: "sim_ctx_sms".to_string(),
                             idempotency_key: "idem_bcast_sms".to_string(),
@@ -6925,6 +6948,9 @@ mod tests {
                             delivery_method: BcastDeliveryMethod::Email,
                             recipient_region: BcastRecipientRegion::Global,
                             app_unavailable: true,
+                            app_unavailable_proof_ref: Some(
+                                "app_unavailable_proof:skip".to_string(),
+                            ),
                             delivery_plan_ref: "delivery_skip".to_string(),
                             simulation_context: "sim_ctx_skip".to_string(),
                             idempotency_key: "idem_bcast_skip".to_string(),
@@ -6962,6 +6988,9 @@ mod tests {
                             delivery_method: BcastDeliveryMethod::Whatsapp,
                             recipient_region: BcastRecipientRegion::Global,
                             app_unavailable: true,
+                            app_unavailable_proof_ref: Some(
+                                "app_unavailable_proof:whatsapp".to_string(),
+                            ),
                             delivery_plan_ref: "delivery_whatsapp".to_string(),
                             simulation_context: "sim_ctx_whatsapp".to_string(),
                             idempotency_key: "idem_bcast_whatsapp".to_string(),
@@ -6991,6 +7020,9 @@ mod tests {
                             delivery_method: BcastDeliveryMethod::Email,
                             recipient_region: BcastRecipientRegion::Global,
                             app_unavailable: true,
+                            app_unavailable_proof_ref: Some(
+                                "app_unavailable_proof:email".to_string(),
+                            ),
                             delivery_plan_ref: "delivery_email".to_string(),
                             simulation_context: "sim_ctx_email".to_string(),
                             idempotency_key: "idem_bcast_email".to_string(),
@@ -7055,6 +7087,7 @@ mod tests {
                     delivery_method: BcastDeliveryMethod::Sms,
                     recipient_region: BcastRecipientRegion::Global,
                     app_unavailable: true,
+                    app_unavailable_proof_ref: Some("app_unavailable_proof:g".to_string()),
                     delivery_plan_ref: "delivery_plan_g".to_string(),
                     simulation_context: "sim_ctx_g".to_string(),
                     idempotency_key: "idem_bcast_deliver_g".to_string(),
