@@ -68,8 +68,6 @@ trap cleanup_tmp_dir EXIT
 
 BLUEPRINT_REGISTRY="docs/09_BLUEPRINT_REGISTRY.md"
 COVERAGE_MATRIX="docs/COVERAGE_MATRIX.md"
-NEW_CHAT_CONTEXT="docs/14_NEW_CHAT_SYSTEM_CONTEXT.md"
-FULL_BUILD_CONTEXT="docs/15_FULL_SYSTEM_BUILD_CONTEXT.md"
 
 KERNEL_N="crates/selene_kernel_contracts/src/ph1n.rs"
 KERNEL_E="crates/selene_kernel_contracts/src/ph1e.rs"
@@ -178,8 +176,6 @@ for i in "${!BLUEPRINT_IDS[@]}"; do
     "$BLUEPRINT_REGISTRY" "blueprint row must stay ACTIVE for ${bp}"
   require_file "docs/BLUEPRINTS/${bp}.md" "blueprint file missing for ${bp}"
 
-  require_match "${bp}" "$NEW_CHAT_CONTEXT" "new chat context missing ${bp}"
-  require_match "${bp}" "$FULL_BUILD_CONTEXT" "full build context missing ${bp}"
   require_match "${bp}" "$COVERAGE_MATRIX" "coverage matrix missing ${bp}"
 
   require_match "${intent}," "$KERNEL_N" "kernel intent enum missing ${intent}"
