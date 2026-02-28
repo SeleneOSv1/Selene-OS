@@ -13,5 +13,43 @@ Purpose: Non-negotiable operating rules for Codex work in this repo.
 - No local-only real work.
 - No untracked files left in the repo. Commit real work, otherwise ignore/move it.
 
+## Rule: Probabilistic Reasoning vs Deterministic Execution (Non-Negotiable)
+Selene must follow this architectural boundary:
+
+Probabilistic Layer (Allowed):
+- Language generation
+- Reasoning
+- Summarization
+- Research
+- Data analysis
+- Document/photo explanation
+- Connector read-only queries
+- Tone/personality shaping
+
+These may be model-driven and non-deterministic.
+
+Deterministic Boundary (Mandatory):
+- Intent -> dispatch classification
+- Access control decisions
+- Simulation execution
+- State mutation
+- Ledger writes
+- Artifact activation
+- Provider promotion/demotion
+- Onboarding progression
+- Message sending
+- Any irreversible action
+
+All execution must:
+- Pass Access checks
+- Require ACTIVE simulation IDs (when applicable)
+- Be idempotent
+- Be replay-safe
+- Be auditable
+- Fail closed on any inconsistency
+
+Language may be probabilistic.
+Execution must never be probabilistic.
+
 ## Override
 - These laws apply by default unless JD explicitly overrides them.
