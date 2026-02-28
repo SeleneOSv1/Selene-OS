@@ -1,6 +1,6 @@
 # Selene System Architecture
 
-## Execution Boundary Law - Probabilistic Reasoning, Deterministic Execution
+## Execution Boundary Law — Probabilistic Reasoning, Deterministic Execution
 Selene must follow this architectural boundary:
 
 Probabilistic Layer (Allowed):
