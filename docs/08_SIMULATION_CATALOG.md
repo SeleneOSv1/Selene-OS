@@ -134,7 +134,7 @@ Locked schema rules:
 | TENANT_CONTEXT_RESOLVE_DRAFT | DRAFT | Tenant | Resolve tenant and policy context before enterprise execution | DRAFT | v1 | Write context resolution result only |
 | QUOTA_CHECK_DRAFT | DRAFT | Quota | Evaluate deterministic budget/quota gates for a request | DRAFT | v1 | Write quota decision result only |
 | KMS_HANDLE_ISSUE_COMMIT | COMMIT | KMS | Issue short-lived credential handle for approved runtime use | DRAFT | v1 | Write handle issue/audit row |
-| WORK_ORDER_APPEND_COMMIT | COMMIT | WorkOrder | Append deterministic work order event to ledger | DRAFT | v1 | Append work_order_ledger row |
+| WORK_ORDER_APPEND_COMMIT | COMMIT | WorkOrder | Append deterministic work order event to ledger | ACTIVE | v1 | Append work_order_ledger row |
 | WORK_LEASE_ACQUIRE_COMMIT | COMMIT | WorkLease | Acquire deterministic lease for a work order | DRAFT | v1 | Write work_order_leases row |
 | WORK_LEASE_RENEW_COMMIT | COMMIT | WorkLease | Renew deterministic lease for a work order | DRAFT | v1 | Update work_order_leases row |
 | WORK_LEASE_RELEASE_COMMIT | COMMIT | WorkLease | Release deterministic lease for a work order | DRAFT | v1 | Update work_order_leases row |

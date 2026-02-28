@@ -2281,6 +2281,9 @@ fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> St
         SimulationDispatchOutcome::LinkDelivered { .. } => "I sent the link.".to_string(),
         SimulationDispatchOutcome::Link(_) => "I generated the link.".to_string(),
         SimulationDispatchOutcome::Reminder(_) => "I scheduled that reminder.".to_string(),
+        SimulationDispatchOutcome::CalendarDraftCreated { .. } => {
+            "Draft created; not sent to external calendar yet.".to_string()
+        }
         SimulationDispatchOutcome::AccessStepUp { outcome, .. } => match outcome {
             selene_kernel_contracts::ph1x::StepUpOutcome::Continue => {
                 "Access verification passed.".to_string()
@@ -6083,5 +6086,15 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_a_response_text_for_calendar_draft_is_explicit_draft_only() {
+        let response =
+            response_text_for_dispatch_outcome(&SimulationDispatchOutcome::CalendarDraftCreated {
+                work_order_id: "wo_cal_test".to_string(),
+                work_order_event_id: 1,
+            });
+        assert_eq!(response, "Draft created; not sent to external calendar yet.");
     }
 }
