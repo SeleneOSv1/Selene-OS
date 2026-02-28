@@ -363,6 +363,9 @@ fn resolve_reminder_desired_time(now: MonotonicTimeNs, value: &str) -> Option<Mo
 }
 
 const REMINDER_RECURRENCE_MAX_OCCURRENCES: usize = 365;
+const REMINDER_DELIVERY_RETRY_DELAY_NS: u64 = 300_000_000_000; // 5 minutes
+const REMINDER_DELIVERY_MISSED_GRACE_NS: u64 = 60_000_000_000; // 1 minute
+const REMINDER_DELIVERY_FOLLOWUP_DELAY_NS: u64 = 900_000_000_000; // 15 minutes
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReminderRecurrenceFrequency {
@@ -494,6 +497,7 @@ mod reminder_reason_codes {
     pub const REM_FAIL_TIME_AMBIGUOUS_NEEDS_CONFIRM: ReasonCodeId = ReasonCodeId(0x5245_00F1);
     pub const REM_FAIL_SCOPE_VIOLATION: ReasonCodeId = ReasonCodeId(0x5245_00F3);
     pub const REM_FAIL_STATE_TRANSITION_INVALID: ReasonCodeId = ReasonCodeId(0x5245_00F4);
+    pub const REM_FAIL_POLICY_BLOCKED: ReasonCodeId = ReasonCodeId(0x5245_00F5);
 }
 
 fn memory_graph_edge_kind_key(
@@ -5554,14 +5558,17 @@ impl Ph1fStore {
         self.next_reminder_seq = self.next_reminder_seq.saturating_add(1);
         let reminder_id = ReminderId::new(format!("rem_{:016x}", self.next_reminder_seq))
             .map_err(StorageError::ContractViolation)?;
-        let occurrence_times = reminder_occurrence_times(resolved_due_at, r.recurrence_rule.as_deref());
+        let occurrence_times =
+            reminder_occurrence_times(resolved_due_at, r.recurrence_rule.as_deref());
         let mut generated_occurrences: Vec<(ReminderOccurrenceId, ReminderOccurrenceRecord)> =
             Vec::with_capacity(occurrence_times.len());
         for scheduled_time in occurrence_times {
             self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
-            let occurrence_id =
-                ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
-                    .map_err(StorageError::ContractViolation)?;
+            let occurrence_id = ReminderOccurrenceId::new(format!(
+                "occ_{:016x}",
+                self.next_reminder_occurrence_seq
+            ))
+            .map_err(StorageError::ContractViolation)?;
             generated_occurrences.push((
                 occurrence_id.clone(),
                 ReminderOccurrenceRecord {
@@ -5751,10 +5758,13 @@ impl Ph1fStore {
                 reminder_occurrence_times(resolved_due_at, recurrence_rule.as_deref());
             let mut new_primary_occurrence_id: Option<ReminderOccurrenceId> = None;
             for scheduled_time in occurrence_times {
-                self.next_reminder_occurrence_seq = self.next_reminder_occurrence_seq.saturating_add(1);
-                let occurrence_id =
-                    ReminderOccurrenceId::new(format!("occ_{:016x}", self.next_reminder_occurrence_seq))
-                        .map_err(StorageError::ContractViolation)?;
+                self.next_reminder_occurrence_seq =
+                    self.next_reminder_occurrence_seq.saturating_add(1);
+                let occurrence_id = ReminderOccurrenceId::new(format!(
+                    "occ_{:016x}",
+                    self.next_reminder_occurrence_seq
+                ))
+                .map_err(StorageError::ContractViolation)?;
                 if new_primary_occurrence_id.is_none() {
                     new_primary_occurrence_id = Some(occurrence_id.clone());
                 }
@@ -5999,6 +6009,10 @@ impl Ph1fStore {
             ReminderDeliveryStatus::Delivered,
             reminder_reason_codes::REMINDER_DELIVERED_PRE,
             None,
+            None,
+            None,
+            None,
+            false,
         )
     }
 
@@ -6007,10 +6021,75 @@ impl Ph1fStore {
         req: &Ph1RemRequest,
         r: &ReminderDeliverDueCommitRequest,
     ) -> Result<Ph1RemResponse, StorageError> {
-        let status = if r.offline_state {
+        let occ_snapshot = self
+            .reminder_occurrences
+            .get(&r.occurrence_id)
+            .ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.delivery.occurrence_id",
+                    reason: "not found",
+                })
+            })?
+            .clone();
+
+        let mut status = if r.offline_state {
             ReminderDeliveryStatus::RetryScheduled
         } else {
             ReminderDeliveryStatus::Delivered
+        };
+        let mut state_after: Option<ReminderState> = None;
+        let mut retry_time: Option<MonotonicTimeNs> = None;
+        let mut followup_time: Option<MonotonicTimeNs> = None;
+
+        if req.envelope.now.0 < occ_snapshot.scheduled_time.0 {
+            status = ReminderDeliveryStatus::RetryScheduled;
+            retry_time = Some(occ_snapshot.scheduled_time);
+        }
+        if let Some(snooze_until) = occ_snapshot.snooze_until {
+            if req.envelope.now.0 < snooze_until.0 {
+                status = ReminderDeliveryStatus::RetryScheduled;
+                state_after = Some(ReminderState::Snoozed);
+                retry_time = Some(snooze_until);
+            }
+        }
+
+        if status == ReminderDeliveryStatus::RetryScheduled {
+            if retry_time.is_none() {
+                retry_time = Some(MonotonicTimeNs(
+                    req.envelope
+                        .now
+                        .0
+                        .saturating_add(REMINDER_DELIVERY_RETRY_DELAY_NS),
+                ));
+            }
+        } else {
+            // Due delivery always schedules a bounded follow-up checkpoint.
+            state_after = Some(ReminderState::FollowupPending);
+            let followup_delay_ns = if req.envelope.now.0
+                > occ_snapshot
+                    .scheduled_time
+                    .0
+                    .saturating_add(REMINDER_DELIVERY_MISSED_GRACE_NS)
+            {
+                // Missed reminder path: still fire once, then tighten follow-up timing.
+                REMINDER_DELIVERY_RETRY_DELAY_NS
+            } else {
+                REMINDER_DELIVERY_FOLLOWUP_DELAY_NS
+            };
+            followup_time = Some(MonotonicTimeNs(
+                req.envelope.now.0.saturating_add(followup_delay_ns),
+            ));
+        }
+
+        let reason_code = match status {
+            ReminderDeliveryStatus::Delivered => reminder_reason_codes::REMINDER_DELIVERED_DUE,
+            ReminderDeliveryStatus::RetryScheduled => {
+                reminder_reason_codes::REMINDER_RETRY_SCHEDULED
+            }
+            ReminderDeliveryStatus::DeferredQuietHours => {
+                reminder_reason_codes::REMINDER_RETRY_SCHEDULED
+            }
+            ReminderDeliveryStatus::Failed => reminder_reason_codes::REMINDER_FAILED,
         };
         self.ph1rem_delivery_common(
             req,
@@ -6023,8 +6102,12 @@ impl Ph1fStore {
             &r.idempotency_key,
             "DELIVER_DUE",
             status,
-            reminder_reason_codes::REMINDER_DELIVERED_DUE,
+            reason_code,
             None,
+            state_after,
+            retry_time,
+            followup_time,
+            true,
         )
     }
 
@@ -6040,6 +6123,29 @@ impl Ph1fStore {
                 "from_channel and to_channel must differ".to_string(),
             )?));
         }
+        let reminder_row = self.reminders.get(&r.reminder_id).ok_or_else(|| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "ph1rem.delivery.reminder_id",
+                reason: "not found",
+            })
+        })?;
+        let to_channel_allowed = reminder_row
+            .channel_preferences
+            .iter()
+            .any(|channel| *channel == r.to_channel);
+        let prior_attempt_exists = self.reminder_delivery_attempts.iter().any(|attempt| {
+            attempt.reminder_id == r.reminder_id
+                && attempt.occurrence_id == r.occurrence_id
+                && attempt.channel == r.from_channel
+        });
+        if !to_channel_allowed || !prior_attempt_exists {
+            return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                req.envelope.simulation_id.clone(),
+                reminder_reason_codes::REM_FAIL_POLICY_BLOCKED,
+                "escalation requires policy-approved target channel and prior from_channel attempt"
+                    .to_string(),
+            )?));
+        }
         self.ph1rem_delivery_common(
             req,
             &r.tenant_id,
@@ -6053,6 +6159,15 @@ impl Ph1fStore {
             ReminderDeliveryStatus::Delivered,
             reminder_reason_codes::REMINDER_ESCALATED,
             Some(1),
+            Some(ReminderState::FollowupPending),
+            None,
+            Some(MonotonicTimeNs(
+                req.envelope
+                    .now
+                    .0
+                    .saturating_add(REMINDER_DELIVERY_FOLLOWUP_DELAY_NS),
+            )),
+            false,
         )
     }
 
@@ -6258,6 +6373,10 @@ impl Ph1fStore {
         delivery_status: ReminderDeliveryStatus,
         reason_code: ReasonCodeId,
         escalation_level: Option<u8>,
+        state_after: Option<ReminderState>,
+        retry_time: Option<MonotonicTimeNs>,
+        followup_time: Option<MonotonicTimeNs>,
+        dedupe_delivered_on_occurrence_channel: bool,
     ) -> Result<Ph1RemResponse, StorageError> {
         let (row_state, occ_scheduled_time) = {
             let row = self.reminders.get(reminder_id).ok_or_else(|| {
@@ -6289,8 +6408,63 @@ impl Ph1fStore {
                     "occurrence does not belong to reminder_id".to_string(),
                 )?));
             }
+            if occ.state == ReminderState::Canceled
+                || occ.state == ReminderState::Completed
+                || occ.state == ReminderState::Failed
+            {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_STATE_TRANSITION_INVALID,
+                    "cannot deliver terminal occurrence state".to_string(),
+                )?));
+            }
             (row.state, occ.scheduled_time)
         };
+
+        if dedupe_delivered_on_occurrence_channel
+            && delivery_status == ReminderDeliveryStatus::Delivered
+            && {
+                self.reminder_delivery_attempts.iter().any(|entry| {
+                    entry.reminder_id == *reminder_id
+                        && entry.occurrence_id == *occurrence_id
+                        && entry.channel == channel
+                        && entry.status == ReminderDeliveryStatus::Delivered
+                })
+            }
+        {
+            let existing = self
+                .reminder_delivery_attempts
+                .iter()
+                .find(|entry| {
+                    entry.reminder_id == *reminder_id
+                        && entry.occurrence_id == *occurrence_id
+                        && entry.channel == channel
+                        && entry.status == ReminderDeliveryStatus::Delivered
+                })
+                .expect("delivery attempt must exist after any()");
+            let out_state = self
+                .reminders
+                .get(reminder_id)
+                .map(|row| row.state)
+                .unwrap_or(row_state);
+            let out_scheduled_time = self
+                .reminder_occurrences
+                .get(occurrence_id)
+                .map(|occ| occ.scheduled_time)
+                .unwrap_or(occ_scheduled_time);
+            return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
+                req.envelope.simulation_id.clone(),
+                reason_code,
+                reminder_id.clone(),
+                Some(occurrence_id.clone()),
+                out_state,
+                Some(out_scheduled_time),
+                Some(existing.status),
+                Some(existing.attempt_id.clone()),
+                existing.proof_ref.clone(),
+                escalation_level,
+            )?));
+        }
 
         if let Some(existing_idx) = self
             .reminder_delivery_attempt_lookup
@@ -6302,13 +6476,30 @@ impl Ph1fStore {
                     reason: "existing delivery row missing",
                 }),
             )?;
+            if existing.reminder_id != *reminder_id || existing.occurrence_id != *occurrence_id {
+                return Ok(Ph1RemResponse::Refuse(Ph1RemRefuse::v1(
+                    req.envelope.simulation_id.clone(),
+                    reminder_reason_codes::REM_FAIL_SCOPE_VIOLATION,
+                    "delivery_attempt_id already bound to another reminder occurrence".to_string(),
+                )?));
+            }
+            let out_state = self
+                .reminders
+                .get(reminder_id)
+                .map(|row| row.state)
+                .unwrap_or(row_state);
+            let out_scheduled_time = self
+                .reminder_occurrences
+                .get(occurrence_id)
+                .map(|occ| occ.scheduled_time)
+                .unwrap_or(occ_scheduled_time);
             return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
                 req.envelope.simulation_id.clone(),
                 reason_code,
                 reminder_id.clone(),
                 Some(occurrence_id.clone()),
-                row_state,
-                Some(occ_scheduled_time),
+                out_state,
+                Some(out_scheduled_time),
                 Some(existing.status),
                 Some(existing.attempt_id.clone()),
                 existing.proof_ref.clone(),
@@ -6330,19 +6521,73 @@ impl Ph1fStore {
                     reason: "existing delivery row missing",
                 }),
             )?;
+            let out_state = self
+                .reminders
+                .get(reminder_id)
+                .map(|row| row.state)
+                .unwrap_or(row_state);
+            let out_scheduled_time = self
+                .reminder_occurrences
+                .get(occurrence_id)
+                .map(|occ| occ.scheduled_time)
+                .unwrap_or(occ_scheduled_time);
             return Ok(Ph1RemResponse::Ok(Ph1RemOk::v1(
                 req.envelope.simulation_id.clone(),
                 reason_code,
                 reminder_id.clone(),
                 Some(occurrence_id.clone()),
-                row_state,
-                Some(occ_scheduled_time),
+                out_state,
+                Some(out_scheduled_time),
                 Some(existing.status),
                 Some(existing.attempt_id.clone()),
                 existing.proof_ref.clone(),
                 escalation_level,
             )?));
         }
+
+        if state_after.is_some() || retry_time.is_some() || followup_time.is_some() {
+            let mut row = self.reminders.remove(reminder_id).ok_or_else(|| {
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1rem.delivery.reminder_id",
+                    reason: "not found",
+                })
+            })?;
+            let mut occ = self
+                .reminder_occurrences
+                .remove(occurrence_id)
+                .ok_or_else(|| {
+                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+                        field: "ph1rem.delivery.occurrence_id",
+                        reason: "not found",
+                    })
+                })?;
+
+            if let Some(new_state) = state_after {
+                row.state = new_state;
+                occ.state = new_state;
+            }
+            if let Some(new_retry_time) = retry_time {
+                occ.retry_time = Some(new_retry_time);
+            }
+            if let Some(new_followup_time) = followup_time {
+                occ.followup_time = Some(new_followup_time);
+            }
+            occ.updated_at = req.envelope.now;
+            row.updated_at = req.envelope.now;
+            self.reminders.insert(reminder_id.clone(), row);
+            self.reminder_occurrences.insert(occurrence_id.clone(), occ);
+        }
+
+        let out_state = self
+            .reminders
+            .get(reminder_id)
+            .map(|row| row.state)
+            .unwrap_or(row_state);
+        let out_scheduled_time = self
+            .reminder_occurrences
+            .get(occurrence_id)
+            .map(|occ| occ.scheduled_time)
+            .unwrap_or(occ_scheduled_time);
 
         let proof_ref = Some(format!(
             "proof:{}:{}",
@@ -6380,8 +6625,8 @@ impl Ph1fStore {
             reason_code,
             reminder_id.clone(),
             Some(occurrence_id.clone()),
-            row_state,
-            Some(occ_scheduled_time),
+            out_state,
+            Some(out_scheduled_time),
             Some(delivery_status),
             Some(delivery_attempt_id.clone()),
             proof_ref,
