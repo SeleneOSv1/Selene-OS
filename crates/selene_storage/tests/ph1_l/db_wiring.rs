@@ -217,3 +217,85 @@ fn at_l_db_04_current_table_no_ledger_rebuild_required() {
         SessionState::Active
     );
 }
+
+#[test]
+fn at_ph1l_db_05_session_lifecycle_open_advance_close_and_idempotency() {
+    let mut s = Ph1fStore::new_in_memory();
+    let user_id = user("tenant_a:user_ph1l_1");
+    let device_id = device("device_ph1l_1");
+    seed_identity_device(&mut s, user_id.clone(), device_id.clone());
+
+    // Open session -> persisted and readable.
+    let open = session_record(
+        6001,
+        user_id.clone(),
+        device_id.clone(),
+        SessionState::Open,
+        100,
+        100,
+        None,
+    );
+    s.upsert_session_lifecycle_row(open.clone(), Some("idem_ph1l_open".to_string()))
+        .unwrap();
+    let open_read = s.session_row(&SessionId(6001)).unwrap();
+    assert_eq!(open_read.session_state, SessionState::Open);
+    assert_eq!(open_read.opened_at, open.opened_at);
+    assert_eq!(open_read.last_activity_at, open.last_activity_at);
+    assert_eq!(open_read.closed_at, None);
+
+    // Advance session -> same session_id, updated state/last activity.
+    let advanced = session_record(
+        6001,
+        user_id.clone(),
+        device_id.clone(),
+        SessionState::Active,
+        100,
+        150,
+        None,
+    );
+    s.upsert_session_lifecycle_row(advanced.clone(), Some("idem_ph1l_advance".to_string()))
+        .unwrap();
+    let advanced_read = s.session_row(&SessionId(6001)).unwrap();
+    assert_eq!(advanced_read.session_state, SessionState::Active);
+    assert_eq!(advanced_read.opened_at, advanced.opened_at);
+    assert_eq!(advanced_read.last_activity_at, advanced.last_activity_at);
+    assert_eq!(advanced_read.closed_at, None);
+
+    // Close session -> closed state persisted.
+    let closed = session_record(
+        6001,
+        user_id,
+        device_id,
+        SessionState::Closed,
+        100,
+        200,
+        Some(200),
+    );
+    s.upsert_session_lifecycle_row(closed.clone(), Some("idem_ph1l_close".to_string()))
+        .unwrap();
+    let closed_read = s.session_row(&SessionId(6001)).unwrap();
+    assert_eq!(closed_read.session_state, SessionState::Closed);
+    assert_eq!(closed_read.opened_at, closed.opened_at);
+    assert_eq!(closed_read.last_activity_at, closed.last_activity_at);
+    assert_eq!(closed_read.closed_at, closed.closed_at);
+
+    // Idempotent close retry -> no duplicate row and no silent mutation.
+    s.upsert_session_lifecycle_row(
+        session_record(
+            6001,
+            user("tenant_a:user_ph1l_1"),
+            device("device_ph1l_1"),
+            SessionState::Closed,
+            100,
+            250,
+            Some(250),
+        ),
+        Some("idem_ph1l_close".to_string()),
+    )
+    .unwrap();
+    assert_eq!(s.session_rows().len(), 1);
+    let closed_after_retry = s.session_row(&SessionId(6001)).unwrap();
+    assert_eq!(closed_after_retry.session_state, SessionState::Closed);
+    assert_eq!(closed_after_retry.last_activity_at, MonotonicTimeNs(200));
+    assert_eq!(closed_after_retry.closed_at, Some(MonotonicTimeNs(200)));
+}
