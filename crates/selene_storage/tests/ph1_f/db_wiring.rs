@@ -35,8 +35,9 @@ use selene_kernel_contracts::ph1selfheal::{
 };
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState};
 use selene_storage::ph1f::{
-    BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore,
-    SessionRecord, StorageError, TenantCompanyLifecycleState, TenantCompanyRecord,
+    AgentExecutionLedgerRowInput, BuilderProposalLedgerRowInput, DeviceRecord, IdentityRecord,
+    IdentityStatus, Ph1fStore, SessionRecord, StorageError, TenantCompanyLifecycleState,
+    TenantCompanyRecord,
 };
 use selene_storage::repo::{Ph1fFoundationRepo, Ph1jAuditRepo};
 
@@ -1142,4 +1143,81 @@ fn at_f_db_12_self_heal_duplicate_card_id_rejected_without_idempotency_match() {
         false,
     ));
     assert!(matches!(dup, Err(StorageError::DuplicateKey { .. })));
+}
+
+#[test]
+fn at_f_db_13_agent_execution_ledger_current_rebuild_and_idempotency() {
+    let mut s = store_with_identity_device_session();
+
+    let row_1 = s
+        .append_agent_execution_ledger_row(AgentExecutionLedgerRowInput {
+            created_at: MonotonicTimeNs(1_000),
+            tenant_id: "tenant_a".to_string(),
+            user_id: user(),
+            session_id: Some(SessionId(1)),
+            correlation_id: CorrelationId(10_001),
+            turn_id: TurnId(20_001),
+            thread_key: "agent_thread_a".to_string(),
+            finder_packet_kind: "SIMULATION_MATCH".to_string(),
+            execution_stage: "MATCH_CONFIRM".to_string(),
+            simulation_id: Some("LINK_INVITE_GENERATE_DRAFT".to_string()),
+            reason_code: ReasonCodeId(0xF100_0001),
+            dev_intake_audit_event_id: None,
+            idempotency_key: Some("agent_exec_idem_1".to_string()),
+        })
+        .unwrap();
+    let row_1_retry = s
+        .append_agent_execution_ledger_row(AgentExecutionLedgerRowInput {
+            created_at: MonotonicTimeNs(1_001),
+            tenant_id: "tenant_a".to_string(),
+            user_id: user(),
+            session_id: Some(SessionId(1)),
+            correlation_id: CorrelationId(10_001),
+            turn_id: TurnId(20_001),
+            thread_key: "agent_thread_a".to_string(),
+            finder_packet_kind: "SIMULATION_MATCH".to_string(),
+            execution_stage: "MATCH_CONFIRM".to_string(),
+            simulation_id: Some("LINK_INVITE_GENERATE_DRAFT".to_string()),
+            reason_code: ReasonCodeId(0xF100_0001),
+            dev_intake_audit_event_id: None,
+            idempotency_key: Some("agent_exec_idem_1".to_string()),
+        })
+        .unwrap();
+    assert_eq!(row_1, row_1_retry);
+    assert_eq!(s.agent_execution_ledger_rows().len(), 1);
+    assert!(matches!(
+        s.attempt_overwrite_agent_execution_ledger_row(row_1),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+
+    let row_2 = s
+        .append_agent_execution_ledger_row(AgentExecutionLedgerRowInput {
+            created_at: MonotonicTimeNs(1_002),
+            tenant_id: "tenant_a".to_string(),
+            user_id: user(),
+            session_id: Some(SessionId(1)),
+            correlation_id: CorrelationId(10_002),
+            turn_id: TurnId(20_002),
+            thread_key: "agent_thread_a".to_string(),
+            finder_packet_kind: "MISSING_SIMULATION".to_string(),
+            execution_stage: "MISSING_SIM_DEV_INTAKE".to_string(),
+            simulation_id: None,
+            reason_code: ReasonCodeId(0xF100_0002),
+            dev_intake_audit_event_id: Some(selene_kernel_contracts::ph1j::AuditEventId(41)),
+            idempotency_key: Some("agent_exec_idem_2".to_string()),
+        })
+        .unwrap();
+    assert_eq!(s.agent_execution_ledger_rows().len(), 2);
+    let current = s
+        .agent_execution_current_row("tenant_a", &user(), "agent_thread_a")
+        .expect("current row should exist");
+    assert_eq!(current.last_row_id, row_2);
+    assert_eq!(current.finder_packet_kind, "MISSING_SIMULATION");
+    assert_eq!(current.execution_stage, "MISSING_SIM_DEV_INTAKE");
+    assert_eq!(current.dev_intake_audit_event_id, Some(selene_kernel_contracts::ph1j::AuditEventId(41)));
+
+    let before = s.agent_execution_current_rows().clone();
+    s.rebuild_agent_execution_current_from_ledger().unwrap();
+    let after = s.agent_execution_current_rows().clone();
+    assert_eq!(before, after);
 }

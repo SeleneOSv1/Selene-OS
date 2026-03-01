@@ -1001,6 +1001,59 @@ pub struct OutcomeUtilizationLedgerRowInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentExecutionLedgerRow {
+    pub schema_version: SchemaVersion,
+    pub row_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub tenant_id: String,
+    pub user_id: UserId,
+    pub session_id: Option<SessionId>,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub thread_key: String,
+    pub finder_packet_kind: String,
+    pub execution_stage: String,
+    pub simulation_id: Option<String>,
+    pub reason_code: ReasonCodeId,
+    pub dev_intake_audit_event_id: Option<AuditEventId>,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentExecutionLedgerRowInput {
+    pub created_at: MonotonicTimeNs,
+    pub tenant_id: String,
+    pub user_id: UserId,
+    pub session_id: Option<SessionId>,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub thread_key: String,
+    pub finder_packet_kind: String,
+    pub execution_stage: String,
+    pub simulation_id: Option<String>,
+    pub reason_code: ReasonCodeId,
+    pub dev_intake_audit_event_id: Option<AuditEventId>,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentExecutionCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub tenant_id: String,
+    pub user_id: UserId,
+    pub thread_key: String,
+    pub last_row_id: u64,
+    pub updated_at: MonotonicTimeNs,
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub finder_packet_kind: String,
+    pub execution_stage: String,
+    pub simulation_id: Option<String>,
+    pub reason_code: ReasonCodeId,
+    pub dev_intake_audit_event_id: Option<AuditEventId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuilderProposalLedgerRow {
     pub schema_version: SchemaVersion,
     pub row_id: u64,
@@ -1141,6 +1194,11 @@ pub struct Ph1fStore {
     // Idempotency: (correlation_id, turn_id, engine_id, outcome_type, idempotency_key) -> row_id
     outcome_utilization_idempotency_index:
         BTreeMap<(CorrelationId, TurnId, String, String, String), u64>,
+    // 38 Phase-1 Agent Execution Core append-only execution proof + current projection.
+    agent_execution_ledger: Vec<AgentExecutionLedgerRow>,
+    agent_execution_current: BTreeMap<(String, UserId, String), AgentExecutionCurrentRecord>,
+    // Idempotency: (tenant_id, user_id, thread_key, idempotency_key) -> row_id
+    agent_execution_idempotency_index: BTreeMap<(String, UserId, String, String), u64>,
     // 14.7.6 self-healing append-only card chain persistence.
     self_heal_failure_event_ledger: Vec<SelfHealFailureEventLedgerRow>,
     self_heal_problem_card_ledger: Vec<SelfHealProblemCardLedgerRow>,
@@ -1560,6 +1618,7 @@ pub struct Ph1fStore {
     next_memory_thread_event_id: u64,
     next_ph1x_thread_state_event_id: u64,
     next_outcome_utilization_row_id: u64,
+    next_agent_execution_row_id: u64,
     next_self_heal_failure_row_id: u64,
     next_self_heal_problem_row_id: u64,
     next_self_heal_fix_row_id: u64,
@@ -2910,6 +2969,9 @@ impl Ph1fStore {
             ph1x_thread_state_idempotency_index: BTreeMap::new(),
             outcome_utilization_ledger: Vec::new(),
             outcome_utilization_idempotency_index: BTreeMap::new(),
+            agent_execution_ledger: Vec::new(),
+            agent_execution_current: BTreeMap::new(),
+            agent_execution_idempotency_index: BTreeMap::new(),
             self_heal_failure_event_ledger: Vec::new(),
             self_heal_problem_card_ledger: Vec::new(),
             self_heal_fix_card_ledger: Vec::new(),
@@ -3098,6 +3160,7 @@ impl Ph1fStore {
             next_memory_thread_event_id: 1,
             next_ph1x_thread_state_event_id: 1,
             next_outcome_utilization_row_id: 1,
+            next_agent_execution_row_id: 1,
             next_self_heal_failure_row_id: 1,
             next_self_heal_problem_row_id: 1,
             next_self_heal_fix_row_id: 1,
@@ -4232,6 +4295,233 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         Err(StorageError::AppendOnlyViolation {
             table: "outcome_utilization_ledger",
+        })
+    }
+
+    fn apply_agent_execution_row_to_current(&mut self, row: &AgentExecutionLedgerRow) {
+        let current_key = (
+            row.tenant_id.clone(),
+            row.user_id.clone(),
+            row.thread_key.clone(),
+        );
+        self.agent_execution_current.insert(
+            current_key,
+            AgentExecutionCurrentRecord {
+                schema_version: SchemaVersion(1),
+                tenant_id: row.tenant_id.clone(),
+                user_id: row.user_id.clone(),
+                thread_key: row.thread_key.clone(),
+                last_row_id: row.row_id,
+                updated_at: row.created_at,
+                correlation_id: row.correlation_id,
+                turn_id: row.turn_id,
+                finder_packet_kind: row.finder_packet_kind.clone(),
+                execution_stage: row.execution_stage.clone(),
+                simulation_id: row.simulation_id.clone(),
+                reason_code: row.reason_code,
+                dev_intake_audit_event_id: row.dev_intake_audit_event_id,
+            },
+        );
+    }
+
+    pub fn append_agent_execution_ledger_row(
+        &mut self,
+        input: AgentExecutionLedgerRowInput,
+    ) -> Result<u64, StorageError> {
+        if input.tenant_id.trim().is_empty() || input.tenant_id.len() > 64 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.tenant_id",
+                    reason: "must be non-empty and <= 64 chars",
+                },
+            ));
+        }
+        if !self.identities.contains_key(&input.user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "agent_execution_ledger.user_id",
+                key: input.user_id.as_str().to_string(),
+            });
+        }
+        if let Some(session_id) = input.session_id {
+            if let Some(session) = self.sessions.get(&session_id) {
+                if session.user_id != input.user_id {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "agent_execution_ledger.session_id",
+                            reason: "session_id must belong to user_id",
+                        },
+                    ));
+                }
+            }
+        }
+        if input.thread_key.trim().is_empty() || input.thread_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.thread_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        if input.finder_packet_kind.trim().is_empty()
+            || input.finder_packet_kind.len() > 64
+            || !is_token_safe_ascii(&input.finder_packet_kind)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.finder_packet_kind",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if input.execution_stage.trim().is_empty()
+            || input.execution_stage.len() > 64
+            || !is_token_safe_ascii(&input.execution_stage)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.execution_stage",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if let Some(simulation_id) = &input.simulation_id {
+            if simulation_id.trim().is_empty()
+                || simulation_id.len() > 128
+                || !is_token_safe_ascii(simulation_id)
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "agent_execution_ledger.simulation_id",
+                        reason: "must be token-safe ASCII and <= 128 chars when present",
+                    },
+                ));
+            }
+        }
+        if input.reason_code.0 == 0 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.reason_code",
+                    reason: "must be non-zero",
+                },
+            ));
+        }
+        if let Some(idempotency_key) = &input.idempotency_key {
+            validate_builder_idempotency_key("agent_execution_ledger.idempotency_key", idempotency_key)?;
+            let idx = (
+                input.tenant_id.clone(),
+                input.user_id.clone(),
+                input.thread_key.clone(),
+                idempotency_key.clone(),
+            );
+            if let Some(existing_row_id) = self.agent_execution_idempotency_index.get(&idx) {
+                return Ok(*existing_row_id);
+            }
+        }
+
+        let row_id = self.next_agent_execution_row_id;
+        self.next_agent_execution_row_id = self.next_agent_execution_row_id.saturating_add(1);
+        let row = AgentExecutionLedgerRow {
+            schema_version: SchemaVersion(1),
+            row_id,
+            created_at: input.created_at,
+            tenant_id: input.tenant_id.clone(),
+            user_id: input.user_id.clone(),
+            session_id: input.session_id,
+            correlation_id: input.correlation_id,
+            turn_id: input.turn_id,
+            thread_key: input.thread_key.clone(),
+            finder_packet_kind: input.finder_packet_kind.clone(),
+            execution_stage: input.execution_stage.clone(),
+            simulation_id: input.simulation_id.clone(),
+            reason_code: input.reason_code,
+            dev_intake_audit_event_id: input.dev_intake_audit_event_id,
+            idempotency_key: input.idempotency_key.clone(),
+        };
+        self.apply_agent_execution_row_to_current(&row);
+        self.agent_execution_ledger.push(row);
+        if let Some(idempotency_key) = &input.idempotency_key {
+            self.agent_execution_idempotency_index.insert(
+                (
+                    input.tenant_id,
+                    input.user_id,
+                    input.thread_key,
+                    idempotency_key.clone(),
+                ),
+                row_id,
+            );
+        }
+        Ok(row_id)
+    }
+
+    pub fn agent_execution_ledger_rows(&self) -> &[AgentExecutionLedgerRow] {
+        &self.agent_execution_ledger
+    }
+
+    pub fn agent_execution_current_rows(
+        &self,
+    ) -> &BTreeMap<(String, UserId, String), AgentExecutionCurrentRecord> {
+        &self.agent_execution_current
+    }
+
+    pub fn agent_execution_current_row(
+        &self,
+        tenant_id: &str,
+        user_id: &UserId,
+        thread_key: &str,
+    ) -> Option<&AgentExecutionCurrentRecord> {
+        self.agent_execution_current
+            .get(&(tenant_id.to_string(), user_id.clone(), thread_key.to_string()))
+    }
+
+    pub fn agent_execution_ledger_rows_for_correlation(
+        &self,
+        correlation_id: CorrelationId,
+    ) -> Vec<&AgentExecutionLedgerRow> {
+        self.agent_execution_ledger
+            .iter()
+            .filter(|row| row.correlation_id == correlation_id)
+            .collect()
+    }
+
+    pub fn rebuild_agent_execution_current_from_ledger(&mut self) -> Result<(), StorageError> {
+        self.agent_execution_current.clear();
+        self.agent_execution_idempotency_index.clear();
+
+        let mut ordered = self.agent_execution_ledger.clone();
+        ordered.sort_by_key(|row| row.row_id);
+        for row in ordered {
+            self.apply_agent_execution_row_to_current(&row);
+            if let Some(idempotency_key) = row.idempotency_key.clone() {
+                validate_builder_idempotency_key(
+                    "agent_execution_ledger.idempotency_key",
+                    &idempotency_key,
+                )?;
+                let idx = (
+                    row.tenant_id.clone(),
+                    row.user_id.clone(),
+                    row.thread_key.clone(),
+                    idempotency_key,
+                );
+                if let Some(existing_row_id) = self.agent_execution_idempotency_index.get(&idx) {
+                    if *existing_row_id != row.row_id {
+                        return Err(StorageError::DuplicateKey {
+                            table: "agent_execution_ledger.idempotency_key",
+                            key: format!("{idx:?}"),
+                        });
+                    }
+                }
+                self.agent_execution_idempotency_index.insert(idx, row.row_id);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn attempt_overwrite_agent_execution_ledger_row(
+        &mut self,
+        _row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "agent_execution_ledger",
         })
     }
 
