@@ -77,7 +77,7 @@ The core should be an extension of existing PH1 flow, not a new autonomous engin
   - `crates/selene_os/src/ph1builder.rs`
   - `docs/ECM/PH1_OS.md` (`PH1.FEEDBACK -> PH1.LEARN -> PH1.PAE -> PH1.BUILDER`).
 - Existing review/governance status:
-  - `PH1.REVIEW` standalone runtime is merged into `PH1.GOV + PH1.ACCESS` (no separate runtime owner).
+  - standalone review runtime is merged into `PH1.GOV + PH1.ACCESS` (no separate runtime owner).
   - source: `docs/33_ENGINE_REVIEW_TRACKER.md`.
 
 ### Important current gap (must be added)
@@ -126,7 +126,7 @@ No autonomy, no bypass of access/confirm/simulation gates.
 - LLM-assisted understanding path (assist-only):
   - `PH1.D intent/clarify refinement output -> Simulation Finder Core ranking input`.
 - Governance/review boundary:
-  - runtime review routes through `PH1.GOV + PH1.ACCESS` (no standalone PH1.REVIEW runtime).
+  - runtime review routes through `PH1.GOV + PH1.ACCESS` (no standalone review runtime).
 
 ## 4) Output packet specs
 
