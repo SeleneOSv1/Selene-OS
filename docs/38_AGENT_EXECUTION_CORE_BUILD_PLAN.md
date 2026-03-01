@@ -66,7 +66,7 @@ Input to Execution Core from Simulation Finder is exactly one packet per cycle:
 - `MissingSimulationPacket`
 
 Execution Core required behavior by packet type:
-- `SimulationMatchPacket` -> consume Finder top-1 candidate as-is, build deterministic single-step `AgentExecutionPlan`, continue through confirm/access/ACTIVE checks.
+- `SimulationMatchPacket` -> consume Finder top-1 candidate as-is; in Phase 1 build deterministic single-step `AgentExecutionPlan`, and in Phase 2 (`Run A2+`) build deterministic multi-step plan via template registry; continue through confirm/access/ACTIVE checks.
 - `ClarifyPacket` -> surface exactly one clarify question and stop dispatch path.
 - `RefusePacket` -> return deterministic refusal response and stop dispatch path.
 - `MissingSimulationPacket` -> route to Dev Intake fallback path (no dispatch attempt).
@@ -249,12 +249,19 @@ Final gate law:
 
 ## 9. Idempotency
 
-Each step must:
-- Derive deterministic idempotency key:
+Canonical source of truth:
+- Section `19.1` (`Canonical idempotency key recipes`) is authoritative for all AEC write paths.
+
+Phase 1 compatibility key:
+- single-step dispatch may use the compatibility projection key
   - `correlation_id + step_id + simulation_id + required_fields_fingerprint + policy_snapshot_version`
-- Use append-only ledger.
+- this compatibility key must map to the canonical `agent_step_execute:*` recipe shape in `19.1`.
+
+Rules:
+- Use append-only ledgers.
 - Be retry-safe.
 - Prevent duplicate side effects.
+- Do not introduce additional idempotency recipes outside Section `19.1`.
 
 Acceptance tests required.
 
@@ -273,20 +280,31 @@ Audit chain must be reconstructable.
 
 ### 10.1 PH1.F storage contracts (DB-truth)
 
-Design-target tables:
-- `agent_execution_ledger` (append-only step events)
-- `agent_execution_current` (projection per plan/step)
+Canonical multi-step tables (authoritative):
+- `agent_plan_ledger` (append-only plan lifecycle events)
+- `agent_plan_current` (projection per plan)
+- `agent_step_ledger` (append-only step lifecycle/execution events)
+- `agent_step_current` (projection per plan/step)
+- `agent_idempotency_index` (idempotency claims across plan/step write paths)
 - `agent_execution_confirmation_ledger`
 - `agent_execution_access_decision_ledger`
 
+Compatibility note (single-step legacy shape):
+- `agent_execution_ledger` / `agent_execution_current` may exist as compatibility projections.
+- Once `A1` lands, they are derived from `agent_step_*` and must not be dual-write sources of truth.
+
 Design-target indexes:
-- unique idempotency: `(tenant_id, correlation_id, step_id, idempotency_key)`
-- plan projection lookup: `(tenant_id, plan_id, step_id)`
+- unique plan idempotency: `(tenant_id, plan_id, idempotency_key)`
+- unique step idempotency: `(tenant_id, plan_id, step_id, idempotency_key)`
+- unique global idempotency: `(tenant_id, idempotency_key)`
+- plan projection lookup: `(tenant_id, plan_id, updated_at)`
+- step projection lookup: `(tenant_id, plan_id, step_id, updated_at)`
 - replay lookup: `(tenant_id, correlation_id, created_at)`
 
 Replay law:
-- `agent_execution_current` must fully rebuild from `agent_execution_ledger`.
-- Any step transition missing ledger evidence is invalid (`no silent transitions`).
+- `agent_plan_current` must fully rebuild from `agent_plan_ledger`.
+- `agent_step_current` must fully rebuild from `agent_step_ledger`.
+- Any plan/step transition missing ledger evidence is invalid (`no silent transitions`).
 
 ## 11. Failure Modes
 
@@ -440,3 +458,212 @@ Agent Execution Core:
 
 Implement Phase 1 (single-step agent) first.
 Do not implement multi-step until single-step is stable.
+
+## 19. Multi-step Agent Expansion (Do-it-all Tasks)
+
+Goal:
+- Enable Agent Execution Core to run multi-step plans deterministically:
+  - `plan -> step ledger -> execute step-by-step via simulations -> pause/clarify/confirm -> resume -> complete`.
+
+Hard rules:
+- Still simulation-gated per step.
+- Confirm required per impactful step.
+- Full idempotency per step.
+- Persist plan + step state in `PH1.F`.
+- Replayable.
+
+### 19.0 Canonical lifecycle states and transitions (authoritative)
+
+Plan states (`agent_plan_current.status`):
+- `PLAN_CREATED`
+- `PLAN_WAITING_CONFIRM`
+- `PLAN_WAITING_CLARIFY`
+- `PLAN_READY`
+- `PLAN_IN_PROGRESS`
+- `PLAN_PAUSED`
+- `PLAN_COMPLETED`
+- `PLAN_FAILED`
+- `PLAN_CANCELLED`
+
+Allowed plan transitions only:
+- `PLAN_CREATED -> PLAN_WAITING_CONFIRM | PLAN_WAITING_CLARIFY | PLAN_READY`
+- `PLAN_WAITING_CONFIRM -> PLAN_READY | PLAN_CANCELLED`
+- `PLAN_WAITING_CLARIFY -> PLAN_READY | PLAN_CANCELLED`
+- `PLAN_READY -> PLAN_IN_PROGRESS`
+- `PLAN_IN_PROGRESS -> PLAN_PAUSED | PLAN_COMPLETED | PLAN_FAILED`
+- `PLAN_PAUSED -> PLAN_IN_PROGRESS | PLAN_CANCELLED`
+
+Terminal plan states:
+- `PLAN_COMPLETED`
+- `PLAN_FAILED`
+- `PLAN_CANCELLED`
+
+Step states (`agent_step_current.status`):
+- `STEP_PENDING`
+- `STEP_WAITING_CONFIRM`
+- `STEP_WAITING_CLARIFY`
+- `STEP_READY`
+- `STEP_EXECUTING`
+- `STEP_SUCCEEDED`
+- `STEP_FAILED_RETRYABLE`
+- `STEP_FAILED_TERMINAL`
+- `STEP_SKIPPED`
+
+Allowed step transitions only:
+- `STEP_PENDING -> STEP_WAITING_CONFIRM | STEP_WAITING_CLARIFY | STEP_READY`
+- `STEP_WAITING_CONFIRM -> STEP_READY | STEP_FAILED_TERMINAL`
+- `STEP_WAITING_CLARIFY -> STEP_READY | STEP_FAILED_TERMINAL`
+- `STEP_READY -> STEP_EXECUTING`
+- `STEP_EXECUTING -> STEP_SUCCEEDED | STEP_FAILED_RETRYABLE | STEP_FAILED_TERMINAL`
+- `STEP_FAILED_RETRYABLE -> STEP_READY | STEP_FAILED_TERMINAL`
+
+Terminal step states:
+- `STEP_SUCCEEDED`
+- `STEP_FAILED_TERMINAL`
+- `STEP_SKIPPED`
+
+No-silent-transition law:
+- Every status transition above requires one append-only ledger row with `from_status`, `to_status`, and `transition_reason_code`.
+
+### 19.1 Canonical idempotency key recipes (authoritative)
+
+Every multi-step write path must use one deterministic idempotency recipe:
+- Plan create:
+  - `agent_plan_create:{tenant_id}:{correlation_id}:{finder_packet_hash}:{plan_template_version}`
+- Plan transition:
+  - `agent_plan_transition:{tenant_id}:{plan_id}:{from_status}:{to_status}:{event_seq}`
+- Step create/materialize:
+  - `agent_step_create:{tenant_id}:{plan_id}:{step_id}:{simulation_id}:{required_fields_fingerprint}`
+- Step execute attempt:
+  - `agent_step_execute:{tenant_id}:{plan_id}:{step_id}:{attempt_no}:{simulation_id}:{required_fields_fingerprint}:{policy_snapshot_version}`
+- Step resume:
+  - `agent_step_resume:{tenant_id}:{plan_id}:{step_id}:{resume_token}`
+- Step complete/finalize:
+  - `agent_step_finalize:{tenant_id}:{plan_id}:{step_id}:{terminal_status}:{outcome_hash}`
+- Plan finalize:
+  - `agent_plan_finalize:{tenant_id}:{plan_id}:{terminal_status}`
+
+Uniqueness/index law:
+- `agent_idempotency_index` must enforce uniqueness on `(tenant_id, idempotency_key)`.
+- Duplicate key replay must return the original proof ref and produce no new side effect.
+
+### Run A1 — DB truth for Agent plans + step state
+
+Files:
+- `docs/03_BUILD_LEDGER.md`
+- `crates/selene_storage/src/ph1f.rs`
+- `crates/selene_storage/src/repo.rs`
+- `crates/selene_storage/tests/ph1_agent/db_wiring.rs` (new)
+- `docs/DB_WIRING/PH1_AGENT.md` (new)
+- `docs/DB_WIRING/migrations/00xx_ph1_agent_plan_tables.sql` (new, use next number)
+
+Tables (design target):
+- `agent_plan_ledger` / `agent_plan_current`
+- `agent_step_ledger` / `agent_step_current`
+- `agent_idempotency_index`
+- `agent_execution_confirmation_ledger`
+- `agent_execution_access_decision_ledger`
+
+Tests to add:
+- `at_agent_db_01_plan_roundtrip_append_only_and_idempotent`
+- `at_agent_db_02_step_roundtrip_append_only_and_idempotent`
+- `at_agent_db_03_replay_rebuild_equals_current_projection`
+- `at_agent_db_04_step_idempotency_prevents_duplicate_commit`
+
+Commands:
+- `cargo test -p selene_storage at_agent_db_0 -- --nocapture`
+- `bash scripts/check_ph1_readiness_strict.sh`
+- `bash scripts/check_agent_sim_finder_core_acceptance.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_agent_execution_core.sh` (required once script exists; design-target pre-lock)
+
+### Run A2 — Plan builder (deterministic) + no execution yet
+
+Files:
+- `crates/selene_os/src/app_ingress.rs`
+- `crates/selene_engines/src/ph1simfinder.rs` (Finder output consumption)
+- `crates/selene_kernel_contracts/src/ph1agent.rs` (if new plan structs need contracts)
+- `docs/03_BUILD_LEDGER.md`
+
+Behavior:
+- Create `AgentExecutionPlan` with ordered steps from Finder output (initially 2-step demo).
+- Persist plan to `PH1.F`.
+- Return `Plan created` + next step required (`confirm`/`clarify`).
+- Deterministic plan construction is AEC-owned only and uses a template-registry artifact:
+  - select `plan_template_ref` by matched simulation family from Finder `SimulationMatchPacket`.
+  - step ordering = template `step_ordinal` ascending.
+  - tie-break = `step_template_id` lexicographic ascending.
+  - compute `plan_hash = sha256(finder_packet_hash + plan_template_ref + ordered_step_fingerprints + policy_snapshot_ref)`.
+  - identical inputs must yield identical `plan_hash` and step order.
+
+Tests to add:
+- `at_agent_plan_01_plan_created_persisted_and_returns_next_step`
+- `at_agent_plan_02_plan_is_deterministic_for_same_inputs`
+- `at_agent_plan_03_missing_sim_emits_dev_intake_no_plan`
+
+Commands:
+- `cargo test -p selene_os at_agent_plan_0 -- --nocapture`
+- `bash scripts/check_ph1_readiness_strict.sh`
+- `bash scripts/check_agent_sim_finder_core_acceptance.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_agent_execution_core.sh` (required once script exists; design-target pre-lock)
+
+### Run A3 — Step executor loop (single-step execution with resume)
+
+Files:
+- `crates/selene_os/src/app_ingress.rs`
+- `crates/selene_os/src/simulation_executor.rs`
+- `crates/selene_storage/src/ph1f.rs`
+- `docs/03_BUILD_LEDGER.md`
+
+Behavior:
+- Execute exactly one step per turn (Phase-2 safe mode).
+- Update `step_current` and append `step_ledger`.
+- Pause on `confirm`/`clarify`.
+- Resume based on `plan_id + step_id`.
+- Enforce per-step access outcomes deterministically: `ALLOW` executes, `DENY` fail-closed, `ESCALATE` fail-closed with `ACCESS_AP_REQUIRED`.
+- Enforce per-step ACTIVE simulation proof before dispatch.
+
+Tests to add:
+- `at_agent_exec_01_executes_step1_persists_outcome_and_pauses`
+- `at_agent_exec_02_resume_executes_step2_and_completes_plan`
+- `at_agent_exec_03_confirm_required_blocks_until_yes`
+- `at_agent_exec_04_step_retry_is_idempotent_no_double_side_effect`
+- `at_agent_exec_05_double_resume_same_step_is_single_commit`
+- `at_agent_exec_06_parallel_turn_collision_same_plan_step_fails_closed`
+- `at_agent_exec_07_step_access_allow_executes`
+- `at_agent_exec_08_step_access_deny_fails_closed`
+- `at_agent_exec_09_step_access_escalate_fails_closed_ap_required`
+- `at_agent_exec_10_step_inactive_sim_fails_closed_with_proof`
+
+Commands:
+- `cargo test -p selene_os at_agent_exec_0 -- --nocapture`
+- `bash scripts/check_ph1_readiness_strict.sh`
+- `bash scripts/check_agent_sim_finder_core_acceptance.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_agent_execution_core.sh` (required once script exists; design-target pre-lock)
+
+### Run A4 — Multi-step pizza demo as missing-sim flow + later capability hook
+
+Files:
+- `crates/selene_os/src/app_ingress.rs`
+- `crates/selene_storage/src/ph1f.rs`
+- `docs/03_BUILD_LEDGER.md`
+
+Behavior:
+- `order pizza` produces `MissingSimulationPacket` -> Dev Intake row only when pizza capability has neither `Active` nor `Draft` simulation in catalog (must follow Finder `Active -> Draft -> None` rule).
+- If pizza simulation exists in `Draft`, AEC must relay Finder `RefusePacket` (`SIM_FINDER_SIMULATION_INACTIVE`) and must not create Dev Intake row.
+- When a pizza simulation exists later, plan builder can use it only if:
+  - catalog status is `Active`,
+  - `catalog_snapshot_ref` proves `Active` at plan-build time,
+  - builder activation proof ref is present (`builder_activation_proof_ref`).
+
+Tests to add:
+- `at_agent_demo_01_order_pizza_routes_to_dev_intake`
+- `at_agent_demo_02_dev_intake_dedupe_fingerprint_is_stable`
+- `at_agent_demo_03_pizza_plan_build_rejected_when_sim_not_active`
+- `at_agent_demo_04_pizza_plan_build_allows_only_with_active_proof`
+- `at_agent_demo_05_order_pizza_draft_routes_to_refuse_not_missing_sim`
+
+Commands:
+- `cargo test -p selene_os at_agent_demo_0 -- --nocapture`
+- `bash scripts/check_ph1_readiness_strict.sh`
+- `bash scripts/check_agent_sim_finder_core_acceptance.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_agent_execution_core.sh` (required once script exists; design-target pre-lock)
