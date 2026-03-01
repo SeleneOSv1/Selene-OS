@@ -46,6 +46,7 @@ pub mod ph1quota;
 pub mod ph1rll;
 pub mod ph1sched;
 pub mod ph1search;
+pub mod ph1simfinder;
 pub mod ph1srl;
 pub mod ph1summary;
 pub mod ph1tenant;

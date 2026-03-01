@@ -33,7 +33,7 @@ The Agent Core must NOT:
 - Trigger `AUTO_MICRO` actions.
 - Run unbounded loops.
 - Execute side effects without ACTIVE simulation.
-- Mutate PH1.F state directly.
+- Mutate PH1.F business-state tables directly (audit/proof appends via governed storage APIs are allowed).
 
 Agent is orchestration only.
 
@@ -46,7 +46,16 @@ Agent must:
 - Never construct raw simulation IDs manually.
 - Always dispatch through `SimulationExecutor`.
 
-### 2.1 Interfaces (Explicit Contracts)
+### 2.1 Runtime ownership boundary (single source of truth)
+
+- PH1.X runtime is the turn-level host that invokes Finder and Execution Core.
+- Finder owns simulation candidate ranking + terminal packet emission.
+- Execution Core owns plan construction, confirm/access/ACTIVE precheck orchestration, and dispatch envelope construction.
+- SimulationExecutor owns side effects, execution commits, and final authoritative access/ACTIVE hard-gate enforcement.
+
+No component may duplicate ranking authority or bypass this boundary.
+
+### 2.2 Interfaces (Explicit Contracts)
 
 #### 37_SIM_FINDER -> 38_AGENT_EXECUTION_CORE
 
@@ -166,6 +175,12 @@ Fields:
 - `reason_code`
 - `user_visible_text`
 
+### 4.5 Output ownership boundary
+
+- `user_visible_text` is an execution outcome payload only.
+- Transcript persistence/display ownership remains outside AEC (adapter transcript path + PH1.F conversation ledger).
+- AEC must not write transcript rows directly.
+
 ## 5. Deterministic Planning Rules
 
 Agent must:
@@ -218,7 +233,7 @@ No confirm, no dispatch.
 
 ## 8. Access + ACTIVE Enforcement
 
-Before dispatch:
+Before dispatch (precheck layer):
 - Access engine lookup (per-user instance only).
 - Ensure action is allowed or requires AP.
 - Ensure simulation is ACTIVE for tenant.
@@ -228,6 +243,9 @@ Fail closed if:
 - `SIMULATION_NOT_ACTIVE`
 - `ACCESS_SCOPE_VIOLATION`
 - `ACCESS_AP_REQUIRED`
+
+Final gate law:
+- SimulationExecutor must re-enforce access + ACTIVE checks as final authoritative hard gate before side effects.
 
 ## 9. Idempotency
 
@@ -315,9 +333,15 @@ Deterministic multi-step replay rule:
 Add:
 - `scripts/check_agent_execution_core.sh`
 
+Implementation note:
+- `scripts/check_agent_execution_core.sh` is a design-target script; until introduced, milestone acceptance tests and readiness checks remain the source of truth.
+
+Production lock condition:
+- Execution Core is not production-locked until `scripts/check_agent_execution_core.sh` exists and passes in CI.
+
 Fail build if:
 - Agent bypasses `SimulationExecutor`.
-- Agent writes to PH1.F directly.
+- Agent writes business-state PH1.F tables directly outside governed execution/audit append paths.
 - Agent dispatches tool as simulation.
 - Missing rollback reference on impactful simulation.
 - `MissingSimulationPacket` path attempts dispatch anyway.
@@ -337,6 +361,17 @@ Performance constraints are advisory to execution and must never bypass:
 - access gates
 - ACTIVE simulation gates
 - audit/idempotency requirements
+
+### 14.2 Execution SLO Gates (production lock)
+
+Production SLO targets (release-blocking once enabled in CI):
+- `agent_dispatch_p95_ms <= 1200`
+- `agent_dispatch_p99_ms <= 2500`
+- `execution_error_rate <= 0.5%` (rolling 24h)
+- `idempotency_duplicate_side_effect_rate = 0`
+
+Fail-closed gate:
+- If any SLO breaches threshold, release remains blocked until corrected or explicitly builder-approved with a time-bounded waiver.
 
 ## 15. Risk Controls
 

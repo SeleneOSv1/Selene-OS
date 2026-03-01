@@ -101,7 +101,15 @@ Add a bounded module inside PH1.NLP/PH1.X boundary:
 
 No autonomy, no bypass of access/confirm/simulation gates.
 
-### 3.1 Required inputs (canonical)
+### 3.1 Authority boundary (single source of truth)
+
+- Finder owns: candidate generation, deterministic ranking, and terminal packet emission.
+- Execution Core/PH1.X owns: clarify relay state, confirm flow, access + ACTIVE gate orchestration, and dispatch orchestration.
+- SimulationExecutor owns: simulation execution and side effects.
+
+No layer may duplicate or override another layer's authority.
+
+### 3.2 Required inputs (canonical)
 
 - Transcript (`PH1.C` output; noisy input tolerated).
 - STT quality metadata and optional N-best/probe artifacts when available from upstream STT routing.
@@ -117,7 +125,7 @@ No autonomy, no bypass of access/confirm/simulation gates.
 - LLM assist candidates from PH1.D (assist-only, bounded).
 - Gold outputs (confirmed mappings/correction pairs).
 
-### 3.2 Wiring path (design target)
+### 3.3 Wiring path (design target)
 
 - Voice-first path:
   - `PH1.C -> PH1.LANG -> PH1.SRL -> PH1.NLP -> Simulation Finder Core -> PH1.X -> simulation_executor`.
@@ -129,6 +137,10 @@ No autonomy, no bypass of access/confirm/simulation gates.
   - runtime review routes through `PH1.GOV + PH1.ACCESS` (no standalone review runtime).
 
 ## 4) Output packet specs
+
+Reason code canonical rule:
+- Section `6) Thresholds and reason codes` is the canonical registry.
+- Per-packet reason code lists in this section are allowed subsets only.
 
 ## 4.1 SimulationMatchPacket
 
@@ -185,6 +197,7 @@ Allowed reason codes:
 - `SIM_FINDER_CLARIFY_MISSING_FIELD`
 - `SIM_FINDER_CLARIFY_AMBIGUOUS`
 - `SIM_FINDER_CLARIFY_LOW_CONFIDENCE_TIE`
+- `SIM_FINDER_ABSTAIN_LOW_CALIBRATED_CONFIDENCE`
 
 Idempotency key recipe:
 - `sim_clarify:{tenant_id}:{user_id}:{correlation_id}:{turn_id}:{missing_field}:{attempt_index}`
@@ -192,9 +205,10 @@ Idempotency key recipe:
 ## 4.3 RefusePacket
 
 Required fields:
-- `reason_code` (`ACCESS_DENIED|ACCESS_AP_REQUIRED|UNSAFE|AMBIGUOUS|POLICY_BLOCKED|SIM_INACTIVE`)
+- `reason_code` (`SIM_FINDER_REFUSE_ACCESS_DENIED|SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED|SIM_FINDER_REFUSE_UNSAFE_REQUEST|SIM_FINDER_REFUSE_AMBIGUOUS|SIM_FINDER_REFUSE_POLICY_BLOCKED|SIM_FINDER_SIMULATION_INACTIVE|SIM_FINDER_REPLAY_ARTIFACT_MISSING`)
 - `message`
 - `evidence_refs[]`
+- `existing_draft_ref` (nullable; required when `reason_code=SIM_FINDER_SIMULATION_INACTIVE`)
 
 ## 4.4 MissingSimulationPacket (Dev Intake)
 
@@ -225,7 +239,7 @@ Schema (`MissingSimulationPacket.v1`) required fields:
 - `active_check_proof_ref`
 - `draft_check_proof_ref`
 - `no_match_proof_ref`
-- `existing_draft_ref` (nullable; required when `Draft` exists)
+- `existing_draft_ref` (nullable; must be `null` for canonical `MissingSimulationPacket` flow because `Draft` routes to `RefusePacket`)
 - `idempotency_key`
 - `reason_code`
 
@@ -302,6 +316,12 @@ Scoring (basis points, deterministic):
 - `gold_match_bonus_bp`
 - penalties: ambiguity, contradictory fields, policy mismatch.
 
+Canonical `confidence_score_bp` formula (integer math):
+- `penalty_bp_total = ambiguity_penalty_bp + contradictory_field_penalty_bp + policy_mismatch_penalty_bp`
+- `raw_score_bp = (35*intent_confidence_bp + 20*required_field_coverage_bp + 10*evidence_coverage_bp + 10*catalog_status_bp + 10*context_alignment_bp + 5*ocr_alignment_bp + 5*llm_assist_alignment_bp + 5*gold_match_bonus_bp) / 100`
+- `confidence_score_bp = clamp(raw_score_bp - penalty_bp_total, 0, 10000)`
+- rounding mode: floor integer division only.
+
 Selection rule:
 - Emit top-1 only.
 - If top-1 below threshold, or top-1/top-2 margin below tie threshold -> `ClarifyPacket` (one question).
@@ -330,17 +350,23 @@ Initial deterministic thresholds (design target):
 
 Reason code family (design target):
 - `SIM_FINDER_MATCH_OK`
+- `SIM_FINDER_MATCH_OK_GOLD_BOOSTED`
+- `SIM_FINDER_MATCH_OK_CATALOG_ACTIVE`
 - `SIM_FINDER_CLARIFY_MISSING_FIELD`
 - `SIM_FINDER_CLARIFY_AMBIGUOUS`
+- `SIM_FINDER_CLARIFY_LOW_CONFIDENCE_TIE`
 - `SIM_FINDER_REFUSE_ACCESS_DENIED`
 - `SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED`
 - `SIM_FINDER_REFUSE_UNSAFE_REQUEST`
+- `SIM_FINDER_REFUSE_AMBIGUOUS`
 - `SIM_FINDER_REFUSE_POLICY_BLOCKED`
 - `SIM_FINDER_SIMULATION_INACTIVE`
 - `SIM_FINDER_REPLAY_ARTIFACT_MISSING`
 - `SIM_FINDER_ABSTAIN_LOW_CALIBRATED_CONFIDENCE`
 - `SIM_FINDER_MISSING_SIMULATION`
 - `SIM_FINDER_MISSING_SIMULATION_DECLINED_LOW_VALUE_HIGH_RISK`
+- `SIM_FINDER_MISSING_SIMULATION_RATE_LIMITED`
+- `SIM_FINDER_MISSING_SIMULATION_DAILY_CAP_REACHED`
 
 ### 6.1 Clarify Quality Discipline (Sharper One-Question Strategy)
 
@@ -355,7 +381,8 @@ Clarify selection must be deterministic and single-question:
 ### 6.2 Deterministic entropy formula for clarify field selection
 
 For each missing field `f`, compute:
-- `entropy_score_bp(f) = 0.5 * domain_cardinality_bp(f) + 0.3 * candidate_split_bp(f) + 0.2 * downstream_risk_bp(f)`
+- `entropy_score_bp(f) = (50*domain_cardinality_bp(f) + 30*candidate_split_bp(f) + 20*downstream_risk_bp(f)) / 100`
+- rounding mode: floor integer division only.
 
 Selection order:
 1. Highest `entropy_score_bp(f)`
@@ -380,8 +407,9 @@ Finder core is pre-dispatch only.
 
 Gate order remains:
 1. PH1.NLP/PH1.X produce packet
-2. PH1.X confirmation path (unchanged)
-3. Simulation executor enforces access + active simulation guards (unchanged)
+2. PH1.X/Execution Core confirmation path (unchanged)
+3. Execution Core performs pre-dispatch access + active simulation precheck.
+4. Simulation executor performs final authoritative access + active simulation hard gate.
 
 If catalog status is not `Active`, finder does not execute; it emits `MissingSimulationPacket` or `RefusePacket` based on policy.
 
@@ -390,7 +418,7 @@ If catalog status is not `Active`, finder does not execute; it emits `MissingSim
 Before emitting `MissingSimulationPacket`, finder must run this exact deterministic check order:
 1. Check `simulation_catalog_current` for candidate with `status=Active`.
 2. If none, check same candidate family with `status=Draft`.
-3. If `Draft` exists, return deterministic fail-closed message (`not active yet`) and optionally create intake only as `link-to-existing-draft` (no duplicate capability request).
+3. If `Draft` exists, emit `RefusePacket` with reason `SIM_FINDER_SIMULATION_INACTIVE`, include `existing_draft_ref`, and do not create a new `MissingSimulationPacket`.
 4. Only when neither `Active` nor `Draft` exists may finder emit `MissingSimulationPacket` with reason `SIM_FINDER_MISSING_SIMULATION`.
 
 This order is non-optional and must be auditable in packet evidence refs.
@@ -411,7 +439,7 @@ Promotion path:
 
 ## 9) Dev Intake workflow
 
-When no match exists after clarification:
+When no matching simulation exists after clarification and deterministic `ACTIVE -> DRAFT -> NONE` proof order:
 1. Emit `MissingSimulationPacket`.
 2. Persist intake ledger row (append-only).
 3. Update current projection row deterministically.
@@ -460,12 +488,13 @@ Replay rule:
 Input components (all basis points `0..10000`):
 - `frequency_bp`: normalized ask frequency for equivalent dedupe fingerprint window.
 - `value_bp`: estimated business impact/time saved class.
+- `estimated_roi_score_bp`: deterministic ROI estimate for implementation payoff.
 - `feasibility_bp`: integration/runtime feasibility estimate.
 - `scope_bp`: tenant-only vs multi-tenant/generalizability score.
 - `risk_bp`: money/permission/external-send/safety risk estimate.
 
 Deterministic formula (fixed):
-- `worthiness_raw_bp = (30*frequency_bp + 30*value_bp + 20*feasibility_bp + 20*scope_bp) / 100`
+- `worthiness_raw_bp = (25*frequency_bp + 25*value_bp + 15*estimated_roi_score_bp + 20*feasibility_bp + 15*scope_bp) / 100`
 - `risk_penalty_bp = risk_bp / 2`
 - `worthiness_score_bp = max(0, worthiness_raw_bp - risk_penalty_bp)`
 
@@ -601,6 +630,12 @@ Required red-team tests:
 - assist-influenced decisions omit artifact fingerprints
 - calibrated abstention thresholds are missing from policy snapshot
 - replay from persisted refs does not reproduce the terminal packet
+
+Implementation note:
+- `check_agent_sim_finder_core_acceptance.sh` is a design-target script for `M8`; before `M8`, milestone proof commands remain the source of truth.
+
+Production lock condition:
+- Finder is not production-locked until `check_agent_sim_finder_core_acceptance.sh` exists and passes in CI.
 
 ## 13) Non-goals
 

@@ -59,6 +59,7 @@ pub mod ph1sched;
 pub mod ph1search;
 pub mod ph1selfheal;
 pub mod ph1simcat;
+pub mod ph1simfinder;
 pub mod ph1srl;
 pub mod ph1summary;
 pub mod ph1tenant;
