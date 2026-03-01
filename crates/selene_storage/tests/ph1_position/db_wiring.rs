@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1j::DeviceId;
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, PrefilledContext};
 use selene_kernel_contracts::ph1onb::{ProofType, SenderVerifyDecision};
 use selene_kernel_contracts::ph1position::{
@@ -15,7 +15,9 @@ use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, StorageError,
     TenantCompanyLifecycleState, TenantCompanyRecord,
 };
-use selene_storage::repo::{Ph1LinkRepo, Ph1OnbRepo, Ph1PositionRepo, Ph1fFoundationRepo};
+use selene_storage::repo::{
+    Ph1LinkRepo, Ph1OnbRepo, Ph1PersonaRepo, Ph1PositionRepo, Ph1fFoundationRepo,
+};
 
 fn user(id: &str) -> UserId {
     UserId::new(id).unwrap()
@@ -646,6 +648,28 @@ fn at_position_db_06_onb_read_only_schema_boundary() {
         actor.clone(),
         SenderVerifyDecision::Confirm,
         "onb-verify-1".to_string(),
+    )
+    .unwrap();
+    let emo_persona_lock_audit_event_id = s
+        .ph1persona_profile_commit_row(
+            MonotonicTimeNs(611),
+            "tenant_a".to_string(),
+            CorrelationId(611),
+            TurnId(611),
+            None,
+            actor.clone(),
+            device_a.clone(),
+            "style_supportive".to_string(),
+            "voice_default".to_string(),
+            "prefs:onb-position-1".to_string(),
+            ReasonCodeId(0x5900_0010),
+            "onb-emo-lock-1".to_string(),
+        )
+        .unwrap();
+    s.ph1onb_emo_persona_lock_commit(
+        MonotonicTimeNs(611),
+        session_1.onboarding_session_id.clone(),
+        emo_persona_lock_audit_event_id,
     )
     .unwrap();
 
