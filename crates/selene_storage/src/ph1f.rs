@@ -1505,7 +1505,8 @@ pub struct Ph1fStore {
     // Primary-key uniqueness: bcast_wait_policy_event_id -> event_idx.
     bcast_wait_policy_event_lookup: BTreeMap<u64, usize>,
     bcast_urgent_followup_policy_ledger: Vec<BcastUrgentFollowupPolicyLedgerRow>,
-    bcast_urgent_followup_policy_current: BTreeMap<TenantId, BcastUrgentFollowupPolicyCurrentRecord>,
+    bcast_urgent_followup_policy_current:
+        BTreeMap<TenantId, BcastUrgentFollowupPolicyCurrentRecord>,
     // Idempotency: (tenant_id, idempotency_key) -> bcast_urgent_followup_policy_event_id.
     bcast_urgent_followup_policy_idempotency_index: BTreeMap<(TenantId, String), u64>,
     // Primary-key uniqueness: bcast_urgent_followup_policy_event_id -> event_idx.
@@ -6810,7 +6811,10 @@ impl Ph1fStore {
         ordered.sort_by_key(|row| row.bcast_policy_event_id);
         let mut tenant_policy_versions: BTreeMap<TenantId, u64> = BTreeMap::new();
         for row in ordered {
-            validate_comms_idempotency_key("bcast_policy_ledger.idempotency_key", &row.idempotency_key)?;
+            validate_comms_idempotency_key(
+                "bcast_policy_ledger.idempotency_key",
+                &row.idempotency_key,
+            )?;
             if row.non_urgent_wait_seconds == 0 {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -6867,8 +6871,10 @@ impl Ph1fStore {
                 ));
             }
             tenant_policy_versions.insert(row.tenant_id.clone(), row.policy_version);
-            self.bcast_policy_idempotency_index
-                .insert((row.tenant_id.clone(), row.idempotency_key.clone()), row.bcast_policy_event_id);
+            self.bcast_policy_idempotency_index.insert(
+                (row.tenant_id.clone(), row.idempotency_key.clone()),
+                row.bcast_policy_event_id,
+            );
             self.apply_bcast_policy_event_to_current(&row);
         }
         Ok(())
@@ -7115,7 +7121,9 @@ impl Ph1fStore {
             &idempotency_key,
         )?;
         let idx = (tenant_id.clone(), idempotency_key.clone());
-        if let Some(existing_event_id) = self.bcast_urgent_followup_policy_idempotency_index.get(&idx)
+        if let Some(existing_event_id) = self
+            .bcast_urgent_followup_policy_idempotency_index
+            .get(&idx)
         {
             return Ok(*existing_event_id);
         }
@@ -16097,6 +16105,156 @@ impl Ph1fStore {
         self.audit_events
             .iter()
             .filter(|e| e.correlation_id == correlation_id && e.engine == AuditEngine::Ph1Nlp)
+            .collect()
+    }
+
+    fn validate_ph1simfinder_tenant_id(tenant_id: &str) -> Result<(), StorageError> {
+        if tenant_id.trim().is_empty() || tenant_id.len() > 64 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1simfinder.tenant_id",
+                    reason: "must be non-empty and <= 64 chars",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_ph1simfinder_idempotency(
+        field: &'static str,
+        idempotency_key: &str,
+    ) -> Result<(), StorageError> {
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_ph1simfinder_bounded_text(
+        field: &'static str,
+        value: &str,
+        max_len: usize,
+    ) -> Result<(), StorageError> {
+        if value.trim().is_empty() || value.len() > max_len {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field,
+                    reason: "must be non-empty and within max length",
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn ph1simfinder_dev_intake_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        session_id: Option<SessionId>,
+        user_id: UserId,
+        device_id: Option<DeviceId>,
+        capability_name: String,
+        requested_simulation_family: String,
+        no_match_proof_ref: String,
+        reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<AuditEventId, StorageError> {
+        Self::validate_ph1simfinder_tenant_id(&tenant_id)?;
+        Self::validate_ph1simfinder_idempotency("ph1simfinder.idempotency_key", &idempotency_key)?;
+        Self::validate_ph1simfinder_bounded_text(
+            "ph1simfinder.capability_name",
+            &capability_name,
+            128,
+        )?;
+        Self::validate_ph1simfinder_bounded_text(
+            "ph1simfinder.requested_simulation_family",
+            &requested_simulation_family,
+            128,
+        )?;
+        Self::validate_ph1simfinder_bounded_text(
+            "ph1simfinder.no_match_proof_ref",
+            &no_match_proof_ref,
+            256,
+        )?;
+        if !self.identities.contains_key(&user_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "audit_events.user_id",
+                key: user_id.as_str().to_string(),
+            });
+        }
+        if let Some(device_id) = &device_id {
+            let dev = self
+                .devices
+                .get(device_id)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "audit_events.device_id",
+                    key: device_id.as_str().to_string(),
+                })?;
+            if dev.user_id != user_id {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1simfinder.device_id",
+                        reason: "device must belong to user_id",
+                    },
+                ));
+            }
+        }
+
+        let payload = AuditPayloadMin::v1(BTreeMap::from([
+            (
+                PayloadKey::new("decision")?,
+                PayloadValue::new("MISSING_SIMULATION_FORWARD")?,
+            ),
+            (
+                PayloadKey::new("capability_name")?,
+                PayloadValue::new(capability_name)?,
+            ),
+            (
+                PayloadKey::new("requested_simulation_family")?,
+                PayloadValue::new(requested_simulation_family)?,
+            ),
+            (
+                PayloadKey::new("no_match_proof_ref")?,
+                PayloadValue::new(no_match_proof_ref)?,
+            ),
+        ]))?;
+
+        let input = AuditEventInput::v1(
+            now,
+            Some(tenant_id),
+            None,
+            session_id,
+            Some(user_id),
+            device_id,
+            AuditEngine::Other("PH1.SIM_FINDER".to_string()),
+            AuditEventType::Other,
+            reason_code,
+            AuditSeverity::Warn,
+            correlation_id,
+            turn_id,
+            payload,
+            None,
+            Some(idempotency_key),
+        )?;
+
+        self.append_audit_event(input)
+    }
+
+    pub fn ph1simfinder_dev_intake_rows(&self, correlation_id: CorrelationId) -> Vec<&AuditEvent> {
+        self.audit_events
+            .iter()
+            .filter(|e| {
+                e.correlation_id == correlation_id
+                    && matches!(&e.engine, AuditEngine::Other(name) if name == "PH1.SIM_FINDER")
+            })
             .collect()
     }
 

@@ -1667,9 +1667,7 @@ fn confirm_text(d: &IntentDraft) -> String {
         }
         IntentType::UpdateBcastUrgentFollowupPolicy => {
             let behavior = field_original(d, FieldKey::Task).unwrap_or("immediate");
-            format!(
-                "You want urgent follow-up behavior to be {behavior}. Is that right?"
-            )
+            format!("You want urgent follow-up behavior to be {behavior}. Is that right?")
         }
         IntentType::UpdateReminder => {
             let reminder_id = field_original(d, FieldKey::ReminderId).unwrap_or("that reminder");

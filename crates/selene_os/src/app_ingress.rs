@@ -16,12 +16,16 @@ use selene_engines::ph1emoguide::{
 use selene_engines::ph1persona::{
     Ph1PersonaConfig as EnginePh1PersonaConfig, Ph1PersonaRuntime as EnginePh1PersonaRuntime,
 };
+use selene_engines::ph1simfinder::{
+    FinderFieldSpec, FinderGoldMapping, FinderRunRequest, FinderRuntimeConfig,
+    FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
+};
 use selene_kernel_contracts::ph1_voice_id::{
     Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
-use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
+use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, ToolName, ToolRequest, ToolResponse, ToolResult,
     ToolStructuredField, ToolTextSnippet,
@@ -42,7 +46,7 @@ use selene_kernel_contracts::ph1link::{
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
 use selene_kernel_contracts::ph1m::MemoryCandidate;
-use selene_kernel_contracts::ph1n::{FieldKey, Ph1nResponse};
+use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
     OnbEmployeePhotoCaptureSendCommitRequest, OnbEmployeeSenderVerifyCommitRequest,
@@ -59,6 +63,10 @@ use selene_kernel_contracts::ph1persona::{
     Ph1PersonaRequest, Ph1PersonaResponse,
 };
 use selene_kernel_contracts::ph1position::TenantId;
+use selene_kernel_contracts::ph1simcat::SimulationStatus;
+use selene_kernel_contracts::ph1simfinder::{
+    FinderFallbackPolicy, FinderRiskTier, FinderTerminalPacket,
+};
 use selene_kernel_contracts::ph1tts::StyleProfileRef;
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
@@ -79,7 +87,9 @@ use crate::ph1os::{
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
 };
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
-use crate::simulation_executor::{SimulationDispatchOutcome, SimulationExecutor};
+use crate::simulation_executor::{
+    simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
+};
 
 #[derive(Debug, Clone)]
 pub struct AppVoiceIngressRequest {
@@ -421,8 +431,10 @@ pub struct AppServerIngressRuntime {
     executor: SimulationExecutor,
     ph1x_runtime: Ph1xRuntime,
     ph1e_runtime: Ph1eRuntime,
+    ph1simfinder_runtime: Ph1SimFinderRuntime,
     agent_input_packet_build_count: RefCell<u64>,
     last_agent_input_packet: RefCell<Option<AgentInputPacket>>,
+    last_finder_terminal_packet: RefCell<Option<FinderTerminalPacket>>,
 }
 
 impl Default for AppServerIngressRuntime {
@@ -437,8 +449,10 @@ impl AppServerIngressRuntime {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
             ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
+            ph1simfinder_runtime: Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1()),
             agent_input_packet_build_count: RefCell::new(0),
             last_agent_input_packet: RefCell::new(None),
+            last_finder_terminal_packet: RefCell::new(None),
         }
     }
 
@@ -2065,7 +2079,11 @@ impl AppServerIngressRuntime {
         request: AppVoiceIngressRequest,
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        let correlation_id = request.correlation_id;
+        let turn_id = request.turn_id;
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
         let actor_user_id = request.actor_user_id.clone();
+        let actor_device_id = request.device_id.clone();
         let actor_tenant_id = request.tenant_id.clone();
         let dispatch_now = x_build.now;
         let (voice_outcome, ph1x_request) =
@@ -2076,6 +2094,181 @@ impl AppServerIngressRuntime {
             ));
         };
 
+        let last_agent_input_packet = self.last_agent_input_packet.borrow().clone();
+        let finder_terminal = self.run_finder_terminal_packet_for_turn(
+            store,
+            &actor_user_id,
+            actor_tenant_id.as_deref(),
+            last_agent_input_packet.as_ref(),
+        )?;
+        *self.last_finder_terminal_packet.borrow_mut() = finder_terminal.clone();
+
+        let mut out =
+            if let Some(terminal) = finder_terminal {
+                match terminal {
+                    FinderTerminalPacket::SimulationMatch(packet) => {
+                        let nlp_output = ph1x_request.nlp_output.as_ref().ok_or(
+                            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                field: "ph1x_request.nlp_output",
+                                reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
+                            }),
+                        )?;
+                        let Ph1nResponse::IntentDraft(intent_draft) = nlp_output else {
+                            return Err(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "ph1x_request.nlp_output",
+                                    reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
+                                },
+                            ));
+                        };
+                        let intent_simulation_id =
+                            simulation_id_for_intent_draft_v1(intent_draft)?.to_string();
+                        if intent_simulation_id != packet.simulation_id {
+                            return Err(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "ph1x_request.nlp_output.intent_draft.intent_type",
+                                    reason: "FINDER_MATCH_EXECUTION_MISMATCH",
+                                },
+                            ));
+                        }
+                        self.run_ph1x_and_dispatch(
+                            store,
+                            voice_outcome,
+                            ph1x_request,
+                            &actor_user_id,
+                            dispatch_now,
+                        )?
+                    }
+                    FinderTerminalPacket::Clarify(packet) => AppVoiceTurnExecutionOutcome {
+                        voice_outcome,
+                        next_move: AppVoiceTurnNextMove::Clarify,
+                        ph1x_request: Some(ph1x_request),
+                        ph1x_response: None,
+                        dispatch_outcome: None,
+                        tool_response: None,
+                        response_text: Some(packet.question),
+                        reason_code: Some(packet.reason_code),
+                    },
+                    FinderTerminalPacket::Refuse(packet) => AppVoiceTurnExecutionOutcome {
+                        voice_outcome,
+                        next_move: AppVoiceTurnNextMove::Refused,
+                        ph1x_request: Some(ph1x_request),
+                        ph1x_response: None,
+                        dispatch_outcome: None,
+                        tool_response: None,
+                        response_text: Some(packet.message),
+                        reason_code: Some(packet.reason_code),
+                    },
+                    FinderTerminalPacket::MissingSimulation(packet) => {
+                        let tenant_id = normalized_tenant_scope_for_dev_intake(
+                            store,
+                            &actor_user_id,
+                            actor_tenant_id.as_deref(),
+                        )?;
+                        let idempotency_key = format!(
+                            "{}:{}:{}",
+                            packet.idempotency_key, packet.tenant_id, packet.user_id
+                        );
+                        let _ = store.ph1simfinder_dev_intake_commit(
+                            dispatch_now,
+                            tenant_id,
+                            correlation_id,
+                            turn_id,
+                            request_session_id,
+                            actor_user_id.clone(),
+                            actor_device_id.clone(),
+                            packet.requested_capability_name_normalized.clone(),
+                            packet.proposed_simulation_family.clone(),
+                            packet.no_match_proof_ref.clone(),
+                            packet.reason_code,
+                            idempotency_key,
+                        )?;
+                        AppVoiceTurnExecutionOutcome {
+                            voice_outcome,
+                            next_move: AppVoiceTurnNextMove::Refused,
+                            ph1x_request: Some(ph1x_request),
+                            ph1x_response: None,
+                            dispatch_outcome: None,
+                            tool_response: None,
+                            response_text: Some(
+                                "I can't do that yet; I've submitted it for review.".to_string(),
+                            ),
+                            reason_code: Some(packet.reason_code),
+                        }
+                    }
+                }
+            } else {
+                self.run_ph1x_and_dispatch(
+                    store,
+                    voice_outcome,
+                    ph1x_request,
+                    &actor_user_id,
+                    dispatch_now,
+                )?
+            };
+
+        // Guardrail: persona hints are tone-only and must never affect
+        // simulation candidate selection, access checks, or ACTIVE sim gating.
+        let persona_style_hint =
+            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
+        out.response_text = out.response_text.take().map(|response_text| {
+            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
+        });
+
+        Ok(out)
+    }
+
+    pub fn run_desktop_voice_turn_end_to_end(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        if request.app_platform != AppPlatform::Desktop {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.app_platform",
+                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
+                },
+            ));
+        }
+        self.run_voice_turn_end_to_end(store, request, x_build)
+    }
+
+    fn run_finder_terminal_packet_for_turn(
+        &self,
+        store: &Ph1fStore,
+        actor_user_id: &UserId,
+        actor_tenant_id: Option<&str>,
+        agent_input_packet: Option<&AgentInputPacket>,
+    ) -> Result<Option<FinderTerminalPacket>, StorageError> {
+        let Some(packet) = agent_input_packet else {
+            return Ok(None);
+        };
+        let Some(run_request) = build_finder_run_request_for_simulation_intent(
+            store,
+            actor_user_id,
+            actor_tenant_id,
+            packet,
+        )?
+        else {
+            return Ok(None);
+        };
+        let terminal = self
+            .ph1simfinder_runtime
+            .run(&run_request)
+            .map_err(StorageError::ContractViolation)?;
+        Ok(Some(terminal))
+    }
+
+    fn run_ph1x_and_dispatch(
+        &self,
+        store: &mut Ph1fStore,
+        voice_outcome: OsVoiceLiveTurnOutcome,
+        ph1x_request: Ph1xRequest,
+        actor_user_id: &UserId,
+        dispatch_now: MonotonicTimeNs,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         let ph1x_response = self
             .ph1x_runtime
             .decide(&ph1x_request)
@@ -2111,9 +2304,12 @@ impl AppServerIngressRuntime {
             }
             Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
                 DispatchRequest::Tool(tool_request) => {
-                    let tool_response =
-                        maybe_build_message_policy_tool_response(store, &actor_user_id, tool_request)?
-                            .unwrap_or_else(|| self.ph1e_runtime.run(tool_request));
+                    let tool_response = maybe_build_message_policy_tool_response(
+                        store,
+                        actor_user_id,
+                        tool_request,
+                    )?
+                    .unwrap_or_else(|| self.ph1e_runtime.run(tool_request));
                     let tool_response_for_followup = tool_response.clone();
                     let tool_followup_request = build_tool_followup_ph1x_request(
                         out.ph1x_request
@@ -2178,32 +2374,7 @@ impl AppServerIngressRuntime {
             },
         }
 
-        // Guardrail: persona hints are tone-only and must never affect
-        // simulation candidate selection, access checks, or ACTIVE sim gating.
-        let persona_style_hint =
-            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
-        out.response_text = out.response_text.take().map(|response_text| {
-            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
-        });
-
         Ok(out)
-    }
-
-    pub fn run_desktop_voice_turn_end_to_end(
-        &self,
-        store: &mut Ph1fStore,
-        request: AppVoiceIngressRequest,
-        x_build: AppVoicePh1xBuildInput,
-    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
-        if request.app_platform != AppPlatform::Desktop {
-            return Err(StorageError::ContractViolation(
-                ContractViolation::InvalidValue {
-                    field: "app_voice_ingress_request.app_platform",
-                    reason: "run_desktop_voice_turn_end_to_end requires AppPlatform::Desktop",
-                },
-            ));
-        }
-        self.run_voice_turn_end_to_end(store, request, x_build)
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -2268,6 +2439,10 @@ impl AppServerIngressRuntime {
 
     pub fn debug_last_agent_input_packet(&self) -> Option<AgentInputPacket> {
         self.last_agent_input_packet.borrow().clone()
+    }
+
+    pub fn debug_last_finder_terminal_packet(&self) -> Option<FinderTerminalPacket> {
+        self.last_finder_terminal_packet.borrow().clone()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2391,12 +2566,13 @@ fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> St
         SimulationDispatchOutcome::LinkDelivered { .. } => "I sent the link.".to_string(),
         SimulationDispatchOutcome::Link(_) => "I generated the link.".to_string(),
         SimulationDispatchOutcome::Reminder(rem) => match rem {
-            selene_kernel_contracts::ph1rem::Ph1RemResponse::Ok(ok) => match ok.simulation_id.as_str()
-            {
-                "REMINDER_UPDATE_COMMIT" => "I updated that reminder.".to_string(),
-                "REMINDER_CANCEL_COMMIT" => "I canceled that reminder.".to_string(),
-                _ => "I scheduled that reminder.".to_string(),
-            },
+            selene_kernel_contracts::ph1rem::Ph1RemResponse::Ok(ok) => {
+                match ok.simulation_id.as_str() {
+                    "REMINDER_UPDATE_COMMIT" => "I updated that reminder.".to_string(),
+                    "REMINDER_CANCEL_COMMIT" => "I canceled that reminder.".to_string(),
+                    _ => "I scheduled that reminder.".to_string(),
+                }
+            }
             selene_kernel_contracts::ph1rem::Ph1RemResponse::Refuse(_) => {
                 "I couldn't complete that reminder request.".to_string()
             }
@@ -2445,7 +2621,10 @@ fn latest_persona_style_hint_for_actor(
     })
 }
 
-fn apply_persona_style_hint_to_response_text(response_text: String, style_hint: Option<&str>) -> String {
+fn apply_persona_style_hint_to_response_text(
+    response_text: String,
+    style_hint: Option<&str>,
+) -> String {
     match style_hint {
         Some("gentle") => format!("Certainly. {response_text}"),
         Some("dominant") => format!("Directly: {response_text}"),
@@ -2904,7 +3083,10 @@ fn maybe_build_message_policy_tool_response(
                 "Tenant {} is using default BCAST policy values.",
                 tenant_id.as_str()
             ),
-            url: format!("https://selene.local/ph1f/bcast-policy/{}/ledger", tenant_id.as_str()),
+            url: format!(
+                "https://selene.local/ph1f/bcast-policy/{}/ledger",
+                tenant_id.as_str()
+            ),
         }]
     } else {
         changes
@@ -3024,6 +3206,289 @@ fn resolve_actor_single_tenant(
     TenantId::new(tenant).map_err(StorageError::ContractViolation)
 }
 
+fn normalized_tenant_scope_for_dev_intake(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    actor_tenant_id: Option<&str>,
+) -> Result<String, StorageError> {
+    if let Some(tenant_id) = actor_tenant_id {
+        return Ok(TenantId::new(tenant_id.to_string())
+            .map_err(StorageError::ContractViolation)?
+            .as_str()
+            .to_string());
+    }
+    Ok(resolve_actor_single_tenant(store, actor_user_id)?
+        .as_str()
+        .to_string())
+}
+
+fn build_finder_run_request_for_simulation_intent(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    actor_tenant_id: Option<&str>,
+    packet: &AgentInputPacket,
+) -> Result<Option<FinderRunRequest>, StorageError> {
+    let Some(Ph1nResponse::IntentDraft(intent_draft)) = packet.nlp_output.as_ref() else {
+        return Ok(None);
+    };
+    if !intent_type_requires_simulation_finder(intent_draft.intent_type) {
+        return Ok(None);
+    }
+
+    let tenant_id = normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+    let simulation_catalog_snapshot_version = packet.sim_catalog_snapshot_version.max(1);
+    let transcript_text = packet
+        .srl_repaired_transcript
+        .clone()
+        .or_else(|| packet.transcript_text.clone())
+        .unwrap_or_else(|| intent_draft_transcript_fallback(intent_draft));
+    let intent_family = finder_intent_family(intent_draft.intent_type);
+    let simulation_catalog = match simulation_id_for_intent_draft_v1(intent_draft) {
+        Ok(simulation_id) => match simulation_status_for_tenant(store, &tenant_id, simulation_id) {
+            Some(status) => {
+                let entry = FinderSimulationCatalogEntry::v1(
+                    simulation_id.to_string(),
+                    intent_family.clone(),
+                    status,
+                    100,
+                    finder_access_actions_for_intent(intent_draft.intent_type),
+                    finder_risk_tier_for_intent(intent_draft.intent_type),
+                    finder_confirm_required_for_intent(intent_draft.intent_type),
+                    FinderFallbackPolicy::Refuse,
+                    finder_synonym_terms_from_transcript(&intent_family, &transcript_text),
+                    finder_required_field_specs_from_intent(intent_draft)?,
+                    vec!["runtime.default".to_string()],
+                )
+                .map_err(StorageError::ContractViolation)?;
+                vec![entry]
+            }
+            None => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
+
+    let run_request = FinderRunRequest::v1(
+        tenant_id,
+        actor_user_id.as_str().to_string(),
+        packet.correlation_id,
+        packet.turn_id,
+        packet
+            .thread_key
+            .clone()
+            .unwrap_or_else(|| format!("corr:{}:thread", packet.correlation_id)),
+        packet.now,
+        transcript_text,
+        packet.sim_catalog_snapshot_hash.clone(),
+        simulation_catalog_snapshot_version,
+        simulation_catalog,
+        Vec::<FinderGoldMapping>::new(),
+        10_000,
+        7_500,
+        7_500,
+        0,
+        0,
+        0,
+        1,
+        "runtime".to_string(),
+        5_000,
+        5_000,
+        5_000,
+        5_000,
+        2_500,
+        "tenant_only".to_string(),
+        "{\"required\":[]}".to_string(),
+        vec!["AT-AGENT-INGRESS-FINDER".to_string()],
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ok(Some(run_request))
+}
+
+fn finder_required_field_specs_from_intent(
+    intent_draft: &IntentDraft,
+) -> Result<Vec<FinderFieldSpec>, StorageError> {
+    let mut specs = Vec::new();
+    for missing_field in &intent_draft.required_fields_missing {
+        let field_name = finder_field_name(*missing_field);
+        let detector_terms = finder_detector_terms_for_field(intent_draft, *missing_field);
+        let spec = FinderFieldSpec::required_v1(
+            field_name.clone(),
+            detector_terms,
+            7_500,
+            7_500,
+            6_500,
+            finder_clarify_question(*missing_field),
+            finder_allowed_answer_formats(*missing_field),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        specs.push(spec);
+    }
+    Ok(specs)
+}
+
+fn finder_detector_terms_for_field(intent_draft: &IntentDraft, key: FieldKey) -> Vec<String> {
+    let mut terms = intent_draft
+        .fields
+        .iter()
+        .filter(|field| field.key == key)
+        .filter_map(|field| {
+            field
+                .value
+                .normalized_value
+                .clone()
+                .or(Some(field.value.original_span.clone()))
+        })
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        terms.push(finder_field_name(key));
+    }
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+fn finder_field_name(key: FieldKey) -> String {
+    format!("{:?}", key).to_ascii_lowercase()
+}
+
+fn finder_clarify_question(key: FieldKey) -> String {
+    match key {
+        FieldKey::RecipientContact => "What contact should I use?".to_string(),
+        FieldKey::Recipient => "Who is the recipient?".to_string(),
+        FieldKey::Task => "What should I do?".to_string(),
+        FieldKey::When => "What exact date and time should I use?".to_string(),
+        _ => format!("What is the {}?", finder_field_name(key)),
+    }
+}
+
+fn finder_allowed_answer_formats(key: FieldKey) -> Vec<String> {
+    match key {
+        FieldKey::RecipientContact => {
+            vec!["+14155550100".to_string(), "tom@example.com".to_string()]
+        }
+        FieldKey::When => vec![
+            "Tomorrow at 7 PM".to_string(),
+            "2026-03-02T19:00".to_string(),
+        ],
+        _ => vec!["Short text".to_string(), "Typed value".to_string()],
+    }
+}
+
+fn intent_draft_transcript_fallback(intent_draft: &IntentDraft) -> String {
+    let mut parts = vec![finder_intent_family(intent_draft.intent_type)];
+    parts.extend(intent_draft.fields.iter().filter_map(|field| {
+        field
+            .value
+            .normalized_value
+            .clone()
+            .or(Some(field.value.original_span.clone()))
+    }));
+    parts.extend(
+        intent_draft
+            .evidence_spans
+            .iter()
+            .map(|span| span.verbatim_excerpt.clone()),
+    );
+    parts
+        .into_iter()
+        .map(|part| part.trim().to_string())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn finder_synonym_terms_from_transcript(intent_family: &str, transcript: &str) -> Vec<String> {
+    let mut terms = transcript
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .map(|term| term.trim().to_ascii_lowercase())
+        .filter(|term| term.len() >= 3)
+        .take(16)
+        .collect::<Vec<_>>();
+    terms.push(intent_family.to_ascii_lowercase());
+    terms.sort();
+    terms.dedup();
+    if terms.is_empty() {
+        vec![intent_family.to_ascii_lowercase()]
+    } else {
+        terms
+    }
+}
+
+fn simulation_status_for_tenant(
+    store: &Ph1fStore,
+    tenant_id: &str,
+    simulation_id: &str,
+) -> Option<SimulationStatus> {
+    let tenant_id = TenantId::new(tenant_id.to_string()).ok()?;
+    let simulation_id =
+        selene_kernel_contracts::ph1simcat::SimulationId::new(simulation_id.to_string()).ok()?;
+    store
+        .simulation_catalog_current()
+        .get(&(tenant_id, simulation_id))
+        .map(|row| row.status)
+}
+
+fn finder_intent_family(intent_type: IntentType) -> String {
+    format!("{intent_type:?}").to_ascii_lowercase()
+}
+
+fn finder_confirm_required_for_intent(intent_type: IntentType) -> bool {
+    !matches!(
+        intent_type,
+        IntentType::MemoryRememberRequest | IntentType::MemoryQuery
+    )
+}
+
+fn finder_risk_tier_for_intent(intent_type: IntentType) -> FinderRiskTier {
+    if matches!(
+        intent_type,
+        IntentType::CreateInviteLink | IntentType::SendMoney
+    ) {
+        FinderRiskTier::High
+    } else {
+        FinderRiskTier::Medium
+    }
+}
+
+fn finder_access_actions_for_intent(intent_type: IntentType) -> Vec<String> {
+    let action = match intent_type {
+        IntentType::CreateInviteLink => "LINK_SEND_INVITE",
+        IntentType::SetReminder
+        | IntentType::UpdateReminder
+        | IntentType::CancelReminder
+        | IntentType::CreateCalendarEvent => "REMINDER_SCHEDULE_ACCESS",
+        IntentType::UpdateBcastWaitPolicy => "BCAST_WAIT_POLICY_UPDATE",
+        IntentType::UpdateBcastUrgentFollowupPolicy => "BCAST_URGENT_FOLLOWUP_POLICY_UPDATE",
+        IntentType::CapreqManage => "CAPREQ_MANAGE",
+        IntentType::AccessSchemaManage => "ACCESS_SCHEMA_MANAGE",
+        IntentType::AccessEscalationVote => "ACCESS_ESCALATION_VOTE",
+        IntentType::AccessInstanceCompileRefresh => "ACCESS_INSTANCE_COMPILE",
+        _ => "SIMULATION_EXECUTE",
+    };
+    vec![action.to_string()]
+}
+
+fn intent_type_requires_simulation_finder(intent_type: IntentType) -> bool {
+    !matches!(
+        intent_type,
+        IntentType::TimeQuery
+            | IntentType::WeatherQuery
+            | IntentType::WebSearchQuery
+            | IntentType::NewsQuery
+            | IntentType::UrlFetchAndCiteQuery
+            | IntentType::DocumentUnderstandQuery
+            | IntentType::PhotoUnderstandQuery
+            | IntentType::DataAnalysisQuery
+            | IntentType::DeepResearchQuery
+            | IntentType::RecordModeQuery
+            | IntentType::ConnectorQuery
+            | IntentType::ListReminders
+            | IntentType::Continue
+            | IntentType::MoreDetail
+    )
+}
+
 fn build_ph1x_request_from_agent_input_packet(
     app_platform: AppPlatform,
     packet: &AgentInputPacket,
@@ -3063,7 +3528,7 @@ fn build_ph1x_request_from_agent_input_packet(
 fn transcript_text_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Option<String> {
     match nlp_output {
         Some(Ph1nResponse::Chat(chat)) => Some(chat.response_text.clone()),
-        Some(Ph1nResponse::IntentDraft(draft)) => Some(format!("{:?}", draft.intent_type)),
+        Some(Ph1nResponse::IntentDraft(draft)) => Some(intent_draft_transcript_fallback(draft)),
         _ => None,
     }
 }
@@ -3075,7 +3540,11 @@ fn simulation_catalog_snapshot_for_agent_input(
     let mut rows: Vec<String> = store
         .simulation_catalog_current()
         .iter()
-        .filter(|((tenant, _), _)| tenant_id.map(|value| tenant.as_str() == value).unwrap_or(true))
+        .filter(|((tenant, _), _)| {
+            tenant_id
+                .map(|value| tenant.as_str() == value)
+                .unwrap_or(true)
+        })
         .map(|((tenant, simulation_id), row)| {
             format!(
                 "{}|{}|{}|{:?}|{:?}|{}",
@@ -3098,7 +3567,11 @@ fn simulation_catalog_snapshot_for_agent_input(
     let version = store
         .simulation_catalog_events()
         .iter()
-        .filter(|row| tenant_id.map(|value| row.tenant_id.as_str() == value).unwrap_or(true))
+        .filter(|row| {
+            tenant_id
+                .map(|value| row.tenant_id.as_str() == value)
+                .unwrap_or(true)
+        })
         .map(|row| row.simulation_catalog_event_id)
         .max()
         .unwrap_or(0);
@@ -3131,7 +3604,10 @@ fn agent_input_packet_hash_hex(
         format!("session_state={session_state:?}"),
         format!("thread_key={}", thread_key.unwrap_or("none")),
         format!("thread_pending={}", thread_state.pending.is_some()),
-        format!("thread_project={}", thread_state.project_id.as_deref().unwrap_or("none")),
+        format!(
+            "thread_project={}",
+            thread_state.project_id.as_deref().unwrap_or("none")
+        ),
         format!(
             "identity_prompt_scope_key={}",
             identity_prompt_scope_key.unwrap_or("none")
@@ -3142,7 +3618,9 @@ fn agent_input_packet_hash_hex(
         ),
         format!(
             "transcript={}",
-            transcript_text.map(truncate_for_packet_hash).unwrap_or_default()
+            transcript_text
+                .map(truncate_for_packet_hash)
+                .unwrap_or_default()
         ),
         format!("lang={}", language_hint.unwrap_or("none")),
     ];
@@ -3479,6 +3957,67 @@ mod tests {
             vec![],
         )
         .unwrap()
+    }
+
+    fn invite_link_send_draft_broken_english(
+        recipient: &str,
+        recipient_contact: &str,
+        tenant_id: &str,
+    ) -> Ph1nResponse {
+        Ph1nResponse::IntentDraft(
+            IntentDraft::v1(
+                IntentType::CreateInviteLink,
+                SchemaVersion(1),
+                vec![
+                    IntentField {
+                        key: FieldKey::InviteeType,
+                        value: FieldValue::normalized(
+                            "associate".to_string(),
+                            "associate".to_string(),
+                        )
+                        .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::DeliveryMethod,
+                        value: FieldValue::normalized("send".to_string(), "sms".to_string())
+                            .unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::Recipient,
+                        value: FieldValue::verbatim(recipient.to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::RecipientContact,
+                        value: FieldValue::verbatim(recipient_contact.to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                    IntentField {
+                        key: FieldKey::TenantId,
+                        value: FieldValue::verbatim(tenant_id.to_string()).unwrap(),
+                        confidence: OverallConfidence::High,
+                    },
+                ],
+                vec![],
+                OverallConfidence::High,
+                vec![EvidenceSpan {
+                    field: FieldKey::Task,
+                    transcript_hash: TranscriptHash(1),
+                    start_byte: 0,
+                    end_byte: 58,
+                    verbatim_excerpt: "selene pls send link tom now, number +14155550100, thanks"
+                        .to_string(),
+                }],
+                ReasonCodeId(1),
+                SensitivityLevel::Private,
+                true,
+                vec![],
+                vec![],
+            )
+            .unwrap(),
+        )
     }
 
     fn web_search_draft(query: &str) -> Ph1nResponse {
@@ -4891,7 +5430,318 @@ mod tests {
                 x_build,
             )
             .expect_err("persona hint must not bypass active simulation guard");
-        assert_contract_reason(active_err_persona, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
+        assert_contract_reason(
+            active_err_persona,
+            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_01_broken_english_match_confirm_then_dispatch() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_match_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_match_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request_1 = AppVoiceIngressRequest::v1(
+            CorrelationId(9801),
+            TurnId(9901),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(20),
+            thread_key: Some("finder_exec_01_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .unwrap();
+        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
+        match runtime
+            .debug_last_finder_terminal_packet()
+            .expect("finder packet should be captured")
+        {
+            FinderTerminalPacket::SimulationMatch(packet) => {
+                assert_eq!(packet.simulation_id, LINK_INVITE_GENERATE_DRAFT);
+            }
+            other => panic!("expected simulation match packet, got {other:?}"),
+        }
+
+        let thread_state_after_confirm = out_1
+            .ph1x_response
+            .expect("confirm run should include ph1x response")
+            .thread_state;
+        let request_2 = AppVoiceIngressRequest::v1(
+            CorrelationId(9802),
+            TurnId(9902),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(21),
+            thread_key: Some("finder_exec_01_thread".to_string()),
+            thread_state: thread_state_after_confirm,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_2 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
+            .unwrap();
+        assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Dispatch);
+        assert!(matches!(
+            out_2.dispatch_outcome,
+            Some(SimulationDispatchOutcome::LinkDelivered { .. })
+        ));
+    }
+
+    #[test]
+    fn at_finder_exec_02_missing_field_returns_single_clarify_question() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_clarify_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_clarify_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9803),
+            TurnId(9903),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(22),
+            thread_key: Some("finder_exec_02_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Clarify);
+        assert!(out.ph1x_response.is_none());
+        assert!(out
+            .response_text
+            .as_deref()
+            .unwrap_or_default()
+            .contains("contact"));
+        match runtime
+            .debug_last_finder_terminal_packet()
+            .expect("finder packet should be captured")
+        {
+            FinderTerminalPacket::Clarify(packet) => {
+                assert_eq!(packet.attempt_index, 1);
+                assert_eq!(packet.max_attempts, 2);
+            }
+            other => panic!("expected clarify packet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_finder_exec_03_missing_sim_routes_to_dev_intake_ledger_row() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_missing_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_missing_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9804),
+            TurnId(9904),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(23),
+            thread_key: Some("finder_exec_03_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I can't do that yet; I've submitted it for review.")
+        );
+        match runtime
+            .debug_last_finder_terminal_packet()
+            .expect("finder packet should be captured")
+        {
+            FinderTerminalPacket::MissingSimulation(_) => {}
+            other => panic!("expected missing simulation packet, got {other:?}"),
+        }
+        let rows = store.ph1simfinder_dev_intake_rows(CorrelationId(9804));
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn at_finder_exec_04_inactive_sim_returns_refuse_with_proof_trace() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_inactive_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_inactive_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Draft,
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9805),
+            TurnId(9905),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(24),
+            thread_key: Some("finder_exec_04_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        match runtime
+            .debug_last_finder_terminal_packet()
+            .expect("finder packet should be captured")
+        {
+            FinderTerminalPacket::Refuse(packet) => {
+                assert_eq!(
+                    packet.reason_code,
+                    selene_kernel_contracts::ph1simfinder::reason_codes::SIM_FINDER_SIMULATION_INACTIVE
+                );
+                assert!(
+                    packet
+                        .evidence_refs
+                        .iter()
+                        .any(|proof| proof.starts_with("catalog.inactive.hit:")),
+                    "inactive proofs must be present"
+                );
+            }
+            other => panic!("expected refuse packet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_finder_exec_05_persona_changes_tone_only_not_sim_selection() {
+        at_emo_01_persona_changes_only_style_not_sim_candidate();
     }
 
     #[test]
@@ -4901,6 +5751,13 @@ mod tests {
         let device_id = DeviceId::new("run6_clarify_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
 
         let request = AppVoiceIngressRequest::v1(
             CorrelationId(9601),
@@ -4940,16 +5797,16 @@ mod tests {
             .response_text
             .as_deref()
             .unwrap_or_default()
-            .contains("Tom"));
-        match out
-            .ph1x_response
-            .expect("clarify outcome must include PH1.X response")
-            .directive
+            .contains("contact"));
+        assert!(out.ph1x_response.is_none());
+        match runtime
+            .debug_last_finder_terminal_packet()
+            .expect("finder packet should be captured")
         {
-            Ph1xDirective::Clarify(clarify) => {
-                assert_eq!(clarify.what_is_missing, vec![FieldKey::RecipientContact]);
+            FinderTerminalPacket::Clarify(clarify) => {
+                assert_eq!(clarify.missing_field, "recipientcontact");
             }
-            _ => panic!("expected PH1.X Clarify directive"),
+            other => panic!("expected finder clarify packet, got {other:?}"),
         }
     }
 
@@ -5715,7 +6572,9 @@ mod tests {
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: vec![],
             confirm_answer: None,
-            nlp_output: Some(connector_query_draft("Selene, show my message policy settings")),
+            nlp_output: Some(connector_query_draft(
+                "Selene, show my message policy settings",
+            )),
             tool_response: None,
             interruption: None,
             locale: None,

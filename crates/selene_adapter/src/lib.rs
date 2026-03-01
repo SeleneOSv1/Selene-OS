@@ -115,11 +115,11 @@ use selene_os::ph1builder::{
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
+use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1l::{
     ph1l_step_voice_turn, trigger_requires_session_open_step, Ph1lConfig, Ph1lRuntime,
     Ph1lTurnTrigger,
 };
-use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
     OsOcrAnalyzerForwardBundle, OsOcrContextNlpOutcome, OsOcrRouteOutcome, OsVoiceLiveTurnOutcome,
@@ -3526,15 +3526,14 @@ impl AdapterRuntime {
             trigger,
             &ph1k_bundle,
         )?;
-        let voice_id_request =
-            build_voice_id_request_from_ph1k_bundle(
-                now,
-                actor_user_id.clone(),
-                &ph1k_bundle,
-                session_turn_state.session_snapshot,
-                session_turn_state.wake_event.clone(),
-            )
-            .map_err(|err| format!("voice request build failed: {err:?}"))?;
+        let voice_id_request = build_voice_id_request_from_ph1k_bundle(
+            now,
+            actor_user_id.clone(),
+            &ph1k_bundle,
+            session_turn_state.session_snapshot,
+            session_turn_state.wake_event.clone(),
+        )
+        .map_err(|err| format!("voice request build failed: {err:?}"))?;
         let ph1c_live_outcome = if upstream_transcript_supplied {
             None
         } else {
@@ -8744,12 +8743,9 @@ mod tests {
         let actor_user_id = UserId::new(wake.actor_user_id).expect("actor id must parse");
         let wake_device =
             DeviceId::new(wake.device_id.expect("wake device id must exist")).expect("valid id");
-        let explicit_device = DeviceId::new(
-            explicit
-                .device_id
-                .expect("explicit device id must exist"),
-        )
-        .expect("valid id");
+        let explicit_device =
+            DeviceId::new(explicit.device_id.expect("explicit device id must exist"))
+                .expect("valid id");
         let store = runtime.store.lock().expect("store lock must not poison");
         let wake_session = latest_session_for_actor_device(&store, &actor_user_id, &wake_device)
             .expect("wake-triggered session must exist");
@@ -8790,8 +8786,8 @@ mod tests {
             "at least one audit event for the turn must include session_id"
         );
 
-        let memory_key = MemoryKey::new("at_l_05.favorite_food".to_string())
-            .expect("memory key must be valid");
+        let memory_key =
+            MemoryKey::new("at_l_05.favorite_food".to_string()).expect("memory key must be valid");
         let memory_event = MemoryLedgerEvent::v1(
             MemoryLedgerEventKind::Stored,
             MonotonicTimeNs(6_000_000_100),
@@ -8869,7 +8865,10 @@ mod tests {
             .expect("agent packet should be captured");
         assert_eq!(packet.correlation_id, 34_001);
         assert_eq!(packet.turn_id, 44_001);
-        assert_eq!(packet.thread_key.as_deref(), Some("adapter_agentpkt_thread"));
+        assert_eq!(
+            packet.thread_key.as_deref(),
+            Some("adapter_agentpkt_thread")
+        );
         assert!(packet.session_id.is_some());
         assert!(!packet.trace_id.is_empty());
         assert!(!packet.packet_hash.is_empty());
@@ -8953,8 +8952,8 @@ mod tests {
         runtime: &AdapterRuntime,
         request: VoiceTurnAdapterRequest,
     ) -> TriggerPrepResult {
-        let app_platform = parse_app_platform(&request.app_platform)
-            .expect("request app_platform must parse");
+        let app_platform =
+            parse_app_platform(&request.app_platform).expect("request app_platform must parse");
         let trigger = parse_trigger(&request.trigger).expect("request trigger must parse");
         let actor_user_id =
             UserId::new(request.actor_user_id.clone()).expect("request actor_user_id must parse");
@@ -9094,7 +9093,10 @@ mod tests {
                 .is_some(),
             ingress_tenant_present: ingress_request.tenant_id.is_some(),
             ingress_device_present: ingress_request.device_id.is_some(),
-            identity_context_is_voice: matches!(ph1x_request.identity_context, IdentityContext::Voice(_)),
+            identity_context_is_voice: matches!(
+                ph1x_request.identity_context,
+                IdentityContext::Voice(_)
+            ),
             identity_prompt_scope_key_present: ph1x_request.identity_prompt_scope_key.is_some(),
             nlp_output_present: ph1x_request.nlp_output.is_some(),
             tool_response_present: ph1x_request.tool_response.is_some(),
@@ -9331,7 +9333,10 @@ mod tests {
                 "seed_adapter_cancel".to_string(),
             )
             .unwrap();
-            match store.ph1rem_run(&seed_req).expect("seed reminder should schedule") {
+            match store
+                .ph1rem_run(&seed_req)
+                .expect("seed reminder should schedule")
+            {
                 Ph1RemResponse::Ok(ok) => ok.reminder_id,
                 _ => panic!("expected seeded reminder"),
             }
@@ -9345,10 +9350,7 @@ mod tests {
         first.correlation_id = 10_301;
         first.turn_id = 20_301;
         first.now_ns = Some(31);
-        first.user_text_final = Some(format!(
-            "Selene cancel reminder {}",
-            reminder_id.as_str()
-        ));
+        first.user_text_final = Some(format!("Selene cancel reminder {}", reminder_id.as_str()));
 
         let out_first = runtime
             .run_voice_turn(first)

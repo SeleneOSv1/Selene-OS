@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
+use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1l::{
     NextAllowedActions, Ph1lInput, Ph1lOutput, PresenceNudge, SessionId, SessionSnapshot,
     TransitionEvent, TtsPlaybackState, UserActivitySignals,
 };
-use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1w::WakeDecision;
 use selene_kernel_contracts::ph1x::Ph1xDirective;
 use selene_kernel_contracts::{
@@ -41,7 +41,10 @@ pub enum Ph1lTurnTrigger {
 }
 
 pub fn trigger_requires_session_open_step(trigger: Ph1lTurnTrigger) -> bool {
-    matches!(trigger, Ph1lTurnTrigger::WakeWord | Ph1lTurnTrigger::Explicit)
+    matches!(
+        trigger,
+        Ph1lTurnTrigger::WakeWord | Ph1lTurnTrigger::Explicit
+    )
 }
 
 pub fn ph1l_step_voice_turn(
@@ -552,14 +555,16 @@ fn close_check_phrase(session_id: Option<SessionId>, attempt: u8) -> (u8, &'stat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::{TtsPlaybackState, UserActivitySignals};
     use selene_kernel_contracts::ph1w::{WakeDecision, WakeGateResults};
     use selene_kernel_contracts::ph1x::{ClarifyDirective, Ph1xDirective};
     use selene_kernel_contracts::ReasonCodeId;
-    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord};
+    use selene_storage::ph1f::{
+        DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord,
+    };
 
     fn policy_ok() -> selene_kernel_contracts::ph1d::PolicyContextRef {
         PolicyContextRef::v1(false, false, SafetyTier::Standard)
@@ -652,7 +657,10 @@ mod tests {
                 .session_id
                 .expect("open/active snapshot must have session id")
         };
-        let opened_at = store.get_session(&session_id).map(|row| row.opened_at).unwrap_or(now);
+        let opened_at = store
+            .get_session(&session_id)
+            .map(|row| row.opened_at)
+            .unwrap_or(now);
         let closed_at = if out.snapshot.session_state == SessionState::Closed {
             Some(now)
         } else {
@@ -749,7 +757,9 @@ mod tests {
             "trigger_os_explicit_commit",
         );
 
-        let wake_row = wake_store.get_session(&wake_sid).expect("wake row must exist");
+        let wake_row = wake_store
+            .get_session(&wake_sid)
+            .expect("wake row must exist");
         let explicit_row = explicit_store
             .get_session(&explicit_sid)
             .expect("explicit row must exist");

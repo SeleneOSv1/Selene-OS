@@ -8,7 +8,9 @@ use crate::ph1l::SessionId;
 use crate::ph1m::MemoryCandidate;
 use crate::ph1n::Ph1nResponse;
 use crate::ph1x::{ConfirmAnswer, ThreadState};
-use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate};
+use crate::{
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
+};
 
 pub const PH1AGENT_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 

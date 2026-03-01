@@ -2240,7 +2240,8 @@ impl SimulationExecutor {
                 })
             }
             IntentType::UpdateBcastUrgentFollowupPolicy => {
-                const BCAST_URGENT_FOLLOWUP_POLICY_UPDATED: ReasonCodeId = ReasonCodeId(0x4243_00A7);
+                const BCAST_URGENT_FOLLOWUP_POLICY_UPDATED: ReasonCodeId =
+                    ReasonCodeId(0x4243_00A7);
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
                 let urgent_followup_immediate = parse_urgent_followup_immediate_behavior(
                     required_field_value(d, FieldKey::Task)?,
@@ -2265,11 +2266,13 @@ impl SimulationExecutor {
                     d,
                     x_idempotency_key,
                 );
-                Ok(SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated {
-                    tenant_id: tenant_id.as_str().to_string(),
-                    urgent_followup_immediate,
-                    event_id,
-                })
+                Ok(
+                    SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated {
+                        tenant_id: tenant_id.as_str().to_string(),
+                        urgent_followup_immediate,
+                        event_id,
+                    },
+                )
             }
             IntentType::SetReminder => {
                 let tenant_id = resolve_reminder_tenant_id(store, d, &actor_user_id)?;
@@ -3723,22 +3726,13 @@ fn parse_urgent_followup_immediate_behavior(v: &FieldValue) -> Result<bool, Stor
         }
         if matches!(
             s.as_str(),
-            "immediate"
-                | "immediately"
-                | "right away"
-                | "instant"
-                | "instantly"
-                | "no wait"
+            "immediate" | "immediately" | "right away" | "instant" | "instantly" | "no wait"
         ) {
             return Ok(true);
         }
         if matches!(
             s.as_str(),
-            "wait"
-                | "delay"
-                | "not immediate"
-                | "no immediate followup"
-                | "no immediate follow-up"
+            "wait" | "delay" | "not immediate" | "no immediate followup" | "no immediate follow-up"
         ) {
             return Ok(false);
         }
@@ -4108,7 +4102,9 @@ fn simulation_catalog_guard_target_v1(
     Ok((tenant_id, simulation_id))
 }
 
-fn simulation_id_for_intent_draft_v1(d: &IntentDraft) -> Result<&'static str, StorageError> {
+pub(crate) fn simulation_id_for_intent_draft_v1(
+    d: &IntentDraft,
+) -> Result<&'static str, StorageError> {
     match d.intent_type {
         IntentType::UpdateBcastUrgentFollowupPolicy | IntentType::UpdateBcastWaitPolicy => {
             Ok(BCAST_POLICY_UPDATE_COMMIT)
@@ -5087,8 +5083,7 @@ mod tests {
             SchemaVersion(1),
             vec![IntentField {
                 key: FieldKey::Task,
-                value: FieldValue::normalized(behavior.to_string(), behavior.to_string())
-                    .unwrap(),
+                value: FieldValue::normalized(behavior.to_string(), behavior.to_string()).unwrap(),
                 confidence: OverallConfidence::High,
             }],
             vec![],
@@ -6641,7 +6636,8 @@ mod tests {
             out,
             Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
+                    field:
+                        "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
                     reason: "ACCESS_SCOPE_VIOLATION",
                 }
             ))
@@ -6687,7 +6683,8 @@ mod tests {
             out,
             Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
-                    field: "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
+                    field:
+                        "simulation_candidate_dispatch.bcast_urgent_followup_policy.access_decision",
                     reason: "ACCESS_AP_REQUIRED",
                 }
             ))
@@ -6761,8 +6758,8 @@ mod tests {
     }
 
     #[test]
-    fn at_sim_exec_bcast_urgent_followup_policy_new_threads_use_updated_behavior_old_urgent_thread_unchanged()
-     {
+    fn at_sim_exec_bcast_urgent_followup_policy_new_threads_use_updated_behavior_old_urgent_thread_unchanged(
+    ) {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
         let actor = UserId::new("tenant_1:user_bcast_urgent_followup_policy_apply").unwrap();
