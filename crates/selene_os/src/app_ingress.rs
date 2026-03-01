@@ -35,7 +35,7 @@ use selene_kernel_contracts::ph1emoguide::{
     EmoGuideInteractionSignals, EmoGuideProfileBuildRequest, EmoGuideProfileValidateRequest,
     EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
 };
-use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{AuditEngine, CorrelationId, DeviceId, PayloadKey, TurnId};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
@@ -2066,6 +2066,7 @@ impl AppServerIngressRuntime {
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         let actor_user_id = request.actor_user_id.clone();
+        let actor_tenant_id = request.tenant_id.clone();
         let dispatch_now = x_build.now;
         let (voice_outcome, ph1x_request) =
             self.run_voice_turn_and_build_ph1x_request(store, request, x_build)?;
@@ -2166,7 +2167,7 @@ impl AppServerIngressRuntime {
                     let dispatch_outcome =
                         self.executor.execute_ph1x_dispatch_simulation_candidate(
                             store,
-                            actor_user_id,
+                            actor_user_id.clone(),
                             dispatch_now,
                             &ph1x_response,
                         )?;
@@ -2176,6 +2177,14 @@ impl AppServerIngressRuntime {
                 }
             },
         }
+
+        // Guardrail: persona hints are tone-only and must never affect
+        // simulation candidate selection, access checks, or ACTIVE sim gating.
+        let persona_style_hint =
+            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
+        out.response_text = out.response_text.take().map(|response_text| {
+            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
+        });
 
         Ok(out)
     }
@@ -2407,6 +2416,40 @@ fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> St
             }
         },
         _ => "Done.".to_string(),
+    }
+}
+
+fn latest_persona_style_hint_for_actor(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    tenant_id: Option<&str>,
+) -> Option<String> {
+    let style_profile_ref_key = PayloadKey::new("style_profile_ref").ok()?;
+    store.audit_events().iter().rev().find_map(|event| {
+        if !matches!(&event.engine, AuditEngine::Other(name) if name == "PH1.PERSONA") {
+            return None;
+        }
+        if event.user_id.as_ref() != Some(actor_user_id) {
+            return None;
+        }
+        if let Some(tenant_id) = tenant_id {
+            if event.tenant_id.as_deref() != Some(tenant_id) {
+                return None;
+            }
+        }
+        event
+            .payload_min
+            .entries
+            .get(&style_profile_ref_key)
+            .map(|value| value.as_str().to_string())
+    })
+}
+
+fn apply_persona_style_hint_to_response_text(response_text: String, style_hint: Option<&str>) -> String {
+    match style_hint {
+        Some("gentle") => format!("Certainly. {response_text}"),
+        Some("dominant") => format!("Directly: {response_text}"),
+        _ => response_text,
     }
 }
 
@@ -3682,6 +3725,25 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_link_send_denied_access_instance(store: &mut Ph1fStore, actor: &UserId, tenant: &str) {
+        store
+            .ph2access_upsert_instance_commit(
+                MonotonicTimeNs(1),
+                tenant.to_string(),
+                actor.clone(),
+                "role.link_sender_denied".to_string(),
+                AccessMode::A,
+                "{\"allow\":[]}".to_string(),
+                true,
+                AccessVerificationLevel::PasscodeTime,
+                AccessDeviceTrustLevel::Dtl4,
+                AccessLifecycleState::Active,
+                "policy_snapshot_v1".to_string(),
+                None,
+            )
+            .unwrap();
+    }
+
     fn seed_simulation_catalog_status(
         store: &mut Ph1fStore,
         tenant: &str,
@@ -3704,6 +3766,32 @@ mod tests {
         )
         .unwrap();
         store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn seed_persona_profile_for_actor(
+        store: &mut Ph1fStore,
+        actor: &UserId,
+        device: &DeviceId,
+        tenant: &str,
+        style_profile_ref: &str,
+        idempotency_key: &str,
+    ) {
+        store
+            .ph1persona_profile_commit(
+                MonotonicTimeNs(25),
+                tenant.to_string(),
+                CorrelationId(98_001),
+                TurnId(98_001),
+                None,
+                actor.clone(),
+                device.clone(),
+                style_profile_ref.to_string(),
+                "voice".to_string(),
+                "prefs_v1".to_string(),
+                ReasonCodeId(0x5800_00E1),
+                idempotency_key.to_string(),
+            )
+            .unwrap();
     }
 
     fn seed_invite_link_for_click(
@@ -4509,6 +4597,301 @@ mod tests {
         let after = runtime.debug_agent_input_packet_build_count();
         assert!(ph1x_request.is_some());
         assert_eq!(after, before + 1);
+    }
+
+    #[test]
+    fn at_emo_01_persona_changes_only_style_not_sim_candidate() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:emo_style_user").unwrap();
+        let device_id = DeviceId::new("emo_style_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(41),
+            thread_key: None,
+            thread_state: ThreadState::v1(
+                Some(PendingState::Confirm {
+                    intent_draft: invite_link_send_draft("Tom", "+14155550100", "tenant_1"),
+                    attempts: 1,
+                }),
+                None,
+            ),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let request_plain = AppVoiceIngressRequest::v1(
+            CorrelationId(9691),
+            TurnId(9791),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let out_plain = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_plain, x_build.clone())
+            .unwrap();
+
+        seed_persona_profile_for_actor(
+            &mut store,
+            &actor_user_id,
+            &device_id,
+            "tenant_1",
+            "gentle",
+            "at_emo_01_persona_profile",
+        );
+
+        let request_persona = AppVoiceIngressRequest::v1(
+            CorrelationId(9692),
+            TurnId(9792),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let out_persona = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_persona, x_build)
+            .unwrap();
+
+        let dispatch_plain = match out_plain
+            .ph1x_response
+            .clone()
+            .expect("plain run should include PH1.X response")
+            .directive
+        {
+            Ph1xDirective::Dispatch(dispatch) => dispatch.dispatch_request,
+            _ => panic!("plain run should dispatch simulation candidate"),
+        };
+        let dispatch_persona = match out_persona
+            .ph1x_response
+            .clone()
+            .expect("persona run should include PH1.X response")
+            .directive
+        {
+            Ph1xDirective::Dispatch(dispatch) => dispatch.dispatch_request,
+            _ => panic!("persona run should dispatch simulation candidate"),
+        };
+
+        assert_eq!(dispatch_plain, dispatch_persona);
+        assert_eq!(out_plain.reason_code, out_persona.reason_code);
+        assert_eq!(out_plain.next_move, AppVoiceTurnNextMove::Dispatch);
+        assert_eq!(out_persona.next_move, AppVoiceTurnNextMove::Dispatch);
+        assert!(matches!(
+            &out_plain.dispatch_outcome,
+            Some(SimulationDispatchOutcome::LinkDelivered { .. })
+        ));
+        assert!(matches!(
+            &out_persona.dispatch_outcome,
+            Some(SimulationDispatchOutcome::LinkDelivered { .. })
+        ));
+        assert_eq!(out_plain.response_text.as_deref(), Some("I sent the link."));
+        assert_eq!(
+            out_persona.response_text.as_deref(),
+            Some("Certainly. I sent the link.")
+        );
+    }
+
+    #[test]
+    fn at_emo_02_persona_cannot_bypass_access_or_active_sim_checks() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:emo_guard_user").unwrap();
+        let device_id = DeviceId::new("emo_guard_device_1").unwrap();
+        let mut access_store = Ph1fStore::new_in_memory();
+        seed_actor(&mut access_store, &actor_user_id, &device_id);
+        seed_link_send_denied_access_instance(&mut access_store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut access_store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(51),
+            thread_key: None,
+            thread_state: ThreadState::v1(
+                Some(PendingState::Confirm {
+                    intent_draft: invite_link_send_draft("Tom", "+14155550100", "tenant_1"),
+                    attempts: 1,
+                }),
+                None,
+            ),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let assert_contract_reason = |err: StorageError, expected_reason: &'static str| match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) => {
+                assert_eq!(reason, expected_reason);
+            }
+            other => panic!("expected contract violation {expected_reason}, got {other:?}"),
+        };
+
+        let access_err_plain = runtime
+            .run_desktop_voice_turn_end_to_end(
+                &mut access_store,
+                AppVoiceIngressRequest::v1(
+                    CorrelationId(9693),
+                    TurnId(9793),
+                    AppPlatform::Desktop,
+                    OsVoiceTrigger::Explicit,
+                    sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+                    actor_user_id.clone(),
+                    Some("tenant_1".to_string()),
+                    Some(device_id.clone()),
+                    Vec::new(),
+                    no_observation(),
+                )
+                .unwrap(),
+                x_build.clone(),
+            )
+            .expect_err("missing access grant must fail closed");
+        assert_contract_reason(access_err_plain, "ACCESS_SCOPE_VIOLATION");
+
+        seed_persona_profile_for_actor(
+            &mut access_store,
+            &actor_user_id,
+            &device_id,
+            "tenant_1",
+            "dominant",
+            "at_emo_02_access_guard_persona",
+        );
+        let access_err_persona = runtime
+            .run_desktop_voice_turn_end_to_end(
+                &mut access_store,
+                AppVoiceIngressRequest::v1(
+                    CorrelationId(9694),
+                    TurnId(9794),
+                    AppPlatform::Desktop,
+                    OsVoiceTrigger::Explicit,
+                    sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+                    actor_user_id.clone(),
+                    Some("tenant_1".to_string()),
+                    Some(device_id.clone()),
+                    Vec::new(),
+                    no_observation(),
+                )
+                .unwrap(),
+                x_build.clone(),
+            )
+            .expect_err("persona hint must not bypass access guard");
+        assert_contract_reason(access_err_persona, "ACCESS_SCOPE_VIOLATION");
+
+        let mut inactive_store = Ph1fStore::new_in_memory();
+        seed_actor(&mut inactive_store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut inactive_store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut inactive_store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Disabled,
+            );
+        }
+
+        let active_err_plain = runtime
+            .run_desktop_voice_turn_end_to_end(
+                &mut inactive_store,
+                AppVoiceIngressRequest::v1(
+                    CorrelationId(9695),
+                    TurnId(9795),
+                    AppPlatform::Desktop,
+                    OsVoiceTrigger::Explicit,
+                    sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+                    actor_user_id.clone(),
+                    Some("tenant_1".to_string()),
+                    Some(device_id.clone()),
+                    Vec::new(),
+                    no_observation(),
+                )
+                .unwrap(),
+                x_build.clone(),
+            )
+            .expect_err("inactive simulations must fail closed");
+        assert_contract_reason(active_err_plain, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
+
+        seed_persona_profile_for_actor(
+            &mut inactive_store,
+            &actor_user_id,
+            &device_id,
+            "tenant_1",
+            "gentle",
+            "at_emo_02_active_guard_persona",
+        );
+        let active_err_persona = runtime
+            .run_desktop_voice_turn_end_to_end(
+                &mut inactive_store,
+                AppVoiceIngressRequest::v1(
+                    CorrelationId(9696),
+                    TurnId(9796),
+                    AppPlatform::Desktop,
+                    OsVoiceTrigger::Explicit,
+                    sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+                    actor_user_id.clone(),
+                    Some("tenant_1".to_string()),
+                    Some(device_id),
+                    Vec::new(),
+                    no_observation(),
+                )
+                .unwrap(),
+                x_build,
+            )
+            .expect_err("persona hint must not bypass active simulation guard");
+        assert_contract_reason(active_err_persona, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
     }
 
     #[test]
