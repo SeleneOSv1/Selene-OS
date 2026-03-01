@@ -250,7 +250,7 @@ Allowed reason codes:
 - `SIM_FINDER_MISSING_SIMULATION_DAILY_CAP_REACHED`
 
 Idempotency key recipe:
-- `missing_sim:{tenant_id}:{user_id}:{dedupe_fingerprint}:{correlation_id}:{turn_id}`
+- Canonical source: see Section `16.12` (`SIL` idempotency registry, authoritative).
 
 ## 5) Deterministic matching/ranking logic
 
@@ -454,14 +454,19 @@ Dev lifecycle closure (system-wide):
 
 ### 9.1 Abuse/Spam Controls (Mandatory)
 
+Canonical window model (single source of truth):
+- All SIL dedupe and rate-limit evaluations use `UTC day buckets` only.
+- Window key: `window_bucket_utc = yyyymmdd_utc`.
+
 Rate limits (fail closed when exceeded):
-- Per user: max `3` new Dev Intake tickets per rolling `1 hour`.
-- Per tenant: max `20` new Dev Intake tickets per rolling `1 hour`.
-- Daily hard cap: max `100` new Dev Intake tickets per tenant per `24 hours`.
+- Per user/day: max `3` new Dev Intake tickets per `window_bucket_utc`.
+- Per tenant/day: max `20` new Dev Intake tickets per `window_bucket_utc`.
+- Per capability/day: max `10` new Dev Intake tickets per `(tenant_id, dedupe_fingerprint, window_bucket_utc)`.
+- Daily hard cap: max `100` new Dev Intake tickets per tenant per `window_bucket_utc`.
 
 Dedupe rules:
-- Primary dedupe key: `(tenant_id, user_id, dedupe_fingerprint)` over `24 hours`.
-- Secondary dedupe key: `(tenant_id, dedupe_fingerprint)` over `24 hours` to suppress cross-user duplicates for same capability request.
+- Primary dedupe key: `(tenant_id, user_id, dedupe_fingerprint, window_bucket_utc)`.
+- Secondary dedupe key: `(tenant_id, dedupe_fingerprint, window_bucket_utc)` to suppress cross-user duplicates for same capability request.
 - If deduped, do not create new ticket; return existing intake reference.
 
 Cap behavior:
@@ -476,7 +481,7 @@ Cap behavior:
 - `sim_finder_gold_mapping_current` (projection)
 
 Idempotency/dedupe keys:
-- Missing-sim intake: `(tenant_id, dedupe_fingerprint, idempotency_key)`
+- Missing-sim intake and SIL write-path idempotency recipes are canonicalized in Section `16.12`.
 - Gold mapping update: `(tenant_id, utterance_fingerprint, simulation_id, idempotency_key)`
 
 Replay rule:
@@ -666,3 +671,305 @@ Replay invariants:
 Preferred canonical docs name: `Simulation Finder Core`.
 
 Reason: it is precise about function, avoids overlap with broader agent/runtime concepts, and matches the hard law that it only finds/routes but does not execute.
+
+## 16) Controlled Self-Improvement Loop (Design -> Build)
+
+Goal:
+- Make missing-simulation handling an end-to-end governed pipeline:
+  - user request -> `MissingSimulationPacket` -> dedupe + worthiness score -> builder proposal (`Draft`) -> human review -> simulation added/activated -> requester notified.
+
+Hard laws:
+- No auto-execution of new simulations.
+- Builder remains the only `Active` promoter.
+- Access rules apply to notification and any downstream action.
+- Dedupe + rate limits are mandatory.
+- Full audit chain is required.
+
+### 16.1 Milestone M0 — End-to-end data model (DB truth)
+
+Deliverables:
+- Dev Intake tables (`PH1.F`):
+  - `sim_finder_missing_sim_ledger` (append-only)
+  - `sim_finder_missing_sim_current` (projection)
+  - `sim_finder_missing_sim_dedupe_index`
+- Builder linkage + notify tables:
+  - `missing_sim_to_builder_proposal_link` (append-only)
+  - `notify_requester_ledger` / `notify_requester_current` (append-only + projection)
+
+Acceptance tests:
+- `AT-SIL-M0-01`: insert missing-sim ledger row idempotently.
+- `AT-SIL-M0-02`: dedupe index prevents duplicates.
+- `AT-SIL-M0-03`: projection rebuild equals current.
+
+Proof command:
+- `cargo test -p selene_storage sil_m0_ -- --nocapture`
+
+### 16.2 Milestone M1 — Wire MissingSimulation -> Dev Intake (verify current wiring)
+
+Deliverables:
+- Finder emits `MissingSimulationPacket` with proof-trace fields.
+- Storage commit persists:
+  - `dedupe_fingerprint`
+  - `worthiness_score_bp`
+  - `requester_user_id`
+  - notify-stub audit row
+
+Acceptance tests:
+- `AT-SIL-M1-01`: missing-sim packet writes ledger row.
+- `AT-SIL-M1-02`: duplicate request dedupes.
+- `AT-SIL-M1-03`: worthiness score stored correctly.
+
+Proof commands:
+- `cargo test -p selene_os at_finder_exec_missing_sim_ -- --nocapture`
+- `cargo test -p selene_storage sil_m1_ -- --nocapture`
+
+### 16.3 Milestone M2 — Worthiness scoring + spam controls (deterministic)
+
+Deliverables:
+- Deterministic scoring function (stored + versioned):
+  - `score = f(frequency, value, risk, feasibility)`
+- Threshold policy:
+  - `auto_propose_threshold_bp`
+  - `block_threshold_bp`
+  - daily cap per user/tenant
+- Rate limits:
+  - per user/day
+  - per tenant/day
+  - per capability/day
+- Escalation to refuse on abuse.
+
+Acceptance tests:
+- `AT-SIL-M2-01`: same inputs produce same score.
+- `AT-SIL-M2-02`: caps enforced.
+- `AT-SIL-M2-03`: blocked reason stored when rejected.
+
+Proof command:
+- `cargo test -p selene_storage sil_m2_ -- --nocapture`
+
+### 16.4 Milestone M3 — Auto-proposal generation (proposal-only; no activation)
+
+Deliverables:
+- When a missing-sim reaches threshold + dedupe count, create builder proposal row as `Draft`.
+
+Rules:
+- Proposal is `Draft` only.
+- No `Active` simulation is created automatically.
+- No code changes are made automatically.
+- Proposal payload includes:
+  - suggested simulation family
+  - required fields schema
+  - integration requirements
+  - acceptance test skeleton
+  - rollback plan requirement
+  - risk class
+
+Acceptance tests:
+- `AT-SIL-M3-01`: threshold triggers proposal row.
+- `AT-SIL-M3-02`: below threshold does not.
+- `AT-SIL-M3-03`: proposal is draft only.
+- `AT-SIL-M3-04`: audit chain links `missing_sim_id -> proposal_id`.
+
+Proof commands:
+- `cargo test -p selene_os sil_m3_ -- --nocapture`
+- `cargo test -p selene_storage sil_m3_ -- --nocapture`
+
+### 16.5 Milestone M4 — Human review + activation handshake
+
+Deliverables:
+- Builder process picks up proposal.
+- Human approves.
+- Simulation is implemented + registered.
+- Simulation becomes `Active` only through builder promotion flow.
+
+Acceptance tests:
+- `AT-SIL-M4-01`: non-builder cannot activate.
+- `AT-SIL-M4-02`: builder activation creates `Active` row.
+- `AT-SIL-M4-03`: missing-sim linked proposal marked `resolved`.
+
+Proof command:
+- `cargo test -p selene_os builder_activation_ -- --nocapture`
+
+### 16.6 Milestone M5 — Notify original requester when capability becomes Active
+
+Deliverables:
+- On activation:
+  - find all requesters linked to `dedupe_fingerprint`
+  - send notification (`BCAST` or app message)
+  - persist notify proof and prevent duplicates
+
+Acceptance tests:
+- `AT-SIL-M5-01`: notify sends once per requester.
+- `AT-SIL-M5-02`: idempotent replay does not double-notify.
+- `AT-SIL-M5-03`: notification includes "now supported" + simulation name.
+
+Proof command:
+- `cargo test -p selene_os sil_notify_ -- --nocapture`
+
+### 16.7 Milestone M6 — CI guardrails (no dead reporting)
+
+Deliverables:
+- Guard script:
+  - `scripts/check_sim_finder_self_improvement_loop.sh`
+- CI fail conditions:
+  - missing-sim rows without legal lifecycle transition evidence from Section `16.9`
+  - proposals without linked missing-sim evidence
+  - notify rows missing proof refs
+
+Acceptance tests:
+- `AT-SIL-M6-01`
+- `AT-SIL-M6-02`
+- `AT-SIL-M6-03`
+
+Proof command:
+- `bash scripts/check_sim_finder_self_improvement_loop.sh`
+
+### 16.8 Build order (canonical)
+
+- `M0 -> M1 (verify) -> M2 -> M3 -> M4 -> M5 -> M6`
+
+Execution note:
+- If `M1` is already mostly wired, verify it early, but do not run `M5` notify flow before `M4` activation linkage proofs are complete.
+
+### 16.9 Canonical missing-sim lifecycle (authoritative)
+
+`sim_finder_missing_sim_current.status` allowed values and transitions:
+- `NEW -> DEDUPED`
+- `NEW -> BLOCKED`
+- `NEW -> PROPOSED`
+- `DEDUPED -> BLOCKED`
+- `DEDUPED -> PROPOSED`
+- `PROPOSED -> RESOLVED`
+- `RESOLVED -> NOTIFIED`
+
+Hard rules:
+- Any transition not listed above is invalid.
+- Every transition requires exactly one append-only ledger row in `sim_finder_missing_sim_ledger`.
+- Projection state must be reconstructable from ledger rows only (`no silent transitions`).
+
+Resolve semantics (canonical):
+- A row may enter `RESOLVED` only when all are present:
+  - `resolved_simulation_id`
+  - `resolved_capability_version`
+  - `resolved_tenant_scope`
+  - `activated_at`
+  - `resolution_proof_ref`
+
+### 16.10 SIL windowing + counters (authoritative)
+
+Windowing rules:
+- SIL uses UTC-day buckets only (`window_bucket_utc = yyyymmdd_utc`).
+- No rolling 60-minute or rolling 24-hour windows are permitted for SIL decisions.
+
+Counter model (design target):
+- `sim_finder_missing_sim_rate_limit_current` keyed by:
+  - `(tenant_id, user_id, window_bucket_utc)`
+  - `(tenant_id, dedupe_fingerprint, window_bucket_utc)`
+  - `(tenant_id, window_bucket_utc)`
+
+Reset semantics:
+- Counters reset only by natural bucket rollover at UTC midnight.
+- Rebuild from ledger must reproduce identical counter values for a given bucket.
+
+### 16.11 Access action registry for SIL writes (authoritative)
+
+Required access action strings:
+- `SIM_FINDER_MISSING_SIM_PROPOSAL_CREATE`
+- `SIM_FINDER_MISSING_SIM_NOTIFY_REQUESTER`
+- `SIM_FINDER_MISSING_SIM_ROLLBACK_OR_REOPEN`
+
+Fail-closed behavior:
+- `ALLOW` -> proceed to simulation-gated SIL commit.
+- `DENY` -> stop and emit `SIM_FINDER_REFUSE_ACCESS_DENIED`.
+- `ESCALATE` -> stop and emit `SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED`.
+
+No SIL write path may query a master/template policy for runtime allow/deny decisions.
+
+### 16.12 SIL idempotency registry (authoritative)
+
+Every SIL write path must use exactly one deterministic key recipe:
+- Intake create:
+  - `sil_intake:{tenant_id}:{user_id}:{dedupe_fingerprint}:{window_bucket_utc}:{correlation_id}:{turn_id}`
+- Dedupe index upsert:
+  - `sil_dedupe:{tenant_id}:{dedupe_fingerprint}:{window_bucket_utc}`
+- Proposal-link append:
+  - `sil_proposal_link:{tenant_id}:{missing_sim_id}:{proposal_id}`
+- Resolve append:
+  - `sil_resolve:{tenant_id}:{missing_sim_id}:{resolved_simulation_id}:{resolved_capability_version}`
+- Notify enqueue:
+  - `sil_notify_enqueue:{tenant_id}:{missing_sim_id}:{requester_user_id}:{resolved_capability_version}`
+- Notify delivery attempt:
+  - `sil_notify_attempt:{tenant_id}:{notify_request_id}:{attempt_index}`
+- Notify finalize:
+  - `sil_notify_finalize:{tenant_id}:{notify_request_id}:{terminal_status}`
+
+Rule:
+- This section is the single source of truth for SIL idempotency recipes.
+
+### 16.13 Dedupe fingerprint specification (authoritative)
+
+`dedupe_fingerprint` generation inputs:
+- `requested_capability_name_normalized`
+- `cleaned_paraphrase`
+- `required_integrations[]` (sorted lexicographically)
+- `category`
+- `tenant_id`
+
+Normalization:
+- Unicode NFKC normalization.
+- Lowercase.
+- Trim + collapse internal whitespace to single spaces.
+- Remove punctuation except connector separators (`/`, `+`, `-`) inside tokens.
+
+Hash method:
+- `sha256(normalized_payload_json)` hex-encoded.
+- Include `dedupe_spec_version` alongside the fingerprint.
+
+Versioning:
+- initial version: `dedupe_spec_version = 1`.
+- any normalization/hash input change requires version increment.
+
+### 16.14 Notify requester status model (authoritative)
+
+`notify_requester_current.status` allowed values:
+- `PENDING`
+- `SENT`
+- `RETRY_SCHEDULED`
+- `FAILED_POISONED`
+- `SUPPRESSED_DUPLICATE`
+
+Allowed transitions:
+- `PENDING -> SENT`
+- `PENDING -> RETRY_SCHEDULED`
+- `RETRY_SCHEDULED -> SENT`
+- `RETRY_SCHEDULED -> RETRY_SCHEDULED` (next attempt with incremented `attempt_index`)
+- `RETRY_SCHEDULED -> FAILED_POISONED`
+- `PENDING -> SUPPRESSED_DUPLICATE`
+
+Retry/poison policy:
+- `max_attempts = 3`
+- if delivery still fails after `max_attempts`, transition to `FAILED_POISONED` with `poison_reason_code` and `poison_proof_ref`.
+- once `SENT` or `SUPPRESSED_DUPLICATE`, row is terminal and immutable.
+
+### 16.15 Finder/SIL milestone crosswalk (authoritative rollout map)
+
+Authoritative track for missing-simulation self-improvement loop:
+- SIL milestones in Section `16` are canonical.
+- Finder milestones in Section `11` remain reference-level for broader Finder scope.
+
+Crosswalk:
+- SIL `M0` + `M1` + `M2` <-> Finder `M6` (Dev Intake storage, dedupe, worthiness).
+- SIL `M3` + `M4` <-> Finder `M6` extension (proposal linkage + builder activation resolution).
+- SIL `M5` <-> Finder `M7` (notification closure).
+- SIL `M6` <-> Finder `M8` (CI guardrails).
+
+### 16.16 SIL reliability SLOs (global-standard gates)
+
+Required SLOs:
+- `intake_to_proposal_p95 <= 24h`
+- `proposal_to_resolved_p95 <= 14d`
+- `false_proposal_rate <= 2%`
+- `notify_delivery_success_rate >= 99%` (rolling 30d)
+- `duplicate_notification_rate = 0`
+
+Operational gate:
+- If any SIL SLO is out of bounds, promotion remains blocked until corrected or explicitly builder-approved with bounded waiver.
