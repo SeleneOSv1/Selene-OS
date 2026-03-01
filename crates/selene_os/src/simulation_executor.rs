@@ -3094,6 +3094,9 @@ impl SimulationExecutor {
         if !voice_identity_is_confirmed(voice_identity_assertion) {
             return Ok(vec![]);
         }
+        let Some(confirmed_user_id) = confirmed_voice_user_id(voice_identity_assertion) else {
+            return Ok(vec![]);
+        };
         *self.memory_context_lookup_count.borrow_mut() += 1;
 
         let topic_hint = topic_hint
@@ -3174,7 +3177,18 @@ impl SimulationExecutor {
                 ))
             }
         };
-        Ok(recall.candidates)
+        // Fail closed to the asserted, confirmed identity scope even if PH1.M runtime state
+        // contains stale/non-scoped entries.
+        let scoped = recall
+            .candidates
+            .into_iter()
+            .filter(|candidate| {
+                store
+                    .memory_current()
+                    .contains_key(&(confirmed_user_id.clone(), candidate.memory_key.clone()))
+            })
+            .collect();
+        Ok(scoped)
     }
 
     pub fn debug_memory_context_lookup_count(&self) -> u64 {
@@ -3189,6 +3203,7 @@ impl SimulationExecutor {
         correlation_id: CorrelationId,
         turn_id: TurnId,
         speaker_assertion: Ph1VoiceIdResponse,
+        provenance_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
         memory_key: MemoryKey,
         memory_value: MemoryValue,
         evidence_quote: String,
@@ -3202,7 +3217,7 @@ impl SimulationExecutor {
             MemoryConsent::ExplicitRemember,
             evidence_quote,
             MemoryProvenance::v1(
-                None,
+                provenance_session_id,
                 Some(format!("test:{}:{}", correlation_id.0, turn_id.0)),
             )
             .map_err(StorageError::ContractViolation)?,
@@ -4183,6 +4198,17 @@ fn voice_identity_is_confirmed(assertion: &Ph1VoiceIdResponse) -> bool {
         Ph1VoiceIdResponse::SpeakerAssertionOk(ok)
             if ok.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed
     )
+}
+
+fn confirmed_voice_user_id(assertion: &Ph1VoiceIdResponse) -> Option<UserId> {
+    match assertion {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(ok)
+            if ok.identity_v2.identity_tier_v2 == IdentityTierV2::Confirmed =>
+        {
+            ok.user_id.clone()
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]

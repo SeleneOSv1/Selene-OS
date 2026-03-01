@@ -3874,6 +3874,11 @@ mod tests {
     }
 
     #[test]
+    fn at_mem_01_probable_identity_returns_empty_memory_candidates() {
+        run5_voice_builder_skips_ph1m_and_ignores_external_memory_when_identity_not_confirmed();
+    }
+
+    #[test]
     fn run5_voice_builder_uses_confirmed_identity_memory_context_to_resolve_tom_contact() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:run5_confirmed_user").unwrap();
@@ -3909,6 +3914,7 @@ mod tests {
                 CorrelationId(9502),
                 TurnId(9602),
                 confirmed_assertion,
+                None,
                 MemoryKey::new("invite_contact_tom_sms").unwrap(),
                 MemoryValue::v1("+14155550100".to_string(), None).unwrap(),
                 "Tom contact memory".to_string(),
@@ -3950,6 +3956,161 @@ mod tests {
             out.directive,
             selene_kernel_contracts::ph1x::Ph1xDirective::Clarify(_)
         ));
+    }
+
+    #[test]
+    fn at_mem_02_confirmed_identity_returns_candidates_when_present() {
+        run5_voice_builder_uses_confirmed_identity_memory_context_to_resolve_tom_contact();
+    }
+
+    #[test]
+    fn at_mem_03_confirmed_identity_wrong_user_never_sees_other_users_memory() {
+        let runtime = AppServerIngressRuntime::default();
+        let owner_user_id = UserId::new("tenant_1:run5_owner_user").unwrap();
+        let owner_device_id = DeviceId::new("run5_owner_device_1").unwrap();
+        let actor_user_id = UserId::new("tenant_1:run5_other_user").unwrap();
+        let actor_device_id = DeviceId::new("run5_other_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &owner_user_id, &owner_device_id);
+        seed_actor(&mut store, &actor_user_id, &actor_device_id);
+
+        runtime
+            .executor
+            .debug_seed_memory_candidate_for_tests(
+                &mut store,
+                MonotonicTimeNs(6),
+                CorrelationId(9513),
+                TurnId(9613),
+                confirmed_voice_assertion(owner_user_id),
+                None,
+                MemoryKey::new("invite_contact_tom_sms").unwrap(),
+                MemoryValue::v1("+14155550100".to_string(), None).unwrap(),
+                "Tom contact memory".to_string(),
+            )
+            .unwrap();
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9514),
+            TurnId(9614),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(actor_device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        let ph1x_request = runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9514),
+                TurnId(9614),
+                AppPlatform::Desktop,
+                &forwarded,
+                x_build,
+            )
+            .unwrap();
+        assert!(
+            ph1x_request.memory_candidates.is_empty(),
+            "actor should never receive another user's memory candidates"
+        );
+        assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 1);
+    }
+
+    #[test]
+    fn at_mem_04_memory_provenance_contains_session_id() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:run5_provenance_user").unwrap();
+        let device_id = DeviceId::new("run5_provenance_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let expected_session_id = SessionId(9515);
+        runtime
+            .executor
+            .debug_seed_memory_candidate_for_tests(
+                &mut store,
+                MonotonicTimeNs(6),
+                CorrelationId(9515),
+                TurnId(9615),
+                confirmed_voice_assertion(actor_user_id.clone()),
+                Some(expected_session_id),
+                MemoryKey::new("invite_contact_tom_sms").unwrap(),
+                MemoryValue::v1("+14155550188".to_string(), None).unwrap(),
+                "Tom contact memory".to_string(),
+            )
+            .unwrap();
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9515),
+            TurnId(9615),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = confirmed_voice_assertion(actor_user_id);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        let ph1x_request = runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9515),
+                TurnId(9615),
+                AppPlatform::Desktop,
+                &forwarded,
+                x_build,
+            )
+            .unwrap();
+        let candidate = ph1x_request
+            .memory_candidates
+            .iter()
+            .find(|candidate| candidate.memory_key.as_str() == "invite_contact_tom_sms")
+            .expect("confirmed identity should receive the seeded memory candidate");
+        assert_eq!(candidate.provenance.session_id, Some(expected_session_id));
+        assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 1);
     }
 
     #[test]

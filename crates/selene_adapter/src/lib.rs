@@ -8829,6 +8829,25 @@ mod tests {
         assert_eq!(memory_record.provenance.session_id, Some(session_id));
     }
 
+    #[test]
+    fn at_mem_01_probable_identity_returns_empty_memory_candidates() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 33_001;
+        req.turn_id = 43_001;
+        req.now_ns = Some(9_000_000_000);
+        req.trigger = "EXPLICIT".to_string();
+        req.user_text_final = Some("Send the invite link to Tom".to_string());
+
+        let prepared = prepare_trigger_agent_input_shape(&runtime, req);
+        assert_eq!(prepared.shape.memory_candidates_len, 0);
+    }
+
+    #[test]
+    fn at_mem_04_memory_provenance_contains_session_id() {
+        at_l_05_session_id_is_present_in_audit_and_memory_provenance();
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct AgentInputPacketShape {
         session_state: SessionState,

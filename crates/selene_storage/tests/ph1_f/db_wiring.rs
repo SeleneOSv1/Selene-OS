@@ -684,6 +684,31 @@ fn at_f_db_04_rebuild_current_from_ledger() {
 }
 
 #[test]
+fn at_mem_04_memory_provenance_contains_session_id() {
+    let mut s = store_with_identity_device_session();
+    s.append_memory_row(
+        &user(),
+        mem_event(
+            MemoryLedgerEventKind::Stored,
+            "invite_contact_tom_sms",
+            Some("+14155550100"),
+            12,
+        ),
+        MemoryUsePolicy::AlwaysUsable,
+        None,
+        Some("at_mem_04_mem_provenance".to_string()),
+    )
+    .unwrap();
+
+    let key = (user(), MemoryKey::new("invite_contact_tom_sms").unwrap());
+    let current = s
+        .memory_current_rows()
+        .get(&key)
+        .expect("memory current row must exist");
+    assert_eq!(current.provenance.session_id, Some(SessionId(1)));
+}
+
+#[test]
 fn at_f_db_05_builder_proposal_run_result_append_only_with_idempotency() {
     let mut s = store_with_identity_device_session();
 
