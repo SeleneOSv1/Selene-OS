@@ -3,6 +3,7 @@
 pub mod common;
 pub mod ph1_voice_id;
 pub mod ph1access;
+pub mod ph1agent;
 pub mod ph1art;
 pub mod ph1bcast;
 pub mod ph1builder;

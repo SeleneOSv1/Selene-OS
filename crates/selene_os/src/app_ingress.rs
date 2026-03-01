@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
+
 use selene_engines::ph1_voice_id::{
     simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
     VoiceIdObservation as EngineVoiceIdObservation,
@@ -19,6 +21,7 @@ use selene_kernel_contracts::ph1_voice_id::{
     VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
+use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, ToolName, ToolRequest, ToolResponse, ToolResult,
     ToolStructuredField, ToolTextSnippet,
@@ -377,6 +380,7 @@ pub struct AppOnboardingContinueOutcome {
 #[derive(Debug, Clone)]
 pub struct AppVoicePh1xBuildInput {
     pub now: MonotonicTimeNs,
+    pub thread_key: Option<String>,
     pub thread_state: ThreadState,
     pub session_state: SessionState,
     pub policy_context_ref: PolicyContextRef,
@@ -417,6 +421,8 @@ pub struct AppServerIngressRuntime {
     executor: SimulationExecutor,
     ph1x_runtime: Ph1xRuntime,
     ph1e_runtime: Ph1eRuntime,
+    agent_input_packet_build_count: RefCell<u64>,
+    last_agent_input_packet: RefCell<Option<AgentInputPacket>>,
 }
 
 impl Default for AppServerIngressRuntime {
@@ -431,6 +437,8 @@ impl AppServerIngressRuntime {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
             ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
+            agent_input_packet_build_count: RefCell::new(0),
+            last_agent_input_packet: RefCell::new(None),
         }
     }
 
@@ -2028,6 +2036,8 @@ impl AppServerIngressRuntime {
         let correlation_id = request.correlation_id;
         let turn_id = request.turn_id;
         let app_platform = request.app_platform.clone();
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_tenant_id = request.tenant_id.clone();
         let outcome = self.run_voice_turn(store, request)?;
 
         let ph1x_request = match &outcome {
@@ -2038,6 +2048,8 @@ impl AppServerIngressRuntime {
                     turn_id,
                     app_platform,
                     forwarded,
+                    request_session_id,
+                    request_tenant_id.as_deref(),
                     x_build,
                 )?)
             }
@@ -2224,8 +2236,43 @@ impl AppServerIngressRuntime {
         turn_id: TurnId,
         app_platform: AppPlatform,
         forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        tenant_id: Option<&str>,
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<Ph1xRequest, StorageError> {
+        let agent_input_packet = self.build_agent_input_packet_for_forwarded_voice(
+            store,
+            correlation_id,
+            turn_id,
+            forwarded,
+            request_session_id,
+            tenant_id,
+            x_build,
+        )?;
+        *self.last_agent_input_packet.borrow_mut() = Some(agent_input_packet.clone());
+        build_ph1x_request_from_agent_input_packet(app_platform, &agent_input_packet)
+    }
+
+    pub fn debug_agent_input_packet_build_count(&self) -> u64 {
+        *self.agent_input_packet_build_count.borrow()
+    }
+
+    pub fn debug_last_agent_input_packet(&self) -> Option<AgentInputPacket> {
+        self.last_agent_input_packet.borrow().clone()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_agent_input_packet_for_forwarded_voice(
+        &self,
+        store: &mut Ph1fStore,
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        tenant_id: Option<&str>,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<AgentInputPacket, StorageError> {
+        *self.agent_input_packet_build_count.borrow_mut() += 1;
         let topic_hint = memory_topic_hint_from_nlp_output(x_build.nlp_output.as_ref());
         let runtime_memory_candidates = if forwarded.identity_confirmed() {
             self.executor
@@ -2242,14 +2289,54 @@ impl AppServerIngressRuntime {
         } else {
             Vec::new()
         };
-        build_ph1x_request_from_voice_forward(
+        let (sim_catalog_snapshot_hash, sim_catalog_snapshot_version) =
+            simulation_catalog_snapshot_for_agent_input(store, tenant_id);
+        let transcript_text = transcript_text_from_nlp_output(x_build.nlp_output.as_ref());
+        let trace_id = format!("agentpkt:{}:{}", correlation_id.0, turn_id.0);
+        let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
             turn_id,
-            app_platform,
-            forwarded,
-            x_build,
+            x_build.now,
+            &trace_id,
+            transcript_text.as_deref(),
+            x_build.locale.as_deref(),
+            request_session_id,
+            x_build.session_state,
+            x_build.thread_key.as_deref(),
+            &x_build.thread_state,
+            &runtime_memory_candidates,
+            sim_catalog_snapshot_version,
+            &sim_catalog_snapshot_hash,
+            forwarded.identity_prompt_scope_key.as_deref(),
+        );
+        AgentInputPacket::v1(
+            correlation_id.0,
+            turn_id.0,
+            x_build.now,
+            trace_id,
+            packet_hash,
+            transcript_text,
+            x_build.locale.clone(),
+            None,
+            forwarded.voice_identity_assertion.clone(),
+            forwarded.identity_prompt_scope_key.clone(),
+            request_session_id,
+            x_build.session_state,
+            x_build.thread_key.clone(),
+            x_build.thread_state,
+            x_build.policy_context_ref,
             runtime_memory_candidates,
+            x_build.confirm_answer,
+            x_build.nlp_output,
+            x_build.tool_response,
+            x_build.interruption,
+            x_build.last_failure_reason_code,
+            None,
+            None,
+            sim_catalog_snapshot_hash,
+            sim_catalog_snapshot_version,
         )
+        .map_err(StorageError::ContractViolation)
     }
 }
 
@@ -2894,31 +2981,27 @@ fn resolve_actor_single_tenant(
     TenantId::new(tenant).map_err(StorageError::ContractViolation)
 }
 
-fn build_ph1x_request_from_voice_forward(
-    correlation_id: CorrelationId,
-    turn_id: TurnId,
+fn build_ph1x_request_from_agent_input_packet(
     app_platform: AppPlatform,
-    forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
-    x_build: AppVoicePh1xBuildInput,
-    runtime_memory_candidates: Vec<MemoryCandidate>,
+    packet: &AgentInputPacket,
 ) -> Result<Ph1xRequest, StorageError> {
     let effective_policy_context_ref =
-        merge_thread_policy_context(x_build.policy_context_ref, &x_build.thread_state);
+        merge_thread_policy_context(packet.policy_context_ref, &packet.thread_state);
     let mut req = Ph1xRequest::v1(
-        correlation_id.0,
-        turn_id.0,
-        x_build.now,
-        x_build.thread_state,
-        x_build.session_state,
-        IdentityContext::Voice(forwarded.voice_identity_assertion.clone()),
+        packet.correlation_id,
+        packet.turn_id,
+        packet.now,
+        packet.thread_state.clone(),
+        packet.session_state,
+        IdentityContext::Voice(packet.voice_identity_assertion.clone()),
         effective_policy_context_ref,
-        runtime_memory_candidates,
-        x_build.confirm_answer,
-        x_build.nlp_output,
-        x_build.tool_response,
-        x_build.interruption,
-        x_build.locale,
-        x_build.last_failure_reason_code,
+        packet.memory_candidates.clone(),
+        packet.confirm_answer,
+        packet.nlp_output.clone(),
+        packet.tool_response.clone(),
+        packet.interruption.clone(),
+        packet.language_hint.clone(),
+        packet.last_failure_reason_code,
     )
     .map_err(StorageError::ContractViolation)?;
     let step_up_capabilities = match app_platform {
@@ -2929,9 +3012,127 @@ fn build_ph1x_request_from_voice_forward(
         .with_step_up_capabilities(Some(step_up_capabilities))
         .map_err(StorageError::ContractViolation)?;
     req = req
-        .with_identity_prompt_scope_key(forwarded.identity_prompt_scope_key.clone())
+        .with_identity_prompt_scope_key(packet.identity_prompt_scope_key.clone())
         .map_err(StorageError::ContractViolation)?;
     Ok(req)
+}
+
+fn transcript_text_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Option<String> {
+    match nlp_output {
+        Some(Ph1nResponse::Chat(chat)) => Some(chat.response_text.clone()),
+        Some(Ph1nResponse::IntentDraft(draft)) => Some(format!("{:?}", draft.intent_type)),
+        _ => None,
+    }
+}
+
+fn simulation_catalog_snapshot_for_agent_input(
+    store: &Ph1fStore,
+    tenant_id: Option<&str>,
+) -> (String, u64) {
+    let mut rows: Vec<String> = store
+        .simulation_catalog_current()
+        .iter()
+        .filter(|((tenant, _), _)| tenant_id.map(|value| tenant.as_str() == value).unwrap_or(true))
+        .map(|((tenant, simulation_id), row)| {
+            format!(
+                "{}|{}|{}|{:?}|{:?}|{}",
+                tenant.as_str(),
+                simulation_id.as_str(),
+                row.simulation_version.0,
+                row.simulation_type,
+                row.status,
+                row.source_event_id
+            )
+        })
+        .collect();
+    rows.sort();
+    let snapshot_text = if rows.is_empty() {
+        "simcat:empty".to_string()
+    } else {
+        rows.join("\n")
+    };
+    let hash = agent_hash_hex(&snapshot_text);
+    let version = store
+        .simulation_catalog_events()
+        .iter()
+        .filter(|row| tenant_id.map(|value| row.tenant_id.as_str() == value).unwrap_or(true))
+        .map(|row| row.simulation_catalog_event_id)
+        .max()
+        .unwrap_or(0);
+    (hash, version)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn agent_input_packet_hash_hex(
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    now: MonotonicTimeNs,
+    trace_id: &str,
+    transcript_text: Option<&str>,
+    language_hint: Option<&str>,
+    session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+    session_state: SessionState,
+    thread_key: Option<&str>,
+    thread_state: &ThreadState,
+    memory_candidates: &[MemoryCandidate],
+    sim_catalog_snapshot_version: u64,
+    sim_catalog_snapshot_hash: &str,
+    identity_prompt_scope_key: Option<&str>,
+) -> String {
+    let mut lines = vec![
+        format!("corr={}", correlation_id.0),
+        format!("turn={}", turn_id.0),
+        format!("now={}", now.0),
+        format!("trace={trace_id}"),
+        format!("session={}", session_id.map(|v| v.0).unwrap_or(0)),
+        format!("session_state={session_state:?}"),
+        format!("thread_key={}", thread_key.unwrap_or("none")),
+        format!("thread_pending={}", thread_state.pending.is_some()),
+        format!("thread_project={}", thread_state.project_id.as_deref().unwrap_or("none")),
+        format!(
+            "identity_prompt_scope_key={}",
+            identity_prompt_scope_key.unwrap_or("none")
+        ),
+        format!(
+            "sim_catalog={}#{}",
+            sim_catalog_snapshot_hash, sim_catalog_snapshot_version
+        ),
+        format!(
+            "transcript={}",
+            transcript_text.map(truncate_for_packet_hash).unwrap_or_default()
+        ),
+        format!("lang={}", language_hint.unwrap_or("none")),
+    ];
+    lines.extend(memory_candidates.iter().map(|candidate| {
+        format!(
+            "mem:{}:{}:{}",
+            candidate.memory_key.as_str(),
+            candidate.memory_value.verbatim,
+            candidate.last_seen_at.0
+        )
+    }));
+    lines.sort();
+    agent_hash_hex(&lines.join("\n"))
+}
+
+fn truncate_for_packet_hash(text: &str) -> String {
+    const MAX: usize = 128;
+    if text.len() <= MAX {
+        return text.to_string();
+    }
+    text[..MAX].to_string()
+}
+
+fn agent_hash_hex(value: &str) -> String {
+    // FNV-1a 64-bit: deterministic and platform-independent.
+    const OFFSET: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET;
+    for byte in value.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    format!("{hash:016x}")
 }
 
 fn build_tool_followup_ph1x_request(
@@ -3796,6 +3997,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(4),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -3853,6 +4055,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(4),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -3923,6 +4126,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -3942,6 +4146,8 @@ mod tests {
                 TurnId(9602),
                 AppPlatform::Desktop,
                 &forwarded,
+                None,
+                Some("tenant_1"),
                 x_build,
             )
             .unwrap();
@@ -4010,6 +4216,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4028,6 +4235,8 @@ mod tests {
                 TurnId(9614),
                 AppPlatform::Desktop,
                 &forwarded,
+                None,
+                Some("tenant_1"),
                 x_build,
             )
             .unwrap();
@@ -4083,6 +4292,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(7),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4101,6 +4311,8 @@ mod tests {
                 TurnId(9615),
                 AppPlatform::Desktop,
                 &forwarded,
+                None,
+                Some("tenant_1"),
                 x_build,
             )
             .unwrap();
@@ -4111,6 +4323,192 @@ mod tests {
             .expect("confirmed identity should receive the seeded memory candidate");
         assert_eq!(candidate.provenance.session_id, Some(expected_session_id));
         assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 1);
+    }
+
+    #[test]
+    fn at_agentpkt_01_packet_contains_all_required_fields() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:agentpkt_user").unwrap();
+        let device_id = DeviceId::new("agentpkt_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9601),
+            TurnId(9701),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(10),
+            thread_key: Some("agentpkt_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("agent packet test".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let (_outcome, ph1x_request) = runtime
+            .run_voice_turn_and_build_ph1x_request(&mut store, request, x_build)
+            .unwrap();
+        assert!(ph1x_request.is_some());
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        assert_eq!(packet.correlation_id, 9601);
+        assert_eq!(packet.turn_id, 9701);
+        assert_eq!(packet.thread_key.as_deref(), Some("agentpkt_thread"));
+        assert_eq!(packet.session_state, SessionState::Active);
+        assert!(packet.session_id.is_some());
+        assert!(!packet.trace_id.is_empty());
+        assert!(!packet.packet_hash.is_empty());
+        assert!(!packet.sim_catalog_snapshot_hash.is_empty());
+        assert!(packet.sim_catalog_snapshot_version > 0);
+        assert_eq!(runtime.debug_agent_input_packet_build_count(), 1);
+    }
+
+    #[test]
+    fn at_agentpkt_02_packet_hash_stable_for_same_inputs() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:agentpkt_hash_user").unwrap();
+        let device_id = DeviceId::new("agentpkt_hash_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9602),
+            TurnId(9702),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(11),
+            thread_key: Some("agentpkt_hash_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("same deterministic input".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let packet_a = runtime
+            .build_agent_input_packet_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9602),
+                TurnId(9702),
+                &forwarded,
+                request_session_id,
+                Some("tenant_1"),
+                x_build.clone(),
+            )
+            .unwrap();
+        let packet_b = runtime
+            .build_agent_input_packet_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9602),
+                TurnId(9702),
+                &forwarded,
+                request_session_id,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+        assert_eq!(packet_a.packet_hash, packet_b.packet_hash);
+    }
+
+    #[test]
+    fn at_agentpkt_03_packet_built_once_per_turn() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:agentpkt_once_user").unwrap();
+        let device_id = DeviceId::new("agentpkt_once_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9603),
+            TurnId(9703),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(12),
+            thread_key: Some("agentpkt_once_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(Ph1nResponse::Chat(
+                Chat::v1("single build test".to_string(), ReasonCodeId(1)).unwrap(),
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+
+        let before = runtime.debug_agent_input_packet_build_count();
+        let (_outcome, ph1x_request) = runtime
+            .run_voice_turn_and_build_ph1x_request(&mut store, request, x_build)
+            .unwrap();
+        let after = runtime.debug_agent_input_packet_build_count();
+        assert!(ph1x_request.is_some());
+        assert_eq!(after, before + 1);
     }
 
     #[test]
@@ -4137,6 +4535,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(8),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4211,6 +4610,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(9),
+            thread_key: None,
             thread_state: ThreadState::v1(
                 Some(PendingState::Confirm {
                     intent_draft: invite_link_send_draft("Tom", "+14155550100", "tenant_1"),
@@ -4277,6 +4677,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(10),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4329,6 +4730,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(101),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4381,6 +4783,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(11),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4433,6 +4836,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(12),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4488,6 +4892,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(13),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4542,6 +4947,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(14),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4596,6 +5002,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(15),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4652,6 +5059,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(16),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4708,6 +5116,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(17),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4764,6 +5173,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(19),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4820,6 +5230,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(20),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4915,6 +5326,7 @@ mod tests {
 
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(23),
+            thread_key: None,
             thread_state: ThreadState::empty_v1(),
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -4968,6 +5380,7 @@ mod tests {
             .unwrap();
         let x_build = AppVoicePh1xBuildInput {
             now: MonotonicTimeNs(18),
+            thread_key: None,
             thread_state,
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),

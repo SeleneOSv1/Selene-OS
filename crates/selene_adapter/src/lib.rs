@@ -3655,6 +3655,7 @@ impl AdapterRuntime {
             .filter(|value| !value.is_empty());
         let x_build = AppVoicePh1xBuildInput {
             now,
+            thread_key: Some(thread_key.clone()),
             thread_state: base_thread_state,
             session_state: session_turn_state.session_snapshot.session_state,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
@@ -8848,6 +8849,78 @@ mod tests {
         at_l_05_session_id_is_present_in_audit_and_memory_provenance();
     }
 
+    #[test]
+    fn at_agentpkt_01_packet_contains_all_required_fields() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 34_001;
+        req.turn_id = 44_001;
+        req.now_ns = Some(10_000_000_000);
+        req.thread_key = Some("adapter_agentpkt_thread".to_string());
+        req.user_text_final = Some("show me weather".to_string());
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("voice turn should succeed for agent packet test");
+        assert_eq!(out.status, "ok");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        assert_eq!(packet.correlation_id, 34_001);
+        assert_eq!(packet.turn_id, 44_001);
+        assert_eq!(packet.thread_key.as_deref(), Some("adapter_agentpkt_thread"));
+        assert!(packet.session_id.is_some());
+        assert!(!packet.trace_id.is_empty());
+        assert!(!packet.packet_hash.is_empty());
+        assert!(!packet.sim_catalog_snapshot_hash.is_empty());
+    }
+
+    #[test]
+    fn at_agentpkt_02_packet_hash_stable_for_same_inputs() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 34_002;
+        req.turn_id = 44_002;
+        req.now_ns = Some(10_000_000_500);
+        req.thread_key = Some("adapter_agentpkt_hash_thread".to_string());
+        req.user_text_final = Some("same deterministic request".to_string());
+
+        runtime
+            .run_voice_turn(req.clone())
+            .expect("first voice turn should succeed");
+        let first = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("first packet should exist");
+        runtime
+            .run_voice_turn(req)
+            .expect("second voice turn should succeed");
+        let second = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("second packet should exist");
+        assert_eq!(first.packet_hash, second.packet_hash);
+    }
+
+    #[test]
+    fn at_agentpkt_03_packet_built_once_per_turn() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 34_003;
+        req.turn_id = 44_003;
+        req.now_ns = Some(10_000_001_000);
+        req.thread_key = Some("adapter_agentpkt_once_thread".to_string());
+        req.user_text_final = Some("packet build count".to_string());
+
+        let before = runtime.ingress.debug_agent_input_packet_build_count();
+        runtime
+            .run_voice_turn(req)
+            .expect("voice turn should succeed");
+        let after = runtime.ingress.debug_agent_input_packet_build_count();
+        assert_eq!(after, before + 1);
+    }
+
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct AgentInputPacketShape {
         session_state: SessionState,
@@ -8993,6 +9066,7 @@ mod tests {
             .filter(|value| !value.is_empty());
         let x_build = AppVoicePh1xBuildInput {
             now,
+            thread_key: Some(thread_key.clone()),
             thread_state: base_thread_state,
             session_state: session_turn_state.session_snapshot.session_state,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
