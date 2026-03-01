@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
@@ -9,7 +10,7 @@ use selene_kernel_contracts::ph1simfinder::{
     FinderFallbackPolicy, FinderRiskTier, FinderTerminalPacket, MissingSimulationPacket,
     RefusePacket, SimulationMatchPacket,
 };
-use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 
 const WORD_INTENT_CONFIDENCE: u32 = 35;
 const WORD_REQUIRED_FIELD_COVERAGE: u32 = 20;
@@ -252,6 +253,7 @@ pub struct FinderRunRequest {
     pub user_id: String,
     pub correlation_id: u128,
     pub turn_id: u64,
+    pub thread_key: String,
     pub now: MonotonicTimeNs,
     pub transcript_text: String,
     pub simulation_catalog_snapshot_hash: String,
@@ -283,6 +285,7 @@ impl FinderRunRequest {
         user_id: String,
         correlation_id: u128,
         turn_id: u64,
+        thread_key: String,
         now: MonotonicTimeNs,
         transcript_text: String,
         simulation_catalog_snapshot_hash: String,
@@ -311,6 +314,7 @@ impl FinderRunRequest {
             user_id,
             correlation_id,
             turn_id,
+            thread_key,
             now,
             transcript_text,
             simulation_catalog_snapshot_hash,
@@ -355,6 +359,7 @@ impl Validate for FinderRunRequest {
                 reason: "must be > 0",
             });
         }
+        validate_required_text("finder_run_request.thread_key", &self.thread_key, 128)?;
         if self.now.0 == 0 {
             return Err(ContractViolation::InvalidValue {
                 field: "finder_run_request.now",
@@ -451,20 +456,35 @@ impl Validate for FinderRunRequest {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct FinderClarifyThreadState {
+    attempts: u8,
+    asked_missing_fields: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Ph1SimFinderRuntime {
     config: FinderRuntimeConfig,
+    clarify_state_by_thread: RefCell<BTreeMap<String, FinderClarifyThreadState>>,
 }
 
 impl Ph1SimFinderRuntime {
     pub fn new(config: FinderRuntimeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            clarify_state_by_thread: RefCell::new(BTreeMap::new()),
+        }
     }
 
     pub fn run(&self, req: &FinderRunRequest) -> Result<FinderTerminalPacket, ContractViolation> {
         req.validate()?;
 
         let transcript = normalize_text(&req.transcript_text);
+        let mut clarify_state = self.load_clarify_state(&req.thread_key);
+        let seeded_attempts = req.clarify_attempt_index.saturating_sub(1);
+        if seeded_attempts > clarify_state.attempts {
+            clarify_state.attempts = seeded_attempts;
+        }
         let utterance_fingerprint = stable_fingerprint(&transcript);
         let gold_bonus_index: BTreeMap<&str, u16> = req
             .gold_mappings
@@ -551,6 +571,7 @@ impl Ph1SimFinderRuntime {
                 )?;
                 let terminal = FinderTerminalPacket::SimulationMatch(packet);
                 terminal.validate()?;
+                self.clear_clarify_state(&req.thread_key);
                 return Ok(terminal);
             }
 
@@ -558,27 +579,91 @@ impl Ph1SimFinderRuntime {
                 || top.confidence_score_bp >= self.config.match_with_clarify_min_bp
                 || top_margin_bp < self.config.tie_margin_min_bp;
             if should_clarify {
-                let (missing_field, question, answer_formats, reason_code) =
-                    if !top.required_fields_missing.is_empty() {
-                        let selection = select_primary_missing_field(top);
-                        (
-                            selection.field_name,
-                            selection.clarify_question,
-                            selection.allowed_answer_formats,
-                            reason_codes::SIM_FINDER_CLARIFY_MISSING_FIELD,
-                        )
-                    } else {
-                        (
-                            "intent_choice".to_string(),
-                            "Should I use the first or second matching action?".to_string(),
-                            vec![
-                                "Use the first one".to_string(),
-                                "Use the second one".to_string(),
-                                "Neither; I will rephrase".to_string(),
-                            ],
-                            reason_codes::SIM_FINDER_CLARIFY_LOW_CONFIDENCE_TIE,
-                        )
+                if clarify_state.attempts >= self.config.max_clarify_attempts {
+                    return self.escalate_clarify_to_refuse(
+                        req,
+                        reason_codes::SIM_FINDER_REFUSE_AMBIGUOUS,
+                        "Need clearer instruction after repeated clarification attempts."
+                            .to_string(),
+                        vec![
+                            format!(
+                                "clarify.max_attempts_reached:{}:{}:{}",
+                                req.thread_key,
+                                clarify_state.attempts,
+                                self.config.max_clarify_attempts
+                            ),
+                            format!(
+                                "clarify.candidate:{}:{}",
+                                top.simulation_id, top.confidence_score_bp
+                            ),
+                        ],
+                    );
+                }
+
+                let (missing_field, question, answer_formats, reason_code) = if !top
+                    .required_fields_missing
+                    .is_empty()
+                {
+                    let Some(selection) =
+                        select_primary_missing_field(top, &clarify_state.asked_missing_fields)
+                    else {
+                        return self.escalate_clarify_to_refuse(
+                                req,
+                                reason_codes::SIM_FINDER_REFUSE_AMBIGUOUS,
+                                "I already asked for each missing detail once; please restate the request clearly."
+                                    .to_string(),
+                                vec![format!(
+                                    "clarify.no_fresh_missing_field:{}:{}",
+                                    req.thread_key,
+                                    top.required_fields_missing.join("|")
+                                )],
+                            );
                     };
+                    (
+                        selection.field_name,
+                        selection.clarify_question,
+                        selection.allowed_answer_formats,
+                        reason_codes::SIM_FINDER_CLARIFY_MISSING_FIELD,
+                    )
+                } else if was_field_already_asked(
+                    &clarify_state.asked_missing_fields,
+                    "intent_choice",
+                ) {
+                    return self.escalate_clarify_to_refuse(
+                        req,
+                        reason_codes::SIM_FINDER_REFUSE_AMBIGUOUS,
+                        "I still see an ambiguous match and cannot ask the same question twice."
+                            .to_string(),
+                        vec![format!(
+                            "clarify.intent_choice_already_asked:{}:{}",
+                            req.thread_key, clarify_state.attempts
+                        )],
+                    );
+                } else {
+                    (
+                        "intent_choice".to_string(),
+                        "Should I use the first or second matching action?".to_string(),
+                        vec![
+                            "Use the first one".to_string(),
+                            "Use the second one".to_string(),
+                            "Neither; I will rephrase".to_string(),
+                        ],
+                        reason_codes::SIM_FINDER_CLARIFY_LOW_CONFIDENCE_TIE,
+                    )
+                };
+                let next_attempt_index = clarify_state.attempts.saturating_add(1);
+                if next_attempt_index > self.config.max_clarify_attempts {
+                    return self.escalate_clarify_to_refuse(
+                        req,
+                        reason_codes::SIM_FINDER_REFUSE_AMBIGUOUS,
+                        "Need clearer instruction after repeated clarification attempts."
+                            .to_string(),
+                        vec![format!(
+                            "clarify.attempt_overflow:{}:{}",
+                            req.thread_key, next_attempt_index
+                        )],
+                    );
+                }
 
                 let packet = ClarifyPacket::v1(
                     req.tenant_id.clone(),
@@ -588,8 +673,7 @@ impl Ph1SimFinderRuntime {
                     question,
                     missing_field.clone(),
                     answer_formats,
-                    req.clarify_attempt_index
-                        .min(self.config.max_clarify_attempts),
+                    next_attempt_index,
                     self.config.max_clarify_attempts,
                     ClarifyOnExceedPolicy::MissingSimulation,
                     format!(
@@ -606,13 +690,17 @@ impl Ph1SimFinderRuntime {
                         req.correlation_id,
                         req.turn_id,
                         missing_field,
-                        req.clarify_attempt_index
-                            .min(self.config.max_clarify_attempts)
+                        next_attempt_index
                     ),
                     reason_code,
                 )?;
                 let terminal = FinderTerminalPacket::Clarify(packet);
                 terminal.validate()?;
+                clarify_state.attempts = next_attempt_index;
+                if !was_field_already_asked(&clarify_state.asked_missing_fields, &missing_field) {
+                    clarify_state.asked_missing_fields.push(missing_field);
+                }
+                self.store_clarify_state(req.thread_key.clone(), clarify_state);
                 return Ok(terminal);
             }
         }
@@ -642,6 +730,7 @@ impl Ph1SimFinderRuntime {
             )?;
             let terminal = FinderTerminalPacket::Refuse(packet);
             terminal.validate()?;
+            self.clear_clarify_state(&req.thread_key);
             return Ok(terminal);
         }
 
@@ -726,6 +815,48 @@ impl Ph1SimFinderRuntime {
         )?;
         let terminal = FinderTerminalPacket::MissingSimulation(packet);
         terminal.validate()?;
+        self.clear_clarify_state(&req.thread_key);
+        Ok(terminal)
+    }
+
+    fn load_clarify_state(&self, thread_key: &str) -> FinderClarifyThreadState {
+        self.clarify_state_by_thread
+            .borrow()
+            .get(thread_key)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn store_clarify_state(&self, thread_key: String, state: FinderClarifyThreadState) {
+        self.clarify_state_by_thread
+            .borrow_mut()
+            .insert(thread_key, state);
+    }
+
+    fn clear_clarify_state(&self, thread_key: &str) {
+        self.clarify_state_by_thread.borrow_mut().remove(thread_key);
+    }
+
+    fn escalate_clarify_to_refuse(
+        &self,
+        req: &FinderRunRequest,
+        reason_code: ReasonCodeId,
+        message: String,
+        evidence_refs: Vec<String>,
+    ) -> Result<FinderTerminalPacket, ContractViolation> {
+        let packet = RefusePacket::v1(
+            req.tenant_id.clone(),
+            req.user_id.clone(),
+            req.correlation_id,
+            req.turn_id,
+            reason_code,
+            message,
+            evidence_refs,
+            None,
+        )?;
+        let terminal = FinderTerminalPacket::Refuse(packet);
+        terminal.validate()?;
+        self.clear_clarify_state(&req.thread_key);
         Ok(terminal)
     }
 }
@@ -871,10 +1002,14 @@ fn choose_top_draft_candidate<'a>(
     ranked.first().copied()
 }
 
-fn select_primary_missing_field(candidate: &RankedCandidate) -> MissingFieldSelection {
+fn select_primary_missing_field(
+    candidate: &RankedCandidate,
+    asked_missing_fields: &[String],
+) -> Option<MissingFieldSelection> {
     let mut selections = candidate
         .required_fields_missing
         .iter()
+        .filter(|name| !was_field_already_asked(asked_missing_fields, name))
         .filter_map(|name| {
             candidate.required_field_specs.get(name).map(|spec| {
                 let entropy_score_bp = (((50u32 * spec.domain_cardinality_bp as u32)
@@ -899,10 +1034,13 @@ fn select_primary_missing_field(candidate: &RankedCandidate) -> MissingFieldSele
             .then_with(|| right.downstream_risk_bp.cmp(&left.downstream_risk_bp))
             .then_with(|| left.field_name.cmp(&right.field_name))
     });
-    selections
-        .into_iter()
-        .next()
-        .expect("select_primary_missing_field requires at least one missing field")
+    selections.into_iter().next()
+}
+
+fn was_field_already_asked(asked_missing_fields: &[String], field_name: &str) -> bool {
+    asked_missing_fields
+        .iter()
+        .any(|asked| asked.eq_ignore_ascii_case(field_name))
 }
 
 fn candidate_matches_transcript(entry: &FinderSimulationCatalogEntry, transcript: &str) -> bool {
@@ -1102,6 +1240,7 @@ mod tests {
             "user_1".to_string(),
             111,
             222,
+            "thread_1".to_string(),
             MonotonicTimeNs(1_000),
             "selene schedule dinner tomorrow at 7".to_string(),
             "simcat_hash_v1".to_string(),
@@ -1304,6 +1443,7 @@ mod tests {
             "user_1".to_string(),
             111,
             222,
+            "thread_1".to_string(),
             MonotonicTimeNs(1_000),
             "selene schedule dinner".to_string(),
             "simcat_hash_v1".to_string(),
@@ -1338,5 +1478,171 @@ mod tests {
             }
             other => panic!("expected clarify output, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn at_sim_finder_m3_01_escalates_after_max_attempts() {
+        let runtime = Ph1SimFinderRuntime::new(FinderRuntimeConfig {
+            max_clarify_attempts: 2,
+            ..FinderRuntimeConfig::mvp_v1()
+        });
+        let entry = FinderSimulationCatalogEntry::v1(
+            "PH1.REM.301".to_string(),
+            "schedule".to_string(),
+            SimulationStatus::Active,
+            10,
+            vec!["REMINDER_SCHEDULE".to_string()],
+            FinderRiskTier::Low,
+            false,
+            FinderFallbackPolicy::Clarify,
+            vec!["schedule".to_string(), "dinner".to_string()],
+            vec![
+                FinderFieldSpec::required_v1(
+                    "where".to_string(),
+                    vec!["at home".to_string()],
+                    9_000,
+                    9_000,
+                    9_000,
+                    "Where should this happen?".to_string(),
+                    vec!["At home".to_string(), "At the office".to_string()],
+                )
+                .unwrap(),
+                FinderFieldSpec::required_v1(
+                    "who".to_string(),
+                    vec!["with".to_string()],
+                    8_500,
+                    8_000,
+                    8_000,
+                    "Who should this include?".to_string(),
+                    vec!["Just me".to_string(), "With JD and wife".to_string()],
+                )
+                .unwrap(),
+                FinderFieldSpec::required_v1(
+                    "notes".to_string(),
+                    vec!["note".to_string()],
+                    8_000,
+                    7_500,
+                    7_000,
+                    "Any notes I should include?".to_string(),
+                    vec!["No notes".to_string(), "Add vegetarian".to_string()],
+                )
+                .unwrap(),
+            ],
+            vec!["calendar".to_string()],
+        )
+        .expect("entry should build");
+
+        let req = FinderRunRequest::v1(
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            111,
+            222,
+            "thread_m3_escalate".to_string(),
+            MonotonicTimeNs(1_000),
+            "selene schedule dinner".to_string(),
+            "simcat_hash_v1".to_string(),
+            1,
+            vec![entry],
+            Vec::new(),
+            8_000,
+            6_000,
+            5_000,
+            0,
+            0,
+            0,
+            1,
+            "scheduling".to_string(),
+            6_500,
+            7_000,
+            6_000,
+            6_500,
+            3_000,
+            "tenant_only".to_string(),
+            "{\"required\":[\"where\",\"who\",\"notes\"]}".to_string(),
+            vec!["AT-SIM-FINDER-M3-01".to_string()],
+        )
+        .expect("request should build");
+
+        match runtime.run(&req).expect("run 1 should succeed") {
+            FinderTerminalPacket::Clarify(packet) => assert_eq!(packet.attempt_index, 1),
+            other => panic!("expected clarify on run 1, got {other:?}"),
+        }
+        match runtime.run(&req).expect("run 2 should succeed") {
+            FinderTerminalPacket::Clarify(packet) => assert_eq!(packet.attempt_index, 2),
+            other => panic!("expected clarify on run 2, got {other:?}"),
+        }
+        match runtime.run(&req).expect("run 3 should succeed") {
+            FinderTerminalPacket::Refuse(packet) => {
+                assert_eq!(
+                    packet.reason_code,
+                    reason_codes::SIM_FINDER_REFUSE_AMBIGUOUS
+                );
+                assert!(packet.message.contains("repeated clarification attempts"));
+            }
+            other => panic!("expected refuse on run 3, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_sim_finder_m3_02_never_asks_same_question_twice_per_thread() {
+        let runtime = Ph1SimFinderRuntime::new(FinderRuntimeConfig {
+            max_clarify_attempts: 3,
+            ..FinderRuntimeConfig::mvp_v1()
+        });
+        let entry = FinderSimulationCatalogEntry::v1(
+            "PH1.REM.302".to_string(),
+            "schedule".to_string(),
+            SimulationStatus::Active,
+            10,
+            vec!["REMINDER_SCHEDULE".to_string()],
+            FinderRiskTier::Low,
+            false,
+            FinderFallbackPolicy::Clarify,
+            vec!["schedule".to_string(), "dinner".to_string()],
+            vec![field_when(), field_where()],
+            vec!["calendar".to_string()],
+        )
+        .expect("entry should build");
+
+        let req = FinderRunRequest::v1(
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            111,
+            222,
+            "thread_m3_no_repeat".to_string(),
+            MonotonicTimeNs(1_000),
+            "selene schedule dinner".to_string(),
+            "simcat_hash_v1".to_string(),
+            1,
+            vec![entry],
+            Vec::new(),
+            8_000,
+            6_000,
+            5_000,
+            0,
+            0,
+            0,
+            1,
+            "scheduling".to_string(),
+            6_500,
+            7_000,
+            6_000,
+            6_500,
+            3_000,
+            "tenant_only".to_string(),
+            "{\"required\":[\"where\",\"when\"]}".to_string(),
+            vec!["AT-SIM-FINDER-M3-02".to_string()],
+        )
+        .expect("request should build");
+
+        let first_field = match runtime.run(&req).expect("run 1 should succeed") {
+            FinderTerminalPacket::Clarify(packet) => packet.missing_field,
+            other => panic!("expected clarify on run 1, got {other:?}"),
+        };
+        let second_field = match runtime.run(&req).expect("run 2 should succeed") {
+            FinderTerminalPacket::Clarify(packet) => packet.missing_field,
+            other => panic!("expected clarify on run 2, got {other:?}"),
+        };
+        assert_ne!(first_field, second_field);
     }
 }
