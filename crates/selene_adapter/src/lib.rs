@@ -7180,7 +7180,7 @@ mod tests {
         SimulationVersion,
     };
     use selene_kernel_contracts::ph1x::{
-        PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
+        IdentityContext, PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
@@ -8823,6 +8823,251 @@ mod tests {
             .get(&(actor_user_id.clone(), memory_key))
             .expect("memory current row must exist");
         assert_eq!(memory_record.provenance.session_id, Some(session_id));
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct AgentInputPacketShape {
+        session_state: SessionState,
+        session_id_present: bool,
+        wake_event_present: bool,
+        voice_id_vad_events_len: usize,
+        voice_id_owner_user_present: bool,
+        ingress_tenant_present: bool,
+        ingress_device_present: bool,
+        identity_context_is_voice: bool,
+        identity_prompt_scope_key_present: bool,
+        nlp_output_present: bool,
+        tool_response_present: bool,
+        memory_candidates_len: usize,
+        confirm_answer_present: bool,
+        locale_present: bool,
+        thread_pending_present: bool,
+        thread_project_id_present: bool,
+        thread_policy_flags_present: bool,
+        pinned_context_refs_len: usize,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct TriggerPrepResult {
+        session_id: Option<SessionId>,
+        shape: AgentInputPacketShape,
+    }
+
+    fn prepare_trigger_agent_input_shape(
+        runtime: &AdapterRuntime,
+        request: VoiceTurnAdapterRequest,
+    ) -> TriggerPrepResult {
+        let app_platform = parse_app_platform(&request.app_platform)
+            .expect("request app_platform must parse");
+        let trigger = parse_trigger(&request.trigger).expect("request trigger must parse");
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("request actor_user_id must parse");
+        let request_device_id = request
+            .device_id
+            .as_ref()
+            .map(|id| DeviceId::new(id.clone()).expect("request device_id must parse"));
+        let correlation_id = CorrelationId(request.correlation_id.into());
+        let turn_id = TurnId(request.turn_id);
+        let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
+        let runtime_device_id = request_device_id.unwrap_or_else(|| {
+            DeviceId::new(format!(
+                "adapter_auto_{}",
+                stable_hash_hex_16(actor_user_id.as_str())
+            ))
+            .expect("generated runtime device id must be valid")
+        });
+        let user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
+
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        ensure_actor_identity_and_device(
+            &mut store,
+            &actor_user_id,
+            Some(&runtime_device_id),
+            app_platform,
+            now,
+        )
+        .expect("identity/device seed must succeed");
+        let tenant_id_for_ph1c = resolve_tenant_scope(
+            request.tenant_id.clone(),
+            &actor_user_id,
+            Some(&runtime_device_id),
+        );
+        let ph1k_bundle = build_ph1k_live_signal_bundle(
+            &store,
+            &request,
+            now,
+            tenant_id_for_ph1c.as_deref(),
+            Some(&runtime_device_id),
+        )
+        .expect("ph1k live signal bundle must build");
+        let session_turn_state = resolve_session_turn_state(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            &runtime_device_id,
+            trigger,
+            &ph1k_bundle,
+        )
+        .expect("session turn state must resolve");
+        let voice_id_request = build_voice_id_request_from_ph1k_bundle(
+            now,
+            actor_user_id.clone(),
+            &ph1k_bundle,
+            session_turn_state.session_snapshot,
+            session_turn_state.wake_event.clone(),
+        )
+        .expect("voice id request must build");
+
+        let ingress_request = AppVoiceIngressRequest::v1(
+            correlation_id,
+            turn_id,
+            app_platform,
+            trigger,
+            voice_id_request,
+            actor_user_id.clone(),
+            tenant_id_for_ph1c.clone(),
+            Some(runtime_device_id.clone()),
+            Vec::new(),
+            empty_observation(),
+        )
+        .expect("ingress request must build");
+        let nlp_output = build_nlp_output_for_voice_turn(
+            &request,
+            user_text_final.as_deref(),
+            tenant_id_for_ph1c.as_deref(),
+        )
+        .expect("nlp output must build");
+        let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
+        let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+        if request.project_id.is_some() || request.pinned_context_refs.is_some() {
+            let project_id = resolve_adapter_project_id(request.project_id.as_deref());
+            let pinned_context_refs =
+                resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
+            base_thread_state = base_thread_state
+                .with_project_context(project_id, pinned_context_refs)
+                .expect("thread project context must patch");
+        }
+        if let Some(flags) = request.thread_policy_flags.as_ref() {
+            let kernel_flags = ThreadPolicyFlags::v1(
+                flags.privacy_mode,
+                flags.do_not_disturb,
+                flags.strict_safety,
+            )
+            .expect("thread policy flags must build");
+            base_thread_state = base_thread_state
+                .with_thread_policy_flags(Some(kernel_flags))
+                .expect("thread policy flags must patch");
+        }
+        let confirm_answer =
+            infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
+        let locale = request
+            .audio_capture_ref
+            .as_ref()
+            .and_then(|capture| capture.locale_tag.as_deref())
+            .map(|raw| truncate_ascii(raw.trim(), 16))
+            .filter(|value| !value.is_empty());
+        let x_build = AppVoicePh1xBuildInput {
+            now,
+            thread_state: base_thread_state,
+            session_state: session_turn_state.session_snapshot.session_state,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: Vec::new(),
+            confirm_answer,
+            nlp_output: Some(nlp_output),
+            tool_response: None,
+            interruption: None,
+            locale,
+            last_failure_reason_code: None,
+        };
+        let (_voice_outcome, ph1x_request) = runtime
+            .ingress
+            .run_voice_turn_and_build_ph1x_request(&mut store, ingress_request.clone(), x_build)
+            .expect("voice turn + ph1x build must succeed");
+        let ph1x_request = ph1x_request.expect("forwarded voice turn must produce ph1x request");
+        let shape = AgentInputPacketShape {
+            session_state: session_turn_state.session_snapshot.session_state,
+            session_id_present: session_turn_state.session_snapshot.session_id.is_some(),
+            wake_event_present: ingress_request.voice_id_request.wake_event.is_some(),
+            voice_id_vad_events_len: ingress_request.voice_id_request.vad_events.len(),
+            voice_id_owner_user_present: ingress_request
+                .voice_id_request
+                .device_owner_user_id
+                .is_some(),
+            ingress_tenant_present: ingress_request.tenant_id.is_some(),
+            ingress_device_present: ingress_request.device_id.is_some(),
+            identity_context_is_voice: matches!(ph1x_request.identity_context, IdentityContext::Voice(_)),
+            identity_prompt_scope_key_present: ph1x_request.identity_prompt_scope_key.is_some(),
+            nlp_output_present: ph1x_request.nlp_output.is_some(),
+            tool_response_present: ph1x_request.tool_response.is_some(),
+            memory_candidates_len: ph1x_request.memory_candidates.len(),
+            confirm_answer_present: ph1x_request.confirm_answer.is_some(),
+            locale_present: ph1x_request.locale.is_some(),
+            thread_pending_present: ph1x_request.thread_state.pending.is_some(),
+            thread_project_id_present: ph1x_request.thread_state.project_id.is_some(),
+            thread_policy_flags_present: ph1x_request.thread_state.thread_policy_flags.is_some(),
+            pinned_context_refs_len: ph1x_request.thread_state.pinned_context_refs.len(),
+        };
+        TriggerPrepResult {
+            session_id: session_turn_state.session_snapshot.session_id,
+            shape,
+        }
+    }
+
+    #[test]
+    fn at_trigger_01_wakeword_and_explicit_share_same_session_open_path() {
+        let runtime = AdapterRuntime::default();
+
+        let mut wake = base_request();
+        wake.correlation_id = 32_001;
+        wake.turn_id = 42_001;
+        wake.now_ns = Some(7_000_000_000);
+        wake.trigger = "WAKE_WORD".to_string();
+        wake.device_id = Some("adapter_trigger_wake_1".to_string());
+        wake.user_text_final = Some("check trigger parity".to_string());
+        let wake_prepared = prepare_trigger_agent_input_shape(&runtime, wake);
+
+        let mut explicit = base_request();
+        explicit.correlation_id = 32_002;
+        explicit.turn_id = 42_002;
+        explicit.now_ns = Some(7_000_000_100);
+        explicit.trigger = "EXPLICIT".to_string();
+        explicit.device_id = Some("adapter_trigger_explicit_1".to_string());
+        explicit.user_text_final = Some("check trigger parity".to_string());
+        let explicit_prepared = prepare_trigger_agent_input_shape(&runtime, explicit);
+
+        assert!(wake_prepared.session_id.is_some());
+        assert!(explicit_prepared.session_id.is_some());
+        assert_eq!(wake_prepared.shape.session_state, SessionState::Active);
+        assert_eq!(explicit_prepared.shape.session_state, SessionState::Active);
+        assert!(wake_prepared.shape.identity_context_is_voice);
+        assert!(explicit_prepared.shape.identity_context_is_voice);
+    }
+
+    #[test]
+    fn at_trigger_02_wakeword_and_explicit_produce_same_agent_input_packet_shape() {
+        let runtime = AdapterRuntime::default();
+
+        let mut wake = base_request();
+        wake.correlation_id = 32_101;
+        wake.turn_id = 42_101;
+        wake.now_ns = Some(8_000_000_000);
+        wake.trigger = "WAKE_WORD".to_string();
+        wake.device_id = Some("adapter_trigger_shape_wake".to_string());
+        wake.user_text_final = Some("show me weather".to_string());
+        let wake_shape = prepare_trigger_agent_input_shape(&runtime, wake).shape;
+
+        let mut explicit = base_request();
+        explicit.correlation_id = 32_102;
+        explicit.turn_id = 42_102;
+        explicit.now_ns = Some(8_000_000_100);
+        explicit.trigger = "EXPLICIT".to_string();
+        explicit.device_id = Some("adapter_trigger_shape_explicit".to_string());
+        explicit.user_text_final = Some("show me weather".to_string());
+        let explicit_shape = prepare_trigger_agent_input_shape(&runtime, explicit).shape;
+
+        assert_eq!(wake_shape, explicit_shape);
     }
 
     #[test]
