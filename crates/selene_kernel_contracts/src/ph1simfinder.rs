@@ -210,6 +210,9 @@ pub struct SimulationMatchPacket {
     pub simulation_id: String,
     pub candidate_rank: u8,
     pub confidence_bp: u16,
+    pub active_simulation: bool,
+    pub catalog_snapshot_hash: String,
+    pub active_check_proof_ref: String,
     pub required_fields_present: Vec<String>,
     pub required_fields_missing: Vec<String>,
     pub evidence_spans: Vec<String>,
@@ -232,6 +235,9 @@ impl SimulationMatchPacket {
         intent_family: String,
         simulation_id: String,
         confidence_bp: u16,
+        active_simulation: bool,
+        catalog_snapshot_hash: String,
+        active_check_proof_ref: String,
         required_fields_present: Vec<String>,
         required_fields_missing: Vec<String>,
         evidence_spans: Vec<String>,
@@ -254,6 +260,9 @@ impl SimulationMatchPacket {
             simulation_id,
             candidate_rank: 1,
             confidence_bp,
+            active_simulation,
+            catalog_snapshot_hash,
+            active_check_proof_ref,
             required_fields_present,
             required_fields_missing,
             evidence_spans,
@@ -315,6 +324,22 @@ impl Validate for SimulationMatchPacket {
             });
         }
         validate_bp("simulation_match_packet.confidence_bp", self.confidence_bp)?;
+        if !self.active_simulation {
+            return Err(ContractViolation::InvalidValue {
+                field: "simulation_match_packet.active_simulation",
+                reason: "must be true for SimulationMatchPacket",
+            });
+        }
+        validate_required_text(
+            "simulation_match_packet.catalog_snapshot_hash",
+            &self.catalog_snapshot_hash,
+            128,
+        )?;
+        validate_required_text(
+            "simulation_match_packet.active_check_proof_ref",
+            &self.active_check_proof_ref,
+            256,
+        )?;
         validate_list_non_empty(
             "simulation_match_packet.required_fields_present",
             &self.required_fields_present,
@@ -917,6 +942,9 @@ mod tests {
             "scheduling".to_string(),
             "PH1.REM.001".to_string(),
             9_001,
+            true,
+            "simcat_hash_v1".to_string(),
+            "catalog.active.yes:simcat_hash_v1:PH1.REM.001:11:22".to_string(),
             vec!["when".to_string()],
             Vec::new(),
             vec!["span:when".to_string()],
@@ -958,6 +986,40 @@ mod tests {
             err,
             ContractViolation::InvalidValue {
                 field: "clarify_packet.reason_code",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn at_simfinder_02b_match_packet_requires_active_proof() {
+        let err = SimulationMatchPacket::v1(
+            "tenant_1".to_string(),
+            "user_1".to_string(),
+            11,
+            22,
+            "scheduling".to_string(),
+            "PH1.REM.001".to_string(),
+            9_001,
+            false,
+            "simcat_hash_v1".to_string(),
+            "catalog.active.no:simcat_hash_v1:PH1.REM.001:11:22".to_string(),
+            vec!["when".to_string()],
+            Vec::new(),
+            vec!["span:when".to_string()],
+            FinderRiskTier::Low,
+            false,
+            vec!["REMINDER_SCHEDULE".to_string()],
+            "idemp_key".to_string(),
+            "sim_match:recipe".to_string(),
+            FinderFallbackPolicy::Clarify,
+            reason_codes::SIM_FINDER_MATCH_OK,
+        )
+        .expect_err("inactive match packet must fail");
+        assert!(matches!(
+            err,
+            ContractViolation::InvalidValue {
+                field: "simulation_match_packet.active_simulation",
                 ..
             }
         ));

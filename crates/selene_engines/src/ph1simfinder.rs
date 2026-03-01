@@ -536,11 +536,21 @@ impl Ph1SimFinderRuntime {
             if top.confidence_score_bp >= self.config.match_direct_min_bp
                 && top.required_fields_missing.is_empty()
             {
+                let mut access_actions_required = top.access_actions_required.clone();
+                access_actions_required.sort();
+                access_actions_required.dedup();
                 let reason_code = if top.gold_match_bonus_bp > 0 {
                     reason_codes::SIM_FINDER_MATCH_OK_GOLD_BOOSTED
                 } else {
                     reason_codes::SIM_FINDER_MATCH_OK_CATALOG_ACTIVE
                 };
+                let active_check_proof_ref = format!(
+                    "catalog.active.yes:{}:{}:{}:{}",
+                    req.simulation_catalog_snapshot_hash,
+                    top.simulation_id,
+                    req.correlation_id,
+                    req.turn_id
+                );
 
                 let packet = SimulationMatchPacket::v1(
                     req.tenant_id.clone(),
@@ -550,12 +560,15 @@ impl Ph1SimFinderRuntime {
                     top.intent_family.clone(),
                     top.simulation_id.clone(),
                     top.confidence_score_bp,
+                    true,
+                    req.simulation_catalog_snapshot_hash.clone(),
+                    active_check_proof_ref.clone(),
                     top.required_fields_present.clone(),
                     top.required_fields_missing.clone(),
-                    top.evidence_spans.clone(),
+                    with_proof_span(top.evidence_spans.clone(), active_check_proof_ref),
                     top.risk_tier,
                     top.confirm_required,
-                    top.access_actions_required.clone(),
+                    access_actions_required,
                     format!(
                         "sim_match:{}:{}:{}:{}:{}:{}",
                         req.tenant_id,
@@ -715,11 +728,14 @@ impl Ph1SimFinderRuntime {
                 "The capability exists as a draft and is not active yet.".to_string(),
                 vec![
                     format!(
-                        "catalog.active.check:{}:{}:{}",
-                        req.simulation_catalog_snapshot_hash, req.correlation_id, req.turn_id
+                        "catalog.active.no:{}:{}:{}:{}",
+                        req.simulation_catalog_snapshot_hash,
+                        draft_entry.simulation_id,
+                        req.correlation_id,
+                        req.turn_id
                     ),
                     format!(
-                        "catalog.draft.hit:{}:{}:{}",
+                        "catalog.inactive.hit:{}:status=draft:{}:{}",
                         draft_entry.simulation_id, req.correlation_id, req.turn_id
                     ),
                 ],
@@ -1180,6 +1196,11 @@ fn stable_fingerprint(input: &str) -> String {
     format!("{hash:016x}")
 }
 
+fn with_proof_span(mut evidence_spans: Vec<String>, active_check_proof_ref: String) -> Vec<String> {
+    evidence_spans.push(format!("proof:{active_check_proof_ref}"));
+    evidence_spans
+}
+
 fn validate_required_text(
     field: &'static str,
     value: &str,
@@ -1311,6 +1332,32 @@ mod tests {
             FinderRiskTier::Low,
             false,
             FinderFallbackPolicy::Clarify,
+            vec![
+                "schedule".to_string(),
+                "dinner".to_string(),
+                "tomorrow".to_string(),
+            ],
+            vec![field_when()],
+            vec!["calendar".to_string()],
+        )
+        .expect("entry should build")
+    }
+
+    fn active_entry_with_guard_requirements(
+        simulation_id: &str,
+        simulation_priority: u16,
+        confirm_required: bool,
+        required_access_actions: Vec<String>,
+    ) -> FinderSimulationCatalogEntry {
+        FinderSimulationCatalogEntry::v1(
+            simulation_id.to_string(),
+            "schedule".to_string(),
+            SimulationStatus::Active,
+            simulation_priority,
+            required_access_actions,
+            FinderRiskTier::High,
+            confirm_required,
+            FinderFallbackPolicy::Refuse,
             vec![
                 "schedule".to_string(),
                 "dinner".to_string(),
@@ -1644,5 +1691,106 @@ mod tests {
             other => panic!("expected clarify on run 2, got {other:?}"),
         };
         assert_ne!(first_field, second_field);
+    }
+
+    #[test]
+    fn at_sim_finder_m4_01_match_packet_includes_access_confirm_and_active_proof() {
+        let runtime = Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1());
+        let req = base_request(vec![active_entry_with_guard_requirements(
+            "PH1.REM.401",
+            200,
+            true,
+            vec![
+                "ACCESS_BETA".to_string(),
+                "ACCESS_ALPHA".to_string(),
+                "ACCESS_ALPHA".to_string(),
+            ],
+        )])
+        .expect("request should build");
+
+        match runtime.run(&req).expect("run should succeed") {
+            FinderTerminalPacket::SimulationMatch(packet) => {
+                assert!(packet.confirm_required);
+                assert_eq!(
+                    packet.access_actions_required,
+                    vec!["ACCESS_ALPHA".to_string(), "ACCESS_BETA".to_string()]
+                );
+                assert!(packet.active_simulation);
+                assert_eq!(packet.catalog_snapshot_hash, "simcat_hash_v1");
+                assert!(packet
+                    .active_check_proof_ref
+                    .contains("catalog.active.yes:simcat_hash_v1:PH1.REM.401"));
+                assert!(packet
+                    .evidence_spans
+                    .iter()
+                    .any(|span| span.starts_with("proof:")));
+            }
+            other => panic!("expected match packet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_sim_finder_m4_02_inactive_sim_returns_refuse_with_inactive_proofs() {
+        let runtime = Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1());
+        let req_draft_only = base_request(vec![FinderSimulationCatalogEntry::v1(
+            "PH1.REM.402".to_string(),
+            "schedule".to_string(),
+            SimulationStatus::Draft,
+            50,
+            vec!["REMINDER_SCHEDULE".to_string()],
+            FinderRiskTier::Low,
+            false,
+            FinderFallbackPolicy::Clarify,
+            vec!["schedule".to_string(), "dinner".to_string()],
+            vec![field_when()],
+            vec!["calendar".to_string()],
+        )
+        .unwrap()])
+        .expect("request should build");
+
+        match runtime.run(&req_draft_only).expect("run should succeed") {
+            FinderTerminalPacket::Refuse(packet) => {
+                assert_eq!(
+                    packet.reason_code,
+                    reason_codes::SIM_FINDER_SIMULATION_INACTIVE
+                );
+                assert!(packet
+                    .evidence_refs
+                    .iter()
+                    .any(|r| r.starts_with("catalog.active.no:simcat_hash_v1:PH1.REM.402")));
+                assert!(packet
+                    .evidence_refs
+                    .iter()
+                    .any(|r| r.starts_with("catalog.inactive.hit:PH1.REM.402:status=draft")));
+            }
+            other => panic!("expected refuse packet, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn at_sim_finder_m4_03_access_required_sim_exposes_execution_gate_requirements() {
+        let runtime = Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1());
+        let req = base_request(vec![active_entry_with_guard_requirements(
+            "PH1.REM.403",
+            120,
+            false,
+            vec!["REMINDER_SCHEDULE_ACCESS".to_string()],
+        )])
+        .expect("request should build");
+
+        match runtime.run(&req).expect("run should succeed") {
+            FinderTerminalPacket::SimulationMatch(packet) => {
+                assert_eq!(
+                    packet.access_actions_required,
+                    vec!["REMINDER_SCHEDULE_ACCESS".to_string()]
+                );
+                assert!(!packet.confirm_required);
+                assert_eq!(
+                    packet.reason_code,
+                    reason_codes::SIM_FINDER_MATCH_OK_CATALOG_ACTIVE
+                );
+            }
+            other => panic!("expected match packet, got {other:?}"),
+        }
     }
 }
