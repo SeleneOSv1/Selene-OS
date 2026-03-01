@@ -115,7 +115,10 @@ use selene_os::ph1builder::{
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
-use selene_os::ph1l::{Ph1lConfig, Ph1lRuntime};
+use selene_os::ph1l::{
+    ph1l_step_voice_turn, trigger_requires_session_open_step, Ph1lConfig, Ph1lRuntime,
+    Ph1lTurnTrigger,
+};
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
@@ -4894,27 +4897,21 @@ fn resolve_session_turn_state(
         }
     }
 
-    let wake_event = if trigger == OsVoiceTrigger::WakeWord || trigger == OsVoiceTrigger::Explicit {
+    let ph1l_turn_trigger = ph1l_turn_trigger_from_os(trigger);
+    let wake_event = if trigger_requires_session_open_step(ph1l_turn_trigger) {
         Some(build_turn_wake_decision(now, ph1k)?)
     } else {
         None
     };
     let active_prev_session_id = lifecycle.session_id();
-    let active_out = lifecycle.step(Ph1lInput::v1(
+    let active_out = ph1l_step_voice_turn(
+        &mut lifecycle,
         now,
+        ph1l_turn_trigger,
         wake_event.clone(),
-        None,
         tts_playback_state_from_bool(ph1k.tts_playback.active),
-        UserActivitySignals {
-            speech_detected: true,
-            barge_in: false,
-            silence_ms: 0,
-        },
         policy_context_ref,
-        false,
-        false,
-        false,
-    ));
+    );
     persist_session_snapshot(
         store,
         now,
@@ -4936,6 +4933,13 @@ fn resolve_session_turn_state(
         session_id_for_commits,
         wake_event,
     })
+}
+
+fn ph1l_turn_trigger_from_os(trigger: OsVoiceTrigger) -> Ph1lTurnTrigger {
+    match trigger {
+        OsVoiceTrigger::WakeWord => Ph1lTurnTrigger::WakeWord,
+        OsVoiceTrigger::Explicit => Ph1lTurnTrigger::Explicit,
+    }
 }
 
 fn latest_session_for_actor_device(

@@ -2,8 +2,9 @@
 
 use selene_kernel_contracts::ph1l::{
     NextAllowedActions, Ph1lInput, Ph1lOutput, PresenceNudge, SessionId, SessionSnapshot,
-    TransitionEvent, TtsPlaybackState,
+    TransitionEvent, TtsPlaybackState, UserActivitySignals,
 };
+use selene_kernel_contracts::ph1d::PolicyContextRef;
 use selene_kernel_contracts::ph1w::WakeDecision;
 use selene_kernel_contracts::ph1x::Ph1xDirective;
 use selene_kernel_contracts::{
@@ -30,6 +31,47 @@ pub mod reason_codes {
 pub enum PendingQuestion {
     Clarify,
     Confirm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ph1lTurnTrigger {
+    WakeWord,
+    Explicit,
+    Other,
+}
+
+pub fn trigger_requires_session_open_step(trigger: Ph1lTurnTrigger) -> bool {
+    matches!(trigger, Ph1lTurnTrigger::WakeWord | Ph1lTurnTrigger::Explicit)
+}
+
+pub fn ph1l_step_voice_turn(
+    runtime: &mut Ph1lRuntime,
+    now: MonotonicTimeNs,
+    trigger: Ph1lTurnTrigger,
+    wake_event: Option<WakeDecision>,
+    tts_state: TtsPlaybackState,
+    policy_context_ref: PolicyContextRef,
+) -> Ph1lOutput {
+    let wake_event = if trigger_requires_session_open_step(trigger) {
+        wake_event
+    } else {
+        None
+    };
+    runtime.step(Ph1lInput::v1(
+        now,
+        wake_event,
+        None,
+        tts_state,
+        UserActivitySignals {
+            speech_detected: true,
+            barge_in: false,
+            silence_ms: 0,
+        },
+        policy_context_ref,
+        false,
+        false,
+        false,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -511,10 +553,13 @@ fn close_check_phrase(session_id: Option<SessionId>, attempt: u8) -> (u8, &'stat
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::{TtsPlaybackState, UserActivitySignals};
     use selene_kernel_contracts::ph1w::{WakeDecision, WakeGateResults};
     use selene_kernel_contracts::ph1x::{ClarifyDirective, Ph1xDirective};
     use selene_kernel_contracts::ReasonCodeId;
+    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord};
 
     fn policy_ok() -> selene_kernel_contracts::ph1d::PolicyContextRef {
         PolicyContextRef::v1(false, false, SafetyTier::Standard)
@@ -565,6 +610,159 @@ mod tests {
             false,
             false,
         )
+    }
+
+    fn seed_identity_and_device(store: &mut Ph1fStore, user_id: &UserId, device_id: &DeviceId) {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(1),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn persist_snapshot_for_test(
+        store: &mut Ph1fStore,
+        user_id: &UserId,
+        device_id: &DeviceId,
+        previous_session_id: Option<SessionId>,
+        out: &Ph1lOutput,
+        now: MonotonicTimeNs,
+        idempotency_key: &str,
+    ) -> SessionId {
+        let session_id = if out.snapshot.session_state == SessionState::Closed {
+            previous_session_id.expect("previous session id must exist for closed snapshot")
+        } else {
+            out.snapshot
+                .session_id
+                .expect("open/active snapshot must have session id")
+        };
+        let opened_at = store.get_session(&session_id).map(|row| row.opened_at).unwrap_or(now);
+        let closed_at = if out.snapshot.session_state == SessionState::Closed {
+            Some(now)
+        } else {
+            None
+        };
+        let row = SessionRecord::v1(
+            session_id,
+            user_id.clone(),
+            device_id.clone(),
+            out.snapshot.session_state,
+            opened_at,
+            now,
+            closed_at,
+        )
+        .unwrap();
+        store
+            .upsert_session_lifecycle(row, Some(idempotency_key.to_string()))
+            .unwrap();
+        session_id
+    }
+
+    fn run_trigger_step_for_test(
+        trigger: Ph1lTurnTrigger,
+        now: MonotonicTimeNs,
+    ) -> (Ph1lOutput, Option<SessionId>) {
+        let mut rt = Ph1lRuntime::from_persisted_state(
+            Ph1lConfig::mvp_desktop_v1(),
+            SessionState::Closed,
+            None,
+            1,
+        )
+        .expect("runtime bootstrap should succeed");
+        let out = ph1l_step_voice_turn(
+            &mut rt,
+            now,
+            trigger,
+            Some(accepted_wake(now)),
+            TtsPlaybackState::Stopped,
+            policy_ok(),
+        );
+        (out, rt.session_id())
+    }
+
+    #[test]
+    fn at_trigger_os_01_wakeword_and_explicit_both_call_ph1l_step() {
+        let now = MonotonicTimeNs(10);
+        let (wake_out, wake_sid) = run_trigger_step_for_test(Ph1lTurnTrigger::WakeWord, now);
+        let (explicit_out, explicit_sid) =
+            run_trigger_step_for_test(Ph1lTurnTrigger::Explicit, now);
+
+        assert_eq!(wake_out.snapshot.session_state, SessionState::Active);
+        assert_eq!(explicit_out.snapshot.session_state, SessionState::Active);
+        assert_eq!(wake_out.snapshot.session_id, Some(SessionId(1)));
+        assert_eq!(explicit_out.snapshot.session_id, Some(SessionId(1)));
+        assert_eq!(wake_sid, explicit_sid);
+    }
+
+    #[test]
+    fn at_trigger_01_os_wakeword_and_explicit_both_call_ph1l_step() {
+        at_trigger_os_01_wakeword_and_explicit_both_call_ph1l_step();
+    }
+
+    #[test]
+    fn at_trigger_os_02_session_id_persisted_identically_for_both_triggers() {
+        let now = MonotonicTimeNs(20);
+        let user_id = UserId::new("tenant_a:trigger_user").unwrap();
+        let device_id = DeviceId::new("trigger_device_1").unwrap();
+
+        let mut wake_store = Ph1fStore::new_in_memory();
+        let mut explicit_store = Ph1fStore::new_in_memory();
+        seed_identity_and_device(&mut wake_store, &user_id, &device_id);
+        seed_identity_and_device(&mut explicit_store, &user_id, &device_id);
+
+        let (wake_out, wake_prev_sid) = run_trigger_step_for_test(Ph1lTurnTrigger::WakeWord, now);
+        let wake_sid = persist_snapshot_for_test(
+            &mut wake_store,
+            &user_id,
+            &device_id,
+            wake_prev_sid,
+            &wake_out,
+            now,
+            "trigger_os_wake_commit",
+        );
+
+        let (explicit_out, explicit_prev_sid) =
+            run_trigger_step_for_test(Ph1lTurnTrigger::Explicit, now);
+        let explicit_sid = persist_snapshot_for_test(
+            &mut explicit_store,
+            &user_id,
+            &device_id,
+            explicit_prev_sid,
+            &explicit_out,
+            now,
+            "trigger_os_explicit_commit",
+        );
+
+        let wake_row = wake_store.get_session(&wake_sid).expect("wake row must exist");
+        let explicit_row = explicit_store
+            .get_session(&explicit_sid)
+            .expect("explicit row must exist");
+        assert_eq!(wake_sid, explicit_sid);
+        assert_eq!(wake_row.session_state, explicit_row.session_state);
+        assert_eq!(wake_row.opened_at, explicit_row.opened_at);
+        assert_eq!(wake_row.last_activity_at, explicit_row.last_activity_at);
+        assert_eq!(wake_row.closed_at, explicit_row.closed_at);
+    }
+
+    #[test]
+    fn at_trigger_02_os_session_id_persisted_identically_for_both_triggers() {
+        at_trigger_os_02_session_id_persisted_identically_for_both_triggers();
     }
 
     #[test]
