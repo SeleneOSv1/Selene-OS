@@ -33,7 +33,7 @@ use selene_kernel_contracts::ph1k::{
     AudioDeviceId, AudioFormat, AudioStreamId, AudioStreamKind, AudioStreamRef, ChannelCount,
     Confidence, FrameDurationMs, SampleFormat, SampleRateHz, SpeechLikeness, VadEvent,
 };
-use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionSnapshot};
 use selene_kernel_contracts::ph1link::{
     AppPlatform, Ph1LinkRequest, Ph1LinkResponse, LINK_INVITE_GENERATE_DRAFT,
 };
@@ -4266,6 +4266,7 @@ fn resolve_voice_identity_assertion(
     let req = build_voice_id_request_for_actor(
         now,
         actor_user_id,
+        session_snapshot_for_actor(store, actor_user_id),
         actor_primary_embedding_capture_ref
             .as_ref()
             .map(|(_, capture_ref)| capture_ref.clone()),
@@ -4356,6 +4357,7 @@ fn resolve_voice_identity_assertion(
 fn build_voice_id_request_for_actor(
     now: MonotonicTimeNs,
     actor_user_id: &UserId,
+    session_snapshot: SessionSnapshot,
     app_primary_embedding_capture_ref: Option<VoiceEmbeddingCaptureRef>,
 ) -> Result<Ph1VoiceIdRequest, StorageError> {
     let stream_id = AudioStreamId(1);
@@ -4376,16 +4378,6 @@ fn build_voice_id_request_for_actor(
         Confidence::new(0.95).map_err(StorageError::ContractViolation)?,
         SpeechLikeness::new(0.95).map_err(StorageError::ContractViolation)?,
     )];
-    let session_snapshot = SessionSnapshot {
-        schema_version: SchemaVersion(1),
-        session_state: SessionState::Active,
-        session_id: Some(SessionId(1)),
-        next_allowed_actions: NextAllowedActions {
-            may_speak: true,
-            must_wait: false,
-            must_rewake: false,
-        },
-    };
     let device_id = AudioDeviceId::new(format!(
         "sim_mic_{}",
         short_hash_hex(&[actor_user_id.as_str()])
@@ -4405,6 +4397,36 @@ fn build_voice_id_request_for_actor(
         app_primary_embedding_capture_ref,
     )
     .map_err(StorageError::ContractViolation)
+}
+
+fn session_snapshot_for_actor(store: &Ph1fStore, actor_user_id: &UserId) -> SessionSnapshot {
+    let latest = store
+        .session_rows()
+        .values()
+        .filter(|row| &row.user_id == actor_user_id)
+        .max_by_key(|row| (row.last_activity_at.0, row.session_id.0));
+    match latest {
+        Some(row) if row.session_state != SessionState::Closed => SessionSnapshot {
+            schema_version: SchemaVersion(1),
+            session_state: row.session_state,
+            session_id: Some(row.session_id),
+            next_allowed_actions: NextAllowedActions {
+                may_speak: true,
+                must_wait: false,
+                must_rewake: false,
+            },
+        },
+        _ => SessionSnapshot {
+            schema_version: SchemaVersion(1),
+            session_state: SessionState::Closed,
+            session_id: None,
+            next_allowed_actions: NextAllowedActions {
+                may_speak: false,
+                must_wait: true,
+                must_rewake: true,
+            },
+        },
+    }
 }
 
 fn profile_embedding_from_capture_ref(capture_ref: &VoiceEmbeddingCaptureRef) -> [i16; 16] {
@@ -7253,8 +7275,13 @@ mod tests {
             )
             .unwrap();
 
-        let req = build_voice_id_request_for_actor(MonotonicTimeNs(3), &actor, None)
-            .expect("voice-id request must be valid");
+        let req = build_voice_id_request_for_actor(
+            MonotonicTimeNs(3),
+            &actor,
+            session_snapshot_for_actor(&store, &actor),
+            None,
+        )
+        .expect("voice-id request must be valid");
         let context = crate::ph1_voice_id::VoiceIdentityRuntimeContext::from_tenant_app_platform(
             Some("tenant_1".to_string()),
             Some(AppPlatform::Ios),

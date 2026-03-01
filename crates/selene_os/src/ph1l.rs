@@ -7,7 +7,7 @@ use selene_kernel_contracts::ph1l::{
 use selene_kernel_contracts::ph1w::WakeDecision;
 use selene_kernel_contracts::ph1x::Ph1xDirective;
 use selene_kernel_contracts::{
-    MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
 
 pub mod reason_codes {
@@ -83,6 +83,37 @@ impl Ph1lRuntime {
             close_check_attempts: 0,
             close_check_last_prompt_at: None,
         }
+    }
+
+    pub fn from_persisted_state(
+        config: Ph1lConfig,
+        state: SessionState,
+        session_id: Option<SessionId>,
+        next_session_id: u128,
+    ) -> Result<Self, ContractViolation> {
+        let next_allowed_actions = default_next_allowed_actions_for_state(state);
+        SessionSnapshot {
+            schema_version: SchemaVersion(1),
+            session_state: state,
+            session_id,
+            next_allowed_actions,
+        }
+        .validate()?;
+        let min_next = session_id
+            .map(|id| id.0.saturating_add(1))
+            .unwrap_or(1)
+            .max(1);
+        Ok(Self {
+            config,
+            state,
+            session_id,
+            next_session_id: next_session_id.max(min_next),
+            pending_question: None,
+            pending_since: None,
+            soft_closed_since: None,
+            close_check_attempts: 0,
+            close_check_last_prompt_at: None,
+        })
     }
 
     pub fn state(&self) -> SessionState {
@@ -429,6 +460,28 @@ impl Ph1lRuntime {
         self.close_check_attempts = attempt;
         self.close_check_last_prompt_at = Some(now);
         Some(prompt)
+    }
+}
+
+fn default_next_allowed_actions_for_state(state: SessionState) -> NextAllowedActions {
+    match state {
+        SessionState::Closed => NextAllowedActions {
+            may_speak: false,
+            must_wait: true,
+            must_rewake: true,
+        },
+        SessionState::Open | SessionState::Active | SessionState::SoftClosed => {
+            NextAllowedActions {
+                may_speak: true,
+                must_wait: false,
+                must_rewake: false,
+            }
+        }
+        SessionState::Suspended => NextAllowedActions {
+            may_speak: false,
+            must_wait: true,
+            must_rewake: false,
+        },
     }
 }
 

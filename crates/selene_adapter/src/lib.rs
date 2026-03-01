@@ -74,7 +74,9 @@ use selene_kernel_contracts::ph1k::{
     PreRollBufferId, PreRollBufferRef, SampleFormat, SampleRateHz, SpeechLikeness,
     TimingStats as Ph1kTimingStats, TtsPlaybackActiveEvent, VadEvent,
 };
-use selene_kernel_contracts::ph1l::{NextAllowedActions, SessionId, SessionSnapshot};
+use selene_kernel_contracts::ph1l::{
+    Ph1lInput, SessionId, SessionSnapshot, TtsPlaybackState, UserActivitySignals,
+};
 use selene_kernel_contracts::ph1learn::LearnSignalType;
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
@@ -90,12 +92,14 @@ use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
 };
-use selene_kernel_contracts::ph1w::{BoundedAudioSegmentRef, SessionState as WakeSessionState};
+use selene_kernel_contracts::ph1w::{
+    BoundedAudioSegmentRef, SessionState as WakeSessionState, WakeDecision, WakeGateResults,
+};
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
 };
 use selene_kernel_contracts::{
-    ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
+    ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
 use selene_os::app_ingress::{
     AppInviteLinkOpenRequest, AppOnboardingContinueAction, AppOnboardingContinueNextStep,
@@ -111,6 +115,7 @@ use selene_os::ph1builder::{
     BuilderOfflineInput, BuilderOrchestrationOutcome, DeterministicBuilderSandboxValidator,
     Ph1BuilderConfig, Ph1BuilderOrchestrator,
 };
+use selene_os::ph1l::{Ph1lConfig, Ph1lRuntime};
 use selene_os::ph1context::{Ph1ContextEngine, Ph1ContextWiring, Ph1ContextWiringConfig};
 use selene_os::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringConfig};
 use selene_os::ph1os::{
@@ -129,7 +134,7 @@ use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
     OutcomeUtilizationLedgerRowInput, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
     Ph1kFeedbackIssueKind, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeEventKind,
-    Ph1kRuntimeEventRecord, StorageError,
+    Ph1kRuntimeEventRecord, SessionRecord, StorageError,
 };
 pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
@@ -1612,6 +1617,7 @@ impl AdapterRuntime {
         turn_id: TurnId,
         actor_user_id: &UserId,
         device_id: Option<&DeviceId>,
+        session_id: Option<SessionId>,
         user_text_partial: Option<String>,
         user_text_final: Option<String>,
         selene_text_partial: Option<String>,
@@ -1645,6 +1651,7 @@ impl AdapterRuntime {
                 turn_id,
                 actor_user_id,
                 device_id,
+                session_id,
                 ConversationRole::User,
                 ConversationSource::VoiceTranscript,
                 &text,
@@ -1664,6 +1671,7 @@ impl AdapterRuntime {
                 turn_id,
                 actor_user_id,
                 device_id,
+                session_id,
                 ConversationRole::Selene,
                 ConversationSource::SeleneOutput,
                 &text,
@@ -2386,6 +2394,7 @@ impl AdapterRuntime {
         turn_id: TurnId,
         actor_user_id: &UserId,
         tenant_id: Option<&str>,
+        session_state: SessionState,
         ph1k: &Ph1kLiveSignalBundle,
     ) -> Option<Ph1cLiveTurnOutcomeSummary> {
         if !self.ph1c_live_enabled {
@@ -2398,7 +2407,7 @@ impl AdapterRuntime {
             ));
         };
         let tenant_id = tenant_id.unwrap_or("tenant_default");
-        let ph1c_request = match build_ph1c_live_request(ph1k) {
+        let ph1c_request = match build_ph1c_live_request(ph1k, session_state) {
             Ok(req) => req,
             Err(_) => {
                 return Some(ph1c_live_reject_summary(
@@ -2465,6 +2474,7 @@ impl AdapterRuntime {
         actor_user_id: &UserId,
         tenant_id: Option<&str>,
         device_id: Option<&DeviceId>,
+        session_id: Option<SessionId>,
         ph1c: &Ph1cLiveTurnOutcomeSummary,
     ) -> Result<(), String> {
         let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
@@ -2483,7 +2493,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         ok.transcript_text.clone(),
@@ -2506,7 +2516,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         reject.reason_code,
@@ -2530,6 +2540,7 @@ impl AdapterRuntime {
         actor_user_id: &UserId,
         tenant_id: Option<&str>,
         device_id: Option<&DeviceId>,
+        session_id: Option<SessionId>,
         ph1c: &Ph1cLiveTurnOutcomeSummary,
     ) -> Result<(), String> {
         let (Some(tenant_id), Some(device_id)) = (tenant_id, device_id) else {
@@ -2556,7 +2567,7 @@ impl AdapterRuntime {
                 tenant_id.to_string(),
                 correlation_id,
                 turn_id,
-                None,
+                session_id,
                 actor_user_id.clone(),
                 device_id.clone(),
                 feedback_event_type.to_string(),
@@ -2592,7 +2603,7 @@ impl AdapterRuntime {
                 tenant_id.to_string(),
                 correlation_id,
                 turn_id,
-                None,
+                session_id,
                 actor_user_id.clone(),
                 device_id.clone(),
                 feedback_event_type.to_string(),
@@ -2617,6 +2628,8 @@ impl AdapterRuntime {
         actor_user_id: &UserId,
         tenant_id: Option<&str>,
         device_id: Option<&DeviceId>,
+        session_id: Option<SessionId>,
+        session_state: SessionState,
         transcript_text: Option<&str>,
         os_outcome: &OsVoiceLiveTurnOutcome,
     ) -> Result<(), String> {
@@ -2648,7 +2661,7 @@ impl AdapterRuntime {
         let request = selene_kernel_contracts::ph1d::Ph1dRequest::v1(
             transcript_ok,
             nlp_output,
-            Ph1cSessionStateRef::v1(SessionState::Active, false),
+            Ph1cSessionStateRef::v1(session_state, false),
             PolicyContextRef::v1(false, false, SafetyTier::Standard),
             ToolCatalogRef::v1(vec![
                 ToolName::Time,
@@ -2677,7 +2690,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         chat.reason_code,
@@ -2695,7 +2708,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         truncate_ascii(&format!("{:?}", intent.refined_intent_type), 64),
@@ -2719,7 +2732,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         truncate_ascii(&missing, 64),
@@ -2738,7 +2751,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         truncate_ascii(&analysis.short_analysis, 64),
@@ -2757,7 +2770,7 @@ impl AdapterRuntime {
                         tenant_id.to_string(),
                         correlation_id,
                         turn_id,
-                        None,
+                        session_id,
                         actor_user_id.clone(),
                         device_id.clone(),
                         ph1d_fail_code(fail.kind).to_string(),
@@ -2784,6 +2797,7 @@ impl AdapterRuntime {
         actor_user_id: &UserId,
         tenant_id: Option<&str>,
         device_id: Option<&DeviceId>,
+        session_id: Option<SessionId>,
         provider_calls: &[Ph1dProviderCallResponse],
         final_transcript: Option<String>,
         language_locale: Option<String>,
@@ -2815,7 +2829,7 @@ impl AdapterRuntime {
                     tenant_id.to_string(),
                     correlation_id,
                     turn_id,
-                    None,
+                    session_id,
                     actor_user_id.clone(),
                     device_id.clone(),
                     feedback_event_type.to_string(),
@@ -2841,7 +2855,7 @@ impl AdapterRuntime {
                     tenant_id.to_string(),
                     correlation_id,
                     turn_id,
-                    None,
+                    session_id,
                     actor_user_id.clone(),
                     device_id.clone(),
                     feedback_event_type.to_string(),
@@ -2945,10 +2959,10 @@ impl AdapterRuntime {
         turn_id: TurnId,
         tenant_id: Option<&str>,
         device_id: &DeviceId,
+        session_id: Option<SessionId>,
         bundle: &Ph1kLiveSignalBundle,
     ) -> Result<(), String> {
         let tenant_id = truncate_ascii(tenant_id.unwrap_or("tenant_default"), 64);
-        let session_id = None;
         let processed_stream_id = Some(bundle.processed_stream_ref.stream_id.0);
         let pre_roll_buffer_id = Some(bundle.pre_roll_buffer_ref.buffer_id.0);
         let device_health = storage_device_health_from_bundle(bundle);
@@ -3259,6 +3273,7 @@ impl AdapterRuntime {
         tenant_id: Option<&str>,
         actor_user_id: &UserId,
         device_id: &DeviceId,
+        session_id: Option<SessionId>,
         bundle: &Ph1kLiveSignalBundle,
     ) -> Result<(), String> {
         let feedback_kind = if let Some(candidate) = bundle.interrupt_decision.candidate.as_ref() {
@@ -3326,7 +3341,7 @@ impl AdapterRuntime {
                 tenant_id,
                 correlation_id,
                 turn_id,
-                None,
+                session_id,
                 actor_user_id.clone(),
                 device_id.clone(),
                 capture_input,
@@ -3498,9 +3513,25 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
         )?;
+        let session_turn_state = resolve_session_turn_state(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            &runtime_device_id,
+            trigger,
+            &ph1k_bundle,
+        )?;
         let voice_id_request =
-            build_voice_id_request_from_ph1k_bundle(now, actor_user_id.clone(), &ph1k_bundle)
-                .map_err(|err| format!("voice request build failed: {err:?}"))?;
+            build_voice_id_request_from_ph1k_bundle(
+                now,
+                actor_user_id.clone(),
+                &ph1k_bundle,
+                session_turn_state.session_snapshot,
+                session_turn_state.wake_event.clone(),
+            )
+            .map_err(|err| format!("voice request build failed: {err:?}"))?;
         let ph1c_live_outcome = if upstream_transcript_supplied {
             None
         } else {
@@ -3509,6 +3540,7 @@ impl AdapterRuntime {
                 turn_id,
                 &actor_user_id,
                 tenant_id_for_ph1c.as_deref(),
+                session_turn_state.session_snapshot.session_state,
                 &ph1k_bundle,
             )
         };
@@ -3527,6 +3559,7 @@ impl AdapterRuntime {
                 &actor_user_id,
                 tenant_id_for_ph1c.as_deref(),
                 Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
                 ph1c,
             )?;
         }
@@ -3545,6 +3578,7 @@ impl AdapterRuntime {
             turn_id,
             tenant_id_for_ph1c.as_deref(),
             &runtime_device_id,
+            session_turn_state.session_id_for_commits,
             &ph1k_bundle,
         )?;
         self.emit_ph1k_feedback_capture(
@@ -3555,6 +3589,7 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
             &actor_user_id,
             &runtime_device_id,
+            session_turn_state.session_id_for_commits,
             &ph1k_bundle,
         )?;
         if let Err(err) = append_ph1k_live_eval_snapshot_csv(
@@ -3618,7 +3653,7 @@ impl AdapterRuntime {
         let x_build = AppVoicePh1xBuildInput {
             now,
             thread_state: base_thread_state,
-            session_state: SessionState::Active,
+            session_state: session_turn_state.session_snapshot.session_state,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: Vec::new(),
             confirm_answer,
@@ -3652,6 +3687,8 @@ impl AdapterRuntime {
             &actor_user_id,
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
+            session_turn_state.session_id_for_commits,
+            session_turn_state.session_snapshot.session_state,
             user_text_final.as_deref(),
             &execution_outcome.voice_outcome,
         )?;
@@ -3675,6 +3712,7 @@ impl AdapterRuntime {
             turn_id,
             &actor_user_id,
             Some(&runtime_device_id),
+            session_turn_state.session_id_for_commits,
             user_text_partial,
             user_text_final,
             selene_text_partial,
@@ -3689,6 +3727,7 @@ impl AdapterRuntime {
                 &actor_user_id,
                 tenant_id_for_ph1c.as_deref(),
                 Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
                 ph1c,
             )?;
             self.emit_ph1d_gold_capture_and_learning(
@@ -3699,6 +3738,7 @@ impl AdapterRuntime {
                 &actor_user_id,
                 tenant_id_for_ph1c.as_deref(),
                 Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
                 &ph1c.provider_call_trace,
                 ph1c.final_text.clone(),
                 ph1c_language_locale(&ph1c.response),
@@ -4535,6 +4575,7 @@ fn append_transcript_final_conversation_turn(
     turn_id: TurnId,
     actor_user_id: &UserId,
     device_id: Option<&DeviceId>,
+    session_id: Option<SessionId>,
     role: ConversationRole,
     source: ConversationSource,
     text: &str,
@@ -4562,7 +4603,7 @@ fn append_transcript_final_conversation_turn(
         now,
         correlation_id,
         turn_id,
-        None,
+        session_id,
         actor_user_id.clone(),
         device_id.cloned(),
         role,
@@ -4773,6 +4814,233 @@ fn resolve_adapter_pinned_context_refs(values: Option<&[String]>) -> Vec<String>
         }
     }
     out
+}
+
+#[derive(Debug, Clone)]
+struct AdapterSessionTurnState {
+    session_snapshot: SessionSnapshot,
+    session_id_for_commits: Option<SessionId>,
+    wake_event: Option<WakeDecision>,
+}
+
+fn resolve_session_turn_state(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    trigger: OsVoiceTrigger,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<AdapterSessionTurnState, String> {
+    let existing = latest_session_for_actor_device(store, actor_user_id, device_id);
+    let next_session_id_seed = store
+        .session_rows()
+        .keys()
+        .map(|session_id| session_id.0)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(1);
+    let (state, session_id) = match existing.as_ref() {
+        Some(rec) if rec.session_state != SessionState::Closed => {
+            (rec.session_state, Some(rec.session_id))
+        }
+        _ => (SessionState::Closed, None),
+    };
+    let mut lifecycle = Ph1lRuntime::from_persisted_state(
+        Ph1lConfig::mvp_desktop_v1(),
+        state,
+        session_id,
+        next_session_id_seed,
+    )
+    .map_err(|err| format!("invalid PH1.L persisted state: {err:?}"))?;
+
+    let policy_context_ref = PolicyContextRef::v1(false, false, SafetyTier::Standard);
+    if let Some(rec) = existing.as_ref() {
+        let silence_ms = now
+            .0
+            .saturating_sub(rec.last_activity_at.0)
+            .saturating_div(1_000_000)
+            .min(u32::MAX as u64) as u32;
+        if silence_ms > 0 {
+            let idle_prev_session_id = lifecycle.session_id();
+            let idle_out = lifecycle.step(Ph1lInput::v1(
+                now,
+                None,
+                None,
+                tts_playback_state_from_bool(ph1k.tts_playback.active),
+                UserActivitySignals {
+                    speech_detected: false,
+                    barge_in: false,
+                    silence_ms,
+                },
+                policy_context_ref,
+                false,
+                false,
+                false,
+            ));
+            persist_session_snapshot(
+                store,
+                now,
+                correlation_id,
+                turn_id,
+                actor_user_id,
+                device_id,
+                idle_prev_session_id,
+                &idle_out,
+                "idle",
+            )?;
+        }
+    }
+
+    let wake_event = if trigger == OsVoiceTrigger::WakeWord || trigger == OsVoiceTrigger::Explicit {
+        Some(build_turn_wake_decision(now, ph1k)?)
+    } else {
+        None
+    };
+    let active_prev_session_id = lifecycle.session_id();
+    let active_out = lifecycle.step(Ph1lInput::v1(
+        now,
+        wake_event.clone(),
+        None,
+        tts_playback_state_from_bool(ph1k.tts_playback.active),
+        UserActivitySignals {
+            speech_detected: true,
+            barge_in: false,
+            silence_ms: 0,
+        },
+        policy_context_ref,
+        false,
+        false,
+        false,
+    ));
+    persist_session_snapshot(
+        store,
+        now,
+        correlation_id,
+        turn_id,
+        actor_user_id,
+        device_id,
+        active_prev_session_id,
+        &active_out,
+        "turn",
+    )?;
+    let session_id_for_commits = if active_out.snapshot.session_state == SessionState::Closed {
+        active_prev_session_id
+    } else {
+        active_out.snapshot.session_id
+    };
+    Ok(AdapterSessionTurnState {
+        session_snapshot: active_out.snapshot,
+        session_id_for_commits,
+        wake_event,
+    })
+}
+
+fn latest_session_for_actor_device(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+) -> Option<SessionRecord> {
+    store
+        .session_rows()
+        .values()
+        .filter(|row| &row.user_id == actor_user_id && &row.device_id == device_id)
+        .cloned()
+        .max_by_key(|row| (row.last_activity_at.0, row.session_id.0))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_session_snapshot(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    previous_session_id: Option<SessionId>,
+    out: &selene_kernel_contracts::ph1l::Ph1lOutput,
+    stage: &str,
+) -> Result<(), String> {
+    let session_id = if out.snapshot.session_state == SessionState::Closed {
+        previous_session_id
+    } else {
+        out.snapshot.session_id
+    };
+    let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    let opened_at = store
+        .get_session(&session_id)
+        .map(|row| row.opened_at)
+        .unwrap_or(now);
+    let closed_at = if out.snapshot.session_state == SessionState::Closed {
+        Some(now)
+    } else {
+        None
+    };
+    let record = SessionRecord::v1(
+        session_id,
+        actor_user_id.clone(),
+        device_id.clone(),
+        out.snapshot.session_state,
+        opened_at,
+        now,
+        closed_at,
+    )
+    .map_err(|err| format!("invalid PH1.L session record: {err:?}"))?;
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(sanitize_idempotency_token(&format!(
+                "adapter_session:{}:{}:{}:{}",
+                correlation_id.0, turn_id.0, stage, session_id.0
+            ))),
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+fn tts_playback_state_from_bool(active: bool) -> TtsPlaybackState {
+    if active {
+        TtsPlaybackState::Playing
+    } else {
+        TtsPlaybackState::Stopped
+    }
+}
+
+fn build_turn_wake_decision(
+    now: MonotonicTimeNs,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<WakeDecision, String> {
+    let capture = BoundedAudioSegmentRef::v1(
+        ph1k.processed_stream_ref.stream_id,
+        ph1k.pre_roll_buffer_ref.buffer_id,
+        ph1k.pre_roll_buffer_ref.t_start,
+        ph1k.pre_roll_buffer_ref.t_end,
+        ph1k.pre_roll_buffer_ref.t_start,
+        ph1k.pre_roll_buffer_ref.t_end,
+    )
+    .map_err(|err| format!("invalid PH1.L wake capture: {err:?}"))?;
+    WakeDecision::accept_v1(
+        selene_os::ph1l::reason_codes::L_OPEN_WAKE,
+        WakeGateResults {
+            g0_integrity_ok: true,
+            g1_activity_ok: true,
+            g1a_utterance_start_ok: true,
+            g2_light_ok: true,
+            g3_strong_ok: true,
+            g3a_liveness_ok: true,
+            g4_personalization_ok: true,
+            g5_policy_ok: true,
+        },
+        now,
+        None,
+        None,
+        capture,
+    )
+    .map_err(|err| format!("invalid PH1.L wake decision: {err:?}"))
 }
 
 fn load_ph1x_thread_state(
@@ -5321,31 +5589,26 @@ fn build_voice_id_request_from_ph1k_bundle(
     now: MonotonicTimeNs,
     actor_user_id: UserId,
     ph1k: &Ph1kLiveSignalBundle,
+    session_snapshot: SessionSnapshot,
+    wake_event: Option<WakeDecision>,
 ) -> Result<Ph1VoiceIdRequest, selene_kernel_contracts::ContractViolation> {
-    let session_snapshot = SessionSnapshot {
-        schema_version: SchemaVersion(1),
-        session_state: SessionState::Active,
-        session_id: Some(SessionId(1)),
-        next_allowed_actions: NextAllowedActions {
-            may_speak: true,
-            must_wait: false,
-            must_rewake: false,
-        },
-    };
     Ph1VoiceIdRequest::v1(
         now,
         ph1k.processed_stream_ref,
         ph1k.vad_events.clone(),
         ph1k.device_state.selected_mic.clone(),
         session_snapshot,
-        None,
+        wake_event,
         ph1k.tts_playback.active,
         DeviceTrustLevel::Trusted,
         Some(actor_user_id),
     )
 }
 
-fn build_ph1c_live_request(ph1k: &Ph1kLiveSignalBundle) -> Result<Ph1cRequest, String> {
+fn build_ph1c_live_request(
+    ph1k: &Ph1kLiveSignalBundle,
+    session_state: SessionState,
+) -> Result<Ph1cRequest, String> {
     let bounded_audio_segment_ref = BoundedAudioSegmentRef::v1(
         ph1k.processed_stream_ref.stream_id,
         ph1k.pre_roll_buffer_ref.buffer_id,
@@ -5385,7 +5648,16 @@ fn build_ph1c_live_request(ph1k: &Ph1kLiveSignalBundle) -> Result<Ph1cRequest, S
     );
     let req = Ph1cRequest::v1(
         bounded_audio_segment_ref,
-        Ph1cSessionStateRef::v1(WakeSessionState::Active, ph1k.tts_playback.active),
+        Ph1cSessionStateRef::v1(
+            match session_state {
+                SessionState::Closed => WakeSessionState::Closed,
+                SessionState::Open => WakeSessionState::Open,
+                SessionState::Active => WakeSessionState::Active,
+                SessionState::SoftClosed => WakeSessionState::SoftClosed,
+                SessionState::Suspended => WakeSessionState::Suspended,
+            },
+            ph1k.tts_playback.active,
+        ),
         ph1k.device_state.clone(),
         language_hint,
         noise_level_hint,
@@ -6886,6 +7158,11 @@ mod tests {
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
+    use selene_kernel_contracts::ph1m::{
+        MemoryConfidence, MemoryConsent, MemoryKey, MemoryLayer, MemoryLedgerEvent,
+        MemoryLedgerEventKind, MemoryProvenance, MemorySensitivityFlag, MemoryUsePolicy,
+        MemoryValue,
+    };
     use selene_kernel_contracts::ph1n::FieldKey;
     use selene_kernel_contracts::ph1onb::{
         ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
@@ -8303,6 +8580,252 @@ mod tests {
     }
 
     #[test]
+    fn at_l_01_wake_opens_new_session_persists_session_id() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 31_001;
+        req.turn_id = 41_001;
+        req.now_ns = Some(1_000_000_000);
+        req.trigger = "WAKE_WORD".to_string();
+        runtime
+            .run_voice_turn(req.clone())
+            .expect("wake turn must succeed");
+
+        let actor_user_id = UserId::new(req.actor_user_id).expect("actor id must parse");
+        let device_id = DeviceId::new(req.device_id.expect("device id must be present"))
+            .expect("device id must parse");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let session = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            .expect("wake turn must persist a session row");
+        assert_eq!(session.session_state, SessionState::Active);
+        assert!(store.get_session(&session.session_id).is_some());
+    }
+
+    #[test]
+    fn at_l_02_next_turn_reuses_session_id_when_active() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_002;
+        first.turn_id = 41_002;
+        first.now_ns = Some(2_000_000_000);
+        first.trigger = "WAKE_WORD".to_string();
+        runtime
+            .run_voice_turn(first.clone())
+            .expect("first wake turn must succeed");
+
+        let actor_user_id = UserId::new(first.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id must parse");
+        let first_session_id = {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+                .expect("first turn must persist session")
+                .session_id
+        };
+
+        let mut second = base_request();
+        second.correlation_id = 31_003;
+        second.turn_id = 41_003;
+        second.now_ns = Some(7_000_000_000);
+        second.trigger = "WAKE_WORD".to_string();
+        runtime
+            .run_voice_turn(second)
+            .expect("second wake turn must succeed");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let second_session_id = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            .expect("second turn must persist session")
+            .session_id;
+        assert_eq!(second_session_id, first_session_id);
+        assert_eq!(
+            store
+                .session_rows()
+                .values()
+                .filter(|row| row.user_id == actor_user_id && row.device_id == device_id)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn at_l_03_timeout_closes_session_next_turn_opens_new() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_004;
+        first.turn_id = 41_004;
+        first.now_ns = Some(3_000_000_000);
+        first.trigger = "WAKE_WORD".to_string();
+        runtime
+            .run_voice_turn(first.clone())
+            .expect("first wake turn must succeed");
+
+        let actor_user_id = UserId::new(first.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id must parse");
+        let first_session = {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+                .expect("first turn must persist session")
+        };
+
+        {
+            let mut store = runtime.store.lock().expect("store lock must not poison");
+            let forced_soft_closed = SessionRecord::v1(
+                first_session.session_id,
+                actor_user_id.clone(),
+                device_id.clone(),
+                SessionState::SoftClosed,
+                first_session.opened_at,
+                first_session.opened_at,
+                None,
+            )
+            .expect("forced soft-closed record must validate");
+            store
+                .upsert_session_lifecycle(
+                    forced_soft_closed,
+                    Some("at_l_03_force_soft_closed".to_string()),
+                )
+                .expect("forced soft-close upsert must succeed");
+        }
+
+        let mut second = base_request();
+        second.correlation_id = 31_005;
+        second.turn_id = 41_005;
+        second.now_ns = Some(250_000_000_000);
+        second.trigger = "WAKE_WORD".to_string();
+        if let Some(capture) = second.audio_capture_ref.as_mut() {
+            capture.tts_playback_active = Some(false);
+        }
+        runtime
+            .run_voice_turn(second)
+            .expect("turn after timeout must succeed");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let latest = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            .expect("latest session must exist");
+        assert_ne!(latest.session_id, first_session.session_id);
+        assert_eq!(latest.session_state, SessionState::Active);
+        let previous = store
+            .get_session(&first_session.session_id)
+            .expect("prior session row must still exist");
+        assert_eq!(previous.session_state, SessionState::Closed);
+        assert_eq!(previous.closed_at, Some(MonotonicTimeNs(250_000_000_000)));
+    }
+
+    #[test]
+    fn at_l_04_explicit_trigger_opens_session_same_as_wake() {
+        let runtime = AdapterRuntime::default();
+
+        let mut wake = base_request();
+        wake.correlation_id = 31_006;
+        wake.turn_id = 41_006;
+        wake.now_ns = Some(4_000_000_000);
+        wake.trigger = "WAKE_WORD".to_string();
+        wake.device_id = Some("adapter_session_wake_device".to_string());
+        runtime
+            .run_voice_turn(wake.clone())
+            .expect("wake turn must succeed");
+
+        let mut explicit = base_request();
+        explicit.correlation_id = 31_007;
+        explicit.turn_id = 41_007;
+        explicit.now_ns = Some(5_000_000_000);
+        explicit.trigger = "EXPLICIT".to_string();
+        explicit.device_id = Some("adapter_session_explicit_device".to_string());
+        runtime
+            .run_voice_turn(explicit.clone())
+            .expect("explicit turn must succeed");
+
+        let actor_user_id = UserId::new(wake.actor_user_id).expect("actor id must parse");
+        let wake_device =
+            DeviceId::new(wake.device_id.expect("wake device id must exist")).expect("valid id");
+        let explicit_device = DeviceId::new(
+            explicit
+                .device_id
+                .expect("explicit device id must exist"),
+        )
+        .expect("valid id");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let wake_session = latest_session_for_actor_device(&store, &actor_user_id, &wake_device)
+            .expect("wake-triggered session must exist");
+        let explicit_session =
+            latest_session_for_actor_device(&store, &actor_user_id, &explicit_device)
+                .expect("explicit-triggered session must exist");
+        assert_eq!(wake_session.session_state, SessionState::Active);
+        assert_eq!(explicit_session.session_state, SessionState::Active);
+    }
+
+    #[test]
+    fn at_l_05_session_id_is_present_in_audit_and_memory_provenance() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 31_008;
+        req.turn_id = 41_008;
+        req.now_ns = Some(6_000_000_000);
+        req.trigger = "WAKE_WORD".to_string();
+        runtime
+            .run_voice_turn(req.clone())
+            .expect("wake turn must succeed");
+
+        let actor_user_id = UserId::new(req.actor_user_id).expect("actor id must parse");
+        let device_id = DeviceId::new(req.device_id.expect("device id must be present"))
+            .expect("device id must parse");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let session_id = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            .expect("session row must exist")
+            .session_id;
+
+        let correlation_id = CorrelationId(req.correlation_id.into());
+        assert!(
+            store
+                .audit_events()
+                .iter()
+                .filter(|event| event.correlation_id == correlation_id)
+                .any(|event| event.session_id == Some(session_id)),
+            "at least one audit event for the turn must include session_id"
+        );
+
+        let memory_key = MemoryKey::new("at_l_05.favorite_food".to_string())
+            .expect("memory key must be valid");
+        let memory_event = MemoryLedgerEvent::v1(
+            MemoryLedgerEventKind::Stored,
+            MonotonicTimeNs(6_000_000_100),
+            memory_key.clone(),
+            Some(
+                MemoryValue::v1("pizza".to_string(), Some("pizza".to_string()))
+                    .expect("memory value must validate"),
+            ),
+            Some("JD said remember pizza".to_string()),
+            MemoryProvenance::v1(
+                Some(session_id),
+                Some("at_l_05_transcript_hash".to_string()),
+            )
+            .expect("memory provenance must validate"),
+            MemoryLayer::Working,
+            MemorySensitivityFlag::Low,
+            MemoryConfidence::High,
+            MemoryConsent::ExplicitRemember,
+            ReasonCodeId(0x4C00_0005),
+        )
+        .expect("memory ledger event must validate");
+        store
+            .append_memory_ledger_event(
+                &actor_user_id,
+                memory_event,
+                MemoryUsePolicy::AlwaysUsable,
+                None,
+                Some("at_l_05_memory_event".to_string()),
+            )
+            .expect("memory event append must succeed");
+
+        let memory_record = store
+            .memory_current()
+            .get(&(actor_user_id.clone(), memory_key))
+            .expect("memory current row must exist");
+        assert_eq!(memory_record.provenance.session_id, Some(session_id));
+    }
+
+    #[test]
     fn at_adapter_02_invalid_platform_fails_fast() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -9629,6 +10152,7 @@ mod tests {
                 &actor_user_id,
                 Some("tenant_a"),
                 Some(&device_id),
+                None,
                 &[provider_response],
                 Some("hello".to_string()),
                 Some("en".to_string()),
