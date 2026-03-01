@@ -1014,6 +1014,11 @@ pub struct AgentExecutionLedgerRow {
     pub finder_packet_kind: String,
     pub execution_stage: String,
     pub simulation_id: Option<String>,
+    pub access_decision: String,
+    pub confirm_decision: String,
+    pub active_simulation_proof_ref: Option<String>,
+    pub simulation_idempotency_key: Option<String>,
+    pub dispatch_outcome_proof_ref: Option<String>,
     pub reason_code: ReasonCodeId,
     pub dev_intake_audit_event_id: Option<AuditEventId>,
     pub idempotency_key: Option<String>,
@@ -1031,6 +1036,11 @@ pub struct AgentExecutionLedgerRowInput {
     pub finder_packet_kind: String,
     pub execution_stage: String,
     pub simulation_id: Option<String>,
+    pub access_decision: String,
+    pub confirm_decision: String,
+    pub active_simulation_proof_ref: Option<String>,
+    pub simulation_idempotency_key: Option<String>,
+    pub dispatch_outcome_proof_ref: Option<String>,
     pub reason_code: ReasonCodeId,
     pub dev_intake_audit_event_id: Option<AuditEventId>,
     pub idempotency_key: Option<String>,
@@ -1049,6 +1059,11 @@ pub struct AgentExecutionCurrentRecord {
     pub finder_packet_kind: String,
     pub execution_stage: String,
     pub simulation_id: Option<String>,
+    pub access_decision: String,
+    pub confirm_decision: String,
+    pub active_simulation_proof_ref: Option<String>,
+    pub simulation_idempotency_key: Option<String>,
+    pub dispatch_outcome_proof_ref: Option<String>,
     pub reason_code: ReasonCodeId,
     pub dev_intake_audit_event_id: Option<AuditEventId>,
 }
@@ -4318,6 +4333,11 @@ impl Ph1fStore {
                 finder_packet_kind: row.finder_packet_kind.clone(),
                 execution_stage: row.execution_stage.clone(),
                 simulation_id: row.simulation_id.clone(),
+                access_decision: row.access_decision.clone(),
+                confirm_decision: row.confirm_decision.clone(),
+                active_simulation_proof_ref: row.active_simulation_proof_ref.clone(),
+                simulation_idempotency_key: row.simulation_idempotency_key.clone(),
+                dispatch_outcome_proof_ref: row.dispatch_outcome_proof_ref.clone(),
                 reason_code: row.reason_code,
                 dev_intake_audit_event_id: row.dev_intake_audit_event_id,
             },
@@ -4397,6 +4417,60 @@ impl Ph1fStore {
                 ));
             }
         }
+        if input.access_decision.trim().is_empty()
+            || input.access_decision.len() > 64
+            || !is_token_safe_ascii(&input.access_decision)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.access_decision",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if input.confirm_decision.trim().is_empty()
+            || input.confirm_decision.len() > 64
+            || !is_token_safe_ascii(&input.confirm_decision)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "agent_execution_ledger.confirm_decision",
+                    reason: "must be token-safe ASCII and <= 64 chars",
+                },
+            ));
+        }
+        if let Some(active_proof_ref) = &input.active_simulation_proof_ref {
+            if active_proof_ref.trim().is_empty() || active_proof_ref.len() > 256 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "agent_execution_ledger.active_simulation_proof_ref",
+                        reason: "must be non-empty and <= 256 chars when present",
+                    },
+                ));
+            }
+        }
+        if let Some(simulation_idempotency_key) = &input.simulation_idempotency_key {
+            if simulation_idempotency_key.trim().is_empty() || simulation_idempotency_key.len() > 256
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "agent_execution_ledger.simulation_idempotency_key",
+                        reason: "must be non-empty and <= 256 chars when present",
+                    },
+                ));
+            }
+        }
+        if let Some(dispatch_outcome_proof_ref) = &input.dispatch_outcome_proof_ref {
+            if dispatch_outcome_proof_ref.trim().is_empty() || dispatch_outcome_proof_ref.len() > 256
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "agent_execution_ledger.dispatch_outcome_proof_ref",
+                        reason: "must be non-empty and <= 256 chars when present",
+                    },
+                ));
+            }
+        }
         if input.reason_code.0 == 0 {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
@@ -4433,6 +4507,11 @@ impl Ph1fStore {
             finder_packet_kind: input.finder_packet_kind.clone(),
             execution_stage: input.execution_stage.clone(),
             simulation_id: input.simulation_id.clone(),
+            access_decision: input.access_decision.clone(),
+            confirm_decision: input.confirm_decision.clone(),
+            active_simulation_proof_ref: input.active_simulation_proof_ref.clone(),
+            simulation_idempotency_key: input.simulation_idempotency_key.clone(),
+            dispatch_outcome_proof_ref: input.dispatch_outcome_proof_ref.clone(),
             reason_code: input.reason_code,
             dev_intake_audit_event_id: input.dev_intake_audit_event_id,
             idempotency_key: input.idempotency_key.clone(),
@@ -16454,6 +16533,8 @@ impl Ph1fStore {
         capability_name: String,
         requested_simulation_family: String,
         no_match_proof_ref: String,
+        dedupe_fingerprint: String,
+        worthiness_score_bp: u16,
         reason_code: ReasonCodeId,
         idempotency_key: String,
     ) -> Result<AuditEventId, StorageError> {
@@ -16474,6 +16555,19 @@ impl Ph1fStore {
             &no_match_proof_ref,
             256,
         )?;
+        Self::validate_ph1simfinder_bounded_text(
+            "ph1simfinder.dedupe_fingerprint",
+            &dedupe_fingerprint,
+            128,
+        )?;
+        if worthiness_score_bp > 10_000 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1simfinder.worthiness_score_bp",
+                    reason: "must be <= 10000",
+                },
+            ));
+        }
         if !self.identities.contains_key(&user_id) {
             return Err(StorageError::ForeignKeyViolation {
                 table: "audit_events.user_id",
@@ -16514,6 +16608,18 @@ impl Ph1fStore {
             (
                 PayloadKey::new("no_match_proof_ref")?,
                 PayloadValue::new(no_match_proof_ref)?,
+            ),
+            (
+                PayloadKey::new("dedupe_fingerprint")?,
+                PayloadValue::new(dedupe_fingerprint)?,
+            ),
+            (
+                PayloadKey::new("worthiness_score_bp")?,
+                PayloadValue::new(worthiness_score_bp.to_string())?,
+            ),
+            (
+                PayloadKey::new("requester_user_id")?,
+                PayloadValue::new(user_id.as_str().to_string())?,
             ),
         ]))?;
 

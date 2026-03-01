@@ -65,7 +65,8 @@ use selene_kernel_contracts::ph1persona::{
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1simcat::SimulationStatus;
 use selene_kernel_contracts::ph1simfinder::{
-    FinderFallbackPolicy, FinderRiskTier, FinderTerminalPacket,
+    reason_codes as sim_finder_reason_codes, FinderFallbackPolicy, FinderRiskTier,
+    FinderTerminalPacket,
 };
 use selene_kernel_contracts::ph1tts::StyleProfileRef;
 use selene_kernel_contracts::ph1x::{
@@ -2132,11 +2133,14 @@ impl AppServerIngressRuntime {
                                 },
                             ));
                         }
-                        self.run_ph1x_and_dispatch(
+                        self.run_ph1x_and_dispatch_with_access_fail_closed(
                             store,
                             voice_outcome,
                             ph1x_request,
                             &actor_user_id,
+                            actor_device_id.as_ref(),
+                            actor_tenant_id.as_deref(),
+                            request_session_id,
                             dispatch_now,
                         )?
                     }
@@ -2181,10 +2185,26 @@ impl AppServerIngressRuntime {
                             packet.requested_capability_name_normalized.clone(),
                             packet.proposed_simulation_family.clone(),
                             packet.no_match_proof_ref.clone(),
+                            packet.dedupe_fingerprint.clone(),
+                            packet.worthiness_score_bp,
                             packet.reason_code,
                             idempotency_key,
                         )?;
                         dev_intake_audit_event_id = Some(dev_intake_event_id);
+                        if let Some(actor_device_id) = actor_device_id.as_ref() {
+                            let _ = store.ph1x_respond_commit(
+                                dispatch_now,
+                                packet.tenant_id.clone(),
+                                correlation_id,
+                                turn_id,
+                                None,
+                                actor_user_id.clone(),
+                                actor_device_id.clone(),
+                                "MISSING_SIMULATION_NOTIFY_SUBMITTED".to_string(),
+                                packet.reason_code,
+                                format!("ph1x_missing_sim_notify:{}:{}", correlation_id.0, turn_id.0),
+                            )?;
+                        }
                         AppVoiceTurnExecutionOutcome {
                             voice_outcome,
                             next_move: AppVoiceTurnNextMove::Refused,
@@ -2200,11 +2220,14 @@ impl AppServerIngressRuntime {
                     }
                 }
             } else {
-                self.run_ph1x_and_dispatch(
+                self.run_ph1x_and_dispatch_with_access_fail_closed(
                     store,
                     voice_outcome,
                     ph1x_request,
                     &actor_user_id,
+                    actor_device_id.as_ref(),
+                    actor_tenant_id.as_deref(),
+                    request_session_id,
                     dispatch_now,
                 )?
             };
@@ -2314,6 +2337,37 @@ impl AppServerIngressRuntime {
         };
         let execution_stage = agent_execution_stage_token_for_terminal(terminal, out.next_move);
         let reason_code = out.reason_code.unwrap_or(fallback_reason_code);
+        let (access_decision, confirm_decision, active_simulation_proof_ref, simulation_idempotency_key) =
+            match terminal {
+                FinderTerminalPacket::SimulationMatch(packet) => (
+                    access_decision_for_match_outcome(out),
+                    confirm_decision_for_match_outcome(packet.confirm_required, out.next_move),
+                    Some(packet.active_check_proof_ref.clone()),
+                    Some(packet.idempotency_key.clone()),
+                ),
+                FinderTerminalPacket::Clarify(_) => (
+                    "N_A".to_string(),
+                    "N_A".to_string(),
+                    None,
+                    None,
+                ),
+                FinderTerminalPacket::Refuse(_) => (
+                    "N_A".to_string(),
+                    "N_A".to_string(),
+                    None,
+                    None,
+                ),
+                FinderTerminalPacket::MissingSimulation(_) => (
+                    "N_A".to_string(),
+                    "N_A".to_string(),
+                    None,
+                    None,
+                ),
+            };
+        let dispatch_outcome_proof_ref = out
+            .dispatch_outcome
+            .as_ref()
+            .map(dispatch_outcome_proof_ref_token);
         let idempotency_key = format!(
             "agent_exec:{}:{}:{}:{}",
             correlation_id.0, turn_id.0, finder_packet_kind, execution_stage
@@ -2329,6 +2383,11 @@ impl AppServerIngressRuntime {
             finder_packet_kind,
             execution_stage,
             simulation_id,
+            access_decision,
+            confirm_decision,
+            active_simulation_proof_ref,
+            simulation_idempotency_key,
+            dispatch_outcome_proof_ref,
             reason_code,
             dev_intake_audit_event_id,
             idempotency_key: Some(idempotency_key),
@@ -2450,6 +2509,70 @@ impl AppServerIngressRuntime {
         }
 
         Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_ph1x_and_dispatch_with_access_fail_closed(
+        &self,
+        store: &mut Ph1fStore,
+        voice_outcome: OsVoiceLiveTurnOutcome,
+        ph1x_request: Ph1xRequest,
+        actor_user_id: &UserId,
+        actor_device_id: Option<&DeviceId>,
+        actor_tenant_id: Option<&str>,
+        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+        dispatch_now: MonotonicTimeNs,
+    ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        let correlation_id = CorrelationId(ph1x_request.correlation_id);
+        let turn_id = TurnId(ph1x_request.turn_id);
+        match self.run_ph1x_and_dispatch(
+            store,
+            voice_outcome.clone(),
+            ph1x_request.clone(),
+            actor_user_id,
+            dispatch_now,
+        ) {
+            Ok(outcome) => Ok(outcome),
+            Err(err) => {
+                let Some(access_failure) = classify_access_fail_closed_error(&err) else {
+                    return Err(err);
+                };
+                if let Some(actor_device_id) = actor_device_id {
+                    let tenant_id = normalized_tenant_scope_for_dev_intake(
+                        store,
+                        actor_user_id,
+                        actor_tenant_id,
+                    )?;
+                    let audit_session_id =
+                        request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                    let _ = store.ph1x_respond_commit(
+                        dispatch_now,
+                        tenant_id,
+                        correlation_id,
+                        turn_id,
+                        audit_session_id,
+                        actor_user_id.clone(),
+                        actor_device_id.clone(),
+                        access_failure.audit_response_kind.to_string(),
+                        access_failure.reason_code,
+                        format!(
+                            "ph1x_access_fail_closed:{}:{}:{}",
+                            correlation_id.0, turn_id.0, access_failure.audit_response_kind
+                        ),
+                    )?;
+                }
+                Ok(AppVoiceTurnExecutionOutcome {
+                    voice_outcome,
+                    next_move: AppVoiceTurnNextMove::Refused,
+                    ph1x_request: Some(ph1x_request),
+                    ph1x_response: None,
+                    dispatch_outcome: None,
+                    tool_response: None,
+                    response_text: Some(access_failure.user_message.to_string()),
+                    reason_code: Some(access_failure.reason_code),
+                })
+            }
+        }
     }
 
     pub fn run_device_artifact_sync_worker_pass(
@@ -2654,6 +2777,102 @@ fn agent_execution_stage_token_for_terminal(
         FinderTerminalPacket::Refuse(_) => "REFUSE_FAIL_CLOSED".to_string(),
         FinderTerminalPacket::MissingSimulation(_) => "MISSING_SIM_DEV_INTAKE".to_string(),
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AccessFailClosedBehavior {
+    reason_code: ReasonCodeId,
+    user_message: &'static str,
+    audit_response_kind: &'static str,
+}
+
+fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {
+    let StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) = err else {
+        return None;
+    };
+    match *reason {
+        "ACCESS_SCOPE_VIOLATION" => Some(AccessFailClosedBehavior {
+            reason_code: sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED,
+            user_message: "I can't proceed because your access policy blocks this action.",
+            audit_response_kind: "ACCESS_DENIED_FAIL_CLOSED",
+        }),
+        "ACCESS_AP_REQUIRED" => Some(AccessFailClosedBehavior {
+            reason_code: sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED,
+            user_message: "I need approval before I can do that.",
+            audit_response_kind: "ACCESS_AP_REQUIRED_FAIL_CLOSED",
+        }),
+        _ => None,
+    }
+}
+
+fn access_decision_for_match_outcome(out: &AppVoiceTurnExecutionOutcome) -> String {
+    if out.next_move == AppVoiceTurnNextMove::Confirm {
+        return "PENDING".to_string();
+    }
+    match out.reason_code {
+        Some(code) if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED => {
+            "DENY".to_string()
+        }
+        Some(code) if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED => {
+            "ESCALATE".to_string()
+        }
+        _ if out.next_move == AppVoiceTurnNextMove::Dispatch => "ALLOW".to_string(),
+        _ => "UNKNOWN".to_string(),
+    }
+}
+
+fn confirm_decision_for_match_outcome(
+    confirm_required: bool,
+    next_move: AppVoiceTurnNextMove,
+) -> String {
+    if !confirm_required {
+        return "NOT_REQUIRED".to_string();
+    }
+    match next_move {
+        AppVoiceTurnNextMove::Confirm => "REQUIRED_PENDING".to_string(),
+        AppVoiceTurnNextMove::Dispatch => "REQUIRED_SATISFIED".to_string(),
+        AppVoiceTurnNextMove::Refused => "REQUIRED_FAIL_CLOSED".to_string(),
+        _ => "REQUIRED_OTHER".to_string(),
+    }
+}
+
+fn dispatch_outcome_proof_ref_token(outcome: &SimulationDispatchOutcome) -> String {
+    fn kind_token(outcome: &SimulationDispatchOutcome) -> &'static str {
+        match outcome {
+            SimulationDispatchOutcome::BroadcastDeliverySend { .. } => "BCAST_DELIVERY_SEND",
+            SimulationDispatchOutcome::BroadcastMhpHandoff { .. } => "BCAST_MHP_HANDOFF",
+            SimulationDispatchOutcome::BroadcastMhpReminderFired(_) => "BCAST_MHP_REMINDER_FIRED",
+            SimulationDispatchOutcome::BroadcastMhpFollowupDecision { .. } => {
+                "BCAST_MHP_FOLLOWUP_DECISION"
+            }
+            SimulationDispatchOutcome::BroadcastMhpAppThreadReplyConcluded { .. } => {
+                "BCAST_MHP_APP_REPLY_CONCLUDED"
+            }
+            SimulationDispatchOutcome::MemoryPropose(_) => "MEMORY_PROPOSE",
+            SimulationDispatchOutcome::MemoryRecall(_) => "MEMORY_RECALL",
+            SimulationDispatchOutcome::MemoryForget(_) => "MEMORY_FORGET",
+            SimulationDispatchOutcome::Link(_) => "LINK",
+            SimulationDispatchOutcome::LinkDelivered { .. } => "LINK_DELIVERED",
+            SimulationDispatchOutcome::Reminder(_) => "REMINDER",
+            SimulationDispatchOutcome::CalendarDraftCreated { .. } => "CALENDAR_DRAFT_CREATED",
+            SimulationDispatchOutcome::Onboarding(_) => "ONBOARDING",
+            SimulationDispatchOutcome::Position(_) => "POSITION",
+            SimulationDispatchOutcome::VoiceId(_) => "VOICE_ID",
+            SimulationDispatchOutcome::Wake(_) => "WAKE",
+            SimulationDispatchOutcome::AccessGatePassed { .. } => "ACCESS_GATE_PASSED",
+            SimulationDispatchOutcome::AccessStepUp { .. } => "ACCESS_STEP_UP",
+            SimulationDispatchOutcome::CapreqLifecycle { .. } => "CAPREQ_LIFECYCLE",
+            SimulationDispatchOutcome::BcastWaitPolicyUpdated { .. } => "BCAST_WAIT_POLICY_UPDATED",
+            SimulationDispatchOutcome::BcastUrgentFollowupPolicyUpdated { .. } => {
+                "BCAST_URGENT_FOLLOWUP_POLICY_UPDATED"
+            }
+        }
+    }
+    format!(
+        "dispatch_proof:{}:{}",
+        kind_token(outcome),
+        short_hash_hex(&[&format!("{outcome:?}")])
+    )
 }
 
 fn response_text_for_dispatch_outcome(outcome: &SimulationDispatchOutcome) -> String {
@@ -5466,14 +5685,7 @@ mod tests {
             last_failure_reason_code: None,
         };
 
-        let assert_contract_reason = |err: StorageError, expected_reason: &'static str| match err {
-            StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) => {
-                assert_eq!(reason, expected_reason);
-            }
-            other => panic!("expected contract violation {expected_reason}, got {other:?}"),
-        };
-
-        let access_err_plain = runtime
+        let access_out_plain = runtime
             .run_desktop_voice_turn_end_to_end(
                 &mut access_store,
                 AppVoiceIngressRequest::v1(
@@ -5491,8 +5703,12 @@ mod tests {
                 .unwrap(),
                 x_build.clone(),
             )
-            .expect_err("missing access grant must fail closed");
-        assert_contract_reason(access_err_plain, "ACCESS_SCOPE_VIOLATION");
+            .expect("missing access grant must return deterministic fail-closed response");
+        assert_eq!(access_out_plain.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            access_out_plain.reason_code,
+            Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED)
+        );
 
         seed_persona_profile_for_actor(
             &mut access_store,
@@ -5502,7 +5718,7 @@ mod tests {
             "dominant",
             "at_emo_02_access_guard_persona",
         );
-        let access_err_persona = runtime
+        let access_out_persona = runtime
             .run_desktop_voice_turn_end_to_end(
                 &mut access_store,
                 AppVoiceIngressRequest::v1(
@@ -5520,8 +5736,12 @@ mod tests {
                 .unwrap(),
                 x_build.clone(),
             )
-            .expect_err("persona hint must not bypass access guard");
-        assert_contract_reason(access_err_persona, "ACCESS_SCOPE_VIOLATION");
+            .expect("persona hint must not bypass access guard");
+        assert_eq!(access_out_persona.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            access_out_persona.reason_code,
+            Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED)
+        );
 
         let mut inactive_store = Ph1fStore::new_in_memory();
         seed_actor(&mut inactive_store, &actor_user_id, &device_id);
@@ -5560,7 +5780,14 @@ mod tests {
                 x_build.clone(),
             )
             .expect_err("inactive simulations must fail closed");
-        assert_contract_reason(active_err_plain, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
+        match active_err_plain {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) => {
+                assert_eq!(reason, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
+            }
+            other => panic!(
+                "expected contract violation SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE, got {other:?}"
+            ),
+        }
 
         seed_persona_profile_for_actor(
             &mut inactive_store,
@@ -5589,10 +5816,14 @@ mod tests {
                 x_build,
             )
             .expect_err("persona hint must not bypass active simulation guard");
-        assert_contract_reason(
-            active_err_persona,
-            "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
-        );
+        match active_err_persona {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) => {
+                assert_eq!(reason, "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE");
+            }
+            other => panic!(
+                "expected contract violation SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE, got {other:?}"
+            ),
+        }
     }
 
     #[test]
@@ -5661,6 +5892,11 @@ mod tests {
             agent_rows[0].simulation_id.as_deref(),
             Some(LINK_INVITE_GENERATE_DRAFT)
         );
+        assert_eq!(agent_rows[0].access_decision, "PENDING");
+        assert_eq!(agent_rows[0].confirm_decision, "REQUIRED_PENDING");
+        assert!(agent_rows[0].active_simulation_proof_ref.is_some());
+        assert!(agent_rows[0].simulation_idempotency_key.is_some());
+        assert!(agent_rows[0].dispatch_outcome_proof_ref.is_none());
         match runtime
             .debug_last_finder_terminal_packet()
             .expect("finder packet should be captured")
@@ -5841,6 +6077,41 @@ mod tests {
         }
         let rows = store.ph1simfinder_dev_intake_rows(CorrelationId(9804));
         assert_eq!(rows.len(), 1);
+        let dedupe_fingerprint = rows[0]
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("dedupe_fingerprint").unwrap())
+            .expect("dedupe_fingerprint payload key must exist")
+            .as_str()
+            .to_string();
+        assert!(dedupe_fingerprint.starts_with("tenant_1:"));
+        let worthiness_score = rows[0]
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("worthiness_score_bp").unwrap())
+            .expect("worthiness_score_bp payload key must exist")
+            .as_str()
+            .to_string();
+        assert!(!worthiness_score.is_empty());
+        let requester_user_id = rows[0]
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("requester_user_id").unwrap())
+            .expect("requester_user_id payload key must exist")
+            .as_str()
+            .to_string();
+        assert_eq!(requester_user_id, "tenant_1:finder_exec_missing_user");
+        let notify_rows = store.ph1x_audit_rows(CorrelationId(9804));
+        assert!(
+            notify_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "MISSING_SIMULATION_NOTIFY_SUBMITTED")
+                    .unwrap_or(false)
+            }),
+            "missing simulation path must emit notify stub audit row"
+        );
         let agent_rows = store.agent_execution_ledger_rows_for_correlation(CorrelationId(9804));
         assert_eq!(agent_rows.len(), 1);
         assert_eq!(agent_rows[0].finder_packet_kind, "MISSING_SIMULATION");
@@ -6014,15 +6285,29 @@ mod tests {
             locale: Some("en-US".to_string()),
             last_failure_reason_code: None,
         };
-        let err = runtime
+        let out_2 = runtime
             .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
-            .expect_err("escalated access must fail closed");
-        match err {
-            StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) => {
-                assert_eq!(reason, "ACCESS_AP_REQUIRED");
-            }
-            other => panic!("expected ACCESS_AP_REQUIRED contract violation, got {other:?}"),
-        }
+            .expect("escalated access must return deterministic fail-closed response");
+        assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out_2.response_text.as_deref(),
+            Some("I need approval before I can do that.")
+        );
+        assert_eq!(
+            out_2.reason_code,
+            Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED)
+        );
+        let ap_rows = store.ph1x_audit_rows(CorrelationId(9807));
+        assert!(
+            ap_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "ACCESS_AP_REQUIRED_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "access escalate fail-closed response must emit PH1.X audit row"
+        );
     }
 
     #[test]
@@ -6071,6 +6356,14 @@ mod tests {
 
         let dev_rows = store.ph1simfinder_dev_intake_rows(CorrelationId(9808));
         assert_eq!(dev_rows.len(), 1);
+        let worthiness_score = dev_rows[0]
+            .payload_min
+            .entries
+            .get(&PayloadKey::new("worthiness_score_bp").unwrap())
+            .expect("worthiness score payload key must exist")
+            .as_str()
+            .to_string();
+        assert!(!worthiness_score.is_empty());
         let agent_rows = store.agent_execution_ledger_rows_for_correlation(CorrelationId(9808));
         assert_eq!(agent_rows.len(), 1);
         assert_eq!(agent_rows[0].finder_packet_kind, "MISSING_SIMULATION");
@@ -6140,6 +6433,132 @@ mod tests {
             .as_str()
             .to_string();
         assert!(capability_name.contains("booktable"));
+        let notify_rows = store.ph1x_audit_rows(CorrelationId(9809));
+        assert!(
+            notify_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "MISSING_SIMULATION_NOTIFY_SUBMITTED")
+                    .unwrap_or(false)
+            }),
+            "missing simulation path must emit notify stub audit row"
+        );
+    }
+
+    #[test]
+    fn at_finder_exec_09_access_deny_fails_closed_deterministically() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:finder_exec_deny_user").unwrap();
+        let device_id = DeviceId::new("finder_exec_deny_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_denied_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request_1 = AppVoiceIngressRequest::v1(
+            CorrelationId(9810),
+            TurnId(9910),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(29),
+            thread_key: Some("finder_exec_09_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .unwrap();
+        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
+
+        let thread_state_after_confirm = out_1
+            .ph1x_response
+            .expect("confirm run should include ph1x response")
+            .thread_state;
+        let request_2 = AppVoiceIngressRequest::v1(
+            CorrelationId(9811),
+            TurnId(9911),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(30),
+            thread_key: Some("finder_exec_09_thread".to_string()),
+            thread_state: thread_state_after_confirm,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_2 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
+            .expect("denied access must return deterministic fail-closed response");
+        assert_eq!(out_2.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out_2.response_text.as_deref(),
+            Some("I can't proceed because your access policy blocks this action.")
+        );
+        assert_eq!(
+            out_2.reason_code,
+            Some(sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_DENIED)
+        );
+        let deny_rows = store.ph1x_audit_rows(CorrelationId(9811));
+        assert!(
+            deny_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "ACCESS_DENIED_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "access deny fail-closed response must emit PH1.X audit row"
+        );
     }
 
     #[test]
