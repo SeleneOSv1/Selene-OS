@@ -413,6 +413,27 @@ Fail-closed gate:
 - `M6` CI guardrails
 - `M7` multi-step planning (future)
 
+### 16.1 Spec vs Implementation Crosswalk (M/S)
+
+Design authority:
+- `M0..M7` remains canonical architecture/spec authority for Execution Core.
+
+Implementation authority:
+- `S1..S5` is implementation packet sequencing recorded in build ledger/proofs.
+
+Crosswalk (implemented milestones):
+| Milestone | Implementation Packet |
+|---|---|
+| `M0` | `S1` |
+| `M1` | `S2` |
+| `M2` | `S3` |
+| `M3` | `S4` |
+| `M4` | `S5` |
+
+Notes:
+- `M5..M7` remain blueprint milestones requiring later implementation packets.
+- Do not delete/replace canonical milestone authority with packet logs.
+
 ## 17. Interaction With Other Plans
 
 - Simulation Finder provides candidate simulations.

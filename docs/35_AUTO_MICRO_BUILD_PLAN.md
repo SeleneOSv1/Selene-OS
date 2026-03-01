@@ -69,6 +69,26 @@ Define one normalized signal envelope for AUTO_MICRO reporting:
 - Aggregation order is canonical (`tenant_id`, `modality`, `provider_id`, `domain_key`, `window_start`).
 - All score inputs must be replayable from append-only rows.
 
+### 4.4 Canonical Window + Trigger Evaluation (Authoritative)
+
+Window model (single source of truth):
+- All scorecard and cap windows are fixed UTC buckets derived from epoch floor:
+  - `window_start = floor(unix_ts_seconds / window_size_seconds) * window_size_seconds`.
+- Allowed `window_size_seconds`: `300` (`5m`), `3600` (`1h`), `86400` (`24h`).
+- No sliding/rolling window semantics are allowed for AUTO_MICRO decisions.
+
+Trigger evaluation model:
+- `N consecutive windows` is evaluated over contiguous bucket sequence with no gaps.
+- Trigger/cap thresholds must come from policy snapshot fields, never from code constants.
+- Required policy fields (design target):
+  - `trigger_threshold_bp`
+  - `consecutive_window_count_required`
+  - `cap_window_seconds`
+  - `cap_limit_count`
+  - `cooldown_seconds`
+- Deterministic ordering for evaluation:
+  - `(tenant_id, modality, provider_id, domain_key, window_start)` ascending.
+
 ## 5. Scorecards (Per Provider/Domain)
 
 ### 5.1 Scorecard Keys
@@ -143,7 +163,7 @@ Initial simulation IDs (design target):
 
 ### 7.3 Frequency Caps
 - Global cap: max AUTO_MICRO commits per tenant per 24h.
-- Per-action cap: max commits per `(action_kind, provider_id/domain_key)` per rolling window.
+- Per-action cap: max commits per `(action_kind, provider_id/domain_key)` per fixed cap window (Section `4.4`).
 - Cooldown cap: minimum interval between two commits for same target.
 - Breach behavior: fail closed with explicit cap reason code.
 
@@ -178,6 +198,18 @@ All AUTO_MICRO runtime policy commits must use these exact access actions:
 - `AUTO_MICRO_RETRY_TIMEOUT_POLICY_UPDATE`
 - `AUTO_MICRO_POLICY_ROLLBACK`
 
+### 7.8 Access Decision Outcomes (Fail-Closed)
+
+Runtime access outcomes for AUTO_MICRO commit paths:
+- `ALLOW` -> proceed to ACTIVE simulation gate and dispatch.
+- `DENY` -> fail closed, no dispatch, persist audit with reason `AUTO_MICRO_ACCESS_DENIED`.
+- `ESCALATE` -> fail closed pending approval, no dispatch, persist audit with reason `AUTO_MICRO_ACCESS_AP_REQUIRED`.
+
+Hard rules:
+- Access is evaluated against per-user PH2 access instance only.
+- No fallback to template/master access source.
+- No AUTO_MICRO commit path may continue on `DENY` or `ESCALATE`.
+
 ## 8. “No Dead Reporting” Rule
 Every report must terminate in one and only one actionable outcome:
 - `ACTION_COMMIT_CANDIDATE` (LOW-risk and allowed), or
@@ -206,7 +238,7 @@ Risk tiers:
 
 ### 10.1 Connector Temporary Disable Policy Commit
 - Trigger signals:
-  - sustained connector/provider failure or timeout rate above hard-fail threshold for N consecutive windows,
+  - sustained connector/provider failure or timeout rate above policy `trigger_threshold_bp` for policy `consecutive_window_count_required` contiguous windows,
   - no conflicting safety/governance block,
   - minimum sample count satisfied.
 - What it changes:
@@ -236,7 +268,7 @@ Risk tiers:
 
 ### 10.2 Retry/Timeout Budget Policy Commit
 - Trigger signals:
-  - timeout rate or retry exhaustion rate crossing threshold for N windows,
+  - timeout rate or retry exhaustion rate crossing policy `trigger_threshold_bp` for policy `consecutive_window_count_required` contiguous windows,
   - regression proof that current budget is suboptimal,
   - bounded impact domain.
 - What it changes:
@@ -278,6 +310,27 @@ Risk tiers:
 | M6 | Rollback + cap enforcement + proof closure | rollback runbook, cap breach refusal matrix, end-to-end proof checklist | rollback/cap policies for AUTO_MICRO class | `AT-AUTO-MICRO-M6-01`, `AT-AUTO-MICRO-M6-02`, `AT-AUTO-MICRO-M6-03` | `cargo test -p selene_os auto_micro_rollback -- --nocapture` |
 | M7 | CI guardrails | guardrail scripts + CI gate wiring for proofs/rollback/caps | CI policy gates only | `AT-AUTO-MICRO-M7-01`, `AT-AUTO-MICRO-M7-02`, `AT-AUTO-MICRO-M7-03` | `bash scripts/check_auto_micro_guardrails.sh` |
 
+### 11.1 Milestone <-> Stability Run Crosswalk (Authoritative)
+
+Canonical architecture blueprint:
+- `M0..M7` is the authoritative design/spec contract.
+
+Implementation track:
+- `S1..S5` (Section `15`) is the runtime implementation sequence and must be recorded via ledger/proof runs.
+
+Crosswalk (implementation coverage):
+| Milestone | Implementation Packet |
+|---|---|
+| `M0` | `S1` |
+| `M1` | `S2` |
+| `M2` | `S3` |
+| `M3` | `S4` |
+| `M4` | `S5` |
+
+Notes:
+- `M5..M7` remain canonical blueprint milestones and require subsequent implementation packets.
+- Do not replace milestone/spec authority with packet logs.
+
 ## 12. Acceptance Test Catalog
 - `AT-AUTO-MICRO-M0-01-overlap-map-covers-pae-feedback-learn-builder-cost-cache-delivery-connector`
 - `AT-AUTO-MICRO-M0-02-overlap-map-classifies-runtime-vs-builder-and-gating`
@@ -304,6 +357,16 @@ Risk tiers:
 - `AT-AUTO-MICRO-M7-01-ci-fails-on-missing-proof-links`
 - `AT-AUTO-MICRO-M7-02-ci-fails-on-missing-rollback-links`
 - `AT-AUTO-MICRO-M7-03-ci-fails-on-frequency-cap-bypass`
+
+### 12.1 Test Naming Policy (Canonical)
+
+Canonical test IDs:
+- `AT-AUTO-MICRO-*` names in this section are authoritative.
+
+Run-packet shorthand:
+- `at_*` names in Section `15` are implementation-level test function names or filters.
+- Every `at_*` test must map to one canonical `AT-AUTO-MICRO-*` acceptance ID.
+- CI/proof reporting must reference canonical `AT-AUTO-MICRO-*` IDs.
 
 ## 13. Implementation Guardrails for Future Packets
 - Keep existing engine ownership: do not move PAE/FEEDBACK/LEARN/COST/CACHE logic into a new engine.
@@ -334,3 +397,141 @@ Risk tiers:
 - `auto_micro_scorecard_idempotency_index`
 - `auto_micro_policy_snapshot_idempotency_index`
 - `auto_micro_promotion_decision_idempotency_index`
+
+## 15. Stability / Optimization Direction (World-Class Reliability)
+
+This is the `make Selene unstoppable` execution track for implementation sequencing.
+
+### 15.0 Scope Boundary for S-Runs (Hard Stop)
+
+Ownership model:
+- `S1..S5` is an implementation packet track.
+- Runtime execution safety governance remains with runtime execution docs/layers (Finder + Execution Core), not AUTO_MICRO.
+- AUTO_MICRO remains an optimization/policy layer and must not own execution-safety authority.
+
+Hard rules:
+- No direct runtime mutation outside simulation-gated commit paths.
+- Any route/provider/cache change affecting behavior must be represented as:
+  - policy snapshot change, or
+  - builder-governed artifact/policy proposal.
+- No bypass of per-user access, ACTIVE simulation gate, frequency caps, idempotency, or rollback refs.
+- If an S-run cannot be expressed under these boundaries, it must stop and route to builder/governance path.
+
+### 15.1 Run S1 — AUTO_MICRO v1 actions (policy commits only, low-risk)
+
+Actions:
+- connector temporary disable policy commit
+- retry/timeout budget policy commit
+
+Files:
+- `docs/35_AUTO_MICRO_BUILD_PLAN.md` (reference only; no edits expected during S1 implementation run)
+- `crates/selene_kernel_contracts/src/ph1auto_micro.rs` (new)
+- `crates/selene_storage/src/ph1f.rs`
+- `crates/selene_os/src/simulation_executor.rs`
+- `crates/selene_os/src/app_ingress.rs` (if voice policy update intent is needed)
+- `docs/08_SIMULATION_CATALOG.md`
+- `docs/03_BUILD_LEDGER.md`
+- `crates/selene_storage/tests/ph1_auto_micro/db_wiring.rs` (new)
+
+Tests:
+- `at_auto_micro_01_connector_disable_commit_requires_access_and_active_sim`
+- `at_auto_micro_02_retry_timeout_commit_requires_access_and_active_sim`
+- `at_auto_micro_03_frequency_caps_enforced`
+- `at_auto_micro_04_idempotent_no_duplicate_policy_rows`
+- `at_auto_micro_05_rollback_restores_previous_snapshot`
+
+Commands:
+- `cargo test -p selene_storage at_auto_micro_db_0 -- --nocapture`
+- `cargo test -p selene_os at_auto_micro_0 -- --nocapture`
+- `bash scripts/check_auto_micro_guardrails.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_ph1_readiness_strict.sh`
+
+### 15.2 Run S2 — Provider failover hardening (STT + TTS)
+
+Files:
+- `crates/selene_engines/src/ph1c.rs` (STT)
+- `crates/selene_os/src/ph1tts.rs` (TTS)
+- `crates/selene_storage/src/ph1f.rs` (to persist provider-health decisions if needed)
+- `docs/03_BUILD_LEDGER.md`
+
+Tests:
+- `at_stt_failover_01_circuit_breaker_switches_provider_deterministically`
+- `at_stt_failover_02_recovers_primary_after_cooldown`
+- `at_tts_failover_01_fallback_provider_used_on_failure`
+- `at_tts_failover_02_no_double_play_on_retry`
+
+Commands:
+- `cargo test -p selene_engines at_stt_failover_0 -- --nocapture`
+- `cargo test -p selene_os at_tts_failover_0 -- --nocapture`
+- `bash scripts/check_auto_micro_guardrails.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_ph1_readiness_strict.sh`
+
+### 15.3 Run S3 — Latency + quality scorecards (better promotion)
+
+Files:
+- `crates/selene_adapter/src/lib.rs` (emit metrics)
+- `crates/selene_storage/src/ph1f.rs` (persist score rows)
+- `crates/selene_os/src/ph1builder.rs` (aggregate)
+- `docs/03_BUILD_LEDGER.md`
+
+Tests:
+- `at_scorecard_01_metrics_emitted_and_persisted`
+- `at_scorecard_02_builder_aggregates_deterministically`
+- `at_scorecard_03_promote_shadow_to_assist_on_threshold`
+- `at_scorecard_04_demote_lead_on_regression`
+
+Commands:
+- `cargo test -p selene_adapter at_scorecard_0 -- --nocapture`
+- `cargo test -p selene_os at_scorecard_0 -- --nocapture`
+- `bash scripts/check_auto_micro_guardrails.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_ph1_readiness_strict.sh`
+
+### 15.4 Run S4 — Connector routing policy hardening
+
+Files:
+- `crates/selene_engines/src/ph1e.rs`
+- `crates/selene_kernel_contracts/src/ph1e.rs`
+- `crates/selene_storage/src/ph1f.rs` (policy snapshot)
+- `docs/03_BUILD_LEDGER.md`
+
+Tests:
+- `at_connector_policy_01_provider_blocked_fail_closed`
+- `at_connector_policy_02_temp_disable_respected_until_expiry`
+- `at_connector_policy_03_budget_caps_enforced`
+- `at_connector_policy_04_provenance_always_included`
+
+Commands:
+- `cargo test -p selene_engines at_connector_policy_0 -- --nocapture`
+- `cargo test -p selene_os at_connector_policy_0 -- --nocapture`
+- `bash scripts/check_auto_micro_guardrails.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_ph1_readiness_strict.sh`
+
+### 15.5 Run S5 — Speed: caching + prefetch (optional and safe)
+
+Files:
+- `crates/selene_engines/src/ph1cache.rs`
+- `crates/selene_os/src/app_ingress.rs` (optional hook)
+- `docs/03_BUILD_LEDGER.md`
+
+Tests:
+- `at_cache_01_cache_hit_reduces_tool_latency`
+- `at_cache_02_cache_never_changes_answer_semantics`
+- `at_cache_03_cache_is_read_only_no_state_mutation`
+
+Commands:
+- `cargo test -p selene_os at_cache_0 -- --nocapture`
+- `bash scripts/check_auto_micro_guardrails.sh` (required once script exists; design-target pre-lock)
+- `bash scripts/check_ph1_readiness_strict.sh`
+
+## 16. AUTO_MICRO Release SLO Gates (Global-Standard Lock)
+
+Release-blocking SLOs (once enabled in CI):
+- `auto_micro_action_commit_success_rate >= 99.0%` (rolling 30d)
+- `auto_micro_rollback_success_rate >= 99.5%` (rolling 30d)
+- `auto_micro_duplicate_side_effect_rate = 0`
+- `auto_micro_cap_breach_false_negative_rate = 0`
+- `auto_micro_scorecard_compute_p95_ms <= 1500`
+- `auto_micro_scorecard_compute_p99_ms <= 3000`
+
+Fail-closed gate:
+- If any SLO breaches threshold, promotion to broader scope is blocked until corrected or explicitly builder-approved with bounded waiver.

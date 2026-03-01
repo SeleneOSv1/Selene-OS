@@ -530,6 +530,27 @@ Forwarding policy:
 | M7 | Notification closure | availability notification trigger spec on simulation activation | `SIM_FINDER_MISSING_SIM_NOTIFY_AVAILABLE_COMMIT` (design target) | `AT-SIM-FINDER-M7-01`, `AT-SIM-FINDER-M7-02` | `cargo test -p selene_os sim_finder_notify -- --nocapture` |
 | M8 | CI guardrails | acceptance script + readiness gate wiring + proof checklist | CI policy only | `AT-SIM-FINDER-M8-01`..`AT-SIM-FINDER-M8-06` | `bash scripts/check_agent_sim_finder_core_acceptance.sh && bash scripts/check_ph1_readiness_strict.sh` |
 
+### 11.1 Spec vs Implementation Crosswalk (M/S)
+
+Design authority:
+- `M0..M8` remains canonical architecture/spec authority for Finder behavior.
+
+Implementation authority:
+- `S1..S5` is implementation packet sequencing recorded in build ledger/proofs.
+
+Crosswalk (implemented milestones):
+| Milestone | Implementation Packet |
+|---|---|
+| `M0` | `S1` |
+| `M1` | `S2` |
+| `M2` | `S3` |
+| `M3` | `S4` |
+| `M4` | `S5` |
+
+Notes:
+- `M5..M8` remain blueprint milestones requiring later implementation packets.
+- Do not delete/replace canonical milestone authority with packet logs.
+
 ## 12) Acceptance test inventory (design target)
 
 - `AT-SIM-FINDER-M0-01-overlap-matrix-complete`
