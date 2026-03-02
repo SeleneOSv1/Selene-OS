@@ -3643,7 +3643,7 @@ mod tests {
         let rt = Ph1nRuntime::new(Ph1nConfig::mvp_v1());
         let out = rt
             .run(&req(
-                "Selene open this URL and cite it: https://example.com/spec",
+                "Selene open this URL and cite it: https://example.invalid/spec",
                 "en",
             ))
             .unwrap();

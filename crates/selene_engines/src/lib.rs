@@ -11,6 +11,7 @@ pub mod ph1d;
 pub mod ph1delivery;
 pub mod ph1diag;
 pub mod ph1doc;
+pub mod device_vault;
 pub mod ph1e;
 pub mod ph1emocore;
 pub mod ph1emoguide;

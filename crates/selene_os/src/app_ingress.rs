@@ -3679,7 +3679,7 @@ fn finder_clarify_question(key: FieldKey) -> String {
 fn finder_allowed_answer_formats(key: FieldKey) -> Vec<String> {
     match key {
         FieldKey::RecipientContact => {
-            vec!["+14155550100".to_string(), "tom@example.com".to_string()]
+            vec!["+14155550100".to_string(), "tom@example.invalid".to_string()]
         }
         FieldKey::When => vec![
             "Tomorrow at 7 PM".to_string(),
@@ -6783,7 +6783,7 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://search.selene.ai/result-1"));
-        assert!(!response_text.contains("example.com"));
+        assert!(!response_text.contains("example.invalid"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6837,7 +6837,7 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://search.selene.ai/result-1"));
-        assert!(!response_text.contains("example.com"));
+        assert!(!response_text.contains("example.invalid"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6891,7 +6891,7 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("https://news.selene.ai/story-1"));
-        assert!(!response_text.contains("example.com"));
+        assert!(!response_text.contains("example.invalid"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6948,7 +6948,7 @@ mod tests {
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("Citations:"));
         assert!(response_text.contains("https://docs.selene.ai/spec#chunk-"));
-        assert!(!response_text.contains("example.com"));
+        assert!(!response_text.contains("example.invalid"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(

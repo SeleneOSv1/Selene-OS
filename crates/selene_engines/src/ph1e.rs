@@ -5,10 +5,12 @@ use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::device_vault;
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
     ToolResult, ToolStructuredField, ToolTextSnippet,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 use serde_json::Value;
 
@@ -49,41 +51,34 @@ pub struct Ph1eProviderConfig {
     pub brave_api_key: Option<String>,
     pub brave_web_url: String,
     pub brave_news_url: String,
-    pub brave_web_fixture_json: Option<String>,
-    pub brave_news_fixture_json: Option<String>,
     pub openai_api_key: Option<String>,
     pub openai_responses_url: String,
     pub openai_model: String,
     pub user_agent: String,
+    pub brave_web_fixture_json: Option<String>,
+    pub brave_news_fixture_json: Option<String>,
     pub url_fetch_fixture_html: Option<String>,
 }
 
 impl Ph1eProviderConfig {
     pub fn from_env() -> Self {
         Self {
-            brave_api_key: env::var("BRAVE_SEARCH_API_KEY")
-                .ok()
-                .and_then(trim_non_empty),
+            // Secrets are resolved from the encrypted local device vault at runtime.
+            brave_api_key: None,
             brave_web_url: env::var("BRAVE_SEARCH_WEB_URL")
                 .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/web/search".to_string()),
             brave_news_url: env::var("BRAVE_SEARCH_NEWS_URL")
                 .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/news/search".to_string()),
-            brave_web_fixture_json: env::var("PH1E_BRAVE_WEB_FIXTURE_JSON")
-                .ok()
-                .and_then(trim_non_empty),
-            brave_news_fixture_json: env::var("PH1E_BRAVE_NEWS_FIXTURE_JSON")
-                .ok()
-                .and_then(trim_non_empty),
-            openai_api_key: env::var("OPENAI_API_KEY").ok().and_then(trim_non_empty),
+            openai_api_key: None,
             openai_responses_url: env::var("OPENAI_RESPONSES_URL")
                 .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
             openai_model: env::var("OPENAI_WEB_FALLBACK_MODEL")
                 .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
             user_agent: env::var("PH1E_HTTP_USER_AGENT")
                 .unwrap_or_else(|_| "selene-ph1e/1.0".to_string()),
-            url_fetch_fixture_html: env::var("PH1E_URL_FETCH_FIXTURE_HTML")
-                .ok()
-                .and_then(trim_non_empty),
+            brave_web_fixture_json: None,
+            brave_news_fixture_json: None,
+            url_fetch_fixture_html: None,
         }
     }
 }
@@ -413,25 +408,60 @@ impl Ph1eRuntime {
         self.run_live_search(req, ToolName::News)
     }
 
+    fn resolve_secret_from_vault(&self, secret_id: ProviderSecretId) -> Option<String> {
+        match device_vault::resolve_secret(secret_id.as_str()) {
+            Ok(Some(secret)) => trim_non_empty(secret),
+            _ => None,
+        }
+    }
+
+    fn resolve_brave_api_key(&self) -> Option<String> {
+        self.provider_config
+            .brave_api_key
+            .clone()
+            .and_then(trim_non_empty)
+            .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::BraveSearchApiKey))
+    }
+
+    fn resolve_openai_api_key(&self) -> Option<String> {
+        self.provider_config
+            .openai_api_key
+            .clone()
+            .and_then(trim_non_empty)
+            .or_else(|| self.resolve_secret_from_vault(ProviderSecretId::OpenAIApiKey))
+    }
+
+    fn brave_fixture_json_for(&self, is_news: bool) -> Option<&str> {
+        if is_news {
+            self.provider_config.brave_news_fixture_json.as_deref()
+        } else {
+            self.provider_config.brave_web_fixture_json.as_deref()
+        }
+    }
+
+    fn url_fetch_fixture_html(&self) -> Option<&str> {
+        self.provider_config.url_fetch_fixture_html.as_deref()
+    }
+
     fn run_live_search(
         &self,
         req: &ToolRequest,
         kind: ToolName,
     ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
         let max_results = req.strict_budget.max_results.min(self.config.max_results);
-        if self.provider_config.brave_api_key.is_none()
-            && self.provider_config.openai_api_key.is_none()
-        {
+        let brave_api_key = self.resolve_brave_api_key();
+        let openai_api_key = self.resolve_openai_api_key();
+        if brave_api_key.is_none() && openai_api_key.is_none() {
             return Err(reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG);
         }
 
-        if let Some(brave_key) = self.provider_config.brave_api_key.as_deref() {
+        if let Some(brave_key) = brave_api_key.as_deref() {
             let url = if matches!(kind, ToolName::News) {
                 &self.provider_config.brave_news_url
             } else {
                 &self.provider_config.brave_web_url
             };
-            if let Ok((items, sources)) = run_brave_search(
+            let brave_response = run_brave_search(
                 url,
                 brave_key,
                 &req.query,
@@ -439,12 +469,10 @@ impl Ph1eRuntime {
                 req.strict_budget.timeout_ms,
                 &self.provider_config.user_agent,
                 matches!(kind, ToolName::News),
-                if matches!(kind, ToolName::News) {
-                    self.provider_config.brave_news_fixture_json.as_deref()
-                } else {
-                    self.provider_config.brave_web_fixture_json.as_deref()
-                },
-            ) {
+                self.brave_fixture_json_for(matches!(kind, ToolName::News)),
+            );
+
+            if let Ok((items, sources)) = brave_response {
                 return Ok((
                     if matches!(kind, ToolName::News) {
                         ToolResult::News { items }
@@ -460,14 +488,10 @@ impl Ph1eRuntime {
             }
         }
 
-        let openai_key = self
-            .provider_config
-            .openai_api_key
-            .as_deref()
-            .ok_or(reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
+        let openai_key = openai_api_key.ok_or(reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
         let (items, sources) = run_openai_search_fallback(
             &self.provider_config.openai_responses_url,
-            openai_key,
+            openai_key.as_str(),
             &self.provider_config.openai_model,
             &req.query,
             max_results,
@@ -495,14 +519,14 @@ impl Ph1eRuntime {
         req: &ToolRequest,
     ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
         let url = first_http_url_in_text(&req.query).ok_or(reason_codes::E_FAIL_QUERY_PARSE)?;
-        let (citations, sources) = run_url_fetch_citation(
+        let fetched = run_url_fetch_citation(
             &url,
             req.strict_budget.max_results.min(self.config.max_results),
             req.strict_budget.timeout_ms,
             &self.provider_config.user_agent,
-            self.provider_config.url_fetch_fixture_html.as_deref(),
-        )
-        .map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
+            self.url_fetch_fixture_html(),
+        );
+        let (citations, sources) = fetched.map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
         Ok((
             ToolResult::UrlFetchAndCite { citations },
             source_metadata_from_live(
@@ -669,6 +693,7 @@ fn run_brave_search(
         serde_json::from_reader(response.into_reader())
             .map_err(|e| format!("brave response parse failed: {e}"))?
     };
+
     let items = extract_tool_snippets(&body, usize::from(max_results), is_news)
         .ok_or_else(|| "brave response had no extractable items".to_string())?;
     let sources = items_to_sources(&items);
@@ -878,6 +903,7 @@ fn run_url_fetch_citation(
             .map_err(|e| format!("failed to read fetched response: {e}"))?;
         String::from_utf8_lossy(&body).to_string()
     };
+
     let normalized = normalize_text_for_citation(&body_text);
     if normalized.is_empty() {
         return Err("fetched page had no extractable text".to_string());
@@ -1348,7 +1374,7 @@ mod tests {
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
         assert!(meta.sources[0].url.contains("#chunk-"));
-        assert!(!meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.invalid"));
         assert_eq!(meta.provider_hint.as_deref(), Some("ph1search_url_fetch"));
     }
 
@@ -1383,7 +1409,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(!meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.invalid"));
     }
 
     #[test]
@@ -1417,7 +1443,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(!meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.invalid"));
     }
 
     #[test]
@@ -1451,7 +1477,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(!meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.invalid"));
     }
 
     #[test]
@@ -1485,7 +1511,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(!meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.invalid"));
     }
 
     #[test]
@@ -1707,7 +1733,7 @@ mod tests {
             .expect("tool result required for web search")
         {
             assert!(!items.is_empty());
-            assert!(!items[0].url.contains("example.com"));
+            assert!(!items[0].url.contains("example.invalid"));
         } else {
             panic!("expected web search tool result");
         }
@@ -1725,7 +1751,7 @@ mod tests {
             .expect("tool result required for news search")
         {
             assert!(!items.is_empty());
-            assert!(!items[0].url.contains("example.com"));
+            assert!(!items[0].url.contains("example.invalid"));
         } else {
             panic!("expected news tool result");
         }

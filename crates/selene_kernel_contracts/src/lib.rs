@@ -69,6 +69,7 @@ pub mod ph1w;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
+pub mod provider_secrets;
 
 pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,

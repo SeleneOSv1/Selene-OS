@@ -10,6 +10,7 @@ use selene_kernel_contracts::ph1m::{
 use selene_kernel_contracts::ph1n::{
     FieldKey, IntentDraft, IntentType, OverallConfidence, Ph1nResponse,
 };
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::ph1tts::TtsControl;
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
@@ -843,7 +844,7 @@ impl Ph1xRuntime {
                 req,
                 clear_pending(base_thread_state),
                 reason_codes::X_TOOL_FAIL,
-                "Sorry — I couldn’t complete that just now. Could you try again?".to_string(),
+                retry_message_for_failure(tr.fail_reason_code.unwrap_or(tr.reason_code)),
                 delivery_base,
             ),
         }
@@ -1800,8 +1801,14 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
         .map(|f| f.value.original_span.as_str())
 }
 
-fn retry_message_for_failure(_rc: ReasonCodeId) -> String {
-    // Keep it honest and human; avoid leaking internals at this layer.
+fn retry_message_for_failure(rc: ReasonCodeId) -> String {
+    if rc == crate::ph1e::reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG {
+        return format!(
+            "Provider key not configured. Run: selene vault set {} (recommended) or selene vault set {}",
+            ProviderSecretId::BraveSearchApiKey.as_str(),
+            ProviderSecretId::OpenAIApiKey.as_str()
+        );
+    }
     "Sorry — I couldn’t complete that just now. Could you try again?".to_string()
 }
 
@@ -1901,7 +1908,7 @@ fn clarify_for_missing(
             "Where should I send the link?".to_string(),
             vec![
                 "+14155551212".to_string(),
-                "name@example.com".to_string(),
+                "name@example.invalid".to_string(),
                 "WeChat: alice".to_string(),
             ],
         ),
@@ -2308,7 +2315,7 @@ mod tests {
             retrieved_at_unix_ms: 1,
             sources: vec![SourceRef {
                 title: "source".to_string(),
-                url: "https://example.com".to_string(),
+                url: "https://example.invalid".to_string(),
             }],
         }
     }
@@ -2810,7 +2817,7 @@ mod tests {
                 items: vec![ToolTextSnippet {
                     title: "Result".to_string(),
                     snippet: "Snippet".to_string(),
-                    url: "https://example.com/search-result".to_string(),
+                    url: "https://example.invalid/search-result".to_string(),
                 }],
             },
             dummy_source_metadata(),
@@ -2841,7 +2848,7 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("https://example.invalid"));
                 assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
             }
             _ => panic!("expected Respond"),
@@ -2889,7 +2896,7 @@ mod tests {
                 items: vec![ToolTextSnippet {
                     title: "Headline".to_string(),
                     snippet: "Snippet".to_string(),
-                    url: "https://example.com/news-result".to_string(),
+                    url: "https://example.invalid/news-result".to_string(),
                 }],
             },
             dummy_source_metadata(),
@@ -2920,7 +2927,7 @@ mod tests {
         let out2 = rt.decide(&second).unwrap();
         match out2.directive {
             Ph1xDirective::Respond(r) => {
-                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("https://example.invalid"));
                 assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
             }
             _ => panic!("expected Respond"),
@@ -2968,7 +2975,7 @@ mod tests {
                 citations: vec![ToolTextSnippet {
                     title: "Citation".to_string(),
                     snippet: "Quoted fact".to_string(),
-                    url: "https://example.com/url-cite".to_string(),
+                    url: "https://example.invalid/url-cite".to_string(),
                 }],
             },
             dummy_source_metadata(),
@@ -3000,7 +3007,7 @@ mod tests {
         match out2.directive {
             Ph1xDirective::Respond(r) => {
                 assert!(r.response_text.contains("Citations:"));
-                assert!(r.response_text.contains("https://example.com"));
+                assert!(r.response_text.contains("https://example.invalid"));
                 assert!(r.response_text.contains("Retrieved at (unix_ms): 1"));
             }
             _ => panic!("expected Respond"),
@@ -3053,7 +3060,7 @@ mod tests {
                 citations: vec![ToolTextSnippet {
                     title: "Doc citation".to_string(),
                     snippet: "Quoted text".to_string(),
-                    url: "https://example.com/doc-cite".to_string(),
+                    url: "https://example.invalid/doc-cite".to_string(),
                 }],
             },
             dummy_source_metadata(),
@@ -3139,7 +3146,7 @@ mod tests {
                 citations: vec![ToolTextSnippet {
                     title: "Image citation".to_string(),
                     snippet: "Visible chart label".to_string(),
-                    url: "https://example.com/photo-cite".to_string(),
+                    url: "https://example.invalid/photo-cite".to_string(),
                 }],
             },
             dummy_source_metadata(),

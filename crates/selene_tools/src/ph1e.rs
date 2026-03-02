@@ -491,7 +491,7 @@ mod tests {
             retrieved_at_unix_ms: 1,
             sources: vec![SourceRef {
                 title: "t".to_string(),
-                url: "https://example.com".to_string(),
+                url: "https://example.invalid".to_string(),
             }],
         }
     }
@@ -621,7 +621,7 @@ mod tests {
                     items: vec![ToolTextSnippet {
                         title: "headline".to_string(),
                         snippet: "one says A".to_string(),
-                        url: "https://example.com/a".to_string(),
+                        url: "https://example.invalid/a".to_string(),
                     }],
                 },
                 source_metadata: metadata(Some("news")),
@@ -689,12 +689,12 @@ mod tests {
                         ToolTextSnippet {
                             title: "t1".to_string(),
                             snippet: "s1".to_string(),
-                            url: "https://example.com/1".to_string(),
+                            url: "https://example.invalid/1".to_string(),
                         },
                         ToolTextSnippet {
                             title: "t2".to_string(),
                             snippet: "s2".to_string(),
-                            url: "https://example.com/2".to_string(),
+                            url: "https://example.invalid/2".to_string(),
                         },
                     ],
                 },
@@ -761,7 +761,7 @@ mod tests {
     #[test]
     fn at_e_09_domain_denylist_fails_closed() {
         let router = ToolRouter::new(ToolRouterConfig {
-            domain_denylist: &["example.com"],
+            domain_denylist: &["example.invalid"],
             ..ToolRouterConfig::mvp_v1()
         });
         let provider = StubProvider {
@@ -770,7 +770,7 @@ mod tests {
                     items: vec![ToolTextSnippet {
                         title: "t".to_string(),
                         snippet: "s".to_string(),
-                        url: "https://example.com/x".to_string(),
+                        url: "https://example.invalid/x".to_string(),
                     }],
                 },
                 source_metadata: metadata(None),

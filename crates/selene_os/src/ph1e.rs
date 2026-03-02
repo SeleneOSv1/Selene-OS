@@ -151,7 +151,7 @@ mod tests {
                 items: vec![ToolTextSnippet {
                     title: "Result".to_string(),
                     snippet: "Snippet".to_string(),
-                    url: "https://example.com/a".to_string(),
+                    url: "https://example.invalid/a".to_string(),
                 }],
             },
             SourceMetadata {
@@ -160,7 +160,7 @@ mod tests {
                 retrieved_at_unix_ms: 1_700_000_000_000,
                 sources: vec![SourceRef {
                     title: "Example".to_string(),
-                    url: "https://example.com/a".to_string(),
+                    url: "https://example.invalid/a".to_string(),
                 }],
             },
             None,

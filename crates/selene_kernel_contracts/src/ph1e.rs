@@ -1076,7 +1076,7 @@ mod tests {
                 retrieved_at_unix_ms: 1_700_000_000_000,
                 sources: vec![SourceRef {
                     title: "Example".to_string(),
-                    url: "https://example.com".to_string(),
+                    url: "https://example.invalid".to_string(),
                 }],
             },
             None,

@@ -9194,7 +9194,7 @@ mod tests {
     }
 
     #[test]
-    fn at_adapter_03b_voice_turn_returns_ph1x_response_payload_with_provenance() {
+    fn at_adapter_03b_voice_turn_provider_unconfigured_fails_closed_with_vault_hint() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
         req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
@@ -9204,18 +9204,9 @@ mod tests {
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "FINAL_TOOL");
         assert_eq!(out.next_move, "dispatch_tool");
-        assert_eq!(out.reason_code, "1476395016");
+        assert_eq!(out.reason_code, "1476395017");
         let response_text = out.response_text.as_str();
-        assert!(response_text.contains("Here are the results:"));
-        assert!(response_text.contains("Sources:"));
-        assert!(response_text.contains("Retrieved at (unix_ms):"));
-        let provenance = out
-            .provenance
-            .as_ref()
-            .expect("tool response must include provenance payload");
-        assert!(!provenance.sources.is_empty());
-        assert!(provenance.retrieved_at > 0);
-        assert!(!provenance.cache_status.is_empty());
+        assert!(response_text.contains("selene vault set brave_search_api_key"));
     }
 
     #[test]
