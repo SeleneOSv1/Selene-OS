@@ -957,3 +957,602 @@ This section is additive and does not replace existing requirements.
 
 15. Personal knowledge boundary control
 - Define strict controls for what memory context can and cannot influence.
+
+## 35) Enterprise Research Expansion (Requested Scope, Additive)
+
+This section directly incorporates enterprise-grade requirements and is additive to Sections `1-34`.
+
+### 35.1 Structured Data Research Mode (Not Pages Only)
+
+Required source classes:
+- company registry datasets
+- financial filings and investor reports
+- government databases and regulatory portals
+- product specification documents
+- pricing tables
+- patents
+- academic papers
+
+Required capabilities:
+- structured extraction mode (key-value, table, entity, metric extraction)
+- table parsing mode with schema validation
+- PDF extraction mode with section and table anchors
+- filing-aware parsing mode (`10-K/10-Q`-style field packs where applicable)
+
+Deterministic rule:
+- if source is structured, extraction must produce typed rows before synthesis (not prose-only snippets).
+
+### 35.2 Competitive Intelligence Mode
+
+Required outputs:
+- competitor comparison table
+- feature differences
+- pricing comparison
+- market-position summary
+- SWOT-style evidence-backed summary
+- customer sentiment summary (source-scoped)
+
+Deterministic requirements:
+- multi-source synthesis with deduplicated feature entities
+- canonical comparison schema (`entity`, `attribute`, `value`, `source_ref`, `as_of_date`)
+- explicit unknown fields when evidence is missing
+
+### 35.3 Real-Time Data Research Mode
+
+Scope examples:
+- stocks, crypto, weather, flights, commodities
+
+Architecture rule:
+- API-first retrieval for real-time domains; web-page search is assist/fallback only.
+
+Deterministic controls:
+- strict freshness TTL per domain
+- retrieval timestamp and freshness score mandatory in Evidence Packet
+- fail-closed if data freshness policy cannot be met
+
+### 35.4 Regulatory / Compliance Research Mode
+
+Required behavior:
+- jurisdiction-aware retrieval and filtering
+- confidence flagging (`HIGH|MODERATE|LOW`) per compliance claim
+- trust-first source policy (official/regulatory sources preferred)
+
+Regulatory trust policy:
+- require explicit trust tier on every compliance citation
+- refuse unsupported compliance claims with `insufficient_regulatory_evidence`
+
+### 35.5 Source Trust and Ranking Model (Canonical)
+
+Source ranking must include:
+- domain reputation score
+- official-source detection (`.gov`, regulator domains, official filings registries, recognized academic domains)
+- spam/clickbait filtering
+- recency and corroboration weighting
+
+Deterministic ranking vector:
+- `final_rank = w1*relevance + w2*trust + w3*freshness + w4*corroboration - w5*spam_risk`
+- integer weights are policy-snapshot controlled and versioned.
+
+### 35.6 Deep Research (Multi-hop) Mode
+
+Required behavior:
+- explicit subgoal chain (`hop_1..hop_n`)
+- each hop produces evidence refs consumed by next hop
+- terminal answer requires completed hop proof chain
+
+Hard rule:
+- no hidden hop; every hop must be auditable in `PH1.J`.
+
+### 35.7 Temporal Comparison Mode
+
+Required behavior:
+- date-filtered retrieval windows
+- timeline extraction
+- change detection between snapshots/reports
+
+Outputs:
+- `what_changed`, `what_unchanged`, `first_seen`, `latest_seen`, citation refs
+
+### 35.8 Risk Scoring Mode
+
+Risk inputs (domain-dependent):
+- financial stress indicators
+- lawsuits/legal events
+- regulatory events
+- negative news clustering
+- operational reliability signals
+
+Deterministic outputs:
+- composite risk score with factor breakdown
+- confidence and evidence coverage indicators
+- explicit non-advice guardrails where required
+
+### 35.9 Internal + External Merge Mode
+
+Required behavior:
+- merge internal memory/context (`PH1.M` / `PH1.CONTEXT`) with external evidence
+- produce explicit delta format:
+  - `previous_internal_view`
+  - `new_external_findings`
+  - `changes_since_last_time`
+
+Hard boundary:
+- internal memory can guide retrieval focus, but cannot override external evidence truth.
+
+### 35.10 Enterprise Report Mode
+
+Report templates (deterministic):
+- executive summary
+- key findings
+- risk summary
+- comparison tables
+- sources and appendix
+
+Output modalities:
+- text report (PH1.WRITE)
+- voice summary (PH1.TTS from same canonical formatted summary)
+- optional graph/table/image/video embeds as referenced artifacts (metadata + source refs)
+
+### 35.11 Search Decision + Conversational Uncertainty Handling
+
+Required behavior:
+- deterministic router decides `search` vs `no-search` vs `clarify`
+- dynamic query rewrite ladder when first retrieval underperforms
+- uncertainty handling must be conversational but evidence-bounded
+
+Hard rule:
+- no confident claim without citation support, even after rewrite or fallback.
+
+## 36) Run Integration Plan for Enterprise Expansion (Additive)
+
+This run map ensures every requested capability is scheduled. Existing runs remain valid; these additions extend them.
+
+### 36.1 Fit Into Existing Runs
+
+| Requested capability | Existing run(s) extended |
+|---|---|
+| Structured extraction/table/PDF basics | Run 1, Run 2, Run 4 |
+| Competitive comparison outputs | Run 3, Run 4, Run 6 |
+| Real-time data freshness controls | Run 1.1, Run 7, Run 8 |
+| Regulatory trust filtering | Run 6, Run 8 |
+| Trust/ranking model | Run 7, Run 8, Run 9 |
+| Multi-hop research | Run 9, Run 11 |
+| Temporal comparison | Run 4, Run 9 |
+| Risk scoring | Run 3, Run 11 |
+| Internal+external merge | Run 3, Run 11 |
+| Enterprise report template mode | Run 3, Run 6, Run 12 |
+
+### 36.2 New Additive Runs (Required)
+
+#### Run 13 — Structured Data Connectors and Parsing
+- Add structured source adapters (registries, filings, official datasets).
+- Implement table + PDF + filing-aware extraction contracts.
+- Add tests for deterministic extraction and schema-stable output.
+
+#### Run 14 — Competitive Intelligence Pipeline
+- Implement canonical comparison schema and dedup entity merger.
+- Add competitor/pricing/feature comparison outputs with citations.
+- Add tests for deterministic comparison ranking and unknown-field behavior.
+
+#### Run 15 — Real-Time API Lane + Freshness Policy
+- Add API-first providers for real-time domains.
+- Add freshness TTL policy and fail-closed behavior.
+- Add tests for stale-data refusal and timestamp correctness.
+
+#### Run 16 — Regulatory Trust Tier and Jurisdiction Routing
+- Add jurisdiction resolver and regulatory trust policy.
+- Enforce official-source preference and compliance confidence flags.
+- Add tests for jurisdiction mismatch and low-trust refusal paths.
+
+#### Run 17 — Trust/Spam/Official Source Model
+- Implement trust score, official-source detection, spam/clickbait penalties.
+- Wire deterministic rank vector into retrieval ordering.
+- Add tests for trust-priority ordering and spam suppression.
+
+#### Run 18 — Multi-Hop Deep Research Planner
+- Add deterministic hop planner and hop-proof chain persistence.
+- Add stop conditions and max-hop budget.
+- Add tests for reproducible multi-hop outputs and no-hidden-hop audit.
+
+#### Run 19 — Temporal Comparison and Change Detection
+- Add date-window retrieval controls and timeline extraction.
+- Add deterministic change-diff output with citations.
+- Add tests for `as_of` comparisons and multi-period report diffs.
+
+#### Run 20 — Risk Scoring Mode
+- Add deterministic risk factor model and breakdown outputs.
+- Add clustering for negative event concentration.
+- Add tests for score reproducibility and insufficient-evidence refusal.
+
+#### Run 21 — Internal+External Merge
+- Add merge packet combining memory context and external evidence.
+- Enforce boundary: memory guides retrieval only, never overrides evidence truth.
+- Add tests for delta summaries and memory-isolation safety.
+
+#### Run 22 — Enterprise Report Templates and Delivery
+- Add long-form report templates (exec summary/findings/risk/appendix).
+- Add deterministic graph/table artifact references and citation mapping.
+- Add tests for report completeness, citation coverage, and voice summary parity.
+
+### 36.3 Completion Rule for Runs 13-22
+
+Every run must:
+- start with clean tree (`git status --porcelain` empty)
+- end with commit + `git push origin main`
+- end with clean tree proof (`git status --porcelain` empty)
+- append ledger proof line with exact commands/tests executed
+
+## 37) Run Completion Hardening Matrix (Additive, Mandatory)
+
+This section closes run-level completeness gaps and is additive to Sections `6`, `6.1`, `14`, and `36`.
+
+### 37.1 Canonical Run ID Map (Single Source for Execution Order)
+
+Canonical execution order:
+- `Run 1`
+- `Run 1.1`
+- `Run 2`
+- `Run 3`
+- `Run 4`
+- `Run 5`
+- `Run 6`
+- `Run 7`
+- `Run 8`
+- `Run 9`
+- `Run 10`
+- `Run 11`
+- `Run 12`
+- `Run 13`
+- `Run 14`
+- `Run 15`
+- `Run 16`
+- `Run 17`
+- `Run 18`
+- `Run 19`
+- `Run 20`
+- `Run 21`
+- `Run 22`
+
+Alias resolution rule:
+- Section `6` defines Runs `1..6`.
+- Section `6.1` and Section `14` provide hardening details and are interpreted as extensions of the same canonical runs.
+- Section `36` defines additive enterprise Runs `13..22`.
+- If any run naming conflict appears in future edits, this section is authoritative for sequencing.
+
+### 37.2 Run 1 Completion Upgrades
+
+- Make `page_hash` mandatory (not optional) for every successful URL fetch output row.
+- Define exact MIME allowlist and refusal reason for unsupported content types.
+- Add deterministic redirect-loop detection with explicit fail-closed reason code.
+
+### 37.3 Run 1.1 Completion Upgrades
+
+- Define strict proxy precedence: `explicit` > `env` > `off`.
+- Define unsupported proxy scheme behavior with fail-closed diagnostics.
+- Add startup outbound probe PASS/FAIL thresholds and severity mapping.
+
+### 37.4 Run 2 Completion Upgrades
+
+- Lock canonical chunking algorithm (split logic + normalization pre-step).
+- Add mandatory `hash_version` field beside each `chunk_id`.
+- Add hash-collision handling rule with deterministic secondary key fallback.
+
+### 37.5 Run 3 Completion Upgrades
+
+- Pin `SynthesisPacket` schema version for PH1.D outputs.
+- Add claim-to-citation validator gate (`100%` of factual claims must cite source/chunk).
+- Add deterministic uncertainty threshold policy for `Low/Moderate/High` confidence labels.
+
+### 37.6 Run 4 Completion Upgrades
+
+- Lock Top-K selection formula with exact weighted fields and tie-breaks.
+- Add domain diversity cap so one domain cannot dominate final evidence set.
+- Add deterministic dead-link substitution policy when selected URLs fail to open.
+
+### 37.7 Run 5 Completion Upgrades
+
+- Lock image/video metadata schema (required vs optional fields).
+- Add safe-search policy with tenant/profile policy snapshot control.
+- Add canonical media URL normalization and duplicate collapse rules.
+
+### 37.8 Run 6 Completion Upgrades
+
+- Lock Brave+GDELT merge formula and precedence fields.
+- Add publish-date normalization contract and timezone handling.
+- Add contradiction clustering policy for conflicting news claims.
+
+### 37.9 Run 7 Completion Upgrades
+
+- Lock numeric fallback trigger thresholds for Brave -> OpenAI transition.
+- Add per-turn provider budget guard and exhaustion behavior.
+- Add fallback-only anti-hallucination test requirements.
+
+### 37.10 Run 8 Completion Upgrades
+
+- Add recency window policy by topic class (business/politics/regulatory/safety).
+- Add minimum source-diversity requirement for news synthesis.
+- Add paywall/redirect canonicalization handling and citation policy.
+
+### 37.11 Run 9 Completion Upgrades
+
+- Lock URL-open stop conditions and budget cutoff behavior by importance tier.
+- Add per-tier open limits (`low`, `medium`, `high`) with deterministic caps.
+- Add snippet-only fallback contract when all URL opens fail.
+
+### 37.12 Run 10 Completion Upgrades
+
+- Add media licensing/rights metadata requirement where available.
+- Add explicit fail-closed reason codes for unsupported media/provider payloads.
+- Add required citation linkage checks for every returned media item.
+
+### 37.13 Run 11 Completion Upgrades
+
+- Add feedback-poisoning resistance controls (replay abuse, malicious correction bursts).
+- Add proposal-priority scoring formula for builder queue ordering.
+- Add rollback drill cadence and verification evidence requirements.
+
+### 37.14 Run 12 Completion Upgrades
+
+- Add one release gate matrix (`test -> script -> threshold -> owner`).
+- Add final evidence pack template with mandatory fields.
+- Add mandatory gate: no release if any required evidence artifact is missing.
+
+### 37.15 Run 13 Completion Upgrades
+
+- Add structured schema registry for extracted datasets/tables/filings.
+- Add parser-version pinning for structured extractors.
+- Add table extraction conformance tests (typed columns + deterministic row ordering).
+
+### 37.16 Run 14 Completion Upgrades
+
+- Add canonical comparison output schema for competitive intelligence.
+- Add deterministic unit/currency normalization rules.
+- Add explicit unknown-field handling where evidence is absent.
+
+### 37.17 Run 15 Completion Upgrades
+
+- Add freshness SLA contract per real-time domain.
+- Add stale-data refusal policy with deterministic reason codes.
+- Add API outage fallback policy and bounded degraded behavior.
+
+### 37.18 Run 16 Completion Upgrades
+
+- Add jurisdiction model (`country`, `state/province`, `industry/sector`).
+- Add regulatory trust-tier source registry requirements.
+- Add compliance confidence scoring contract per claim.
+
+### 37.19 Run 17 Completion Upgrades
+
+- Add governance rules for trust score updates (owner + approval path).
+- Add explainable trust-factor persistence in audit packet.
+- Add deterministic trust override constraints (no runtime ad-hoc overrides).
+
+### 37.20 Run 18 Completion Upgrades
+
+- Add max-hop and max-time budgets for deep research.
+- Add cycle detection and recursion-stop behavior.
+- Add hop failure semantics (`retryable`, `terminal`, `partial-with-disclosure`).
+
+### 37.21 Run 19 Completion Upgrades
+
+- Add explicit `as_of` semantics and time-window anchoring.
+- Add deterministic timeline diff algorithm specification.
+- Add missing-date handling with confidence downgrade rules.
+
+### 37.22 Run 20 Completion Upgrades
+
+- Add risk score bands and factor-weight registry.
+- Add calibration method and drift-check requirements.
+- Add mandatory non-advice guard text contract in risk outputs.
+
+### 37.23 Run 21 Completion Upgrades
+
+- Add identity-gated internal memory merge policy.
+- Add recency weighting policy for internal memory evidence.
+- Add contradiction rule when internal memory and external evidence conflict.
+
+### 37.24 Run 22 Completion Upgrades
+
+- Add enterprise report schema validator and required-section checks.
+- Add section completeness rules (`exec summary`, `findings`, `risk`, `appendix`, `citations`).
+- Add export mode contract (`brief`, `standard`, `deep`, `report`) with citation parity.
+
+## 38) Cross-Run Closure Requirements (Additive, Mandatory)
+
+This section closes system-level completeness gaps and fulfills the wire-ready placeholders from Section `17.3`.
+
+### 38.1 Canonical Packet Appendix Requirement
+
+Must add one canonical packet appendix covering:
+- `TurnInputPacket`
+- `SearchAssistPacket`
+- `ToolRequestPacket`
+- `EvidencePacket`
+- `SynthesisPacket`
+- `WritePacket`
+- `RiskPacket`
+- `ComparisonPacket`
+- `EnterpriseReportPacket`
+- `AuditPacket`
+
+Rule:
+- each packet must include schema version, producer owner, consumer owner, required fields, and fail-closed validation behavior.
+
+### 38.2 Canonical Reason-Code Registry Requirement
+
+Must define one plan-wide reason-code registry with:
+- unique code IDs
+- owner engine
+- user-visible wording contract
+- retryability class
+- severity class
+
+No run may define ad-hoc reason codes outside the canonical registry.
+
+### 38.3 Canonical Idempotency Key Table Requirement
+
+Must define one idempotency appendix for all write paths (`PH1.F` + `PH1.J`) including:
+- write path name
+- key recipe
+- uniqueness index
+- duplicate replay behavior
+
+No write path may ship without idempotency recipe registration.
+
+### 38.4 Dependency DAG Requirement
+
+Must add a run dependency DAG defining:
+- hard prerequisites
+- optional parallelizable runs
+- blocked-on relationships
+
+Execution rule:
+- a run cannot start unless all its hard prerequisite runs are green and ledger-proven.
+
+### 38.5 Requirement-to-Run-to-Test Trace Matrix
+
+Must add one traceability matrix:
+- requirement ID
+- owning run(s)
+- acceptance tests
+- CI scripts
+- proof command
+
+Closure rule:
+- every enterprise requirement in Section `35` must map to at least one test and one proof command.
+
+### 38.6 Production Lock and SLO Gate Requirement
+
+Must add one production lock section defining:
+- release SLOs (`latency`, `citation coverage`, `refusal correctness`, `freshness compliance`, `risk score reproducibility`)
+- hard pass/fail thresholds
+- waiver authority and expiry rules
+
+No production promotion is allowed if any lock gate is red.
+
+## 39) Canonical End-to-End Build Program (Authoritative Run Sequence)
+
+This section rebuilds the full plan into one executable sequence without removing any prior requirements.
+
+Interpretation rule:
+- Sections `0-38` remain the complete requirement catalog.
+- This section is the authoritative implementation order for building the full system end to end.
+
+Global run gate (applies to every run below):
+- Start: `git status --porcelain` must be empty.
+- End: commit + `git push origin main` + `git status --porcelain` empty + ledger proof line with exact commands/tests.
+
+### 39.1 Phase A — Contracts and Governance Foundation
+
+#### Run 1 — Canonical Packet Registry
+- Implement and lock packet schemas (`TurnInput`, `SearchAssist`, `ToolRequest`, `Evidence`, `Synthesis`, `Write`, `Comparison`, `Risk`, `Report`, `Audit`).
+- Attach schema versioning and compatibility rules.
+
+#### Run 2 — Reason-Code Registry
+- Implement one canonical reason-code registry with owner engine and fail-closed behavior.
+- Remove ad-hoc reason-code drift from all lanes.
+
+#### Run 3 — Idempotency Registry
+- Implement one canonical idempotency table for all PH1.F/PH1.J write paths.
+- Define duplicate replay behavior per write path.
+
+#### Run 4 — Dependency DAG and Trace Matrix
+- Implement run dependency DAG and requirement-to-run-to-test matrix.
+- Block out-of-order execution in CI.
+
+### 39.2 Phase B — Retrieval Core and Safety
+
+#### Run 5 — Proxy Universal Layer
+- Implement and lock proxy modes (`off`, `env`, `explicit`) with startup probe and safe diagnostics.
+
+#### Run 6 — URL Fetch Core
+- Implement deterministic URL fetch and extraction, MIME/redirect/charset policy, and fail-closed reasons.
+
+#### Run 7 — Chunk/Hash/Citation Foundation
+- Implement deterministic chunking, `hash_version`, collision handling, and citation binding.
+
+#### Run 8 — Query Planning and Top-K Selector
+- Implement deterministic query rewrite ladder and Top-K scoring/tie-break rules.
+
+#### Run 9 — Web Provider Ladder
+- Implement Brave lead + OpenAI fallback thresholds, budgets, and provider health state routing.
+
+#### Run 10 — News Provider Ladder
+- Implement Brave lead + GDELT assist deterministic merge with recency/date normalization.
+
+#### Run 11 — Image/Video Retrieval Lane
+- Implement deterministic image/video query and ranking, safe-search policy, and media metadata schema.
+
+### 39.3 Phase C — Grounded Answering and Output
+
+#### Run 12 — PH1.D Grounded Synthesis
+- Implement evidence-only synthesis contract and claim-to-citation validator gate.
+
+#### Run 13 — PH1.WRITE + PH1.TTS Output Contract
+- Implement structured professional text formatting and voice parity from the same formatted payload.
+
+#### Run 14 — Observability and Debug Packet
+- Implement standard debug packet with safe fields and redaction guarantees.
+
+#### Run 15 — Performance, Cost, and Importance Tiers
+- Implement latency/cost budgets, queue/backpressure, and deterministic `low|medium|high` search-depth policy.
+
+### 39.4 Phase D — Reliability and Adaptive Quality
+
+#### Run 16 — Two-Tier Cache + Parallel Retrieval
+- Implement L1/L2 cache contracts, deterministic fan-out, and stable merge ordering.
+
+#### Run 17 — Quality Gates and Replay Harness
+- Implement benchmark corpus, replay determinism gates, and regression thresholds.
+
+#### Run 18 — Learning Layer
+- Implement failure-signature model, bounded session-level adaptation, builder-governed promotion path, and rollback drills.
+
+### 39.5 Phase E — Enterprise Expansion
+
+#### Run 19 — Structured Data Connectors
+- Implement registry/filings/government/academic/product/pricing/patent source adapters.
+
+#### Run 20 — PDF, Table, and Filing-Aware Parsing
+- Implement PDF extraction, table schema extraction, and filing-specific parsers.
+
+#### Run 21 — Competitive Intelligence Mode
+- Implement comparison schema, feature/pricing/entity dedup, and SWOT evidence output.
+
+#### Run 22 — Real-Time API Mode
+- Implement API-first lanes for time-sensitive domains with freshness TTL and stale-data refusal.
+
+#### Run 23 — Regulatory and Jurisdiction Mode
+- Implement jurisdiction routing, compliance confidence flags, and regulatory trust-tier filtering.
+
+#### Run 24 — Trust/Spam/Official Source Model
+- Implement trust ranking vector, official source detection, spam/clickbait suppression, and explainable trust factors.
+
+#### Run 25 — Deep Multi-Hop Research
+- Implement deterministic hop planner, max-hop/max-time budgets, cycle detection, and hop audit proofs.
+
+#### Run 26 — Temporal Comparison Mode
+- Implement `as_of` windows, timeline extraction, and deterministic change detection.
+
+#### Run 27 — Risk Scoring Mode
+- Implement factorized risk model, calibration rules, confidence coverage, and non-advice guardrails.
+
+#### Run 28 — Internal + External Merge
+- Implement memory/context merge contract with strict boundary (memory guides retrieval, never overrides evidence).
+
+#### Run 29 — Enterprise Report Mode
+- Implement long-form report templates, required sections, citation completeness validation, and export modes.
+
+### 39.6 Phase F — Final Lock and Release
+
+#### Run 30 — Production Lock and Final Acceptance
+- Run full CI gate matrix, SLO gates, traceability checks, and final evidence pack closure.
+- Enforce no-release-on-red for any mandatory gate.
+
+### 39.7 Coverage Map to Existing Sections
+
+Coverage guarantee:
+- Runs `1-4` satisfy Section `38` closure requirements and Section `17.3` wire-ready addenda.
+- Runs `5-18` satisfy core requirements in Sections `1-34` including safety, quality, and parity enhancements.
+- Runs `19-29` implement all enterprise capabilities in Section `35`.
+- Run `30` enforces release lock requirements in Section `38.6` and final closure expectations in Sections `12`, `15`, and `37`.
