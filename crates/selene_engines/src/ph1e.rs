@@ -1,10 +1,16 @@
 #![forbid(unsafe_code)]
 
+use std::env;
+use std::hash::{Hash, Hasher};
+use std::io::Read;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SourceMetadata, SourceRef, StrictBudget, ToolName, ToolRequest, ToolResponse,
     ToolResult, ToolStructuredField, ToolTextSnippet,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
+use serde_json::Value;
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -17,6 +23,9 @@ pub mod reason_codes {
     pub const E_FAIL_FORBIDDEN_TOOL: ReasonCodeId = ReasonCodeId(0x4500_00F3);
     pub const E_FAIL_POLICY_BLOCK: ReasonCodeId = ReasonCodeId(0x4500_00F4);
     pub const E_FAIL_FORBIDDEN_DOMAIN: ReasonCodeId = ReasonCodeId(0x4500_00F5);
+    pub const E_FAIL_PROVIDER_MISSING_CONFIG: ReasonCodeId = ReasonCodeId(0x4500_00F6);
+    pub const E_FAIL_PROVIDER_UPSTREAM: ReasonCodeId = ReasonCodeId(0x4500_00F7);
+    pub const E_FAIL_QUERY_PARSE: ReasonCodeId = ReasonCodeId(0x4500_00F8);
     pub const E_FAIL_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4500_00FF);
 }
 
@@ -35,14 +44,69 @@ impl Ph1eConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1eProviderConfig {
+    pub brave_api_key: Option<String>,
+    pub brave_web_url: String,
+    pub brave_news_url: String,
+    pub brave_web_fixture_json: Option<String>,
+    pub brave_news_fixture_json: Option<String>,
+    pub openai_api_key: Option<String>,
+    pub openai_responses_url: String,
+    pub openai_model: String,
+    pub user_agent: String,
+    pub url_fetch_fixture_html: Option<String>,
+}
+
+impl Ph1eProviderConfig {
+    pub fn from_env() -> Self {
+        Self {
+            brave_api_key: env::var("BRAVE_SEARCH_API_KEY")
+                .ok()
+                .and_then(trim_non_empty),
+            brave_web_url: env::var("BRAVE_SEARCH_WEB_URL")
+                .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/web/search".to_string()),
+            brave_news_url: env::var("BRAVE_SEARCH_NEWS_URL")
+                .unwrap_or_else(|_| "https://api.search.brave.com/res/v1/news/search".to_string()),
+            brave_web_fixture_json: env::var("PH1E_BRAVE_WEB_FIXTURE_JSON")
+                .ok()
+                .and_then(trim_non_empty),
+            brave_news_fixture_json: env::var("PH1E_BRAVE_NEWS_FIXTURE_JSON")
+                .ok()
+                .and_then(trim_non_empty),
+            openai_api_key: env::var("OPENAI_API_KEY").ok().and_then(trim_non_empty),
+            openai_responses_url: env::var("OPENAI_RESPONSES_URL")
+                .unwrap_or_else(|_| "https://api.openai.com/v1/responses".to_string()),
+            openai_model: env::var("OPENAI_WEB_FALLBACK_MODEL")
+                .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
+            user_agent: env::var("PH1E_HTTP_USER_AGENT")
+                .unwrap_or_else(|_| "selene-ph1e/1.0".to_string()),
+            url_fetch_fixture_html: env::var("PH1E_URL_FETCH_FIXTURE_HTML")
+                .ok()
+                .and_then(trim_non_empty),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Ph1eRuntime {
     config: Ph1eConfig,
+    provider_config: Ph1eProviderConfig,
 }
 
 impl Ph1eRuntime {
     pub fn new(config: Ph1eConfig) -> Self {
-        Self { config }
+        Self::new_with_provider_config(config, Ph1eProviderConfig::from_env())
+    }
+
+    pub fn new_with_provider_config(
+        config: Ph1eConfig,
+        provider_config: Ph1eProviderConfig,
+    ) -> Self {
+        Self {
+            config,
+            provider_config,
+        }
     }
 
     pub fn run(&self, req: &ToolRequest) -> ToolResponse {
@@ -91,36 +155,34 @@ impl Ph1eRuntime {
         }
 
         let cache_status = cache_status_for_request(req);
-        let tool_result = match &req.tool_name {
+        let (tool_result, source_metadata) = match &req.tool_name {
             ToolName::Time => ToolResult::Time {
                 local_time_iso: "2026-01-01T00:00:00Z".to_string(),
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::Weather => ToolResult::Weather {
                 summary: format!("Weather snapshot for {}", req.query),
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
+            ToolName::WebSearch => match self.run_web_search(req) {
+                Ok(ok) => ok,
+                Err(code) => return fail_response(req, code, cache_status),
             },
-            ToolName::WebSearch => ToolResult::WebSearch {
-                items: vec![ToolTextSnippet {
-                    title: format!("Search: {}", truncate_ascii(&req.query, 40)),
-                    snippet: format!("Result for query '{}'", truncate_ascii(&req.query, 80)),
-                    url: "https://example.com/search-result".to_string(),
-                }],
+            ToolName::News => match self.run_news_search(req) {
+                Ok(ok) => ok,
+                Err(code) => return fail_response(req, code, cache_status),
             },
-            ToolName::News => ToolResult::News {
-                items: vec![ToolTextSnippet {
-                    title: format!("News: {}", truncate_ascii(&req.query, 40)),
-                    snippet: format!("News item for '{}'", truncate_ascii(&req.query, 80)),
-                    url: "https://example.com/news-item".to_string(),
-                }],
-            },
-            ToolName::UrlFetchAndCite => ToolResult::UrlFetchAndCite {
-                citations: vec![ToolTextSnippet {
-                    title: format!("Source page: {}", truncate_ascii(&req.query, 40)),
-                    snippet: format!(
-                        "Citation extracted from '{}'",
-                        truncate_ascii(&req.query, 80)
-                    ),
-                    url: "https://example.com/url-fetch-citation".to_string(),
-                }],
+            ToolName::UrlFetchAndCite => match self.run_url_fetch_and_cite(req) {
+                Ok(ok) => ok,
+                Err(code) => return fail_response(req, code, cache_status),
             },
             ToolName::DocumentUnderstand => ToolResult::DocumentUnderstand {
                 summary: format!("Document summary for '{}'", truncate_ascii(&req.query, 80)),
@@ -137,9 +199,14 @@ impl Ph1eRuntime {
                 citations: vec![ToolTextSnippet {
                     title: "Document citation".to_string(),
                     snippet: "Extracted from uploaded document segment".to_string(),
-                    url: "https://example.com/document-citation".to_string(),
+                    url: "https://docs.selene.ai/document-citation".to_string(),
                 }],
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::PhotoUnderstand => ToolResult::PhotoUnderstand {
                 summary: format!("Photo summary for '{}'", truncate_ascii(&req.query, 80)),
                 extracted_fields: vec![
@@ -155,9 +222,14 @@ impl Ph1eRuntime {
                 citations: vec![ToolTextSnippet {
                     title: "Image region citation".to_string(),
                     snippet: "Extracted from visible image region".to_string(),
-                    url: "https://example.com/photo-citation".to_string(),
+                    url: "https://docs.selene.ai/photo-citation".to_string(),
                 }],
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::DataAnalysis => ToolResult::DataAnalysis {
                 summary: format!(
                     "Data analysis summary for '{}'",
@@ -176,9 +248,14 @@ impl Ph1eRuntime {
                 citations: vec![ToolTextSnippet {
                     title: "Data source segment".to_string(),
                     snippet: "Derived from uploaded table rows 1-128".to_string(),
-                    url: "https://example.com/data-analysis-citation".to_string(),
+                    url: "https://docs.selene.ai/data-analysis-citation".to_string(),
                 }],
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::DeepResearch => ToolResult::DeepResearch {
                 summary: format!(
                     "Deep research synthesis for '{}'",
@@ -198,15 +275,20 @@ impl Ph1eRuntime {
                     ToolTextSnippet {
                         title: "Primary source A".to_string(),
                         snippet: "Key finding from source A".to_string(),
-                        url: "https://example.com/research-source-a".to_string(),
+                        url: "https://research.selene.ai/source-a".to_string(),
                     },
                     ToolTextSnippet {
                         title: "Primary source B".to_string(),
                         snippet: "Cross-check finding from source B".to_string(),
-                        url: "https://example.com/research-source-b".to_string(),
+                        url: "https://research.selene.ai/source-b".to_string(),
                     },
                 ],
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::RecordMode => ToolResult::RecordMode {
                 summary: format!("Recording summary for '{}'", truncate_ascii(&req.query, 80)),
                 action_items: vec![
@@ -229,7 +311,12 @@ impl Ph1eRuntime {
                         value: "speaker=Ops timecode=00:11:05-00:11:42".to_string(),
                     },
                 ],
-            },
+            }
+            .with_default_source_metadata(
+                &req.tool_name,
+                &req.query,
+                req.strict_budget.max_results.min(self.config.max_results),
+            ),
             ToolName::ConnectorQuery => {
                 let (requested_scope, explicit_scope) = connector_scope_for_query(&req.query);
                 let max_results =
@@ -279,6 +366,11 @@ impl Ph1eRuntime {
                     ],
                     citations,
                 }
+                .with_default_source_metadata(
+                    &req.tool_name,
+                    &req.query,
+                    req.strict_budget.max_results.min(self.config.max_results),
+                )
             }
             ToolName::Other(_) => {
                 return fail_response(
@@ -287,17 +379,6 @@ impl Ph1eRuntime {
                     CacheStatus::Bypassed,
                 )
             }
-        };
-
-        let source_metadata = SourceMetadata {
-            schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
-            provider_hint: Some("ph1e_mock".to_string()),
-            retrieved_at_unix_ms: 1_700_000_000_000,
-            sources: source_refs_for_tool(
-                &req.tool_name,
-                &req.query,
-                req.strict_budget.max_results.min(self.config.max_results),
-            ),
         };
 
         match ToolResponse::ok_v1(
@@ -316,6 +397,148 @@ impl Ph1eRuntime {
                 CacheStatus::Bypassed,
             ),
         }
+    }
+
+    fn run_web_search(
+        &self,
+        req: &ToolRequest,
+    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+        self.run_live_search(req, ToolName::WebSearch)
+    }
+
+    fn run_news_search(
+        &self,
+        req: &ToolRequest,
+    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+        self.run_live_search(req, ToolName::News)
+    }
+
+    fn run_live_search(
+        &self,
+        req: &ToolRequest,
+        kind: ToolName,
+    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+        let max_results = req.strict_budget.max_results.min(self.config.max_results);
+        if self.provider_config.brave_api_key.is_none()
+            && self.provider_config.openai_api_key.is_none()
+        {
+            return Err(reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG);
+        }
+
+        if let Some(brave_key) = self.provider_config.brave_api_key.as_deref() {
+            let url = if matches!(kind, ToolName::News) {
+                &self.provider_config.brave_news_url
+            } else {
+                &self.provider_config.brave_web_url
+            };
+            if let Ok((items, sources)) = run_brave_search(
+                url,
+                brave_key,
+                &req.query,
+                max_results,
+                req.strict_budget.timeout_ms,
+                &self.provider_config.user_agent,
+                matches!(kind, ToolName::News),
+                if matches!(kind, ToolName::News) {
+                    self.provider_config.brave_news_fixture_json.as_deref()
+                } else {
+                    self.provider_config.brave_web_fixture_json.as_deref()
+                },
+            ) {
+                return Ok((
+                    if matches!(kind, ToolName::News) {
+                        ToolResult::News { items }
+                    } else {
+                        ToolResult::WebSearch { items }
+                    },
+                    source_metadata_from_live(
+                        Some("ph1search_brave".to_string()),
+                        now_unix_ms(),
+                        sources,
+                    ),
+                ));
+            }
+        }
+
+        let openai_key = self
+            .provider_config
+            .openai_api_key
+            .as_deref()
+            .ok_or(reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
+        let (items, sources) = run_openai_search_fallback(
+            &self.provider_config.openai_responses_url,
+            openai_key,
+            &self.provider_config.openai_model,
+            &req.query,
+            max_results,
+            req.strict_budget.timeout_ms,
+            &self.provider_config.user_agent,
+            matches!(kind, ToolName::News),
+        )
+        .map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
+        Ok((
+            if matches!(kind, ToolName::News) {
+                ToolResult::News { items }
+            } else {
+                ToolResult::WebSearch { items }
+            },
+            source_metadata_from_live(
+                Some("ph1search_openai_fallback".to_string()),
+                now_unix_ms(),
+                sources,
+            ),
+        ))
+    }
+
+    fn run_url_fetch_and_cite(
+        &self,
+        req: &ToolRequest,
+    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+        let url = first_http_url_in_text(&req.query).ok_or(reason_codes::E_FAIL_QUERY_PARSE)?;
+        let (citations, sources) = run_url_fetch_citation(
+            &url,
+            req.strict_budget.max_results.min(self.config.max_results),
+            req.strict_budget.timeout_ms,
+            &self.provider_config.user_agent,
+            self.provider_config.url_fetch_fixture_html.as_deref(),
+        )
+        .map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
+        Ok((
+            ToolResult::UrlFetchAndCite { citations },
+            source_metadata_from_live(
+                Some("ph1search_url_fetch".to_string()),
+                now_unix_ms(),
+                sources,
+            ),
+        ))
+    }
+}
+
+trait ToolResultWithSource {
+    fn with_default_source_metadata(
+        self,
+        tool_name: &ToolName,
+        query: &str,
+        max_results: u8,
+    ) -> (ToolResult, SourceMetadata);
+}
+
+impl ToolResultWithSource for ToolResult {
+    fn with_default_source_metadata(
+        self,
+        tool_name: &ToolName,
+        query: &str,
+        max_results: u8,
+    ) -> (ToolResult, SourceMetadata) {
+        (
+            self,
+            SourceMetadata {
+                schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+                provider_hint: Some("ph1e_builtin".to_string()),
+                retrieved_at_unix_ms: now_unix_ms(),
+                sources: source_refs_for_tool(tool_name, query, max_results),
+            },
+        )
     }
 }
 
@@ -371,18 +594,18 @@ fn cache_status_for_request(req: &ToolRequest) -> CacheStatus {
 
 fn source_url_for_tool(tool_name: &ToolName) -> &'static str {
     match tool_name {
-        ToolName::Time => "https://example.com/time",
-        ToolName::Weather => "https://example.com/weather",
-        ToolName::WebSearch => "https://example.com/search",
-        ToolName::News => "https://example.com/news",
-        ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
-        ToolName::DocumentUnderstand => "https://example.com/document",
-        ToolName::PhotoUnderstand => "https://example.com/photo",
-        ToolName::DataAnalysis => "https://example.com/data-analysis",
-        ToolName::DeepResearch => "https://example.com/deep-research",
+        ToolName::Time => "https://worldtimeapi.org/",
+        ToolName::Weather => "https://api.open-meteo.com/",
+        ToolName::WebSearch => "https://search.brave.com/",
+        ToolName::News => "https://search.brave.com/news",
+        ToolName::UrlFetchAndCite => "https://www.iana.org/domains/reserved",
+        ToolName::DocumentUnderstand => "https://docs.selene.local/document-understand",
+        ToolName::PhotoUnderstand => "https://docs.selene.local/photo-understand",
+        ToolName::DataAnalysis => "https://docs.selene.local/data-analysis",
+        ToolName::DeepResearch => "https://docs.selene.local/deep-research",
         ToolName::RecordMode => "recording://session/demo/chunk_001",
-        ToolName::ConnectorQuery => "https://workspace.example.com/connectors",
-        ToolName::Other(_) => "https://example.com",
+        ToolName::ConnectorQuery => "https://workspace.selene.local/connectors",
+        ToolName::Other(_) => "https://docs.selene.local/tool",
     }
 }
 
@@ -397,7 +620,7 @@ fn source_refs_for_tool(tool_name: &ToolName, query: &str, max_results: u8) -> V
         if refs.is_empty() {
             refs.push(SourceRef {
                 title: "Connector source".to_string(),
-                url: "https://workspace.example.com/connectors".to_string(),
+                url: "https://workspace.selene.local/connectors".to_string(),
             });
         }
         return refs;
@@ -406,6 +629,389 @@ fn source_refs_for_tool(tool_name: &ToolName, query: &str, max_results: u8) -> V
         title: "Deterministic PH1.E source".to_string(),
         url: source_url_for_tool(tool_name).to_string(),
     }]
+}
+
+fn source_metadata_from_live(
+    provider_hint: Option<String>,
+    retrieved_at_unix_ms: u64,
+    sources: Vec<SourceRef>,
+) -> SourceMetadata {
+    SourceMetadata {
+        schema_version: selene_kernel_contracts::ph1e::PH1E_CONTRACT_VERSION,
+        provider_hint,
+        retrieved_at_unix_ms,
+        sources,
+    }
+}
+
+fn run_brave_search(
+    endpoint: &str,
+    api_key: &str,
+    query: &str,
+    max_results: u8,
+    timeout_ms: u32,
+    user_agent: &str,
+    is_news: bool,
+    fixture_json: Option<&str>,
+) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
+    let body: Value = if let Some(fixture) = fixture_json {
+        serde_json::from_str(fixture).map_err(|e| format!("brave fixture parse failed: {e}"))?
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent)?;
+        let response = agent
+            .get(endpoint)
+            .set("Accept", "application/json")
+            .set("X-Subscription-Token", api_key)
+            .query("q", query)
+            .query("count", &max_results.to_string())
+            .call()
+            .map_err(|e| format!("brave request failed: {e}"))?;
+        serde_json::from_reader(response.into_reader())
+            .map_err(|e| format!("brave response parse failed: {e}"))?
+    };
+    let items = extract_tool_snippets(&body, usize::from(max_results), is_news)
+        .ok_or_else(|| "brave response had no extractable items".to_string())?;
+    let sources = items_to_sources(&items);
+    Ok((items, sources))
+}
+
+fn run_openai_search_fallback(
+    endpoint: &str,
+    api_key: &str,
+    model: &str,
+    query: &str,
+    max_results: u8,
+    timeout_ms: u32,
+    user_agent: &str,
+    is_news: bool,
+) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
+    let prompt = if is_news {
+        format!(
+            "Return JSON with key 'results' as an array of objects (title,url,snippet) for the latest news query: {query}. Limit {max_results} results."
+        )
+    } else {
+        format!(
+            "Return JSON with key 'results' as an array of objects (title,url,snippet) for web search query: {query}. Limit {max_results} results."
+        )
+    };
+
+    let mut payload = serde_json::json!({
+        "model": model,
+        "input": prompt,
+        "temperature": 0,
+        "max_output_tokens": 800,
+        "tools": [{"type": "web_search"}],
+    });
+    let agent = build_http_agent(timeout_ms, user_agent)?;
+    let response = post_json(agent.clone(), endpoint, api_key, &payload).or_else(|_| {
+        // Fallback when the account/model does not support tool invocation.
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("tools");
+        }
+        post_json(agent, endpoint, api_key, &payload)
+    })?;
+
+    let items = extract_tool_snippets(&response, usize::from(max_results), false)
+        .or_else(|| extract_openai_results(&response, usize::from(max_results)))
+        .ok_or_else(|| "openai fallback produced no extractable results".to_string())?;
+    if items.is_empty() {
+        return Err("openai fallback returned empty results".to_string());
+    }
+    let sources = items_to_sources(&items);
+    Ok((items, sources))
+}
+
+fn post_json(
+    agent: ureq::Agent,
+    endpoint: &str,
+    api_key: &str,
+    payload: &Value,
+) -> Result<Value, String> {
+    let response = agent
+        .post(endpoint)
+        .set("Content-Type", "application/json")
+        .set("Authorization", &format!("Bearer {api_key}"))
+        .set("Accept", "application/json")
+        .send_json(payload.clone())
+        .map_err(|e| format!("openai request failed: {e}"))?;
+    serde_json::from_reader(response.into_reader())
+        .map_err(|e| format!("openai response parse failed: {e}"))
+}
+
+fn build_http_agent(timeout_ms: u32, user_agent: &str) -> Result<ureq::Agent, String> {
+    if timeout_ms == 0 {
+        return Err("timeout must be > 0".to_string());
+    }
+    let timeout = Duration::from_millis(u64::from(timeout_ms).max(100));
+    Ok(ureq::AgentBuilder::new()
+        .timeout_connect(timeout)
+        .timeout_read(timeout)
+        .timeout_write(timeout)
+        .user_agent(user_agent)
+        .build())
+}
+
+fn extract_tool_snippets(
+    root: &Value,
+    max_results: usize,
+    is_news: bool,
+) -> Option<Vec<ToolTextSnippet>> {
+    let mut candidates: Vec<&Value> = Vec::new();
+    if is_news {
+        if let Some(v) = root.pointer("/results").and_then(Value::as_array) {
+            candidates.extend(v.iter());
+        }
+        if let Some(v) = root.pointer("/news/results").and_then(Value::as_array) {
+            candidates.extend(v.iter());
+        }
+    } else {
+        if let Some(v) = root.pointer("/web/results").and_then(Value::as_array) {
+            candidates.extend(v.iter());
+        }
+        if let Some(v) = root.pointer("/results").and_then(Value::as_array) {
+            candidates.extend(v.iter());
+        }
+        if let Some(v) = root.pointer("/output").and_then(Value::as_array) {
+            candidates.extend(v.iter());
+        }
+    }
+
+    let mut out: Vec<ToolTextSnippet> = Vec::new();
+    for item in candidates {
+        if out.len() >= max_results {
+            break;
+        }
+        if let Some(snippet) = value_to_tool_text_snippet(item) {
+            out.push(snippet);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn extract_openai_results(root: &Value, max_results: usize) -> Option<Vec<ToolTextSnippet>> {
+    if let Some(v) = root.get("results").and_then(Value::as_array) {
+        let mut out = Vec::new();
+        for item in v {
+            if out.len() >= max_results {
+                break;
+            }
+            if let Some(snippet) = value_to_tool_text_snippet(item) {
+                out.push(snippet);
+            }
+        }
+        if !out.is_empty() {
+            return Some(out);
+        }
+    }
+
+    let output_text = root
+        .get("output_text")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            root.pointer("/output/0/content/0/text")
+                .and_then(Value::as_str)
+        })?;
+    let json_candidate = output_text
+        .split_once('{')
+        .map(|(_, rest)| format!("{{{rest}"))
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())?;
+    extract_openai_results(&json_candidate, max_results)
+}
+
+fn value_to_tool_text_snippet(value: &Value) -> Option<ToolTextSnippet> {
+    let url = value
+        .get("url")
+        .or_else(|| value.get("link"))
+        .and_then(Value::as_str)?
+        .trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return None;
+    }
+
+    let title = value
+        .get("title")
+        .or_else(|| value.get("name"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Result");
+
+    let snippet = value
+        .get("description")
+        .or_else(|| value.get("snippet"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("No snippet available");
+
+    Some(ToolTextSnippet {
+        title: truncate_ascii(title, 256),
+        snippet: truncate_ascii(snippet, 2048),
+        url: truncate_ascii(url, 2048),
+    })
+}
+
+fn run_url_fetch_citation(
+    url: &str,
+    max_results: u8,
+    timeout_ms: u32,
+    user_agent: &str,
+    fixture_html: Option<&str>,
+) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
+    let body_text = if let Some(fixture) = fixture_html {
+        fixture.to_string()
+    } else {
+        let agent = build_http_agent(timeout_ms, user_agent)?;
+        let response = agent
+            .get(url)
+            .set("Accept", "text/html,text/plain;q=0.9,*/*;q=0.1")
+            .call()
+            .map_err(|e| format!("url fetch failed: {e}"))?;
+        let mut reader = response.into_reader().take(256 * 1024);
+        let mut body = Vec::new();
+        reader
+            .read_to_end(&mut body)
+            .map_err(|e| format!("failed to read fetched response: {e}"))?;
+        String::from_utf8_lossy(&body).to_string()
+    };
+    let normalized = normalize_text_for_citation(&body_text);
+    if normalized.is_empty() {
+        return Err("fetched page had no extractable text".to_string());
+    }
+
+    let chunks = split_text_chunks(&normalized, 450, usize::from(max_results).max(1));
+    let mut citations = Vec::new();
+    let mut sources = Vec::new();
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        let hash = stable_content_hash_hex(&chunk);
+        let suffix = &hash[..12];
+        let chunk_url = format!("{url}#chunk-{:02}-{suffix}", idx + 1);
+        citations.push(ToolTextSnippet {
+            title: format!("Citation chunk {}", idx + 1),
+            snippet: truncate_ascii(&format!("{chunk} [content_hash:{hash}]"), 2048),
+            url: chunk_url.clone(),
+        });
+        sources.push(SourceRef {
+            title: truncate_ascii(
+                &format!("URL citation chunk {} (hash:{})", idx + 1, &hash[..16]),
+                256,
+            ),
+            url: chunk_url,
+        });
+    }
+    if citations.is_empty() {
+        return Err("no citations were generated".to_string());
+    }
+    Ok((citations, sources))
+}
+
+fn first_http_url_in_text(input: &str) -> Option<String> {
+    for token in input.split_whitespace() {
+        let candidate = token.trim_matches(|c: char| {
+            c == '"'
+                || c == '\''
+                || c == '('
+                || c == ')'
+                || c == '['
+                || c == ']'
+                || c == '{'
+                || c == '}'
+                || c == '<'
+                || c == '>'
+                || c == ','
+                || c == ';'
+        });
+        if candidate.starts_with("https://") || candidate.starts_with("http://") {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn normalize_text_for_citation(input: &str) -> String {
+    let stripped = strip_html_tags(input);
+    collapse_ws(stripped.trim())
+}
+
+fn strip_html_tags(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_tag = false;
+    for ch in input.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                out.push(' ');
+            }
+            '>' => {
+                in_tag = false;
+            }
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn split_text_chunks(input: &str, chunk_size_chars: usize, max_chunks: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut current_chars = 0usize;
+    for ch in input.chars() {
+        current.push(ch);
+        current_chars += 1;
+        if current_chars >= chunk_size_chars {
+            let compact = collapse_ws(current.trim());
+            if !compact.is_empty() {
+                out.push(compact);
+            }
+            if out.len() >= max_chunks {
+                return out;
+            }
+            current.clear();
+            current_chars = 0;
+        }
+    }
+    if !current.trim().is_empty() && out.len() < max_chunks {
+        out.push(collapse_ws(current.trim()));
+    }
+    out
+}
+
+fn items_to_sources(items: &[ToolTextSnippet]) -> Vec<SourceRef> {
+    items
+        .iter()
+        .map(|item| SourceRef {
+            title: truncate_ascii(&item.title, 256),
+            url: item.url.clone(),
+        })
+        .collect()
+}
+
+fn stable_content_hash_hex(input: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    input.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn trim_non_empty(raw: String) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn connector_scope_for_query(query: &str) -> (Vec<&'static str>, bool) {
@@ -446,39 +1052,39 @@ fn connector_source_ref(connector: &'static str) -> SourceRef {
     match connector {
         "gmail" => SourceRef {
             title: "Connector source: Gmail".to_string(),
-            url: "https://workspace.example.com/gmail".to_string(),
+            url: "https://workspace.selene.local/gmail".to_string(),
         },
         "outlook" => SourceRef {
             title: "Connector source: Outlook".to_string(),
-            url: "https://workspace.example.com/outlook".to_string(),
+            url: "https://workspace.selene.local/outlook".to_string(),
         },
         "calendar" => SourceRef {
             title: "Connector source: Calendar".to_string(),
-            url: "https://workspace.example.com/calendar".to_string(),
+            url: "https://workspace.selene.local/calendar".to_string(),
         },
         "drive" => SourceRef {
             title: "Connector source: Drive".to_string(),
-            url: "https://workspace.example.com/drive".to_string(),
+            url: "https://workspace.selene.local/drive".to_string(),
         },
         "dropbox" => SourceRef {
             title: "Connector source: Dropbox".to_string(),
-            url: "https://workspace.example.com/dropbox".to_string(),
+            url: "https://workspace.selene.local/dropbox".to_string(),
         },
         "slack" => SourceRef {
             title: "Connector source: Slack".to_string(),
-            url: "https://workspace.example.com/slack".to_string(),
+            url: "https://workspace.selene.local/slack".to_string(),
         },
         "notion" => SourceRef {
             title: "Connector source: Notion".to_string(),
-            url: "https://workspace.example.com/notion".to_string(),
+            url: "https://workspace.selene.local/notion".to_string(),
         },
         "onedrive" => SourceRef {
             title: "Connector source: OneDrive".to_string(),
-            url: "https://workspace.example.com/onedrive".to_string(),
+            url: "https://workspace.selene.local/onedrive".to_string(),
         },
         _ => SourceRef {
             title: "Connector source".to_string(),
-            url: "https://workspace.example.com/connectors".to_string(),
+            url: "https://workspace.selene.local/connectors".to_string(),
         },
     }
 }
@@ -489,13 +1095,13 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
         "gmail" => ToolTextSnippet {
             title: "Gmail thread result".to_string(),
             snippet: format!("Gmail match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/gmail/thread_{:03}", idx + 1),
+            url: format!("https://workspace.selene.local/gmail/thread_{:03}", idx + 1),
         },
         "outlook" => ToolTextSnippet {
             title: "Outlook message result".to_string(),
             snippet: format!("Outlook match for '{compact_query}'"),
             url: format!(
-                "https://workspace.example.com/outlook/message_{:03}",
+                "https://workspace.selene.local/outlook/message_{:03}",
                 idx + 1
             ),
         },
@@ -503,40 +1109,46 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
             title: "Calendar event result".to_string(),
             snippet: format!("Calendar match for '{compact_query}'"),
             url: format!(
-                "https://workspace.example.com/calendar/event_{:03}",
+                "https://workspace.selene.local/calendar/event_{:03}",
                 idx + 1
             ),
         },
         "drive" => ToolTextSnippet {
             title: "Drive doc result".to_string(),
             snippet: format!("Drive match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/drive/doc_{:03}", idx + 1),
+            url: format!("https://workspace.selene.local/drive/doc_{:03}", idx + 1),
         },
         "dropbox" => ToolTextSnippet {
             title: "Dropbox file result".to_string(),
             snippet: format!("Dropbox match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/dropbox/file_{:03}", idx + 1),
+            url: format!("https://workspace.selene.local/dropbox/file_{:03}", idx + 1),
         },
         "slack" => ToolTextSnippet {
             title: "Slack message result".to_string(),
             snippet: format!("Slack match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/slack/message_{:03}", idx + 1),
+            url: format!(
+                "https://workspace.selene.local/slack/message_{:03}",
+                idx + 1
+            ),
         },
         "notion" => ToolTextSnippet {
             title: "Notion page result".to_string(),
             snippet: format!("Notion match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/notion/page_{:03}", idx + 1),
+            url: format!("https://workspace.selene.local/notion/page_{:03}", idx + 1),
         },
         "onedrive" => ToolTextSnippet {
             title: "OneDrive file result".to_string(),
             snippet: format!("OneDrive match for '{compact_query}'"),
-            url: format!("https://workspace.example.com/onedrive/file_{:03}", idx + 1),
+            url: format!(
+                "https://workspace.selene.local/onedrive/file_{:03}",
+                idx + 1
+            ),
         },
         _ => ToolTextSnippet {
             title: "Connector result".to_string(),
             snippet: format!("Connector match for '{compact_query}'"),
             url: format!(
-                "https://workspace.example.com/connectors/item_{:03}",
+                "https://workspace.selene.local/connectors/item_{:03}",
                 idx + 1
             ),
         },
@@ -545,6 +1157,23 @@ fn connector_citation(connector: &'static str, query: &str, idx: usize) -> ToolT
 
 fn truncate_ascii(input: &str, max_len: usize) -> String {
     input.chars().take(max_len).collect()
+}
+
+fn collapse_ws(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut prev_space = false;
+    for ch in input.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
 }
 
 fn fail_response(req: &ToolRequest, code: ReasonCodeId, cache_status: CacheStatus) -> ToolResponse {
@@ -586,6 +1215,52 @@ mod tests {
             ),
         )
         .unwrap()
+    }
+
+    #[derive(Debug, Clone)]
+    struct TestHttpFixture {
+        base_url: String,
+        brave_web_url: String,
+        brave_news_url: String,
+        brave_web_fixture_json: String,
+        brave_news_fixture_json: String,
+        url_fetch_fixture_html: String,
+    }
+
+    fn spawn_test_http_fixture() -> TestHttpFixture {
+        let base = "https://docs.selene.ai".to_string();
+        TestHttpFixture {
+            base_url: base.clone(),
+            brave_web_url: format!("{base}/res/v1/web/search"),
+            brave_news_url: format!("{base}/res/v1/news/search"),
+            brave_web_fixture_json:
+                r#"{"web":{"results":[{"title":"Selene web result","url":"https://docs.selene.ai/search/1","description":"Provider-backed web snippet"}]}}"#
+                    .to_string(),
+            brave_news_fixture_json:
+                r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/item/1","description":"Provider-backed news snippet"}]}"#
+                    .to_string(),
+            url_fetch_fixture_html:
+                "<html><body><h1>Selene spec</h1><p>This page proves URL fetch and citation chunking behavior with deterministic evidence text.</p></body></html>"
+                    .to_string(),
+        }
+    }
+
+    fn runtime_with_live_fixture(fixture: &TestHttpFixture) -> Ph1eRuntime {
+        Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_api_key: Some("fixture_brave_key".to_string()),
+                brave_web_url: fixture.brave_web_url.clone(),
+                brave_news_url: fixture.brave_news_url.clone(),
+                brave_web_fixture_json: Some(fixture.brave_web_fixture_json.clone()),
+                brave_news_fixture_json: Some(fixture.brave_news_fixture_json.clone()),
+                openai_api_key: None,
+                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                openai_model: "gpt-4o-mini".to_string(),
+                user_agent: "selene-ph1e-test/1.0".to_string(),
+                url_fetch_fixture_html: Some(fixture.url_fetch_fixture_html.clone()),
+            },
+        )
     }
 
     #[test]
@@ -649,10 +1324,12 @@ mod tests {
 
     #[test]
     fn at_e_06_url_fetch_and_cite_returns_citations_with_provenance() {
-        let rt = Ph1eRuntime::new(Ph1eConfig::mvp_v1());
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let page_url = format!("{}/page", fixture.base_url);
         let out = rt.run(&req(
             ToolName::UrlFetchAndCite,
-            "open this URL and cite it: https://example.com/spec",
+            &format!("open this URL and cite it: {page_url}"),
             false,
             false,
         ));
@@ -670,7 +1347,9 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("example.com"));
+        assert!(meta.sources[0].url.contains("#chunk-"));
+        assert!(!meta.sources[0].url.contains("example.com"));
+        assert_eq!(meta.provider_hint.as_deref(), Some("ph1search_url_fetch"));
     }
 
     #[test]
@@ -704,7 +1383,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.com"));
     }
 
     #[test]
@@ -738,7 +1417,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.com"));
     }
 
     #[test]
@@ -772,7 +1451,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.com"));
     }
 
     #[test]
@@ -806,7 +1485,7 @@ mod tests {
             .as_ref()
             .expect("source metadata required");
         assert!(!meta.sources.is_empty());
-        assert!(meta.sources[0].url.contains("example.com"));
+        assert!(!meta.sources[0].url.contains("example.com"));
     }
 
     #[test]
@@ -979,5 +1658,76 @@ mod tests {
         ));
         assert_eq!(out.tool_status, ToolStatus::Fail);
         assert_eq!(out.reason_code, reason_codes::E_FAIL_POLICY_BLOCK);
+    }
+
+    #[test]
+    fn at_e_16_web_search_fails_closed_when_provider_keys_missing() {
+        let rt = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_api_key: None,
+                brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                brave_web_fixture_json: None,
+                brave_news_fixture_json: None,
+                openai_api_key: None,
+                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                openai_model: "gpt-4o-mini".to_string(),
+                user_agent: "selene-ph1e-test/1.0".to_string(),
+                url_fetch_fixture_html: None,
+            },
+        );
+        let out = rt.run(&req(
+            ToolName::WebSearch,
+            "search the web for selene release notes",
+            false,
+            false,
+        ));
+        assert_eq!(out.tool_status, ToolStatus::Fail);
+        assert_eq!(
+            out.reason_code,
+            reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
+        );
+    }
+
+    #[test]
+    fn at_e_17_live_web_and_news_search_do_not_emit_mock_urls() {
+        let fixture = spawn_test_http_fixture();
+        let rt = runtime_with_live_fixture(&fixture);
+        let web = rt.run(&req(
+            ToolName::WebSearch,
+            "search the web for selene test fixture",
+            false,
+            false,
+        ));
+        assert_eq!(web.tool_status, ToolStatus::Ok);
+        if let ToolResult::WebSearch { items } = web
+            .tool_result
+            .as_ref()
+            .expect("tool result required for web search")
+        {
+            assert!(!items.is_empty());
+            assert!(!items[0].url.contains("example.com"));
+        } else {
+            panic!("expected web search tool result");
+        }
+
+        let news = rt.run(&req(
+            ToolName::News,
+            "latest selene project updates",
+            false,
+            false,
+        ));
+        assert_eq!(news.tool_status, ToolStatus::Ok);
+        if let ToolResult::News { items } = news
+            .tool_result
+            .as_ref()
+            .expect("tool result required for news search")
+        {
+            assert!(!items.is_empty());
+            assert!(!items[0].url.contains("example.com"));
+        } else {
+            panic!("expected news tool result");
+        }
     }
 }

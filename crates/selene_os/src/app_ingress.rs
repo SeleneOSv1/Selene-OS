@@ -39,7 +39,9 @@ use selene_kernel_contracts::ph1emoguide::{
     EmoGuideInteractionSignals, EmoGuideProfileBuildRequest, EmoGuideProfileValidateRequest,
     EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
 };
-use selene_kernel_contracts::ph1j::{AuditEngine, AuditEventId, CorrelationId, DeviceId, PayloadKey, TurnId};
+use selene_kernel_contracts::ph1j::{
+    AuditEngine, AuditEventId, CorrelationId, DeviceId, PayloadKey, TurnId,
+};
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
@@ -2105,132 +2107,135 @@ impl AppServerIngressRuntime {
         *self.last_finder_terminal_packet.borrow_mut() = finder_terminal.clone();
         let mut dev_intake_audit_event_id: Option<AuditEventId> = None;
 
-        let mut out =
-            if let Some(terminal) = finder_terminal.clone() {
-                match terminal {
-                    FinderTerminalPacket::SimulationMatch(packet) => {
-                        let nlp_output = ph1x_request.nlp_output.as_ref().ok_or(
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1x_request.nlp_output",
-                                reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
-                            }),
-                        )?;
-                        let Ph1nResponse::IntentDraft(intent_draft) = nlp_output else {
-                            return Err(StorageError::ContractViolation(
+        let mut out = if let Some(terminal) = finder_terminal.clone() {
+            match terminal {
+                FinderTerminalPacket::SimulationMatch(packet) => {
+                    let nlp_output =
+                        ph1x_request
+                            .nlp_output
+                            .as_ref()
+                            .ok_or(StorageError::ContractViolation(
                                 ContractViolation::InvalidValue {
                                     field: "ph1x_request.nlp_output",
                                     reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
                                 },
-                            ));
-                        };
-                        let intent_simulation_id =
-                            simulation_id_for_intent_draft_v1(intent_draft)?.to_string();
-                        if intent_simulation_id != packet.simulation_id {
-                            return Err(StorageError::ContractViolation(
-                                ContractViolation::InvalidValue {
-                                    field: "ph1x_request.nlp_output.intent_draft.intent_type",
-                                    reason: "FINDER_MATCH_EXECUTION_MISMATCH",
-                                },
-                            ));
-                        }
-                        self.run_ph1x_and_dispatch_with_access_fail_closed(
-                            store,
-                            voice_outcome,
-                            ph1x_request,
-                            &actor_user_id,
-                            actor_device_id.as_ref(),
-                            actor_tenant_id.as_deref(),
-                            request_session_id,
-                            dispatch_now,
-                        )?
+                            ))?;
+                    let Ph1nResponse::IntentDraft(intent_draft) = nlp_output else {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1x_request.nlp_output",
+                                reason: "FINDER_MATCH_REQUIRES_INTENT_DRAFT",
+                            },
+                        ));
+                    };
+                    let intent_simulation_id =
+                        simulation_id_for_intent_draft_v1(intent_draft)?.to_string();
+                    if intent_simulation_id != packet.simulation_id {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1x_request.nlp_output.intent_draft.intent_type",
+                                reason: "FINDER_MATCH_EXECUTION_MISMATCH",
+                            },
+                        ));
                     }
-                    FinderTerminalPacket::Clarify(packet) => AppVoiceTurnExecutionOutcome {
+                    self.run_ph1x_and_dispatch_with_access_fail_closed(
+                        store,
                         voice_outcome,
-                        next_move: AppVoiceTurnNextMove::Clarify,
-                        ph1x_request: Some(ph1x_request),
-                        ph1x_response: None,
-                        dispatch_outcome: None,
-                        tool_response: None,
-                        response_text: Some(packet.question),
-                        reason_code: Some(packet.reason_code),
-                    },
-                    FinderTerminalPacket::Refuse(packet) => AppVoiceTurnExecutionOutcome {
+                        ph1x_request,
+                        &actor_user_id,
+                        actor_device_id.as_ref(),
+                        actor_tenant_id.as_deref(),
+                        request_session_id,
+                        dispatch_now,
+                    )?
+                }
+                FinderTerminalPacket::Clarify(packet) => AppVoiceTurnExecutionOutcome {
+                    voice_outcome,
+                    next_move: AppVoiceTurnNextMove::Clarify,
+                    ph1x_request: Some(ph1x_request),
+                    ph1x_response: None,
+                    dispatch_outcome: None,
+                    tool_response: None,
+                    response_text: Some(packet.question),
+                    reason_code: Some(packet.reason_code),
+                },
+                FinderTerminalPacket::Refuse(packet) => AppVoiceTurnExecutionOutcome {
+                    voice_outcome,
+                    next_move: AppVoiceTurnNextMove::Refused,
+                    ph1x_request: Some(ph1x_request),
+                    ph1x_response: None,
+                    dispatch_outcome: None,
+                    tool_response: None,
+                    response_text: Some(packet.message),
+                    reason_code: Some(packet.reason_code),
+                },
+                FinderTerminalPacket::MissingSimulation(packet) => {
+                    let tenant_id = normalized_tenant_scope_for_dev_intake(
+                        store,
+                        &actor_user_id,
+                        actor_tenant_id.as_deref(),
+                    )?;
+                    let idempotency_key = format!(
+                        "{}:{}:{}",
+                        packet.idempotency_key, packet.tenant_id, packet.user_id
+                    );
+                    let dev_intake_event_id = store.ph1simfinder_dev_intake_commit(
+                        dispatch_now,
+                        tenant_id,
+                        correlation_id,
+                        turn_id,
+                        request_session_id,
+                        actor_user_id.clone(),
+                        actor_device_id.clone(),
+                        packet.requested_capability_name_normalized.clone(),
+                        packet.proposed_simulation_family.clone(),
+                        packet.no_match_proof_ref.clone(),
+                        packet.dedupe_fingerprint.clone(),
+                        packet.worthiness_score_bp,
+                        packet.reason_code,
+                        idempotency_key,
+                    )?;
+                    dev_intake_audit_event_id = Some(dev_intake_event_id);
+                    if let Some(actor_device_id) = actor_device_id.as_ref() {
+                        let _ = store.ph1x_respond_commit(
+                            dispatch_now,
+                            packet.tenant_id.clone(),
+                            correlation_id,
+                            turn_id,
+                            None,
+                            actor_user_id.clone(),
+                            actor_device_id.clone(),
+                            "MISSING_SIMULATION_NOTIFY_SUBMITTED".to_string(),
+                            packet.reason_code,
+                            format!("ph1x_missing_sim_notify:{}:{}", correlation_id.0, turn_id.0),
+                        )?;
+                    }
+                    AppVoiceTurnExecutionOutcome {
                         voice_outcome,
                         next_move: AppVoiceTurnNextMove::Refused,
                         ph1x_request: Some(ph1x_request),
                         ph1x_response: None,
                         dispatch_outcome: None,
                         tool_response: None,
-                        response_text: Some(packet.message),
+                        response_text: Some(
+                            "I can't do that yet; I've submitted it for review.".to_string(),
+                        ),
                         reason_code: Some(packet.reason_code),
-                    },
-                    FinderTerminalPacket::MissingSimulation(packet) => {
-                        let tenant_id = normalized_tenant_scope_for_dev_intake(
-                            store,
-                            &actor_user_id,
-                            actor_tenant_id.as_deref(),
-                        )?;
-                        let idempotency_key = format!(
-                            "{}:{}:{}",
-                            packet.idempotency_key, packet.tenant_id, packet.user_id
-                        );
-                        let dev_intake_event_id = store.ph1simfinder_dev_intake_commit(
-                            dispatch_now,
-                            tenant_id,
-                            correlation_id,
-                            turn_id,
-                            request_session_id,
-                            actor_user_id.clone(),
-                            actor_device_id.clone(),
-                            packet.requested_capability_name_normalized.clone(),
-                            packet.proposed_simulation_family.clone(),
-                            packet.no_match_proof_ref.clone(),
-                            packet.dedupe_fingerprint.clone(),
-                            packet.worthiness_score_bp,
-                            packet.reason_code,
-                            idempotency_key,
-                        )?;
-                        dev_intake_audit_event_id = Some(dev_intake_event_id);
-                        if let Some(actor_device_id) = actor_device_id.as_ref() {
-                            let _ = store.ph1x_respond_commit(
-                                dispatch_now,
-                                packet.tenant_id.clone(),
-                                correlation_id,
-                                turn_id,
-                                None,
-                                actor_user_id.clone(),
-                                actor_device_id.clone(),
-                                "MISSING_SIMULATION_NOTIFY_SUBMITTED".to_string(),
-                                packet.reason_code,
-                                format!("ph1x_missing_sim_notify:{}:{}", correlation_id.0, turn_id.0),
-                            )?;
-                        }
-                        AppVoiceTurnExecutionOutcome {
-                            voice_outcome,
-                            next_move: AppVoiceTurnNextMove::Refused,
-                            ph1x_request: Some(ph1x_request),
-                            ph1x_response: None,
-                            dispatch_outcome: None,
-                            tool_response: None,
-                            response_text: Some(
-                                "I can't do that yet; I've submitted it for review.".to_string(),
-                            ),
-                            reason_code: Some(packet.reason_code),
-                        }
                     }
                 }
-            } else {
-                self.run_ph1x_and_dispatch_with_access_fail_closed(
-                    store,
-                    voice_outcome,
-                    ph1x_request,
-                    &actor_user_id,
-                    actor_device_id.as_ref(),
-                    actor_tenant_id.as_deref(),
-                    request_session_id,
-                    dispatch_now,
-                )?
-            };
+            }
+        } else {
+            self.run_ph1x_and_dispatch_with_access_fail_closed(
+                store,
+                voice_outcome,
+                ph1x_request,
+                &actor_user_id,
+                actor_device_id.as_ref(),
+                actor_tenant_id.as_deref(),
+                request_session_id,
+                dispatch_now,
+            )?
+        };
 
         if let Some(terminal) = finder_terminal.as_ref() {
             self.record_agent_execution_terminal_packet(
@@ -2317,7 +2322,8 @@ impl AppServerIngressRuntime {
         out: &AppVoiceTurnExecutionOutcome,
         dev_intake_audit_event_id: Option<AuditEventId>,
     ) -> Result<(), StorageError> {
-        let tenant_id = normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
+        let tenant_id =
+            normalized_tenant_scope_for_dev_intake(store, actor_user_id, actor_tenant_id)?;
         let thread_key = agent_input_packet
             .and_then(|packet| packet.thread_key.clone())
             .unwrap_or_else(|| format!("corr:{}:turn:{}", correlation_id.0, turn_id.0));
@@ -2330,40 +2336,33 @@ impl AppServerIngressRuntime {
             FinderTerminalPacket::Clarify(packet) => {
                 ("CLARIFY".to_string(), None, packet.reason_code)
             }
-            FinderTerminalPacket::Refuse(packet) => ("REFUSE".to_string(), None, packet.reason_code),
+            FinderTerminalPacket::Refuse(packet) => {
+                ("REFUSE".to_string(), None, packet.reason_code)
+            }
             FinderTerminalPacket::MissingSimulation(packet) => {
                 ("MISSING_SIMULATION".to_string(), None, packet.reason_code)
             }
         };
         let execution_stage = agent_execution_stage_token_for_terminal(terminal, out.next_move);
         let reason_code = out.reason_code.unwrap_or(fallback_reason_code);
-        let (access_decision, confirm_decision, active_simulation_proof_ref, simulation_idempotency_key) =
-            match terminal {
-                FinderTerminalPacket::SimulationMatch(packet) => (
-                    access_decision_for_match_outcome(out),
-                    confirm_decision_for_match_outcome(packet.confirm_required, out.next_move),
-                    Some(packet.active_check_proof_ref.clone()),
-                    Some(packet.idempotency_key.clone()),
-                ),
-                FinderTerminalPacket::Clarify(_) => (
-                    "N_A".to_string(),
-                    "N_A".to_string(),
-                    None,
-                    None,
-                ),
-                FinderTerminalPacket::Refuse(_) => (
-                    "N_A".to_string(),
-                    "N_A".to_string(),
-                    None,
-                    None,
-                ),
-                FinderTerminalPacket::MissingSimulation(_) => (
-                    "N_A".to_string(),
-                    "N_A".to_string(),
-                    None,
-                    None,
-                ),
-            };
+        let (
+            access_decision,
+            confirm_decision,
+            active_simulation_proof_ref,
+            simulation_idempotency_key,
+        ) = match terminal {
+            FinderTerminalPacket::SimulationMatch(packet) => (
+                access_decision_for_match_outcome(out),
+                confirm_decision_for_match_outcome(packet.confirm_required, out.next_move),
+                Some(packet.active_check_proof_ref.clone()),
+                Some(packet.idempotency_key.clone()),
+            ),
+            FinderTerminalPacket::Clarify(_) => ("N_A".to_string(), "N_A".to_string(), None, None),
+            FinderTerminalPacket::Refuse(_) => ("N_A".to_string(), "N_A".to_string(), None, None),
+            FinderTerminalPacket::MissingSimulation(_) => {
+                ("N_A".to_string(), "N_A".to_string(), None, None)
+            }
+        };
         let dispatch_outcome_proof_ref = out
             .dispatch_outcome
             .as_ref()
@@ -2543,8 +2542,8 @@ impl AppServerIngressRuntime {
                         actor_user_id,
                         actor_tenant_id,
                     )?;
-                    let audit_session_id =
-                        request_session_id.filter(|session_id| store.get_session(session_id).is_some());
+                    let audit_session_id = request_session_id
+                        .filter(|session_id| store.get_session(session_id).is_some());
                     let _ = store.ph1x_respond_commit(
                         dispatch_now,
                         tenant_id,
@@ -2787,7 +2786,8 @@ struct AccessFailClosedBehavior {
 }
 
 fn classify_access_fail_closed_error(err: &StorageError) -> Option<AccessFailClosedBehavior> {
-    let StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) = err else {
+    let StorageError::ContractViolation(ContractViolation::InvalidValue { reason, .. }) = err
+    else {
         return None;
     };
     match *reason {
@@ -4045,6 +4045,7 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 mod tests {
     use super::*;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
+    use selene_engines::ph1e::Ph1eProviderConfig;
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerLabel,
     };
@@ -4448,6 +4449,35 @@ mod tests {
             )
             .unwrap(),
         )
+    }
+
+    fn runtime_with_search_tool_fixtures() -> AppServerIngressRuntime {
+        let mut runtime = AppServerIngressRuntime::default();
+        runtime.ph1e_runtime = Ph1eRuntime::new_with_provider_config(
+            Ph1eConfig::mvp_v1(),
+            Ph1eProviderConfig {
+                brave_api_key: Some("fixture_brave_key".to_string()),
+                brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
+                brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
+                brave_web_fixture_json: Some(
+                    r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
+                        .to_string(),
+                ),
+                brave_news_fixture_json: Some(
+                    r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
+                        .to_string(),
+                ),
+                openai_api_key: None,
+                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                openai_model: "gpt-4o-mini".to_string(),
+                user_agent: "selene-os-app-ingress-test/1.0".to_string(),
+                url_fetch_fixture_html: Some(
+                    "<html><body><h1>Selene URL source</h1><p>This is a deterministic fixture page for URL fetch and citation chunking with provenance metadata.</p></body></html>"
+                        .to_string(),
+                ),
+            },
+        );
+        runtime
     }
 
     fn document_understand_draft(query: &str) -> Ph1nResponse {
@@ -6712,7 +6742,7 @@ mod tests {
 
     #[test]
     fn run_a_desktop_voice_turn_end_to_end_dispatches_web_search_and_returns_provenance() {
-        let runtime = AppServerIngressRuntime::default();
+        let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:runa_websearch_user").unwrap();
         let device_id = DeviceId::new("runa_websearch_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
@@ -6752,7 +6782,8 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://example.com/search-result"));
+        assert!(response_text.contains("https://search.selene.ai/result-1"));
+        assert!(!response_text.contains("example.com"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6765,7 +6796,7 @@ mod tests {
 
     #[test]
     fn run_a2_ios_voice_turn_end_to_end_dispatches_web_search_and_returns_provenance() {
-        let runtime = AppServerIngressRuntime::default();
+        let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:runa2_ios_websearch_user").unwrap();
         let device_id = DeviceId::new("runa2_ios_websearch_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
@@ -6805,7 +6836,8 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://example.com/search-result"));
+        assert!(response_text.contains("https://search.selene.ai/result-1"));
+        assert!(!response_text.contains("example.com"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6818,7 +6850,7 @@ mod tests {
 
     #[test]
     fn run_b_desktop_voice_turn_end_to_end_dispatches_news_and_returns_provenance() {
-        let runtime = AppServerIngressRuntime::default();
+        let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:runb_news_user").unwrap();
         let device_id = DeviceId::new("runb_news_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
@@ -6858,7 +6890,8 @@ mod tests {
             .unwrap();
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
-        assert!(response_text.contains("https://example.com/news"));
+        assert!(response_text.contains("https://news.selene.ai/story-1"));
+        assert!(!response_text.contains("example.com"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
@@ -6871,7 +6904,7 @@ mod tests {
 
     #[test]
     fn run_c_desktop_voice_turn_end_to_end_dispatches_url_fetch_and_cite_and_returns_provenance() {
-        let runtime = AppServerIngressRuntime::default();
+        let runtime = runtime_with_search_tool_fixtures();
         let actor_user_id = UserId::new("tenant_1:runc_urlfetch_user").unwrap();
         let device_id = DeviceId::new("runc_urlfetch_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
@@ -6900,7 +6933,7 @@ mod tests {
             memory_candidates: vec![],
             confirm_answer: None,
             nlp_output: Some(url_fetch_and_cite_draft(
-                "open this URL and cite it: https://example.com/spec",
+                "open this URL and cite it: https://docs.selene.ai/spec",
             )),
             tool_response: None,
             interruption: None,
@@ -6914,7 +6947,8 @@ mod tests {
         assert_eq!(out.next_move, AppVoiceTurnNextMove::Respond);
         let response_text = out.response_text.expect("respond output must include text");
         assert!(response_text.contains("Citations:"));
-        assert!(response_text.contains("https://example.com"));
+        assert!(response_text.contains("https://docs.selene.ai/spec#chunk-"));
+        assert!(!response_text.contains("example.com"));
         assert!(response_text.contains("Retrieved at (unix_ms):"));
         assert!(out.dispatch_outcome.is_none());
         assert!(matches!(
