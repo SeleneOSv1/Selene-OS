@@ -109,14 +109,20 @@ Rules:
 - No citation invention
 - If insufficient evidence, explicitly state it
 - If conflicting evidence, flag the conflict
+- PH1.D must perform deterministic clarity cleanup (grammar/coherence/conciseness) while preserving evidence meaning.
+- PH1.D may improve wording clarity, but must not introduce new facts, entities, dates, amounts, or claims.
 
 ## 4.1 PH1.WRITE Structured Output Rules
+
+PH1.WRITE is mandatory for final user-facing text rendering in this plan; raw PH1.D synthesis text is not returned directly.
+Text and voice must share one canonical `formatted_text` output from PH1.WRITE. If voice is enabled, PH1.TTS speaks this same `formatted_text` (no separate semantic rewrite path).
 
 For text output, PH1.WRITE must format responses with:
 
 - Clear headings
 - Bullet points
 - Explicit citations
+- Professional writing quality (clear grammar, concise structure, deterministic ordering)
 
 Example format:
 
@@ -136,6 +142,7 @@ For voice output:
 - Natural pause between sections
 - Same logical structure as text
 - No filler language, no speculation, no invented claims
+- Speak from PH1.WRITE `formatted_text` with clear pacing and pronunciation-safe delivery
 
 ## 5) Determinism and Safety
 
@@ -268,7 +275,7 @@ PH1.D outputs (structured):
 PH1.WRITE requirements:
 
 - Text output: headings/bullets/citations clearly formatted
-- Voice output: same structure, spoken clearly in requested language
+- Voice output: same structure, spoken clearly in requested language from the same PH1.WRITE `formatted_text`
 
 Fail-closed:
 
