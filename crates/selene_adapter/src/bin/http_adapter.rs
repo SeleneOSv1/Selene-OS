@@ -14,6 +14,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use selene_engines::ph1e::startup_outbound_self_check_logs;
 use selene_adapter::{
     app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
     InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
@@ -43,6 +44,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = bind.parse()?;
     let sync_worker_enabled = parse_sync_worker_enabled_from_env();
     let sync_worker_interval_ms = parse_sync_worker_interval_ms_from_env();
+
+    for line in startup_outbound_self_check_logs() {
+        eprintln!("{line}");
+    }
 
     let runtime = Arc::new(Mutex::new(AdapterRuntime::default_from_env()?));
     if sync_worker_enabled {

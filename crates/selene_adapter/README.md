@@ -41,6 +41,21 @@ SELENE_ADAPTER_SYNC_WORKER_INTERVAL_MS=1000
 
 `SELENE_ADAPTER_SYNC_WORKER_INTERVAL_MS` must be between `100` and `60000`.
 
+PH1.E proxy configuration (Clash-friendly):
+
+```bash
+SELENE_PROXY_MODE=explicit
+SELENE_HTTP_PROXY_URL=http://127.0.0.1:<your_clash_port>
+SELENE_HTTPS_PROXY_URL=http://127.0.0.1:<your_clash_port>
+```
+
+Proxy modes:
+- `SELENE_PROXY_MODE=off`: no proxy.
+- `SELENE_PROXY_MODE=env`: uses `HTTP_PROXY` / `HTTPS_PROXY` only.
+- `SELENE_PROXY_MODE=explicit`: uses `SELENE_HTTP_PROXY_URL` and `SELENE_HTTPS_PROXY_URL` (both required).
+
+Avoid `ALL_PROXY` socks unless explicitly supported and tested in your environment.
+
 Automatic improvement + builder handoff from sync failures (enabled by default):
 
 ```bash

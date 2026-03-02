@@ -80,6 +80,101 @@ impl ProviderCallError {
     }
 }
 
+const STARTUP_CONNECTIVITY_TIMEOUT_MS: u32 = 2_000;
+const BRAVE_CONNECTIVITY_PROBE_URL: &str = "https://api.search.brave.com/";
+const OPENAI_CONNECTIVITY_PROBE_URL: &str = "https://api.openai.com/";
+const CLASH_EXPLICIT_HINT: &str =
+    "If using Clash, set SELENE_PROXY_MODE=explicit and SELENE_HTTP_PROXY_URL=http://127.0.0.1:<port>";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ph1eProxyMode {
+    Off,
+    Env,
+    Explicit,
+}
+
+impl Ph1eProxyMode {
+    fn from_env_value(raw: Option<String>) -> Self {
+        match raw
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("off") => Self::Off,
+            Some("explicit") => Self::Explicit,
+            _ => Self::Env,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Env => "env",
+            Self::Explicit => "explicit",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1eProxyConfig {
+    pub mode: Ph1eProxyMode,
+    pub http_proxy_url: Option<String>,
+    pub https_proxy_url: Option<String>,
+}
+
+impl Ph1eProxyConfig {
+    pub fn from_env() -> Self {
+        Self {
+            mode: Ph1eProxyMode::from_env_value(env::var("SELENE_PROXY_MODE").ok()),
+            http_proxy_url: env::var("SELENE_HTTP_PROXY_URL").ok(),
+            https_proxy_url: env::var("SELENE_HTTPS_PROXY_URL").ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedProxyConfig {
+    mode: Ph1eProxyMode,
+    http_proxy_url: Option<String>,
+    https_proxy_url: Option<String>,
+    effective_proxy_url: Option<String>,
+}
+
+impl ResolvedProxyConfig {
+    fn safe_proxy_host_port(&self) -> Option<String> {
+        self.effective_proxy_url
+            .as_ref()
+            .and_then(|url| proxy_host_port_hint(url))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundSelfCheckFailure {
+    pub provider: &'static str,
+    pub endpoint: &'static str,
+    pub proxy_mode: Ph1eProxyMode,
+    pub proxy_host_port: Option<String>,
+    pub error_kind: &'static str,
+}
+
+impl OutboundSelfCheckFailure {
+    pub fn safe_log_line(&self) -> String {
+        let mut out = format!(
+            "selene_adapter_http outbound self-check failed provider={} endpoint={} proxy_mode={} error={}",
+            self.provider,
+            self.endpoint,
+            self.proxy_mode.as_str(),
+            self.error_kind,
+        );
+        if let Some(proxy) = self.proxy_host_port.as_deref() {
+            out.push_str(&format!(" proxy={proxy}"));
+        }
+        out
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1eConfig {
     pub max_timeout_ms: u32,
@@ -104,6 +199,7 @@ pub struct Ph1eProviderConfig {
     pub openai_responses_url: String,
     pub openai_model: String,
     pub user_agent: String,
+    pub proxy_config: Ph1eProxyConfig,
     pub brave_web_fixture_json: Option<String>,
     pub brave_news_fixture_json: Option<String>,
     pub url_fetch_fixture_html: Option<String>,
@@ -125,6 +221,7 @@ impl Ph1eProviderConfig {
                 .unwrap_or_else(|_| "gpt-4o-mini".to_string()),
             user_agent: env::var("PH1E_HTTP_USER_AGENT")
                 .unwrap_or_else(|_| "selene-ph1e/1.0".to_string()),
+            proxy_config: Ph1eProxyConfig::from_env(),
             brave_web_fixture_json: None,
             brave_news_fixture_json: None,
             url_fetch_fixture_html: None,
@@ -534,6 +631,7 @@ impl Ph1eRuntime {
                 max_results,
                 req.strict_budget.timeout_ms,
                 &self.provider_config.user_agent,
+                &self.provider_config.proxy_config,
                 matches!(kind, ToolName::News),
                 self.brave_fixture_json_for(matches!(kind, ToolName::News)),
             );
@@ -568,6 +666,7 @@ impl Ph1eRuntime {
                 max_results,
                 req.strict_budget.timeout_ms,
                 &self.provider_config.user_agent,
+                &self.provider_config.proxy_config,
                 matches!(kind, ToolName::News),
             ) {
                 Ok((items, sources)) => Ok((
@@ -587,13 +686,18 @@ impl Ph1eRuntime {
                     combine_live_search_failure_detail(
                         brave_failure.as_ref(),
                         Some(&openai_failure),
+                        &self.provider_config.proxy_config,
                     ),
                 )),
             }
         } else if let Some(brave_failure) = brave_failure {
             Err(ToolFailPayload::with_detail(
                 reason_codes::E_FAIL_PROVIDER_UPSTREAM,
-                brave_failure.safe_detail(),
+                combine_live_search_failure_detail(
+                    Some(&brave_failure),
+                    None,
+                    &self.provider_config.proxy_config,
+                ),
             ))
         } else {
             Err(ToolFailPayload::new(reason_codes::E_FAIL_PROVIDER_UPSTREAM))
@@ -610,6 +714,7 @@ impl Ph1eRuntime {
             req.strict_budget.max_results.min(self.config.max_results),
             req.strict_budget.timeout_ms,
             &self.provider_config.user_agent,
+            &self.provider_config.proxy_config,
             self.url_fetch_fixture_html(),
         );
         let (citations, sources) = fetched.map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
@@ -621,6 +726,74 @@ impl Ph1eRuntime {
                 sources,
             ),
         ))
+    }
+}
+
+pub fn startup_outbound_self_check_logs() -> Vec<String> {
+    let provider_config = Ph1eProviderConfig::from_env();
+    run_startup_outbound_self_check_with_probe(
+        &provider_config,
+        probe_provider_connectivity,
+    )
+    .into_iter()
+    .map(|failure| failure.safe_log_line())
+    .collect()
+}
+
+fn run_startup_outbound_self_check_with_probe<F>(
+    provider_config: &Ph1eProviderConfig,
+    mut probe: F,
+) -> Vec<OutboundSelfCheckFailure>
+where
+    F: FnMut(
+        &'static str,
+        &'static str,
+        u32,
+        &str,
+        &Ph1eProxyConfig,
+    ) -> Result<(), ProviderCallError>,
+{
+    let mut failures = Vec::new();
+    for (provider, endpoint) in [
+        ("brave", BRAVE_CONNECTIVITY_PROBE_URL),
+        ("openai", OPENAI_CONNECTIVITY_PROBE_URL),
+    ] {
+        if let Err(err) = probe(
+            provider,
+            endpoint,
+            STARTUP_CONNECTIVITY_TIMEOUT_MS,
+            &provider_config.user_agent,
+            &provider_config.proxy_config,
+        ) {
+            failures.push(OutboundSelfCheckFailure {
+                provider,
+                endpoint,
+                proxy_mode: provider_config.proxy_config.mode,
+                proxy_host_port: resolve_proxy_config(&provider_config.proxy_config)
+                    .ok()
+                    .and_then(|resolved| resolved.safe_proxy_host_port()),
+                error_kind: err.error_kind,
+            });
+        }
+    }
+    failures
+}
+
+fn probe_provider_connectivity(
+    provider: &'static str,
+    endpoint: &'static str,
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+) -> Result<(), ProviderCallError> {
+    let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
+        .map_err(|_| ProviderCallError::new(provider, "config_invalid", None))?;
+    match agent.head(endpoint).call() {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(_, _)) => Ok(()),
+        Err(ureq::Error::Transport(transport)) => Err(provider_error_from_transport(
+            provider, transport,
+        )),
     }
 }
 
@@ -754,6 +927,87 @@ fn source_metadata_from_live(
     }
 }
 
+fn resolve_proxy_config(proxy_config: &Ph1eProxyConfig) -> Result<ResolvedProxyConfig, String> {
+    let mode = proxy_config.mode;
+    let (http_proxy_url, https_proxy_url) = match mode {
+        Ph1eProxyMode::Off => (None, None),
+        Ph1eProxyMode::Env => (
+            env::var("HTTP_PROXY").ok().and_then(trim_non_empty),
+            env::var("HTTPS_PROXY").ok().and_then(trim_non_empty),
+        ),
+        Ph1eProxyMode::Explicit => (
+            proxy_config
+                .http_proxy_url
+                .clone()
+                .and_then(trim_non_empty),
+            proxy_config
+                .https_proxy_url
+                .clone()
+                .and_then(trim_non_empty),
+        ),
+    };
+
+    if matches!(mode, Ph1eProxyMode::Explicit) && (http_proxy_url.is_none() || https_proxy_url.is_none()) {
+        return Err(
+            "explicit proxy mode requires SELENE_HTTP_PROXY_URL and SELENE_HTTPS_PROXY_URL"
+                .to_string(),
+        );
+    }
+
+    let effective_proxy_url = https_proxy_url.clone().or_else(|| http_proxy_url.clone());
+    Ok(ResolvedProxyConfig {
+        mode,
+        http_proxy_url,
+        https_proxy_url,
+        effective_proxy_url,
+    })
+}
+
+fn proxy_host_port_hint(raw_proxy_url: &str) -> Option<String> {
+    let trimmed = raw_proxy_url.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let without_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    let without_auth = without_scheme
+        .rsplit_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(without_scheme);
+    let host_port = without_auth
+        .split(['/', '?', '#'])
+        .next()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    Some(host_port.to_string())
+}
+
+fn proxy_hint_for_failures(
+    brave_failure: Option<&ProviderCallError>,
+    openai_failure: Option<&ProviderCallError>,
+    proxy_config: &Ph1eProxyConfig,
+) -> Option<String> {
+    let kind = brave_failure
+        .map(|err| err.error_kind)
+        .or_else(|| openai_failure.map(|err| err.error_kind))?;
+    if !matches!(kind, "connection" | "tls" | "dns" | "config_invalid") {
+        return None;
+    }
+
+    let mode = proxy_config.mode.as_str();
+    let proxy_host_port = resolve_proxy_config(proxy_config)
+        .ok()
+        .and_then(|resolved| resolved.safe_proxy_host_port());
+    let mut out = format!("proxy_mode={mode}");
+    if let Some(proxy) = proxy_host_port.as_deref() {
+        out.push_str(&format!(" proxy={proxy}"));
+    }
+    out.push_str(&format!(" hint={CLASH_EXPLICIT_HINT}"));
+    Some(out)
+}
+
 fn run_brave_search(
     endpoint: &str,
     api_key: &str,
@@ -761,6 +1015,7 @@ fn run_brave_search(
     max_results: u8,
     timeout_ms: u32,
     user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
     is_news: bool,
     fixture_json: Option<&str>,
 ) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), ProviderCallError> {
@@ -768,7 +1023,7 @@ fn run_brave_search(
         serde_json::from_str(fixture)
             .map_err(|_| ProviderCallError::new("brave", "json_parse", None))?
     } else {
-        let agent = build_http_agent(timeout_ms, user_agent)
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
             .map_err(|_| ProviderCallError::new("brave", "config_invalid", None))?;
         let response = agent
             .get(endpoint)
@@ -796,6 +1051,7 @@ fn run_openai_search_fallback(
     max_results: u8,
     timeout_ms: u32,
     user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
     is_news: bool,
 ) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), ProviderCallError> {
     let prompt = if is_news {
@@ -815,7 +1071,7 @@ fn run_openai_search_fallback(
         "max_output_tokens": 800,
         "tools": [{"type": "web_search"}],
     });
-    let agent = build_http_agent(timeout_ms, user_agent)
+    let agent = build_http_agent(timeout_ms, user_agent, proxy_config)
         .map_err(|_| ProviderCallError::new("openai", "config_invalid", None))?;
     let response = post_json(agent.clone(), endpoint, api_key, &payload).or_else(|_| {
         // Fallback when the account/model does not support tool invocation.
@@ -852,17 +1108,28 @@ fn post_json(
         .map_err(|_| ProviderCallError::new("openai", "json_parse", None))
 }
 
-fn build_http_agent(timeout_ms: u32, user_agent: &str) -> Result<ureq::Agent, String> {
+fn build_http_agent(
+    timeout_ms: u32,
+    user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
+) -> Result<ureq::Agent, String> {
     if timeout_ms == 0 {
         return Err("timeout must be > 0".to_string());
     }
     let timeout = Duration::from_millis(u64::from(timeout_ms).max(100));
-    Ok(ureq::AgentBuilder::new()
+    let mut builder = ureq::AgentBuilder::new()
         .timeout_connect(timeout)
         .timeout_read(timeout)
         .timeout_write(timeout)
         .user_agent(user_agent)
-        .build())
+        .try_proxy_from_env(false);
+    let resolved_proxy = resolve_proxy_config(proxy_config)?;
+    if let Some(proxy_url) = resolved_proxy.effective_proxy_url.as_deref() {
+        let proxy = ureq::Proxy::new(proxy_url)
+            .map_err(|_| format!("invalid proxy url for mode={}", proxy_config.mode.as_str()))?;
+        builder = builder.proxy(proxy);
+    }
+    Ok(builder.build())
 }
 
 fn provider_error_from_ureq(provider: &'static str, err: ureq::Error) -> ProviderCallError {
@@ -870,12 +1137,17 @@ fn provider_error_from_ureq(provider: &'static str, err: ureq::Error) -> Provide
         ureq::Error::Status(status, _) => {
             ProviderCallError::new(provider, "http_non_200", Some(status as u16))
         }
-        ureq::Error::Transport(transport) => {
-            let combined = format!("{:?} {}", transport.kind(), transport);
-            let error_kind = classify_transport_error_kind(&combined);
-            ProviderCallError::new(provider, error_kind, None)
-        }
+        ureq::Error::Transport(transport) => provider_error_from_transport(provider, transport),
     }
+}
+
+fn provider_error_from_transport(
+    provider: &'static str,
+    transport: ureq::Transport,
+) -> ProviderCallError {
+    let combined = format!("{:?} {}", transport.kind(), transport);
+    let error_kind = classify_transport_error_kind(&combined);
+    ProviderCallError::new(provider, error_kind, None)
 }
 
 fn classify_transport_error_kind(raw: &str) -> &'static str {
@@ -896,8 +1168,9 @@ fn classify_transport_error_kind(raw: &str) -> &'static str {
 fn combine_live_search_failure_detail(
     brave_failure: Option<&ProviderCallError>,
     openai_failure: Option<&ProviderCallError>,
+    proxy_config: &Ph1eProxyConfig,
 ) -> String {
-    match (brave_failure, openai_failure) {
+    let mut detail = match (brave_failure, openai_failure) {
         (Some(brave), Some(openai)) => format!(
             "primary({}) fallback({})",
             brave.safe_detail(),
@@ -906,7 +1179,14 @@ fn combine_live_search_failure_detail(
         (Some(brave), None) => brave.safe_detail(),
         (None, Some(openai)) => openai.safe_detail(),
         (None, None) => "provider=unknown error=upstream".to_string(),
+    };
+    if let Some(proxy_hint) =
+        proxy_hint_for_failures(brave_failure, openai_failure, proxy_config)
+    {
+        detail.push(' ');
+        detail.push_str(&proxy_hint);
     }
+    detail
 }
 
 fn extract_tool_snippets(
@@ -1018,12 +1298,13 @@ fn run_url_fetch_citation(
     max_results: u8,
     timeout_ms: u32,
     user_agent: &str,
+    proxy_config: &Ph1eProxyConfig,
     fixture_html: Option<&str>,
 ) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
     let body_text = if let Some(fixture) = fixture_html {
         fixture.to_string()
     } else {
-        let agent = build_http_agent(timeout_ms, user_agent)?;
+        let agent = build_http_agent(timeout_ms, user_agent, proxy_config)?;
         let response = agent
             .get(url)
             .set("Accept", "text/html,text/plain;q=0.9,*/*;q=0.1")
@@ -1377,6 +1658,12 @@ mod tests {
             env::set_var(key, value);
             Self { key, previous }
         }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = env::var_os(key);
+            env::remove_var(key);
+            Self { key, previous }
+        }
     }
 
     impl Drop for ScopedEnvVar {
@@ -1481,6 +1768,11 @@ mod tests {
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
                 user_agent: "selene-ph1e-test/1.0".to_string(),
+                proxy_config: Ph1eProxyConfig {
+                    mode: Ph1eProxyMode::Off,
+                    http_proxy_url: None,
+                    https_proxy_url: None,
+                },
                 url_fetch_fixture_html: Some(fixture.url_fetch_fixture_html.clone()),
             },
         )
@@ -1898,6 +2190,11 @@ mod tests {
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
                     user_agent: "selene-ph1e-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
                     url_fetch_fixture_html: None,
                 },
             );
@@ -1971,6 +2268,11 @@ mod tests {
                     openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
                     user_agent: "selene-ph1e-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
                     url_fetch_fixture_html: None,
                 },
             );
@@ -2007,6 +2309,11 @@ mod tests {
                     openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
                     openai_model: "gpt-4o-mini".to_string(),
                     user_agent: "selene-ph1e-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
                     url_fetch_fixture_html: None,
                 },
             );
@@ -2026,5 +2333,93 @@ mod tests {
             assert!(detail.contains("provider=openai"));
             assert!(detail.contains("error="));
         });
+    }
+
+    #[test]
+    fn proxy_mode_off_builds_client_no_proxy() {
+        let proxy_config = Ph1eProxyConfig {
+            mode: Ph1eProxyMode::Off,
+            http_proxy_url: Some("http://127.0.0.1:7897".to_string()),
+            https_proxy_url: Some("http://127.0.0.1:7898".to_string()),
+        };
+        let resolved = resolve_proxy_config(&proxy_config).expect("proxy config must resolve");
+        assert_eq!(resolved.mode, Ph1eProxyMode::Off);
+        assert!(resolved.effective_proxy_url.is_none());
+        assert!(build_http_agent(1_000, "selene-test", &proxy_config).is_ok());
+    }
+
+    #[test]
+    fn proxy_mode_env_does_not_set_all_proxy() {
+        let _all_proxy = ScopedEnvVar::set("ALL_PROXY", "socks5://127.0.0.1:9050");
+        let _http_proxy = ScopedEnvVar::set("HTTP_PROXY", "http://127.0.0.1:7001");
+        let _https_proxy = ScopedEnvVar::unset("HTTPS_PROXY");
+        let proxy_config = Ph1eProxyConfig {
+            mode: Ph1eProxyMode::Env,
+            http_proxy_url: None,
+            https_proxy_url: None,
+        };
+        let resolved = resolve_proxy_config(&proxy_config).expect("proxy config must resolve");
+        assert_eq!(
+            resolved.effective_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7001")
+        );
+        let effective = resolved.effective_proxy_url.as_deref().unwrap_or("");
+        assert!(!effective.starts_with("socks5://"));
+    }
+
+    #[test]
+    fn proxy_mode_explicit_sets_http_https_proxy() {
+        let proxy_config = Ph1eProxyConfig {
+            mode: Ph1eProxyMode::Explicit,
+            http_proxy_url: Some("http://127.0.0.1:7897".to_string()),
+            https_proxy_url: Some("http://127.0.0.1:7898".to_string()),
+        };
+        let resolved = resolve_proxy_config(&proxy_config).expect("proxy config must resolve");
+        assert_eq!(
+            resolved.http_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7897")
+        );
+        assert_eq!(
+            resolved.https_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7898")
+        );
+        assert_eq!(
+            resolved.effective_proxy_url.as_deref(),
+            Some("http://127.0.0.1:7898")
+        );
+    }
+
+    #[test]
+    fn startup_self_check_failure_produces_safe_diagnostic() {
+        let provider_config = Ph1eProviderConfig {
+            brave_api_key: None,
+            brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+            brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+            openai_api_key: None,
+            openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+            openai_model: "gpt-4o-mini".to_string(),
+            user_agent: "selene-ph1e-test/1.0".to_string(),
+            proxy_config: Ph1eProxyConfig {
+                mode: Ph1eProxyMode::Explicit,
+                http_proxy_url: Some("http://user:password@127.0.0.1:7897".to_string()),
+                https_proxy_url: Some("http://127.0.0.1:7898".to_string()),
+            },
+            brave_web_fixture_json: None,
+            brave_news_fixture_json: None,
+            url_fetch_fixture_html: None,
+        };
+
+        let failures =
+            run_startup_outbound_self_check_with_probe(&provider_config, |provider, _, _, _, _| {
+                Err(ProviderCallError::new(provider, "connection", None))
+            });
+        assert_eq!(failures.len(), 2);
+        for failure in failures {
+            let line = failure.safe_log_line();
+            assert!(line.contains("proxy_mode=explicit"));
+            assert!(line.contains("error=connection"));
+            assert!(line.contains("provider="));
+            assert!(!line.contains("user:password"));
+        }
     }
 }

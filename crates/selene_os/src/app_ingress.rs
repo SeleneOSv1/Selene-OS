@@ -4045,7 +4045,7 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 mod tests {
     use super::*;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
-    use selene_engines::ph1e::Ph1eProviderConfig;
+    use selene_engines::ph1e::{Ph1eProviderConfig, Ph1eProxyConfig, Ph1eProxyMode};
     use selene_kernel_contracts::ph1_voice_id::{
         DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerLabel,
     };
@@ -4471,6 +4471,11 @@ mod tests {
                 openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
                 openai_model: "gpt-4o-mini".to_string(),
                 user_agent: "selene-os-app-ingress-test/1.0".to_string(),
+                proxy_config: Ph1eProxyConfig {
+                    mode: Ph1eProxyMode::Off,
+                    http_proxy_url: None,
+                    https_proxy_url: None,
+                },
                 url_fetch_fixture_html: Some(
                     "<html><body><h1>Selene URL source</h1><p>This is a deterministic fixture page for URL fetch and citation chunking with provenance metadata.</p></body></html>"
                         .to_string(),
