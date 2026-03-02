@@ -59,7 +59,6 @@ pub struct Ph1mConfig {
     pub micro_promote_after_seen: u32,
     pub resume_hot_window_ms: u64,
     pub resume_warm_window_ms: u64,
-    pub resume_warm_window_remember_everything_ms: u64,
     pub unresolved_decay_window_ms: u64,
 }
 
@@ -71,7 +70,6 @@ impl Ph1mConfig {
             micro_promote_after_seen: 2,
             resume_hot_window_ms: MEMORY_RESUME_HOT_WINDOW_MS,
             resume_warm_window_ms: MEMORY_RESUME_WARM_WINDOW_MS,
-            resume_warm_window_remember_everything_ms: 60_u64 * 24 * 60 * 60 * 1000,
             unresolved_decay_window_ms: MEMORY_UNRESOLVED_DECAY_WINDOW_MS,
         }
     }
@@ -586,12 +584,27 @@ impl Ph1mRuntime {
                 if let Some(topic_hint) = &lower_topic_hint {
                     let title = entry.thread_title.to_ascii_lowercase();
                     let thread_id = entry.thread_id.to_ascii_lowercase();
-                    if !title.contains(topic_hint) && !thread_id.contains(topic_hint) {
+                    let summary_match = if effective_mode == MemoryRetentionMode::RememberEverything
+                    {
+                        entry
+                            .summary_bullets
+                            .iter()
+                            .any(|v| v.to_ascii_lowercase().contains(topic_hint))
+                    } else {
+                        false
+                    };
+                    if !title.contains(topic_hint)
+                        && !thread_id.contains(topic_hint)
+                        && !summary_match
+                    {
                         return None;
                     }
                 }
                 let age_ns = req.now.0.saturating_sub(entry.last_updated_at.0);
                 let tier = resume_tier_for(age_ns, entry.unresolved, effective_mode, &self.config);
+                if tier == MemoryResumeTier::Cold && req.topic_hint.is_none() {
+                    return None;
+                }
                 let unresolved_boost =
                     entry.unresolved && age_ns <= ms_to_ns(self.config.unresolved_decay_window_ms);
                 Some((entry, tier, unresolved_boost))
@@ -599,15 +612,26 @@ impl Ph1mRuntime {
             .collect();
 
         candidates.sort_by(|a, b| {
-            let (a_entry, _, a_unresolved_boost) = a;
-            let (b_entry, _, b_unresolved_boost) = b;
-            b_entry
-                .pinned
-                .cmp(&a_entry.pinned)
-                .then_with(|| b_unresolved_boost.cmp(a_unresolved_boost))
-                .then_with(|| b_entry.last_updated_at.0.cmp(&a_entry.last_updated_at.0))
-                .then_with(|| b_entry.use_count.cmp(&a_entry.use_count))
-                .then_with(|| a_entry.thread_id.cmp(&b_entry.thread_id))
+            let (a_entry, a_tier, a_unresolved_boost) = a;
+            let (b_entry, b_tier, b_unresolved_boost) = b;
+            tier_rank(*b_tier)
+                .cmp(&tier_rank(*a_tier))
+                .then_with(|| {
+                    if effective_mode == MemoryRetentionMode::RememberEverything {
+                        b_entry.use_count.cmp(&a_entry.use_count)
+                    } else {
+                        core::cmp::Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    b_entry
+                        .pinned
+                        .cmp(&a_entry.pinned)
+                        .then_with(|| b_unresolved_boost.cmp(a_unresolved_boost))
+                        .then_with(|| b_entry.last_updated_at.0.cmp(&a_entry.last_updated_at.0))
+                        .then_with(|| b_entry.use_count.cmp(&a_entry.use_count))
+                        .then_with(|| a_entry.thread_id.cmp(&b_entry.thread_id))
+                })
         });
 
         let Some((selected, tier, _)) = candidates.into_iter().next() else {
@@ -1156,10 +1180,8 @@ fn resume_tier_for(
     retention_mode: MemoryRetentionMode,
     cfg: &Ph1mConfig,
 ) -> MemoryResumeTier {
-    let warm_window_ms = match retention_mode {
-        MemoryRetentionMode::Default => cfg.resume_warm_window_ms,
-        MemoryRetentionMode::RememberEverything => cfg.resume_warm_window_remember_everything_ms,
-    };
+    let _ = retention_mode;
+    let warm_window_ms = cfg.resume_warm_window_ms;
     let hot_ns = ms_to_ns(cfg.resume_hot_window_ms);
     let warm_ns = ms_to_ns(warm_window_ms);
     let unresolved_decay_ns = ms_to_ns(cfg.unresolved_decay_window_ms);
@@ -1874,9 +1896,206 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Cold));
+        assert_eq!(out.resume_tier, None);
         assert_eq!(out.resume_action, MemoryResumeAction::None);
         assert!(out.resume_summary_bullets.is_empty());
+    }
+
+    #[test]
+    fn remember_everything_keeps_warm_boundary_at_30d() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let older_than_warm_ns = ms_to_ns(MEMORY_RESUME_WARM_WINDOW_MS.saturating_add(1));
+        let now = MonotonicTimeNs(older_than_warm_ns.saturating_add(6_000_000_000));
+        rt.retention_mode_set(
+            &Ph1mRetentionModeSetRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                "idem_ret_keep_30d".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                MemoryThreadDigest::v1(
+                    "thread_old_re".to_string(),
+                    "Older than warm".to_string(),
+                    vec!["old summary".to_string()],
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(older_than_warm_ns)),
+                    2,
+                )
+                .unwrap(),
+                "idem_thread_keep_30d".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(out.resume_tier, None);
+        assert_eq!(out.resume_action, MemoryResumeAction::None);
+    }
+
+    #[test]
+    fn remember_everything_topic_hint_matches_summary_bullets() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let warm_delta_ns = ms_to_ns(MEMORY_RESUME_WARM_WINDOW_MS.saturating_sub(1));
+        let hot_ns = ms_to_ns(MEMORY_RESUME_HOT_WINDOW_MS);
+        let now = MonotonicTimeNs(warm_delta_ns.saturating_add(7_000_000_000));
+        rt.retention_mode_set(
+            &Ph1mRetentionModeSetRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                "idem_ret_summary_hint".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                MemoryThreadDigest::v1(
+                    "thread_ops".to_string(),
+                    "Operations updates".to_string(),
+                    vec!["Pizza order blocked by missing integration".to_string()],
+                    false,
+                    false,
+                    MonotonicTimeNs(
+                        now.0
+                            .saturating_sub(warm_delta_ns.max(hot_ns.saturating_add(1))),
+                    ),
+                    4,
+                )
+                .unwrap(),
+                "idem_thread_summary_hint".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    Some("pizza".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_ops"));
+        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
+    fn resume_select_prefers_actionable_warm_over_cold_without_topic() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let warm_delta_ns = ms_to_ns(MEMORY_RESUME_WARM_WINDOW_MS.saturating_sub(1));
+        let cold_delta_ns = ms_to_ns(MEMORY_RESUME_WARM_WINDOW_MS.saturating_add(1));
+        let now = MonotonicTimeNs(cold_delta_ns.saturating_add(8_000_000_000));
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_cold_pinned".to_string(),
+                    "Pinned but old".to_string(),
+                    vec!["Old".to_string()],
+                    true,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(cold_delta_ns)),
+                    100,
+                )
+                .unwrap(),
+                "idem_thread_cold".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_warm".to_string(),
+                    "Warm and actionable".to_string(),
+                    vec!["Need follow-up".to_string()],
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(warm_delta_ns)),
+                    1,
+                )
+                .unwrap(),
+                "idem_thread_warm".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_warm"));
+        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
     }
 
     #[test]

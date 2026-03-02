@@ -952,7 +952,7 @@ Preference field:
 
 Deterministic effects:
 - `DEFAULT`: standard pull-first recall (safe push memory only)
-- `REMEMBER_EVERYTHING`: stronger auto-resume priority, longer retention windows, richer thread digests
+- `REMEMBER_EVERYTHING`: stronger auto-resume ranking priority and broader topic-match recall (including digest summaries), while keeping canonical `HOT/WARM/COLD` windows unchanged
 
 Still bounded:
 - per-turn bundle caps remain unchanged
