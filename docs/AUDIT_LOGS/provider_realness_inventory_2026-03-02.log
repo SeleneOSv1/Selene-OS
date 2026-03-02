@@ -1,0 +1,535 @@
+# Provider Realness Inventory
+date: 2026-03-02
+repo: /Users/xiamo/Documents/A-Selene/Selene-OS
+branch: main
+head: 5e7e28f
+
+## Global stub scan
+$ rg -n "mock|example\.com|terminal-unavailable|VOICE_DEFAULT|ph1e_mock" crates/ docs/
+crates/selene_os/src/ph1m.rs:1477:                    field: "mock",
+crates/selene_engines/src/ph1n.rs:3646:                "Selene open this URL and cite it: https://example.com/spec",
+crates/selene_storage/src/ph1f.rs:16800:                PayloadValue::new("deterministic_mock")?,
+crates/selene_os/src/app_ingress.rs:3682:            vec!["+14155550100".to_string(), "tom@example.com".to_string()]
+crates/selene_os/src/app_ingress.rs:6755:        assert!(response_text.contains("https://example.com/search-result"));
+crates/selene_os/src/app_ingress.rs:6808:        assert!(response_text.contains("https://example.com/search-result"));
+crates/selene_os/src/app_ingress.rs:6861:        assert!(response_text.contains("https://example.com/news"));
+crates/selene_os/src/app_ingress.rs:6903:                "open this URL and cite it: https://example.com/spec",
+crates/selene_os/src/app_ingress.rs:6917:        assert!(response_text.contains("https://example.com"));
+crates/selene_os/src/ph1tts.rs:147:                            voice_id: VoiceId::new("VOICE_DEFAULT").unwrap(),
+crates/selene_os/src/ph1e.rs:154:                    url: "https://example.com/a".to_string(),
+crates/selene_os/src/ph1e.rs:163:                    url: "https://example.com/a".to_string(),
+crates/selene_engines/src/ph1e.rs:105:                    url: "https://example.com/search-result".to_string(),
+crates/selene_engines/src/ph1e.rs:112:                    url: "https://example.com/news-item".to_string(),
+crates/selene_engines/src/ph1e.rs:122:                    url: "https://example.com/url-fetch-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:140:                    url: "https://example.com/document-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:158:                    url: "https://example.com/photo-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:179:                    url: "https://example.com/data-analysis-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:201:                        url: "https://example.com/research-source-a".to_string(),
+crates/selene_engines/src/ph1e.rs:206:                        url: "https://example.com/research-source-b".to_string(),
+crates/selene_engines/src/ph1e.rs:294:            provider_hint: Some("ph1e_mock".to_string()),
+crates/selene_engines/src/ph1e.rs:374:        ToolName::Time => "https://example.com/time",
+crates/selene_engines/src/ph1e.rs:375:        ToolName::Weather => "https://example.com/weather",
+crates/selene_engines/src/ph1e.rs:376:        ToolName::WebSearch => "https://example.com/search",
+crates/selene_engines/src/ph1e.rs:377:        ToolName::News => "https://example.com/news",
+crates/selene_engines/src/ph1e.rs:378:        ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
+crates/selene_engines/src/ph1e.rs:379:        ToolName::DocumentUnderstand => "https://example.com/document",
+crates/selene_engines/src/ph1e.rs:380:        ToolName::PhotoUnderstand => "https://example.com/photo",
+crates/selene_engines/src/ph1e.rs:381:        ToolName::DataAnalysis => "https://example.com/data-analysis",
+crates/selene_engines/src/ph1e.rs:382:        ToolName::DeepResearch => "https://example.com/deep-research",
+crates/selene_engines/src/ph1e.rs:384:        ToolName::ConnectorQuery => "https://workspace.example.com/connectors",
+crates/selene_engines/src/ph1e.rs:385:        ToolName::Other(_) => "https://example.com",
+crates/selene_engines/src/ph1e.rs:400:                url: "https://workspace.example.com/connectors".to_string(),
+crates/selene_engines/src/ph1e.rs:449:            url: "https://workspace.example.com/gmail".to_string(),
+crates/selene_engines/src/ph1e.rs:453:            url: "https://workspace.example.com/outlook".to_string(),
+crates/selene_engines/src/ph1e.rs:457:            url: "https://workspace.example.com/calendar".to_string(),
+crates/selene_engines/src/ph1e.rs:461:            url: "https://workspace.example.com/drive".to_string(),
+crates/selene_engines/src/ph1e.rs:465:            url: "https://workspace.example.com/dropbox".to_string(),
+crates/selene_engines/src/ph1e.rs:469:            url: "https://workspace.example.com/slack".to_string(),
+crates/selene_engines/src/ph1e.rs:473:            url: "https://workspace.example.com/notion".to_string(),
+crates/selene_engines/src/ph1e.rs:477:            url: "https://workspace.example.com/onedrive".to_string(),
+crates/selene_engines/src/ph1e.rs:481:            url: "https://workspace.example.com/connectors".to_string(),
+crates/selene_engines/src/ph1e.rs:492:            url: format!("https://workspace.example.com/gmail/thread_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:498:                "https://workspace.example.com/outlook/message_{:03}",
+crates/selene_engines/src/ph1e.rs:506:                "https://workspace.example.com/calendar/event_{:03}",
+crates/selene_engines/src/ph1e.rs:513:            url: format!("https://workspace.example.com/drive/doc_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:518:            url: format!("https://workspace.example.com/dropbox/file_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:523:            url: format!("https://workspace.example.com/slack/message_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:528:            url: format!("https://workspace.example.com/notion/page_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:533:            url: format!("https://workspace.example.com/onedrive/file_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:539:                "https://workspace.example.com/connectors/item_{:03}",
+crates/selene_engines/src/ph1e.rs:655:            "open this URL and cite it: https://example.com/spec",
+crates/selene_engines/src/ph1e.rs:673:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:707:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:741:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:775:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:809:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_tools/src/ph1e.rs:494:                url: "https://example.com".to_string(),
+crates/selene_tools/src/ph1e.rs:624:                        url: "https://example.com/a".to_string(),
+crates/selene_tools/src/ph1e.rs:692:                            url: "https://example.com/1".to_string(),
+crates/selene_tools/src/ph1e.rs:697:                            url: "https://example.com/2".to_string(),
+crates/selene_tools/src/ph1e.rs:764:            domain_denylist: &["example.com"],
+crates/selene_tools/src/ph1e.rs:773:                        url: "https://example.com/x".to_string(),
+crates/selene_os/src/ph1x.rs:2381:            "tom@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2394:            "tom@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2496:                "name@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2982:                url: "https://example.com".to_string(),
+crates/selene_os/src/ph1x.rs:3701:                    url: "https://example.com/search-result".to_string(),
+crates/selene_os/src/ph1x.rs:3732:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3780:                    url: "https://example.com/news-result".to_string(),
+crates/selene_os/src/ph1x.rs:3811:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3859:                    url: "https://example.com/url-cite".to_string(),
+crates/selene_os/src/ph1x.rs:3891:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3944:                    url: "https://example.com/doc-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4030:                    url: "https://example.com/photo-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4116:                    url: "https://example.com/data-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4202:                    url: "https://example.com/research-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4373:                    url: "https://workspace.example.com/gmail/thread_001".to_string(),
+crates/selene_engines/src/ph1x.rs:1904:                "name@example.com".to_string(),
+crates/selene_engines/src/ph1x.rs:2311:                url: "https://example.com".to_string(),
+crates/selene_engines/src/ph1x.rs:2813:                    url: "https://example.com/search-result".to_string(),
+crates/selene_engines/src/ph1x.rs:2844:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_engines/src/ph1x.rs:2892:                    url: "https://example.com/news-result".to_string(),
+crates/selene_engines/src/ph1x.rs:2923:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_engines/src/ph1x.rs:2971:                    url: "https://example.com/url-cite".to_string(),
+crates/selene_engines/src/ph1x.rs:3003:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_engines/src/ph1x.rs:3056:                    url: "https://example.com/doc-cite".to_string(),
+crates/selene_engines/src/ph1x.rs:3142:                    url: "https://example.com/photo-cite".to_string(),
+docs/03_BUILD_LEDGER.md:172:`2026-02-17 | PHASE13S_FAILCLOSED_STALE_ALERT_SIMULATION | WATCHDOG_CMD=/tmp/mock_stale_watchdog.sh RUN_MODE=once FAIL_CLOSED=1 bash scripts/check_builder_production_soak_runner.sh (expected non-zero) | PASS | Simulated stale telemetry breach (`STALE_CANARY_TELEMETRY`) and verified runner emits classified alert `PRODUCTION_SOAK_STALE_TELEMETRY`, writes alert/state logs, and exits non-zero in fail-closed mode.`
+docs/03_BUILD_LEDGER.md:180:`2026-02-17 | PHASE13S_ALERT_RECIPIENT_RUNTIME_ROUTING_CONTROLS | bash scripts/check_builder_pipeline_phase13s.sh ; bash scripts/check_builder_pipeline_phase13t.sh ; bash scripts/set_builder_failure_alert_recipient.sh set-primary owner JD ; bash scripts/set_builder_failure_alert_recipient.sh set-delegate ap_ops AP_OPS 0 ; bash scripts/check_builder_production_soak_runner.sh (forced-failure mock, cooldown=0) ; bash scripts/ack_builder_failure_alert.sh <bcast_id> <recipient_user_id> | PASS | Added runtime recipient-routing controls for failure alerts: delegated target management script, acknowledgement ingest script, routing-state/ack/audit files, delegated-ignore timeout detection with automatic fallback to JD/JD-nominated recipient, and launchd/runtime wiring updates so fallback behavior remains deterministic without manual log watching.`
+docs/03_BUILD_LEDGER.md:182:`2026-02-17 | BCAST_MHP_VOICE_DEFAULT_TEXT_EXPLICIT_OVERRIDE_LOCK | cargo test -p selene_os at_sim_exec_01 -- --nocapture | PASS | Locked BCAST follow-up modality in SimulationExecutor: follow-up communications are voice by default with explicit text-only overrides (`USER_REQUESTED_TEXT`, `CANNOT_SPEAK`) only; added text-override dispatch test and updated BCAST DB wiring/ECM docs to enforce no silent modality switching.`
+crates/selene_engines/src/ph1tts.rs:166:        let voice_id = VoiceId::new("VOICE_DEFAULT").expect("voice id must be constructible");
+crates/selene_kernel_contracts/src/ph1e.rs:1079:                    url: "https://example.com".to_string(),
+
+## Web/News/URL
+$ rg -n "WebSearch|News|UrlFetchAndCite|ph1e_mock|example.com|workspace.example.com" crates/selene_engines/src/ph1e.rs crates/selene_os/src/ph1x.rs crates/selene_os/src/app_ingress.rs
+crates/selene_engines/src/ph1e.rs:101:            ToolName::WebSearch => ToolResult::WebSearch {
+crates/selene_engines/src/ph1e.rs:105:                    url: "https://example.com/search-result".to_string(),
+crates/selene_engines/src/ph1e.rs:108:            ToolName::News => ToolResult::News {
+crates/selene_engines/src/ph1e.rs:110:                    title: format!("News: {}", truncate_ascii(&req.query, 40)),
+crates/selene_engines/src/ph1e.rs:111:                    snippet: format!("News item for '{}'", truncate_ascii(&req.query, 80)),
+crates/selene_engines/src/ph1e.rs:112:                    url: "https://example.com/news-item".to_string(),
+crates/selene_engines/src/ph1e.rs:115:            ToolName::UrlFetchAndCite => ToolResult::UrlFetchAndCite {
+crates/selene_engines/src/ph1e.rs:122:                    url: "https://example.com/url-fetch-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:140:                    url: "https://example.com/document-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:158:                    url: "https://example.com/photo-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:179:                    url: "https://example.com/data-analysis-citation".to_string(),
+crates/selene_engines/src/ph1e.rs:201:                        url: "https://example.com/research-source-a".to_string(),
+crates/selene_engines/src/ph1e.rs:206:                        url: "https://example.com/research-source-b".to_string(),
+crates/selene_engines/src/ph1e.rs:294:            provider_hint: Some("ph1e_mock".to_string()),
+crates/selene_engines/src/ph1e.rs:330:        ToolName::WebSearch | ToolName::News | ToolName::UrlFetchAndCite | ToolName::DeepResearch
+crates/selene_engines/src/ph1e.rs:374:        ToolName::Time => "https://example.com/time",
+crates/selene_engines/src/ph1e.rs:375:        ToolName::Weather => "https://example.com/weather",
+crates/selene_engines/src/ph1e.rs:376:        ToolName::WebSearch => "https://example.com/search",
+crates/selene_engines/src/ph1e.rs:377:        ToolName::News => "https://example.com/news",
+crates/selene_engines/src/ph1e.rs:378:        ToolName::UrlFetchAndCite => "https://example.com/url-fetch",
+crates/selene_engines/src/ph1e.rs:379:        ToolName::DocumentUnderstand => "https://example.com/document",
+crates/selene_engines/src/ph1e.rs:380:        ToolName::PhotoUnderstand => "https://example.com/photo",
+crates/selene_engines/src/ph1e.rs:381:        ToolName::DataAnalysis => "https://example.com/data-analysis",
+crates/selene_engines/src/ph1e.rs:382:        ToolName::DeepResearch => "https://example.com/deep-research",
+crates/selene_engines/src/ph1e.rs:384:        ToolName::ConnectorQuery => "https://workspace.example.com/connectors",
+crates/selene_engines/src/ph1e.rs:385:        ToolName::Other(_) => "https://example.com",
+crates/selene_engines/src/ph1e.rs:400:                url: "https://workspace.example.com/connectors".to_string(),
+crates/selene_engines/src/ph1e.rs:449:            url: "https://workspace.example.com/gmail".to_string(),
+crates/selene_engines/src/ph1e.rs:453:            url: "https://workspace.example.com/outlook".to_string(),
+crates/selene_engines/src/ph1e.rs:457:            url: "https://workspace.example.com/calendar".to_string(),
+crates/selene_engines/src/ph1e.rs:461:            url: "https://workspace.example.com/drive".to_string(),
+crates/selene_engines/src/ph1e.rs:465:            url: "https://workspace.example.com/dropbox".to_string(),
+crates/selene_engines/src/ph1e.rs:469:            url: "https://workspace.example.com/slack".to_string(),
+crates/selene_engines/src/ph1e.rs:473:            url: "https://workspace.example.com/notion".to_string(),
+crates/selene_engines/src/ph1e.rs:477:            url: "https://workspace.example.com/onedrive".to_string(),
+crates/selene_engines/src/ph1e.rs:481:            url: "https://workspace.example.com/connectors".to_string(),
+crates/selene_engines/src/ph1e.rs:492:            url: format!("https://workspace.example.com/gmail/thread_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:498:                "https://workspace.example.com/outlook/message_{:03}",
+crates/selene_engines/src/ph1e.rs:506:                "https://workspace.example.com/calendar/event_{:03}",
+crates/selene_engines/src/ph1e.rs:513:            url: format!("https://workspace.example.com/drive/doc_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:518:            url: format!("https://workspace.example.com/dropbox/file_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:523:            url: format!("https://workspace.example.com/slack/message_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:528:            url: format!("https://workspace.example.com/notion/page_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:533:            url: format!("https://workspace.example.com/onedrive/file_{:03}", idx + 1),
+crates/selene_engines/src/ph1e.rs:539:                "https://workspace.example.com/connectors/item_{:03}",
+crates/selene_engines/src/ph1e.rs:594:        let out = rt.run(&req(ToolName::WebSearch, "selene", true, false));
+crates/selene_engines/src/ph1e.rs:621:            ToolName::News,
+crates/selene_engines/src/ph1e.rs:654:            ToolName::UrlFetchAndCite,
+crates/selene_engines/src/ph1e.rs:655:            "open this URL and cite it: https://example.com/spec",
+crates/selene_engines/src/ph1e.rs:665:            ToolResult::UrlFetchAndCite { citations } => assert!(!citations.is_empty()),
+crates/selene_engines/src/ph1e.rs:666:            other => panic!("expected UrlFetchAndCite result, got {other:?}"),
+crates/selene_engines/src/ph1e.rs:673:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:707:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:741:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:775:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_engines/src/ph1e.rs:809:        assert!(meta.sources[0].url.contains("example.com"));
+crates/selene_os/src/ph1x.rs:631:                | IntentType::WebSearchQuery
+crates/selene_os/src/ph1x.rs:632:                | IntentType::NewsQuery
+crates/selene_os/src/ph1x.rs:633:                | IntentType::UrlFetchAndCiteQuery
+crates/selene_os/src/ph1x.rs:651:                IntentType::WebSearchQuery => (
+crates/selene_os/src/ph1x.rs:652:                    ToolName::WebSearch,
+crates/selene_os/src/ph1x.rs:655:                IntentType::NewsQuery => (
+crates/selene_os/src/ph1x.rs:656:                    ToolName::News,
+crates/selene_os/src/ph1x.rs:659:                IntentType::UrlFetchAndCiteQuery => (
+crates/selene_os/src/ph1x.rs:660:                    ToolName::UrlFetchAndCite,
+crates/selene_os/src/ph1x.rs:1839:            ToolResult::WebSearch { items } | ToolResult::News { items } => {
+crates/selene_os/src/ph1x.rs:1845:            ToolResult::UrlFetchAndCite { citations } => {
+crates/selene_os/src/ph1x.rs:2148:        | IntentType::WebSearchQuery
+crates/selene_os/src/ph1x.rs:2149:        | IntentType::NewsQuery
+crates/selene_os/src/ph1x.rs:2150:        | IntentType::UrlFetchAndCiteQuery
+crates/selene_os/src/ph1x.rs:2381:            "tom@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2394:            "tom@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2496:                "name@example.com".to_string(),
+crates/selene_os/src/ph1x.rs:2982:                url: "https://example.com".to_string(),
+crates/selene_os/src/ph1x.rs:3044:                IntentType::WebSearchQuery,
+crates/selene_os/src/ph1x.rs:3061:                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::WebSearch),
+crates/selene_os/src/ph1x.rs:3086:                IntentType::NewsQuery,
+crates/selene_os/src/ph1x.rs:3103:                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::News),
+crates/selene_os/src/ph1x.rs:3128:                IntentType::UrlFetchAndCiteQuery,
+crates/selene_os/src/ph1x.rs:3145:                    DispatchRequest::Tool(t) => assert_eq!(t.tool_name, ToolName::UrlFetchAndCite),
+crates/selene_os/src/ph1x.rs:3475:                IntentType::WebSearchQuery,
+crates/selene_os/src/ph1x.rs:3675:                IntentType::WebSearchQuery,
+crates/selene_os/src/ph1x.rs:3697:            ToolResult::WebSearch {
+crates/selene_os/src/ph1x.rs:3701:                    url: "https://example.com/search-result".to_string(),
+crates/selene_os/src/ph1x.rs:3732:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3754:                IntentType::NewsQuery,
+crates/selene_os/src/ph1x.rs:3776:            ToolResult::News {
+crates/selene_os/src/ph1x.rs:3780:                    url: "https://example.com/news-result".to_string(),
+crates/selene_os/src/ph1x.rs:3811:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3833:                IntentType::UrlFetchAndCiteQuery,
+crates/selene_os/src/ph1x.rs:3855:            ToolResult::UrlFetchAndCite {
+crates/selene_os/src/ph1x.rs:3859:                    url: "https://example.com/url-cite".to_string(),
+crates/selene_os/src/ph1x.rs:3891:                assert!(r.response_text.contains("https://example.com"));
+crates/selene_os/src/ph1x.rs:3944:                    url: "https://example.com/doc-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4030:                    url: "https://example.com/photo-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4116:                    url: "https://example.com/data-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4202:                    url: "https://example.com/research-cite".to_string(),
+crates/selene_os/src/ph1x.rs:4373:                    url: "https://workspace.example.com/gmail/thread_001".to_string(),
+crates/selene_os/src/app_ingress.rs:3682:            vec!["+14155550100".to_string(), "tom@example.com".to_string()]
+crates/selene_os/src/app_ingress.rs:3791:            | IntentType::WebSearchQuery
+crates/selene_os/src/app_ingress.rs:3792:            | IntentType::NewsQuery
+crates/selene_os/src/app_ingress.rs:3793:            | IntentType::UrlFetchAndCiteQuery
+crates/selene_os/src/app_ingress.rs:4381:                IntentType::WebSearchQuery,
+crates/selene_os/src/app_ingress.rs:4406:                IntentType::NewsQuery,
+crates/selene_os/src/app_ingress.rs:4431:                IntentType::UrlFetchAndCiteQuery,
+crates/selene_os/src/app_ingress.rs:6755:        assert!(response_text.contains("https://example.com/search-result"));
+crates/selene_os/src/app_ingress.rs:6808:        assert!(response_text.contains("https://example.com/search-result"));
+crates/selene_os/src/app_ingress.rs:6861:        assert!(response_text.contains("https://example.com/news"));
+crates/selene_os/src/app_ingress.rs:6903:                "open this URL and cite it: https://example.com/spec",
+crates/selene_os/src/app_ingress.rs:6917:        assert!(response_text.contains("https://example.com"));
+
+## LLM routing
+$ rg -n "SELENE_PH1D_LIVE_PROVIDER_ID|SELENE_PH1D_LIVE_MODEL_ID|live provider adapter unavailable|prompt_template_version|output_schema_hash|tool_catalog_hash|policy_context_hash|transcript_hash|model_route_class" crates/selene_adapter/src/lib.rs crates/selene_kernel_contracts/src/ph1d.rs crates/selene_storage/src/ph1f.rs
+crates/selene_kernel_contracts/src/ph1d.rs:174:    pub output_schema_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:175:    pub tool_catalog_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:176:    pub policy_context_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:177:    pub transcript_hash: Option<TranscriptHash>,
+crates/selene_kernel_contracts/src/ph1d.rs:205:        output_schema_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:206:        tool_catalog_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:207:        policy_context_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:208:        transcript_hash: Option<TranscriptHash>,
+crates/selene_kernel_contracts/src/ph1d.rs:234:            output_schema_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:235:            tool_catalog_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:236:            policy_context_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:237:            transcript_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:323:        self.output_schema_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:324:        self.tool_catalog_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:325:        self.policy_context_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:366:    pub normalized_output_schema_hash: Option<SchemaHash>,
+crates/selene_kernel_contracts/src/ph1d.rs:387:        normalized_output_schema_hash: Option<SchemaHash>,
+crates/selene_kernel_contracts/src/ph1d.rs:406:            normalized_output_schema_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:467:        if let Some(normalized_output_schema_hash) = self.normalized_output_schema_hash {
+crates/selene_kernel_contracts/src/ph1d.rs:468:            normalized_output_schema_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:485:            if self.normalized_output_schema_hash.is_none() {
+crates/selene_kernel_contracts/src/ph1d.rs:487:                    field: "ph1d_provider_call_response.normalized_output_schema_hash",
+crates/selene_kernel_contracts/src/ph1d.rs:513:    pub prompt_template_version: SchemaVersion,
+crates/selene_kernel_contracts/src/ph1d.rs:514:    pub output_schema_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:515:    pub tool_catalog_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:516:    pub policy_context_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:517:    pub transcript_hash: TranscriptHash,
+crates/selene_kernel_contracts/src/ph1d.rs:534:        let transcript_hash = TranscriptHash(nonzero_u64(fnv1a64(
+crates/selene_kernel_contracts/src/ph1d.rs:537:        let tool_catalog_hash =
+crates/selene_kernel_contracts/src/ph1d.rs:539:        let policy_context_hash = SchemaHash(nonzero_u64(fnv1a64(&policy_context_bytes(
+crates/selene_kernel_contracts/src/ph1d.rs:542:        let output_schema_hash = SchemaHash(nonzero_u64(fnv1a64(b"ph1d_output_schema_v1")));
+crates/selene_kernel_contracts/src/ph1d.rs:544:            transcript_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:545:            tool_catalog_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:546:            policy_context_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:547:            output_schema_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:552:            prompt_template_version: SchemaVersion(1),
+crates/selene_kernel_contracts/src/ph1d.rs:553:            output_schema_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:554:            tool_catalog_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:555:            policy_context_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:556:            transcript_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:576:        if self.prompt_template_version != SchemaVersion(1) {
+crates/selene_kernel_contracts/src/ph1d.rs:578:                field: "ph1d_request.prompt_template_version",
+crates/selene_kernel_contracts/src/ph1d.rs:579:                reason: "unsupported prompt_template_version",
+crates/selene_kernel_contracts/src/ph1d.rs:583:        self.output_schema_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:584:        self.tool_catalog_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:585:        self.policy_context_hash.validate()?;
+crates/selene_kernel_contracts/src/ph1d.rs:591:        let expected_transcript_hash = TranscriptHash(nonzero_u64(fnv1a64(
+crates/selene_kernel_contracts/src/ph1d.rs:594:        if self.transcript_hash != expected_transcript_hash {
+crates/selene_kernel_contracts/src/ph1d.rs:596:                field: "ph1d_request.transcript_hash",
+crates/selene_kernel_contracts/src/ph1d.rs:601:        let expected_tool_catalog_hash = SchemaHash(nonzero_u64(fnv1a64(&tool_catalog_bytes(
+crates/selene_kernel_contracts/src/ph1d.rs:604:        if self.tool_catalog_hash != expected_tool_catalog_hash {
+crates/selene_kernel_contracts/src/ph1d.rs:606:                field: "ph1d_request.tool_catalog_hash",
+crates/selene_kernel_contracts/src/ph1d.rs:611:        let expected_policy_context_hash = SchemaHash(nonzero_u64(fnv1a64(&policy_context_bytes(
+crates/selene_kernel_contracts/src/ph1d.rs:614:        if self.policy_context_hash != expected_policy_context_hash {
+crates/selene_kernel_contracts/src/ph1d.rs:616:                field: "ph1d_request.policy_context_hash",
+crates/selene_kernel_contracts/src/ph1d.rs:621:        let expected_output_schema_hash =
+crates/selene_kernel_contracts/src/ph1d.rs:623:        if self.output_schema_hash != expected_output_schema_hash {
+crates/selene_kernel_contracts/src/ph1d.rs:625:                field: "ph1d_request.output_schema_hash",
+crates/selene_kernel_contracts/src/ph1d.rs:631:            expected_transcript_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:632:            expected_tool_catalog_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:633:            expected_policy_context_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:634:            expected_output_schema_hash,
+crates/selene_kernel_contracts/src/ph1d.rs:730:    transcript_hash: TranscriptHash,
+crates/selene_kernel_contracts/src/ph1d.rs:731:    tool_catalog_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:732:    policy_context_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:733:    output_schema_hash: SchemaHash,
+crates/selene_kernel_contracts/src/ph1d.rs:736:    out.extend_from_slice(&transcript_hash.0.to_le_bytes());
+crates/selene_kernel_contracts/src/ph1d.rs:737:    out.extend_from_slice(&tool_catalog_hash.0.to_le_bytes());
+crates/selene_kernel_contracts/src/ph1d.rs:738:    out.extend_from_slice(&policy_context_hash.0.to_le_bytes());
+crates/selene_kernel_contracts/src/ph1d.rs:739:    out.extend_from_slice(&output_schema_hash.0.to_le_bytes());
+crates/selene_kernel_contracts/src/ph1d.rs:1024:        r.transcript_hash = TranscriptHash(r.transcript_hash.0.wrapping_add(1));
+crates/selene_adapter/src/lib.rs:869:        let provider_id = env::var("SELENE_PH1D_LIVE_PROVIDER_ID")
+crates/selene_adapter/src/lib.rs:873:            .ok_or_else(|| "missing SELENE_PH1D_LIVE_PROVIDER_ID".to_string())?;
+crates/selene_adapter/src/lib.rs:874:        let model_id = env::var("SELENE_PH1D_LIVE_MODEL_ID")
+crates/selene_adapter/src/lib.rs:892:            "ph1d live provider adapter unavailable for provider={} model={}",
+crates/selene_adapter/src/lib.rs:2515:                let transcript_hash = ph1c.final_text.as_ref().map(|v| stable_hash_hex_16(v));
+crates/selene_adapter/src/lib.rs:2527:                        transcript_hash,
+crates/selene_adapter/src/lib.rs:3403:            "PH1.D live provider adapter unavailable for PH1.VISION OCR path".to_string()
+crates/selene_adapter/src/lib.rs:8802:                Some("at_l_05_transcript_hash".to_string()),
+crates/selene_adapter/src/lib.rs:10432:            "prompt_template_version",
+crates/selene_adapter/src/lib.rs:10433:            "output_schema_hash",
+crates/selene_adapter/src/lib.rs:10434:            "tool_catalog_hash",
+crates/selene_adapter/src/lib.rs:10435:            "policy_context_hash",
+crates/selene_adapter/src/lib.rs:10436:            "transcript_hash",
+crates/selene_adapter/src/lib.rs:10438:            "model_route_class",
+crates/selene_storage/src/ph1f.rs:16019:        transcript_hash: String,
+crates/selene_storage/src/ph1f.rs:16041:            transcript_hash.clone(),
+crates/selene_storage/src/ph1f.rs:16049:            PayloadKey::new("transcript_hash")?,
+crates/selene_storage/src/ph1f.rs:16050:            PayloadValue::new(transcript_hash)?,
+crates/selene_storage/src/ph1f.rs:16133:        transcript_hash: Option<String>,
+crates/selene_storage/src/ph1f.rs:16143:        if let Some(hash) = transcript_hash {
+crates/selene_storage/src/ph1f.rs:16145:                PayloadKey::new("transcript_hash")?,
+crates/selene_storage/src/ph1f.rs:16772:        transcript_hash: Option<&str>,
+crates/selene_storage/src/ph1f.rs:16782:                PayloadKey::new("prompt_template_version")?,
+crates/selene_storage/src/ph1f.rs:16786:                PayloadKey::new("output_schema_hash")?,
+crates/selene_storage/src/ph1f.rs:16790:                PayloadKey::new("tool_catalog_hash")?,
+crates/selene_storage/src/ph1f.rs:16794:                PayloadKey::new("policy_context_hash")?,
+crates/selene_storage/src/ph1f.rs:16799:                PayloadKey::new("model_route_class")?,
+crates/selene_storage/src/ph1f.rs:16806:            PayloadKey::new("transcript_hash")?,
+crates/selene_storage/src/ph1f.rs:16807:            PayloadValue::new(transcript_hash.unwrap_or("transcript_unavailable"))?,
+
+## STT ladder/failover/shadow
+$ rg -n "mvp_openai_google_v1|primary_provider_id|secondary_provider_id|run_via_live_provider_adapter|fallback|circuit|evaluate_inhouse_shadow_route|at_c_step13|at_c_5h_step3" crates/selene_engines/src/ph1c.rs crates/selene_adapter/src/lib.rs
+crates/selene_engines/src/ph1c.rs:151:    pub primary_provider_id: String,
+crates/selene_engines/src/ph1c.rs:153:    pub secondary_provider_id: String,
+crates/selene_engines/src/ph1c.rs:175:    pub fn mvp_openai_google_v1(correlation_id: u64, turn_id: u64, tenant_id: String) -> Self {
+crates/selene_engines/src/ph1c.rs:186:            primary_provider_id: "openai".to_string(),
+crates/selene_engines/src/ph1c.rs:188:            secondary_provider_id: "google".to_string(),
+crates/selene_engines/src/ph1c.rs:227:        if !is_provider_token(&self.primary_provider_id, 64)
+crates/selene_engines/src/ph1c.rs:228:            || !is_provider_token(&self.secondary_provider_id, 64)
+crates/selene_engines/src/ph1c.rs:236:        if !is_openai_provider_id(&self.primary_provider_id) {
+crates/selene_engines/src/ph1c.rs:238:                "ph1c_live_provider_context.primary_provider_id",
+crates/selene_engines/src/ph1c.rs:241:        if !is_google_provider_id(&self.secondary_provider_id) {
+crates/selene_engines/src/ph1c.rs:243:                "ph1c_live_provider_context.secondary_provider_id",
+crates/selene_engines/src/ph1c.rs:315:                "ph1c_circuit_breaker_config.failure_threshold",
+crates/selene_engines/src/ph1c.rs:320:                "ph1c_circuit_breaker_config.cooldown_ms",
+crates/selene_engines/src/ph1c.rs:408:    circuit_breaker_config: Ph1cCircuitBreakerConfig,
+crates/selene_engines/src/ph1c.rs:409:    circuit_breakers: Arc<Mutex<CircuitBreakerBook>>,
+crates/selene_engines/src/ph1c.rs:415:        match Self::with_circuit_breaker_config(config.clone(), preferred) {
+crates/selene_engines/src/ph1c.rs:418:                let fallback = Ph1cCircuitBreakerConfig {
+crates/selene_engines/src/ph1c.rs:423:                Self::with_circuit_breaker_config(config, fallback).unwrap_or_else(|_| Self {
+crates/selene_engines/src/ph1c.rs:425:                    circuit_breaker_config: fallback,
+crates/selene_engines/src/ph1c.rs:426:                    circuit_breakers: Arc::new(Mutex::new(CircuitBreakerBook::default())),
+crates/selene_engines/src/ph1c.rs:432:    pub(crate) fn with_circuit_breaker_config(
+crates/selene_engines/src/ph1c.rs:434:        circuit_breaker_config: Ph1cCircuitBreakerConfig,
+crates/selene_engines/src/ph1c.rs:436:        circuit_breaker_config.validate()?;
+crates/selene_engines/src/ph1c.rs:439:            circuit_breaker_config,
+crates/selene_engines/src/ph1c.rs:440:            circuit_breakers: Arc::new(Mutex::new(CircuitBreakerBook::default())),
+crates/selene_engines/src/ph1c.rs:601:    pub fn run_via_live_provider_adapter<A: Ph1dProviderAdapter>(
+crates/selene_engines/src/ph1c.rs:607:        self.run_via_live_provider_adapter_at_ms(req, live, adapter, unix_now_ms())
+crates/selene_engines/src/ph1c.rs:610:    fn run_via_live_provider_adapter_at_ms<A: Ph1dProviderAdapter>(
+crates/selene_engines/src/ph1c.rs:637:            let circuit_key = circuit_breaker_key_for_slot(live, slot);
+crates/selene_engines/src/ph1c.rs:638:            if self.is_circuit_open(&circuit_key, now_ms) {
+crates/selene_engines/src/ph1c.rs:647:                if self.is_circuit_open(&circuit_key, now_ms) {
+crates/selene_engines/src/ph1c.rs:672:                                self.on_provider_success(&circuit_key);
+crates/selene_engines/src/ph1c.rs:762:                                    self.on_provider_failure(&circuit_key, now_ms);
+crates/selene_engines/src/ph1c.rs:770:                        self.on_provider_failure(&circuit_key, now_ms);
+crates/selene_engines/src/ph1c.rs:857:            let circuit_key = circuit_breaker_key_for_slot(live, slot);
+crates/selene_engines/src/ph1c.rs:858:            if self.is_circuit_open(&circuit_key, now_ms) {
+crates/selene_engines/src/ph1c.rs:870:                if self.is_circuit_open(&circuit_key, now_ms) {
+crates/selene_engines/src/ph1c.rs:907:                                    self.on_provider_success(&circuit_key);
+crates/selene_engines/src/ph1c.rs:913:                                        self.on_provider_failure(&circuit_key, now_ms);
+crates/selene_engines/src/ph1c.rs:921:                            self.on_provider_failure(&circuit_key, now_ms);
+crates/selene_engines/src/ph1c.rs:986:    pub fn evaluate_inhouse_shadow_route(
+crates/selene_engines/src/ph1c.rs:1069:    fn is_circuit_open(&self, key: &CircuitBreakerKey, now_ms: u64) -> bool {
+crates/selene_engines/src/ph1c.rs:1070:        let mut book = match self.circuit_breakers.lock() {
+crates/selene_engines/src/ph1c.rs:1090:        let mut book = match self.circuit_breakers.lock() {
+crates/selene_engines/src/ph1c.rs:1096:        let threshold = self.circuit_breaker_config.failure_threshold;
+crates/selene_engines/src/ph1c.rs:1097:        let cooldown_ms = u64::from(self.circuit_breaker_config.cooldown_ms);
+crates/selene_engines/src/ph1c.rs:1116:        let mut book = match self.circuit_breakers.lock() {
+crates/selene_engines/src/ph1c.rs:1442:        ProviderSlot::Primary => (&live.primary_provider_id, &live.primary_model_id),
+crates/selene_engines/src/ph1c.rs:1443:        ProviderSlot::Secondary => (&live.secondary_provider_id, &live.secondary_model_id),
+crates/selene_engines/src/ph1c.rs:1444:        ProviderSlot::Tertiary => (&live.secondary_provider_id, &live.secondary_model_id),
+crates/selene_engines/src/ph1c.rs:1464:fn circuit_breaker_key_for_slot(
+crates/selene_engines/src/ph1c.rs:1568:    let fallback_language_tag = LanguageTag::new("und".to_string())
+crates/selene_engines/src/ph1c.rs:1573:        .unwrap_or(fallback_language_tag);
+crates/selene_engines/src/ph1c.rs:3130:            Ph1cLiveProviderContext::mvp_openai_google_v1(2001, 3001, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3140:        match rt.run_via_live_provider_adapter(&req, &live, &adapter) {
+crates/selene_engines/src/ph1c.rs:3155:    fn at_c_5h_step2_live_ph1d_secondary_fallback_after_primary_timeout() {
+crates/selene_engines/src/ph1c.rs:3161:            Ph1cLiveProviderContext::mvp_openai_google_v1(2002, 3002, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3175:        match rt.run_via_live_provider_adapter(&req, &live, &adapter) {
+crates/selene_engines/src/ph1c.rs:3181:            other => panic!("expected transcript_ok from secondary fallback, got: {other:?}"),
+crates/selene_engines/src/ph1c.rs:3204:            Ph1cLiveProviderContext::mvp_openai_google_v1(2003, 3003, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3212:        match rt.run_via_live_provider_adapter(&req, &live, &adapter) {
+crates/selene_engines/src/ph1c.rs:3227:    fn at_c_5h_step3_primary_circuit_open_skips_to_google_secondary() {
+crates/selene_engines/src/ph1c.rs:3231:        let rt = Ph1cRuntime::with_circuit_breaker_config(
+crates/selene_engines/src/ph1c.rs:3240:            Ph1cLiveProviderContext::mvp_openai_google_v1(2101, 3101, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3246:                text: "fallback after timeout",
+crates/selene_engines/src/ph1c.rs:3253:        let first = rt.run_via_live_provider_adapter_at_ms(&req, &live, &first_adapter, 10_000);
+crates/selene_engines/src/ph1c.rs:3267:        let second = rt.run_via_live_provider_adapter_at_ms(&req, &live, &second_adapter, 11_000);
+crates/selene_engines/src/ph1c.rs:3272:            other => panic!("expected fallback transcript during breaker cooldown, got: {other:?}"),
+crates/selene_engines/src/ph1c.rs:3285:    fn at_c_5h_step3_primary_circuit_cooldown_reopens_primary() {
+crates/selene_engines/src/ph1c.rs:3289:        let rt = Ph1cRuntime::with_circuit_breaker_config(
+crates/selene_engines/src/ph1c.rs:3298:            Ph1cLiveProviderContext::mvp_openai_google_v1(2102, 3102, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3305:                text: "fallback path",
+crates/selene_engines/src/ph1c.rs:3312:        let _ = rt.run_via_live_provider_adapter_at_ms(&req, &live, &first_adapter, 20_000);
+crates/selene_engines/src/ph1c.rs:3321:        let _ = rt.run_via_live_provider_adapter_at_ms(&req, &live, &second_adapter, 20_500);
+crates/selene_engines/src/ph1c.rs:3334:        let third = rt.run_via_live_provider_adapter_at_ms(&req, &live, &third_adapter, 21_100);
+crates/selene_engines/src/ph1c.rs:3352:    fn at_c_5h_step3_circuit_scope_is_tenant_provider_model_specific() {
+crates/selene_engines/src/ph1c.rs:3356:        let rt = Ph1cRuntime::with_circuit_breaker_config(
+crates/selene_engines/src/ph1c.rs:3366:            Ph1cLiveProviderContext::mvp_openai_google_v1(2103, 3103, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3370:            Ph1cLiveProviderContext::mvp_openai_google_v1(2104, 3104, "tenant_b".to_string());
+crates/selene_engines/src/ph1c.rs:3377:                text: "tenant a fallback",
+crates/selene_engines/src/ph1c.rs:3384:        let _ = rt.run_via_live_provider_adapter_at_ms(&req, &live_tenant_a, &a_adapter, 30_000);
+crates/selene_engines/src/ph1c.rs:3398:            rt.run_via_live_provider_adapter_at_ms(&req, &live_tenant_b, &b_adapter, 30_100);
+crates/selene_engines/src/ph1c.rs:3413:            Ph1cLiveProviderContext::mvp_openai_google_v1(2201, 3201, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3451:            Ph1cLiveProviderContext::mvp_openai_google_v1(2202, 3202, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3512:            Ph1cLiveProviderContext::mvp_openai_google_v1(2203, 3203, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3830:            Ph1cLiveProviderContext::mvp_openai_google_v1(2301, 3301, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3843:        let out = rt.run_via_live_provider_adapter(&req, &live, &adapter);
+crates/selene_engines/src/ph1c.rs:3869:            Ph1cLiveProviderContext::mvp_openai_google_v1(2302, 3302, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3883:            rt.run_via_live_provider_adapter(&req, &live_without_lexicon, &adapter_without);
+crates/selene_engines/src/ph1c.rs:3889:            Ph1cLiveProviderContext::mvp_openai_google_v1(2303, 3303, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:3903:        let with = rt.run_via_live_provider_adapter(&req, &live_with_lexicon, &adapter_with);
+crates/selene_engines/src/ph1c.rs:4003:            .evaluate_inhouse_shadow_route(
+crates/selene_engines/src/ph1c.rs:4018:            .evaluate_inhouse_shadow_route(&req, slice_key, &provider_truth, &inhouse_shadow, true)
+crates/selene_engines/src/ph1c.rs:4058:            .evaluate_inhouse_shadow_route(&req, slice_key, &provider_truth, &inhouse_shadow, true)
+crates/selene_engines/src/ph1c.rs:4064:    fn at_c_step13_openai_primary_success_prefers_primary_slot() {
+crates/selene_engines/src/ph1c.rs:4103:    fn at_c_step13_google_fallback_on_openai_fail_uses_secondary_slot() {
+crates/selene_engines/src/ph1c.rs:4122:                transcript_text: "google fallback accepted".to_string(),
+crates/selene_engines/src/ph1c.rs:4132:                assert_eq!(ok.transcript_text, "google fallback accepted");
+crates/selene_engines/src/ph1c.rs:4137:            other => panic!("expected secondary-slot fallback transcript_ok, got: {other:?}"),
+crates/selene_engines/src/ph1c.rs:4142:    fn at_c_step13_terminal_fail_closed_when_openai_and_google_fail() {
+crates/selene_engines/src/ph1c.rs:4261:                transcript_text: "set meeting tomorrow fallback".to_string(),
+crates/selene_engines/src/ph1c.rs:4270:                assert_eq!(ok.transcript_text, "set meeting tomorrow fallback")
+crates/selene_engines/src/ph1c.rs:4272:            other => panic!("expected transcript_ok from secondary fallback, got: {other:?}"),
+crates/selene_engines/src/ph1c.rs:4330:                transcript_text: "use secondary cloud assist fallback".to_string(),
+crates/selene_engines/src/ph1c.rs:4340:                assert_eq!(ok.transcript_text, "use secondary cloud assist fallback")
+crates/selene_engines/src/ph1c.rs:4342:            other => panic!("expected transcript_ok from secondary fallback, got: {other:?}"),
+crates/selene_engines/src/ph1c.rs:4397:    fn retries_per_provider_are_bounded_before_fallback() {
+crates/selene_engines/src/ph1c.rs:4599:            Ph1cLiveProviderContext::mvp_openai_google_v1(2501, 3501, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:4620:        match rt.run_via_live_provider_adapter(&req, &live, &adapter) {
+crates/selene_engines/src/ph1c.rs:4633:            Ph1cLiveProviderContext::mvp_openai_google_v1(2502, 3502, "tenant_a".to_string());
+crates/selene_engines/src/ph1c.rs:4657:        match rt.run_via_live_provider_adapter(&req, &live, &adapter) {
+crates/selene_adapter/src/lib.rs:2422:        let mut live = Ph1cLiveProviderContext::mvp_openai_google_v1(
+crates/selene_adapter/src/lib.rs:2451:        let response = self.ph1c_runtime.run_via_live_provider_adapter(
+
+## TTS
+$ rg -n "VOICE_DEFAULT|Deterministic voice selection placeholder|ph1tts" crates/selene_engines/src/ph1tts.rs crates/selene_os/src/ph1tts.rs crates/selene_storage/src/ph1f.rs
+crates/selene_os/src/ph1tts.rs:4:use selene_kernel_contracts::ph1tts::{Ph1ttsEvent, Ph1ttsRequest, TtsControl, TtsFailed};
+crates/selene_os/src/ph1tts.rs:65:                field: "ph1tts_wiring_config.max_tick_delta_ms",
+crates/selene_os/src/ph1tts.rs:87:                schema_version: selene_kernel_contracts::ph1tts::PH1TTS_CONTRACT_VERSION,
+crates/selene_os/src/ph1tts.rs:105:                field: "ph1tts_wiring.tick_delta_ms",
+crates/selene_os/src/ph1tts.rs:123:    use selene_kernel_contracts::ph1tts::{
+crates/selene_os/src/ph1tts.rs:145:                                selene_kernel_contracts::ph1tts::PH1TTS_CONTRACT_VERSION,
+crates/selene_os/src/ph1tts.rs:147:                            voice_id: VoiceId::new("VOICE_DEFAULT").unwrap(),
+crates/selene_os/src/ph1tts.rs:159:                                    selene_kernel_contracts::ph1tts::PH1TTS_CONTRACT_VERSION,
+crates/selene_os/src/ph1tts.rs:188:                    schema_version: selene_kernel_contracts::ph1tts::PH1TTS_CONTRACT_VERSION,
+crates/selene_os/src/ph1tts.rs:278:                field: "ph1tts_wiring.tick_delta_ms",
+crates/selene_engines/src/ph1tts.rs:4:use selene_kernel_contracts::ph1tts::{
+crates/selene_engines/src/ph1tts.rs:165:        // Deterministic voice selection placeholder.
+crates/selene_engines/src/ph1tts.rs:166:        let voice_id = VoiceId::new("VOICE_DEFAULT").expect("voice id must be constructible");
+crates/selene_engines/src/ph1tts.rs:318:    use selene_kernel_contracts::ph1tts::{
+crates/selene_storage/src/ph1f.rs:1391:    ph1tts_device_tenant_bindings: BTreeMap<DeviceId, String>,
+crates/selene_storage/src/ph1f.rs:3079:            ph1tts_device_tenant_bindings: BTreeMap::new(),
+crates/selene_storage/src/ph1f.rs:17814:    fn validate_ph1tts_tenant_id(tenant_id: &str) -> Result<(), StorageError> {
+crates/selene_storage/src/ph1f.rs:17818:                    field: "ph1tts.tenant_id",
+crates/selene_storage/src/ph1f.rs:17826:    fn validate_ph1tts_idempotency(
+crates/selene_storage/src/ph1f.rs:17841:    fn validate_ph1tts_bounded_text(
+crates/selene_storage/src/ph1f.rs:17857:    fn validate_ph1tts_scope_and_bindings(
+crates/selene_storage/src/ph1f.rs:17881:                    field: "ph1tts.device_id",
+crates/selene_storage/src/ph1f.rs:17898:                        field: "ph1tts.session_scope",
+crates/selene_storage/src/ph1f.rs:17905:        if let Some(bound_tenant_id) = self.ph1tts_device_tenant_bindings.get(device_id) {
+crates/selene_storage/src/ph1f.rs:17909:                        field: "ph1tts.tenant_id",
+crates/selene_storage/src/ph1f.rs:17915:            self.ph1tts_device_tenant_bindings
+crates/selene_storage/src/ph1f.rs:17923:    pub fn ph1tts_render_summary_commit(
+crates/selene_storage/src/ph1f.rs:17938:        Self::validate_ph1tts_tenant_id(&tenant_id)?;
+crates/selene_storage/src/ph1f.rs:17939:        Self::validate_ph1tts_idempotency("ph1tts.idempotency_key", &idempotency_key)?;
+crates/selene_storage/src/ph1f.rs:17940:        Self::validate_ph1tts_bounded_text("ph1tts.route_class_used", &route_class_used, 32)?;
+crates/selene_storage/src/ph1f.rs:17941:        Self::validate_ph1tts_bounded_text("ph1tts.mode_used", &mode_used, 32)?;
+crates/selene_storage/src/ph1f.rs:17942:        Self::validate_ph1tts_bounded_text("ph1tts.voice_id", &voice_id, 96)?;
+crates/selene_storage/src/ph1f.rs:17943:        self.validate_ph1tts_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+crates/selene_storage/src/ph1f.rs:17976:    pub fn ph1tts_started_commit(
+crates/selene_storage/src/ph1f.rs:17989:        Self::validate_ph1tts_tenant_id(&tenant_id)?;
+crates/selene_storage/src/ph1f.rs:17990:        Self::validate_ph1tts_idempotency("ph1tts.idempotency_key", &idempotency_key)?;
+crates/selene_storage/src/ph1f.rs:17991:        Self::validate_ph1tts_bounded_text("ph1tts.answer_id", &answer_id, 96)?;
+crates/selene_storage/src/ph1f.rs:17992:        self.validate_ph1tts_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+crates/selene_storage/src/ph1f.rs:18021:    pub fn ph1tts_canceled_commit(
+crates/selene_storage/src/ph1f.rs:18035:        Self::validate_ph1tts_tenant_id(&tenant_id)?;
+crates/selene_storage/src/ph1f.rs:18036:        Self::validate_ph1tts_idempotency("ph1tts.idempotency_key", &idempotency_key)?;
+crates/selene_storage/src/ph1f.rs:18037:        Self::validate_ph1tts_bounded_text("ph1tts.answer_id", &answer_id, 96)?;
+crates/selene_storage/src/ph1f.rs:18038:        Self::validate_ph1tts_bounded_text("ph1tts.stop_reason", &stop_reason, 64)?;
+crates/selene_storage/src/ph1f.rs:18039:        self.validate_ph1tts_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+crates/selene_storage/src/ph1f.rs:18071:    pub fn ph1tts_failed_commit(
+crates/selene_storage/src/ph1f.rs:18085:        Self::validate_ph1tts_tenant_id(&tenant_id)?;
+crates/selene_storage/src/ph1f.rs:18086:        Self::validate_ph1tts_idempotency("ph1tts.idempotency_key", &idempotency_key)?;
+crates/selene_storage/src/ph1f.rs:18087:        Self::validate_ph1tts_bounded_text("ph1tts.answer_id", &answer_id, 96)?;
+crates/selene_storage/src/ph1f.rs:18088:        Self::validate_ph1tts_bounded_text("ph1tts.fail_code", &fail_code, 64)?;
+crates/selene_storage/src/ph1f.rs:18089:        self.validate_ph1tts_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+crates/selene_storage/src/ph1f.rs:18117:    pub fn ph1tts_audit_rows(&self, correlation_id: CorrelationId) -> Vec<&AuditEvent> {
+
+## OCR
+$ rg -n "openai_default|PH1.VISION OCR path|PH1.D live provider adapter unavailable for PH1.VISION OCR path|Ph1OsOcrRouteConfig|RecordingOcrAdapter|at_os_2[3-9]_" crates/selene_adapter/src/lib.rs crates/selene_os/src/ph1os.rs
+crates/selene_os/src/ph1os.rs:1542:pub struct Ph1OsOcrRouteConfig {
+crates/selene_os/src/ph1os.rs:1556:impl Ph1OsOcrRouteConfig {
+crates/selene_os/src/ph1os.rs:1557:    pub fn openai_default() -> Self {
+crates/selene_os/src/ph1os.rs:1715:    config: Ph1OsOcrRouteConfig,
+crates/selene_os/src/ph1os.rs:1723:    pub fn new(config: Ph1OsOcrRouteConfig, adapter: A) -> Result<Self, ContractViolation> {
+crates/selene_os/src/ph1os.rs:2257:    config: &Ph1OsOcrRouteConfig,
+crates/selene_os/src/ph1os.rs:4082:    struct RecordingOcrAdapter {
+crates/selene_os/src/ph1os.rs:4087:    impl RecordingOcrAdapter {
+crates/selene_os/src/ph1os.rs:4096:    impl Ph1dProviderAdapter for RecordingOcrAdapter {
+crates/selene_os/src/ph1os.rs:4220:    fn at_os_23_ocr_handoff_routes_vision_bundle_through_ph1d_provider() {
+crates/selene_os/src/ph1os.rs:4221:        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaOk);
+crates/selene_os/src/ph1os.rs:4223:            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter.clone())
+crates/selene_os/src/ph1os.rs:4257:    fn at_os_24_ocr_handoff_routes_doc_bundle_through_ph1d_provider() {
+crates/selene_os/src/ph1os.rs:4258:        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaOk);
+crates/selene_os/src/ph1os.rs:4260:            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter.clone())
+crates/selene_os/src/ph1os.rs:4290:    fn at_os_25_ocr_handoff_fails_closed_on_provider_schema_drift() {
+crates/selene_os/src/ph1os.rs:4291:        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::SchemaFail);
+crates/selene_os/src/ph1os.rs:4293:            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
+crates/selene_os/src/ph1os.rs:4310:    fn at_os_26_ocr_handoff_fails_closed_on_low_confidence() {
+crates/selene_os/src/ph1os.rs:4311:        let adapter = RecordingOcrAdapter::new(OcrAdapterMode::LowConfidence);
+crates/selene_os/src/ph1os.rs:4312:        let mut config = Ph1OsOcrRouteConfig::openai_default();
+crates/selene_os/src/ph1os.rs:4424:        let adapter = RecordingOcrAdapter::new(mode);
+crates/selene_os/src/ph1os.rs:4426:            Ph1OsOcrRouteWiring::new(Ph1OsOcrRouteConfig::openai_default(), adapter).unwrap();
+crates/selene_os/src/ph1os.rs:4453:    fn at_os_27_ocr_validated_output_feeds_context_and_nlp() {
+crates/selene_os/src/ph1os.rs:4507:    fn at_os_28_ocr_context_nlp_fails_closed_when_context_disabled() {
+crates/selene_os/src/ph1os.rs:4541:    fn at_os_29_ocr_context_nlp_fails_closed_when_nlp_disabled() {
+crates/selene_adapter/src/lib.rs:126:    OsVoiceTrigger, Ph1OsOcrContextNlpConfig, Ph1OsOcrContextNlpWiring, Ph1OsOcrRouteConfig,
+crates/selene_adapter/src/lib.rs:3403:            "PH1.D live provider adapter unavailable for PH1.VISION OCR path".to_string()
+crates/selene_adapter/src/lib.rs:3405:        let mut ocr_route_config = Ph1OsOcrRouteConfig::openai_default();
+
+## Environment key scan
+$ rg -n "OPENAI_API_KEY|GOOGLE.*KEY|BING|SERP|PH1D_OPENAI_MODEL|SELENE_PH1D_LIVE_PROVIDER_ID|SELENE_PH1D_LIVE_MODEL_ID" crates/ docs/
+crates/selene_os/src/ph1os.rs:1563:            model_id: std::env::var("PH1D_OPENAI_MODEL")
+crates/selene_adapter/src/lib.rs:869:        let provider_id = env::var("SELENE_PH1D_LIVE_PROVIDER_ID")
+crates/selene_adapter/src/lib.rs:873:            .ok_or_else(|| "missing SELENE_PH1D_LIVE_PROVIDER_ID".to_string())?;
+crates/selene_adapter/src/lib.rs:874:        let model_id = env::var("SELENE_PH1D_LIVE_MODEL_ID")
+
+## Inventory table
+Domain | Current runtime path | Stub indicator(s) | Replacement target
+---|---|---|---
+Web/News/URL | PH1.E deterministic tool router (`crates/selene_engines/src/ph1e.rs`) | `provider_hint=ph1e_mock`, `example.com`/`workspace.example.com` URLs | OpenAI Responses `web_search` + real URL fetch/cite adapter
+LLM | PH1.D provider adapter bootstrap in adapter (`EnvPh1dLiveAdapter`) | `live provider adapter unavailable` terminal error | Real PH1.D provider adapter implementation (Responses API)
+STT | PH1.C live ladder OpenAI->Google with failover logic (`ph1c`) | External provider calls blocked by PH1.D adapter terminal-unavailable path | Keep ladder; enable real PH1.D adapter transport
+TTS | Deterministic local PH1.TTS engine (`VOICE_DEFAULT`) | comment `Deterministic voice selection placeholder`; no provider calls | OpenAI audio/speech adapter (e.g. gpt-4o-mini-tts)
+OCR | PH1.OS OCR route config defaults to OpenAI (`ph1os`) | Adapter path errors if PH1.D live adapter unavailable; tests use `RecordingOcrAdapter` | Real PH1.D OCR provider adapter transport (OpenAI vision/OCR)
