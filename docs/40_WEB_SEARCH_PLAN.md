@@ -680,6 +680,10 @@ This section is additive and applies across all runs.
 
 ## 16) System Wiring Plan
 
+Scope note:
+- This section is a conceptual wiring summary.
+- Authoritative final wiring/ownership contracts for the finished build are defined in Section `40`.
+
 ### 16.1 Canonical Wiring Law
 
 1. `PH1.OS` is orchestration authority.
@@ -758,12 +762,16 @@ This section is additive and applies across all runs.
 
 ### 17.3 Wire-Ready Addenda (Must Be Added for Full Build Readiness)
 
-1. Add one canonical packet registry appendix (`TurnInput`, `SearchAssist`, `ToolRequest`, `EvidencePacket`, `SynthesisPacket`, `WritePacket`, `AuditPacket`).
-2. Add one canonical ownership appendix listing authoritative engine per decision.
-3. Add one canonical handoff map per run (`producer -> packet -> consumer`).
-4. Add one canonical failure map (`reason_code` owner engine + fail-closed behavior).
-5. Add one canonical idempotency key recipe table per write path (`PH1.F` + `PH1.J`).
-6. Add one CI gate map from each run to required scripts/tests.
+Status:
+- These addenda are now captured by Sections `38` and `40` and are treated as implementation requirements, not optional future notes.
+
+Fulfillment mapping:
+1. Canonical packet registry requirement -> Section `38.1`
+2. Canonical ownership appendix requirement -> Section `40.6`
+3. Canonical handoff map requirement -> Section `40.4`
+4. Canonical failure ownership map requirement -> Section `40.7`
+5. Canonical idempotency key table requirement -> Section `38.3`
+6. CI gate map requirement -> Section `38.5` plus Section `39.7`
 
 ## 18) Performance Budget Contract
 
@@ -1556,3 +1564,163 @@ Coverage guarantee:
 - Runs `5-18` satisfy core requirements in Sections `1-34` including safety, quality, and parity enhancements.
 - Runs `19-29` implement all enterprise capabilities in Section `35`.
 - Run `30` enforces release lock requirements in Section `38.6` and final closure expectations in Sections `12`, `15`, and `37`.
+
+## 40) Final Wiring and Ownership Contract (Authoritative for Finished System)
+
+This section is authoritative for end-to-end runtime wiring when the full build program is complete.
+
+### 40.1 Top-Level Runtime Law
+
+1. `PH1.OS` orchestrates all engine sequencing and handoffs.
+2. `PH1.X` is the only runtime conversation-move authority.
+3. `PH1.E` is the only read-only external retrieval execution authority.
+4. `PH1.D` is synthesis-only and evidence-bounded (non-authoritative).
+5. `PH1.WRITE` is presentation-only and may not change semantic truth.
+6. `PH1.TTS` renders voice from PH1.WRITE formatted output only.
+7. `PH1.J` is append-only audit authority.
+8. `PH1.F` is persistence/projection authority.
+9. No direct engine-to-engine calls; all transitions flow through orchestrated contracts.
+
+### 40.2 Canonical Turn State Machine
+
+Allowed turn states:
+- `TURN_ACCEPTED`
+- `INPUT_PARSED`
+- `INTENT_CLASSIFIED`
+- `PLAN_SELECTED`
+- `RETRIEVAL_EXECUTED`
+- `EVIDENCE_LOCKED`
+- `SYNTHESIS_READY`
+- `OUTPUT_RENDERED`
+- `AUDIT_COMMITTED`
+- `TURN_COMPLETED`
+- `TURN_FAILED_CLOSED`
+
+Allowed transitions:
+- `TURN_ACCEPTED -> INPUT_PARSED -> INTENT_CLASSIFIED -> PLAN_SELECTED`
+- `PLAN_SELECTED -> RETRIEVAL_EXECUTED -> EVIDENCE_LOCKED -> SYNTHESIS_READY -> OUTPUT_RENDERED -> AUDIT_COMMITTED -> TURN_COMPLETED`
+- `any non-terminal state -> TURN_FAILED_CLOSED` (with reason code + proof refs)
+
+No silent transitions:
+- every transition must append one audit row in `PH1.J`.
+
+### 40.3 Deterministic Gate Order (Must Be Enforced Every Turn)
+
+1. Session/identity gate (`PH1.L` + `PH1.VOICE.ID` when voice lane is active).
+2. Input quality gate (`PH1.C` + optional SRL/LANG repairs).
+3. Intent/mode gate (`PH1.NLP`, `PH1.PRUNE`, `PH1.DIAG`, final decision by `PH1.X`).
+4. Policy/access/cost gate (`PH1.POLICY`, `PH1.ACCESS`, `PH1.QUOTA`/`PH1.COST`).
+5. Retrieval execution gate (`PH1.SEARCH` plan, `PH1.E` execution, proxy/provider checks).
+6. Evidence integrity gate (`EvidencePacket` validation and citation traceability checks).
+7. Synthesis gate (`PH1.D` evidence-only synthesis).
+8. Output gate (`PH1.WRITE` formatting + optional `PH1.TTS`).
+9. Audit/persistence gate (`PH1.J` append, `PH1.F` projection updates).
+
+### 40.4 Canonical Packet Handoff Map (`producer -> packet -> consumer`)
+
+| Producer | Packet | Consumer | Rule |
+|---|---|---|---|
+| `PH1.C`/`PH1.SRL`/`PH1.LANG` | `TurnInputPacket` | `PH1.NLP` / `PH1.X` | input only, no decisions |
+| `PH1.NLP`/`PH1.PRUNE`/`PH1.DIAG` | `SearchAssistPacket` | `PH1.X` | advisory only |
+| `PH1.X` | `ToolRequestPacket` | `PH1.SEARCH` -> `PH1.E` | authoritative dispatch intent |
+| `PH1.E` | `EvidencePacket` | `PH1.D` / `PH1.WRITE` / `PH1.J` | authoritative retrieval truth |
+| `PH1.D` | `SynthesisPacket` | `PH1.WRITE` | no new facts allowed |
+| `PH1.WRITE` | `WritePacket` | API response + `PH1.TTS` + `PH1.J` | presentation only |
+| `PH1.D`/`PH1.WRITE` (mode-specific) | `ComparisonPacket` / `RiskPacket` / `EnterpriseReportPacket` | API response + `PH1.J` | evidence-bound structured modes |
+| Orchestrator | `AuditPacket` | `PH1.J` -> `PH1.F` projections | append-only audit closure |
+
+### 40.5 Mode Flow Contracts (End-to-End)
+
+#### 40.5.1 Standard Web/News Answer
+- `PH1.X` selects retrieval mode.
+- `PH1.SEARCH` generates deterministic query plan.
+- `PH1.E` executes provider ladder + URL open/chunking as needed.
+- `PH1.D` synthesizes from evidence only.
+- `PH1.WRITE` renders final text; `PH1.TTS` speaks same structure when voice enabled.
+- `PH1.J` records full proof chain.
+
+#### 40.5.2 Structured Data Mode
+- `PH1.X` selects `structured_data` mode.
+- `PH1.E` calls structured connectors/parsers (tables/PDF/filings).
+- output must include typed extraction rows before narrative synthesis.
+- `PH1.D` can summarize typed rows but cannot bypass extracted schema.
+
+#### 40.5.3 Competitive Intelligence Mode
+- `PH1.E` retrieves multi-source competitor evidence.
+- dedup + normalization (units/currencies/features) occurs before synthesis.
+- output must include canonical comparison schema with source refs.
+
+#### 40.5.4 Real-Time Mode
+- API-first retrieval is mandatory.
+- freshness TTL check runs before synthesis.
+- stale data triggers fail-closed or explicit stale disclosure by policy.
+
+#### 40.5.5 Regulatory/Compliance Mode
+- jurisdiction resolution runs first.
+- trust-tier filtering prioritizes official/regulatory sources.
+- unsupported compliance claims must fail closed with explicit reason code.
+
+#### 40.5.6 Multi-Hop Deep Research Mode
+- planner emits bounded hop chain.
+- each hop yields evidence refs consumed by next hop.
+- final answer requires complete hop proof chain and stop-condition proofs.
+
+#### 40.5.7 Temporal Comparison Mode
+- retrieval enforces `as_of` windows.
+- timeline extraction + deterministic diff generation.
+- output includes changed/unchanged fields with citations.
+
+#### 40.5.8 Risk Scoring Mode
+- factor evidence retrieval (financial/legal/regulatory/news).
+- deterministic risk computation with calibrated factor weights.
+- output includes score, factor breakdown, confidence, and guardrail text.
+
+#### 40.5.9 Internal + External Merge Mode
+- internal memory/context retrieval is identity-gated.
+- memory shapes retrieval focus only.
+- external evidence remains truth authority for final claims.
+
+#### 40.5.10 Enterprise Report Mode
+- same evidence core, different output contract.
+- required sections: executive summary, findings, risk, comparisons, appendix, citations.
+- export modes (`brief`, `standard`, `deep`, `report`) must preserve citation parity.
+
+### 40.6 Final Ownership Matrix (Decision, Execution, and Write Ownership)
+
+| Responsibility | Authoritative Owner | Non-Authoritative Contributors |
+|---|---|---|
+| turn orchestration | `PH1.OS` | none |
+| next move decision (`clarify/refuse/retrieve`) | `PH1.X` | `PH1.NLP`, `PH1.PRUNE`, `PH1.DIAG` |
+| query planning hints | `PH1.SEARCH` (assist) | `PH1.KNOW`, `PH1.CACHE`, `PH1.CONTEXT` |
+| external retrieval execution | `PH1.E` | none |
+| policy/access/quota gating | `PH1.POLICY` + `PH1.ACCESS` + `PH1.QUOTA/COST` | `PH1.PAE` hints only |
+| evidence truth | `EvidencePacket` produced by `PH1.E` | none |
+| synthesis | `PH1.D` (non-authoritative) | none |
+| presentation formatting | `PH1.WRITE` | none |
+| voice playback | `PH1.TTS` | none |
+| audit log truth | `PH1.J` | none |
+| persistence/projections | `PH1.F` | none |
+| learning proposals | `PH1.FEEDBACK`/`PH1.LEARN`/`PH1.PAE` | `PH1.GOV` approval lane |
+| activation/promotion | `PH1.GOV` / Builder | none |
+
+### 40.7 Failure Ownership Map (Fail-Closed)
+
+| Failure class | Detection owner | User-facing owner | Required behavior |
+|---|---|---|---|
+| invalid input/session/identity | `PH1.X` with session/identity providers | `PH1.X`/adapter | refuse/clarify deterministically |
+| policy/access denial | `PH1.ACCESS`/`PH1.POLICY` | `PH1.X` | fail closed; no retrieval |
+| proxy/provider transport failure | `PH1.E` | `PH1.X` + `PH1.WRITE` | safe fail_detail; no invented fallback |
+| no evidence / low evidence | `PH1.D` validator + policy thresholds | `PH1.WRITE` | insufficient-evidence response |
+| citation mismatch | synthesis/output validator | `PH1.X` | fail closed, no answer release |
+| stale real-time data | freshness gate | `PH1.X`/`PH1.WRITE` | stale disclosure or refusal per policy |
+| compliance uncertainty | regulatory mode validator | `PH1.WRITE` | confidence downgrade or refusal |
+| mode budget exhaustion | quota/cost gates | `PH1.X` | deterministic degraded mode |
+
+### 40.8 End-to-End “Perfect Machine” Invariants
+
+1. Same inputs + same policy snapshots + same evidence -> same output envelope.
+2. Every factual claim has citation traceability to `sources[]` or `content_chunks[]`.
+3. No synthesis outside `EvidencePacket` truth boundary.
+4. No runtime governance bypass (`PH1.GOV` remains activation authority).
+5. No hidden side effects in read-only research lane.
+6. Every turn is replayable from `PH1.J` + `PH1.F` records.
