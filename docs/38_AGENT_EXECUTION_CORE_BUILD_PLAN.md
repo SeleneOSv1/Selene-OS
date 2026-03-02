@@ -179,6 +179,7 @@ Fields:
 
 - `user_visible_text` is an execution outcome payload only.
 - Transcript persistence/display ownership remains outside AEC (adapter transcript path + PH1.F conversation ledger).
+- PH1.WRITE owns text structuring/formatting of user-visible responses; PH1.TTS owns voice rendering/output.
 - AEC must not write transcript rows directly.
 
 ## 5. Deterministic Planning Rules
@@ -352,7 +353,8 @@ Add:
 - `scripts/check_agent_execution_core.sh`
 
 Implementation note:
-- `scripts/check_agent_execution_core.sh` is a design-target script; until introduced, milestone acceptance tests and readiness checks remain the source of truth.
+- `scripts/check_agent_execution_core.sh` exists in `scripts/` and is required CI evidence for production lock.
+- Milestone acceptance tests and readiness checks are supplemental and must not replace the guard script gate.
 
 Production lock condition:
 - Execution Core is not production-locked until `scripts/check_agent_execution_core.sh` exists and passes in CI.
@@ -419,20 +421,23 @@ Design authority:
 - `M0..M7` remains canonical architecture/spec authority for Execution Core.
 
 Implementation authority:
-- `S1..S5` is implementation packet sequencing recorded in build ledger/proofs.
+- `A1..A4` is the implementation packet sequencing for this document.
 
-Crosswalk (implemented milestones):
-| Milestone | Implementation Packet |
-|---|---|
-| `M0` | `S1` |
-| `M1` | `S2` |
-| `M2` | `S3` |
-| `M3` | `S4` |
-| `M4` | `S5` |
+Crosswalk (implementation coverage):
+| Milestone | Implementation Packet | Coverage |
+|---|---|---|
+| `M0` | `A1` | Full |
+| `M1` | `A2` | Full |
+| `M2` | `A3` | Full (single-step) |
+| `M3` | `A3` | Full |
+| `M4` | `A3` | Full |
+| `M5` | `A1 + A3` | Partial |
+| `M6` | `A4 + guardrail CI packet` | Partial |
+| `M7` | Post-`A4` packet (future) | Not covered |
 
 Notes:
-- `M5..M7` remain blueprint milestones requiring later implementation packets.
-- Do not delete/replace canonical milestone authority with packet logs.
+- `A*` packets are implementation logs; they do not override milestone/spec authority.
+- Do not substitute other plan run aliases (`S*` etc.) for AEC implementation authority in this document.
 
 ## 17. Interaction With Other Plans
 

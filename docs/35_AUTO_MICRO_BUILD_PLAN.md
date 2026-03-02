@@ -98,6 +98,7 @@ Trigger evaluation model:
 ### 5.2 Deterministic Metrics
 - `success_rate_bp = ok_count * 10000 / total_count`
 - `timeout_rate_bp = timeout_count * 10000 / total_count`
+- `error_rate_bp = error_count * 10000 / total_count`
 - `retry_exhaust_rate_bp = retry_exhaust_count * 10000 / total_count`
 - `fallback_rate_bp = fallback_count * 10000 / total_count`
 - `correction_rate_bp = correction_count * 10000 / total_count`

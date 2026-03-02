@@ -209,6 +209,7 @@ Required fields:
 - `message`
 - `evidence_refs[]`
 - `existing_draft_ref` (nullable; required when `reason_code=SIM_FINDER_SIMULATION_INACTIVE`)
+- `existing_catalog_ref` (nullable; required when `reason_code=SIM_FINDER_REFUSE_POLICY_BLOCKED` due to `Deprecated|Disabled` catalog status)
 
 ## 4.4 MissingSimulationPacket (Dev Intake)
 
@@ -419,7 +420,9 @@ Before emitting `MissingSimulationPacket`, finder must run this exact determinis
 1. Check `simulation_catalog_current` for candidate with `status=Active`.
 2. If none, check same candidate family with `status=Draft`.
 3. If `Draft` exists, emit `RefusePacket` with reason `SIM_FINDER_SIMULATION_INACTIVE`, include `existing_draft_ref`, and do not create a new `MissingSimulationPacket`.
-4. Only when neither `Active` nor `Draft` exists may finder emit `MissingSimulationPacket` with reason `SIM_FINDER_MISSING_SIMULATION`.
+4. If no `Draft`, check same candidate family with `status=Deprecated|Disabled`.
+5. If `Deprecated|Disabled` exists, emit `RefusePacket` with reason `SIM_FINDER_REFUSE_POLICY_BLOCKED`, include `existing_catalog_ref`, and do not create a new `MissingSimulationPacket`.
+6. Only when none of `Active|Draft|Deprecated|Disabled` exists may finder emit `MissingSimulationPacket` with reason `SIM_FINDER_MISSING_SIMULATION`.
 
 This order is non-optional and must be auditable in packet evidence refs.
 
@@ -449,7 +452,7 @@ When no matching simulation exists after clarification and deterministic `ACTIVE
 Dev lifecycle closure (system-wide):
 6. Dev team triages intake packet (accept/reject/defer).
 7. If accepted, simulation is implemented and activated in catalog.
-8. Finder linkage marks intake row resolved by `simulation_id + version`.
+8. Finder linkage marks intake row resolved using canonical resolve semantics in Section `16.9`.
 9. Original requester is notified capability is now active.
 
 ### 9.1 Abuse/Spam Controls (Mandatory)
@@ -536,20 +539,12 @@ Design authority:
 - `M0..M8` remains canonical architecture/spec authority for Finder behavior.
 
 Implementation authority:
-- `S1..S5` is implementation packet sequencing recorded in build ledger/proofs.
+- Finder implementation sequencing in this document is the milestone order itself: `M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8`.
+- Missing-simulation SIL implementation sequencing is canonical in Section `16.8`.
 
-Crosswalk (implemented milestones):
-| Milestone | Implementation Packet |
-|---|---|
-| `M0` | `S1` |
-| `M1` | `S2` |
-| `M2` | `S3` |
-| `M3` | `S4` |
-| `M4` | `S5` |
-
-Notes:
-- `M5..M8` remain blueprint milestones requiring later implementation packets.
-- Do not delete/replace canonical milestone authority with packet logs.
+Cross-doc run-name rule:
+- `S*`/`A*` packet names from other plans may be referenced in ledgers, but they are non-authoritative aliases for Finder behavior.
+- Finder behavior authority remains `M0..M8` + Section `16` milestones only.
 
 ## 12) Acceptance test inventory (design target)
 
@@ -658,7 +653,8 @@ Required red-team tests:
 - replay from persisted refs does not reproduce the terminal packet
 
 Implementation note:
-- `check_agent_sim_finder_core_acceptance.sh` is a design-target script for `M8`; before `M8`, milestone proof commands remain the source of truth.
+- `check_agent_sim_finder_core_acceptance.sh` exists in `scripts/` and is required CI evidence for `M8` lock.
+- Milestone proof commands remain supplemental evidence and must not replace the guard script gate.
 
 Production lock condition:
 - Finder is not production-locked until `check_agent_sim_finder_core_acceptance.sh` exists and passes in CI.
@@ -747,8 +743,9 @@ Proof commands:
 ### 16.3 Milestone M2 — Worthiness scoring + spam controls (deterministic)
 
 Deliverables:
-- Deterministic scoring function (stored + versioned):
-  - `score = f(frequency, value, risk, feasibility)`
+- Deterministic scoring function (stored + versioned), canonical formula source:
+  - Section `10` (`Simulation worthiness scoring`) only.
+  - Inputs are exactly `frequency_bp`, `value_bp`, `estimated_roi_score_bp`, `feasibility_bp`, `scope_bp`, and `risk_bp`.
 - Threshold policy:
   - `auto_propose_threshold_bp`
   - `block_threshold_bp`
