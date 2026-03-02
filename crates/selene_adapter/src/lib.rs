@@ -7155,6 +7155,7 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_engines::device_vault::DeviceVault;
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock};
     use selene_kernel_contracts::ph1_voice_id::{
@@ -7217,7 +7218,12 @@ mod tests {
         }
     }
 
-    fn with_isolated_empty_device_vault<T>(label: &str, f: impl FnOnce() -> T) -> T {
+    fn with_isolated_device_vault<T>(
+        label: &str,
+        secrets: &[(&str, &str)],
+        env_overrides: &[(&'static str, &'static str)],
+        f: impl FnOnce() -> T,
+    ) -> T {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
         let _guard = env_lock.lock().expect("env lock poisoned");
@@ -7225,17 +7231,33 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("time must be monotonic for tests")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("selene-empty-vault-{label}-{nanos}.json"));
+        let path = std::env::temp_dir().join(format!("selene-vault-{label}-{nanos}.json"));
+        let key_path = path.with_extension("master.key");
         let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(path.with_extension("master.key"));
+        let _ = std::fs::remove_file(&key_path);
+        let vault = DeviceVault::for_paths(path.clone(), key_path);
+        for (key, value) in secrets {
+            vault
+                .set_secret(key, value)
+                .expect("test vault secret seed should succeed");
+        }
         let path_text = path
             .to_str()
             .expect("temp path should be valid UTF-8 for test env var")
             .to_string();
-        let _scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &path_text);
+        let mut scopes = Vec::new();
+        scopes.push(ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &path_text));
+        for (key, value) in env_overrides {
+            scopes.push(ScopedEnvVar::set(key, value));
+        }
         let out = f();
+        drop(scopes);
         let _ = std::fs::remove_file(path);
         out
+    }
+
+    fn with_isolated_empty_device_vault<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        with_isolated_device_vault(label, &[], &[], f)
     }
 
     fn base_request() -> VoiceTurnAdapterRequest {
@@ -9255,6 +9277,53 @@ mod tests {
             let response_text = out.response_text.as_str();
             assert!(response_text.contains("selene vault set brave_search_api_key"));
         });
+    }
+
+    #[test]
+    fn at_adapter_03bb_voice_turn_surfaces_safe_brave_failure_detail() {
+        with_isolated_device_vault(
+            "at_adapter_03bb",
+            &[("brave_search_api_key", "test_brave_key")],
+            &[
+                ("BRAVE_SEARCH_WEB_URL", "http://127.0.0.1:9/res/v1/web/search"),
+                ("BRAVE_SEARCH_NEWS_URL", "http://127.0.0.1:9/res/v1/news/search"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("voice turn with forced brave failure must return adapter response");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL_TOOL");
+                let text = out.response_text.to_ascii_lowercase();
+                assert!(text.contains("provider=brave"));
+                assert!(text.contains("error="));
+            },
+        );
+    }
+
+    #[test]
+    fn at_adapter_03bc_voice_turn_surfaces_safe_openai_fallback_failure_detail() {
+        with_isolated_device_vault(
+            "at_adapter_03bc",
+            &[("openai_api_key", "test_openai_key")],
+            &[("OPENAI_RESPONSES_URL", "http://127.0.0.1:9/v1/responses")],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("voice turn with forced openai failure must return adapter response");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL_TOOL");
+                let text = out.response_text.to_ascii_lowercase();
+                assert!(text.contains("provider=openai"));
+                assert!(text.contains("error="));
+            },
+        );
     }
 
     #[test]

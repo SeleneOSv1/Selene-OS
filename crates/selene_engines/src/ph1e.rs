@@ -31,6 +31,55 @@ pub mod reason_codes {
     pub const E_FAIL_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4500_00FF);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ToolFailPayload {
+    reason_code: ReasonCodeId,
+    fail_detail: Option<String>,
+}
+
+impl ToolFailPayload {
+    fn new(reason_code: ReasonCodeId) -> Self {
+        Self {
+            reason_code,
+            fail_detail: None,
+        }
+    }
+
+    fn with_detail(reason_code: ReasonCodeId, detail: String) -> Self {
+        Self {
+            reason_code,
+            fail_detail: Some(detail),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderCallError {
+    provider: &'static str,
+    http_status: Option<u16>,
+    error_kind: &'static str,
+}
+
+impl ProviderCallError {
+    fn new(provider: &'static str, error_kind: &'static str, http_status: Option<u16>) -> Self {
+        Self {
+            provider,
+            http_status,
+            error_kind,
+        }
+    }
+
+    fn safe_detail(&self) -> String {
+        match self.http_status {
+            Some(status) => format!(
+                "provider={} error={} status={}",
+                self.provider, self.error_kind, status
+            ),
+            None => format!("provider={} error={}", self.provider, self.error_kind),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1eConfig {
     pub max_timeout_ms: u32,
@@ -169,11 +218,25 @@ impl Ph1eRuntime {
             ),
             ToolName::WebSearch => match self.run_web_search(req) {
                 Ok(ok) => ok,
-                Err(code) => return fail_response(req, code, cache_status),
+                Err(fail) => {
+                    return fail_response_with_detail(
+                        req,
+                        fail.reason_code,
+                        cache_status,
+                        fail.fail_detail.as_deref(),
+                    )
+                }
             },
             ToolName::News => match self.run_news_search(req) {
                 Ok(ok) => ok,
-                Err(code) => return fail_response(req, code, cache_status),
+                Err(fail) => {
+                    return fail_response_with_detail(
+                        req,
+                        fail.reason_code,
+                        cache_status,
+                        fail.fail_detail.as_deref(),
+                    )
+                }
             },
             ToolName::UrlFetchAndCite => match self.run_url_fetch_and_cite(req) {
                 Ok(ok) => ok,
@@ -397,14 +460,14 @@ impl Ph1eRuntime {
     fn run_web_search(
         &self,
         req: &ToolRequest,
-    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+    ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
         self.run_live_search(req, ToolName::WebSearch)
     }
 
     fn run_news_search(
         &self,
         req: &ToolRequest,
-    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+    ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
         self.run_live_search(req, ToolName::News)
     }
 
@@ -447,14 +510,17 @@ impl Ph1eRuntime {
         &self,
         req: &ToolRequest,
         kind: ToolName,
-    ) -> Result<(ToolResult, SourceMetadata), ReasonCodeId> {
+    ) -> Result<(ToolResult, SourceMetadata), ToolFailPayload> {
         let max_results = req.strict_budget.max_results.min(self.config.max_results);
         let brave_api_key = self.resolve_brave_api_key();
         let openai_api_key = self.resolve_openai_api_key();
         if brave_api_key.is_none() && openai_api_key.is_none() {
-            return Err(reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG);
+            return Err(ToolFailPayload::new(
+                reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG,
+            ));
         }
 
+        let mut brave_failure: Option<ProviderCallError> = None;
         if let Some(brave_key) = brave_api_key.as_deref() {
             let url = if matches!(kind, ToolName::News) {
                 &self.provider_config.brave_news_url
@@ -472,46 +538,66 @@ impl Ph1eRuntime {
                 self.brave_fixture_json_for(matches!(kind, ToolName::News)),
             );
 
-            if let Ok((items, sources)) = brave_response {
-                return Ok((
+            match brave_response {
+                Ok((items, sources)) => {
+                    return Ok((
+                        if matches!(kind, ToolName::News) {
+                            ToolResult::News { items }
+                        } else {
+                            ToolResult::WebSearch { items }
+                        },
+                        source_metadata_from_live(
+                            Some("ph1search_brave".to_string()),
+                            now_unix_ms(),
+                            sources,
+                        ),
+                    ));
+                }
+                Err(err) => {
+                    brave_failure = Some(err);
+                }
+            }
+        }
+
+        if let Some(openai_key) = openai_api_key.as_deref() {
+            match run_openai_search_fallback(
+                &self.provider_config.openai_responses_url,
+                openai_key,
+                &self.provider_config.openai_model,
+                &req.query,
+                max_results,
+                req.strict_budget.timeout_ms,
+                &self.provider_config.user_agent,
+                matches!(kind, ToolName::News),
+            ) {
+                Ok((items, sources)) => Ok((
                     if matches!(kind, ToolName::News) {
                         ToolResult::News { items }
                     } else {
                         ToolResult::WebSearch { items }
                     },
                     source_metadata_from_live(
-                        Some("ph1search_brave".to_string()),
+                        Some("ph1search_openai_fallback".to_string()),
                         now_unix_ms(),
                         sources,
                     ),
-                ));
+                )),
+                Err(openai_failure) => Err(ToolFailPayload::with_detail(
+                    reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                    combine_live_search_failure_detail(
+                        brave_failure.as_ref(),
+                        Some(&openai_failure),
+                    ),
+                )),
             }
+        } else if let Some(brave_failure) = brave_failure {
+            Err(ToolFailPayload::with_detail(
+                reason_codes::E_FAIL_PROVIDER_UPSTREAM,
+                brave_failure.safe_detail(),
+            ))
+        } else {
+            Err(ToolFailPayload::new(reason_codes::E_FAIL_PROVIDER_UPSTREAM))
         }
-
-        let openai_key = openai_api_key.ok_or(reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
-        let (items, sources) = run_openai_search_fallback(
-            &self.provider_config.openai_responses_url,
-            openai_key.as_str(),
-            &self.provider_config.openai_model,
-            &req.query,
-            max_results,
-            req.strict_budget.timeout_ms,
-            &self.provider_config.user_agent,
-            matches!(kind, ToolName::News),
-        )
-        .map_err(|_| reason_codes::E_FAIL_PROVIDER_UPSTREAM)?;
-        Ok((
-            if matches!(kind, ToolName::News) {
-                ToolResult::News { items }
-            } else {
-                ToolResult::WebSearch { items }
-            },
-            source_metadata_from_live(
-                Some("ph1search_openai_fallback".to_string()),
-                now_unix_ms(),
-                sources,
-            ),
-        ))
     }
 
     fn run_url_fetch_and_cite(
@@ -677,11 +763,13 @@ fn run_brave_search(
     user_agent: &str,
     is_news: bool,
     fixture_json: Option<&str>,
-) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
+) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), ProviderCallError> {
     let body: Value = if let Some(fixture) = fixture_json {
-        serde_json::from_str(fixture).map_err(|e| format!("brave fixture parse failed: {e}"))?
+        serde_json::from_str(fixture)
+            .map_err(|_| ProviderCallError::new("brave", "json_parse", None))?
     } else {
-        let agent = build_http_agent(timeout_ms, user_agent)?;
+        let agent = build_http_agent(timeout_ms, user_agent)
+            .map_err(|_| ProviderCallError::new("brave", "config_invalid", None))?;
         let response = agent
             .get(endpoint)
             .set("Accept", "application/json")
@@ -689,13 +777,13 @@ fn run_brave_search(
             .query("q", query)
             .query("count", &max_results.to_string())
             .call()
-            .map_err(|e| format!("brave request failed: {e}"))?;
+            .map_err(|e| provider_error_from_ureq("brave", e))?;
         serde_json::from_reader(response.into_reader())
-            .map_err(|e| format!("brave response parse failed: {e}"))?
+            .map_err(|_| ProviderCallError::new("brave", "json_parse", None))?
     };
 
     let items = extract_tool_snippets(&body, usize::from(max_results), is_news)
-        .ok_or_else(|| "brave response had no extractable items".to_string())?;
+        .ok_or_else(|| ProviderCallError::new("brave", "empty_results", None))?;
     let sources = items_to_sources(&items);
     Ok((items, sources))
 }
@@ -709,7 +797,7 @@ fn run_openai_search_fallback(
     timeout_ms: u32,
     user_agent: &str,
     is_news: bool,
-) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), String> {
+) -> Result<(Vec<ToolTextSnippet>, Vec<SourceRef>), ProviderCallError> {
     let prompt = if is_news {
         format!(
             "Return JSON with key 'results' as an array of objects (title,url,snippet) for the latest news query: {query}. Limit {max_results} results."
@@ -727,7 +815,8 @@ fn run_openai_search_fallback(
         "max_output_tokens": 800,
         "tools": [{"type": "web_search"}],
     });
-    let agent = build_http_agent(timeout_ms, user_agent)?;
+    let agent = build_http_agent(timeout_ms, user_agent)
+        .map_err(|_| ProviderCallError::new("openai", "config_invalid", None))?;
     let response = post_json(agent.clone(), endpoint, api_key, &payload).or_else(|_| {
         // Fallback when the account/model does not support tool invocation.
         if let Some(obj) = payload.as_object_mut() {
@@ -738,9 +827,9 @@ fn run_openai_search_fallback(
 
     let items = extract_tool_snippets(&response, usize::from(max_results), false)
         .or_else(|| extract_openai_results(&response, usize::from(max_results)))
-        .ok_or_else(|| "openai fallback produced no extractable results".to_string())?;
+        .ok_or_else(|| ProviderCallError::new("openai", "empty_results", None))?;
     if items.is_empty() {
-        return Err("openai fallback returned empty results".to_string());
+        return Err(ProviderCallError::new("openai", "empty_results", None));
     }
     let sources = items_to_sources(&items);
     Ok((items, sources))
@@ -751,16 +840,16 @@ fn post_json(
     endpoint: &str,
     api_key: &str,
     payload: &Value,
-) -> Result<Value, String> {
+) -> Result<Value, ProviderCallError> {
     let response = agent
         .post(endpoint)
         .set("Content-Type", "application/json")
         .set("Authorization", &format!("Bearer {api_key}"))
         .set("Accept", "application/json")
         .send_json(payload.clone())
-        .map_err(|e| format!("openai request failed: {e}"))?;
+        .map_err(|e| provider_error_from_ureq("openai", e))?;
     serde_json::from_reader(response.into_reader())
-        .map_err(|e| format!("openai response parse failed: {e}"))
+        .map_err(|_| ProviderCallError::new("openai", "json_parse", None))
 }
 
 fn build_http_agent(timeout_ms: u32, user_agent: &str) -> Result<ureq::Agent, String> {
@@ -774,6 +863,50 @@ fn build_http_agent(timeout_ms: u32, user_agent: &str) -> Result<ureq::Agent, St
         .timeout_write(timeout)
         .user_agent(user_agent)
         .build())
+}
+
+fn provider_error_from_ureq(provider: &'static str, err: ureq::Error) -> ProviderCallError {
+    match err {
+        ureq::Error::Status(status, _) => {
+            ProviderCallError::new(provider, "http_non_200", Some(status as u16))
+        }
+        ureq::Error::Transport(transport) => {
+            let combined = format!("{:?} {}", transport.kind(), transport);
+            let error_kind = classify_transport_error_kind(&combined);
+            ProviderCallError::new(provider, error_kind, None)
+        }
+    }
+}
+
+fn classify_transport_error_kind(raw: &str) -> &'static str {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("timeout") {
+        "timeout"
+    } else if lower.contains("tls") || lower.contains("ssl") {
+        "tls"
+    } else if lower.contains("dns") {
+        "dns"
+    } else if lower.contains("connection") || lower.contains("connect") {
+        "connection"
+    } else {
+        "transport"
+    }
+}
+
+fn combine_live_search_failure_detail(
+    brave_failure: Option<&ProviderCallError>,
+    openai_failure: Option<&ProviderCallError>,
+) -> String {
+    match (brave_failure, openai_failure) {
+        (Some(brave), Some(openai)) => format!(
+            "primary({}) fallback({})",
+            brave.safe_detail(),
+            openai.safe_detail()
+        ),
+        (Some(brave), None) => brave.safe_detail(),
+        (None, Some(openai)) => openai.safe_detail(),
+        (None, None) => "provider=unknown error=upstream".to_string(),
+    }
 }
 
 fn extract_tool_snippets(
@@ -1203,8 +1336,24 @@ fn collapse_ws(input: &str) -> String {
 }
 
 fn fail_response(req: &ToolRequest, code: ReasonCodeId, cache_status: CacheStatus) -> ToolResponse {
-    ToolResponse::fail_v1(req.request_id, req.query_hash, code, cache_status)
+    fail_response_with_detail(req, code, cache_status, None)
+}
+
+fn fail_response_with_detail(
+    req: &ToolRequest,
+    code: ReasonCodeId,
+    cache_status: CacheStatus,
+    fail_detail: Option<&str>,
+) -> ToolResponse {
+    let safe_detail = fail_detail
+        .map(sanitize_fail_detail_text)
+        .filter(|detail| !detail.is_empty());
+    ToolResponse::fail_with_detail_v1(req.request_id, req.query_hash, code, safe_detail, cache_status)
         .expect("ToolResponse::fail_v1 must construct for bounded PH1.E failure output")
+}
+
+fn sanitize_fail_detail_text(detail: &str) -> String {
+    truncate_ascii(&collapse_ws(detail), 256)
 }
 
 #[cfg(test)]
@@ -1805,5 +1954,77 @@ mod tests {
         } else {
             panic!("expected news tool result");
         }
+    }
+
+    #[test]
+    fn at_e_18_web_search_brave_failure_surfaces_safe_fail_detail() {
+        with_isolated_empty_device_vault("at_e_18", || {
+            let rt = Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: Some("test_brave_key".to_string()),
+                    brave_web_url: "http://127.0.0.1:9/res/v1/web/search".to_string(),
+                    brave_news_url: "http://127.0.0.1:9/res/v1/news/search".to_string(),
+                    brave_web_fixture_json: None,
+                    brave_news_fixture_json: None,
+                    openai_api_key: None,
+                    openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    user_agent: "selene-ph1e-test/1.0".to_string(),
+                    url_fetch_fixture_html: None,
+                },
+            );
+            let out = rt.run(&req(
+                ToolName::WebSearch,
+                "search the web for selene release notes",
+                false,
+                false,
+            ));
+            assert_eq!(out.tool_status, ToolStatus::Fail);
+            assert_eq!(out.reason_code, reason_codes::E_FAIL_PROVIDER_UPSTREAM);
+            let detail = out
+                .fail_detail
+                .as_deref()
+                .expect("fail detail must be present for provider upstream failures")
+                .to_ascii_lowercase();
+            assert!(detail.contains("provider=brave"));
+            assert!(detail.contains("error="));
+        });
+    }
+
+    #[test]
+    fn at_e_19_web_search_openai_failure_surfaces_safe_fail_detail() {
+        with_isolated_empty_device_vault("at_e_19", || {
+            let rt = Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: None,
+                    brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                    brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_web_fixture_json: None,
+                    brave_news_fixture_json: None,
+                    openai_api_key: Some("test_openai_key".to_string()),
+                    openai_responses_url: "http://127.0.0.1:9/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    user_agent: "selene-ph1e-test/1.0".to_string(),
+                    url_fetch_fixture_html: None,
+                },
+            );
+            let out = rt.run(&req(
+                ToolName::WebSearch,
+                "search the web for selene release notes",
+                false,
+                false,
+            ));
+            assert_eq!(out.tool_status, ToolStatus::Fail);
+            assert_eq!(out.reason_code, reason_codes::E_FAIL_PROVIDER_UPSTREAM);
+            let detail = out
+                .fail_detail
+                .as_deref()
+                .expect("fail detail must be present for provider upstream failures")
+                .to_ascii_lowercase();
+            assert!(detail.contains("provider=openai"));
+            assert!(detail.contains("error="));
+        });
     }
 }

@@ -274,7 +274,7 @@ impl Ph1xRuntime {
                 req,
                 clear_pending(base_thread_state),
                 reason_codes::X_LAST_FAILURE,
-                retry_message_for_failure(rc),
+                retry_message_for_failure(rc, None),
                 delivery_base,
             );
         }
@@ -844,7 +844,10 @@ impl Ph1xRuntime {
                 req,
                 clear_pending(base_thread_state),
                 reason_codes::X_TOOL_FAIL,
-                retry_message_for_failure(tr.fail_reason_code.unwrap_or(tr.reason_code)),
+                retry_message_for_failure(
+                    tr.fail_reason_code.unwrap_or(tr.reason_code),
+                    tr.fail_detail.as_deref(),
+                ),
                 delivery_base,
             ),
         }
@@ -1801,7 +1804,7 @@ fn field_original<'a>(d: &'a IntentDraft, key: FieldKey) -> Option<&'a str> {
         .map(|f| f.value.original_span.as_str())
 }
 
-fn retry_message_for_failure(rc: ReasonCodeId) -> String {
+fn retry_message_for_failure(rc: ReasonCodeId, fail_detail: Option<&str>) -> String {
     if rc == crate::ph1e::reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG {
         return format!(
             "Provider key not configured. Run: selene vault set {} (recommended) or selene vault set {}",
@@ -1809,7 +1812,30 @@ fn retry_message_for_failure(rc: ReasonCodeId) -> String {
             ProviderSecretId::OpenAIApiKey.as_str()
         );
     }
+    if rc == crate::ph1e::reason_codes::E_FAIL_PROVIDER_UPSTREAM {
+        if let Some(detail) = safe_tool_fail_detail(fail_detail) {
+            return format!("Upstream provider error ({detail}). Please try again.");
+        }
+        return "Upstream provider failed. Please try again.".to_string();
+    }
     "Sorry — I couldn’t complete that just now. Could you try again?".to_string()
+}
+
+fn safe_tool_fail_detail(raw: Option<&str>) -> Option<String> {
+    let raw = raw?;
+    let mut cleaned = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if !ch.is_control() {
+            cleaned.push(ch);
+        }
+    }
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let collapsed = collapsed.trim();
+    if collapsed.is_empty() {
+        return None;
+    }
+    let bounded: String = collapsed.chars().take(180).collect();
+    Some(bounded)
 }
 
 fn clarify_for_missing(
@@ -4046,6 +4072,7 @@ mod tests {
             source_metadata: Some(dummy_source_metadata()),
             reason_code: ReasonCodeId(1),
             fail_reason_code: None,
+            fail_detail: None,
             ambiguity: Some(amb),
             cache_status: CacheStatus::Bypassed,
         };

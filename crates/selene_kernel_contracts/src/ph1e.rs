@@ -918,6 +918,7 @@ pub struct ToolResponse {
     pub source_metadata: Option<SourceMetadata>,
     pub reason_code: ReasonCodeId,
     pub fail_reason_code: Option<ReasonCodeId>,
+    pub fail_detail: Option<String>,
     pub ambiguity: Option<StructuredAmbiguity>,
     pub cache_status: CacheStatus,
 }
@@ -941,6 +942,7 @@ impl ToolResponse {
             source_metadata: Some(source_metadata),
             reason_code,
             fail_reason_code: None,
+            fail_detail: None,
             ambiguity,
             cache_status,
         };
@@ -954,6 +956,16 @@ impl ToolResponse {
         fail_reason_code: ReasonCodeId,
         cache_status: CacheStatus,
     ) -> Result<Self, ContractViolation> {
+        Self::fail_with_detail_v1(request_id, query_hash, fail_reason_code, None, cache_status)
+    }
+
+    pub fn fail_with_detail_v1(
+        request_id: ToolRequestId,
+        query_hash: ToolQueryHash,
+        fail_reason_code: ReasonCodeId,
+        fail_detail: Option<String>,
+        cache_status: CacheStatus,
+    ) -> Result<Self, ContractViolation> {
         let r = Self {
             schema_version: PH1E_CONTRACT_VERSION,
             request_id,
@@ -963,6 +975,7 @@ impl ToolResponse {
             source_metadata: None,
             reason_code: fail_reason_code,
             fail_reason_code: Some(fail_reason_code),
+            fail_detail,
             ambiguity: None,
             cache_status,
         };
@@ -992,6 +1005,12 @@ impl Validate for ToolResponse {
                 if self.fail_reason_code.is_some() {
                     return Err(ContractViolation::InvalidValue {
                         field: "tool_response.fail_reason_code",
+                        reason: "must be None when tool_status=OK",
+                    });
+                }
+                if self.fail_detail.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "tool_response.fail_detail",
                         reason: "must be None when tool_status=OK",
                     });
                 }
@@ -1025,6 +1044,27 @@ impl Validate for ToolResponse {
                         field: "tool_response.reason_code",
                         reason: "must equal fail_reason_code when tool_status=FAIL",
                     });
+                }
+                if let Some(detail) = &self.fail_detail {
+                    let trimmed = detail.trim();
+                    if trimmed.is_empty() {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "tool_response.fail_detail",
+                            reason: "must not be empty when present",
+                        });
+                    }
+                    if trimmed.len() > 256 {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "tool_response.fail_detail",
+                            reason: "must be <= 256 chars when present",
+                        });
+                    }
+                    if trimmed.chars().any(|c| c.is_control()) {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "tool_response.fail_detail",
+                            reason: "must not contain control characters",
+                        });
+                    }
                 }
             }
         }
