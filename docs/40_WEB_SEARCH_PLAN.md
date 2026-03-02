@@ -17,7 +17,7 @@ Hard rule: No `SimulationExecutor` involvement for this path. This remains read-
 ## 1) Authoritative Architectural Flow
 
 `PH1.X` decides `need web/news/url`  
-`-> PH1.SEARCH` (merged `PH1.WEBINT` capability)  
+`-> PH1.SEARCH` (includes merged web intelligence capability)  
 `-> Evidence Packet` returned  
 `-> PH1.D` synthesizes strictly from Evidence Packet  
 `-> PH1.WRITE` formats output  
