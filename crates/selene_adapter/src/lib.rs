@@ -7155,6 +7155,8 @@ fn build_builder_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
     use selene_kernel_contracts::ph1_voice_id::{
         VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
@@ -7191,6 +7193,50 @@ mod tests {
         DeviceRecord, IdentityRecord, IdentityStatus,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                std::env::set_var(self.key, value);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn with_isolated_empty_device_vault<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = env_lock.lock().expect("env lock poisoned");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time must be monotonic for tests")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("selene-empty-vault-{label}-{nanos}.json"));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("master.key"));
+        let path_text = path
+            .to_str()
+            .expect("temp path should be valid UTF-8 for test env var")
+            .to_string();
+        let _scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &path_text);
+        let out = f();
+        let _ = std::fs::remove_file(path);
+        out
+    }
 
     fn base_request() -> VoiceTurnAdapterRequest {
         VoiceTurnAdapterRequest {
@@ -9195,18 +9241,20 @@ mod tests {
 
     #[test]
     fn at_adapter_03b_voice_turn_provider_unconfigured_fails_closed_with_vault_hint() {
-        let runtime = AdapterRuntime::default();
-        let mut req = base_request();
-        req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
-        let out = runtime
-            .run_voice_turn(req)
-            .expect("voice turn with explicit web query must succeed");
-        assert_eq!(out.status, "ok");
-        assert_eq!(out.outcome, "FINAL_TOOL");
-        assert_eq!(out.next_move, "dispatch_tool");
-        assert_eq!(out.reason_code, "1476395017");
-        let response_text = out.response_text.as_str();
-        assert!(response_text.contains("selene vault set brave_search_api_key"));
+        with_isolated_empty_device_vault("at_adapter_03b", || {
+            let runtime = AdapterRuntime::default();
+            let mut req = base_request();
+            req.user_text_final = Some("Selene search the web for H100 pricing".to_string());
+            let out = runtime
+                .run_voice_turn(req)
+                .expect("voice turn with explicit web query must succeed");
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.outcome, "FINAL_TOOL");
+            assert_eq!(out.next_move, "dispatch_tool");
+            assert_eq!(out.reason_code, "1476395017");
+            let response_text = out.response_text.as_str();
+            assert!(response_text.contains("selene vault set brave_search_api_key"));
+        });
     }
 
     #[test]

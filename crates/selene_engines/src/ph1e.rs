@@ -1212,6 +1212,54 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1e::{ToolRequestOrigin, ToolStatus};
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
+    use std::{env, fs};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<OsString>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var_os(key);
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_ref() {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn with_isolated_empty_device_vault<T>(label: &str, f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = env_lock.lock().expect("env lock poisoned");
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time must be monotonic for tests")
+            .as_nanos();
+        let path = env::temp_dir().join(format!("selene-empty-vault-{label}-{nanos}.json"));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(path.with_extension("master.key"));
+        let path_text = path
+            .to_str()
+            .expect("temp path should be valid UTF-8 for test env var")
+            .to_string();
+        let _scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &path_text);
+        let out = f();
+        let _ = fs::remove_file(path);
+        out
+    }
 
     fn req(tool_name: ToolName, query: &str, privacy_mode: bool, strict: bool) -> ToolRequest {
         req_with_budget(tool_name, query, privacy_mode, strict, 3)
@@ -1688,32 +1736,34 @@ mod tests {
 
     #[test]
     fn at_e_16_web_search_fails_closed_when_provider_keys_missing() {
-        let rt = Ph1eRuntime::new_with_provider_config(
-            Ph1eConfig::mvp_v1(),
-            Ph1eProviderConfig {
-                brave_api_key: None,
-                brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
-                brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
-                brave_web_fixture_json: None,
-                brave_news_fixture_json: None,
-                openai_api_key: None,
-                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
-                openai_model: "gpt-4o-mini".to_string(),
-                user_agent: "selene-ph1e-test/1.0".to_string(),
-                url_fetch_fixture_html: None,
-            },
-        );
-        let out = rt.run(&req(
-            ToolName::WebSearch,
-            "search the web for selene release notes",
-            false,
-            false,
-        ));
-        assert_eq!(out.tool_status, ToolStatus::Fail);
-        assert_eq!(
-            out.reason_code,
-            reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
-        );
+        with_isolated_empty_device_vault("at_e_16", || {
+            let rt = Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: None,
+                    brave_web_url: "https://api.search.brave.com/res/v1/web/search".to_string(),
+                    brave_news_url: "https://api.search.brave.com/res/v1/news/search".to_string(),
+                    brave_web_fixture_json: None,
+                    brave_news_fixture_json: None,
+                    openai_api_key: None,
+                    openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    user_agent: "selene-ph1e-test/1.0".to_string(),
+                    url_fetch_fixture_html: None,
+                },
+            );
+            let out = rt.run(&req(
+                ToolName::WebSearch,
+                "search the web for selene release notes",
+                false,
+                false,
+            ));
+            assert_eq!(out.tool_status, ToolStatus::Fail);
+            assert_eq!(
+                out.reason_code,
+                reason_codes::E_FAIL_PROVIDER_MISSING_CONFIG
+            );
+        });
     }
 
     #[test]
