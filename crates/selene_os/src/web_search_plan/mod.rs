@@ -5,6 +5,7 @@ pub mod cache;
 pub mod contract_hash;
 pub mod diag;
 pub mod idempotency_validator;
+pub mod learn;
 pub mod learning;
 pub mod news;
 pub mod news_provider;
