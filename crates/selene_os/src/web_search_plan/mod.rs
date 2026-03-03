@@ -5,6 +5,7 @@ pub mod contract_hash;
 pub mod idempotency_validator;
 pub mod news_provider;
 pub mod packet_validator;
+pub mod planning;
 pub mod proxy;
 pub mod reason_code_validator;
 pub mod registry_loader;
