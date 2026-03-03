@@ -74,6 +74,7 @@ fn test_valid_fixtures_pass() {
         "evidence.json",
         "synthesis.json",
         "write.json",
+        "computation.json",
         "audit.json",
     ];
 
@@ -90,6 +91,7 @@ fn test_invalid_fixtures_fail() {
         "tool_request_bad_mode.json",
         "evidence_bad_schema_version.json",
         "audit_missing_hashes.json",
+        "computation_missing_required.json",
         "unknown_reason_code.json",
     ];
 
@@ -237,4 +239,19 @@ fn test_contract_hash_manifest_can_be_computed() {
     assert_eq!(manifest.manifest_version, "1.0.0");
     assert_eq!(manifest.hash_algorithm, "sha256");
     assert_eq!(manifest.hashes.packet_schema_hash.len(), 64);
+}
+
+#[test]
+fn test_computation_valid_fixture_passes() {
+    validate_single_fixture("valid", "computation.json")
+        .expect("valid computation fixture must pass");
+}
+
+#[test]
+fn test_computation_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "computation_missing_required.json");
+    assert!(
+        result.is_err(),
+        "invalid computation fixture unexpectedly passed"
+    );
 }

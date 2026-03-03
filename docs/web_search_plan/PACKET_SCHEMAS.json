@@ -296,6 +296,40 @@
       ]
     },
     {
+      "packet_name": "ComputationPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "inputs",
+            "aggregates",
+            "consensus",
+            "confidence",
+            "reason_codes"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "inputs": "object",
+            "aggregates": "array_object",
+            "consensus": "array_object",
+            "confidence": "array_object",
+            "reason_codes": "array_string"
+          }
+        }
+      ]
+    },
+    {
       "packet_name": "AuditPacket",
       "consumer_expected_version": "1.0.0",
       "versions": [

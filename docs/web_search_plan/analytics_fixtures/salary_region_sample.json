@@ -1,0 +1,91 @@
+{
+  "trace_id": "trace-analytics-salary",
+  "created_at_ms": 1701000000000,
+  "policy_snapshot_id": "policy_run21_v1",
+  "as_of_ms": 1701000000000,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.ANALYTICS"],
+    "created_at_ms": 1701000000000,
+    "trace_id": "trace-analytics-salary",
+    "query": "salary benchmark",
+    "retrieved_at_ms": 1701000000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Market Survey A",
+        "url": "https://data.example.com/salary-a",
+        "trust_tier": "high"
+      },
+      {
+        "title": "Market Survey B",
+        "url": "https://data.example.com/salary-b",
+        "trust_tier": "medium"
+      },
+      {
+        "title": "Market Survey C",
+        "url": "https://data.example.com/salary-c",
+        "trust_tier": "low"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk_salary_001"
+      }
+    ],
+    "trust_metadata": {
+      "analytics": {
+        "unit_conversions": [],
+        "currency_rates": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Region-1",
+      "attribute": "Salary",
+      "value": {
+        "type": "currency",
+        "amount": 100000.0,
+        "currency_code": "USD"
+      },
+      "unit": "year",
+      "as_of_ms": 1701000000000,
+      "source_url": "https://data.example.com/salary-a",
+      "source_ref": "https://data.example.com/salary-a",
+      "confidence": 0.98,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Region-1",
+      "attribute": "Salary",
+      "value": {
+        "type": "currency",
+        "amount": 100000.0,
+        "currency_code": "USD"
+      },
+      "unit": "year",
+      "as_of_ms": 1701000000000,
+      "source_url": "https://data.example.com/salary-b",
+      "source_ref": "https://data.example.com/salary-b",
+      "confidence": 0.92,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Region-1",
+      "attribute": "Salary",
+      "value": {
+        "type": "currency",
+        "amount": 120000.0,
+        "currency_code": "USD"
+      },
+      "unit": "year",
+      "as_of_ms": 1701000000000,
+      "source_url": "https://data.example.com/salary-c",
+      "source_ref": "https://data.example.com/salary-c",
+      "confidence": 0.85,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

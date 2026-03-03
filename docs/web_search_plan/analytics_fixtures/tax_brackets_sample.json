@@ -1,0 +1,102 @@
+{
+  "trace_id": "trace-analytics-tax",
+  "created_at_ms": 1702000000000,
+  "policy_snapshot_id": "policy_run21_v1",
+  "as_of_ms": 1702000000000,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.ANALYTICS"],
+    "created_at_ms": 1702000000000,
+    "trace_id": "trace-analytics-tax",
+    "query": "tax brackets",
+    "retrieved_at_ms": 1702000000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Tax Table",
+        "url": "https://gov.example.org/tax-table",
+        "trust_tier": "high"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "unit_conversions": [],
+        "currency_rates": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "value": {
+        "type": "percent",
+        "value": 10.0
+      },
+      "unit": "percent",
+      "as_of_ms": 1702000000000,
+      "source_url": "https://gov.example.org/tax-table",
+      "source_ref": "https://gov.example.org/tax-table",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "value": {
+        "type": "percent",
+        "value": 15.0
+      },
+      "unit": "percent",
+      "as_of_ms": 1702000000000,
+      "source_url": "https://gov.example.org/tax-table",
+      "source_ref": "https://gov.example.org/tax-table",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "value": {
+        "type": "percent",
+        "value": 20.0
+      },
+      "unit": "percent",
+      "as_of_ms": 1702000000000,
+      "source_url": "https://gov.example.org/tax-table",
+      "source_ref": "https://gov.example.org/tax-table",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "value": {
+        "type": "percent",
+        "value": 25.0
+      },
+      "unit": "percent",
+      "as_of_ms": 1702000000000,
+      "source_url": "https://gov.example.org/tax-table",
+      "source_ref": "https://gov.example.org/tax-table",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "value": {
+        "type": "percent",
+        "value": 30.0
+      },
+      "unit": "percent",
+      "as_of_ms": 1702000000000,
+      "source_url": "https://gov.example.org/tax-table",
+      "source_ref": "https://gov.example.org/tax-table",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

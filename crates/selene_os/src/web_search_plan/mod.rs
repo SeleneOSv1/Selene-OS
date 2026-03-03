@@ -1,7 +1,8 @@
 #![forbid(unsafe_code)]
 
-pub mod chunk;
+pub mod analytics;
 pub mod cache;
+pub mod chunk;
 pub mod contract_hash;
 pub mod diag;
 pub mod document;
@@ -15,9 +16,9 @@ pub mod parallel;
 pub mod perf_cost;
 pub mod planning;
 pub mod proxy;
-pub mod replay;
 pub mod reason_code_validator;
 pub mod registry_loader;
+pub mod replay;
 pub mod structured;
 pub mod synthesis;
 pub mod turn_state_machine_validator;

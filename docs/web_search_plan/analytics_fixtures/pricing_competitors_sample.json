@@ -1,0 +1,93 @@
+{
+  "trace_id": "trace-analytics-pricing",
+  "created_at_ms": 1703000000000,
+  "policy_snapshot_id": "policy_run21_v1",
+  "as_of_ms": 1703000000000,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.ANALYTICS"],
+    "created_at_ms": 1703000000000,
+    "trace_id": "trace-analytics-pricing",
+    "query": "competitor pricing",
+    "retrieved_at_ms": 1703000000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Vendor A",
+        "url": "https://prices.example.com/a",
+        "trust_tier": "high"
+      },
+      {
+        "title": "Vendor B",
+        "url": "https://prices.example.com/b",
+        "trust_tier": "medium"
+      },
+      {
+        "title": "Vendor C",
+        "url": "https://prices.example.com/c",
+        "trust_tier": "medium"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "unit_conversions": [],
+        "currency_rates": [
+          {
+            "from": "EUR",
+            "to": "USD",
+            "rate": "1.100000"
+          }
+        ]
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Model-X",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 100.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1703000000000,
+      "source_url": "https://prices.example.com/a",
+      "source_ref": "https://prices.example.com/a",
+      "confidence": 0.95,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Model-X",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 90.0,
+        "currency_code": "EUR"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1703000000000,
+      "source_url": "https://prices.example.com/b",
+      "source_ref": "https://prices.example.com/b",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Model-X",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 110.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1703000000000,
+      "source_url": "https://prices.example.com/c",
+      "source_ref": "https://prices.example.com/c",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

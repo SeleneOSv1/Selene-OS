@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464000500,
+  "trace_id": "trace_run21_turn_001",
+  "inputs": {
+    "evidence_hash": "a3fdbf3f2e4a87e5f9c5a3d2aa227f4cb92dd8b1e1e7f93e8968fd1b69f4c0a1",
+    "policy_snapshot_id": "policy_run21_v1",
+    "as_of_ms": 1762464000400
+  },
+  "aggregates": [
+    {
+      "metric_id": "taxbracket.rate",
+      "entity": "TaxBracket",
+      "attribute": "Rate",
+      "unit": "percent",
+      "method": "median",
+      "value": {"type": "int", "value": 20},
+      "sample_size": 5,
+      "source_refs": ["https://gov.example.org/tax-table"]
+    }
+  ],
+  "consensus": [
+    {
+      "group_id": "f9f8c7dd3b09b7e4d8fdf3014b84323411abf1135578f756c1e059a7290db7d7",
+      "topic": "taxbracket.rate:TaxBracket:Rate:percent:none",
+      "candidates": [
+        {
+          "value": {"type": "int", "value": 20},
+          "sources": ["https://gov.example.org/tax-table"]
+        }
+      ],
+      "chosen": {"type": "int", "value": 20},
+      "agreement_score": "1",
+      "outliers": []
+    }
+  ],
+  "confidence": [
+    {
+      "claim_key": "taxbracket.rate:TaxBracket:Rate:median",
+      "confidence_score": "0.95",
+      "factors": {
+        "sample_size": 5,
+        "trust_tier_mix": "1",
+        "recency": "1",
+        "conflict": "1",
+        "outliers": "1"
+      }
+    }
+  ],
+  "reason_codes": []
+}
