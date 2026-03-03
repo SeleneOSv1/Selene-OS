@@ -33,7 +33,11 @@ impl ChunkHasher for Sha256ChunkHasher {
     }
 }
 
-pub fn hash_chunks(canonical_url: &str, source_url: &str, chunks: &[TextChunk]) -> Vec<HashedChunk> {
+pub fn hash_chunks(
+    canonical_url: &str,
+    source_url: &str,
+    chunks: &[TextChunk],
+) -> Vec<HashedChunk> {
     hash_chunks_with_hasher(canonical_url, source_url, chunks, &Sha256ChunkHasher)
 }
 
@@ -68,7 +72,8 @@ pub fn derive_chunk_id(
     hasher: &impl ChunkHasher,
 ) -> String {
     let material = format!(
-        "canonical_url={}\x1fnorm_version={}\x1fchunk_version={}\x1fchunk_index={}\x1fnormalized_text={}",
+        "hash_version={}\x1fcanonical_url={}\x1fnorm_version={}\x1fchunk_version={}\x1fchunk_index={}\x1fnormalized_text={}",
+        HASH_VERSION,
         canonical_url,
         chunk.norm_version,
         chunk.chunk_version,
