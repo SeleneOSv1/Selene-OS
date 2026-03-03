@@ -20,6 +20,8 @@ This registry is the canonical authority for web research lane packet contracts.
 9. EnterpriseReportPacket (stub)
 10. AuditPacket
 11. ComputationPacket
+12. VisionToolRequestPacket
+13. VisionEvidencePacket
 
 ## Common Required Fields (all packets)
 - `schema_version`

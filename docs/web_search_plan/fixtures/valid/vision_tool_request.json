@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.X",
+  "intended_consumers": ["PH1.E", "PH1.D", "PH1.J"],
+  "created_at_ms": 1762465000000,
+  "trace_id": "trace_run21a_vision_001",
+  "mode": "image_analyze",
+  "asset_ref": {
+    "asset_hash": "9f7c1b0d6f3a58e1f9e613f063bc5ec1a4572d8f0b8a45095b33656de2d6ef7f",
+    "locator": "asset://vision_fixtures/images/text_heavy.png",
+    "mime_type": "image/png",
+    "size_bytes": 2048
+  },
+  "options": {
+    "language_hint": "en-US",
+    "max_frames": 4,
+    "frame_stride_ms": 1000,
+    "safe_mode": true,
+    "analyze_url": false
+  },
+  "budgets": {
+    "timeout_ms": 4000,
+    "max_bytes": 10485760
+  },
+  "policy_snapshot_id": "policy_run21a_v1"
+}

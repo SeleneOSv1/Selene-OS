@@ -75,6 +75,8 @@ fn test_valid_fixtures_pass() {
         "synthesis.json",
         "write.json",
         "computation.json",
+        "vision_tool_request.json",
+        "vision_evidence.json",
         "audit.json",
     ];
 
@@ -92,6 +94,8 @@ fn test_invalid_fixtures_fail() {
         "evidence_bad_schema_version.json",
         "audit_missing_hashes.json",
         "computation_missing_required.json",
+        "vision_tool_request_missing_asset_ref.json",
+        "vision_evidence_missing_outputs.json",
         "unknown_reason_code.json",
     ];
 
@@ -253,5 +257,35 @@ fn test_computation_invalid_fixture_fails() {
     assert!(
         result.is_err(),
         "invalid computation fixture unexpectedly passed"
+    );
+}
+
+#[test]
+fn test_vision_tool_request_valid_fixture_passes() {
+    validate_single_fixture("valid", "vision_tool_request.json")
+        .expect("valid vision tool request fixture must pass");
+}
+
+#[test]
+fn test_vision_evidence_valid_fixture_passes() {
+    validate_single_fixture("valid", "vision_evidence.json")
+        .expect("valid vision evidence fixture must pass");
+}
+
+#[test]
+fn test_vision_tool_request_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "vision_tool_request_missing_asset_ref.json");
+    assert!(
+        result.is_err(),
+        "invalid vision tool request fixture unexpectedly passed"
+    );
+}
+
+#[test]
+fn test_vision_evidence_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "vision_evidence_missing_outputs.json");
+    assert!(
+        result.is_err(),
+        "invalid vision evidence fixture unexpectedly passed"
     );
 }

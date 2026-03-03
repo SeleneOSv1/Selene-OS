@@ -178,6 +178,12 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "synthesis.json" => Some("SynthesisPacket"),
         "write.json" => Some("WritePacket"),
         "computation.json" | "computation_missing_required.json" => Some("ComputationPacket"),
+        "vision_tool_request.json" | "vision_tool_request_missing_asset_ref.json" => {
+            Some("VisionToolRequestPacket")
+        }
+        "vision_evidence.json" | "vision_evidence_missing_outputs.json" => {
+            Some("VisionEvidencePacket")
+        }
         "audit.json" | "audit_missing_hashes.json" | "unknown_reason_code.json" => {
             Some("AuditPacket")
         }

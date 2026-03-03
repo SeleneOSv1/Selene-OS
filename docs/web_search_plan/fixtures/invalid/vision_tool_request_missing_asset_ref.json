@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.X",
+  "intended_consumers": ["PH1.E", "PH1.D", "PH1.J"],
+  "created_at_ms": 1762465000000,
+  "trace_id": "trace_run21a_vision_002",
+  "mode": "image_analyze",
+  "options": {
+    "language_hint": "en-US",
+    "safe_mode": true,
+    "analyze_url": false
+  },
+  "budgets": {
+    "timeout_ms": 4000,
+    "max_bytes": 10485760
+  },
+  "policy_snapshot_id": "policy_run21a_v1"
+}

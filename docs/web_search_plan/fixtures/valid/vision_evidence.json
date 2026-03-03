@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.E",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762465000001,
+  "trace_id": "trace_run21a_vision_001",
+  "asset_ref": {
+    "asset_hash": "9f7c1b0d6f3a58e1f9e613f063bc5ec1a4572d8f0b8a45095b33656de2d6ef7f",
+    "locator": "asset://vision_fixtures/images/text_heavy.png",
+    "mime_type": "image/png",
+    "size_bytes": 2048
+  },
+  "retrieved_at_ms": 1762465000010,
+  "provider_runs": [
+    {
+      "provider_id": "vision_download",
+      "endpoint": "download",
+      "latency_ms": 12
+    },
+    {
+      "provider_id": "vision_ocr",
+      "endpoint": "ocr",
+      "latency_ms": 85
+    }
+  ],
+  "outputs": [
+    {
+      "output_type": "OCRResult",
+      "page_or_frame_index": 0,
+      "ocr_engine_id": "fixture_ocr",
+      "language": "en-US",
+      "text_blocks": [
+        {
+          "bbox": {"x": 0.0, "y": 0.0, "w": 10.0, "h": 4.0},
+          "text": "HELLO WORLD",
+          "confidence": 0.97,
+          "pii_suspected": false
+        }
+      ],
+      "full_text": "HELLO WORLD"
+    }
+  ],
+  "confidence_summary": {
+    "mean_confidence": 0.97,
+    "confident_item_count": 1,
+    "total_item_count": 1
+  },
+  "reason_codes": [],
+  "packet_hashes": {
+    "asset_hash": "9f7c1b0d6f3a58e1f9e613f063bc5ec1a4572d8f0b8a45095b33656de2d6ef7f",
+    "provider_runs_hash": "e4bc4553a37945185600529640f5c1d8034f58ca3cb4f5b9e0f2b3704af4be90",
+    "outputs_hash": "1000c6c2088afc9e5defa72e882f7f942bf55b703901543a4f1c08e4e108af35"
+  },
+  "output_hash": "1000c6c2088afc9e5defa72e882f7f942bf55b703901543a4f1c08e4e108af35"
+}
