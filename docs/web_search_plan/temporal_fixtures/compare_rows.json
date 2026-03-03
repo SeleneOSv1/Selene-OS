@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "entity": "Acme",
+      "attribute": "Revenue",
+      "value": { "type": "currency", "amount": 1500.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": 1701100000000,
+      "source_url": "https://filings.example/acme-q2",
+      "source_ref": "https://filings.example/acme-q2#revenue",
+      "confidence": 0.99,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Users",
+      "value": { "type": "int", "value": 100 },
+      "unit": null,
+      "as_of_ms": 1701100000000,
+      "source_url": "https://filings.example/acme-q2",
+      "source_ref": "https://filings.example/acme-q2#users",
+      "confidence": 0.96,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Churn",
+      "value": { "type": "percent", "value": 5.0 },
+      "unit": null,
+      "as_of_ms": 1701100000000,
+      "source_url": "https://filings.example/acme-q2",
+      "source_ref": "https://filings.example/acme-q2#churn",
+      "confidence": 0.95,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Margin",
+      "value": { "type": "percent", "value": 25.0 },
+      "unit": null,
+      "as_of_ms": 1701100000000,
+      "source_url": "https://filings.example/acme-q2",
+      "source_ref": "https://filings.example/acme-q2#margin",
+      "confidence": 0.95,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

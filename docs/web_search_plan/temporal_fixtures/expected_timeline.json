@@ -1,0 +1,14 @@
+{
+  "expected_order": [
+    { "entity": "Acme", "attribute": "LegacyMetric", "as_of_ms": 1699000000000 },
+    { "entity": "Acme", "attribute": "Churn", "as_of_ms": 1700100000000 },
+    { "entity": "Acme", "attribute": "Cost", "as_of_ms": 1700100000000 },
+    { "entity": "Acme", "attribute": "MissingTime", "as_of_ms": 1700100000000 },
+    { "entity": "Acme", "attribute": "Revenue", "as_of_ms": 1700100000000 },
+    { "entity": "Acme", "attribute": "Users", "as_of_ms": 1700100000000 },
+    { "entity": "Acme", "attribute": "Churn", "as_of_ms": 1701100000000 },
+    { "entity": "Acme", "attribute": "Margin", "as_of_ms": 1701100000000 },
+    { "entity": "Acme", "attribute": "Revenue", "as_of_ms": 1701100000000 },
+    { "entity": "Acme", "attribute": "Users", "as_of_ms": 1701100000000 }
+  ]
+}

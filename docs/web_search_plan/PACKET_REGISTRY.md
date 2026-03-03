@@ -15,7 +15,7 @@ This registry is the canonical authority for web research lane packet contracts.
 4. EvidencePacket
 5. SynthesisPacket
 6. WritePacket
-7. ComparisonPacket (stub)
+7. ComparisonPacket
 8. RiskPacket (stub)
 9. EnterpriseReportPacket (stub)
 10. AuditPacket

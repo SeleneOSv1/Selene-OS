@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "entity": "Acme",
+      "attribute": "Price",
+      "value": { "type": "currency", "amount": 30.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": 1700100000000,
+      "source_url": "https://pricing.example/acme",
+      "source_ref": "https://pricing.example/acme#price-usd",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Price",
+      "value": { "type": "currency", "amount": 28.0, "currency_code": "EUR" },
+      "unit": null,
+      "as_of_ms": 1701100000000,
+      "source_url": "https://pricing.example/acme-eu",
+      "source_ref": "https://pricing.example/acme-eu#price-eur",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

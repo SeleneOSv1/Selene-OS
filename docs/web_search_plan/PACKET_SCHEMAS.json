@@ -242,7 +242,15 @@
             "produced_by": "string",
             "intended_consumers": "array_string",
             "created_at_ms": "int64",
-            "trace_id": "string"
+            "trace_id": "string",
+            "as_of_baseline_from_ms": "int64",
+            "as_of_baseline_to_ms": "int64",
+            "as_of_compare_from_ms": "int64",
+            "as_of_compare_to_ms": "int64",
+            "timeline_events": "array_object",
+            "changes": "array_object",
+            "uncertainty_flags": "array_string",
+            "reason_codes": "array_string"
           }
         }
       ]

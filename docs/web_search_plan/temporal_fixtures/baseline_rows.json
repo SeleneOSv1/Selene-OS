@@ -1,0 +1,70 @@
+{
+  "rows": [
+    {
+      "entity": "Acme",
+      "attribute": "Revenue",
+      "value": { "type": "currency", "amount": 1200.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": 1700100000000,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#revenue",
+      "confidence": 0.98,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Users",
+      "value": { "type": "int", "value": 100 },
+      "unit": null,
+      "as_of_ms": 1700100000000,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#users",
+      "confidence": 0.96,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Cost",
+      "value": { "type": "currency", "amount": 400.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": 1700100000000,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#cost",
+      "confidence": 0.97,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Churn",
+      "value": { "type": "percent", "value": 5.0 },
+      "unit": null,
+      "as_of_ms": 1700100000000,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#churn",
+      "confidence": 0.94,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "LegacyMetric",
+      "value": { "type": "int", "value": 1 },
+      "unit": null,
+      "as_of_ms": 1699000000000,
+      "source_url": "https://filings.example/acme-legacy",
+      "source_ref": "https://filings.example/acme-legacy#legacy",
+      "confidence": 0.7,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "MissingTime",
+      "value": { "type": "string", "value": "unknown" },
+      "unit": null,
+      "as_of_ms": null,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#missing-time",
+      "confidence": 0.5,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

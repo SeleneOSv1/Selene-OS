@@ -1,0 +1,77 @@
+{
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.SEARCH",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1702000000000,
+    "trace_id": "trace-temporal-fixture",
+    "query": "acme temporal test",
+    "retrieved_at_ms": 1702000000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Acme Q1",
+        "url": "https://filings.example/acme-q1",
+        "snippet": "Q1 results",
+        "media_type": "document",
+        "provider_id": "DocumentParser",
+        "rank": 1,
+        "canonical_url": "https://filings.example/acme-q1",
+        "published_at": 1700100000000
+      },
+      {
+        "title": "Acme Q2",
+        "url": "https://filings.example/acme-q2",
+        "snippet": "Q2 results",
+        "media_type": "document",
+        "provider_id": "DocumentParser",
+        "rank": 2,
+        "canonical_url": "https://filings.example/acme-q2",
+        "published_at": 1701100000000
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {}
+  },
+  "rows": [
+    {
+      "entity": "Acme",
+      "attribute": "Revenue",
+      "value": { "type": "currency", "amount": 1200.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": null,
+      "source_url": "https://filings.example/acme-q1",
+      "source_ref": "https://filings.example/acme-q1#revenue",
+      "confidence": 0.97,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "Revenue",
+      "value": { "type": "currency", "amount": 1500.0, "currency_code": "USD" },
+      "unit": null,
+      "as_of_ms": null,
+      "source_url": "https://filings.example/acme-q2",
+      "source_ref": "https://filings.example/acme-q2#revenue",
+      "confidence": 0.98,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Acme",
+      "attribute": "NoTimestamp",
+      "value": { "type": "string", "value": "missing" },
+      "unit": null,
+      "as_of_ms": null,
+      "source_url": "https://filings.example/unknown",
+      "source_ref": "https://filings.example/unknown#missing",
+      "confidence": 0.5,
+      "schema_version": "1.0.0"
+    }
+  ],
+  "windows": {
+    "baseline_from_ms": 1700000000000,
+    "baseline_to_ms": 1700500000000,
+    "compare_from_ms": 1701000000000,
+    "compare_to_ms": 1701500000000
+  }
+}

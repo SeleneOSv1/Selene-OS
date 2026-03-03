@@ -1,0 +1,9 @@
+{
+  "expected_change_types": {
+    "acme|churn|": "unchanged",
+    "acme|cost|": "removed",
+    "acme|margin|": "added",
+    "acme|revenue|": "modified",
+    "acme|users|": "unchanged"
+  }
+}

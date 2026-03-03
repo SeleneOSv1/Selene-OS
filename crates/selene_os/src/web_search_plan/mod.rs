@@ -25,6 +25,7 @@ pub mod registry_loader;
 pub mod replay;
 pub mod structured;
 pub mod synthesis;
+pub mod temporal;
 pub mod trust;
 pub mod turn_state_machine_validator;
 pub mod url;
