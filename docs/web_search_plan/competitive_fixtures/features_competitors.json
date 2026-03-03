@@ -1,0 +1,125 @@
+{
+  "trace_id": "trace-competitive-features",
+  "created_at_ms": 1707100000000,
+  "target_entity": "Selene OS",
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.ANALYTICS", "PH1.D"],
+    "created_at_ms": 1707100000000,
+    "trace_id": "trace-competitive-features",
+    "query": "competitive feature matrix",
+    "retrieved_at_ms": 1707100000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Selene Features",
+        "url": "https://selene.example.com/features",
+        "trust_tier": "high"
+      },
+      {
+        "title": "Alpha Features",
+        "url": "https://alpha.example.com/features",
+        "trust_tier": "medium"
+      },
+      {
+        "title": "Beta Features",
+        "url": "https://beta.example.com/features",
+        "trust_tier": "medium"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "currency_rates": [],
+        "unit_conversions": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Selene OS",
+      "attribute": "feature:api access",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://selene.example.com/features",
+      "source_ref": "https://selene.example.com/features",
+      "confidence": 0.95,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "AlphaSuite",
+      "attribute": "feature:api access",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://alpha.example.com/features",
+      "source_ref": "https://alpha.example.com/features",
+      "confidence": 0.92,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "BetaCloud",
+      "attribute": "feature:api access",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://beta.example.com/features",
+      "source_ref": "https://beta.example.com/features",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Selene OS",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://selene.example.com/features",
+      "source_ref": "https://selene.example.com/features",
+      "confidence": 0.94,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "AlphaSuite",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "string",
+        "value": "maybe"
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://alpha.example.com/features",
+      "source_ref": "https://alpha.example.com/features",
+      "confidence": 0.85,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "BetaCloud",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "unit": null,
+      "as_of_ms": 1707100000000,
+      "source_url": "https://beta.example.com/features",
+      "source_ref": "https://beta.example.com/features",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 pub mod analytics;
 pub mod cache;
 pub mod chunk;
+pub mod competitive;
 pub mod contract_hash;
 pub mod diag;
 pub mod document;

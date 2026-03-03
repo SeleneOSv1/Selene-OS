@@ -1,0 +1,66 @@
+{
+  "trace_id": "trace-competitive-mixed-currency",
+  "created_at_ms": 1707200000000,
+  "target_entity": "Selene OS",
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.ANALYTICS", "PH1.D"],
+    "created_at_ms": 1707200000000,
+    "trace_id": "trace-competitive-mixed-currency",
+    "query": "mixed currency pricing",
+    "retrieved_at_ms": 1707200000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Selene Pricing",
+        "url": "https://selene.example.com/pricing",
+        "trust_tier": "high"
+      },
+      {
+        "title": "Euro Vendor Pricing",
+        "url": "https://euro.example.com/pricing",
+        "trust_tier": "medium"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "currency_rates": [],
+        "unit_conversions": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Selene OS",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 100.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707200000000,
+      "source_url": "https://selene.example.com/pricing",
+      "source_ref": "https://selene.example.com/pricing",
+      "confidence": 0.98,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "EuroSuite",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 90.0,
+        "currency_code": "EUR"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707200000000,
+      "source_url": "https://euro.example.com/pricing",
+      "source_ref": "https://euro.example.com/pricing",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

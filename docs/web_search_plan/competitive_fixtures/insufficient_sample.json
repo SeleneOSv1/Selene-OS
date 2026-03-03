@@ -1,0 +1,66 @@
+{
+  "trace_id": "trace-competitive-insufficient",
+  "created_at_ms": 1707300000000,
+  "target_entity": "Selene OS",
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.ANALYTICS", "PH1.D"],
+    "created_at_ms": 1707300000000,
+    "trace_id": "trace-competitive-insufficient",
+    "query": "insufficient comparison sample",
+    "retrieved_at_ms": 1707300000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Selene Pricing",
+        "url": "https://selene.example.com/pricing",
+        "trust_tier": "high"
+      },
+      {
+        "title": "Solo Competitor",
+        "url": "https://solo.example.com/pricing",
+        "trust_tier": "medium"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "currency_rates": [],
+        "unit_conversions": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Selene OS",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 100.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707300000000,
+      "source_url": "https://selene.example.com/pricing",
+      "source_ref": "https://selene.example.com/pricing",
+      "confidence": 0.97,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "SoloCompetitor",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 95.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707300000000,
+      "source_url": "https://solo.example.com/pricing",
+      "source_ref": "https://solo.example.com/pricing",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ]
+}

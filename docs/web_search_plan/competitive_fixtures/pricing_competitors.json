@@ -1,0 +1,189 @@
+{
+  "trace_id": "trace-competitive-pricing",
+  "created_at_ms": 1707000000000,
+  "target_entity": "Selene OS",
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.ANALYTICS", "PH1.D"],
+    "created_at_ms": 1707000000000,
+    "trace_id": "trace-competitive-pricing",
+    "query": "competitive pricing",
+    "retrieved_at_ms": 1707000000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Selene Pricing",
+        "url": "https://selene.example.com/pricing",
+        "trust_tier": "high"
+      },
+      {
+        "title": "AlphaSuite Pricing",
+        "url": "https://alpha.example.com/pricing",
+        "trust_tier": "high"
+      },
+      {
+        "title": "BetaCloud Pricing",
+        "url": "https://beta.example.com/pricing",
+        "trust_tier": "medium"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "analytics": {
+        "currency_rates": [],
+        "unit_conversions": []
+      }
+    }
+  },
+  "structured_rows": [
+    {
+      "entity": "Selene OS",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 120.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707000000000,
+      "source_url": "https://selene.example.com/pricing",
+      "source_ref": "https://selene.example.com/pricing",
+      "confidence": 0.98,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "AlphaSuite",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 95.0,
+        "currency_code": "USD"
+      },
+      "unit": "monthly",
+      "as_of_ms": 1707000000000,
+      "source_url": "https://alpha.example.com/pricing",
+      "source_ref": "https://alpha.example.com/pricing",
+      "confidence": 0.96,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "BetaCloud",
+      "attribute": "Price",
+      "value": {
+        "type": "currency",
+        "amount": 1200.0,
+        "currency_code": "USD"
+      },
+      "unit": "yearly",
+      "as_of_ms": 1707000000000,
+      "source_url": "https://beta.example.com/pricing",
+      "source_ref": "https://beta.example.com/pricing",
+      "confidence": 0.93,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "Selene OS",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "unit": null,
+      "as_of_ms": 1707000000000,
+      "source_url": "https://selene.example.com/pricing",
+      "source_ref": "https://selene.example.com/pricing",
+      "confidence": 0.92,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "AlphaSuite",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "bool",
+        "value": true
+      },
+      "unit": null,
+      "as_of_ms": 1707000000000,
+      "source_url": "https://alpha.example.com/pricing",
+      "source_ref": "https://alpha.example.com/pricing",
+      "confidence": 0.92,
+      "schema_version": "1.0.0"
+    },
+    {
+      "entity": "BetaCloud",
+      "attribute": "feature:sso",
+      "value": {
+        "type": "bool",
+        "value": false
+      },
+      "unit": null,
+      "as_of_ms": 1707000000000,
+      "source_url": "https://beta.example.com/pricing",
+      "source_ref": "https://beta.example.com/pricing",
+      "confidence": 0.9,
+      "schema_version": "1.0.0"
+    }
+  ],
+  "computation_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.ANALYTICS",
+    "intended_consumers": ["PH1.D", "PH1.WRITE"],
+    "created_at_ms": 1707000000100,
+    "trace_id": "trace-competitive-pricing",
+    "inputs": {
+      "evidence_hash": "evidence-hash-pricing",
+      "policy_snapshot_id": "policy_run22_v1",
+      "as_of_ms": 1707000000000
+    },
+    "aggregates": [
+      {
+        "metric_id": "market_price",
+        "entity": "market",
+        "attribute": "Price",
+        "unit": "monthly",
+        "currency": "USD",
+        "window": {
+          "as_of_ms": 1707000000000,
+          "from_ms": null,
+          "to_ms": null
+        },
+        "method": "p50",
+        "value": {
+          "type": "decimal",
+          "value": "97.500000"
+        },
+        "sample_size": 2,
+        "source_refs": [
+          "https://alpha.example.com/pricing",
+          "https://beta.example.com/pricing"
+        ]
+      },
+      {
+        "metric_id": "market_price",
+        "entity": "market",
+        "attribute": "Price",
+        "unit": "monthly",
+        "currency": "USD",
+        "window": {
+          "as_of_ms": 1707000000000,
+          "from_ms": null,
+          "to_ms": null
+        },
+        "method": "p75",
+        "value": {
+          "type": "decimal",
+          "value": "98.750000"
+        },
+        "sample_size": 2,
+        "source_refs": [
+          "https://alpha.example.com/pricing",
+          "https://beta.example.com/pricing"
+        ]
+      }
+    ],
+    "consensus": [],
+    "confidence": [],
+    "reason_codes": []
+  }
+}
