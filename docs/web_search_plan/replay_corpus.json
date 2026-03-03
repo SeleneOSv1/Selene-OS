@@ -1,0 +1,41 @@
+{
+  "corpus_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "web_answer_basic",
+      "mode": "web",
+      "query": "selene deterministic web search",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_inputs": {
+        "fixed_time_ms": 1700000000000,
+        "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+        "fixed_provider_mode": "fixture"
+      }
+    },
+    {
+      "case_id": "news_answer_basic",
+      "mode": "news",
+      "query": "latest selene platform update",
+      "importance_tier": "high",
+      "expected_outcome": "answer",
+      "fixed_inputs": {
+        "fixed_time_ms": 1700000005000,
+        "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+        "fixed_provider_mode": "fixture"
+      }
+    },
+    {
+      "case_id": "web_refusal_insufficient",
+      "mode": "web",
+      "query": "unverifiable claim",
+      "importance_tier": "low",
+      "expected_outcome": "refusal",
+      "fixed_inputs": {
+        "fixed_time_ms": 1700000010000,
+        "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+        "fixed_provider_mode": "fixture"
+      }
+    }
+  ]
+}

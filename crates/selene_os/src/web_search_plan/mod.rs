@@ -13,6 +13,7 @@ pub mod parallel;
 pub mod perf_cost;
 pub mod planning;
 pub mod proxy;
+pub mod replay;
 pub mod reason_code_validator;
 pub mod registry_loader;
 pub mod synthesis;

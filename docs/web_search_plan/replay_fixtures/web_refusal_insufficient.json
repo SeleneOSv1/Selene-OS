@@ -1,0 +1,77 @@
+{
+  "case_id": "web_refusal_insufficient",
+  "stop_reason": "provider_results_exhausted",
+  "simulated_latency_ms": 1400,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000010000,
+    "trace_id": "trace-replay-web-refusal-1",
+    "query": "unverifiable claim",
+    "retrieved_at_ms": 1700000010000,
+    "provider_runs": [
+      {
+        "provider_id": "brave_web_search",
+        "endpoint": "web",
+        "latency_ms": 900,
+        "error": {
+          "error_kind": "empty_results",
+          "reason_code": "empty_results"
+        }
+      }
+    ],
+    "sources": [],
+    "content_chunks": [],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000010100,
+    "trace_id": "trace-replay-web-refusal-1",
+    "answer_text": "Insufficient evidence is available to support a grounded answer.",
+    "bullet_evidence": [
+      "Insufficient evidence was available from retrieved sources."
+    ],
+    "citations": [],
+    "uncertainty_flags": [],
+    "reason_codes": ["insufficient_evidence"],
+    "evidence_refs": [],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000010200,
+    "trace_id": "trace-replay-web-refusal-1",
+    "formatted_text": "Direct Answer\nInsufficient evidence is available to support a grounded answer.\nEvidence\n- Insufficient evidence was available from retrieved sources.\nCitations\nNone",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {}
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000010300,
+    "trace_id": "trace-replay-web-refusal-1",
+    "turn_state_transition": {
+      "from": "TURN_FAILED_CLOSED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-web-refusal-1",
+      "synthesis": "hash-synthesis-web-refusal-1",
+      "write": "hash-write-web-refusal-1"
+    },
+    "evidence_hash": "hash-evidence-web-refusal-1",
+    "response_hash": "hash-write-web-refusal-1",
+    "reason_codes": ["insufficient_evidence"],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

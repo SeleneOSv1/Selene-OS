@@ -1,0 +1,100 @@
+{
+  "case_id": "web_answer_basic",
+  "stop_reason": "k_reached",
+  "simulated_latency_ms": 3200,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000000000,
+    "trace_id": "trace-replay-web-1",
+    "query": "selene deterministic web search",
+    "retrieved_at_ms": 1700000000000,
+    "provider_runs": [
+      {
+        "provider_id": "brave_web_search",
+        "endpoint": "web",
+        "latency_ms": 780,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Selene Determinism Notes",
+        "url": "https://example.com/selene-determinism",
+        "snippet": "Selene enforces deterministic ordering and fail-closed behavior.",
+        "media_type": "web",
+        "provider_id": "brave_web_search",
+        "rank": 1,
+        "canonical_url": "https://example.com/selene-determinism"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-web-001",
+        "source_url": "https://example.com/selene-determinism",
+        "canonical_url": "https://example.com/selene-determinism",
+        "chunk_index": 0,
+        "text_excerpt": "Selene enforces deterministic ordering and fail-closed behavior.",
+        "text_len_chars": 65
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000000100,
+    "trace_id": "trace-replay-web-1",
+    "answer_text": "Selene uses deterministic processing and fail-closed controls.",
+    "bullet_evidence": [
+      "Deterministic ordering and fail-closed behavior are documented in the source excerpt."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://example.com/selene-determinism"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-web-001"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000000200,
+    "trace_id": "trace-replay-web-1",
+    "formatted_text": "Direct Answer\nSelene uses deterministic processing and fail-closed controls.\nEvidence\n- Deterministic ordering and fail-closed behavior are documented in the source excerpt. [c1]\nCitations\n[c1] https://example.com/selene-determinism",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://example.com/selene-determinism"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000000300,
+    "trace_id": "trace-replay-web-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-web-1",
+      "synthesis": "hash-synthesis-web-1",
+      "write": "hash-write-web-1"
+    },
+    "evidence_hash": "hash-evidence-web-1",
+    "response_hash": "hash-write-web-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

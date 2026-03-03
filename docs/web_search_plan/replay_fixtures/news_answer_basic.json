@@ -1,0 +1,124 @@
+{
+  "case_id": "news_answer_basic",
+  "stop_reason": "provider_results_exhausted",
+  "simulated_latency_ms": 9600,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000005000,
+    "trace_id": "trace-replay-news-1",
+    "query": "latest selene platform update",
+    "retrieved_at_ms": 1700000005000,
+    "provider_runs": [
+      {
+        "provider_id": "brave_news_search",
+        "endpoint": "news",
+        "latency_ms": 1100,
+        "results_count": 2,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Selene Platform Update",
+        "url": "https://news.example.com/selene-update",
+        "snippet": "Selene shipped deterministic replay and quality gates.",
+        "media_type": "news",
+        "provider_id": "brave_news_search",
+        "rank": 1,
+        "canonical_url": "https://news.example.com/selene-update"
+      },
+      {
+        "title": "Selene Governance Update",
+        "url": "https://world.example.com/selene-governance",
+        "snippet": "Quality gates now enforce citation coverage in replay mode.",
+        "media_type": "news",
+        "provider_id": "brave_news_search",
+        "rank": 2,
+        "canonical_url": "https://world.example.com/selene-governance"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-news-001",
+        "source_url": "https://news.example.com/selene-update",
+        "canonical_url": "https://news.example.com/selene-update",
+        "chunk_index": 0,
+        "text_excerpt": "Selene shipped deterministic replay and quality gates.",
+        "text_len_chars": 54
+      },
+      {
+        "chunk_id": "chunk-news-002",
+        "source_url": "https://world.example.com/selene-governance",
+        "canonical_url": "https://world.example.com/selene-governance",
+        "chunk_index": 1,
+        "text_excerpt": "Quality gates now enforce citation coverage in replay mode.",
+        "text_len_chars": 58
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000005100,
+    "trace_id": "trace-replay-news-1",
+    "answer_text": "Selene updates report deterministic replay plus citation quality gates.",
+    "bullet_evidence": [
+      "A news source reports deterministic replay and quality gates.",
+      "A second source reports citation coverage enforcement in replay mode."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://news.example.com/selene-update"
+      },
+      {
+        "type": "source_url",
+        "value": "https://world.example.com/selene-governance"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-news-001", "chunk-news-002"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000005200,
+    "trace_id": "trace-replay-news-1",
+    "formatted_text": "Direct Answer\nSelene updates report deterministic replay plus citation quality gates.\nEvidence\n- A news source reports deterministic replay and quality gates. [c1]\n- A second source reports citation coverage enforcement in replay mode. [c2]\nCitations\n[c1] https://news.example.com/selene-update\n[c2] https://world.example.com/selene-governance",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://news.example.com/selene-update",
+      "c2": "https://world.example.com/selene-governance"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000005300,
+    "trace_id": "trace-replay-news-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-news-1",
+      "synthesis": "hash-synthesis-news-1",
+      "write": "hash-write-news-1"
+    },
+    "evidence_hash": "hash-evidence-news-1",
+    "response_hash": "hash-write-news-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}
