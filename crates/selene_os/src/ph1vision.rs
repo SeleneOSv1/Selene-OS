@@ -213,6 +213,14 @@ where
                 )?;
                 return Ok(VisionWiringOutcome::Refused(r));
             }
+            Ph1VisionResponse::AnalyzeMediaOk(_) => {
+                let r = VisionRefuse::v1(
+                    VisionCapabilityId::EvidenceExtract,
+                    reason_codes::PH1_VISION_INTERNAL_PIPELINE_ERROR,
+                    "unexpected media response for extract request".to_string(),
+                )?;
+                return Ok(VisionWiringOutcome::Refused(r));
+            }
         };
 
         let validate_req =
@@ -234,6 +242,14 @@ where
                     VisionCapabilityId::VisibleContentValidate,
                     reason_codes::PH1_VISION_INTERNAL_PIPELINE_ERROR,
                     "unexpected extract response for validation request".to_string(),
+                )?;
+                return Ok(VisionWiringOutcome::Refused(r));
+            }
+            Ph1VisionResponse::AnalyzeMediaOk(_) => {
+                let r = VisionRefuse::v1(
+                    VisionCapabilityId::VisibleContentValidate,
+                    reason_codes::PH1_VISION_INTERNAL_PIPELINE_ERROR,
+                    "unexpected media response for validation request".to_string(),
                 )?;
                 return Ok(VisionWiringOutcome::Refused(r));
             }
@@ -333,6 +349,14 @@ mod tests {
                         .unwrap(),
                     )
                 }
+                Ph1VisionRequest::AnalyzeMedia(_) => Ph1VisionResponse::Refuse(
+                    VisionRefuse::v1(
+                        VisionCapabilityId::AnalyzeMedia,
+                        ReasonCodeId(99),
+                        "analyze-media not supported in wiring test engine".to_string(),
+                    )
+                    .unwrap(),
+                ),
             }
         }
     }
@@ -385,6 +409,14 @@ mod tests {
                         .unwrap(),
                     )
                 }
+                Ph1VisionRequest::AnalyzeMedia(_) => Ph1VisionResponse::Refuse(
+                    VisionRefuse::v1(
+                        VisionCapabilityId::AnalyzeMedia,
+                        ReasonCodeId(99),
+                        "analyze-media not supported in drift test engine".to_string(),
+                    )
+                    .unwrap(),
+                ),
             }
         }
     }

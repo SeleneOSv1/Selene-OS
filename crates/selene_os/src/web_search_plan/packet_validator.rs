@@ -174,13 +174,7 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "turn_input.json" | "turn_input_missing_required.json" => Some("TurnInputPacket"),
         "search_assist.json" => Some("SearchAssistPacket"),
         "tool_request.json" | "tool_request_bad_mode.json" => Some("ToolRequestPacket"),
-        "vision_tool_request.json" | "vision_tool_request_missing_asset_ref.json" => {
-            Some("VisionToolRequestPacket")
-        }
         "evidence.json" | "evidence_bad_schema_version.json" => Some("EvidencePacket"),
-        "vision_evidence.json" | "vision_evidence_missing_outputs.json" => {
-            Some("VisionEvidencePacket")
-        }
         "synthesis.json" => Some("SynthesisPacket"),
         "write.json" => Some("WritePacket"),
         "audit.json" | "audit_missing_hashes.json" | "unknown_reason_code.json" => {

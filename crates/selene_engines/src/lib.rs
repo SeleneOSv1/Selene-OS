@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod device_vault;
 pub mod ph1_voice_id;
 pub mod ph1bcast;
 pub mod ph1c;
@@ -11,7 +12,6 @@ pub mod ph1d;
 pub mod ph1delivery;
 pub mod ph1diag;
 pub mod ph1doc;
-pub mod device_vault;
 pub mod ph1e;
 pub mod ph1emocore;
 pub mod ph1emoguide;
@@ -53,6 +53,7 @@ pub mod ph1summary;
 pub mod ph1tenant;
 pub mod ph1tts;
 pub mod ph1vision;
+pub(crate) mod ph1vision_media;
 pub mod ph1w;
 pub mod ph1work;
 pub mod ph1write;
