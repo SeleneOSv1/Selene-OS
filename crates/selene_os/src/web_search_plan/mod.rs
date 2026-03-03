@@ -17,6 +17,7 @@ pub mod proxy;
 pub mod replay;
 pub mod reason_code_validator;
 pub mod registry_loader;
+pub mod structured;
 pub mod synthesis;
 pub mod turn_state_machine_validator;
 pub mod url;
