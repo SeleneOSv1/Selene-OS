@@ -3,6 +3,7 @@
 pub mod chunk;
 pub mod contract_hash;
 pub mod idempotency_validator;
+pub mod news;
 pub mod news_provider;
 pub mod packet_validator;
 pub mod planning;
