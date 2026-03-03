@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464000900,
+  "trace_id": "trace_run28_turn_001",
+  "risk_score": "0.693333",
+  "risk_level": "high",
+  "factor_breakdown": [
+    {
+      "factor_id": "financial_stress",
+      "score": "1",
+      "weight": "0.28",
+      "evidence_refs": [
+        "https://news.example/acme-financial-warning",
+        "chunk-risk-1"
+      ],
+      "notes": "evidence_points=7 refs=2"
+    }
+  ],
+  "confidence_score": "0.797334",
+  "evidence_refs": [
+    "https://news.example/acme-financial-warning",
+    "chunk-risk-1"
+  ],
+  "risk_model_version": "1.0.0",
+  "disclaimer": "Informational only — not financial/legal advice.",
+  "uncertainty_flags": [],
+  "reason_codes": []
+}

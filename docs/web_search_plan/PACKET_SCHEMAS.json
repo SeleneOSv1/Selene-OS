@@ -274,7 +274,16 @@
             "produced_by": "string",
             "intended_consumers": "array_string",
             "created_at_ms": "int64",
-            "trace_id": "string"
+            "trace_id": "string",
+            "risk_score": "string",
+            "risk_level": "string",
+            "factor_breakdown": "array_object",
+            "confidence_score": "string",
+            "evidence_refs": "array_string",
+            "risk_model_version": "string",
+            "disclaimer": "string",
+            "uncertainty_flags": "array_string",
+            "reason_codes": "array_string"
           }
         }
       ]

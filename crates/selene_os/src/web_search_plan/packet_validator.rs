@@ -177,6 +177,7 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "evidence.json" | "evidence_bad_schema_version.json" => Some("EvidencePacket"),
         "synthesis.json" => Some("SynthesisPacket"),
         "write.json" => Some("WritePacket"),
+        "risk.json" | "risk_missing_required.json" => Some("RiskPacket"),
         "computation.json" | "computation_missing_required.json" => Some("ComputationPacket"),
         "vision_tool_request.json" | "vision_tool_request_missing_asset_ref.json" => {
             Some("VisionToolRequestPacket")

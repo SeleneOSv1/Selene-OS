@@ -1,0 +1,39 @@
+{
+  "request": {
+    "trace_id": "trace-risk-missing",
+    "created_at_ms": 1703000000000,
+    "intended_consumers": ["PH1.D"],
+    "evidence_packet": {
+      "schema_version": "1.0.0",
+      "produced_by": "PH1.SEARCH",
+      "intended_consumers": ["PH1.D"],
+      "created_at_ms": 1703000000000,
+      "trace_id": "trace-risk-missing",
+      "query": "acme neutral summary",
+      "retrieved_at_ms": 1703000000000,
+      "provider_runs": [],
+      "sources": [
+        {
+          "title": "Acme product update",
+          "url": "https://news.example/acme-product-update",
+          "snippet": "Acme launched a new dashboard and improved design.",
+          "media_type": "news",
+          "provider_id": "BraveWebSearch",
+          "rank": 1,
+          "canonical_url": "https://news.example/acme-product-update",
+          "trust_tier": "medium",
+          "freshness_score": 0.9
+        }
+      ],
+      "content_chunks": [
+        {
+          "chunk_id": "chunk-neutral-1",
+          "source_url": "https://news.example/acme-product-update",
+          "text_excerpt": "The launch focused on UI polish and customer onboarding.",
+          "contradiction_group_id": null
+        }
+      ],
+      "trust_metadata": {}
+    }
+  }
+}

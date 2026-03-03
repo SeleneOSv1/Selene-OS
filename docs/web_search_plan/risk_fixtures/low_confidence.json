@@ -1,0 +1,50 @@
+{
+  "request": {
+    "trace_id": "trace-risk-low-confidence",
+    "created_at_ms": 1703000000000,
+    "intended_consumers": ["PH1.D", "PH1.WRITE"],
+    "evidence_packet": {
+      "schema_version": "1.0.0",
+      "produced_by": "PH1.SEARCH",
+      "intended_consumers": ["PH1.D", "PH1.WRITE"],
+      "created_at_ms": 1703000000000,
+      "trace_id": "trace-risk-low-confidence",
+      "query": "acme low confidence risk",
+      "retrieved_at_ms": 1703000000000,
+      "provider_runs": [],
+      "sources": [
+        {
+          "title": "Blog claims probe",
+          "url": "https://blog.example/acme-probe",
+          "snippet": "Rumors of investigation and possible sanction surfaced online.",
+          "media_type": "news",
+          "provider_id": "BraveWebSearch",
+          "rank": 1,
+          "canonical_url": "https://blog.example/acme-probe",
+          "trust_tier": "low",
+          "freshness_score": 0.12
+        },
+        {
+          "title": "Forum outage post",
+          "url": "https://forum.example/acme-outage",
+          "snippet": "User post alleges downtime and unresolved incident.",
+          "media_type": "news",
+          "provider_id": "BraveWebSearch",
+          "rank": 2,
+          "canonical_url": "https://forum.example/acme-outage",
+          "trust_tier": "unknown",
+          "freshness_score": 0.08
+        }
+      ],
+      "content_chunks": [
+        {
+          "chunk_id": "chunk-low-1",
+          "source_url": "https://blog.example/acme-probe",
+          "text_excerpt": "Article mentions enforcement rumors but no official documents.",
+          "contradiction_group_id": null
+        }
+      ],
+      "trust_metadata": {}
+    }
+  }
+}

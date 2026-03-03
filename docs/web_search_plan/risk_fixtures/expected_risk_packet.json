@@ -1,0 +1,15 @@
+{
+  "trace_id": "trace-risk-sufficient",
+  "risk_level": "high",
+  "risk_score": "0.72",
+  "confidence_score": "0.9144",
+  "risk_model_version": "1.0.0",
+  "required_factor_ids": [
+    "financial_stress",
+    "legal_events",
+    "negative_news_cluster",
+    "operational_reliability",
+    "regulatory_events"
+  ],
+  "required_disclaimer": "Informational only — not financial/legal advice."
+}

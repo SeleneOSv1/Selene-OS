@@ -23,6 +23,7 @@ pub mod reason_code_validator;
 pub mod regulatory;
 pub mod registry_loader;
 pub mod replay;
+pub mod risk;
 pub mod structured;
 pub mod synthesis;
 pub mod temporal;

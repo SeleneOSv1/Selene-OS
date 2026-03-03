@@ -1,0 +1,86 @@
+{
+  "request": {
+    "trace_id": "trace-risk-conflict",
+    "created_at_ms": 1703000000000,
+    "intended_consumers": ["PH1.D", "PH1.WRITE"],
+    "evidence_packet": {
+      "schema_version": "1.0.0",
+      "produced_by": "PH1.SEARCH",
+      "intended_consumers": ["PH1.D", "PH1.WRITE"],
+      "created_at_ms": 1703000000000,
+      "trace_id": "trace-risk-conflict",
+      "query": "acme conflict risk",
+      "retrieved_at_ms": 1703000000000,
+      "provider_runs": [],
+      "sources": [
+        {
+          "title": "Acme outage confirmed",
+          "url": "https://status.example/acme-outage-major",
+          "snippet": "A major outage and service disruption affected enterprise customers.",
+          "media_type": "news",
+          "provider_id": "BraveWebSearch",
+          "rank": 1,
+          "canonical_url": "https://status.example/acme-outage-major",
+          "trust_tier": "high",
+          "freshness_score": 0.82
+        },
+        {
+          "title": "Acme denied outage duration",
+          "url": "https://press.example/acme-response",
+          "snippet": "Company statement disputed outage duration and severity.",
+          "media_type": "news",
+          "provider_id": "BraveWebSearch",
+          "rank": 2,
+          "canonical_url": "https://press.example/acme-response",
+          "trust_tier": "medium",
+          "freshness_score": 0.8,
+          "contradiction_group_id": "conflict-1"
+        }
+      ],
+      "content_chunks": [
+        {
+          "chunk_id": "chunk-conflict-1",
+          "source_url": "https://status.example/acme-outage-major",
+          "text_excerpt": "Independent monitors observed four hours of downtime and repeated failure alerts.",
+          "contradiction_group_id": "conflict-1"
+        },
+        {
+          "chunk_id": "chunk-conflict-2",
+          "source_url": "https://press.example/acme-response",
+          "text_excerpt": "Official response says outage lasted fifteen minutes with no customer impact.",
+          "contradiction_group_id": "conflict-1"
+        }
+      ],
+      "trust_metadata": {}
+    },
+    "computation_packet": {
+      "schema_version": "1.0.0",
+      "produced_by": "PH1.ANALYTICS",
+      "intended_consumers": ["PH1.D"],
+      "created_at_ms": 1703000000000,
+      "trace_id": "trace-risk-conflict",
+      "inputs": {
+        "evidence_hash": "stub",
+        "policy_snapshot_id": "policy-snapshot-default",
+        "as_of_ms": 1703000000000
+      },
+      "aggregates": [],
+      "consensus": [
+        {
+          "group_id": "g1",
+          "topic": "acme.uptime",
+          "candidates": [],
+          "agreement_score": "0.45",
+          "outliers": [
+            {
+              "value": { "type": "decimal", "value": "0.90" },
+              "sources": ["chunk-conflict-1"]
+            }
+          ]
+        }
+      ],
+      "confidence": [],
+      "reason_codes": ["conflicting_evidence_detected"]
+    }
+  }
+}

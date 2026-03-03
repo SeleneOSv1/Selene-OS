@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464000900,
+  "risk_score": "0.51",
+  "risk_level": "medium",
+  "factor_breakdown": [],
+  "confidence_score": "0.40",
+  "evidence_refs": [],
+  "risk_model_version": "1.0.0",
+  "disclaimer": "Informational only — not financial/legal advice.",
+  "uncertainty_flags": ["confidence_low"],
+  "reason_codes": ["insufficient_evidence"]
+}
