@@ -4,6 +4,7 @@ pub mod chunk;
 pub mod cache;
 pub mod contract_hash;
 pub mod diag;
+pub mod document;
 pub mod idempotency_validator;
 pub mod learn;
 pub mod learning;

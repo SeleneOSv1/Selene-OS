@@ -1,0 +1,74 @@
+[
+  {
+    "entity": "ACME CORP",
+    "attribute": "company_name",
+    "value": {
+      "type": "string",
+      "value": "ACME CORP"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "ACME CORP",
+    "attribute": "period_end_date",
+    "value": {
+      "type": "date",
+      "value": "2025-12-31"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "ACME CORP",
+    "attribute": "revenue",
+    "value": {
+      "type": "currency",
+      "amount": 1200.5,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "ACME CORP",
+    "attribute": "net_income",
+    "value": {
+      "type": "currency",
+      "amount": 300.25,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "ACME CORP",
+    "attribute": "risk_factors_section_present",
+    "value": {
+      "type": "bool",
+      "value": true
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  }
+]

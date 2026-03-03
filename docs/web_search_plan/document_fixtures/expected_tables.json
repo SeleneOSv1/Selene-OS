@@ -1,0 +1,88 @@
+[
+  {
+    "entity": "Acme",
+    "attribute": "revenue",
+    "value": {
+      "type": "currency",
+      "amount": 1200.5,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_1",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "Acme",
+    "attribute": "margin",
+    "value": {
+      "type": "percent",
+      "value": 15.0
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_1",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "Acme",
+    "attribute": "asof",
+    "value": {
+      "type": "date",
+      "value": "2025-12-31"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_1",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "Beta",
+    "attribute": "revenue",
+    "value": {
+      "type": "currency",
+      "amount": 999.0,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_2",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "Beta",
+    "attribute": "margin",
+    "value": {
+      "type": "percent",
+      "value": 10.0
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_2",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "Beta",
+    "attribute": "asof",
+    "value": {
+      "type": "date",
+      "value": "2025-06-30"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/sample_table.pdf",
+    "source_ref": "https://example.com/sample_table.pdf#table_row_2",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  }
+]

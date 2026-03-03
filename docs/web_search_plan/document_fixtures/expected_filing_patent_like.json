@@ -1,0 +1,72 @@
+[
+  {
+    "entity": "US1234567B2",
+    "attribute": "patent_number",
+    "value": {
+      "type": "string",
+      "value": "US1234567B2"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "US1234567B2",
+    "attribute": "filing_date",
+    "value": {
+      "type": "date",
+      "value": "2024-01-20"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "US1234567B2",
+    "attribute": "inventor",
+    "value": {
+      "type": "string",
+      "value": "Alice Smith"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "US1234567B2",
+    "attribute": "inventor",
+    "value": {
+      "type": "string",
+      "value": "Bob Lee"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "US1234567B2",
+    "attribute": "assignee",
+    "value": {
+      "type": "string",
+      "value": "Acme Corp"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  }
+]

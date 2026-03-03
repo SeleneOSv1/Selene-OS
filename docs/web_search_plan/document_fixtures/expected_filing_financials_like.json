@@ -1,0 +1,47 @@
+[
+  {
+    "entity": "IncomeStatement",
+    "attribute": "revenue",
+    "value": {
+      "type": "currency",
+      "amount": 1200.5,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "BalanceSheet",
+    "attribute": "total_assets",
+    "value": {
+      "type": "currency",
+      "amount": 5000.0,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  },
+  {
+    "entity": "CashFlow",
+    "attribute": "operating_cash_flow",
+    "value": {
+      "type": "currency",
+      "amount": 800.1,
+      "currency_code": "USD"
+    },
+    "unit": null,
+    "as_of_ms": null,
+    "source_url": "https://example.com/filing.pdf",
+    "source_ref": "https://example.com/filing.pdf",
+    "confidence": null,
+    "schema_version": "1.0.0"
+  }
+]

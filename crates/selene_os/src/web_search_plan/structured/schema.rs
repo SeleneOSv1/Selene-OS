@@ -9,6 +9,10 @@ pub enum StructuredSchemaId {
     PatentRecordV1,
     AcademicRecordV1,
     PricingTableV1,
+    PdfTableV1,
+    FilingSecLikeV1,
+    FilingFinancialsLikeV1,
+    FilingPatentLikeV1,
 }
 
 impl StructuredSchemaId {
@@ -21,6 +25,10 @@ impl StructuredSchemaId {
             Self::PatentRecordV1 => "patent_record_v1",
             Self::AcademicRecordV1 => "academic_record_v1",
             Self::PricingTableV1 => "pricing_table_v1",
+            Self::PdfTableV1 => "pdf_table_v1",
+            Self::FilingSecLikeV1 => "filing_sec_like_v1",
+            Self::FilingFinancialsLikeV1 => "filing_financials_like_v1",
+            Self::FilingPatentLikeV1 => "filing_patent_like_v1",
         }
     }
 
@@ -33,6 +41,10 @@ impl StructuredSchemaId {
             "patent_record_v1" => Some(Self::PatentRecordV1),
             "academic_record_v1" => Some(Self::AcademicRecordV1),
             "pricing_table_v1" => Some(Self::PricingTableV1),
+            "pdf_table_v1" => Some(Self::PdfTableV1),
+            "filing_sec_like_v1" => Some(Self::FilingSecLikeV1),
+            "filing_financials_like_v1" => Some(Self::FilingFinancialsLikeV1),
+            "filing_patent_like_v1" => Some(Self::FilingPatentLikeV1),
             _ => None,
         }
     }
@@ -73,6 +85,28 @@ pub fn schema_rule_for(schema_id: StructuredSchemaId) -> SchemaRule {
         StructuredSchemaId::PricingTableV1 => SchemaRule {
             schema_id,
             required_attributes: &["product", "price"],
+        },
+        StructuredSchemaId::PdfTableV1 => SchemaRule {
+            schema_id,
+            required_attributes: &["revenue", "margin", "as_of"],
+        },
+        StructuredSchemaId::FilingSecLikeV1 => SchemaRule {
+            schema_id,
+            required_attributes: &[
+                "company_name",
+                "period_end_date",
+                "revenue",
+                "net_income",
+                "risk_factors_section_present",
+            ],
+        },
+        StructuredSchemaId::FilingFinancialsLikeV1 => SchemaRule {
+            schema_id,
+            required_attributes: &["revenue", "total_assets", "operating_cash_flow"],
+        },
+        StructuredSchemaId::FilingPatentLikeV1 => SchemaRule {
+            schema_id,
+            required_attributes: &["patent_number", "filing_date", "inventor", "assignee"],
         },
     }
 }
