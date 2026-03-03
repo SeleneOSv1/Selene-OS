@@ -1,17 +1,21 @@
 #![forbid(unsafe_code)]
 
+pub mod boundary_guard;
 pub mod citation_validator;
-pub mod claim_parser;
-pub mod conflict_detector;
-pub mod insufficient_evidence;
+pub mod claim_extractor;
+pub mod conflict_handler;
+pub mod insufficiency_gate;
 pub mod template;
 
+use crate::web_search_plan::synthesis::boundary_guard::{
+    assert_evidence_boundary, EvidenceBoundaryContext,
+};
 use crate::web_search_plan::synthesis::citation_validator::{
     build_evidence_citation_index, validate_claim_citation_coverage, CitationValidationError,
 };
-use crate::web_search_plan::synthesis::claim_parser::{parse_atomic_claims, CitationRefKind};
-use crate::web_search_plan::synthesis::conflict_detector::detect_conflicts;
-use crate::web_search_plan::synthesis::insufficient_evidence::{
+use crate::web_search_plan::synthesis::claim_extractor::{extract_atomic_claims, CitationRefKind};
+use crate::web_search_plan::synthesis::conflict_handler::detect_conflicts;
+use crate::web_search_plan::synthesis::insufficiency_gate::{
     assess_evidence_sufficiency, EvidenceSufficiencyPolicy,
 };
 use crate::web_search_plan::synthesis::template::{
@@ -73,7 +77,15 @@ pub fn synthesize_evidence_bound(
     policy: SynthesisPolicy,
     external_lookup: Option<&dyn ExternalLookup>,
 ) -> Result<SynthesisResult, SynthesisError> {
-    assert_evidence_boundary(external_lookup)?;
+    assert_evidence_boundary(EvidenceBoundaryContext::from_external_lookup_requested(
+        external_lookup.is_some(),
+    ))
+    .map_err(|violation| {
+        SynthesisError::EvidenceBoundaryViolation(format!(
+            "PH1.D evidence boundary violation: {}",
+            violation.as_str()
+        ))
+    })?;
 
     let citation_index =
         build_evidence_citation_index(evidence_packet).map_err(SynthesisError::InvalidEvidence)?;
@@ -86,7 +98,6 @@ pub fn synthesize_evidence_bound(
             user_question,
             sufficiency.distinct_sources,
             sufficiency.chunk_support,
-            sufficiency.corroboration_count,
         );
         let uncertainty_flags = if conflicts.is_empty() {
             Vec::new()
@@ -129,7 +140,7 @@ pub fn synthesize_evidence_bound(
     }
 
     let draft = render_grounded_draft(user_question, &ranked_chunks, &conflicts);
-    let claims = parse_atomic_claims(&draft.answer_text);
+    let claims = extract_atomic_claims(&draft.answer_text);
     let validation =
         validate_claim_citation_coverage(&claims, &citation_index).map_err(|err| match err {
             CitationValidationError::CitationMismatch { message, .. } => {
@@ -217,17 +228,6 @@ pub fn append_synthesis_audit_fields(
         }),
     );
 
-    Ok(())
-}
-
-fn assert_evidence_boundary(
-    external_lookup: Option<&dyn ExternalLookup>,
-) -> Result<(), SynthesisError> {
-    if external_lookup.is_some() {
-        return Err(SynthesisError::EvidenceBoundaryViolation(
-            "PH1.D evidence boundary violation: external lookup is forbidden".to_string(),
-        ));
-    }
     Ok(())
 }
 

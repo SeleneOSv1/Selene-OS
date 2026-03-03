@@ -7,7 +7,6 @@ use std::collections::BTreeSet;
 pub struct EvidenceSufficiencyPolicy {
     pub min_distinct_sources: usize,
     pub min_chunk_support: usize,
-    pub min_corroboration_count: usize,
 }
 
 impl Default for EvidenceSufficiencyPolicy {
@@ -15,7 +14,6 @@ impl Default for EvidenceSufficiencyPolicy {
         Self {
             min_distinct_sources: 2,
             min_chunk_support: 2,
-            min_corroboration_count: 2,
         }
     }
 }
@@ -24,7 +22,6 @@ impl Default for EvidenceSufficiencyPolicy {
 pub struct EvidenceSufficiency {
     pub distinct_sources: usize,
     pub chunk_support: usize,
-    pub corroboration_count: usize,
     pub is_sufficient: bool,
 }
 
@@ -53,28 +50,24 @@ pub fn assess_evidence_sufficiency(
         }
     }
 
-    let mut chunk_sources: BTreeSet<String> = BTreeSet::new();
     for chunk in &chunks {
         if let Some(url) = chunk.get("source_url").and_then(Value::as_str) {
             let url = url.trim();
             if !url.is_empty() {
-                chunk_sources.insert(url.to_string());
+                source_urls.insert(url.to_string());
             }
         }
     }
 
-    let distinct_sources = source_urls.union(&chunk_sources).count();
+    let distinct_sources = source_urls.len();
     let chunk_support = chunks.len();
-    let corroboration_count = chunk_sources.len();
 
     let is_sufficient = distinct_sources >= policy.min_distinct_sources
-        && chunk_support >= policy.min_chunk_support
-        && corroboration_count >= policy.min_corroboration_count;
+        && chunk_support >= policy.min_chunk_support;
 
     EvidenceSufficiency {
         distinct_sources,
         chunk_support,
-        corroboration_count,
         is_sufficient,
     }
 }

@@ -3,7 +3,7 @@
 use super::citation_validator::{
     build_evidence_citation_index, validate_claim_citation_coverage, CitationValidationError,
 };
-use super::claim_parser::{AtomicClaim, CitationRef, CitationRefKind};
+use super::claim_extractor::{AtomicClaim, CitationRef, CitationRefKind};
 use super::{
     synthesize_evidence_bound, ExternalLookup, SynthesisError, SynthesisPolicy,
     SYNTHESIS_TEMPLATE_VERSION,
@@ -129,10 +129,9 @@ fn test_t2_unsupported_claim_triggers_hard_fail() {
     let evidence = malformed_uncited_evidence_packet();
     let policy = SynthesisPolicy {
         // Bypass sufficiency so unsupported-claim validation is exercised directly.
-        sufficiency: super::insufficient_evidence::EvidenceSufficiencyPolicy {
+        sufficiency: super::insufficiency_gate::EvidenceSufficiencyPolicy {
             min_distinct_sources: 0,
             min_chunk_support: 0,
-            min_corroboration_count: 0,
         },
         max_claims: 8,
     };
@@ -194,7 +193,7 @@ fn test_t3_conflict_detection_surfaces_uncertainty() {
         .get("answer_text")
         .and_then(Value::as_str)
         .expect("answer text should exist");
-    assert!(answer.contains("Optional Uncertainty"));
+    assert!(answer.contains("Uncertainty"));
     assert!(result.audit_metrics.conflict_detected);
 }
 
@@ -305,6 +304,30 @@ fn test_t6_external_lookup_boundary_blocked() {
     match err {
         SynthesisError::EvidenceBoundaryViolation(message) => {
             assert!(message.contains("forbidden"));
+        }
+        other => panic!("unexpected error variant: {:?}", other),
+    }
+}
+
+#[test]
+fn test_t7_citation_references_valid_chunk_ids_only() {
+    let evidence = base_evidence_packet();
+    let index = build_evidence_citation_index(&evidence).expect("evidence index should build");
+
+    let claims = vec![AtomicClaim {
+        claim_id: "claim_001".to_string(),
+        text: "Invalid chunk claim".to_string(),
+        citations: vec![CitationRef {
+            kind: CitationRefKind::ChunkId,
+            value: "chunk-unknown".to_string(),
+        }],
+    }];
+
+    let err = validate_claim_citation_coverage(&claims, &index)
+        .expect_err("unknown chunk_id must fail citation validation");
+    match err {
+        CitationValidationError::CitationMismatch { message, .. } => {
+            assert!(message.contains("unknown chunk_id"));
         }
         other => panic!("unexpected error variant: {:?}", other),
     }

@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::synthesis::claim_parser::{AtomicClaim, CitationRef, CitationRefKind};
+use crate::web_search_plan::synthesis::claim_extractor::{
+    AtomicClaim, CitationRef, CitationRefKind,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
 

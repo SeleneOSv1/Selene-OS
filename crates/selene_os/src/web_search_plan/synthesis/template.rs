@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::synthesis::claim_parser::{CitationRef, CitationRefKind};
-use crate::web_search_plan::synthesis::conflict_detector::ConflictGroup;
+use crate::web_search_plan::synthesis::claim_extractor::{CitationRef, CitationRefKind};
+use crate::web_search_plan::synthesis::conflict_handler::ConflictGroup;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateChunkInput {
@@ -24,12 +24,21 @@ pub fn render_grounded_draft(
     chunks: &[TemplateChunkInput],
     conflicts: &[ConflictGroup],
 ) -> DraftSynthesis {
+    let direct_answer = if let Some(first_chunk) = chunks.first() {
+        format!(
+            "The available evidence indicates: {}",
+            first_chunk.claim_text.trim()
+        )
+    } else {
+        format!(
+            "The available evidence indicates findings for: {}",
+            user_question.trim()
+        )
+    };
+
     let mut lines = Vec::new();
     lines.push("Direct Answer".to_string());
-    lines.push(format!(
-        "Grounded response for question: {}",
-        user_question.trim()
-    ));
+    lines.push(direct_answer);
     lines.push(String::new());
 
     lines.push("Evidence".to_string());
@@ -80,7 +89,7 @@ pub fn render_grounded_draft(
     if !conflicts.is_empty() {
         uncertainty_flags.push("conflicting_evidence_detected".to_string());
         lines.push(String::new());
-        lines.push("Optional Uncertainty".to_string());
+        lines.push("Uncertainty".to_string());
         for group in conflicts {
             let mut segments = Vec::new();
             for claim in &group.claims {
@@ -110,13 +119,11 @@ pub fn render_insufficient_evidence_answer(
     user_question: &str,
     distinct_sources: usize,
     chunk_support: usize,
-    corroboration_count: usize,
 ) -> String {
     format!(
-        "Direct Answer\nInsufficient evidence to answer question: {}\n\nEvidence\n- distinct_sources={}\n- chunk_support={}\n- corroboration_count={}\n\nCitations\n- none",
+        "Direct Answer\nInsufficient evidence to answer question: {}\n\nEvidence\n- distinct_sources={}\n- chunk_support={}\n\nCitations\n- none",
         user_question.trim(),
         distinct_sources,
         chunk_support,
-        corroboration_count
     )
 }

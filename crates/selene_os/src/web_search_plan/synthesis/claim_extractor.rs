@@ -19,7 +19,7 @@ pub struct AtomicClaim {
     pub citations: Vec<CitationRef>,
 }
 
-pub fn parse_atomic_claims(answer_text: &str) -> Vec<AtomicClaim> {
+pub fn extract_atomic_claims(answer_text: &str) -> Vec<AtomicClaim> {
     let mut claims = Vec::new();
 
     for line in answer_text.lines() {
@@ -30,10 +30,10 @@ pub fn parse_atomic_claims(answer_text: &str) -> Vec<AtomicClaim> {
 
         let body = trimmed.trim_start_matches("- ").trim();
         let citations = extract_marked_citations(body);
-        // Only bullets with explicit citation markers are treated as factual claims.
         if citations.is_empty() {
             continue;
         }
+
         let claim_text = strip_marked_citations(body)
             .split_whitespace()
             .collect::<Vec<&str>>()

@@ -44,12 +44,26 @@ pub fn detect_conflicts(evidence_packet: &Value) -> Vec<ConflictGroup> {
         let source_url = chunk
             .get("source_url")
             .and_then(Value::as_str)
+            .or_else(|| {
+                chunk
+                    .get("citation")
+                    .and_then(Value::as_object)
+                    .and_then(|citation| citation.get("source_url"))
+                    .and_then(Value::as_str)
+            })
             .unwrap_or("")
             .trim()
             .to_string();
         let chunk_id = chunk
             .get("chunk_id")
             .and_then(Value::as_str)
+            .or_else(|| {
+                chunk
+                    .get("citation")
+                    .and_then(Value::as_object)
+                    .and_then(|citation| citation.get("chunk_id"))
+                    .and_then(Value::as_str)
+            })
             .unwrap_or("")
             .trim()
             .to_string();
