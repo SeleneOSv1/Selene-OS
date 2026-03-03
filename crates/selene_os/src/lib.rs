@@ -64,6 +64,7 @@ pub mod ph1write;
 pub mod ph1x;
 pub mod section40_exit;
 pub mod simulation_executor;
+pub mod web_search_plan;
 
 pub fn hello_compile() -> &'static str {
     "hello compile"

@@ -1,0 +1,107 @@
+{
+  "registry_version": "1.0.0",
+  "engines": [
+    {
+      "engine_id": "PH1.OS",
+      "authority": "authoritative",
+      "allowed_actions": ["orchestrate", "gate_ordering", "route_handoffs"],
+      "must_not_do": ["execute_tools_directly", "synthesize_facts"]
+    },
+    {
+      "engine_id": "PH1.X",
+      "authority": "authoritative",
+      "allowed_actions": ["decide_lane", "emit_tool_request", "enforce_gates"],
+      "must_not_do": ["synthesize_facts", "execute_provider_calls"]
+    },
+    {
+      "engine_id": "PH1.E",
+      "authority": "authoritative",
+      "allowed_actions": ["execute_read_only_tools", "emit_evidence_packet"],
+      "must_not_do": ["decide_final_answer", "commit_side_effects"]
+    },
+    {
+      "engine_id": "PH1.J",
+      "authority": "authoritative",
+      "allowed_actions": ["append_audit", "persist_audit_hashes"],
+      "must_not_do": ["decide_business_logic", "alter_prior_audit_rows"]
+    },
+    {
+      "engine_id": "PH1.F",
+      "authority": "authoritative",
+      "allowed_actions": ["persist_evidence", "persist_policy_snapshots"],
+      "must_not_do": ["runtime_policy_decisioning", "answer_synthesis"]
+    },
+    {
+      "engine_id": "PH1.TTS",
+      "authority": "authoritative",
+      "allowed_actions": ["voice_playback"],
+      "must_not_do": ["alter_content", "decide_ground_truth"]
+    },
+    {
+      "engine_id": "PH1.D",
+      "authority": "non_authoritative",
+      "allowed_actions": ["synthesis_from_evidence"],
+      "must_not_do": ["use_outside_knowledge", "execute_tools", "grant_authority"]
+    },
+    {
+      "engine_id": "PH1.WRITE",
+      "authority": "non_authoritative",
+      "allowed_actions": ["presentation_formatting", "citation_rendering"],
+      "must_not_do": ["change_semantic_truth", "invent_facts"]
+    },
+    {
+      "engine_id": "PH1.SEARCH",
+      "authority": "non_authoritative",
+      "allowed_actions": ["query_planning", "request_normalization"],
+      "must_not_do": ["call_providers_directly", "return_final_answer"]
+    },
+    {
+      "engine_id": "PH1.NLP",
+      "authority": "non_authoritative",
+      "allowed_actions": ["intent_assist", "parse_input"],
+      "must_not_do": ["final_decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.PRUNE",
+      "authority": "non_authoritative",
+      "allowed_actions": ["context_pruning"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.DIAG",
+      "authority": "non_authoritative",
+      "allowed_actions": ["diagnostics"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.SRL",
+      "authority": "non_authoritative",
+      "allowed_actions": ["semantic_role_labeling"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.LANG",
+      "authority": "non_authoritative",
+      "allowed_actions": ["language_normalization"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.CONTEXT",
+      "authority": "non_authoritative",
+      "allowed_actions": ["context_hints"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.KNOW",
+      "authority": "non_authoritative",
+      "allowed_actions": ["knowledge_hints"],
+      "must_not_do": ["decisioning", "execution"]
+    },
+    {
+      "engine_id": "PH1.CACHE",
+      "authority": "non_authoritative",
+      "allowed_actions": ["cache_hints"],
+      "must_not_do": ["decisioning", "execution"]
+    }
+  ]
+}

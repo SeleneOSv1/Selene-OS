@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.NLP",
+  "intended_consumers": ["PH1.X"],
+  "created_at_ms": 1762464000100,
+  "trace_id": "trace_run1_turn_001",
+  "intent_class": "web_research",
+  "search_required": true,
+  "confidence": 0.93,
+  "missing_fields": [],
+  "risk_flags": ["freshness_sensitive"]
+}

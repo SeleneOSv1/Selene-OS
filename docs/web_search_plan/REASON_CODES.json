@@ -1,0 +1,226 @@
+{
+  "registry_version": "1.0.0",
+  "wording_contract": {
+    "forbidden_substrings": [
+      "sk-",
+      "api_key",
+      "authorization: bearer",
+      "/users/",
+      "c:\\\\",
+      "traceback"
+    ],
+    "note": "User-facing templates must remain secret-safe and infra-safe."
+  },
+  "reason_codes": [
+    {
+      "code_id": "invalid_session",
+      "owner_engine": "PH1.X",
+      "category": "input",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Session is invalid. Start a new session and retry.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "session_id"]
+    },
+    {
+      "code_id": "identity_not_verified",
+      "owner_engine": "PH1.X",
+      "category": "input",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Identity is not verified. Please verify and retry.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "session_id"]
+    },
+    {
+      "code_id": "input_unparseable",
+      "owner_engine": "PH1.NLP",
+      "category": "input",
+      "severity": "error",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Input could not be parsed. Please rephrase and retry.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "input_hash"]
+    },
+    {
+      "code_id": "access_denied",
+      "owner_engine": "PH1.X",
+      "category": "policy",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Access denied by policy.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "policy_snapshot_id"]
+    },
+    {
+      "code_id": "policy_violation",
+      "owner_engine": "PH1.X",
+      "category": "policy",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Request violates policy constraints.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "policy_snapshot_id"]
+    },
+    {
+      "code_id": "quota_exceeded",
+      "owner_engine": "PH1.QUOTA",
+      "category": "quota",
+      "severity": "warn",
+      "retry_class": "cooldown_required",
+      "user_message_template": "Quota exceeded. Retry after cooldown.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "quota_window"]
+    },
+    {
+      "code_id": "budget_exhausted",
+      "owner_engine": "PH1.X",
+      "category": "quota",
+      "severity": "warn",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Budget exhausted for this turn.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "budget_id"]
+    },
+    {
+      "code_id": "provider_unconfigured",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "error",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Provider configuration is missing.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "provider_id"]
+    },
+    {
+      "code_id": "provider_upstream_failed",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "error",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Provider failed upstream. Retry may succeed.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "provider_id"]
+    },
+    {
+      "code_id": "proxy_misconfigured",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "error",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Proxy configuration is invalid.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "proxy_mode"]
+    },
+    {
+      "code_id": "timeout_exceeded",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Retrieval timed out before completion.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "timeout_ms"]
+    },
+    {
+      "code_id": "empty_results",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "No results found for this query.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "query_hash"]
+    },
+    {
+      "code_id": "insufficient_evidence",
+      "owner_engine": "PH1.D",
+      "category": "evidence",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Evidence is insufficient to support a grounded answer.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "evidence_hash"]
+    },
+    {
+      "code_id": "conflicting_evidence_detected",
+      "owner_engine": "PH1.D",
+      "category": "evidence",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Evidence conflicts across sources.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "evidence_hash"]
+    },
+    {
+      "code_id": "citation_mismatch",
+      "owner_engine": "PH1.WRITE",
+      "category": "evidence",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Citation mapping failed validation.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "citation_map_hash"]
+    },
+    {
+      "code_id": "unsupported_claim",
+      "owner_engine": "PH1.D",
+      "category": "synthesis",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Claim is unsupported by available evidence.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "claim_id"]
+    },
+    {
+      "code_id": "stale_data",
+      "owner_engine": "PH1.E",
+      "category": "retrieval",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Retrieved data is stale for required freshness.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "retrieved_at_ms"]
+    },
+    {
+      "code_id": "freshness_policy_unmet",
+      "owner_engine": "PH1.X",
+      "category": "policy",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Freshness policy requirements were not met.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "policy_snapshot_id"]
+    },
+    {
+      "code_id": "insufficient_regulatory_evidence",
+      "owner_engine": "PH1.D",
+      "category": "compliance",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Regulatory evidence is insufficient for this response.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "jurisdiction"]
+    },
+    {
+      "code_id": "jurisdiction_mismatch",
+      "owner_engine": "PH1.X",
+      "category": "compliance",
+      "severity": "error",
+      "retry_class": "never",
+      "user_message_template": "Jurisdiction context does not match the requested scope.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "jurisdiction"]
+    },
+    {
+      "code_id": "compliance_confidence_low",
+      "owner_engine": "PH1.D",
+      "category": "compliance",
+      "severity": "warn",
+      "retry_class": "builder_action_required",
+      "user_message_template": "Compliance confidence is below required threshold.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "compliance_score"]
+    }
+  ]
+}

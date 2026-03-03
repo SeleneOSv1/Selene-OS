@@ -1,0 +1,124 @@
+{
+  "registry_version": "1.0.0",
+  "handoffs": [
+    {
+      "producer_engine": "PH1.C",
+      "packet_type": "TurnInputPacket",
+      "consumer_engine": "PH1.NLP",
+      "rule": "Turn input capture enters read-only lane after session gate.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.C",
+      "packet_type": "TurnInputPacket",
+      "consumer_engine": "PH1.X",
+      "rule": "Turn input is available to orchestrator for gate ordering.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.SRL",
+      "packet_type": "TurnInputPacket",
+      "consumer_engine": "PH1.NLP",
+      "rule": "SRL-normalized input is consumed for intent extraction.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.LANG",
+      "packet_type": "TurnInputPacket",
+      "consumer_engine": "PH1.NLP",
+      "rule": "Language-normalized packet preserves deterministic transcript context.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.NLP",
+      "packet_type": "SearchAssistPacket",
+      "consumer_engine": "PH1.X",
+      "rule": "Intent and search requirement guidance flows to orchestrator.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.PRUNE",
+      "packet_type": "SearchAssistPacket",
+      "consumer_engine": "PH1.X",
+      "rule": "Pruned context hints are advisory to decisioning.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.DIAG",
+      "packet_type": "SearchAssistPacket",
+      "consumer_engine": "PH1.X",
+      "rule": "Diagnostics are advisory and non-authoritative.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.X",
+      "packet_type": "ToolRequestPacket",
+      "consumer_engine": "PH1.SEARCH",
+      "rule": "Orchestrator emits retrieval plan packet only after gates 1-4 pass.",
+      "authority": "authoritative"
+    },
+    {
+      "producer_engine": "PH1.SEARCH",
+      "packet_type": "ToolRequestPacket",
+      "consumer_engine": "PH1.E",
+      "rule": "Search planner forwards read-only request; no provider calls in planner.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.E",
+      "packet_type": "EvidencePacket",
+      "consumer_engine": "PH1.D",
+      "rule": "Synthesis consumes evidence packet only for factual grounding.",
+      "authority": "authoritative"
+    },
+    {
+      "producer_engine": "PH1.E",
+      "packet_type": "EvidencePacket",
+      "consumer_engine": "PH1.WRITE",
+      "rule": "Writer receives evidence refs for rendering and citations.",
+      "authority": "authoritative"
+    },
+    {
+      "producer_engine": "PH1.E",
+      "packet_type": "EvidencePacket",
+      "consumer_engine": "PH1.J",
+      "rule": "Audit receives evidence envelope/hash refs.",
+      "authority": "authoritative"
+    },
+    {
+      "producer_engine": "PH1.D",
+      "packet_type": "SynthesisPacket",
+      "consumer_engine": "PH1.WRITE",
+      "rule": "Synthesis output is transformed to presentation only.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.WRITE",
+      "packet_type": "WritePacket",
+      "consumer_engine": "API",
+      "rule": "API response uses write packet only.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.WRITE",
+      "packet_type": "WritePacket",
+      "consumer_engine": "PH1.TTS",
+      "rule": "Voice rendering consumes already grounded formatted text.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.WRITE",
+      "packet_type": "WritePacket",
+      "consumer_engine": "PH1.J",
+      "rule": "Audit tracks rendered output hash and mode.",
+      "authority": "non_authoritative"
+    },
+    {
+      "producer_engine": "PH1.OS",
+      "packet_type": "AuditPacket",
+      "consumer_engine": "PH1.J",
+      "rule": "Orchestrator commits canonical turn audit packet append-only.",
+      "authority": "authoritative"
+    }
+  ]
+}

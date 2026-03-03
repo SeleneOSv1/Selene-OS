@@ -1,0 +1,335 @@
+{
+  "registry_version": "1.0.0",
+  "schema_policy": {
+    "default_additional_properties": false
+  },
+  "packets": [
+    {
+      "packet_name": "TurnInputPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "transcript",
+            "identity_scope",
+            "language",
+            "session_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "transcript": "string",
+            "identity_scope": "string",
+            "language": "string",
+            "session_id": "string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "SearchAssistPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "intent_class",
+            "search_required",
+            "confidence",
+            "missing_fields",
+            "risk_flags"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "intent_class": "string",
+            "search_required": "bool",
+            "confidence": "float",
+            "missing_fields": "array_string",
+            "risk_flags": "array_string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "ToolRequestPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "mode",
+            "query",
+            "importance_tier",
+            "budgets"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "mode": "string",
+            "query": "string",
+            "importance_tier": "string",
+            "budgets": "object"
+          },
+          "field_enums": {
+            "mode": [
+              "web",
+              "news",
+              "images",
+              "video",
+              "structured",
+              "url_fetch"
+            ],
+            "importance_tier": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "EvidencePacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "query",
+            "retrieved_at_ms",
+            "provider_runs",
+            "sources",
+            "content_chunks",
+            "trust_metadata"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "query": "string",
+            "retrieved_at_ms": "int64",
+            "provider_runs": "array_object",
+            "sources": "array_object",
+            "content_chunks": "array_object",
+            "trust_metadata": "object"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "SynthesisPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "answer_text",
+            "bullet_evidence",
+            "citations",
+            "uncertainty_flags",
+            "reason_codes",
+            "evidence_refs",
+            "synthesis_template_version"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "answer_text": "string",
+            "bullet_evidence": "array_string",
+            "citations": "array_object",
+            "uncertainty_flags": "array_string",
+            "reason_codes": "array_string",
+            "evidence_refs": "array_string",
+            "synthesis_template_version": "string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "WritePacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "formatted_text",
+            "format_mode",
+            "voice_safe",
+            "citation_map"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "formatted_text": "string",
+            "format_mode": "string",
+            "voice_safe": "bool",
+            "citation_map": "object"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "ComparisonPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "RiskPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "EnterpriseReportPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "AuditPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "turn_state_transition",
+            "packet_hashes",
+            "evidence_hash",
+            "response_hash",
+            "reason_codes",
+            "policy_snapshot_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "turn_state_transition": "string_or_object",
+            "packet_hashes": "object",
+            "evidence_hash": "string",
+            "response_hash": "string",
+            "reason_codes": "array_string",
+            "policy_snapshot_id": "string"
+          }
+        }
+      ]
+    }
+  ]
+}

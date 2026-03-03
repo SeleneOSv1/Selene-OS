@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.C",
+  "intended_consumers": ["PH1.NLP", "PH1.X"],
+  "created_at_ms": 1762464000000,
+  "trace_id": "trace_run1_turn_001",
+  "transcript": "Summarize latest policy updates for cloud security.",
+  "identity_scope": "verified_user",
+  "language": "en-US",
+  "session_id": "sess_001"
+}

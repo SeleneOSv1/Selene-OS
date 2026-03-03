@@ -1,0 +1,73 @@
+{
+  "registry_version": "1.0.0",
+  "write_paths": [
+    {
+      "write_path_name": "audit_append",
+      "owning_engine": "PH1.J",
+      "idempotency_key_recipe": {
+        "description": "sha256(trace_id + turn_state_transition + evidence_hash + response_hash + policy_snapshot_id)",
+        "canonical_fields": [
+          "trace_id",
+          "turn_state_transition",
+          "evidence_hash",
+          "response_hash",
+          "policy_snapshot_id"
+        ]
+      },
+      "uniqueness_scope": "global",
+      "persistence_table": "audit_events",
+      "duplicate_behavior": "return_existing",
+      "introduced_in_version": "1.0.0"
+    },
+    {
+      "write_path_name": "evidence_persist",
+      "owning_engine": "PH1.F",
+      "idempotency_key_recipe": {
+        "description": "sha256(trace_id + query + retrieved_at_ms + policy_snapshot_id)",
+        "canonical_fields": [
+          "trace_id",
+          "query",
+          "retrieved_at_ms",
+          "policy_snapshot_id"
+        ]
+      },
+      "uniqueness_scope": "per_session",
+      "persistence_table": "evidence_packets",
+      "duplicate_behavior": "no_op_success",
+      "introduced_in_version": "1.0.0"
+    },
+    {
+      "write_path_name": "policy_snapshot_persist",
+      "owning_engine": "PH1.F",
+      "idempotency_key_recipe": {
+        "description": "sha256(policy_snapshot_id + trace_id + policy_hash)",
+        "canonical_fields": [
+          "policy_snapshot_id",
+          "trace_id",
+          "policy_hash"
+        ]
+      },
+      "uniqueness_scope": "per_tenant",
+      "persistence_table": "policy_snapshots",
+      "duplicate_behavior": "return_existing",
+      "introduced_in_version": "1.0.0"
+    }
+  ],
+  "expected_unique_indexes": [
+    {
+      "write_path_name": "audit_append",
+      "index_name": "ux_audit_events_idempotency_key",
+      "columns": ["idempotency_key"]
+    },
+    {
+      "write_path_name": "evidence_persist",
+      "index_name": "ux_evidence_packets_idempotency_key",
+      "columns": ["idempotency_key"]
+    },
+    {
+      "write_path_name": "policy_snapshot_persist",
+      "index_name": "ux_policy_snapshots_idempotency_key",
+      "columns": ["idempotency_key"]
+    }
+  ]
+}

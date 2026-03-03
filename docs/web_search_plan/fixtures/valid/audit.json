@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.OS",
+  "intended_consumers": ["PH1.J"],
+  "created_at_ms": 1762464000600,
+  "trace_id": "trace_run1_turn_001",
+  "turn_state_transition": "OUTPUT_RENDERED->AUDIT_COMMITTED",
+  "packet_hashes": {
+    "turn_input": "h_turn_input",
+    "evidence": "h_evidence",
+    "write": "h_write"
+  },
+  "evidence_hash": "evidence_hash_001",
+  "response_hash": "response_hash_001",
+  "reason_codes": ["stale_data"],
+  "policy_snapshot_id": "policy_snapshot_001"
+}

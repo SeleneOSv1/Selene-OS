@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.X",
+  "intended_consumers": ["PH1.SEARCH", "PH1.E"],
+  "created_at_ms": 1762464000200,
+  "trace_id": "trace_run1_turn_002",
+  "mode": "write",
+  "query": "cloud security policy updates 2026",
+  "importance_tier": "high",
+  "budgets": {
+    "timeout_ms": 2000,
+    "max_results": 5
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "registry_version": "1.0.0",
+  "states": [
+    "TURN_ACCEPTED",
+    "INPUT_PARSED",
+    "INTENT_CLASSIFIED",
+    "PLAN_SELECTED",
+    "RETRIEVAL_EXECUTED",
+    "EVIDENCE_LOCKED",
+    "SYNTHESIS_READY",
+    "OUTPUT_RENDERED",
+    "AUDIT_COMMITTED",
+    "TURN_COMPLETED",
+    "TURN_FAILED_CLOSED"
+  ],
+  "allowed_transitions": [
+    { "from": "TURN_ACCEPTED", "to": "INPUT_PARSED" },
+    { "from": "INPUT_PARSED", "to": "INTENT_CLASSIFIED" },
+    { "from": "INTENT_CLASSIFIED", "to": "PLAN_SELECTED" },
+    { "from": "PLAN_SELECTED", "to": "RETRIEVAL_EXECUTED" },
+    { "from": "RETRIEVAL_EXECUTED", "to": "EVIDENCE_LOCKED" },
+    { "from": "EVIDENCE_LOCKED", "to": "SYNTHESIS_READY" },
+    { "from": "SYNTHESIS_READY", "to": "OUTPUT_RENDERED" },
+    { "from": "OUTPUT_RENDERED", "to": "AUDIT_COMMITTED" },
+    { "from": "AUDIT_COMMITTED", "to": "TURN_COMPLETED" },
+    { "from": "TURN_FAILED_CLOSED", "to": "AUDIT_COMMITTED" },
+    { "from": "*", "to": "TURN_FAILED_CLOSED" }
+  ],
+  "failure_state": "TURN_FAILED_CLOSED",
+  "gate_order": [
+    "session_identity_gate",
+    "input_quality_gate",
+    "intent_mode_gate",
+    "policy_access_quota_cost_gate",
+    "retrieval_execution_gate",
+    "evidence_integrity_gate",
+    "synthesis_gate",
+    "output_gate",
+    "audit_persistence_gate"
+  ]
+}
