@@ -1,0 +1,13 @@
+{
+  "root_query": "Acme annual report and SEC filing trends",
+  "mode": "structured",
+  "importance_tier": "low",
+  "sub_queries": [
+    "acme annual report",
+    "sec filing trends",
+    "acme risk factors"
+  ],
+  "max_hops": 5,
+  "max_time_per_hop_ms": 120,
+  "max_total_time_ms": 200
+}

@@ -1,0 +1,19 @@
+{
+  "simple_chain": {
+    "mode": "web",
+    "expected_hops": [
+      "acme pricing then acme support and acme reliability",
+      "acme pricing",
+      "acme support",
+      "acme reliability"
+    ]
+  },
+  "cycle_case": {
+    "mode": "web",
+    "expected_hops": [
+      "acme roadmap and acme release notes",
+      "acme roadmap",
+      "acme release notes"
+    ]
+  }
+}

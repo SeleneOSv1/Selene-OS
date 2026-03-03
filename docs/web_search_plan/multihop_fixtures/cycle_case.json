@@ -1,0 +1,11 @@
+{
+  "root_query": "Acme roadmap and Acme release notes",
+  "mode": "web",
+  "importance_tier": "medium",
+  "sub_queries": [
+    "acme roadmap",
+    "acme release notes"
+  ],
+  "max_hops": 5,
+  "repeated_canonical_url": "https://example.com/acme-roadmap"
+}

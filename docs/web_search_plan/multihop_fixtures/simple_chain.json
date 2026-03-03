@@ -1,0 +1,11 @@
+{
+  "root_query": "Acme pricing then Acme support and Acme reliability",
+  "mode": "web",
+  "importance_tier": "medium",
+  "sub_queries": [
+    "acme pricing",
+    "acme support",
+    "acme reliability"
+  ],
+  "max_hops": 5
+}
