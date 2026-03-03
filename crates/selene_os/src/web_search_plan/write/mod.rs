@@ -2,6 +2,7 @@
 
 pub mod citation_renderer;
 pub mod formatter;
+pub mod localization;
 pub mod style_guard;
 pub mod voice_renderer;
 
@@ -58,6 +59,7 @@ pub struct WriteAuditMetrics {
     pub citation_count: usize,
     pub bullet_count: usize,
     pub format_mode: String,
+    pub language_tag: String,
     pub style_guard_passed: bool,
 }
 
@@ -104,6 +106,7 @@ pub fn render_write_packet(
         citation_count: formatted.citation_count,
         bullet_count: formatted.bullet_count,
         format_mode: format_mode.as_str().to_string(),
+        language_tag: formatted.language_tag,
         style_guard_passed: formatted.style_guard_passed,
     };
 
@@ -146,6 +149,7 @@ pub fn append_write_audit_fields(
             "citation_count": metrics.citation_count,
             "bullet_count": metrics.bullet_count,
             "format_mode": metrics.format_mode,
+            "language_tag": metrics.language_tag,
             "style_guard_passed": metrics.style_guard_passed,
         }),
     );

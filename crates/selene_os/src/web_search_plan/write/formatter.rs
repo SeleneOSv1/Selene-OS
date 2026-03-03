@@ -3,6 +3,9 @@
 use crate::web_search_plan::write::citation_renderer::{
     build_citation_map, citation_keys_for_bullet, parse_evidence_lines, strip_marker_tokens,
 };
+use crate::web_search_plan::write::localization::{
+    derive_language_tag, enforce_language_contract, normalize_language_tag,
+};
 use crate::web_search_plan::write::style_guard::{
     normalize_bullet_text, normalize_claim_text, normalize_direct_answer, validate_style_guard,
     StyleGuardConfig,
@@ -16,6 +19,7 @@ pub struct FormattedWrite {
     pub citation_map: Map<String, Value>,
     pub citation_count: usize,
     pub bullet_count: usize,
+    pub language_tag: String,
     pub style_guard_passed: bool,
 }
 
@@ -131,6 +135,13 @@ pub fn format_synthesis_packet(
         ));
     }
 
+    let language_tag = derive_language_tag(&direct_answer, &bullet_evidence);
+    let normalized_language_tag = normalize_language_tag(&language_tag)
+        .map_err(WriteError::StyleGuardViolation)?
+        .to_string();
+    enforce_language_contract(&normalized_language_tag, &direct_answer, &bullet_evidence)
+        .map_err(WriteError::StyleGuardViolation)?;
+
     let citation_build = build_citation_map(answer_text, synthesis_citations)
         .map_err(WriteError::CitationMismatch)?;
 
@@ -215,6 +226,7 @@ pub fn format_synthesis_packet(
         citation_count: citation_build.citation_map.len(),
         bullet_count: rendered_bullets.len(),
         citation_map: citation_build.citation_map,
+        language_tag: normalized_language_tag,
         style_guard_passed: true,
     })
 }

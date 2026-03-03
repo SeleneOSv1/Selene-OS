@@ -64,6 +64,8 @@ fn test_t1_identical_synthesis_packet_produces_identical_formatted_text() {
     );
     assert_eq!(first.write_packet, second.write_packet);
     assert_eq!(first.voice_text, second.voice_text);
+    assert_eq!(first.audit_metrics.language_tag, second.audit_metrics.language_tag);
+    assert_eq!(first.audit_metrics.language_tag, "en");
 
     let packet_registry = load_packet_schema_registry().expect("packet schema should load");
     validate_packet_schema_registry(&packet_registry).expect("packet schema should validate");
@@ -199,14 +201,31 @@ fn test_t6_voice_output_matches_formatted_text_semantics() {
 }
 
 #[test]
-fn test_t7_style_guard_blocks_mutation_attempts() {
+fn test_t7_localization_contract_blocks_mid_response_switching() {
+    let mut synthesis = base_synthesis_packet();
+    synthesis["answer_text"] = json!("Direct Answer\nGrounded response in English.\n\nEvidence\n- 中文结论来自来源 A. [chunk:chunk-a] [url:https://example.com/a]\n- Claim from source B. [chunk:chunk-b] [url:https://example.com/b]\n\nCitations\n- url:https://example.com/a\n- url:https://example.com/b");
+    synthesis["bullet_evidence"] = json!(["中文结论来自来源 A.", "Claim from source B."]);
+
+    let err = render_write_packet(
+        &synthesis,
+        1_700_000_600_500i64,
+        "trace-run13-t7",
+        WriteFormatMode::Standard,
+    )
+    .expect_err("language switching should fail localization contract");
+
+    assert!(matches!(err, WriteError::StyleGuardViolation(_)));
+}
+
+#[test]
+fn test_t8_style_guard_blocks_mutation_attempts() {
     let mut synthesis = base_synthesis_packet();
     synthesis["answer_text"] = json!("Direct Answer\nGrounded response for question: What happened.\n\nEvidence\n- Different statement that mutates meaning. [chunk:chunk-a] [url:https://example.com/a]\n- Claim from source B. [chunk:chunk-b] [url:https://example.com/b]\n\nCitations\n- url:https://example.com/a\n- url:https://example.com/b");
 
     let err = render_write_packet(
         &synthesis,
         1_700_000_600_500i64,
-        "trace-run6-t7",
+        "trace-run6-t8",
         WriteFormatMode::Standard,
     )
     .expect_err("semantic mutation should fail style guard");
@@ -260,6 +279,12 @@ fn test_append_write_audit_fields_is_replay_stable() {
             .get("style_guard_passed")
             .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        write_audit
+            .get("language_tag")
+            .and_then(Value::as_str),
+        Some("en")
     );
 }
 
