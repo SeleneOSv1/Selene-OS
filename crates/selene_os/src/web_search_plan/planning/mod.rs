@@ -26,6 +26,7 @@ use crate::web_search_plan::planning::open_selector::{
 use crate::web_search_plan::planning::scoring::{score_with_policy, ScoreSignals, ScoringPolicy};
 use crate::web_search_plan::planning::snippet_fallback::build_snippet_fallback;
 use crate::web_search_plan::planning::tie_break::{sort_ranked_candidates, RankedCandidate};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -119,7 +120,7 @@ impl StopReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenSuccess {
     pub final_url: String,
     pub title: String,

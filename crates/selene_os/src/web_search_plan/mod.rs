@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod chunk;
+pub mod cache;
 pub mod contract_hash;
 pub mod diag;
 pub mod idempotency_validator;
@@ -8,6 +9,7 @@ pub mod learning;
 pub mod news;
 pub mod news_provider;
 pub mod packet_validator;
+pub mod parallel;
 pub mod perf_cost;
 pub mod planning;
 pub mod proxy;

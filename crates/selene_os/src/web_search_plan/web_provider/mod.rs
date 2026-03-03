@@ -6,6 +6,10 @@ pub mod health_state;
 pub mod openai_fallback;
 pub mod provider_merge;
 
+use crate::web_search_plan::cache::cache_key::{CacheKey, CacheMode};
+use crate::web_search_plan::cache::l1::L1Cache;
+use crate::web_search_plan::cache::ttl::ttl_ms_for;
+use crate::web_search_plan::cache::{lookup_typed, store_typed, CacheLookupHit};
 use crate::web_search_plan::chunk::bounded_excerpt;
 use crate::web_search_plan::chunk::chunker::{TextChunk, CHUNK_VERSION};
 use crate::web_search_plan::chunk::hasher::{derive_chunk_id, Sha256ChunkHasher, HASH_VERSION};
@@ -26,6 +30,7 @@ use crate::web_search_plan::web_provider::health_state::{
     HealthPolicy, ProviderHealthState, ProviderHealthTracker,
 };
 use crate::web_search_plan::web_provider::provider_merge::merge_results;
+use serde::{Deserialize, Serialize};
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -37,8 +42,10 @@ pub const DEFAULT_MAX_RESULTS: usize = 5;
 pub const DEFAULT_TIMEOUT_MS: u64 = 2_500;
 pub const DEFAULT_USER_AGENT: &str = "selene-web-provider-ladder/1.0";
 pub const WEB_PROVIDER_ENGINE_ID: &str = "PH1.E";
+const CACHE_SCHEMA_VERSION: &str = "1.0.0";
+const DEFAULT_CACHE_POLICY_SNAPSHOT_ID: &str = "policy-snapshot-default";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ProviderId {
     WebProviderLadder,
     BraveWebSearch,
@@ -58,6 +65,7 @@ impl ProviderId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderErrorKind {
     BudgetExhausted,
+    PolicyViolation,
     ProviderUnconfigured,
     DnsFailed,
     TlsFailed,
@@ -75,6 +83,7 @@ impl ProviderErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyViolation => "policy_violation",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::DnsFailed => "dns_failed",
             Self::TlsFailed => "tls_failed",
@@ -92,6 +101,7 @@ impl ProviderErrorKind {
     pub const fn reason_code(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyViolation => "policy_violation",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::TimeoutExceeded => "timeout_exceeded",
             Self::EmptyResults => "empty_results",
@@ -122,7 +132,7 @@ impl ProviderError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedSearchResult {
     pub title: String,
     pub url: String,
@@ -133,7 +143,7 @@ pub struct NormalizedSearchResult {
     pub provider_rank: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderCallSuccess {
     pub results: Vec<NormalizedSearchResult>,
     pub latency_ms: u64,
@@ -379,6 +389,10 @@ fn execute_web_provider_ladder(
     let effective_max_results = config.max_results.min(tier_caps.max_results_from_search);
     let effective_timeout_ms = clamp_provider_timeout(config.timeout_ms, request.importance_tier);
     let mut provider_call_budget = ProviderCallBudget::for_tier(request.importance_tier);
+    let mut l1_cache = L1Cache::default();
+    let cache_enabled = web_cache_enabled();
+    let cache_policy_snapshot_id = cache_policy_snapshot_id();
+    let mut evidence_retrieved_at_ms = now_ms;
 
     if health_tracker.should_skip_lead(
         ProviderId::BraveWebSearch.as_str(),
@@ -420,17 +434,31 @@ fn execute_web_provider_ladder(
         provider_call_budget
             .record_fallback_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
-        let openai_key = resolve_openai_api_key(config)?;
-        let openai = openai_fallback::execute_openai_web_search(
-            &config.openai_endpoint,
-            &openai_key,
-            &config.openai_model,
-            &request.query,
-            effective_max_results,
-            effective_timeout_ms,
-            &config.user_agent,
-            &config.proxy_config,
+        let (openai, cache_hit) = run_provider_call_with_cache(
+            &mut l1_cache,
+            cache_enabled,
+            &request,
+            ProviderId::OpenAiWebSearch,
+            CacheMode::Web,
+            cache_policy_snapshot_id.as_str(),
+            now_ms,
+            || {
+                let openai_key = resolve_openai_api_key(config)?;
+                openai_fallback::execute_openai_web_search(
+                    &config.openai_endpoint,
+                    &openai_key,
+                    &config.openai_model,
+                    &request.query,
+                    effective_max_results,
+                    effective_timeout_ms,
+                    &config.user_agent,
+                    &config.proxy_config,
+                )
+            },
         )?;
+        if let Some(hit) = cache_hit {
+            evidence_retrieved_at_ms = evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+        }
         health_tracker.record_success(ProviderId::OpenAiWebSearch.as_str());
         results_count_fallback = openai.results.len();
         openai_results = openai.results;
@@ -450,17 +478,32 @@ fn execute_web_provider_ladder(
         provider_call_budget
             .record_lead_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
-        let brave_key = resolve_brave_api_key(config)?;
-        match brave_adapter::execute_brave_web_search(
-            &config.brave_endpoint,
-            &brave_key,
-            &request.query,
-            effective_max_results,
-            effective_timeout_ms,
-            &config.user_agent,
-            &config.proxy_config,
+        match run_provider_call_with_cache(
+            &mut l1_cache,
+            cache_enabled,
+            &request,
+            ProviderId::BraveWebSearch,
+            CacheMode::Web,
+            cache_policy_snapshot_id.as_str(),
+            now_ms,
+            || {
+                let brave_key = resolve_brave_api_key(config)?;
+                brave_adapter::execute_brave_web_search(
+                    &config.brave_endpoint,
+                    &brave_key,
+                    &request.query,
+                    effective_max_results,
+                    effective_timeout_ms,
+                    &config.user_agent,
+                    &config.proxy_config,
+                )
+            },
         ) {
             Ok(brave) => {
+                let (brave, cache_hit) = brave;
+                if let Some(hit) = cache_hit {
+                    evidence_retrieved_at_ms = evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+                }
                 health_tracker.record_success(ProviderId::BraveWebSearch.as_str());
                 results_count_lead = brave.results.len();
                 brave_results = brave.results;
@@ -507,18 +550,34 @@ fn execute_web_provider_ladder(
                     provider_call_budget
                         .record_fallback_call()
                         .map_err(|reason| budget_exhausted_error(reason))?;
-                    let openai_key = resolve_openai_api_key(config)?;
-                    match openai_fallback::execute_openai_web_search(
-                        &config.openai_endpoint,
-                        &openai_key,
-                        &config.openai_model,
-                        &request.query,
-                        effective_max_results,
-                        effective_timeout_ms,
-                        &config.user_agent,
-                        &config.proxy_config,
+                    match run_provider_call_with_cache(
+                        &mut l1_cache,
+                        cache_enabled,
+                        &request,
+                        ProviderId::OpenAiWebSearch,
+                        CacheMode::Web,
+                        cache_policy_snapshot_id.as_str(),
+                        now_ms,
+                        || {
+                            let openai_key = resolve_openai_api_key(config)?;
+                            openai_fallback::execute_openai_web_search(
+                                &config.openai_endpoint,
+                                &openai_key,
+                                &config.openai_model,
+                                &request.query,
+                                effective_max_results,
+                                effective_timeout_ms,
+                                &config.user_agent,
+                                &config.proxy_config,
+                            )
+                        },
                     ) {
                         Ok(openai) => {
+                            let (openai, cache_hit) = openai;
+                            if let Some(hit) = cache_hit {
+                                evidence_retrieved_at_ms =
+                                    evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+                            }
                             health_tracker.record_success(ProviderId::OpenAiWebSearch.as_str());
                             results_count_fallback = openai.results.len();
                             openai_results = openai.results;
@@ -623,7 +682,7 @@ fn execute_web_provider_ladder(
         "created_at_ms": request.created_at_ms,
         "trace_id": request.trace_id,
         "query": request.query,
-        "retrieved_at_ms": now_ms,
+        "retrieved_at_ms": evidence_retrieved_at_ms,
         "provider_runs": provider_runs,
         "sources": sources,
         "content_chunks": content_chunks,
@@ -758,6 +817,91 @@ fn resolve_secret_from_vault(secret_id: ProviderSecretId) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn run_provider_call_with_cache<F>(
+    l1_cache: &mut L1Cache,
+    cache_enabled: bool,
+    request: &ParsedToolRequest,
+    provider_id: ProviderId,
+    mode: CacheMode,
+    policy_snapshot_id: &str,
+    now_ms: i64,
+    call: F,
+) -> Result<(ProviderCallSuccess, Option<CacheLookupHit<ProviderCallSuccess>>), ProviderError>
+where
+    F: FnOnce() -> Result<ProviderCallSuccess, ProviderError>,
+{
+    if cache_enabled {
+        let key = CacheKey::new(
+            mode,
+            request.query.as_str(),
+            None,
+            Some(provider_id.as_str()),
+            request.importance_tier,
+            Some(policy_snapshot_id),
+        );
+        match lookup_typed::<ProviderCallSuccess>(
+            l1_cache,
+            &key,
+            now_ms,
+            CACHE_SCHEMA_VERSION,
+            policy_snapshot_id,
+        ) {
+            Ok(Some(hit)) => return Ok((hit.value.clone(), Some(hit))),
+            Ok(None) => {}
+            Err(err) => {
+                return Err(ProviderError {
+                    provider_id,
+                    kind: ProviderErrorKind::PolicyViolation,
+                    status_code: None,
+                    message: format!("cache lookup rejected: {}", err),
+                    latency_ms: 0,
+                })
+            }
+        }
+
+        let fresh = call()?;
+        let ttl_ms = ttl_ms_for(mode, request.importance_tier);
+        store_typed(
+            l1_cache,
+            &key,
+            &fresh,
+            CACHE_SCHEMA_VERSION,
+            now_ms,
+            ttl_ms,
+            policy_snapshot_id,
+            now_ms,
+        )
+        .map_err(|err| ProviderError {
+            provider_id,
+            kind: ProviderErrorKind::PolicyViolation,
+            status_code: None,
+            message: format!("cache store rejected: {}", err),
+            latency_ms: 0,
+        })?;
+        return Ok((fresh, None));
+    }
+
+    call().map(|fresh| (fresh, None))
+}
+
+fn web_cache_enabled() -> bool {
+    match std::env::var("SELENE_WEB_CACHE_ENABLED") {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn cache_policy_snapshot_id() -> String {
+    std::env::var("SELENE_WEB_CACHE_POLICY_SNAPSHOT_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_CACHE_POLICY_SNAPSHOT_ID.to_string())
 }
 
 fn budget_exhausted_error(message: &str) -> ProviderError {

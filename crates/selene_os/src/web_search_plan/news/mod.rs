@@ -7,6 +7,10 @@ pub mod gdelt;
 pub mod merge;
 pub mod recency;
 
+use crate::web_search_plan::cache::cache_key::{CacheKey, CacheMode};
+use crate::web_search_plan::cache::l1::L1Cache;
+use crate::web_search_plan::cache::ttl::ttl_ms_for;
+use crate::web_search_plan::cache::{lookup_typed, store_typed, CacheLookupHit};
 use crate::web_search_plan::chunk::bounded_excerpt;
 use crate::web_search_plan::chunk::chunker::{TextChunk, CHUNK_VERSION};
 use crate::web_search_plan::chunk::hasher::{derive_chunk_id, Sha256ChunkHasher, HASH_VERSION};
@@ -32,6 +36,7 @@ use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::web_provider::health_state::{
     HealthPolicy, ProviderHealthState, ProviderHealthTracker,
 };
+use serde::{Deserialize, Serialize};
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -42,8 +47,10 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 2_500;
 pub const DEFAULT_MAX_RESULTS: usize = 6;
 pub const DEFAULT_USER_AGENT: &str = "selene-news-provider-ladder/1.0";
 pub const NEWS_ENGINE_ID: &str = "PH1.E";
+const CACHE_SCHEMA_VERSION: &str = "1.0.0";
+const DEFAULT_CACHE_POLICY_SNAPSHOT_ID: &str = "policy-snapshot-default";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NewsProviderId {
     NewsProviderLadder,
     BraveNewsSearch,
@@ -63,6 +70,7 @@ impl NewsProviderId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewsProviderErrorKind {
     BudgetExhausted,
+    PolicyViolation,
     ProviderUnconfigured,
     DnsFailed,
     TlsFailed,
@@ -80,6 +88,7 @@ impl NewsProviderErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyViolation => "policy_violation",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::DnsFailed => "dns_failed",
             Self::TlsFailed => "tls_failed",
@@ -97,6 +106,7 @@ impl NewsProviderErrorKind {
     pub const fn reason_code(self) -> &'static str {
         match self {
             Self::BudgetExhausted => "budget_exhausted",
+            Self::PolicyViolation => "policy_violation",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::TimeoutExceeded => "timeout_exceeded",
             Self::EmptyResults => "empty_results",
@@ -127,7 +137,7 @@ impl NewsProviderError {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderNewsItem {
     pub title: String,
     pub url: String,
@@ -140,7 +150,7 @@ pub struct ProviderNewsItem {
     pub domain: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NormalizedNewsResult {
     pub title: String,
     pub url: String,
@@ -212,6 +222,12 @@ pub struct NewsAuditMetrics {
 pub struct NewsProviderLadderResult {
     pub evidence_packet: Value,
     pub audit_metrics: NewsAuditMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NewsProviderCallPayload {
+    results: Vec<ProviderNewsItem>,
+    latency_ms: u64,
 }
 
 pub fn execute_news_provider_ladder_from_tool_request(
@@ -410,6 +426,10 @@ fn execute_news_provider_ladder(
     let effective_timeout_ms = clamp_provider_timeout(config.timeout_ms, request.perf_importance_tier);
     let mut provider_call_budget = ProviderCallBudget::for_tier(request.perf_importance_tier);
     let mut provider_runs = Vec::new();
+    let mut l1_cache = L1Cache::default();
+    let cache_enabled = news_cache_enabled();
+    let cache_policy_snapshot_id = cache_policy_snapshot_id();
+    let mut evidence_retrieved_at_ms = now_ms;
 
     let mut lead_attempted = false;
     let mut fallback_used = false;
@@ -445,14 +465,31 @@ fn execute_news_provider_ladder(
         provider_call_budget
             .record_fallback_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
-        let gdelt = gdelt::execute_gdelt_news_search(
-            &config.gdelt_endpoint,
-            &request.query,
-            effective_max_results,
-            effective_timeout_ms,
-            &config.user_agent,
-            &config.proxy_config,
+        let (gdelt, cache_hit) = run_news_provider_call_with_cache(
+            &mut l1_cache,
+            cache_enabled,
+            &request,
+            NewsProviderId::GdeltNewsAssist,
+            cache_policy_snapshot_id.as_str(),
+            now_ms,
+            || {
+                gdelt::execute_gdelt_news_search(
+                    &config.gdelt_endpoint,
+                    &request.query,
+                    effective_max_results,
+                    effective_timeout_ms,
+                    &config.user_agent,
+                    &config.proxy_config,
+                )
+                .map(|value| NewsProviderCallPayload {
+                    results: value.results,
+                    latency_ms: value.latency_ms,
+                })
+            },
         )?;
+        if let Some(hit) = cache_hit {
+            evidence_retrieved_at_ms = evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+        }
         let (normalized, filtered_count) =
             normalize_and_filter_results(&gdelt.results, now_ms, window_days);
         filtered_total = filtered_total.saturating_add(filtered_count);
@@ -474,16 +511,34 @@ fn execute_news_provider_ladder(
             .record_lead_call()
             .map_err(|reason| budget_exhausted_error(reason))?;
         let brave_key = resolve_brave_api_key(config)?;
-        match brave_news::execute_brave_news_search(
-            &config.brave_news_endpoint,
-            &brave_key,
-            &request.query,
-            effective_max_results,
-            effective_timeout_ms,
-            &config.user_agent,
-            &config.proxy_config,
+        match run_news_provider_call_with_cache(
+            &mut l1_cache,
+            cache_enabled,
+            &request,
+            NewsProviderId::BraveNewsSearch,
+            cache_policy_snapshot_id.as_str(),
+            now_ms,
+            || {
+                brave_news::execute_brave_news_search(
+                    &config.brave_news_endpoint,
+                    &brave_key,
+                    &request.query,
+                    effective_max_results,
+                    effective_timeout_ms,
+                    &config.user_agent,
+                    &config.proxy_config,
+                )
+                .map(|value| NewsProviderCallPayload {
+                    results: value.results,
+                    latency_ms: value.latency_ms,
+                })
+            },
         ) {
             Ok(brave) => {
+                let (brave, cache_hit) = brave;
+                if let Some(hit) = cache_hit {
+                    evidence_retrieved_at_ms = evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+                }
                 health_tracker.record_success(NewsProviderId::BraveNewsSearch.as_str());
                 let (normalized, filtered_count) =
                     normalize_and_filter_results(&brave.results, now_ms, window_days);
@@ -533,15 +588,34 @@ fn execute_news_provider_ladder(
                     provider_call_budget
                         .record_fallback_call()
                         .map_err(|reason| budget_exhausted_error(reason))?;
-                    match gdelt::execute_gdelt_news_search(
-                        &config.gdelt_endpoint,
-                        &request.query,
-                        effective_max_results,
-                        effective_timeout_ms,
-                        &config.user_agent,
-                        &config.proxy_config,
+                    match run_news_provider_call_with_cache(
+                        &mut l1_cache,
+                        cache_enabled,
+                        &request,
+                        NewsProviderId::GdeltNewsAssist,
+                        cache_policy_snapshot_id.as_str(),
+                        now_ms,
+                        || {
+                            gdelt::execute_gdelt_news_search(
+                                &config.gdelt_endpoint,
+                                &request.query,
+                                effective_max_results,
+                                effective_timeout_ms,
+                                &config.user_agent,
+                                &config.proxy_config,
+                            )
+                            .map(|value| NewsProviderCallPayload {
+                                results: value.results,
+                                latency_ms: value.latency_ms,
+                            })
+                        },
                     ) {
                         Ok(gdelt) => {
+                            let (gdelt, cache_hit) = gdelt;
+                            if let Some(hit) = cache_hit {
+                                evidence_retrieved_at_ms =
+                                    evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+                            }
                             health_tracker.record_success(NewsProviderId::GdeltNewsAssist.as_str());
                             let (normalized, filtered_count) =
                                 normalize_and_filter_results(&gdelt.results, now_ms, window_days);
@@ -603,15 +677,34 @@ fn execute_news_provider_ladder(
             provider_call_budget
                 .record_fallback_call()
                 .map_err(|reason| budget_exhausted_error(reason))?;
-            match gdelt::execute_gdelt_news_search(
-                &config.gdelt_endpoint,
-                &request.query,
-                effective_max_results,
-                effective_timeout_ms,
-                &config.user_agent,
-                &config.proxy_config,
+            match run_news_provider_call_with_cache(
+                &mut l1_cache,
+                cache_enabled,
+                &request,
+                NewsProviderId::GdeltNewsAssist,
+                cache_policy_snapshot_id.as_str(),
+                now_ms,
+                || {
+                    gdelt::execute_gdelt_news_search(
+                        &config.gdelt_endpoint,
+                        &request.query,
+                        effective_max_results,
+                        effective_timeout_ms,
+                        &config.user_agent,
+                        &config.proxy_config,
+                    )
+                    .map(|value| NewsProviderCallPayload {
+                        results: value.results,
+                        latency_ms: value.latency_ms,
+                    })
+                },
             ) {
                 Ok(gdelt) => {
+                    let (gdelt, cache_hit) = gdelt;
+                    if let Some(hit) = cache_hit {
+                        evidence_retrieved_at_ms =
+                            evidence_retrieved_at_ms.min(hit.retrieved_at_ms);
+                    }
                     health_tracker.record_success(NewsProviderId::GdeltNewsAssist.as_str());
                     let (normalized, filtered_count) =
                         normalize_and_filter_results(&gdelt.results, now_ms, window_days);
@@ -735,7 +828,7 @@ fn execute_news_provider_ladder(
         "created_at_ms": request.created_at_ms,
         "trace_id": request.trace_id,
         "query": request.query,
-        "retrieved_at_ms": now_ms,
+        "retrieved_at_ms": evidence_retrieved_at_ms,
         "provider_runs": provider_runs,
         "sources": sources,
         "content_chunks": content_chunks,
@@ -1059,6 +1152,97 @@ fn resolve_secret_from_vault(secret_id: ProviderSecretId) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn run_news_provider_call_with_cache<F>(
+    l1_cache: &mut L1Cache,
+    cache_enabled: bool,
+    request: &ParsedToolRequest,
+    provider_id: NewsProviderId,
+    policy_snapshot_id: &str,
+    now_ms: i64,
+    call: F,
+) -> Result<
+    (
+        NewsProviderCallPayload,
+        Option<CacheLookupHit<NewsProviderCallPayload>>,
+    ),
+    NewsProviderError,
+>
+where
+    F: FnOnce() -> Result<NewsProviderCallPayload, NewsProviderError>,
+{
+    if cache_enabled {
+        let key = CacheKey::new(
+            CacheMode::News,
+            request.query.as_str(),
+            None,
+            Some(provider_id.as_str()),
+            request.perf_importance_tier,
+            Some(policy_snapshot_id),
+        );
+        match lookup_typed::<NewsProviderCallPayload>(
+            l1_cache,
+            &key,
+            now_ms,
+            CACHE_SCHEMA_VERSION,
+            policy_snapshot_id,
+        ) {
+            Ok(Some(hit)) => return Ok((hit.value.clone(), Some(hit))),
+            Ok(None) => {}
+            Err(err) => {
+                return Err(NewsProviderError {
+                    provider_id,
+                    kind: NewsProviderErrorKind::PolicyViolation,
+                    status_code: None,
+                    message: format!("cache lookup rejected: {}", err),
+                    latency_ms: 0,
+                })
+            }
+        }
+
+        let fresh = call()?;
+        let ttl_ms = ttl_ms_for(CacheMode::News, request.perf_importance_tier);
+        store_typed(
+            l1_cache,
+            &key,
+            &fresh,
+            CACHE_SCHEMA_VERSION,
+            now_ms,
+            ttl_ms,
+            policy_snapshot_id,
+            now_ms,
+        )
+        .map_err(|err| NewsProviderError {
+            provider_id,
+            kind: NewsProviderErrorKind::PolicyViolation,
+            status_code: None,
+            message: format!("cache store rejected: {}", err),
+            latency_ms: 0,
+        })?;
+
+        return Ok((fresh, None));
+    }
+
+    call().map(|fresh| (fresh, None))
+}
+
+fn news_cache_enabled() -> bool {
+    match std::env::var("SELENE_NEWS_CACHE_ENABLED") {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn cache_policy_snapshot_id() -> String {
+    std::env::var("SELENE_NEWS_CACHE_POLICY_SNAPSHOT_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_CACHE_POLICY_SNAPSHOT_ID.to_string())
 }
 
 fn budget_exhausted_error(message: &str) -> NewsProviderError {
