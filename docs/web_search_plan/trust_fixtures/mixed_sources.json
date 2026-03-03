@@ -1,0 +1,37 @@
+{
+  "now_ms": 1707700000000,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE"],
+    "created_at_ms": 1707700000000,
+    "trace_id": "trace-trust-mixed",
+    "query": "trust scoring sample",
+    "retrieved_at_ms": 1707700000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "SEC filing update",
+        "url": "https://www.sec.gov/rules/final",
+        "snippet": "Official SEC release.",
+        "published_at_ms": 1707696400000,
+        "rank": 1
+      },
+      {
+        "title": "REUTERS MARKET UPDATE",
+        "url": "https://www.reuters.com/world/us?utm_source=ref",
+        "snippet": "Market coverage",
+        "published_at_ms": 1707613600000,
+        "rank": 2
+      },
+      {
+        "title": "SHOCKING!!! YOU WON'T BELIEVE THIS!!!",
+        "url": "https://news.example.com/story?utm_source=x&utm_medium=y&utm_campaign=z&gclid=abc&id=10",
+        "snippet": "Unbelievable clickbait!!!",
+        "rank": 3
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "expected_order_urls": [
+    "https://www.sec.gov/rules/final",
+    "https://www.reuters.com/world/us?utm_source=ref",
+    "https://news.example.com/story?utm_source=x&utm_medium=y&utm_campaign=z&gclid=abc&id=10"
+  ],
+  "expected_tiers": [
+    "OFFICIAL",
+    "MEDIUM",
+    "UNKNOWN"
+  ],
+  "required_factor_subsets": [
+    ["TRUST_TIER_OFFICIAL", "OFFICIAL_DOMAIN"],
+    ["TRUST_TIER_MEDIUM", "URL_TRACKING_PARAM_PENALTY"],
+    ["SPAM_KEYWORD_PENALTY", "SPAM_PENALTY_APPLIED"]
+  ]
+}

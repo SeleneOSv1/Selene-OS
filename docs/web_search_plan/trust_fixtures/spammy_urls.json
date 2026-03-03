@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "url": "https://news.example.com/story?utm_source=x&utm_medium=y&utm_campaign=z&gclid=abc&id=10",
+      "title": "SHOCKING!!! YOU WON'T BELIEVE THIS!!!",
+      "snippet": "Unbelievable viral story click here now.",
+      "min_spam_risk_score": 0.5
+    },
+    {
+      "url": "https://www.sec.gov/rules/final",
+      "title": "SEC final rule publication",
+      "snippet": "Official source text.",
+      "max_spam_risk_score": 0.2
+    }
+  ]
+}

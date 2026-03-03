@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "url": "https://www.sec.gov/rules/final",
+      "expected_tier": "OFFICIAL"
+    },
+    {
+      "url": "https://www.mas.gov.sg/regulation",
+      "expected_tier": "OFFICIAL"
+    },
+    {
+      "url": "https://www.standards.org/control",
+      "expected_tier": "HIGH"
+    },
+    {
+      "url": "https://www.reuters.com/world/us",
+      "expected_tier": "MEDIUM"
+    },
+    {
+      "url": "https://myblog.example.com/post",
+      "expected_tier": "LOW"
+    }
+  ]
+}

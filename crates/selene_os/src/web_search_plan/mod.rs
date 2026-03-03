@@ -24,6 +24,7 @@ pub mod registry_loader;
 pub mod replay;
 pub mod structured;
 pub mod synthesis;
+pub mod trust;
 pub mod turn_state_machine_validator;
 pub mod url;
 pub mod vision;
