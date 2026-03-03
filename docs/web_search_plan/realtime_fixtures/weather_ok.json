@@ -1,0 +1,29 @@
+{
+  "now_ms": 1707500000000,
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707499990000,
+    "trace_id": "trace-realtime-weather-ok",
+    "mode": "structured",
+    "query": "weather in Tokyo tomorrow",
+    "importance_tier": "medium",
+    "budgets": {
+      "domain_hint": "weather"
+    }
+  },
+  "adapter_output": {
+    "provider_id": "RealtimeWeather",
+    "endpoint_url": "https://weather.example.com/current?q=tokyo",
+    "title": "Weather API",
+    "trust_tier": "high",
+    "retrieved_at_ms": 1707499400000,
+    "latency_ms": 180,
+    "payload": {
+      "retrieved_at_ms": 1707499400000,
+      "trust_tier": "high",
+      "temperature_c": 19.5
+    }
+  }
+}

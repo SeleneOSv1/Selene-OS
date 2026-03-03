@@ -1,0 +1,29 @@
+{
+  "now_ms": 1707400000000,
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707399990000,
+    "trace_id": "trace-realtime-finance-ok",
+    "mode": "structured",
+    "query": "ticker:MSFT latest quote",
+    "importance_tier": "high",
+    "budgets": {
+      "domain_hint": "finance"
+    }
+  },
+  "adapter_output": {
+    "provider_id": "RealtimeFinance",
+    "endpoint_url": "https://finance.example.com/quote?symbol=MSFT",
+    "title": "Finance API",
+    "trust_tier": "high",
+    "retrieved_at_ms": 1707399760000,
+    "latency_ms": 120,
+    "payload": {
+      "retrieved_at_ms": 1707399760000,
+      "trust_tier": "high",
+      "price": 421.12
+    }
+  }
+}

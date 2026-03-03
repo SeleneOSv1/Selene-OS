@@ -1,0 +1,29 @@
+{
+  "now_ms": 1707500000000,
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707499980000,
+    "trace_id": "trace-realtime-weather-stale",
+    "mode": "structured",
+    "query": "forecast for Shanghai",
+    "importance_tier": "high",
+    "budgets": {
+      "domain_hint": "weather"
+    }
+  },
+  "adapter_output": {
+    "provider_id": "RealtimeWeather",
+    "endpoint_url": "https://weather.example.com/current?q=shanghai",
+    "title": "Weather API",
+    "trust_tier": "medium",
+    "retrieved_at_ms": 1707498800000,
+    "latency_ms": 160,
+    "payload": {
+      "retrieved_at_ms": 1707498800000,
+      "trust_tier": "medium",
+      "temperature_c": 25.0
+    }
+  }
+}
