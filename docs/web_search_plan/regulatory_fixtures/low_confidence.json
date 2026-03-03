@@ -1,0 +1,47 @@
+{
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707630000000,
+    "trace_id": "trace-regulatory-low-confidence",
+    "mode": "structured",
+    "query": "US compliance overview",
+    "importance_tier": "medium",
+    "budgets": {
+      "regulatory_mode": true,
+      "jurisdiction_code": "US",
+      "min_trust_tier": "medium",
+      "required_compliance_confidence": "high"
+    }
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D"],
+    "created_at_ms": 1707630000100,
+    "trace_id": "trace-regulatory-low-confidence",
+    "query": "US compliance overview",
+    "retrieved_at_ms": 1707630000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Reuters policy article",
+        "url": "https://www.reuters.com/world/us",
+        "rank": 1
+      },
+      {
+        "title": "Bloomberg policy article",
+        "url": "https://www.bloomberg.com/markets",
+        "rank": 2
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "realtime": {
+        "stale": false,
+        "freshness_score": 0.8
+      }
+    }
+  }
+}

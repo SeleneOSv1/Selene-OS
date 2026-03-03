@@ -1,0 +1,53 @@
+{
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707600000000,
+    "trace_id": "trace-regulatory-official",
+    "mode": "structured",
+    "query": "MAS regulatory compliance update",
+    "importance_tier": "high",
+    "budgets": {
+      "regulatory_mode": true,
+      "jurisdiction_code": "SG",
+      "min_trust_tier": "official",
+      "required_compliance_confidence": "high"
+    }
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE"],
+    "created_at_ms": 1707600000100,
+    "trace_id": "trace-regulatory-official",
+    "query": "MAS regulatory compliance update",
+    "retrieved_at_ms": 1707600000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "MAS regulation bulletin",
+        "url": "https://www.mas.gov.sg/regulation",
+        "snippet": "Official Monetary Authority of Singapore publication",
+        "media_type": "structured",
+        "provider_id": "RealtimeGenericJson",
+        "rank": 1
+      },
+      {
+        "title": "Singapore government policy",
+        "url": "https://www.gov.sg/policy",
+        "snippet": "Government source",
+        "media_type": "structured",
+        "provider_id": "RealtimeGenericJson",
+        "rank": 2
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "realtime": {
+        "stale": false,
+        "freshness_score": 0.91
+      }
+    }
+  }
+}

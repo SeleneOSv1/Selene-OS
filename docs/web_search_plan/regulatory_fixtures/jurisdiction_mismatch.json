@@ -1,0 +1,42 @@
+{
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E"],
+    "created_at_ms": 1707620000000,
+    "trace_id": "trace-regulatory-mismatch",
+    "mode": "structured",
+    "query": "Singapore regulatory filing status",
+    "importance_tier": "medium",
+    "budgets": {
+      "regulatory_mode": true,
+      "jurisdiction_code": "SG",
+      "min_trust_tier": "high",
+      "required_compliance_confidence": "moderate"
+    }
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D"],
+    "created_at_ms": 1707620000100,
+    "trace_id": "trace-regulatory-mismatch",
+    "query": "Singapore regulatory filing status",
+    "retrieved_at_ms": 1707620000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "US SEC source",
+        "url": "https://www.sec.gov/rules",
+        "rank": 1
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "realtime": {
+        "stale": false,
+        "freshness_score": 0.86
+      }
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "tool_request": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.X",
+    "intended_consumers": ["PH1.E", "PH1.D"],
+    "created_at_ms": 1707610000000,
+    "trace_id": "trace-regulatory-mixed",
+    "mode": "structured",
+    "query": "US compliance sources review",
+    "importance_tier": "medium",
+    "budgets": {
+      "regulatory_mode": true,
+      "jurisdiction_code": "US",
+      "min_trust_tier": "high",
+      "required_compliance_confidence": "moderate"
+    }
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D"],
+    "created_at_ms": 1707610000100,
+    "trace_id": "trace-regulatory-mixed",
+    "query": "US compliance sources review",
+    "retrieved_at_ms": 1707610000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "SEC bulletin",
+        "url": "https://www.sec.gov/news",
+        "rank": 1
+      },
+      {
+        "title": "Standards org paper",
+        "url": "https://www.standards.org/controls",
+        "rank": 2
+      },
+      {
+        "title": "Reuters commentary",
+        "url": "https://www.reuters.com/world/us",
+        "rank": 3
+      },
+      {
+        "title": "Personal blog",
+        "url": "https://randomblog.example.com/post",
+        "rank": 4
+      },
+      {
+        "title": "Malformed source",
+        "url": "not-a-url",
+        "rank": 5
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "realtime": {
+        "stale": false,
+        "freshness_score": 0.88
+      }
+    }
+  }
+}
