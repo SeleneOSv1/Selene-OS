@@ -14,6 +14,7 @@ pub mod registry_loader;
 pub mod synthesis;
 pub mod turn_state_machine_validator;
 pub mod url;
+pub mod vision;
 pub mod web_provider;
 pub mod write;
 

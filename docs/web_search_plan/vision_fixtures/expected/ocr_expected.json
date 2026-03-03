@@ -1,0 +1,16 @@
+{
+  "output_type": "OCRResult",
+  "page_or_frame_index": 0,
+  "timestamp_ms": null,
+  "ocr_engine_id": "fixture_ocr",
+  "language": "en-US",
+  "text_blocks": [
+    {
+      "bbox": {"x": 0.0, "y": 0.0, "w": 10.0, "h": 4.0},
+      "text": "HELLO WORLD",
+      "confidence": 0.97,
+      "pii_suspected": false
+    }
+  ],
+  "full_text": "HELLO WORLD"
+}

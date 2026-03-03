@@ -118,6 +118,50 @@
       ]
     },
     {
+      "packet_name": "VisionToolRequestPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "mode",
+            "asset_ref",
+            "options",
+            "budgets",
+            "policy_snapshot_id"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "mode": "string",
+            "asset_ref": "object",
+            "options": "object",
+            "budgets": "object",
+            "policy_snapshot_id": "string"
+          },
+          "field_enums": {
+            "mode": [
+              "image_ocr",
+              "image_objects",
+              "image_analyze",
+              "video_transcribe",
+              "video_keyframes",
+              "video_analyze"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "packet_name": "EvidencePacket",
       "consumer_expected_version": "1.0.0",
       "versions": [
@@ -149,6 +193,46 @@
             "sources": "array_object",
             "content_chunks": "array_object",
             "trust_metadata": "object"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "VisionEvidencePacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "asset_ref",
+            "retrieved_at_ms",
+            "provider_runs",
+            "outputs",
+            "confidence_summary",
+            "reason_codes",
+            "packet_hashes",
+            "output_hash"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "asset_ref": "object",
+            "retrieved_at_ms": "int64",
+            "provider_runs": "array_object",
+            "outputs": "array_object",
+            "confidence_summary": "object",
+            "reason_codes": "array_string",
+            "packet_hashes": "object",
+            "output_hash": "string"
           }
         }
       ]

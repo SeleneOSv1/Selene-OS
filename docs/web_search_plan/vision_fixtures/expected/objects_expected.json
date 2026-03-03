@@ -1,0 +1,13 @@
+{
+  "output_type": "ObjectDetectionResult",
+  "frame_index": null,
+  "timestamp_ms": null,
+  "model_id": "fixture_objects_model",
+  "objects": [
+    {
+      "label": "person",
+      "bbox": {"x": 5.0, "y": 8.0, "w": 20.0, "h": 40.0},
+      "confidence": 0.92
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 ## Allowed (Backward-Compatible)
 - Add optional fields.
 - Tighten enum values only when backward acceptance is preserved for existing values.
+- Add new packet definitions with explicit `consumer_expected_version`.
 
 ## Blocked (Backward-Incompatible)
 - Rename fields.

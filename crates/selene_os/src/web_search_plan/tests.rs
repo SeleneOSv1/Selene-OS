@@ -71,7 +71,9 @@ fn test_valid_fixtures_pass() {
         "turn_input.json",
         "search_assist.json",
         "tool_request.json",
+        "vision_tool_request.json",
         "evidence.json",
+        "vision_evidence.json",
         "synthesis.json",
         "write.json",
         "audit.json",
@@ -88,7 +90,9 @@ fn test_invalid_fixtures_fail() {
     let invalid_names = [
         "turn_input_missing_required.json",
         "tool_request_bad_mode.json",
+        "vision_tool_request_missing_asset_ref.json",
         "evidence_bad_schema_version.json",
+        "vision_evidence_missing_outputs.json",
         "audit_missing_hashes.json",
         "unknown_reason_code.json",
     ];

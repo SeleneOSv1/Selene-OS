@@ -1,0 +1,7 @@
+{
+  "output_type": "KeyframeIndexResult",
+  "keyframes": [
+    {"timestamp_ms": 0, "frame_index": 0, "frame_hash": "hash0"},
+    {"timestamp_ms": 1000, "frame_index": 1, "frame_hash": "hash1"}
+  ]
+}

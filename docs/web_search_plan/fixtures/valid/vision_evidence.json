@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.E",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464010100,
+  "trace_id": "trace_run12a_vision_001",
+  "asset_ref": {
+    "asset_hash": "8f9c1af7d22c0f8f7bdfe8a355f8f2773ff10d8d1da177ac6a8f928fdff92261",
+    "locator": "asset://vision/text_heavy",
+    "mime_type": "image/png",
+    "size_bytes": 1024
+  },
+  "retrieved_at_ms": 1762464010200,
+  "provider_runs": [
+    {
+      "provider_id": "vision_download",
+      "endpoint": "download",
+      "latency_ms": 10,
+      "error": null
+    },
+    {
+      "provider_id": "vision_ocr",
+      "endpoint": "ocr",
+      "latency_ms": 40,
+      "error": null
+    }
+  ],
+  "outputs": [
+    {
+      "output_type": "OCRResult",
+      "page_or_frame_index": 0,
+      "timestamp_ms": null,
+      "ocr_engine_id": "ocr_engine_test",
+      "language": "en-US",
+      "text_blocks": [
+        {
+          "bbox": {"x": 0.0, "y": 0.0, "w": 10.0, "h": 5.0},
+          "text": "Sample text",
+          "confidence": 0.95,
+          "pii_suspected": false
+        }
+      ],
+      "full_text": "Sample text"
+    }
+  ],
+  "confidence_summary": {
+    "mean_confidence": 0.95,
+    "ocr_blocks_retained": 1,
+    "objects_retained": 0,
+    "transcript_segments_retained": 0,
+    "output_count": 1
+  },
+  "reason_codes": [],
+  "packet_hashes": {
+    "asset_hash": "8f9c1af7d22c0f8f7bdfe8a355f8f2773ff10d8d1da177ac6a8f928fdff92261",
+    "provider_runs_hash": "h_provider_runs",
+    "outputs_hash": "h_outputs"
+  },
+  "output_hash": "h_outputs"
+}
