@@ -11,6 +11,10 @@ use crate::web_search_plan::chunk::bounded_excerpt;
 use crate::web_search_plan::chunk::chunker::{TextChunk, CHUNK_VERSION};
 use crate::web_search_plan::chunk::hasher::{derive_chunk_id, Sha256ChunkHasher, HASH_VERSION};
 use crate::web_search_plan::chunk::normalize::{normalize_document_for_chunking, NORM_VERSION};
+use crate::web_search_plan::diag::{
+    default_degraded_transitions, default_failed_transitions, try_build_debug_packet,
+    DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
+};
 use crate::web_search_plan::news::conflict::{
     build_conflict_clusters, cluster_lookup_by_canonical_url,
 };
@@ -416,6 +420,8 @@ fn execute_news_provider_ladder(
             NewsProviderId::BraveNewsSearch,
             "health_cooldown",
             brave_state,
+            request.trace_id.as_str(),
+            request.created_at_ms,
         ));
 
         let gdelt = gdelt::execute_gdelt_news_search(
@@ -495,6 +501,8 @@ fn execute_news_provider_ladder(
                         now_ms,
                         config.health_policy,
                     ),
+                    request.trace_id.as_str(),
+                    request.created_at_ms,
                 ));
 
                 if can_fallback {
@@ -539,6 +547,8 @@ fn execute_news_provider_ladder(
                                     now_ms,
                                     config.health_policy,
                                 ),
+                                request.trace_id.as_str(),
+                                request.created_at_ms,
                             ));
                             return Err(gdelt_err);
                         }
@@ -604,6 +614,8 @@ fn execute_news_provider_ladder(
                             now_ms,
                             config.health_policy,
                         ),
+                        request.trace_id.as_str(),
+                        request.created_at_ms,
                     ));
                     if brave_filtered.is_empty() {
                         return Err(err);
@@ -615,13 +627,28 @@ fn execute_news_provider_ladder(
 
     let merge = merge_news_results(&brave_filtered, &gdelt_filtered);
     if merge.merged_results.is_empty() {
-        return Err(NewsProviderError {
+        let error = NewsProviderError {
             provider_id: NewsProviderId::NewsProviderLadder,
             kind: NewsProviderErrorKind::EmptyResults,
             status_code: None,
             message: "no news results after recency filtering and merge".to_string(),
             latency_ms: 0,
+        };
+        let _ = try_build_debug_packet(DebugPacketContext {
+            trace_id: request.trace_id.as_str(),
+            status: DebugStatus::Failed,
+            provider: "Planning",
+            error_kind: error.kind.as_str(),
+            reason_code: error.reason_code(),
+            proxy_mode: None,
+            source_url: None,
+            created_at_ms: request.created_at_ms,
+            turn_state_transitions: &default_failed_transitions(request.created_at_ms),
+            debug_hint: Some(error.message.as_str()),
+            fallback_used: Some(fallback_used),
+            health_status_before_fallback: Some(health_to_debug_status(brave_state)),
         });
+        return Err(error);
     }
 
     let domain_count = distinct_domain_count(&merge.merged_results);
@@ -843,7 +870,38 @@ fn provider_run_error(
     results_count: usize,
     fallback_trigger: Option<&str>,
     health_state: ProviderHealthState,
+    trace_id: &str,
+    created_at_ms: i64,
 ) -> Value {
+    let degraded = fallback_trigger.is_some();
+    let status = if degraded {
+        DebugStatus::Degraded
+    } else {
+        DebugStatus::Failed
+    };
+    let transitions = if degraded {
+        default_degraded_transitions(created_at_ms)
+    } else {
+        default_failed_transitions(created_at_ms)
+    };
+    let debug_packet = try_build_debug_packet(DebugPacketContext {
+        trace_id,
+        status,
+        provider: provider_name_for_debug(error.provider_id),
+        error_kind: error.kind.as_str(),
+        reason_code: error.reason_code(),
+        proxy_mode: None,
+        source_url: None,
+        created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some(error.message.as_str()),
+        fallback_used: Some(degraded),
+        health_status_before_fallback: Some(health_to_debug_status(health_state)),
+    })
+    .ok()
+    .and_then(|packet| serde_json::to_value(packet).ok())
+    .unwrap_or(Value::Null);
+
     json!({
         "provider_id": error.provider_id.as_str(),
         "endpoint": "news",
@@ -856,6 +914,7 @@ fn provider_run_error(
             "reason_code": error.reason_code(),
             "status_code": error.status_code,
             "message": error.message,
+            "debug_packet": debug_packet,
         }
     })
 }
@@ -864,7 +923,28 @@ fn provider_run_skipped(
     provider_id: NewsProviderId,
     fallback_trigger: &str,
     health_state: ProviderHealthState,
+    trace_id: &str,
+    created_at_ms: i64,
 ) -> Value {
+    let transitions = default_degraded_transitions(created_at_ms);
+    let debug_packet = try_build_debug_packet(DebugPacketContext {
+        trace_id,
+        status: DebugStatus::Degraded,
+        provider: provider_name_for_debug(provider_id),
+        error_kind: "health_cooldown",
+        reason_code: "provider_upstream_failed",
+        proxy_mode: None,
+        source_url: None,
+        created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some("provider skipped due to cooldown"),
+        fallback_used: Some(true),
+        health_status_before_fallback: Some(health_to_debug_status(health_state)),
+    })
+    .ok()
+    .and_then(|packet| serde_json::to_value(packet).ok())
+    .unwrap_or(Value::Null);
+
     json!({
         "provider_id": provider_id.as_str(),
         "endpoint": "news",
@@ -874,7 +954,24 @@ fn provider_run_skipped(
         "health_state": health_state.as_str(),
         "error": Value::Null,
         "skipped_due_to_cooldown": true,
+        "debug_packet": debug_packet,
     })
+}
+
+fn provider_name_for_debug(provider_id: NewsProviderId) -> &'static str {
+    match provider_id {
+        NewsProviderId::NewsProviderLadder => "Planning",
+        NewsProviderId::BraveNewsSearch => "BraveWebSearch",
+        NewsProviderId::GdeltNewsAssist => "GDELT",
+    }
+}
+
+fn health_to_debug_status(state: ProviderHealthState) -> HealthStatusBeforeFallback {
+    match state {
+        ProviderHealthState::Healthy => HealthStatusBeforeFallback::Healthy,
+        ProviderHealthState::Degraded => HealthStatusBeforeFallback::Degraded,
+        ProviderHealthState::Cooldown => HealthStatusBeforeFallback::Cooldown,
+    }
 }
 
 fn fallback_trigger_label(kind: NewsProviderErrorKind) -> Option<&'static str> {

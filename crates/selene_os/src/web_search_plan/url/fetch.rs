@@ -6,6 +6,9 @@ use crate::web_search_plan::chunk::{
     build_hashed_chunks_for_document, bounded_excerpt, ChunkBuildError,
     EVIDENCE_TRUNCATED_REASON_CODE, HASH_COLLISION_REASON_CODE,
 };
+use crate::web_search_plan::diag::{
+    default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
+};
 use crate::web_search_plan::proxy::proxy_redaction::redact_proxy_url;
 use crate::web_search_plan::proxy::proxy_self_check::run_startup_self_check;
 use crate::web_search_plan::proxy::{ProxyErrorKind, ProxyMode};
@@ -627,6 +630,9 @@ fn build_failure_evidence_packet(
     kind: UrlFetchErrorKind,
     message: &str,
 ) -> Value {
+    let debug_packet_value =
+        build_fetch_debug_packet_value(request, audit, kind, message).unwrap_or(Value::Null);
+
     json!({
         "schema_version": "1.0.0",
         "produced_by": request.produced_by,
@@ -671,10 +677,52 @@ fn build_failure_evidence_packet(
             "quality_gate_version": QUALITY_GATE_VERSION,
             "failure": {
                 "error_kind": kind.as_str(),
-                "reason_code": kind.reason_code()
+                "reason_code": kind.reason_code(),
+                "debug_packet": debug_packet_value,
             }
         }
     })
+}
+
+fn build_fetch_debug_packet_value(
+    request: &UrlFetchRequest,
+    audit: &UrlFetchAudit,
+    kind: UrlFetchErrorKind,
+    message: &str,
+) -> Option<Value> {
+    let provider = match kind {
+        UrlFetchErrorKind::ProxyMisconfigured
+        | UrlFetchErrorKind::ProxyAuthFailed
+        | UrlFetchErrorKind::ProxyConnectFailed
+        | UrlFetchErrorKind::ProxyTlsFailed
+        | UrlFetchErrorKind::ProxyDnsFailed
+        | UrlFetchErrorKind::ProxyTimeout => "Proxy",
+        UrlFetchErrorKind::HashCollisionDetected => "ChunkHash",
+        _ => "UrlFetch",
+    };
+
+    let source_url = audit
+        .final_url
+        .as_deref()
+        .or(Some(request.requested_url.as_str()));
+
+    let packet = try_build_debug_packet(DebugPacketContext {
+        trace_id: request.trace_id.as_str(),
+        status: DebugStatus::Failed,
+        provider,
+        error_kind: kind.as_str(),
+        reason_code: kind.reason_code(),
+        proxy_mode: Some(request.proxy_config.mode.as_str()),
+        source_url,
+        created_at_ms: request.created_at_ms,
+        turn_state_transitions: &default_failed_transitions(request.created_at_ms),
+        debug_hint: Some(message),
+        fallback_used: None,
+        health_status_before_fallback: None,
+    })
+    .ok()?;
+
+    serde_json::to_value(packet).ok()
 }
 
 fn is_redirect_status(status: u16) -> bool {

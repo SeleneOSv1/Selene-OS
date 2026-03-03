@@ -11,6 +11,9 @@ use crate::web_search_plan::chunk::chunker::ChunkPolicy;
 use crate::web_search_plan::chunk::{
     bounded_excerpt, build_hashed_chunks_for_document, ChunkBuildError,
 };
+use crate::web_search_plan::diag::{
+    default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
+};
 use crate::web_search_plan::planning::budget_control::{BudgetControl, OpenBudgetPolicy};
 use crate::web_search_plan::planning::dead_link_handler::should_select_replacement;
 use crate::web_search_plan::planning::open_selector::{
@@ -269,7 +272,7 @@ where
                     &open_success.extracted_text,
                     ChunkPolicy::default(),
                 )
-                .map_err(|err| format_chunk_build_error(candidate, err))?;
+                .map_err(|err| format_chunk_build_error(input, candidate, err))?;
 
                 let chunk_count = chunk_output.chunks.len();
                 if !budget.can_accept_success(open_success.extracted_chars, chunk_count) {
@@ -284,6 +287,8 @@ where
                         candidate,
                         ranked.score.final_score,
                         &failure,
+                        input.trace_id.as_str(),
+                        input.created_at_ms,
                     ));
                     open_failures.push(failure);
                     stop_reason = StopReason::BudgetExhausted;
@@ -346,6 +351,8 @@ where
                     candidate,
                     ranked.score.final_score,
                     &failure,
+                    input.trace_id.as_str(),
+                    input.created_at_ms,
                 ));
                 open_failures.push(failure.clone());
                 if !should_select_replacement(&failure.reason_code) {
@@ -492,7 +499,28 @@ fn provider_run_failure(
     candidate: &SearchCandidate,
     final_score: i64,
     failure: &OpenFailure,
+    trace_id: &str,
+    created_at_ms: i64,
 ) -> Value {
+    let transitions = default_failed_transitions(created_at_ms);
+    let debug_packet = try_build_debug_packet(DebugPacketContext {
+        trace_id,
+        status: DebugStatus::Failed,
+        provider: "UrlFetch",
+        error_kind: failure.error_kind.as_str(),
+        reason_code: failure.reason_code.as_str(),
+        proxy_mode: None,
+        source_url: Some(candidate.url.as_str()),
+        created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some(failure.message.as_str()),
+        fallback_used: None,
+        health_status_before_fallback: None,
+    })
+    .ok()
+    .and_then(|packet| serde_json::to_value(packet).ok())
+    .unwrap_or(Value::Null);
+
     json!({
         "provider_id": "url_fetch_open",
         "endpoint": "url_fetch",
@@ -504,6 +532,7 @@ fn provider_run_failure(
             "error_kind": failure.error_kind,
             "reason_code": failure.reason_code,
             "message": failure.message,
+            "debug_packet": debug_packet,
         }
     })
 }
@@ -555,23 +584,53 @@ fn normalize_importance_tier(raw: &str) -> Result<String, String> {
     }
 }
 
-fn format_chunk_build_error(candidate: &SearchCandidate, err: ChunkBuildError) -> String {
-    match err {
+fn format_chunk_build_error(
+    input: &PlanningInput,
+    candidate: &SearchCandidate,
+    err: ChunkBuildError,
+) -> String {
+    let (error_kind, reason_code, message) = match err {
         ChunkBuildError::HashCollisionDetected {
             chunk_id,
             first_index,
             second_index,
-        } => format!(
-            "hash collision for candidate {} chunk_id {} indexes {} and {}",
-            candidate.canonical_url, chunk_id, first_index, second_index
+        } => (
+            "hash_collision_detected",
+            "hash_collision_detected",
+            format!(
+                "hash collision for candidate {} chunk_id {} indexes {} and {}",
+                candidate.canonical_url, chunk_id, first_index, second_index
+            ),
         ),
         ChunkBuildError::CitationAnchorInvalid(message) => {
-            format!(
-                "invalid citation anchors for {}: {}",
-                candidate.canonical_url, message
+            (
+                "transport_failed",
+                "provider_upstream_failed",
+                format!(
+                    "invalid citation anchors for {}: {}",
+                    candidate.canonical_url, message
+                ),
             )
         }
-    }
+    };
+
+    let transitions = default_failed_transitions(input.created_at_ms);
+    let _ = try_build_debug_packet(DebugPacketContext {
+        trace_id: input.trace_id.as_str(),
+        status: DebugStatus::Failed,
+        provider: "ChunkHash",
+        error_kind,
+        reason_code,
+        proxy_mode: None,
+        source_url: Some(candidate.url.as_str()),
+        created_at_ms: input.created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some(message.as_str()),
+        fallback_used: None,
+        health_status_before_fallback: None,
+    });
+
+    message
 }
 
 #[cfg(test)]

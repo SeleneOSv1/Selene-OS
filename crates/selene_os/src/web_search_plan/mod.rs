@@ -2,6 +2,7 @@
 
 pub mod chunk;
 pub mod contract_hash;
+pub mod diag;
 pub mod idempotency_validator;
 pub mod learning;
 pub mod news;

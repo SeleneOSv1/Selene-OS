@@ -8,6 +8,9 @@ pub mod voice_renderer;
 
 use crate::web_search_plan::write::formatter::format_synthesis_packet;
 use crate::web_search_plan::write::voice_renderer::render_voice_output;
+use crate::web_search_plan::diag::{
+    default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
+};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -76,7 +79,10 @@ pub fn render_write_packet(
     trace_id: &str,
     format_mode: WriteFormatMode,
 ) -> Result<WriteRenderResult, WriteError> {
-    let formatted = format_synthesis_packet(synthesis_packet, format_mode)?;
+    let formatted = format_synthesis_packet(synthesis_packet, format_mode).map_err(|err| {
+        emit_write_debug_packet(trace_id, created_at_ms, &err);
+        err
+    })?;
 
     let write_packet = json!({
         "schema_version": WRITE_SCHEMA_VERSION,
@@ -161,6 +167,39 @@ fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+fn emit_write_debug_packet(trace_id: &str, created_at_ms: i64, error: &WriteError) {
+    let (error_kind, reason_code, hint) = match error {
+        WriteError::InvalidSynthesis(message) => {
+            ("input_unparseable", "input_unparseable", message.as_str())
+        }
+        WriteError::CitationMismatch(message) => {
+            ("citation_mismatch", "citation_mismatch", message.as_str())
+        }
+        WriteError::UnsupportedClaim(message) => {
+            ("unsupported_claim", "unsupported_claim", message.as_str())
+        }
+        WriteError::StyleGuardViolation(message) => {
+            ("policy_violation", "policy_violation", message.as_str())
+        }
+    };
+
+    let transitions = default_failed_transitions(created_at_ms);
+    let _ = try_build_debug_packet(DebugPacketContext {
+        trace_id,
+        status: DebugStatus::Failed,
+        provider: "Write",
+        error_kind,
+        reason_code,
+        proxy_mode: None,
+        source_url: None,
+        created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some(hint),
+        fallback_used: None,
+        health_status_before_fallback: None,
+    });
 }
 
 #[cfg(test)]

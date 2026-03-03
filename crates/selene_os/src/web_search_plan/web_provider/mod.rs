@@ -10,6 +10,10 @@ use crate::web_search_plan::chunk::bounded_excerpt;
 use crate::web_search_plan::chunk::chunker::{TextChunk, CHUNK_VERSION};
 use crate::web_search_plan::chunk::hasher::{derive_chunk_id, Sha256ChunkHasher, HASH_VERSION};
 use crate::web_search_plan::chunk::normalize::{normalize_document_for_chunking, NORM_VERSION};
+use crate::web_search_plan::diag::{
+    default_degraded_transitions, default_failed_transitions, try_build_debug_packet,
+    DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
+};
 use crate::web_search_plan::proxy::proxy_config::{ProxyConfig, SystemEnvProvider};
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::web_provider::fallback_policy::{
@@ -364,6 +368,25 @@ fn execute_web_provider_ladder(
         config.health_policy,
     ) {
         fallback_used = true;
+        let skipped_transitions = default_degraded_transitions(request.created_at_ms);
+        let skipped_debug_packet = try_build_debug_packet(DebugPacketContext {
+            trace_id: request.trace_id.as_str(),
+            status: DebugStatus::Degraded,
+            provider: "BraveWebSearch",
+            error_kind: "health_cooldown",
+            reason_code: "provider_upstream_failed",
+            proxy_mode: None,
+            source_url: None,
+            created_at_ms: request.created_at_ms,
+            turn_state_transitions: &skipped_transitions,
+            debug_hint: Some("lead provider skipped due to cooldown"),
+            fallback_used: Some(true),
+            health_status_before_fallback: Some(health_to_debug_status(brave_state)),
+        })
+        .ok()
+        .and_then(|packet| serde_json::to_value(packet).ok())
+        .unwrap_or(Value::Null);
+
         provider_runs.push(json!({
             "provider_id": ProviderId::BraveWebSearch.as_str(),
             "endpoint": "web",
@@ -373,6 +396,7 @@ fn execute_web_provider_ladder(
             "fallback_trigger": "health_cooldown",
             "health_state": brave_state.as_str(),
             "skipped_due_to_cooldown": true,
+            "debug_packet": skipped_debug_packet,
         }));
 
         let openai_key = resolve_openai_api_key(config)?;
@@ -451,6 +475,8 @@ fn execute_web_provider_ladder(
                         now_ms,
                         config.health_policy,
                     ),
+                    request.trace_id.as_str(),
+                    request.created_at_ms,
                 ));
 
                 if should_fallback {
@@ -496,6 +522,8 @@ fn execute_web_provider_ladder(
                                     now_ms,
                                     config.health_policy,
                                 ),
+                                request.trace_id.as_str(),
+                                request.created_at_ms,
                             ));
                             return Err(openai_err);
                         }
@@ -509,13 +537,28 @@ fn execute_web_provider_ladder(
 
     let merged = merge_results(&brave_results, &openai_results);
     if merged.merged_results.is_empty() {
-        return Err(ProviderError {
+        let error = ProviderError {
             provider_id: ProviderId::WebProviderLadder,
             kind: ProviderErrorKind::EmptyResults,
             status_code: None,
             message: "provider ladder produced zero merged results".to_string(),
             latency_ms: 0,
+        };
+        let _ = try_build_debug_packet(DebugPacketContext {
+            trace_id: request.trace_id.as_str(),
+            status: DebugStatus::Failed,
+            provider: "Planning",
+            error_kind: error.kind.as_str(),
+            reason_code: error.reason_code(),
+            proxy_mode: None,
+            source_url: None,
+            created_at_ms: request.created_at_ms,
+            turn_state_transitions: &default_failed_transitions(request.created_at_ms),
+            debug_hint: Some(error.message.as_str()),
+            fallback_used: Some(fallback_used),
+            health_status_before_fallback: Some(health_to_debug_status(brave_state)),
         });
+        return Err(error);
     }
 
     let sources: Vec<Value> = merged
@@ -706,7 +749,38 @@ fn provider_run_error(
     triggered_fallback: bool,
     fallback_trigger: Option<&str>,
     health_state: ProviderHealthState,
+    trace_id: &str,
+    created_at_ms: i64,
 ) -> Value {
+    let status = if triggered_fallback {
+        DebugStatus::Degraded
+    } else {
+        DebugStatus::Failed
+    };
+    let transitions = if triggered_fallback {
+        default_degraded_transitions(created_at_ms)
+    } else {
+        default_failed_transitions(created_at_ms)
+    };
+    let reason_code = error.reason_code();
+    let debug_packet = try_build_debug_packet(DebugPacketContext {
+        trace_id,
+        status,
+        provider: provider_name_for_debug(error.provider_id),
+        error_kind: error.kind.as_str(),
+        reason_code,
+        proxy_mode: None,
+        source_url: None,
+        created_at_ms,
+        turn_state_transitions: &transitions,
+        debug_hint: Some(error.message.as_str()),
+        fallback_used: Some(triggered_fallback),
+        health_status_before_fallback: Some(health_to_debug_status(health_state)),
+    })
+    .ok()
+    .and_then(|packet| serde_json::to_value(packet).ok())
+    .unwrap_or(Value::Null);
+
     json!({
         "provider_id": error.provider_id.as_str(),
         "endpoint": "web",
@@ -716,11 +790,28 @@ fn provider_run_error(
             "reason_code": error.reason_code(),
             "status_code": error.status_code,
             "message": error.message,
+            "debug_packet": debug_packet,
         },
         "triggered_fallback": triggered_fallback,
         "fallback_trigger": fallback_trigger,
         "health_state": health_state.as_str(),
     })
+}
+
+fn provider_name_for_debug(provider_id: ProviderId) -> &'static str {
+    match provider_id {
+        ProviderId::WebProviderLadder => "Planning",
+        ProviderId::BraveWebSearch => "BraveWebSearch",
+        ProviderId::OpenAiWebSearch => "OpenAI_WebSearch",
+    }
+}
+
+fn health_to_debug_status(state: ProviderHealthState) -> HealthStatusBeforeFallback {
+    match state {
+        ProviderHealthState::Healthy => HealthStatusBeforeFallback::Healthy,
+        ProviderHealthState::Degraded => HealthStatusBeforeFallback::Degraded,
+        ProviderHealthState::Cooldown => HealthStatusBeforeFallback::Cooldown,
+    }
 }
 
 pub fn normalize_text_value(input: &str) -> String {
