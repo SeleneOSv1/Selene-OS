@@ -173,6 +173,26 @@
       "audit_required_fields": ["trace_id", "claim_id"]
     },
     {
+      "code_id": "evidence_truncated",
+      "owner_engine": "PH1.E",
+      "category": "evidence",
+      "severity": "warn",
+      "retry_class": "immediate_allowed",
+      "user_message_template": "Evidence was truncated due to deterministic chunk limits.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "max_chunks_per_document"]
+    },
+    {
+      "code_id": "hash_collision_detected",
+      "owner_engine": "PH1.E",
+      "category": "evidence",
+      "severity": "critical",
+      "retry_class": "never",
+      "user_message_template": "Evidence hash collision detected. Response generation was stopped.",
+      "introduced_in_version": "1.0.0",
+      "audit_required_fields": ["trace_id", "chunk_id"]
+    },
+    {
       "code_id": "stale_data",
       "owner_engine": "PH1.E",
       "category": "retrieval",

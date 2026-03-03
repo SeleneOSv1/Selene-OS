@@ -1,5 +1,11 @@
 #![forbid(unsafe_code)]
 
+use crate::web_search_plan::chunk::chunker::ChunkPolicy;
+use crate::web_search_plan::chunk::citation::build_citation_anchors;
+use crate::web_search_plan::chunk::{
+    build_hashed_chunks_for_document, bounded_excerpt, ChunkBuildError,
+    EVIDENCE_TRUNCATED_REASON_CODE, HASH_COLLISION_REASON_CODE,
+};
 use crate::web_search_plan::proxy::proxy_redaction::redact_proxy_url;
 use crate::web_search_plan::proxy::proxy_self_check::run_startup_self_check;
 use crate::web_search_plan::proxy::{ProxyErrorKind, ProxyMode};
@@ -115,7 +121,18 @@ pub fn fetch_url_to_evidence_packet(
         audit.bytes_decompressed = body.bytes_decompressed;
         audit.extraction_chars = body.extracted.extraction_chars;
 
-        let evidence_packet = build_success_evidence_packet(request, &audit, &body);
+        let final_url = audit
+            .final_url
+            .clone()
+            .unwrap_or_else(|| audit.canonical_url.clone());
+        let chunk_output = build_hashed_chunks_for_document(
+            &audit.canonical_url,
+            &final_url,
+            &body.extracted.body_text,
+            ChunkPolicy::default(),
+        )
+        .map_err(|err| map_chunk_error_to_fetch_failure(request, &audit, err))?;
+        let evidence_packet = build_success_evidence_packet(request, &audit, &body, &chunk_output);
         return Ok(UrlFetchSuccess {
             evidence_packet,
             title: body.extracted.title,
@@ -481,12 +498,44 @@ fn build_success_evidence_packet(
     request: &UrlFetchRequest,
     audit: &UrlFetchAudit,
     body: &BodyOutcome,
+    chunk_output: &crate::web_search_plan::chunk::ChunkBuildOutput,
 ) -> Value {
     let final_url = audit
         .final_url
         .clone()
         .unwrap_or_else(|| audit.canonical_url.clone());
-    let excerpt: String = body.extracted.body_text.chars().take(600).collect();
+    let citation_anchors = build_citation_anchors(&chunk_output.chunks);
+    let content_chunks: Vec<Value> = chunk_output
+        .chunks
+        .iter()
+        .zip(citation_anchors.iter())
+        .map(|(chunk, citation)| {
+            json!({
+                "chunk_id": chunk.chunk_id,
+                "hash_version": chunk.hash_version,
+                "norm_version": chunk.norm_version,
+                "chunk_version": chunk.chunk_version,
+                "source_url": chunk.source_url,
+                "canonical_url": chunk.canonical_url,
+                "chunk_index": chunk.chunk_index,
+                "text_excerpt": bounded_excerpt(&chunk.normalized_text, 320),
+                "text_len_chars": chunk.text_len_chars,
+                "citation": {
+                    "chunk_id": citation.chunk_id,
+                    "source_url": citation.source_url
+                }
+            })
+        })
+        .collect();
+    let truncation_reason = if chunk_output
+        .reason_codes
+        .iter()
+        .any(|code| *code == EVIDENCE_TRUNCATED_REASON_CODE)
+    {
+        Some(EVIDENCE_TRUNCATED_REASON_CODE)
+    } else {
+        None
+    };
 
     json!({
         "schema_version": "1.0.0",
@@ -503,7 +552,8 @@ fn build_success_evidence_packet(
                 "status_code": audit.status_code,
                 "canonical_url": audit.canonical_url,
                 "final_url": final_url,
-                "reason_code": Value::Null,
+                "reason_code": truncation_reason,
+                "reason_codes": chunk_output.reason_codes,
                 "timeout_hit": audit.timeout_hit,
                 "proxy": {
                     "mode": audit.proxy_mode,
@@ -526,25 +576,49 @@ fn build_success_evidence_packet(
                 "canonical_url": audit.canonical_url
             }
         ],
-        "content_chunks": [
-            {
-                "ordinal": 0,
-                "excerpt": excerpt,
-                "source_url": final_url
-            }
-        ],
+        "content_chunks": content_chunks,
         "trust_metadata": {
             "canon_version": CANON_VERSION,
             "charset_version": CHARSET_VERSION,
             "normalization_version": NORMALIZATION_VERSION,
             "extraction_version": EXTRACTION_VERSION,
             "quality_gate_version": QUALITY_GATE_VERSION,
+            "chunking": {
+                "chunk_count": chunk_output.chunks.len(),
+                "truncated": chunk_output.truncated,
+                "reason_codes": chunk_output.reason_codes
+            },
             "quality": {
                 "text_len": body.quality.text_len,
                 "noise_ratio_bp": body.quality.noise_ratio_bp
             }
         }
     })
+}
+
+fn map_chunk_error_to_fetch_failure(
+    request: &UrlFetchRequest,
+    audit: &UrlFetchAudit,
+    error: ChunkBuildError,
+) -> UrlFetchFailure {
+    match error {
+        ChunkBuildError::HashCollisionDetected {
+            chunk_id,
+            first_index,
+            second_index,
+        } => build_failure(
+            request,
+            audit,
+            UrlFetchErrorKind::HashCollisionDetected,
+            &format!(
+                "{} chunk_id={} first_index={} second_index={}",
+                HASH_COLLISION_REASON_CODE, chunk_id, first_index, second_index
+            ),
+        ),
+        ChunkBuildError::CitationAnchorInvalid(message) => {
+            build_failure(request, audit, UrlFetchErrorKind::TransportFailed, &message)
+        }
+    }
 }
 
 fn build_failure_evidence_packet(

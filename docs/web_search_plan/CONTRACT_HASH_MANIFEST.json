@@ -3,7 +3,7 @@
   "hash_algorithm": "sha256",
   "hashes": {
     "packet_schema_hash": "97e87f58fb724576de23da6d3772db51a3e05b336cdf23759639edd08cb66e30",
-    "reason_code_registry_hash": "4ce1cce7654a6eef3dea93a03ca8f0df39bb12707211cfb7191413392d3922fb",
+    "reason_code_registry_hash": "25a0f83923a381ef6668843c4a68bcda822d048fb3b0b0f52bbf58be3055fec8",
     "idempotency_registry_hash": "5dbeb88408a46e11ad831117a76cda304cd837cb5608ac77c61d10d750ffb2fa",
     "turn_state_machine_hash": "0a9c474a9cf16f5632b98c3f1f66774390cecfc5341d0eb98a61290727c2ab4d",
     "handoff_map_hash": "9289ea56ea2257b64074f38d56c8d93216517c5a9be7e1d2537c5f7e73643762",

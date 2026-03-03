@@ -106,6 +106,7 @@ pub enum UrlFetchErrorKind {
     ExtractionTooLarge,
     DecompressionFailed,
     CharsetDecodeFailed,
+    HashCollisionDetected,
     ExtractionQualityLow,
     EmptyExtraction,
     TimeoutExceeded,
@@ -136,6 +137,7 @@ impl UrlFetchErrorKind {
             Self::ExtractionTooLarge => "extraction_chars_exceeded",
             Self::DecompressionFailed => "decompression_failed",
             Self::CharsetDecodeFailed => "charset_decode_failed",
+            Self::HashCollisionDetected => "hash_collision_detected",
             Self::ExtractionQualityLow => "extraction_quality_low",
             Self::EmptyExtraction => "empty_extraction",
             Self::TimeoutExceeded => "timeout_exceeded",
@@ -158,6 +160,7 @@ impl UrlFetchErrorKind {
             | Self::ProxyTlsFailed
             | Self::ProxyDnsFailed => "proxy_misconfigured",
             Self::ExtractionQualityLow | Self::EmptyExtraction => "empty_results",
+            Self::HashCollisionDetected => "hash_collision_detected",
             _ => "provider_upstream_failed",
         }
     }
