@@ -9,6 +9,11 @@ use crate::web_search_plan::chunk::{
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
+use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
+use crate::web_search_plan::perf_cost::timeouts::{
+    clamp_provider_timeout, clamp_url_fetch_total_timeout,
+};
+use crate::web_search_plan::perf_cost::enforce_url_open_cap;
 use crate::web_search_plan::proxy::proxy_redaction::redact_proxy_url;
 use crate::web_search_plan::proxy::proxy_self_check::run_startup_self_check;
 use crate::web_search_plan::proxy::{ProxyErrorKind, ProxyMode};
@@ -52,23 +57,36 @@ struct BodyOutcome {
 pub fn fetch_url_to_evidence_packet(
     request: &UrlFetchRequest,
 ) -> Result<UrlFetchSuccess, UrlFetchFailure> {
+    if let Err(reason_code) = enforce_url_open_cap(request.url_open_ordinal, request.url_open_cap) {
+        return Err(build_failure_without_audit(
+            request,
+            UrlFetchErrorKind::BudgetExhausted,
+            &format!("url open cap exceeded: {}", reason_code),
+        ));
+    }
+
+    let effective_policy = effective_fetch_policy(request);
+
     let canonical = canonicalize_url(&request.requested_url)
         .map_err(|kind| build_failure_without_audit(request, kind, "failed to canonicalize url"))?;
 
     let mut audit = UrlFetchAudit::new(canonical.canonical_url.clone(), request.proxy_config.mode);
     let mut redirect = RedirectState::new(
         &canonical.canonical_url,
-        request.policy.max_redirect_depth,
-        request.policy.allow_scheme_downgrade,
+        effective_policy.max_redirect_depth,
+        effective_policy.allow_scheme_downgrade,
     );
 
     let mut current_url = canonical.canonical_url.clone();
     loop {
         let step_start = Instant::now();
-        let response = send_get_request(request, &current_url, &mut audit).map_err(|mut failure| {
-            failure.audit.canonical_url = canonical.canonical_url.clone();
-            failure
-        })?;
+        let response =
+            send_get_request(request, &current_url, &mut audit, &effective_policy).map_err(
+                |mut failure| {
+                    failure.audit.canonical_url = canonical.canonical_url.clone();
+                    failure
+                },
+            )?;
         audit.latency_ms = audit
             .latency_ms
             .saturating_add(step_start.elapsed().as_millis() as u64);
@@ -100,7 +118,7 @@ pub fn fetch_url_to_evidence_packet(
         }
 
         audit.final_url = Some(current_url.clone());
-        if status != 200 && !request.policy.allow_non_200 {
+        if status != 200 && !effective_policy.allow_non_200 {
             return Err(build_failure(
                 request,
                 &audit,
@@ -116,7 +134,7 @@ pub fn fetch_url_to_evidence_packet(
             response,
             content_type_header.as_deref(),
             content_encoding_header.as_deref(),
-            &request.policy,
+            &effective_policy,
         )
         .map_err(|kind| build_failure(request, &audit, kind, "failed while reading response body"))?;
 
@@ -150,11 +168,12 @@ fn send_get_request(
     request: &UrlFetchRequest,
     current_url: &str,
     audit: &mut UrlFetchAudit,
+    policy: &UrlFetchPolicy,
 ) -> Result<ureq::Response, UrlFetchFailure> {
     let mut builder = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_millis(request.policy.connect_timeout_ms))
-        .timeout_read(Duration::from_millis(request.policy.read_timeout_ms))
-        .timeout_write(Duration::from_millis(request.policy.read_timeout_ms))
+        .timeout_connect(Duration::from_millis(policy.connect_timeout_ms))
+        .timeout_read(Duration::from_millis(policy.read_timeout_ms))
+        .timeout_write(Duration::from_millis(policy.read_timeout_ms))
         .user_agent(FIXED_USER_AGENT)
         .try_proxy_from_env(false)
         .redirects(0);
@@ -200,7 +219,7 @@ fn send_get_request(
         .set("Accept-Encoding", FIXED_ACCEPT_ENCODING)
         .set("Cache-Control", "no-cache")
         .set("Pragma", "no-cache")
-        .timeout(Duration::from_millis(request.policy.total_timeout_ms));
+        .timeout(Duration::from_millis(policy.total_timeout_ms));
 
     match req.call() {
         Ok(resp) => Ok(resp),
@@ -225,6 +244,15 @@ fn send_get_request(
             ))
         }
     }
+}
+
+fn effective_fetch_policy(request: &UrlFetchRequest) -> UrlFetchPolicy {
+    let tier = ImportanceTier::parse_or_default(request.importance_tier.as_str());
+    let mut policy = request.policy.clone();
+    policy.connect_timeout_ms = clamp_provider_timeout(policy.connect_timeout_ms, tier);
+    policy.read_timeout_ms = clamp_provider_timeout(policy.read_timeout_ms, tier);
+    policy.total_timeout_ms = clamp_url_fetch_total_timeout(policy.total_timeout_ms, tier);
+    policy
 }
 
 fn proxy_for_url<'a>(

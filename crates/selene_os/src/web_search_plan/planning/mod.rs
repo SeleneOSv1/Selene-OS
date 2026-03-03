@@ -14,6 +14,10 @@ use crate::web_search_plan::chunk::{
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
+use crate::web_search_plan::perf_cost::budgets::{budget_plan_for_tier, ProviderCallBudget};
+use crate::web_search_plan::perf_cost::degrade::{DegradeController, DegradeStep};
+use crate::web_search_plan::perf_cost::tiers::{caps_for_tier, ImportanceTier, TierCaps};
+use crate::web_search_plan::perf_cost::timeouts::timeout_envelope_for_tier;
 use crate::web_search_plan::planning::budget_control::{BudgetControl, OpenBudgetPolicy};
 use crate::web_search_plan::planning::dead_link_handler::should_select_replacement;
 use crate::web_search_plan::planning::open_selector::{
@@ -215,8 +219,11 @@ pub fn execute_search_topk_pipeline_with_url_fetch(
     policy: &PlanningPolicy,
     open_context: &UrlOpenContext,
 ) -> Result<PlanningResult, String> {
+    let mut url_open_ordinal = 0usize;
     execute_search_topk_pipeline_with_opener(input, policy, |candidate| {
-        open_candidate_with_url_fetch(open_context, candidate)
+        let ordinal = url_open_ordinal;
+        url_open_ordinal = url_open_ordinal.saturating_add(1);
+        open_candidate_with_url_fetch(open_context, candidate, ordinal)
     })
 }
 
@@ -228,8 +235,36 @@ pub fn execute_search_topk_pipeline_with_opener<F>(
 where
     F: FnMut(&SearchCandidate) -> Result<OpenSuccess, OpenFailure>,
 {
+    let tier = ImportanceTier::parse_or_default(input.importance_tier.as_str());
+    let tier_caps = caps_for_tier(tier);
+    let timeout_envelope = timeout_envelope_for_tier(tier);
+    let stage_budget_plan = budget_plan_for_tier(tier);
+
+    let mut effective_open_budget = policy.open_budget.clone();
+    effective_open_budget.max_urls_opened_per_query = effective_open_budget
+        .max_urls_opened_per_query
+        .min(tier_caps.max_urls_opened_per_query);
+    effective_open_budget.per_domain_cap = effective_open_budget
+        .per_domain_cap
+        .min(tier_caps.max_urls_opened_per_query.max(1));
+    effective_open_budget.max_total_extracted_chars = effective_open_budget
+        .max_total_extracted_chars
+        .min(tier_caps.max_total_extracted_chars);
+    effective_open_budget.max_chunks_total = effective_open_budget
+        .max_chunks_total
+        .min(tier_caps.max_chunks_total);
+
     let ranked_candidates = rank_candidates(&input.candidates, &policy.scoring_policy);
-    let mut budget = BudgetControl::new(policy.open_budget.clone());
+    let mut max_results_budget = ranked_candidates
+        .len()
+        .min(tier_caps.max_results_from_search);
+
+    let mut budget = BudgetControl::new(effective_open_budget.clone());
+    let mut provider_call_budget = ProviderCallBudget::for_tier(tier);
+    let mut degrade_controller = DegradeController::new(tier);
+    let mut degrade_step: Option<DegradeStep> = None;
+    let mut forced_snippet_only = false;
+    let mut degraded_evidence_mode = false;
 
     let mut top_k_selected = Vec::new();
     let mut open_failures: Vec<OpenFailure> = Vec::new();
@@ -241,22 +276,85 @@ where
     let mut stop_reason = StopReason::ProviderResultsExhausted;
     let mut exhausted_candidates = true;
 
-    for ranked in &ranked_candidates {
-        if budget.reached_open_limit() {
+    let mut ranked_index = 0usize;
+    while ranked_index < ranked_candidates.len() {
+        if ranked_index >= max_results_budget {
+            exhausted_candidates = false;
+            break;
+        }
+
+        let active_caps = degrade_controller.current_caps();
+        let effective_open_limit = effective_open_budget
+            .max_urls_opened_per_query
+            .min(active_caps.max_urls_opened_per_query);
+
+        if active_caps.snippet_only_mode || effective_open_limit == 0 {
+            forced_snippet_only = true;
+            degraded_evidence_mode = true;
+            reason_codes.insert("budget_exhausted".to_string());
+            stop_reason = StopReason::BudgetExhausted;
+            exhausted_candidates = false;
+            break;
+        }
+
+        if budget.successful_opens >= effective_open_limit {
             stop_reason = StopReason::KReached;
             exhausted_candidates = false;
             break;
         }
         if budget.exhausted_structural_budget() {
-            stop_reason = StopReason::BudgetExhausted;
             reason_codes.insert("budget_exhausted".to_string());
-            exhausted_candidates = false;
-            break;
+            let decision = degrade_controller.advance();
+            degrade_step = decision.step;
+            degraded_evidence_mode = true;
+            if matches!(
+                decision.step,
+                Some(DegradeStep::ReduceMaxResultsFromSearchToTierMinimum)
+            ) {
+                max_results_budget =
+                    max_results_budget.min(TierCaps::minimum_search_results());
+            }
+            if decision.fail_closed {
+                return Err("deterministic degrade path exhausted; failing closed".to_string());
+            }
+            if decision.execution_caps.snippet_only_mode {
+                forced_snippet_only = true;
+                stop_reason = StopReason::BudgetExhausted;
+                exhausted_candidates = false;
+                break;
+            }
+            continue;
         }
 
+        let ranked = &ranked_candidates[ranked_index];
+        ranked_index = ranked_index.saturating_add(1);
         let candidate = &ranked.candidate;
         let domain = candidate.domain();
         if !budget.can_select_domain(&domain) {
+            continue;
+        }
+
+        if let Err(code) = provider_call_budget.record_lead_call() {
+            reason_codes.insert(code.to_string());
+            let decision = degrade_controller.advance();
+            degrade_step = decision.step;
+            degraded_evidence_mode = true;
+            if matches!(
+                decision.step,
+                Some(DegradeStep::ReduceMaxResultsFromSearchToTierMinimum)
+            ) {
+                max_results_budget =
+                    max_results_budget.min(TierCaps::minimum_search_results());
+            }
+            if decision.fail_closed {
+                return Err("provider call budget exhausted after degrade path".to_string());
+            }
+            if decision.execution_caps.snippet_only_mode {
+                forced_snippet_only = true;
+                stop_reason = StopReason::BudgetExhausted;
+                exhausted_candidates = false;
+                break;
+            }
             continue;
         }
 
@@ -340,7 +438,7 @@ where
                     chunk_count,
                 ));
 
-                if budget.reached_open_limit() {
+                if budget.successful_opens >= effective_open_limit {
                     stop_reason = StopReason::KReached;
                     break;
                 }
@@ -382,17 +480,16 @@ where
         };
     }
 
-    let mut degraded_evidence_mode = false;
-    if budget.successful_opens == 0 {
+    if forced_snippet_only || budget.successful_opens == 0 {
         degraded_evidence_mode = true;
         let fallback_candidates = select_snippet_candidates(
             &ranked_candidates,
-            policy.open_budget.max_urls_opened_per_query,
-            policy.open_budget.per_domain_cap,
+            effective_open_budget.max_urls_opened_per_query.max(1),
+            effective_open_budget.per_domain_cap,
         );
         let fallback = build_snippet_fallback(
             &fallback_candidates,
-            policy.open_budget.max_urls_opened_per_query,
+            effective_open_budget.max_urls_opened_per_query.max(1),
             policy.snippet_fallback_min_sources,
         );
         for code in fallback.reason_codes {
@@ -430,6 +527,50 @@ where
         })
         .collect();
 
+    let budget_summary = json!({
+        "max_urls_opened_per_query": budget.policy().max_urls_opened_per_query,
+        "per_domain_cap": budget.policy().per_domain_cap,
+        "max_total_extracted_chars": budget.policy().max_total_extracted_chars,
+        "max_chunks_total": budget.policy().max_chunks_total,
+        "used_extracted_chars": budget.total_extracted_chars,
+        "used_chunks": budget.total_chunks,
+        "successful_opens": budget.successful_opens,
+        "max_results_from_search": tier_caps.max_results_from_search,
+        "max_queries": tier_caps.max_queries,
+        "max_concurrent_fetches": tier_caps.max_concurrent_fetches,
+        "timeout_per_provider_ms": timeout_envelope.per_provider_timeout_ms,
+        "total_timeout_per_turn_ms": timeout_envelope.total_timeout_per_turn_ms,
+        "url_fetch_total_timeout_ms": timeout_envelope.url_fetch_total_timeout_ms,
+        "max_total_provider_calls_per_turn": tier_caps.max_total_provider_calls_per_turn,
+        "max_fallback_invocations_per_turn": tier_caps.max_fallback_invocations_per_turn,
+        "max_retries_per_provider": tier_caps.max_retries_per_provider,
+        "total_provider_calls": provider_call_budget.total_provider_calls(),
+        "policy_stage_deadlines_ms": {
+            "X": stage_budget_plan.stage_deadlines_ms.x,
+            "SEARCH": stage_budget_plan.stage_deadlines_ms.search,
+            "E": stage_budget_plan.stage_deadlines_ms.e,
+            "D": stage_budget_plan.stage_deadlines_ms.d,
+            "WRITE": stage_budget_plan.stage_deadlines_ms.write,
+            "TTS": stage_budget_plan.stage_deadlines_ms.tts,
+        }
+    });
+
+    let planning_metadata = json!({
+        "policy_snapshot_id": policy.policy_snapshot_id,
+        "weights_version": policy.scoring_policy.weights_version,
+        "importance_tier": input.importance_tier,
+        "rewrite_attempts": input.rewrite_attempts,
+        "sub_queries": input.sub_queries,
+        "top_k_selected": top_k_selected,
+        "stop_reason": stop_reason.as_str(),
+        "open_failures": open_failures_json,
+        "degraded_evidence_mode": degraded_evidence_mode,
+        "degrade_step": degrade_step.map(|step| step.as_str().to_string()),
+        "reason_codes": reason_codes.into_iter().collect::<Vec<String>>(),
+        "selected_scores": selected_scores_json,
+        "budget": budget_summary,
+    });
+
     let evidence_packet = json!({
         "schema_version": "1.0.0",
         "produced_by": input.produced_by,
@@ -442,28 +583,7 @@ where
         "sources": sources,
         "content_chunks": content_chunks,
         "trust_metadata": {
-            "planning": {
-                "policy_snapshot_id": policy.policy_snapshot_id,
-                "weights_version": policy.scoring_policy.weights_version,
-                "importance_tier": input.importance_tier,
-                "rewrite_attempts": input.rewrite_attempts,
-                "sub_queries": input.sub_queries,
-                "top_k_selected": top_k_selected,
-                "stop_reason": stop_reason.as_str(),
-                "open_failures": open_failures_json,
-                "degraded_evidence_mode": degraded_evidence_mode,
-                "reason_codes": reason_codes.into_iter().collect::<Vec<String>>(),
-                "selected_scores": selected_scores_json,
-                "budget": {
-                    "max_urls_opened_per_query": budget.policy().max_urls_opened_per_query,
-                    "per_domain_cap": budget.policy().per_domain_cap,
-                    "max_total_extracted_chars": budget.policy().max_total_extracted_chars,
-                    "max_chunks_total": budget.policy().max_chunks_total,
-                    "used_extracted_chars": budget.total_extracted_chars,
-                    "used_chunks": budget.total_chunks,
-                    "successful_opens": budget.successful_opens,
-                }
-            }
+            "planning": planning_metadata
         }
     });
 

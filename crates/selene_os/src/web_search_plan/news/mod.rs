@@ -15,6 +15,9 @@ use crate::web_search_plan::diag::{
     default_degraded_transitions, default_failed_transitions, try_build_debug_packet,
     DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
 };
+use crate::web_search_plan::perf_cost::budgets::ProviderCallBudget;
+use crate::web_search_plan::perf_cost::tiers::{caps_for_tier, ImportanceTier as PerfImportanceTier};
+use crate::web_search_plan::perf_cost::timeouts::clamp_provider_timeout;
 use crate::web_search_plan::news::conflict::{
     build_conflict_clusters, cluster_lookup_by_canonical_url,
 };
@@ -59,6 +62,7 @@ impl NewsProviderId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NewsProviderErrorKind {
+    BudgetExhausted,
     ProviderUnconfigured,
     DnsFailed,
     TlsFailed,
@@ -75,6 +79,7 @@ pub enum NewsProviderErrorKind {
 impl NewsProviderErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::DnsFailed => "dns_failed",
             Self::TlsFailed => "tls_failed",
@@ -91,6 +96,7 @@ impl NewsProviderErrorKind {
 
     pub const fn reason_code(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::TimeoutExceeded => "timeout_exceeded",
             Self::EmptyResults => "empty_results",
@@ -282,6 +288,7 @@ struct ParsedToolRequest {
     created_at_ms: i64,
     intended_consumers: Vec<String>,
     importance_tier: ImportanceTier,
+    perf_importance_tier: PerfImportanceTier,
 }
 
 fn parse_tool_request(packet: &Value) -> Result<ParsedToolRequest, NewsProviderError> {
@@ -355,6 +362,12 @@ fn parse_tool_request(packet: &Value) -> Result<ParsedToolRequest, NewsProviderE
             latency_ms: 0,
         })?;
 
+    let perf_importance_tier = obj
+        .get("importance_tier")
+        .and_then(Value::as_str)
+        .map(PerfImportanceTier::parse_or_default)
+        .unwrap_or_default();
+
     let intended_consumers = obj
         .get("intended_consumers")
         .and_then(Value::as_array)
@@ -381,6 +394,7 @@ fn parse_tool_request(packet: &Value) -> Result<ParsedToolRequest, NewsProviderE
         created_at_ms,
         intended_consumers,
         importance_tier,
+        perf_importance_tier,
     })
 }
 
@@ -391,6 +405,10 @@ fn execute_news_provider_ladder(
     config: &NewsRuntimeConfig,
 ) -> Result<NewsProviderLadderResult, NewsProviderError> {
     let window_days = recency_window_days(request.importance_tier);
+    let tier_caps = caps_for_tier(request.perf_importance_tier);
+    let effective_max_results = config.max_results.min(tier_caps.max_results_from_search);
+    let effective_timeout_ms = clamp_provider_timeout(config.timeout_ms, request.perf_importance_tier);
+    let mut provider_call_budget = ProviderCallBudget::for_tier(request.perf_importance_tier);
     let mut provider_runs = Vec::new();
 
     let mut lead_attempted = false;
@@ -424,11 +442,14 @@ fn execute_news_provider_ladder(
             request.created_at_ms,
         ));
 
+        provider_call_budget
+            .record_fallback_call()
+            .map_err(|reason| budget_exhausted_error(reason))?;
         let gdelt = gdelt::execute_gdelt_news_search(
             &config.gdelt_endpoint,
             &request.query,
-            config.max_results,
-            config.timeout_ms,
+            effective_max_results,
+            effective_timeout_ms,
             &config.user_agent,
             &config.proxy_config,
         )?;
@@ -449,13 +470,16 @@ fn execute_news_provider_ladder(
         ));
     } else {
         lead_attempted = true;
+        provider_call_budget
+            .record_lead_call()
+            .map_err(|reason| budget_exhausted_error(reason))?;
         let brave_key = resolve_brave_api_key(config)?;
         match brave_news::execute_brave_news_search(
             &config.brave_news_endpoint,
             &brave_key,
             &request.query,
-            config.max_results,
-            config.timeout_ms,
+            effective_max_results,
+            effective_timeout_ms,
             &config.user_agent,
             &config.proxy_config,
         ) {
@@ -506,11 +530,14 @@ fn execute_news_provider_ladder(
                 ));
 
                 if can_fallback {
+                    provider_call_budget
+                        .record_fallback_call()
+                        .map_err(|reason| budget_exhausted_error(reason))?;
                     match gdelt::execute_gdelt_news_search(
                         &config.gdelt_endpoint,
                         &request.query,
-                        config.max_results,
-                        config.timeout_ms,
+                        effective_max_results,
+                        effective_timeout_ms,
                         &config.user_agent,
                         &config.proxy_config,
                     ) {
@@ -573,11 +600,14 @@ fn execute_news_provider_ladder(
                 "insufficient_evidence".to_string()
             });
 
+            provider_call_budget
+                .record_fallback_call()
+                .map_err(|reason| budget_exhausted_error(reason))?;
             match gdelt::execute_gdelt_news_search(
                 &config.gdelt_endpoint,
                 &request.query,
-                config.max_results,
-                config.timeout_ms,
+                effective_max_results,
+                effective_timeout_ms,
                 &config.user_agent,
                 &config.proxy_config,
             ) {
@@ -724,6 +754,13 @@ fn execute_news_provider_ladder(
                 "dedup_count": merge.dedup_count,
                 "corroborated_count": merge.corroborated_canonical_urls.len(),
                 "contradiction_clusters": trust_metadata_clusters,
+                "importance_tier": request.perf_importance_tier.as_str(),
+                "max_total_provider_calls_per_turn": tier_caps.max_total_provider_calls_per_turn,
+                "max_fallback_invocations_per_turn": tier_caps.max_fallback_invocations_per_turn,
+                "max_retries_per_provider": tier_caps.max_retries_per_provider,
+                "total_provider_calls": provider_call_budget.total_provider_calls(),
+                "fallback_invocations": provider_call_budget.fallback_invocations(),
+                "timeout_per_provider_ms": effective_timeout_ms,
             }
         }
     });
@@ -1021,6 +1058,16 @@ fn resolve_secret_from_vault(secret_id: ProviderSecretId) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+fn budget_exhausted_error(message: &str) -> NewsProviderError {
+    NewsProviderError {
+        provider_id: NewsProviderId::NewsProviderLadder,
+        kind: NewsProviderErrorKind::BudgetExhausted,
+        status_code: None,
+        message: format!("provider call budget exhausted: {}", message),
+        latency_ms: 0,
     }
 }
 

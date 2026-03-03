@@ -14,6 +14,9 @@ use crate::web_search_plan::diag::{
     default_degraded_transitions, default_failed_transitions, try_build_debug_packet,
     DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
 };
+use crate::web_search_plan::perf_cost::budgets::ProviderCallBudget;
+use crate::web_search_plan::perf_cost::tiers::{caps_for_tier, ImportanceTier};
+use crate::web_search_plan::perf_cost::timeouts::clamp_provider_timeout;
 use crate::web_search_plan::proxy::proxy_config::{ProxyConfig, SystemEnvProvider};
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::web_provider::fallback_policy::{
@@ -54,6 +57,7 @@ impl ProviderId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderErrorKind {
+    BudgetExhausted,
     ProviderUnconfigured,
     DnsFailed,
     TlsFailed,
@@ -70,6 +74,7 @@ pub enum ProviderErrorKind {
 impl ProviderErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::DnsFailed => "dns_failed",
             Self::TlsFailed => "tls_failed",
@@ -86,6 +91,7 @@ impl ProviderErrorKind {
 
     pub const fn reason_code(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::ProviderUnconfigured => "provider_unconfigured",
             Self::TimeoutExceeded => "timeout_exceeded",
             Self::EmptyResults => "empty_results",
@@ -252,6 +258,7 @@ struct ParsedToolRequest {
     query: String,
     created_at_ms: i64,
     intended_consumers: Vec<String>,
+    importance_tier: ImportanceTier,
 }
 
 fn parse_tool_request_packet(packet: &Value) -> Result<ParsedToolRequest, ProviderError> {
@@ -313,6 +320,12 @@ fn parse_tool_request_packet(packet: &Value) -> Result<ParsedToolRequest, Provid
             latency_ms: 0,
         })?;
 
+    let importance_tier = obj
+        .get("importance_tier")
+        .and_then(Value::as_str)
+        .map(ImportanceTier::parse_or_default)
+        .unwrap_or_default();
+
     let intended_consumers = obj
         .get("intended_consumers")
         .and_then(Value::as_array)
@@ -338,6 +351,7 @@ fn parse_tool_request_packet(packet: &Value) -> Result<ParsedToolRequest, Provid
         query,
         created_at_ms,
         intended_consumers,
+        importance_tier,
     })
 }
 
@@ -361,6 +375,10 @@ fn execute_web_provider_ladder(
     let mut openai_results = Vec::new();
     let mut results_count_lead = 0usize;
     let mut results_count_fallback = 0usize;
+    let tier_caps = caps_for_tier(request.importance_tier);
+    let effective_max_results = config.max_results.min(tier_caps.max_results_from_search);
+    let effective_timeout_ms = clamp_provider_timeout(config.timeout_ms, request.importance_tier);
+    let mut provider_call_budget = ProviderCallBudget::for_tier(request.importance_tier);
 
     if health_tracker.should_skip_lead(
         ProviderId::BraveWebSearch.as_str(),
@@ -399,14 +417,17 @@ fn execute_web_provider_ladder(
             "debug_packet": skipped_debug_packet,
         }));
 
+        provider_call_budget
+            .record_fallback_call()
+            .map_err(|reason| budget_exhausted_error(reason))?;
         let openai_key = resolve_openai_api_key(config)?;
         let openai = openai_fallback::execute_openai_web_search(
             &config.openai_endpoint,
             &openai_key,
             &config.openai_model,
             &request.query,
-            config.max_results,
-            config.timeout_ms,
+            effective_max_results,
+            effective_timeout_ms,
             &config.user_agent,
             &config.proxy_config,
         )?;
@@ -426,13 +447,16 @@ fn execute_web_provider_ladder(
         ));
     } else {
         lead_attempted = true;
+        provider_call_budget
+            .record_lead_call()
+            .map_err(|reason| budget_exhausted_error(reason))?;
         let brave_key = resolve_brave_api_key(config)?;
         match brave_adapter::execute_brave_web_search(
             &config.brave_endpoint,
             &brave_key,
             &request.query,
-            config.max_results,
-            config.timeout_ms,
+            effective_max_results,
+            effective_timeout_ms,
             &config.user_agent,
             &config.proxy_config,
         ) {
@@ -480,14 +504,17 @@ fn execute_web_provider_ladder(
                 ));
 
                 if should_fallback {
+                    provider_call_budget
+                        .record_fallback_call()
+                        .map_err(|reason| budget_exhausted_error(reason))?;
                     let openai_key = resolve_openai_api_key(config)?;
                     match openai_fallback::execute_openai_web_search(
                         &config.openai_endpoint,
                         &openai_key,
                         &config.openai_model,
                         &request.query,
-                        config.max_results,
-                        config.timeout_ms,
+                        effective_max_results,
+                        effective_timeout_ms,
                         &config.user_agent,
                         &config.proxy_config,
                     ) {
@@ -607,6 +634,13 @@ fn execute_web_provider_ladder(
                 "fallback_used": fallback_used,
                 "dedup_count": merged.dedup_count,
                 "health_snapshot": provider_health_snapshot,
+                "importance_tier": request.importance_tier.as_str(),
+                "max_total_provider_calls_per_turn": tier_caps.max_total_provider_calls_per_turn,
+                "max_fallback_invocations_per_turn": tier_caps.max_fallback_invocations_per_turn,
+                "max_retries_per_provider": tier_caps.max_retries_per_provider,
+                "total_provider_calls": provider_call_budget.total_provider_calls(),
+                "fallback_invocations": provider_call_budget.fallback_invocations(),
+                "timeout_per_provider_ms": effective_timeout_ms,
             }
         }
     });
@@ -723,6 +757,16 @@ fn resolve_secret_from_vault(secret_id: ProviderSecretId) -> Option<String> {
             }
         }
         _ => None,
+    }
+}
+
+fn budget_exhausted_error(message: &str) -> ProviderError {
+    ProviderError {
+        provider_id: ProviderId::WebProviderLadder,
+        kind: ProviderErrorKind::BudgetExhausted,
+        status_code: None,
+        message: format!("provider call budget exhausted: {}", message),
+        latency_ms: 0,
     }
 }
 

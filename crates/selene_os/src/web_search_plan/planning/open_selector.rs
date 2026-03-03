@@ -8,22 +8,28 @@ use crate::web_search_plan::url::{fetch_url_to_evidence_packet, UrlFetchPolicy, 
 pub struct UrlOpenContext {
     pub trace_id: String,
     pub query: String,
+    pub importance_tier: String,
     pub created_at_ms: i64,
     pub retrieved_at_ms: i64,
     pub produced_by: String,
     pub intended_consumers: Vec<String>,
     pub proxy_config: ProxyConfig,
     pub url_fetch_policy: UrlFetchPolicy,
+    pub url_open_cap: usize,
 }
 
 pub fn open_candidate_with_url_fetch(
     context: &UrlOpenContext,
     candidate: &SearchCandidate,
+    url_open_ordinal: usize,
 ) -> Result<OpenSuccess, OpenFailure> {
     let request = UrlFetchRequest {
         trace_id: context.trace_id.clone(),
         query: context.query.clone(),
         requested_url: candidate.url.clone(),
+        importance_tier: context.importance_tier.clone(),
+        url_open_ordinal,
+        url_open_cap: Some(context.url_open_cap),
         created_at_ms: context.created_at_ms,
         retrieved_at_ms: context.retrieved_at_ms,
         produced_by: context.produced_by.clone(),

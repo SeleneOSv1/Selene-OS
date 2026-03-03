@@ -20,6 +20,9 @@ pub struct UrlFetchRequest {
     pub trace_id: String,
     pub query: String,
     pub requested_url: String,
+    pub importance_tier: String,
+    pub url_open_ordinal: usize,
+    pub url_open_cap: Option<usize>,
     pub created_at_ms: i64,
     pub retrieved_at_ms: i64,
     pub produced_by: String,
@@ -42,6 +45,9 @@ impl UrlFetchRequest {
             trace_id: trace_id.to_string(),
             query: query.to_string(),
             requested_url: requested_url.to_string(),
+            importance_tier: "medium".to_string(),
+            url_open_ordinal: 0,
+            url_open_cap: None,
             created_at_ms: now_ms,
             retrieved_at_ms: now_ms,
             produced_by: produced_by.to_string(),
@@ -91,6 +97,7 @@ impl Default for UrlFetchPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UrlFetchErrorKind {
+    BudgetExhausted,
     UnsupportedScheme,
     InvalidUrl,
     HttpNon200,
@@ -122,6 +129,7 @@ pub enum UrlFetchErrorKind {
 impl UrlFetchErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::UnsupportedScheme => "unsupported_scheme",
             Self::InvalidUrl => "invalid_url",
             Self::HttpNon200 => "http_non_200",
@@ -153,6 +161,7 @@ impl UrlFetchErrorKind {
 
     pub const fn reason_code(self) -> &'static str {
         match self {
+            Self::BudgetExhausted => "budget_exhausted",
             Self::TimeoutExceeded | Self::ProxyTimeout => "timeout_exceeded",
             Self::ProxyMisconfigured
             | Self::ProxyAuthFailed

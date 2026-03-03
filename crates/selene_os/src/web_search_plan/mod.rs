@@ -8,6 +8,7 @@ pub mod learning;
 pub mod news;
 pub mod news_provider;
 pub mod packet_validator;
+pub mod perf_cost;
 pub mod planning;
 pub mod proxy;
 pub mod reason_code_validator;

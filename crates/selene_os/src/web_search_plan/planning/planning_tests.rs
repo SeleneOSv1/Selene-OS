@@ -157,7 +157,8 @@ fn test_t2_tie_break_stability() {
         ),
     ];
 
-    let input = planning_input(candidates);
+    let mut input = planning_input(candidates);
+    input.importance_tier = "high".to_string();
     let mut policy = PlanningPolicy::default();
     policy.open_budget.max_urls_opened_per_query = 3;
     policy.scoring_policy = ScoringPolicy::new(
