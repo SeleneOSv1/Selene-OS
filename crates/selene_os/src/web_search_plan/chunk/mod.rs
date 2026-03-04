@@ -9,9 +9,9 @@ pub mod normalize;
 use crate::web_search_plan::chunk::chunker::{chunk_document, ChunkPolicy, TextChunk};
 use crate::web_search_plan::chunk::citation::{build_citation_anchors, validate_citation_anchors};
 use crate::web_search_plan::chunk::collision::detect_chunk_hash_collisions;
-use crate::web_search_plan::chunk::hasher::{
-    hash_chunks, hash_chunks_with_hasher, ChunkHasher, HashedChunk,
-};
+use crate::web_search_plan::chunk::hasher::{hash_chunks, HashedChunk};
+#[cfg(test)]
+use crate::web_search_plan::chunk::hasher::{hash_chunks_with_hasher, ChunkHasher};
 use crate::web_search_plan::chunk::normalize::normalize_document_for_chunking;
 
 pub const EVIDENCE_TRUNCATED_REASON_CODE: &str = "evidence_truncated";
@@ -56,6 +56,7 @@ pub(crate) fn build_hashed_chunks_with_default_hasher(
     finalize_chunk_output(normalized_document, chunked.truncated, hashed)
 }
 
+#[cfg(test)]
 pub(crate) fn build_hashed_chunks_with_custom_hasher(
     canonical_url: &str,
     source_url: &str,

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Default behavior keeps strict validation trees clean by writing reports under /tmp.
+# Set KEEP_EVAL_REPORTS=1 to persist reports under docs/web_search_plan/eval/reports/.
 scripts/web_search_plan/check_replay_harness.sh
 scripts/web_search_plan/check_quality_gates.sh
 
@@ -9,7 +11,12 @@ cargo test -p selene_os web_search_plan::eval::eval_tests --quiet
 head_commit="$(git rev-parse HEAD)"
 timestamp_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 date_tag="$(date -u +"%Y%m%dT%H%M%SZ")"
-output_dir="docs/web_search_plan/eval/reports"
+if [[ "${KEEP_EVAL_REPORTS:-0}" == "1" ]]; then
+  output_dir="docs/web_search_plan/eval/reports"
+else
+  output_dir="/tmp/selene_web_eval_reports/${date_tag}"
+fi
+mkdir -p "${output_dir}"
 
 cmd_output="$(
   cargo run -p selene_os --bin web_search_eval_report --quiet -- \
