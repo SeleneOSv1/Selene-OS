@@ -48,6 +48,7 @@ run_gate "scripts/web_search_plan/check_perf_cost_tiers.sh" scripts/web_search_p
 run_gate "scripts/web_search_plan/check_cache_parallel.sh" scripts/web_search_plan/check_cache_parallel.sh
 run_gate "scripts/web_search_plan/check_replay_harness.sh" scripts/web_search_plan/check_replay_harness.sh
 run_gate "scripts/web_search_plan/check_quality_gates.sh" scripts/web_search_plan/check_quality_gates.sh
+run_gate "scripts/web_search_plan/check_continuous_eval.sh" scripts/web_search_plan/check_continuous_eval.sh
 run_gate "scripts/web_search_plan/check_structured_connectors.sh" scripts/web_search_plan/check_structured_connectors.sh
 run_gate "scripts/web_search_plan/check_document_parsing.sh" scripts/web_search_plan/check_document_parsing.sh
 run_gate "scripts/web_search_plan/check_analytics_numeric_consensus.sh" scripts/web_search_plan/check_analytics_numeric_consensus.sh
@@ -59,6 +60,11 @@ run_gate "scripts/web_search_plan/check_multihop_research.sh" scripts/web_search
 run_gate "scripts/web_search_plan/check_temporal_mode.sh" scripts/web_search_plan/check_temporal_mode.sh
 run_gate "scripts/web_search_plan/check_risk_mode.sh" scripts/web_search_plan/check_risk_mode.sh
 run_gate "scripts/web_search_plan/check_merge_mode.sh" scripts/web_search_plan/check_merge_mode.sh
+run_gate "scripts/web_search_plan/check_parity_enhancements.sh" scripts/web_search_plan/check_parity_enhancements.sh
+run_gate "scripts/web_search_plan/check_gap_closers.sh" scripts/web_search_plan/check_gap_closers.sh
+if [[ -x "scripts/web_search_plan/check_enterprise_integration_lock.sh" ]]; then
+  run_gate "scripts/web_search_plan/check_enterprise_integration_lock.sh" scripts/web_search_plan/check_enterprise_integration_lock.sh
+fi
 run_gate "cargo test -p selene_os web_search_plan::tests --quiet" cargo test -p selene_os web_search_plan::tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::release::release_tests --quiet" cargo test -p selene_os web_search_plan::release::release_tests --quiet
 

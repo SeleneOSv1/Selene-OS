@@ -27,6 +27,7 @@ pub mod regulatory;
 pub mod release;
 pub mod registry_loader;
 pub mod replay;
+pub mod runtime;
 pub mod risk;
 pub mod structured;
 pub mod synthesis;
