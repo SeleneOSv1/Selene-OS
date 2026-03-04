@@ -81,6 +81,8 @@ cat /tmp/selene_web_search_turn_fixture.log
 echo "expected fixture mode to fail closed with exit=2"
 exit 1
 '
+run_gate "cargo run -p selene_os --bin web_search_enterprise_turn -- --fixture --mode report --query \"test\"" cargo run -p selene_os --bin web_search_enterprise_turn -- --fixture --mode report --query "test"
+run_gate "cargo run -p selene_os --bin web_search_vision_turn -- --fixture --mode image_ocr --asset text_heavy" cargo run -p selene_os --bin web_search_vision_turn -- --fixture --mode image_ocr --asset text_heavy
 run_gate "cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet" cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::tests --quiet" cargo test -p selene_os web_search_plan::tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::release::release_tests --quiet" cargo test -p selene_os web_search_plan::release::release_tests --quiet

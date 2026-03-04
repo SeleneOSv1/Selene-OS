@@ -1,13 +1,13 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::replay::snapshot::hash_canonical_json;
-use crate::web_search_plan::runtime::orchestrator::{
-    execute_web_search_turn_with_dependencies, RuntimeDependencies,
-};
-use crate::web_search_plan::web_provider::WebProviderRuntimeConfig;
 use crate::web_search_plan::news::NewsRuntimeConfig;
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::proxy::ProxyMode;
+use crate::web_search_plan::replay::snapshot::hash_canonical_json;
+use crate::web_search_plan::runtime::orchestrator::{
+    execute_web_search_turn_with_dependencies, RuntimeDependencies, RuntimeServiceTrace,
+};
+use crate::web_search_plan::web_provider::WebProviderRuntimeConfig;
 use crate::web_search_plan::write::WriteFormatMode;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -203,7 +203,8 @@ fn runtime_deps_for_base(base: &str) -> RuntimeDependencies {
                 http_proxy_url: None,
                 https_proxy_url: None,
             },
-            health_policy: crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
+            health_policy:
+                crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
             brave_api_key_override: Some("test_brave_key".to_string()),
             openai_api_key_override: Some("test_openai_key".to_string()),
         },
@@ -218,11 +219,14 @@ fn runtime_deps_for_base(base: &str) -> RuntimeDependencies {
                 http_proxy_url: None,
                 https_proxy_url: None,
             },
-            health_policy: crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
+            health_policy:
+                crate::web_search_plan::web_provider::health_state::HealthPolicy::default(),
             brave_api_key_override: Some("test_brave_key".to_string()),
         },
         planning_policy: crate::web_search_plan::planning::PlanningPolicy::default(),
         write_format_mode: WriteFormatMode::Standard,
+        learn_observation_enabled: false,
+        service_trace: None,
     }
 }
 
@@ -253,7 +257,10 @@ fn assert_success_state_path(audit_packet: &Value) {
 
 fn sanitized_provider_latency(packet: &Value) -> Value {
     let mut cloned = packet.clone();
-    if let Some(runs) = cloned.get_mut("provider_runs").and_then(Value::as_array_mut) {
+    if let Some(runs) = cloned
+        .get_mut("provider_runs")
+        .and_then(Value::as_array_mut)
+    {
         for run in runs {
             if let Some(object) = run.as_object_mut() {
                 object.insert("latency_ms".to_string(), json!(0));
@@ -321,7 +328,13 @@ fn test_t1_web_happy_path_returns_all_packets_with_citations_and_stable_hashes()
     let run_a = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
-        make_tool_request(trace_id, created_at_ms.saturating_add(2), "web", query, "medium"),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "web",
+            query,
+            "medium",
+        ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps_a,
     )
@@ -329,7 +342,13 @@ fn test_t1_web_happy_path_returns_all_packets_with_citations_and_stable_hashes()
     let run_b = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
-        make_tool_request(trace_id, created_at_ms.saturating_add(2), "web", query, "medium"),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "web",
+            query,
+            "medium",
+        ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps_b,
     )
@@ -345,14 +364,12 @@ fn test_t1_web_happy_path_returns_all_packets_with_citations_and_stable_hashes()
             .unwrap_or(0),
         4
     );
-    assert!(
-        run_a
-            .write_packet
-            .get("citation_map")
-            .and_then(Value::as_object)
-            .map(|map| !map.is_empty())
-            .unwrap_or(false)
-    );
+    assert!(run_a
+        .write_packet
+        .get("citation_map")
+        .and_then(Value::as_object)
+        .map(|map| !map.is_empty())
+        .unwrap_or(false));
 
     assert_eq!(
         hash_canonical_json(&run_a.evidence_packet).expect("hash should compute"),
@@ -396,7 +413,13 @@ fn test_t2_refusal_path_insufficient_evidence_fails_closed_with_reason_code() {
     let error = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), false),
-        make_tool_request(trace_id, created_at_ms.saturating_add(2), "web", query, "medium"),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "web",
+            query,
+            "medium",
+        ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps,
     )
@@ -411,13 +434,11 @@ fn test_t2_refusal_path_insufficient_evidence_fails_closed_with_reason_code() {
             .unwrap_or(""),
         "TURN_FAILED_CLOSED"
     );
-    assert!(
-        error
-            .debug_packet
-            .as_ref()
-            .map(|packet| packet.get("reason_code").is_some())
-            .unwrap_or(true)
-    );
+    assert!(error
+        .debug_packet
+        .as_ref()
+        .map(|packet| packet.get("reason_code").is_some())
+        .unwrap_or(true));
 }
 
 #[test]
@@ -470,7 +491,13 @@ fn test_t3_news_path_is_deterministic_and_citation_backed() {
     let run_a = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
-        make_tool_request(trace_id, created_at_ms.saturating_add(2), "news", query, "medium"),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "news",
+            query,
+            "medium",
+        ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps_a,
     )
@@ -478,29 +505,31 @@ fn test_t3_news_path_is_deterministic_and_citation_backed() {
     let run_b = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
-        make_tool_request(trace_id, created_at_ms.saturating_add(2), "news", query, "medium"),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "news",
+            query,
+            "medium",
+        ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps_b,
     )
     .expect("news runtime should be deterministic");
 
     assert_success_state_path(&run_a.audit_packet);
-    assert!(
-        run_a
-            .synthesis_packet
-            .get("citations")
-            .and_then(Value::as_array)
-            .map(|entries| !entries.is_empty())
-            .unwrap_or(false)
-    );
-    assert!(
-        run_a
-            .write_packet
-            .get("citation_map")
-            .and_then(Value::as_object)
-            .map(|map| !map.is_empty())
-            .unwrap_or(false)
-    );
+    assert!(run_a
+        .synthesis_packet
+        .get("citations")
+        .and_then(Value::as_array)
+        .map(|entries| !entries.is_empty())
+        .unwrap_or(false));
+    assert!(run_a
+        .write_packet
+        .get("citation_map")
+        .and_then(Value::as_object)
+        .map(|map| !map.is_empty())
+        .unwrap_or(false));
 
     assert_eq!(
         hash_canonical_json(&sanitized_provider_latency(&run_a.evidence_packet))
@@ -602,7 +631,12 @@ fn test_all_modes_route_through_orchestrator() {
             "policy-snapshot-runtime-v1".to_string(),
             &mut deps,
         )
-        .unwrap_or_else(|error| panic!("mode {} should succeed but failed: {}", mode, error.reason_code));
+        .unwrap_or_else(|error| {
+            panic!(
+                "mode {} should succeed but failed: {}",
+                mode, error.reason_code
+            )
+        });
         assert_success_state_path(&result.audit_packet);
     }
 
@@ -657,4 +691,110 @@ fn test_all_modes_route_through_orchestrator() {
     }
 
     let _ = join.join();
+}
+
+#[test]
+fn test_t5_parallel_service_trace_invoked_on_web_execution() {
+    let trace = Arc::new(RuntimeServiceTrace::default());
+    let created_at_ms = 1_703_200_000_000_i64;
+    let trace_id = "trace-runtime-parallel-hook";
+    let query = "parallel hook invocation check";
+
+    let (base, join) = spawn_server(
+        move |method, path, base_url| {
+            if method == "GET" && path.starts_with("/res/v1/web/search") {
+                MockResponse::json(
+                    200,
+                    json!({
+                        "web": {
+                            "results": [
+                                {
+                                    "title": "Parallel Hook Source A",
+                                    "url": format!("{}/page/parallel-a", base_url),
+                                    "description": "Source A for runtime parallel hook trace."
+                                },
+                                {
+                                    "title": "Parallel Hook Source B",
+                                    "url": format!("{}/page/parallel-b", base_url),
+                                    "description": "Source B for runtime parallel hook trace."
+                                }
+                            ]
+                        }
+                    }),
+                )
+            } else if method == "GET"
+                && (path.starts_with("/page/parallel-a") || path.starts_with("/page/parallel-b"))
+            {
+                MockResponse::html(
+                    200,
+                    "<html><body><p>parallel hook deterministic content</p></body></html>",
+                )
+            } else {
+                MockResponse::json(500, json!({"error": "unexpected path"}))
+            }
+        },
+        8,
+    );
+
+    let mut deps = runtime_deps_for_base(&base);
+    deps.service_trace = Some(trace.clone());
+
+    execute_web_search_turn_with_dependencies(
+        make_turn_input(trace_id, created_at_ms, query),
+        make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "web",
+            query,
+            "medium",
+        ),
+        "policy-snapshot-runtime-v1".to_string(),
+        &mut deps,
+    )
+    .expect("web runtime should succeed");
+
+    assert!(
+        trace.parallel_plan_calls() >= 1,
+        "parallel plan trace counter should increment"
+    );
+
+    let _ = join.join();
+}
+
+#[test]
+fn test_t6_learn_observer_trace_invoked_on_fail_closed_path() {
+    let trace = Arc::new(RuntimeServiceTrace::default());
+    let trace_id = "trace-runtime-learn-hook";
+    let created_at_ms = 1_703_200_000_100_i64;
+    let query = "learn hook fail-closed check";
+
+    let (base, _join) = spawn_server(
+        move |_, _, _| MockResponse::json(500, json!({"error": "unused"})),
+        1,
+    );
+    let mut deps = runtime_deps_for_base(&base);
+    deps.learn_observation_enabled = true;
+    deps.service_trace = Some(trace.clone());
+
+    let error = execute_web_search_turn_with_dependencies(
+        make_turn_input(trace_id, created_at_ms, query),
+        make_search_assist(trace_id, created_at_ms.saturating_add(1), false),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "web",
+            query,
+            "medium",
+        ),
+        "policy-snapshot-runtime-v1".to_string(),
+        &mut deps,
+    )
+    .expect_err("search_required=false should fail closed");
+
+    assert_eq!(error.reason_code, "insufficient_evidence");
+    assert!(
+        trace.learn_observe_calls() >= 1,
+        "learn observation trace counter should increment on fail-closed path"
+    );
 }

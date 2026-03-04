@@ -5,16 +5,21 @@ use crate::web_search_plan::diag::state_trace::{
     MonotonicClock, StateTraceRecorder, TurnStateTransition,
 };
 use crate::web_search_plan::diag::try_build_debug_packet;
+use crate::web_search_plan::learn::failure_signature::{
+    compute_signature_id, FailureEvent, LearningLane,
+};
 use crate::web_search_plan::news::{
     append_news_audit_fields, execute_news_provider_ladder_from_tool_request, NewsAuditMetrics,
     NewsRuntimeConfig,
 };
 use crate::web_search_plan::packet_validator::validate_packet;
+use crate::web_search_plan::parallel::scheduler::{schedule_deterministically, RetrievalTask};
+use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
+use crate::web_search_plan::planning::open_selector::UrlOpenContext;
 use crate::web_search_plan::planning::{
     execute_search_topk_pipeline_with_url_fetch, planning_input_from_tool_request, PlanningPolicy,
     SearchCandidate,
 };
-use crate::web_search_plan::planning::open_selector::UrlOpenContext;
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::replay::snapshot::hash_canonical_json;
@@ -31,7 +36,8 @@ use crate::web_search_plan::write::{
     append_write_audit_fields, render_write_packet, WriteFormatMode,
 };
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub type TurnInputPacket = Value;
 pub type SearchAssistPacket = Value;
@@ -44,12 +50,30 @@ pub type ReasonCodeId = String;
 
 const RUNTIME_ENGINE_ID: &str = "PH1.OS";
 
+#[derive(Debug, Default)]
+pub struct RuntimeServiceTrace {
+    learn_observe_calls: AtomicU64,
+    parallel_plan_calls: AtomicU64,
+}
+
+impl RuntimeServiceTrace {
+    pub fn learn_observe_calls(&self) -> u64 {
+        self.learn_observe_calls.load(Ordering::SeqCst)
+    }
+
+    pub fn parallel_plan_calls(&self) -> u64 {
+        self.parallel_plan_calls.load(Ordering::SeqCst)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeDependencies {
     pub web_runtime_config: WebProviderRuntimeConfig,
     pub news_runtime_config: NewsRuntimeConfig,
     pub planning_policy: PlanningPolicy,
     pub write_format_mode: WriteFormatMode,
+    pub learn_observation_enabled: bool,
+    pub service_trace: Option<Arc<RuntimeServiceTrace>>,
 }
 
 impl Default for RuntimeDependencies {
@@ -59,6 +83,8 @@ impl Default for RuntimeDependencies {
             news_runtime_config: NewsRuntimeConfig::default(),
             planning_policy: PlanningPolicy::default(),
             write_format_mode: WriteFormatMode::Standard,
+            learn_observation_enabled: false,
+            service_trace: None,
         }
     }
 }
@@ -222,7 +248,11 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             .and_then(Value::as_bool)
             .unwrap_or(true)
         {
-            return self.fail_closed("insufficient_evidence", "SearchAssist", "insufficient_evidence");
+            return self.fail_closed(
+                "insufficient_evidence",
+                "SearchAssist",
+                "insufficient_evidence",
+            );
         }
 
         self.transition_or_fail("INTENT_CLASSIFIED")?;
@@ -253,8 +283,13 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
 
                 let candidates = candidates_from_web_sources(&web_result.evidence_packet);
                 if candidates.is_empty() {
-                    return self.fail_closed("insufficient_evidence", "WebProvider", "empty_results");
+                    return self.fail_closed(
+                        "insufficient_evidence",
+                        "WebProvider",
+                        "empty_results",
+                    );
                 }
+                self.observe_parallel_plan(candidates.as_slice());
 
                 let retrieved_at_ms = web_result
                     .evidence_packet
@@ -381,32 +416,40 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             None,
         )
         .map_err(|error| match error {
-            crate::web_search_plan::synthesis::SynthesisError::EvidenceBoundaryViolation(_) => {
-                self.fail_closed("policy_violation", "Synthesis", "policy_violation")
-                    .expect_err("fail_closed always errors")
-            }
-            crate::web_search_plan::synthesis::SynthesisError::InvalidEvidence(_) => {
-                self.fail_closed("insufficient_evidence", "Synthesis", "insufficient_evidence")
-                    .expect_err("fail_closed always errors")
-            }
-            crate::web_search_plan::synthesis::SynthesisError::CitationMismatch(_) => {
-                self.fail_closed("citation_mismatch", "Synthesis", "citation_mismatch")
-                    .expect_err("fail_closed always errors")
-            }
-            crate::web_search_plan::synthesis::SynthesisError::UnsupportedClaim(_) => {
-                self.fail_closed("policy_violation", "Synthesis", "unsupported_claim")
-                    .expect_err("fail_closed always errors")
-            }
+            crate::web_search_plan::synthesis::SynthesisError::EvidenceBoundaryViolation(_) => self
+                .fail_closed("policy_violation", "Synthesis", "policy_violation")
+                .expect_err("fail_closed always errors"),
+            crate::web_search_plan::synthesis::SynthesisError::InvalidEvidence(_) => self
+                .fail_closed(
+                    "insufficient_evidence",
+                    "Synthesis",
+                    "insufficient_evidence",
+                )
+                .expect_err("fail_closed always errors"),
+            crate::web_search_plan::synthesis::SynthesisError::CitationMismatch(_) => self
+                .fail_closed("citation_mismatch", "Synthesis", "citation_mismatch")
+                .expect_err("fail_closed always errors"),
+            crate::web_search_plan::synthesis::SynthesisError::UnsupportedClaim(_) => self
+                .fail_closed("policy_violation", "Synthesis", "unsupported_claim")
+                .expect_err("fail_closed always errors"),
         })?;
 
         if synthesis
             .synthesis_packet
             .get("reason_codes")
             .and_then(Value::as_array)
-            .map(|codes| codes.iter().any(|code| code.as_str() == Some("insufficient_evidence")))
+            .map(|codes| {
+                codes
+                    .iter()
+                    .any(|code| code.as_str() == Some("insufficient_evidence"))
+            })
             .unwrap_or(false)
         {
-            return self.fail_closed("insufficient_evidence", "Synthesis", "insufficient_evidence");
+            return self.fail_closed(
+                "insufficient_evidence",
+                "Synthesis",
+                "insufficient_evidence",
+            );
         }
 
         self.transition_or_fail("SYNTHESIS_READY")?;
@@ -474,11 +517,13 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
     }
 
     fn transition_or_fail(&mut self, state: &str) -> Result<(), RuntimeExecutionError> {
-        self.recorder.transition(state).map_err(|_| RuntimeExecutionError {
-            reason_code: "policy_violation".to_string(),
-            transitions: self.recorder.transitions().to_vec(),
-            debug_packet: None,
-        })
+        self.recorder
+            .transition(state)
+            .map_err(|_| RuntimeExecutionError {
+                reason_code: "policy_violation".to_string(),
+                transitions: self.recorder.transitions().to_vec(),
+                debug_packet: None,
+            })
     }
 
     fn validate_input_packets(&mut self) -> Result<(), RuntimeExecutionError> {
@@ -513,8 +558,12 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             debug_packet: None,
         })?;
         validate_packet(packet_name, packet, &registry).map_err(|_| {
-            self.fail_closed("policy_violation", "RuntimeValidator", "packet_validation_failed")
-                .expect_err("fail_closed always errors")
+            self.fail_closed(
+                "policy_violation",
+                "RuntimeValidator",
+                "packet_validation_failed",
+            )
+            .expect_err("fail_closed always errors")
         })
     }
 
@@ -544,6 +593,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         error_kind: &str,
         debug_hint: Option<&str>,
     ) -> Result<RuntimeExecutionArtifacts, RuntimeExecutionError> {
+        self.observe_failure_signature(reason_code, provider, error_kind);
         let _ = self.recorder.transition("TURN_FAILED_CLOSED");
         let transitions = self.recorder.transitions().to_vec();
         let debug_packet = try_build_debug_packet(DebugPacketContext {
@@ -568,6 +618,53 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             transitions,
             debug_packet,
         })
+    }
+
+    fn observe_parallel_plan(&mut self, candidates: &[SearchCandidate]) {
+        let tasks = candidates
+            .iter()
+            .enumerate()
+            .map(|(index, candidate)| RetrievalTask {
+                task_id: format!(
+                    "runtime-plan-{}-{}",
+                    index,
+                    candidate.canonical_url.as_str()
+                ),
+                priority: candidate.provider_rank as u32,
+                canonical_url: candidate.canonical_url.clone(),
+                provider_id: candidate.provider_id.clone(),
+                task_type: "url_fetch".to_string(),
+            })
+            .collect::<Vec<RetrievalTask>>();
+        let _ = schedule_deterministically(tasks);
+
+        if let Some(trace) = self.deps.service_trace.as_ref() {
+            trace.parallel_plan_calls.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    fn observe_failure_signature(&mut self, reason_code: &str, provider: &str, error_kind: &str) {
+        if let Some(trace) = self.deps.service_trace.as_ref() {
+            trace.learn_observe_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
+        if !self.deps.learn_observation_enabled {
+            return;
+        }
+
+        let event = FailureEvent {
+            lane: lane_from_mode(self.context.mode.as_str()),
+            provider_id: Some(provider.to_string()),
+            error_kind: error_kind.to_string(),
+            reason_code_id: reason_code.to_string(),
+            importance_tier: ImportanceTier::parse_or_default(
+                self.context.importance_tier.as_str(),
+            ),
+            canonical_url: None,
+            occurred_at_ms: self.context.created_at_ms,
+            ttl_ms: 0,
+        };
+        let _ = compute_signature_id(&event);
     }
 }
 
@@ -666,8 +763,16 @@ fn candidates_from_web_sources(evidence_packet: &Value) -> Vec<SearchCandidate> 
         .unwrap_or_default()
         .into_iter()
         .filter_map(|source| {
-            let title = source.get("title").and_then(Value::as_str)?.trim().to_string();
-            let url = source.get("url").and_then(Value::as_str)?.trim().to_string();
+            let title = source
+                .get("title")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
+            let url = source
+                .get("url")
+                .and_then(Value::as_str)?
+                .trim()
+                .to_string();
             let canonical_url = source
                 .get("canonical_url")
                 .and_then(Value::as_str)
@@ -693,7 +798,12 @@ fn candidates_from_web_sources(evidence_packet: &Value) -> Vec<SearchCandidate> 
             let trust_tier = source
                 .get("trust_tier_score")
                 .and_then(Value::as_i64)
-                .or_else(|| source.get("trust_score").and_then(Value::as_f64).map(|v| v as i64))
+                .or_else(|| {
+                    source
+                        .get("trust_score")
+                        .and_then(Value::as_f64)
+                        .map(|v| v as i64)
+                })
                 .unwrap_or(50) as i32;
             let freshness_score = source
                 .get("freshness_score")
@@ -734,5 +844,17 @@ fn default_proxy_config() -> ProxyConfig {
         mode: crate::web_search_plan::proxy::ProxyMode::Off,
         http_proxy_url: None,
         https_proxy_url: None,
+    }
+}
+
+fn lane_from_mode(mode: &str) -> LearningLane {
+    match mode {
+        "news" => LearningLane::News,
+        "url_fetch" => LearningLane::UrlFetch,
+        "synthesis" => LearningLane::Synthesis,
+        "write" => LearningLane::Write,
+        "images" => LearningLane::Images,
+        "video" => LearningLane::Video,
+        _ => LearningLane::Web,
     }
 }
