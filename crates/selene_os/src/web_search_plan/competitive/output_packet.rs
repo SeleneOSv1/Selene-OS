@@ -1,14 +1,14 @@
 #![forbid(unsafe_code)]
 
 use crate::web_search_plan::competitive::schema::{
-    ComparisonPacket, CompetitiveComparison, CompetitiveRequest, COMPETITIVE_ENGINE_ID,
+    CompetitiveComparison, CompetitiveComparisonPacket, CompetitiveRequest, COMPETITIVE_ENGINE_ID,
     COMPETITIVE_SCHEMA_VERSION,
 };
 
 pub fn build_comparison_packet(
     request: &CompetitiveRequest,
     comparison: CompetitiveComparison,
-) -> ComparisonPacket {
+) -> CompetitiveComparisonPacket {
     let intended_consumers = if request.intended_consumers.is_empty() {
         vec![
             "PH1.D".to_string(),
@@ -19,7 +19,7 @@ pub fn build_comparison_packet(
         request.intended_consumers.clone()
     };
 
-    ComparisonPacket {
+    CompetitiveComparisonPacket {
         schema_version: COMPETITIVE_SCHEMA_VERSION.to_string(),
         produced_by: COMPETITIVE_ENGINE_ID.to_string(),
         intended_consumers,

@@ -247,7 +247,7 @@ fn test_t7_output_packet_validates_against_schema() {
     let registry = load_packet_schema_registry().expect("packet schema registry should load");
     validate_packet_schema_registry(&registry).expect("packet schema should validate");
     let packet_value = serde_json::to_value(&output.packet).expect("packet serialize");
-    validate_packet("ComparisonPacket", &packet_value, &registry)
+    validate_packet("TemporalComparisonPacket", &packet_value, &registry)
         .expect("comparison packet should validate");
 }
 

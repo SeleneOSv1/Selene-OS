@@ -1274,3 +1274,6 @@ pub fn extract_domain(raw_url: &str) -> Option<String> {
 
 #[cfg(test)]
 pub mod news_tests;
+
+#[cfg(test)]
+pub mod news_parity_tests;

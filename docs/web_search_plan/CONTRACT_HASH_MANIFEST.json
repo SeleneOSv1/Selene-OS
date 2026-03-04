@@ -2,12 +2,12 @@
   "manifest_version": "1.0.0",
   "hash_algorithm": "sha256",
   "hashes": {
-    "packet_schema_hash": "dbcf76df2f8a6deef319d8709a428fc5d6ae906761ab7e4c0bd76a7a56474147",
+    "packet_schema_hash": "e674522c7c32b5b9b187db7d358f6cf31595d6b21f61504d2aecba549ed6d200",
     "reason_code_registry_hash": "25a0f83923a381ef6668843c4a68bcda822d048fb3b0b0f52bbf58be3055fec8",
     "idempotency_registry_hash": "5dbeb88408a46e11ad831117a76cda304cd837cb5608ac77c61d10d750ffb2fa",
     "turn_state_machine_hash": "0a9c474a9cf16f5632b98c3f1f66774390cecfc5341d0eb98a61290727c2ab4d",
     "handoff_map_hash": "9289ea56ea2257b64074f38d56c8d93216517c5a9be7e1d2537c5f7e73643762",
     "ownership_matrix_hash": "0b9e49f1f4d3b4732d1489db359ac70926bad59fdf4854c8844feab2ed7265c3",
-    "compat_matrix_hash": "cd45c99371d2a86f6780eb9187ffe9e7ba0dfe799ab04cda7ec1131e3f9d0b2e"
+    "compat_matrix_hash": "b6fa772f8de4174b71cd27f2762ed957c117f826c1bc07ee9b3d247a75793fb6"
   }
 }

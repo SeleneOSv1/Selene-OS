@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": [
+    "PH1.D",
+    "PH1.WRITE",
+    "PH1.J"
+  ],
+  "created_at_ms": 1772496000000,
+  "trace_id": "trace-temporal-invalid",
+  "as_of_baseline_from_ms": 1700000000000,
+  "as_of_baseline_to_ms": 1700900000000,
+  "as_of_compare_from_ms": 1701000000000,
+  "as_of_compare_to_ms": 1701900000000,
+  "timeline_events": [],
+  "uncertainty_flags": [],
+  "reason_codes": []
+}

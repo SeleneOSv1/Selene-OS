@@ -74,7 +74,10 @@ fn test_valid_fixtures_pass() {
         "evidence.json",
         "synthesis.json",
         "write.json",
+        "temporal_comparison.json",
+        "competitive_comparison.json",
         "risk.json",
+        "enterprise_report.json",
         "computation.json",
         "vision_tool_request.json",
         "vision_evidence.json",
@@ -95,7 +98,10 @@ fn test_invalid_fixtures_fail() {
         "tool_request_bad_mode.json",
         "evidence_bad_schema_version.json",
         "audit_missing_hashes.json",
+        "temporal_comparison_missing_required.json",
+        "competitive_comparison_missing_required.json",
         "risk_missing_required.json",
+        "enterprise_report_missing_required.json",
         "computation_missing_required.json",
         "vision_tool_request_missing_asset_ref.json",
         "vision_evidence_missing_outputs.json",
@@ -261,6 +267,51 @@ fn test_computation_invalid_fixture_fails() {
     assert!(
         result.is_err(),
         "invalid computation fixture unexpectedly passed"
+    );
+}
+
+#[test]
+fn test_temporal_comparison_valid_fixture_passes() {
+    validate_single_fixture("valid", "temporal_comparison.json")
+        .expect("valid temporal comparison fixture must pass");
+}
+
+#[test]
+fn test_temporal_comparison_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "temporal_comparison_missing_required.json");
+    assert!(
+        result.is_err(),
+        "invalid temporal comparison fixture unexpectedly passed"
+    );
+}
+
+#[test]
+fn test_competitive_comparison_valid_fixture_passes() {
+    validate_single_fixture("valid", "competitive_comparison.json")
+        .expect("valid competitive comparison fixture must pass");
+}
+
+#[test]
+fn test_competitive_comparison_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "competitive_comparison_missing_required.json");
+    assert!(
+        result.is_err(),
+        "invalid competitive comparison fixture unexpectedly passed"
+    );
+}
+
+#[test]
+fn test_enterprise_report_valid_fixture_passes() {
+    validate_single_fixture("valid", "enterprise_report.json")
+        .expect("valid enterprise report fixture must pass");
+}
+
+#[test]
+fn test_enterprise_report_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "enterprise_report_missing_required.json");
+    assert!(
+        result.is_err(),
+        "invalid enterprise report fixture unexpectedly passed"
     );
 }
 

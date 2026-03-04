@@ -138,3 +138,6 @@ pub fn append_learn_audit_fields(
 
 #[cfg(test)]
 pub mod learn_tests;
+
+#[cfg(test)]
+pub mod learn_parity_tests;

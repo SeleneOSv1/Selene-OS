@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.D",
+  "intended_consumers": [
+    "PH1.WRITE",
+    "PH1.J"
+  ],
+  "created_at_ms": 1772496000000,
+  "trace_id": "trace-enterprise-report",
+  "report_title": "Enterprise Research Summary",
+  "sections": [
+    {
+      "section_id": "executive_summary",
+      "heading": "Executive Summary",
+      "content": "Evidence-bound synthesis generated."
+    }
+  ],
+  "reason_codes": [],
+  "source_refs": [
+    "https://example.com/source-1"
+  ]
+}

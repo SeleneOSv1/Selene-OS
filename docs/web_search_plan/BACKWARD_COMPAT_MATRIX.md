@@ -17,3 +17,9 @@
 2. Update this matrix.
 3. Refresh valid/invalid fixtures.
 4. Update `CONTRACT_HASH_MANIFEST.json`.
+
+## Recorded Blocked Change (Phase A Dedup/Contract Fix)
+- `ComparisonPacket` was split into two explicit packet contracts:
+  - `TemporalComparisonPacket`
+  - `CompetitiveComparisonPacket`
+- This removes ambiguous dual-shape semantics and is treated as a blocked contract change with refreshed fixtures and validators.

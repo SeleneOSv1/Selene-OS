@@ -15,14 +15,15 @@ This registry is the canonical authority for web research lane packet contracts.
 4. EvidencePacket
 5. SynthesisPacket
 6. WritePacket
-7. ComparisonPacket
-8. RiskPacket
-9. EnterpriseReportPacket (stub)
-10. AuditPacket
-11. ComputationPacket
-12. VisionToolRequestPacket
-13. VisionEvidencePacket
-14. MergePacket
+7. TemporalComparisonPacket
+8. CompetitiveComparisonPacket
+9. RiskPacket
+10. EnterpriseReportPacket
+11. AuditPacket
+12. ComputationPacket
+13. VisionToolRequestPacket
+14. VisionEvidencePacket
+15. MergePacket
 
 ## Common Required Fields (all packets)
 - `schema_version`

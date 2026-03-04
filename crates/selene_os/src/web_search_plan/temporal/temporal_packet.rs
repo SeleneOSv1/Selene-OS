@@ -218,7 +218,7 @@ fn validate_temporal_packet(packet: &TemporalComparisonPacket) -> Result<(), Tem
         .map_err(|err| TemporalBuildError::new("policy_violation", err))?;
     let value = serde_json::to_value(packet)
         .map_err(|err| TemporalBuildError::new("policy_violation", err.to_string()))?;
-    validate_packet("ComparisonPacket", &value, &registry)
+    validate_packet("TemporalComparisonPacket", &value, &registry)
         .map_err(|err| TemporalBuildError::new("policy_violation", err))
 }
 

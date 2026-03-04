@@ -14,15 +14,17 @@ use crate::web_search_plan::competitive::feature_normalize::build_feature_matrix
 use crate::web_search_plan::competitive::output_packet::build_comparison_packet;
 use crate::web_search_plan::competitive::pricing_normalize::build_pricing_table;
 use crate::web_search_plan::competitive::schema::{
-    ComparisonPacket, CompetitiveError, CompetitiveErrorKind, CompetitiveRequest,
+    CompetitiveComparisonPacket, CompetitiveError, CompetitiveErrorKind, CompetitiveRequest,
 };
+use crate::web_search_plan::packet_validator::validate_packet;
+use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::structured::normalize::sort_rows_deterministically;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
 pub fn run_competitive_mode(
     mut request: CompetitiveRequest,
-) -> Result<ComparisonPacket, CompetitiveError> {
+) -> Result<CompetitiveComparisonPacket, CompetitiveError> {
     if request.trace_id.trim().is_empty() {
         return Err(CompetitiveError::new(
             CompetitiveErrorKind::PolicyViolation,
@@ -70,7 +72,9 @@ pub fn run_competitive_mode(
         pricing.reason_codes,
     );
 
-    Ok(build_comparison_packet(&request, comparison))
+    let packet = build_comparison_packet(&request, comparison);
+    validate_competitive_packet(&packet)?;
+    Ok(packet)
 }
 
 pub fn parse_computation_packet(
@@ -112,6 +116,27 @@ fn collect_allowed_source_refs(evidence_packet: &Value) -> BTreeSet<String> {
         }
     }
     refs
+}
+
+fn validate_competitive_packet(packet: &CompetitiveComparisonPacket) -> Result<(), CompetitiveError> {
+    let registry = load_packet_schema_registry().map_err(|err| {
+        CompetitiveError::new(
+            CompetitiveErrorKind::PolicyViolation,
+            format!("failed to load packet schema registry: {}", err),
+        )
+    })?;
+    let packet_json = serde_json::to_value(packet).map_err(|err| {
+        CompetitiveError::new(
+            CompetitiveErrorKind::PolicyViolation,
+            format!("failed to serialize competitive packet: {}", err),
+        )
+    })?;
+    validate_packet("CompetitiveComparisonPacket", &packet_json, &registry).map_err(|err| {
+        CompetitiveError::new(
+            CompetitiveErrorKind::PolicyViolation,
+            format!("competitive packet validation failed: {}", err),
+        )
+    })
 }
 
 #[cfg(test)]

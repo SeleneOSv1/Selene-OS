@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": [
+    "PH1.D",
+    "PH1.WRITE",
+    "PH1.J"
+  ],
+  "created_at_ms": 1772496000000,
+  "trace_id": "trace-competitive-invalid",
+  "target_entity": "Acme Cloud",
+  "competitors": [],
+  "feature_matrix": [],
+  "uncertainty_flags": [],
+  "reason_codes": [],
+  "source_refs": []
+}

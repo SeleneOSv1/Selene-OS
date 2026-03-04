@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": [
+    "PH1.D",
+    "PH1.WRITE",
+    "PH1.J"
+  ],
+  "created_at_ms": 1772496000000,
+  "trace_id": "trace-temporal-fixture",
+  "as_of_baseline_from_ms": 1700000000000,
+  "as_of_baseline_to_ms": 1700900000000,
+  "as_of_compare_from_ms": 1701000000000,
+  "as_of_compare_to_ms": 1701900000000,
+  "timeline_events": [
+    {
+      "event_id": "evt-1",
+      "entity": "Acme",
+      "attribute": "Revenue",
+      "value": "100",
+      "as_of_ms": 1700500000000,
+      "source_refs": [
+        "https://example.com/revenue-q1"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "key": "acme|revenue|usd",
+      "prior_value": "100",
+      "new_value": "110",
+      "change_type": "modified",
+      "delta_value": "10",
+      "first_seen_ms": 1700500000000,
+      "latest_seen_ms": 1701500000000,
+      "citations_prior": [
+        "https://example.com/revenue-q1"
+      ],
+      "citations_new": [
+        "https://example.com/revenue-q2"
+      ]
+    }
+  ],
+  "uncertainty_flags": [],
+  "reason_codes": []
+}

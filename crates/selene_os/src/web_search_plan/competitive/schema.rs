@@ -146,7 +146,7 @@ pub struct CompetitiveComparison {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ComparisonPacket {
+pub struct CompetitiveComparisonPacket {
     pub schema_version: String,
     pub produced_by: String,
     pub intended_consumers: Vec<String>,

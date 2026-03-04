@@ -224,7 +224,7 @@
       ]
     },
     {
-      "packet_name": "ComparisonPacket",
+      "packet_name": "TemporalComparisonPacket",
       "consumer_expected_version": "1.0.0",
       "versions": [
         {
@@ -235,7 +235,15 @@
             "produced_by",
             "intended_consumers",
             "created_at_ms",
-            "trace_id"
+            "trace_id",
+            "as_of_baseline_from_ms",
+            "as_of_baseline_to_ms",
+            "as_of_compare_from_ms",
+            "as_of_compare_to_ms",
+            "timeline_events",
+            "changes",
+            "uncertainty_flags",
+            "reason_codes"
           ],
           "field_types": {
             "schema_version": "string",
@@ -251,6 +259,46 @@
             "changes": "array_object",
             "uncertainty_flags": "array_string",
             "reason_codes": "array_string"
+          }
+        }
+      ]
+    },
+    {
+      "packet_name": "CompetitiveComparisonPacket",
+      "consumer_expected_version": "1.0.0",
+      "versions": [
+        {
+          "schema_version": "1.0.0",
+          "additional_properties": false,
+          "required_fields": [
+            "schema_version",
+            "produced_by",
+            "intended_consumers",
+            "created_at_ms",
+            "trace_id",
+            "target_entity",
+            "competitors",
+            "pricing_table",
+            "feature_matrix",
+            "uncertainty_flags",
+            "reason_codes",
+            "source_refs"
+          ],
+          "field_types": {
+            "schema_version": "string",
+            "produced_by": "string",
+            "intended_consumers": "array_string",
+            "created_at_ms": "int64",
+            "trace_id": "string",
+            "target_entity": "string",
+            "competitors": "array_object",
+            "pricing_table": "array_object",
+            "feature_matrix": "array_object",
+            "position_summary": "object",
+            "swot": "object",
+            "uncertainty_flags": "array_string",
+            "reason_codes": "array_string",
+            "source_refs": "array_string"
           }
         }
       ]
@@ -300,14 +348,22 @@
             "produced_by",
             "intended_consumers",
             "created_at_ms",
-            "trace_id"
+            "trace_id",
+            "report_title",
+            "sections",
+            "reason_codes",
+            "source_refs"
           ],
           "field_types": {
             "schema_version": "string",
             "produced_by": "string",
             "intended_consumers": "array_string",
             "created_at_ms": "int64",
-            "trace_id": "string"
+            "trace_id": "string",
+            "report_title": "string",
+            "sections": "array_object",
+            "reason_codes": "array_string",
+            "source_refs": "array_string"
           }
         }
       ]

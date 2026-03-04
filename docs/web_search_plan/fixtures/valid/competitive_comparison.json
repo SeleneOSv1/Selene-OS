@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": [
+    "PH1.D",
+    "PH1.WRITE",
+    "PH1.J"
+  ],
+  "created_at_ms": 1772496000000,
+  "trace_id": "trace-competitive-fixture",
+  "target_entity": "Acme Cloud",
+  "competitors": [
+    {
+      "entity_id": "cmp-1",
+      "name": "Bravo Cloud",
+      "sources": [
+        "https://example.com/bravo"
+      ]
+    }
+  ],
+  "pricing_table": [
+    {
+      "entity_id": "cmp-1",
+      "price_value": "49.00",
+      "currency": "USD",
+      "billing_period": "monthly",
+      "tax_included": "unknown",
+      "source_refs": [
+        "https://example.com/bravo-pricing"
+      ]
+    }
+  ],
+  "feature_matrix": [
+    {
+      "entity_id": "cmp-1",
+      "feature_key": "sso",
+      "feature_label": "Single Sign-On",
+      "presence": "true",
+      "source_refs": [
+        "https://example.com/bravo-features"
+      ]
+    }
+  ],
+  "uncertainty_flags": [],
+  "reason_codes": [],
+  "source_refs": [
+    "https://example.com/bravo-pricing",
+    "https://example.com/bravo-features"
+  ]
+}
