@@ -478,6 +478,11 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         let _ = crate::web_search_plan::enterprise::parse_mode("report");
         let _ = crate::web_search_plan::vision::VisionMode::parse("image_analyze");
         let _ = crate::web_search_plan::learn::LEARN_ENGINE_ID;
+        let _ = crate::web_search_plan::parallel::scheduler::build_stable_key(
+            "https://example.com",
+            "RuntimeBinding",
+            "noop",
+        );
     }
 
     fn transition_or_fail(&mut self, state: &str) -> Result<(), RuntimeExecutionError> {

@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 
+use crate::web_search_plan::trust::domain_rules::{
+    classify_trust_tier, parse_trust_tier_literal, CanonicalTrustTier,
+};
 use serde_json::Value;
-use url::Url;
 
 pub const TRUST_TIER_POLICY_VERSION: &str = "1.0.0";
 
@@ -47,37 +49,6 @@ impl TrustTier {
     }
 }
 
-const OFFICIAL_ALLOWLIST: &[&str] = &[
-    "sec.gov",
-    "mas.gov.sg",
-    "europa.eu",
-    "bafin.de",
-    "gov.sg",
-];
-
-const HIGH_ALLOWLIST: &[&str] = &[
-    "iso.org",
-    "nist.gov",
-    "ieee.org",
-    "standards.org",
-    "oecd.org",
-];
-
-const MEDIUM_ALLOWLIST: &[&str] = &[
-    "reuters.com",
-    "bloomberg.com",
-    "ft.com",
-    "wsj.com",
-    "cnbc.com",
-];
-
-const LOW_ALLOWLIST: &[&str] = &[
-    "reddit.com",
-    "medium.com",
-    "blogspot.com",
-    "wordpress.com",
-];
-
 pub fn classify_source(source: &Value) -> TrustTier {
     if let Some(url) = source.get("url").and_then(Value::as_str) {
         let from_url = classify_url(url);
@@ -94,66 +65,19 @@ pub fn classify_source(source: &Value) -> TrustTier {
 }
 
 pub fn classify_url(url: &str) -> TrustTier {
-    let host = Url::parse(url)
-        .ok()
-        .and_then(|parsed| parsed.host_str().map(|value| value.to_ascii_lowercase()));
-    let Some(host) = host else {
-        return TrustTier::Unknown;
-    };
-
-    if is_official_host(host.as_str()) {
-        return TrustTier::Official;
-    }
-    if is_high_host(host.as_str()) {
-        return TrustTier::High;
-    }
-    if is_medium_host(host.as_str()) {
-        return TrustTier::Medium;
-    }
-    if is_low_host(host.as_str()) {
-        return TrustTier::Low;
-    }
-    if host.contains("blog") || host.ends_with(".substack.com") {
-        return TrustTier::Low;
-    }
-    TrustTier::Unknown
-}
-
-fn is_official_host(host: &str) -> bool {
-    OFFICIAL_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-        || host.ends_with(".gov")
-        || host.contains(".gov.")
-}
-
-fn is_high_host(host: &str) -> bool {
-    HIGH_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-        || host.ends_with(".edu")
-        || host.contains(".edu.")
-}
-
-fn is_medium_host(host: &str) -> bool {
-    MEDIUM_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-}
-
-fn is_low_host(host: &str) -> bool {
-    LOW_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
+    map_from_canonical(classify_trust_tier(url))
 }
 
 fn map_trust_tier_literal(raw: &str) -> Option<TrustTier> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "official" => Some(TrustTier::Official),
-        "high" => Some(TrustTier::High),
-        "medium" => Some(TrustTier::Medium),
-        "low" => Some(TrustTier::Low),
-        "unknown" => Some(TrustTier::Unknown),
-        _ => None,
+    parse_trust_tier_literal(raw).map(map_from_canonical)
+}
+
+fn map_from_canonical(tier: CanonicalTrustTier) -> TrustTier {
+    match tier {
+        CanonicalTrustTier::Official => TrustTier::Official,
+        CanonicalTrustTier::High => TrustTier::High,
+        CanonicalTrustTier::Medium => TrustTier::Medium,
+        CanonicalTrustTier::Low => TrustTier::Low,
+        CanonicalTrustTier::Unknown => TrustTier::Unknown,
     }
 }

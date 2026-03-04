@@ -63,7 +63,7 @@ pub fn evaluate_case(case: &EvalCase) -> Result<CaseEvaluation, String> {
     let determinism_ok =
         snapshot_first == snapshot_second && snapshot_hash == case.expected_snapshot_hash;
 
-    let citation_coverage_ratio = compute_citation_coverage_ratio(fixture.synthesis_packet.as_ref())?;
+    let citation_coverage_ratio = citation_coverage_ratio(fixture.synthesis_packet.as_ref())?;
     let refusal_observed = snapshot_first.reason_codes.iter().any(|code| is_refusal_code(code));
     let refusal_correctness = if case.expected_outcome == "refusal" {
         refusal_observed
@@ -136,7 +136,7 @@ pub fn evaluate_case(case: &EvalCase) -> Result<CaseEvaluation, String> {
     })
 }
 
-fn compute_citation_coverage_ratio(synthesis_packet: Option<&Value>) -> Result<f64, String> {
+pub fn citation_coverage_ratio(synthesis_packet: Option<&Value>) -> Result<f64, String> {
     let Some(packet) = synthesis_packet else {
         return Ok(0.0);
     };
