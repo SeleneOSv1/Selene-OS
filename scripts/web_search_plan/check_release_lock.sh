@@ -35,17 +35,22 @@ run_gate "scripts/web_search_plan/check_reason_codes.sh" scripts/web_search_plan
 run_gate "scripts/web_search_plan/check_idempotency.sh" scripts/web_search_plan/check_idempotency.sh
 run_gate "scripts/web_search_plan/check_turn_state_machine.sh" scripts/web_search_plan/check_turn_state_machine.sh
 run_gate "scripts/web_search_plan/check_handoff_ownership.sh" scripts/web_search_plan/check_handoff_ownership.sh
+run_gate "scripts/web_search_plan/check_doc_canon.sh" scripts/web_search_plan/check_doc_canon.sh
+run_gate "scripts/web_search_plan/check_trace_matrix.sh" scripts/web_search_plan/check_trace_matrix.sh
 run_gate "scripts/web_search_plan/check_proxy_universal.sh" scripts/web_search_plan/check_proxy_universal.sh
 run_gate "scripts/web_search_plan/check_url_fetch_core.sh" scripts/web_search_plan/check_url_fetch_core.sh
 run_gate "scripts/web_search_plan/check_chunk_hash_core.sh" scripts/web_search_plan/check_chunk_hash_core.sh
 run_gate "scripts/web_search_plan/check_web_provider_ladder.sh" scripts/web_search_plan/check_web_provider_ladder.sh
 run_gate "scripts/web_search_plan/check_news_provider_ladder.sh" scripts/web_search_plan/check_news_provider_ladder.sh
+run_gate "scripts/web_search_plan/check_news_parity.sh" scripts/web_search_plan/check_news_parity.sh
 run_gate "scripts/web_search_plan/check_search_topk_pipeline.sh" scripts/web_search_plan/check_search_topk_pipeline.sh
 run_gate "scripts/web_search_plan/check_synthesis_core.sh" scripts/web_search_plan/check_synthesis_core.sh
 run_gate "scripts/web_search_plan/check_write_core.sh" scripts/web_search_plan/check_write_core.sh
 run_gate "scripts/web_search_plan/check_debug_packet.sh" scripts/web_search_plan/check_debug_packet.sh
 run_gate "scripts/web_search_plan/check_perf_cost_tiers.sh" scripts/web_search_plan/check_perf_cost_tiers.sh
 run_gate "scripts/web_search_plan/check_cache_parallel.sh" scripts/web_search_plan/check_cache_parallel.sh
+run_gate "scripts/web_search_plan/check_vision_engine.sh" scripts/web_search_plan/check_vision_engine.sh
+run_gate "scripts/web_search_plan/check_learning_layer.sh" scripts/web_search_plan/check_learning_layer.sh
 run_gate "scripts/web_search_plan/check_replay_harness.sh" scripts/web_search_plan/check_replay_harness.sh
 run_gate "scripts/web_search_plan/check_quality_gates.sh" scripts/web_search_plan/check_quality_gates.sh
 run_gate "scripts/web_search_plan/check_continuous_eval.sh" scripts/web_search_plan/check_continuous_eval.sh
@@ -62,9 +67,9 @@ run_gate "scripts/web_search_plan/check_risk_mode.sh" scripts/web_search_plan/ch
 run_gate "scripts/web_search_plan/check_merge_mode.sh" scripts/web_search_plan/check_merge_mode.sh
 run_gate "scripts/web_search_plan/check_parity_enhancements.sh" scripts/web_search_plan/check_parity_enhancements.sh
 run_gate "scripts/web_search_plan/check_gap_closers.sh" scripts/web_search_plan/check_gap_closers.sh
-if [[ -x "scripts/web_search_plan/check_enterprise_integration_lock.sh" ]]; then
-  run_gate "scripts/web_search_plan/check_enterprise_integration_lock.sh" scripts/web_search_plan/check_enterprise_integration_lock.sh
-fi
+run_gate "scripts/web_search_plan/check_enterprise_integration_lock.sh" scripts/web_search_plan/check_enterprise_integration_lock.sh
+run_gate "scripts/web_search_plan/check_slo_lock.sh" scripts/web_search_plan/check_slo_lock.sh
+run_gate "cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet" cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::tests --quiet" cargo test -p selene_os web_search_plan::tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::release::release_tests --quiet" cargo test -p selene_os web_search_plan::release::release_tests --quiet
 

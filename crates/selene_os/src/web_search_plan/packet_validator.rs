@@ -172,11 +172,15 @@ fn validate_field_type(
 pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str> {
     match filename {
         "turn_input.json" | "turn_input_missing_required.json" => Some("TurnInputPacket"),
-        "search_assist.json" => Some("SearchAssistPacket"),
-        "tool_request.json" | "tool_request_bad_mode.json" => Some("ToolRequestPacket"),
-        "evidence.json" | "evidence_bad_schema_version.json" => Some("EvidencePacket"),
-        "synthesis.json" => Some("SynthesisPacket"),
-        "write.json" => Some("WritePacket"),
+        "search_assist.json" | "search_assist_missing_required.json" => Some("SearchAssistPacket"),
+        "tool_request.json"
+        | "tool_request_bad_mode.json"
+        | "tool_request_missing_required.json" => Some("ToolRequestPacket"),
+        "evidence.json" | "evidence_bad_schema_version.json" | "evidence_missing_required.json" => {
+            Some("EvidencePacket")
+        }
+        "synthesis.json" | "synthesis_missing_required.json" => Some("SynthesisPacket"),
+        "write.json" | "write_missing_required.json" => Some("WritePacket"),
         "temporal_comparison.json" | "temporal_comparison_missing_required.json" => {
             Some("TemporalComparisonPacket")
         }
@@ -191,15 +195,47 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "vision_tool_request.json" | "vision_tool_request_missing_asset_ref.json" => {
             Some("VisionToolRequestPacket")
         }
-        "vision_evidence.json" | "vision_evidence_missing_outputs.json" => {
+        "vision_tool_request_missing_required.json" => Some("VisionToolRequestPacket"),
+        "vision_evidence.json"
+        | "vision_evidence_missing_outputs.json"
+        | "vision_evidence_missing_required.json" => {
             Some("VisionEvidencePacket")
         }
         "merge.json" | "merge_missing_required.json" => Some("MergePacket"),
-        "audit.json" | "audit_missing_hashes.json" | "unknown_reason_code.json" => {
+        "audit.json"
+        | "audit_missing_hashes.json"
+        | "audit_missing_required.json"
+        | "unknown_reason_code.json" => {
             Some("AuditPacket")
         }
         _ => None,
     }
+}
+
+pub fn required_fixture_pair(packet_name: &str) -> Option<(String, String)> {
+    let base = match packet_name {
+        "TurnInputPacket" => "turn_input",
+        "SearchAssistPacket" => "search_assist",
+        "ToolRequestPacket" => "tool_request",
+        "EvidencePacket" => "evidence",
+        "SynthesisPacket" => "synthesis",
+        "WritePacket" => "write",
+        "TemporalComparisonPacket" => "temporal_comparison",
+        "CompetitiveComparisonPacket" => "competitive_comparison",
+        "RiskPacket" => "risk",
+        "EnterpriseReportPacket" => "enterprise_report",
+        "ComputationPacket" => "computation",
+        "AuditPacket" => "audit",
+        "VisionToolRequestPacket" => "vision_tool_request",
+        "VisionEvidencePacket" => "vision_evidence",
+        "MergePacket" => "merge",
+        _ => return None,
+    };
+
+    Some((
+        format!("{}.json", base),
+        format!("{}_missing_required.json", base),
+    ))
 }
 
 pub fn packet_definition_by_name<'a>(

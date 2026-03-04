@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.E",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464000300,
+  "trace_id": "trace_run1_turn_001",
+  "query": "cloud security policy updates 2026",
+  "retrieved_at_ms": 1762464000299,
+  "provider_runs": [
+    {"provider": "provider_a", "status": "ok"}
+  ],
+  "sources": [
+    {"title": "Source A", "url": "https://example.org/a"}
+  ],
+  "content_chunks": []
+}

@@ -182,3 +182,22 @@ fn test_t7_missing_retrieved_at_fails_without_inference() {
         .expect_err("missing retrieved_at_ms must fail");
     assert_eq!(err.reason_code(), "policy_violation");
 }
+
+#[test]
+fn test_t8_weather_fixtures_cover_fresh_and_stale_paths() {
+    let (fresh_request, fresh_output) = fixture_request_and_output("weather_ok.json");
+    let fresh_result =
+        finalize_realtime_result(&fresh_request, fresh_output).expect("weather_ok should pass");
+    assert_eq!(
+        fresh_result
+            .evidence_packet
+            .pointer("/trust_metadata/realtime/domain")
+            .and_then(Value::as_str),
+        Some("weather")
+    );
+
+    let (stale_request, stale_output) = fixture_request_and_output("weather_stale.json");
+    let stale_error =
+        finalize_realtime_result(&stale_request, stale_output).expect_err("weather_stale must fail");
+    assert_eq!(stale_error.reason_code(), "stale_data");
+}

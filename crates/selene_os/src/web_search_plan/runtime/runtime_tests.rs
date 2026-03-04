@@ -519,3 +519,142 @@ fn test_t3_news_path_is_deterministic_and_citation_backed() {
 
     let _ = join.join();
 }
+
+#[test]
+fn test_all_modes_route_through_orchestrator() {
+    let trace_id = "trace-runtime-mode-route";
+    let created_at_ms = 1_703_100_000_000_i64;
+
+    let (base, join) = spawn_server(
+        move |method, path, base_url| {
+            if method == "GET" && path.starts_with("/res/v1/web/search") {
+                MockResponse::json(
+                    200,
+                    json!({
+                        "web": {
+                            "results": [
+                                {
+                                    "title": "Runtime Mode Routing",
+                                    "url": format!("{}/page/mode-routing", base_url),
+                                    "description": "Mode routing remains deterministic and evidence-bound."
+                                },
+                                {
+                                    "title": "Runtime Mode Routing Companion",
+                                    "url": format!("{}/page/mode-routing-2", base_url),
+                                    "description": "Companion source for deterministic synthesis sufficiency."
+                                }
+                            ]
+                        }
+                    }),
+                )
+            } else if method == "GET" && path.starts_with("/res/v1/news/search") {
+                MockResponse::json(
+                    200,
+                    json!({
+                        "results": [
+                            {
+                                "title": "Runtime News Routing",
+                                "url": "https://news.example.com/runtime-routing",
+                                "description": "News lane remains deterministic.",
+                                "published": "2026-03-03T10:00:00Z"
+                            },
+                            {
+                                "title": "Runtime News Routing Companion",
+                                "url": "https://analysis.example.org/runtime-routing",
+                                "description": "Companion source for deterministic news synthesis.",
+                                "published": "2026-03-03T11:00:00Z"
+                            }
+                        ]
+                    }),
+                )
+            } else if method == "GET" && path.starts_with("/api/v2/doc/doc") {
+                MockResponse::json(200, json!({"articles": []}))
+            } else if method == "GET"
+                && (path.starts_with("/page/mode-routing")
+                    || path.starts_with("/page/mode-routing-2")
+                    || path.starts_with("/page/url-fetch"))
+            {
+                MockResponse::html(
+                    200,
+                    "<html><body><p>Deterministic mode routing content for runtime tests.</p></body></html>",
+                )
+            } else {
+                MockResponse::json(500, json!({"error": "unexpected path"}))
+            }
+        },
+        16,
+    );
+
+    let mut deps = runtime_deps_for_base(&base);
+
+    for mode in ["web", "news"] {
+        let query = "runtime orchestrator route check".to_string();
+        let result = execute_web_search_turn_with_dependencies(
+            make_turn_input(trace_id, created_at_ms, query.as_str()),
+            make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
+            make_tool_request(
+                trace_id,
+                created_at_ms.saturating_add(2),
+                mode,
+                query.as_str(),
+                "medium",
+            ),
+            "policy-snapshot-runtime-v1".to_string(),
+            &mut deps,
+        )
+        .unwrap_or_else(|error| panic!("mode {} should succeed but failed: {}", mode, error.reason_code));
+        assert_success_state_path(&result.audit_packet);
+    }
+
+    let url_fetch_query = format!("{}/page/url-fetch", base);
+    let url_fetch_error = execute_web_search_turn_with_dependencies(
+        make_turn_input(trace_id, created_at_ms, url_fetch_query.as_str()),
+        make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
+        make_tool_request(
+            trace_id,
+            created_at_ms.saturating_add(2),
+            "url_fetch",
+            url_fetch_query.as_str(),
+            "medium",
+        ),
+        "policy-snapshot-runtime-v1".to_string(),
+        &mut deps,
+    )
+    .expect_err("url_fetch mode should fail closed when evidence is insufficient");
+    assert!(
+        matches!(
+            url_fetch_error.reason_code.as_str(),
+            "empty_results" | "insufficient_evidence" | "provider_upstream_failed"
+        ),
+        "unexpected url_fetch reason code {}",
+        url_fetch_error.reason_code
+    );
+
+    for mode in ["structured", "images", "video"] {
+        let error = execute_web_search_turn_with_dependencies(
+            make_turn_input(trace_id, created_at_ms, "unsupported mode route check"),
+            make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
+            make_tool_request(
+                trace_id,
+                created_at_ms.saturating_add(2),
+                mode,
+                "unsupported mode route check",
+                "medium",
+            ),
+            "policy-snapshot-runtime-v1".to_string(),
+            &mut deps,
+        )
+        .expect_err("unsupported mode should fail closed");
+        assert_eq!(error.reason_code, "policy_violation");
+        assert_eq!(
+            error
+                .transitions
+                .last()
+                .map(|transition| transition.to.as_str())
+                .unwrap_or(""),
+            "TURN_FAILED_CLOSED"
+        );
+    }
+
+    let _ = join.join();
+}

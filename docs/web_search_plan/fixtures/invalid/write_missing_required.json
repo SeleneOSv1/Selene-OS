@@ -1,0 +1,10 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.WRITE",
+  "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+  "created_at_ms": 1762464000500,
+  "trace_id": "trace_run1_turn_001",
+  "formatted_text": "Short answer with citations.",
+  "format_mode": "standard",
+  "voice_safe": true
+}

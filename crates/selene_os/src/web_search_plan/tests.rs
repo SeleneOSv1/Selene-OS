@@ -3,7 +3,8 @@
 use crate::web_search_plan::contract_hash::{computed_manifest, verify_contract_hash_manifest};
 use crate::web_search_plan::idempotency_validator::validate_idempotency_registry;
 use crate::web_search_plan::packet_validator::{
-    packet_name_from_fixture_filename, validate_packet, validate_packet_schema_registry,
+    packet_name_from_fixture_filename, required_fixture_pair, validate_packet,
+    validate_packet_schema_registry,
 };
 use crate::web_search_plan::reason_code_validator::{
     validate_reason_code_registry, validate_reason_codes_registered,
@@ -95,15 +96,23 @@ fn test_valid_fixtures_pass() {
 fn test_invalid_fixtures_fail() {
     let invalid_names = [
         "turn_input_missing_required.json",
+        "search_assist_missing_required.json",
+        "tool_request_missing_required.json",
         "tool_request_bad_mode.json",
+        "evidence_missing_required.json",
         "evidence_bad_schema_version.json",
+        "synthesis_missing_required.json",
+        "write_missing_required.json",
+        "audit_missing_required.json",
         "audit_missing_hashes.json",
         "temporal_comparison_missing_required.json",
         "competitive_comparison_missing_required.json",
         "risk_missing_required.json",
         "enterprise_report_missing_required.json",
         "computation_missing_required.json",
+        "vision_tool_request_missing_required.json",
         "vision_tool_request_missing_asset_ref.json",
+        "vision_evidence_missing_required.json",
         "vision_evidence_missing_outputs.json",
         "merge_missing_required.json",
         "unknown_reason_code.json",
@@ -116,6 +125,69 @@ fn test_invalid_fixtures_fail() {
             "invalid fixture {} unexpectedly passed validation",
             name
         );
+    }
+}
+
+#[test]
+fn test_registered_packets_have_required_fixture_pairs() {
+    let packet_registry = load_packet_schema_registry().expect("packet registry must load");
+
+    for packet in &packet_registry.packets {
+        let (valid_name, invalid_name) = required_fixture_pair(packet.packet_name.as_str())
+            .unwrap_or_else(|| panic!("missing fixture naming rule for {}", packet.packet_name));
+
+        let valid_path = fixtures_dir("valid").join(valid_name.as_str());
+        assert!(
+            valid_path.exists(),
+            "missing valid fixture for {} at {}",
+            packet.packet_name,
+            valid_path.display()
+        );
+        let invalid_path = fixtures_dir("invalid").join(invalid_name.as_str());
+        assert!(
+            invalid_path.exists(),
+            "missing invalid fixture for {} at {}",
+            packet.packet_name,
+            invalid_path.display()
+        );
+    }
+}
+
+#[test]
+fn test_fixture_files_map_to_registered_packets() {
+    let packet_registry = load_packet_schema_registry().expect("packet registry must load");
+    let packet_names = packet_registry
+        .packets
+        .iter()
+        .map(|entry| entry.packet_name.as_str())
+        .collect::<std::collections::BTreeSet<&str>>();
+
+    for kind in ["valid", "invalid"] {
+        let dir = fixtures_dir(kind);
+        let entries = fs::read_dir(&dir)
+            .unwrap_or_else(|err| panic!("failed reading fixture dir {}: {}", dir.display(), err));
+        for entry in entries {
+            let entry = entry.expect("fixture entry should be readable");
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let packet_name = packet_name_from_fixture_filename(file_name).unwrap_or_else(|| {
+                panic!(
+                    "fixture {} has no packet mapping rule",
+                    path.display()
+                )
+            });
+            assert!(
+                packet_names.contains(packet_name),
+                "fixture {} maps to unregistered packet {}",
+                path.display(),
+                packet_name
+            );
+        }
     }
 }
 

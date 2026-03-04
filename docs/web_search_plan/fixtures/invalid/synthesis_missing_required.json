@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.D",
+  "intended_consumers": ["PH1.WRITE"],
+  "created_at_ms": 1762464000400,
+  "trace_id": "trace_run1_turn_001",
+  "answer_text": "Policy updates emphasize tighter evidence and freshness controls.",
+  "bullet_evidence": [
+    "Source A states new audit controls.",
+    "Source B confirms updated freshness checks."
+  ],
+  "uncertainty_flags": [],
+  "reason_codes": ["stale_data"],
+  "evidence_refs": ["ev_ref_001"],
+  "synthesis_template_version": "v1"
+}

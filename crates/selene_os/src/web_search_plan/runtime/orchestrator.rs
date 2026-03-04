@@ -215,6 +215,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
     fn run(&mut self) -> Result<RuntimeExecutionArtifacts, RuntimeExecutionError> {
         self.transition_or_fail("INPUT_PARSED")?;
         self.validate_input_packets()?;
+        self.bind_extension_module_contracts();
 
         if !self
             .search_assist
@@ -471,6 +472,12 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             audit_packet,
             transitions,
         })
+    }
+
+    fn bind_extension_module_contracts(&self) {
+        let _ = crate::web_search_plan::enterprise::parse_mode("report");
+        let _ = crate::web_search_plan::vision::VisionMode::parse("image_analyze");
+        let _ = crate::web_search_plan::learn::LEARN_ENGINE_ID;
     }
 
     fn transition_or_fail(&mut self, state: &str) -> Result<(), RuntimeExecutionError> {
