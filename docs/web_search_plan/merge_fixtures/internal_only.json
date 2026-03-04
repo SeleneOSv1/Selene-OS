@@ -1,0 +1,28 @@
+{
+  "trace_id": "trace_merge_internal_only",
+  "created_at_ms": 1762465000100,
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "policy_snapshot_id": "policy_run29_v1",
+  "internal_context": {
+    "prior_summary": "Previously tracked competitor pricing and uptime notes.",
+    "prior_key_points": [
+      "Starter plan costs $10 monthly.",
+      "Platform uptime SLA is 99.9%."
+    ],
+    "prior_timestamp_ms": 1762464000000,
+    "internal_source_type": "prior_session"
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1762465000000,
+    "trace_id": "trace_evidence_internal_only",
+    "query": "acme pricing",
+    "retrieved_at_ms": 1762465000000,
+    "provider_runs": [],
+    "sources": [],
+    "content_chunks": [],
+    "trust_metadata": {}
+  }
+}

@@ -185,6 +185,7 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "vision_evidence.json" | "vision_evidence_missing_outputs.json" => {
             Some("VisionEvidencePacket")
         }
+        "merge.json" | "merge_missing_required.json" => Some("MergePacket"),
         "audit.json" | "audit_missing_hashes.json" | "unknown_reason_code.json" => {
             Some("AuditPacket")
         }

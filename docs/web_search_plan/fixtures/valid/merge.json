@@ -1,0 +1,50 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.MERGE",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464001800,
+  "trace_id": "trace_run29_turn_001",
+  "policy_snapshot_id": "policy_run29_v1",
+  "evidence_hash": "f67e4f49363603e6f4d11ea81294ad3504ff17d03b9db6d9498dc8fcc6391635",
+  "internal_context_hash": "2059f0cb2a3e615ca4817dd6e8fe1978ddf9e236dc2ea4f973368c8f001cfb5f",
+  "merge_template_version": "1.0.0",
+  "internal_view": {
+    "prior_summary": "Starter plan was previously listed at ten dollars monthly.",
+    "prior_key_points": ["Starter plan costs $10 monthly."],
+    "prior_timestamp_ms": 1762463000000,
+    "internal_source_type": "memory"
+  },
+  "external_view": {
+    "top_findings": [
+      {
+        "topic_key": "1f8bc3b3d36e8f6196de26601457d53c9fc9166ce1dd2530f35e7ec66d9f5782",
+        "statement": "Starter plan now costs $12 monthly.",
+        "citations": ["chunk-merge-1"]
+      }
+    ],
+    "retrieved_at_ms": 1762464000300
+  },
+  "delta": {
+    "changes_since_last_time": [
+      {
+        "topic_key": "1f8bc3b3d36e8f6196de26601457d53c9fc9166ce1dd2530f35e7ec66d9f5782",
+        "prior_statement": "Starter plan costs $10 monthly.",
+        "new_statement": "Starter plan now costs $12 monthly.",
+        "change_type": "contradicted",
+        "citations": ["chunk-merge-1"]
+      }
+    ]
+  },
+  "conflict_report": {
+    "conflicts": [
+      {
+        "topic_key": "1f8bc3b3d36e8f6196de26601457d53c9fc9166ce1dd2530f35e7ec66d9f5782",
+        "internal_claim": "Starter plan costs $10 monthly.",
+        "evidence_claim": "Starter plan now costs $12 monthly.",
+        "evidence_citations": ["chunk-merge-1"],
+        "resolution_rule": "external_evidence_prevails"
+      }
+    ]
+  },
+  "reason_codes": ["conflicting_evidence_detected"]
+}

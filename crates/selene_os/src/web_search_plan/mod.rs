@@ -10,6 +10,7 @@ pub mod document;
 pub mod idempotency_validator;
 pub mod learn;
 pub mod learning;
+pub mod merge;
 pub mod multihop;
 pub mod news;
 pub mod news_provider;

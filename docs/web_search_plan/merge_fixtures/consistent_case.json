@@ -1,0 +1,48 @@
+{
+  "trace_id": "trace_merge_consistent",
+  "created_at_ms": 1762465000300,
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "policy_snapshot_id": "policy_run29_v1",
+  "internal_context": {
+    "prior_summary": "Pricing and reliability were reviewed recently.",
+    "prior_key_points": [
+      "Starter plan now costs $12 monthly."
+    ],
+    "prior_timestamp_ms": 1762464900000,
+    "internal_source_type": "memory"
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1762465000000,
+    "trace_id": "trace_evidence_consistent",
+    "query": "acme starter plan",
+    "retrieved_at_ms": 1762465000000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Pricing Page",
+        "url": "https://example.com/pricing",
+        "snippet": "Starter plan now costs $12 monthly."
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-merge-1",
+        "source_url": "https://example.com/pricing",
+        "normalized_text": "Starter plan now costs $12 monthly."
+      }
+    ],
+    "trust_metadata": {
+      "merge": {
+        "top_findings": [
+          {
+            "statement": "Starter plan now costs $12 monthly.",
+            "citations": ["chunk-merge-1"]
+          }
+        ]
+      }
+    }
+  }
+}

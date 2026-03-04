@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.MERGE",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1762464001801,
+  "trace_id": "trace_run29_turn_002",
+  "policy_snapshot_id": "policy_run29_v1",
+  "internal_context_hash": "2059f0cb2a3e615ca4817dd6e8fe1978ddf9e236dc2ea4f973368c8f001cfb5f",
+  "merge_template_version": "1.0.0",
+  "internal_view": {
+    "prior_summary": "",
+    "prior_key_points": [],
+    "prior_timestamp_ms": 0,
+    "internal_source_type": "prior_session"
+  },
+  "external_view": {
+    "top_findings": [],
+    "retrieved_at_ms": 1762464000300
+  },
+  "delta": {
+    "changes_since_last_time": []
+  },
+  "reason_codes": []
+}

@@ -22,6 +22,7 @@ This registry is the canonical authority for web research lane packet contracts.
 11. ComputationPacket
 12. VisionToolRequestPacket
 13. VisionEvidencePacket
+14. MergePacket
 
 ## Common Required Fields (all packets)
 - `schema_version`

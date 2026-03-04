@@ -1,0 +1,7 @@
+{
+  "internal_only": "e1bd972220aa4c0b23009601b01768a9e76dddd7d2aec228f8bda6fcaa7c54a1",
+  "external_only": "8cab85b5739ce6416f6752fd6f7931fc186d869638a1b73161a9cce8fefd65ac",
+  "consistent_case": "3175849f169f8adfda4d5cbbead5a3212960ad48e9681b9cbe78af1c433d7fdd",
+  "conflict_case": "5d2cc632990466523fcaf01033fc7997617cda86a740555604e3772f8b89eff2",
+  "insufficient_evidence_case": "3df05ff3c84e428a9b6b8dfa0bd39a1b87d766257b87856176651768b859363e"
+}

@@ -78,6 +78,7 @@ fn test_valid_fixtures_pass() {
         "computation.json",
         "vision_tool_request.json",
         "vision_evidence.json",
+        "merge.json",
         "audit.json",
     ];
 
@@ -98,6 +99,7 @@ fn test_invalid_fixtures_fail() {
         "computation_missing_required.json",
         "vision_tool_request_missing_asset_ref.json",
         "vision_evidence_missing_outputs.json",
+        "merge_missing_required.json",
         "unknown_reason_code.json",
     ];
 
@@ -290,4 +292,15 @@ fn test_vision_evidence_invalid_fixture_fails() {
         result.is_err(),
         "invalid vision evidence fixture unexpectedly passed"
     );
+}
+
+#[test]
+fn test_merge_valid_fixture_passes() {
+    validate_single_fixture("valid", "merge.json").expect("valid merge fixture must pass");
+}
+
+#[test]
+fn test_merge_invalid_fixture_fails() {
+    let result = validate_single_fixture("invalid", "merge_missing_required.json");
+    assert!(result.is_err(), "invalid merge fixture unexpectedly passed");
 }
