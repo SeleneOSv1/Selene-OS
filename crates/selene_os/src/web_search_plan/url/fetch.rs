@@ -6,6 +6,7 @@ use crate::web_search_plan::chunk::{
     build_hashed_chunks_for_document, bounded_excerpt, ChunkBuildError,
     EVIDENCE_TRUNCATED_REASON_CODE, HASH_COLLISION_REASON_CODE,
 };
+use crate::web_search_plan::gap_closers::injection_defense::sanitize_fetched_content;
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
@@ -52,6 +53,12 @@ struct BodyOutcome {
     quality: QualityMetrics,
     bytes_read: usize,
     bytes_decompressed: usize,
+    injection_removed_chars: usize,
+    injection_flagged_count: usize,
+    injection_materially_reduced: bool,
+    injection_reason_code: Option<String>,
+    injection_flagged_patterns: Vec<String>,
+    injection_defense_version: String,
 }
 
 pub fn fetch_url_to_evidence_packet(
@@ -422,12 +429,27 @@ fn read_response_body(
     }
 
     let mime = detect_allowed_mime(content_type_header, &sniff_prefix)?;
-    let extracted = extract_document(mime, &decoded_text, policy.max_extracted_chars)?;
+    let mut extracted = extract_document(mime, &decoded_text, policy.max_extracted_chars)?;
+    let injection_outcome = sanitize_fetched_content(&extracted.body_text);
+    extracted.body_text = injection_outcome.sanitized_text.clone();
+    extracted.extraction_chars = extracted.body_text.chars().count();
+    if extracted.body_text.trim().is_empty() {
+        return Err(UrlFetchErrorKind::EmptyExtraction);
+    }
+
     let quality = evaluate_text_quality(
         &extracted.body_text,
         policy.min_text_length,
         policy.max_noise_ratio_bp,
     )?;
+
+    let mut injection_flagged_patterns = injection_outcome
+        .flagged_segments
+        .iter()
+        .map(|segment| segment.matched_pattern.clone())
+        .collect::<Vec<String>>();
+    injection_flagged_patterns.sort();
+    injection_flagged_patterns.dedup();
 
     Ok(BodyOutcome {
         mime,
@@ -435,6 +457,12 @@ fn read_response_body(
         quality,
         bytes_read: bytes_read.load(Ordering::Relaxed),
         bytes_decompressed: decompressed_bytes,
+        injection_removed_chars: injection_outcome.removed_char_count,
+        injection_flagged_count: injection_outcome.flagged_segments.len(),
+        injection_materially_reduced: injection_outcome.materially_reduced,
+        injection_reason_code: injection_outcome.reason_code,
+        injection_flagged_patterns,
+        injection_defense_version: injection_outcome.defense_version,
     })
 }
 
@@ -558,14 +586,26 @@ fn build_success_evidence_packet(
             })
         })
         .collect();
-    let truncation_reason = if chunk_output
+    let mut provider_reason_codes = chunk_output
         .reason_codes
         .iter()
-        .any(|code| *code == EVIDENCE_TRUNCATED_REASON_CODE)
+        .map(|code| (*code).to_string())
+        .collect::<Vec<String>>();
+    if let Some(code) = body.injection_reason_code.as_ref() {
+        if !provider_reason_codes.iter().any(|entry| entry == code) {
+            provider_reason_codes.push(code.clone());
+        }
+    }
+    provider_reason_codes.sort();
+    provider_reason_codes.dedup();
+
+    let reason_code = if provider_reason_codes
+        .iter()
+        .any(|code| code == EVIDENCE_TRUNCATED_REASON_CODE)
     {
-        Some(EVIDENCE_TRUNCATED_REASON_CODE)
+        Some(EVIDENCE_TRUNCATED_REASON_CODE.to_string())
     } else {
-        None
+        body.injection_reason_code.clone()
     };
 
     json!({
@@ -583,8 +623,8 @@ fn build_success_evidence_packet(
                 "status_code": audit.status_code,
                 "canonical_url": audit.canonical_url,
                 "final_url": final_url,
-                "reason_code": truncation_reason,
-                "reason_codes": chunk_output.reason_codes,
+                "reason_code": reason_code,
+                "reason_codes": provider_reason_codes,
                 "timeout_hit": audit.timeout_hit,
                 "proxy": {
                     "mode": audit.proxy_mode,
@@ -618,6 +658,14 @@ fn build_success_evidence_packet(
                 "chunk_count": chunk_output.chunks.len(),
                 "truncated": chunk_output.truncated,
                 "reason_codes": chunk_output.reason_codes
+            },
+            "injection_defense": {
+                "version": body.injection_defense_version,
+                "flagged_segment_count": body.injection_flagged_count,
+                "flagged_patterns": body.injection_flagged_patterns,
+                "removed_char_count": body.injection_removed_chars,
+                "materially_reduced": body.injection_materially_reduced,
+                "reason_code": body.injection_reason_code,
             },
             "quality": {
                 "text_len": body.quality.text_len,

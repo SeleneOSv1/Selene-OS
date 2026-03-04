@@ -14,6 +14,12 @@ use crate::web_search_plan::chunk::{
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
+use crate::web_search_plan::gap_closers::freshness_watchdog::{
+    evaluate_freshness_watchdog, report_to_json as freshness_watchdog_to_json,
+};
+use crate::web_search_plan::gap_closers::unknown_first::{
+    decision_to_json as unknown_first_to_json, evaluate_unknown_first_pre_synthesis,
+};
 use crate::web_search_plan::parity::ambiguity::{
     select_single_best_clarification, AMBIGUITY_POLICY_VERSION,
 };
@@ -589,6 +595,12 @@ where
         &open_failure_urls,
         &reason_codes_vec,
     );
+    let freshness_watchdog = evaluate_freshness_watchdog(
+        input.query.as_str(),
+        input.importance_tier.as_str(),
+        input.retrieved_at_ms,
+        sources.as_slice(),
+    );
 
     let budget_summary = json!({
         "max_urls_opened_per_query": budget.policy().max_urls_opened_per_query,
@@ -628,6 +640,8 @@ where
         "stop_reason": stop_reason.as_str(),
         "open_failures": open_failures_json,
         "degraded_evidence_mode": degraded_evidence_mode,
+        "refresh_required": freshness_watchdog.refresh_required,
+        "stale_citations": freshness_watchdog.stale_citations,
         "degrade_step": degrade_step.map(|step| step.as_str().to_string()),
         "reason_codes": reason_codes_vec,
         "selected_scores": selected_scores_json,
@@ -656,10 +670,13 @@ where
             "stitching_version": STITCHING_POLICY_VERSION,
             "stitching_summary": contradiction_summary_json(&stitching_summary),
         },
+        "gap_closers": {
+            "freshness_watchdog": freshness_watchdog_to_json(&freshness_watchdog),
+        },
         "budget": budget_summary,
     });
 
-    let evidence_packet = json!({
+    let mut evidence_packet = json!({
         "schema_version": "1.0.0",
         "produced_by": input.produced_by,
         "intended_consumers": input.intended_consumers,
@@ -674,6 +691,18 @@ where
             "planning": planning_metadata
         }
     });
+    let unknown_first = evaluate_unknown_first_pre_synthesis(&evidence_packet);
+    if let Some(planning_obj) = evidence_packet
+        .pointer_mut("/trust_metadata/planning")
+        .and_then(Value::as_object_mut)
+    {
+        let gap_closers_entry = planning_obj
+            .entry("gap_closers".to_string())
+            .or_insert_with(|| json!({}));
+        if let Some(gap_obj) = gap_closers_entry.as_object_mut() {
+            gap_obj.insert("unknown_first".to_string(), unknown_first_to_json(&unknown_first));
+        }
+    }
 
     Ok(PlanningResult {
         evidence_packet,

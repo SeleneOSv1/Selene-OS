@@ -1,0 +1,23 @@
+{
+  "query": "latest stock price update",
+  "importance_tier": "high",
+  "retrieved_at_ms": 1700000000000,
+  "sources": [
+    {
+      "url": "https://fresh.example.com/a",
+      "published_at": 1699999700000
+    },
+    {
+      "url": "https://stale.example.com/b",
+      "published_at": 1699989200000
+    },
+    {
+      "url": "https://stale.example.com/c",
+      "published_at": 1699978400000
+    }
+  ],
+  "expected_stale_refs": [
+    "https://stale.example.com/b",
+    "https://stale.example.com/c"
+  ]
+}

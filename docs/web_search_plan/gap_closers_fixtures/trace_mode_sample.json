@@ -1,0 +1,59 @@
+{
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000010000,
+    "trace_id": "trace-gap-1",
+    "answer_text": "Direct Answer:\nThe report shows rising revenue.\n\nEvidence:\n- Revenue increased by 12% year over year. [chunk-1]\n- Official filing confirms improved margin. [https://example.gov/report]\n\nCitations:\n- [C1] https://example.gov/report",
+    "bullet_evidence": [
+      "Revenue increased by 12% year over year.",
+      "Official filing confirms improved margin."
+    ],
+    "citations": [
+      { "type": "chunk_id", "value": "chunk-1" },
+      { "type": "source_url", "value": "https://example.gov/report" }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-1", "https://example.gov/report"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.SEARCH",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000009000,
+    "trace_id": "trace-gap-1",
+    "query": "company performance",
+    "retrieved_at_ms": 1700000010000,
+    "provider_runs": [],
+    "sources": [
+      {
+        "title": "Official filing",
+        "url": "https://example.gov/report",
+        "media_type": "web",
+        "trust_tier": "official",
+        "freshness_score": 0.92
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-1",
+        "source_url": "https://example.gov/report",
+        "chunk_index": 0,
+        "text_excerpt": "Revenue increased by 12% year over year.",
+        "text_len_chars": 41
+      }
+    ],
+    "trust_metadata": {}
+  },
+  "computation_packet": {
+    "consensus": [
+      {
+        "group_id": "group-1",
+        "outliers": ["source-outlier"]
+      }
+    ]
+  }
+}

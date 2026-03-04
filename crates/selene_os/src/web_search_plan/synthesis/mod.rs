@@ -21,6 +21,7 @@ use crate::web_search_plan::synthesis::insufficiency_gate::{
 use crate::web_search_plan::synthesis::template::{
     render_grounded_draft, render_insufficient_evidence_answer, TemplateChunkInput,
 };
+use crate::web_search_plan::gap_closers::unknown_first::evaluate_unknown_first_pre_synthesis;
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
@@ -109,8 +110,48 @@ pub fn synthesize_evidence_bound(
         SynthesisError::InvalidEvidence(message)
     })?;
 
-    let sufficiency = assess_evidence_sufficiency(evidence_packet, policy.sufficiency);
     let conflicts = detect_conflicts(evidence_packet);
+    let unknown_first = evaluate_unknown_first_pre_synthesis(evidence_packet);
+    if unknown_first.unknown_required {
+        let answer_text = render_insufficient_evidence_answer(
+            user_question,
+            citation_index.source_urls.len(),
+            citation_index.chunk_ids.len(),
+        );
+        let uncertainty_flags = if conflicts.is_empty() {
+            Vec::new()
+        } else {
+            vec!["conflicting_evidence_detected".to_string()]
+        };
+        let reason_codes = vec!["insufficient_evidence".to_string()];
+
+        let packet = build_synthesis_packet(
+            trace_id,
+            created_at_ms,
+            answer_text,
+            vec!["Insufficient evidence for grounded synthesis.".to_string()],
+            vec![],
+            uncertainty_flags,
+            reason_codes,
+            Vec::new(),
+        );
+
+        let metrics = SynthesisAuditMetrics {
+            number_of_claims: 0,
+            number_of_citations: 0,
+            citation_coverage_ratio: 0.0,
+            conflict_detected: !conflicts.is_empty(),
+            insufficient_evidence_flag: true,
+            synthesis_template_version: SYNTHESIS_TEMPLATE_VERSION.to_string(),
+        };
+
+        return Ok(SynthesisResult {
+            synthesis_packet: packet,
+            audit_metrics: metrics,
+        });
+    }
+
+    let sufficiency = assess_evidence_sufficiency(evidence_packet, policy.sufficiency);
 
     if !sufficiency.is_sufficient {
         let answer_text = render_insufficient_evidence_answer(

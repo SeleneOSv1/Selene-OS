@@ -8,6 +8,7 @@ pub mod contract_hash;
 pub mod diag;
 pub mod document;
 pub mod eval;
+pub mod gap_closers;
 pub mod idempotency_validator;
 pub mod learn;
 pub mod learning;

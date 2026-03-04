@@ -1,0 +1,57 @@
+{
+  "comparison_packet": {
+    "pricing_table": [
+      {
+        "entity_id": "beta",
+        "price_value": "29.99",
+        "currency": "USD",
+        "billing_period": "monthly",
+        "tax_included": "false"
+      },
+      {
+        "entity_id": "alpha",
+        "price_value": "19.99",
+        "currency": "USD",
+        "billing_period": "monthly",
+        "tax_included": "true"
+      }
+    ]
+  },
+  "temporal_packet": {
+    "changes": [
+      {
+        "key": "z|latency|ms",
+        "prior_value": { "kind": "int", "value": "110" },
+        "new_value": { "kind": "int", "value": "95" },
+        "change_type": "modified",
+        "delta_value": "-15"
+      },
+      {
+        "key": "a|price|usd",
+        "prior_value": { "kind": "currency", "value": "10" },
+        "new_value": { "kind": "currency", "value": "12" },
+        "change_type": "modified",
+        "delta_value": "2"
+      }
+    ]
+  },
+  "risk_packet": {
+    "factor_breakdown": [
+      {
+        "factor_id": "operational_reliability",
+        "score": "0.65",
+        "weight": "0.25",
+        "evidence_refs": ["src-b"]
+      },
+      {
+        "factor_id": "financial_stress",
+        "score": "0.45",
+        "weight": "0.30",
+        "evidence_refs": ["src-a", "chunk-a"]
+      }
+    ]
+  },
+  "expected_competitive_table": "| entity_id | price | currency | billing_period | tax_included |\n| --------- | ----- | -------- | -------------- | ------------ |\n| alpha     | 19.99 | USD      | monthly        | true         |\n| beta      | 29.99 | USD      | monthly        | false        |",
+  "expected_temporal_table": "| key          | prior | new | change_type | delta |\n| ------------ | ----- | --- | ----------- | ----- |\n| a|price|usd  | 10    | 12  | modified    | 2     |\n| z|latency|ms | 110   | 95  | modified    | -15   |",
+  "expected_risk_table": "| factor_id               | score | weight | evidence_refs |\n| ----------------------- | ----- | ------ | ------------- |\n| financial_stress        | 0.45  | 0.30   | chunk-a,src-a |\n| operational_reliability | 0.65  | 0.25   | src-b         |"
+}
