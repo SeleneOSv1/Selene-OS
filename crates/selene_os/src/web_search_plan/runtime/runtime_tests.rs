@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
+use crate::web_search_plan::learn::failure_signature::{
+    compute_signature_id, FailureEvent, LearningLane,
+};
 use crate::web_search_plan::news::NewsRuntimeConfig;
+use crate::web_search_plan::parallel::scheduler::{schedule_deterministically, RetrievalTask};
+use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
 use crate::web_search_plan::proxy::proxy_config::ProxyConfig;
 use crate::web_search_plan::proxy::ProxyMode;
 use crate::web_search_plan::replay::snapshot::hash_canonical_json;
@@ -739,7 +744,7 @@ fn test_t5_parallel_service_trace_invoked_on_web_execution() {
     let mut deps = runtime_deps_for_base(&base);
     deps.service_trace = Some(trace.clone());
 
-    execute_web_search_turn_with_dependencies(
+    let run = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
         make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
         make_tool_request(
@@ -754,6 +759,39 @@ fn test_t5_parallel_service_trace_invoked_on_web_execution() {
     )
     .expect("web runtime should succeed");
 
+    let top_k_selected = run
+        .evidence_packet
+        .pointer("/trust_metadata/planning/top_k_selected")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| entry.as_str().map(ToString::to_string))
+        .collect::<Vec<String>>();
+    let expected_scheduler_order = schedule_deterministically(vec![
+        RetrievalTask {
+            task_id: "runtime-plan-000000".to_string(),
+            priority: 1,
+            canonical_url: format!("{}/page/parallel-a", base),
+            provider_id: "web_provider_ladder".to_string(),
+            task_type: "url_fetch".to_string(),
+        },
+        RetrievalTask {
+            task_id: "runtime-plan-000001".to_string(),
+            priority: 2,
+            canonical_url: format!("{}/page/parallel-b", base),
+            provider_id: "web_provider_ladder".to_string(),
+            task_type: "url_fetch".to_string(),
+        },
+    ])
+    .into_iter()
+    .map(|task| task.canonical_url)
+    .collect::<Vec<String>>();
+    assert_eq!(
+        top_k_selected, expected_scheduler_order,
+        "open order should follow scheduler order"
+    );
+
     assert!(
         trace.parallel_plan_calls() >= 1,
         "parallel plan trace counter should increment"
@@ -767,7 +805,7 @@ fn test_t6_learn_observer_trace_invoked_on_fail_closed_path() {
     let trace = Arc::new(RuntimeServiceTrace::default());
     let trace_id = "trace-runtime-learn-hook";
     let created_at_ms = 1_703_200_000_100_i64;
-    let query = "learn hook fail-closed check";
+    let query = "not a valid url";
 
     let (base, _join) = spawn_server(
         move |_, _, _| MockResponse::json(500, json!({"error": "unused"})),
@@ -779,20 +817,54 @@ fn test_t6_learn_observer_trace_invoked_on_fail_closed_path() {
 
     let error = execute_web_search_turn_with_dependencies(
         make_turn_input(trace_id, created_at_ms, query),
-        make_search_assist(trace_id, created_at_ms.saturating_add(1), false),
+        make_search_assist(trace_id, created_at_ms.saturating_add(1), true),
         make_tool_request(
             trace_id,
             created_at_ms.saturating_add(2),
-            "web",
+            "url_fetch",
             query,
             "medium",
         ),
         "policy-snapshot-runtime-v1".to_string(),
         &mut deps,
     )
-    .expect_err("search_required=false should fail closed");
+    .expect_err("invalid url_fetch input should fail closed");
+    let debug_packet = error
+        .debug_packet
+        .as_ref()
+        .expect("debug packet should be present on url_fetch failure");
+    let debug_reason_code = debug_packet
+        .get("reason_code")
+        .and_then(Value::as_str)
+        .expect("debug reason_code should exist");
+    let debug_error_kind = debug_packet
+        .get("error_kind")
+        .and_then(Value::as_str)
+        .expect("debug error_kind should exist");
+    let debug_provider = debug_packet
+        .get("provider")
+        .and_then(Value::as_str)
+        .expect("debug provider should exist");
 
-    assert_eq!(error.reason_code, "insufficient_evidence");
+    let event = FailureEvent {
+        lane: LearningLane::UrlFetch,
+        provider_id: Some(debug_provider.to_string()),
+        error_kind: debug_error_kind.to_string(),
+        reason_code_id: debug_reason_code.to_string(),
+        importance_tier: ImportanceTier::Medium,
+        canonical_url: None,
+        occurred_at_ms: created_at_ms,
+        ttl_ms: 0,
+    };
+    let expected_signature_id = compute_signature_id(&event);
+    let debug_hint = debug_packet
+        .get("debug_hint")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        debug_hint.contains(expected_signature_id.as_str()),
+        "debug_hint should include failure_signature_id"
+    );
     assert!(
         trace.learn_observe_calls() >= 1,
         "learn observation trace counter should increment on fail-closed path"

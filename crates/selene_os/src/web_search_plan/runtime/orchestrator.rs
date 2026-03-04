@@ -36,6 +36,7 @@ use crate::web_search_plan::write::{
     append_write_audit_fields, render_write_packet, WriteFormatMode,
 };
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -289,7 +290,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
                         "empty_results",
                     );
                 }
-                self.observe_parallel_plan(candidates.as_slice());
+                let candidates = self.schedule_web_candidates(candidates);
 
                 let retrieved_at_ms = web_result
                     .evidence_packet
@@ -593,7 +594,10 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         error_kind: &str,
         debug_hint: Option<&str>,
     ) -> Result<RuntimeExecutionArtifacts, RuntimeExecutionError> {
-        self.observe_failure_signature(reason_code, provider, error_kind);
+        let failure_signature_id =
+            self.observe_failure_signature(reason_code, provider, error_kind);
+        let debug_hint_owned =
+            append_failure_signature_debug_hint(debug_hint, failure_signature_id.as_str());
         let _ = self.recorder.transition("TURN_FAILED_CLOSED");
         let transitions = self.recorder.transitions().to_vec();
         let debug_packet = try_build_debug_packet(DebugPacketContext {
@@ -606,7 +610,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             source_url: None,
             created_at_ms: self.context.created_at_ms,
             turn_state_transitions: transitions.as_slice(),
-            debug_hint,
+            debug_hint: Some(debug_hint_owned.as_str()),
             fallback_used: None,
             health_status_before_fallback: None,
         })
@@ -620,36 +624,46 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
         })
     }
 
-    fn observe_parallel_plan(&mut self, candidates: &[SearchCandidate]) {
+    fn schedule_web_candidates(
+        &mut self,
+        candidates: Vec<SearchCandidate>,
+    ) -> Vec<SearchCandidate> {
+        let mut candidates_by_task_id = BTreeMap::new();
         let tasks = candidates
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(index, candidate)| RetrievalTask {
-                task_id: format!(
-                    "runtime-plan-{}-{}",
-                    index,
-                    candidate.canonical_url.as_str()
-                ),
-                priority: candidate.provider_rank as u32,
-                canonical_url: candidate.canonical_url.clone(),
-                provider_id: candidate.provider_id.clone(),
-                task_type: "url_fetch".to_string(),
+            .map(|(index, candidate)| {
+                let task_id = format!("runtime-plan-{:06}", index);
+                candidates_by_task_id.insert(task_id.clone(), candidate.clone());
+                RetrievalTask {
+                    task_id,
+                    priority: candidate.provider_rank as u32,
+                    canonical_url: candidate.canonical_url,
+                    provider_id: candidate.provider_id,
+                    task_type: "url_fetch".to_string(),
+                }
             })
             .collect::<Vec<RetrievalTask>>();
-        let _ = schedule_deterministically(tasks);
+        let scheduled_tasks = schedule_deterministically(tasks);
 
         if let Some(trace) = self.deps.service_trace.as_ref() {
             trace.parallel_plan_calls.fetch_add(1, Ordering::SeqCst);
         }
+
+        scheduled_tasks
+            .into_iter()
+            .filter_map(|task| candidates_by_task_id.remove(task.task_id.as_str()))
+            .collect()
     }
 
-    fn observe_failure_signature(&mut self, reason_code: &str, provider: &str, error_kind: &str) {
+    fn observe_failure_signature(
+        &mut self,
+        reason_code: &str,
+        provider: &str,
+        error_kind: &str,
+    ) -> String {
         if let Some(trace) = self.deps.service_trace.as_ref() {
             trace.learn_observe_calls.fetch_add(1, Ordering::SeqCst);
-        }
-
-        if !self.deps.learn_observation_enabled {
-            return;
         }
 
         let event = FailureEvent {
@@ -664,7 +678,7 @@ impl<'a, C: MonotonicClock> RuntimeOrchestrator<'a, C> {
             occurred_at_ms: self.context.created_at_ms,
             ttl_ms: 0,
         };
-        let _ = compute_signature_id(&event);
+        compute_signature_id(&event)
     }
 }
 
@@ -856,5 +870,13 @@ fn lane_from_mode(mode: &str) -> LearningLane {
         "images" => LearningLane::Images,
         "video" => LearningLane::Video,
         _ => LearningLane::Web,
+    }
+}
+
+fn append_failure_signature_debug_hint(base_hint: Option<&str>, signature_id: &str) -> String {
+    let signature_fragment = format!("failure_signature_id:{}", signature_id);
+    match base_hint.map(str::trim).filter(|hint| !hint.is_empty()) {
+        Some(hint) => format!("{} | {}", hint, signature_fragment),
+        None => signature_fragment,
     }
 }

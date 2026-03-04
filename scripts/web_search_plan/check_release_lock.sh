@@ -30,6 +30,26 @@ run_gate() {
   fi
 }
 
+declared_check_names=$'check_contracts.sh\ncheck_reason_codes.sh\ncheck_idempotency.sh\ncheck_turn_state_machine.sh\ncheck_handoff_ownership.sh\ncheck_doc_canon.sh\ncheck_trace_matrix.sh\ncheck_proxy_universal.sh\ncheck_url_fetch_core.sh\ncheck_chunk_hash_core.sh\ncheck_web_provider_ladder.sh\ncheck_news_provider_ladder.sh\ncheck_news_parity.sh\ncheck_search_topk_pipeline.sh\ncheck_synthesis_core.sh\ncheck_write_core.sh\ncheck_debug_packet.sh\ncheck_perf_cost_tiers.sh\ncheck_cache_parallel.sh\ncheck_vision_engine.sh\ncheck_learning_layer.sh\ncheck_replay_harness.sh\ncheck_quality_gates.sh\ncheck_continuous_eval.sh\ncheck_structured_connectors.sh\ncheck_document_parsing.sh\ncheck_analytics_numeric_consensus.sh\ncheck_competitive_intel.sh\ncheck_realtime_api_mode.sh\ncheck_regulatory_mode.sh\ncheck_trust_model.sh\ncheck_multihop_research.sh\ncheck_temporal_mode.sh\ncheck_risk_mode.sh\ncheck_merge_mode.sh\ncheck_parity_enhancements.sh\ncheck_gap_closers.sh\ncheck_enterprise_integration_lock.sh\ncheck_slo_lock.sh'
+missing_checks=()
+for check_path in scripts/web_search_plan/check_*.sh; do
+  check_name="$(basename "${check_path}")"
+  if [ "${check_name}" = "check_release_lock.sh" ]; then
+    continue
+  fi
+  if ! printf '%s\n' "${declared_check_names}" | grep -Fxq "${check_name}"; then
+    missing_checks+=("${check_name}")
+  fi
+done
+if [ "${#missing_checks[@]}" -gt 0 ]; then
+  echo "SELF_COVER_PASS=FAIL"
+  for check_name in "${missing_checks[@]}"; do
+    echo "MISSING_CHECK=${check_name}"
+  done
+  exit 1
+fi
+echo "SELF_COVER_PASS=PASS"
+
 run_gate "scripts/web_search_plan/check_contracts.sh" scripts/web_search_plan/check_contracts.sh
 run_gate "scripts/web_search_plan/check_reason_codes.sh" scripts/web_search_plan/check_reason_codes.sh
 run_gate "scripts/web_search_plan/check_idempotency.sh" scripts/web_search_plan/check_idempotency.sh
