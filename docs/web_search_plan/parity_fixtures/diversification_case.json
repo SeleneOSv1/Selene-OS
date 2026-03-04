@@ -1,0 +1,14 @@
+{
+  "importance_tier": "high",
+  "min_distinct_domains": 3,
+  "items": [
+    {"id": "a1", "url": "https://a.example.com/1"},
+    {"id": "a2", "url": "https://a.example.com/2"},
+    {"id": "b1", "url": "https://b.example.com/1"},
+    {"id": "b2", "url": "https://b.example.com/2"}
+  ],
+  "expected_order": ["a1", "b1", "a2", "b2"],
+  "expected_distinct_domain_count": 2,
+  "expected_threshold_met": false,
+  "expected_limited": true
+}

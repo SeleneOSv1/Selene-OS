@@ -1,0 +1,17 @@
+{
+  "query": "selene policy changes",
+  "existing_attempts": [
+    "rewrite_1:selene policy changes authoritative sources"
+  ],
+  "triggered": true,
+  "max_attempts": 2,
+  "expected_attempts": [
+    "rewrite_1:selene policy changes authoritative sources",
+    "rewrite_2:selene policy changes primary evidence"
+  ],
+  "expected_reformulated_queries": [
+    "selene policy changes",
+    "selene policy changes primary evidence"
+  ],
+  "expected_exhausted": true
+}

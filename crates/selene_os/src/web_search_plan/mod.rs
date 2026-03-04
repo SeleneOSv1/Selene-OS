@@ -17,6 +17,7 @@ pub mod news;
 pub mod news_provider;
 pub mod packet_validator;
 pub mod parallel;
+pub mod parity;
 pub mod perf_cost;
 pub mod planning;
 pub mod proxy;

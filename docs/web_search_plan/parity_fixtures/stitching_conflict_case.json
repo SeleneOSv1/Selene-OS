@@ -1,0 +1,24 @@
+{
+  "primary_sources": [
+    {"title": "Primary Source A", "url": "https://source.example.com/a", "canonical_url": "https://source.example.com/a"},
+    {"title": "Primary Source B", "url": "https://source.example.com/b", "canonical_url": "https://source.example.com/b"}
+  ],
+  "fallback_sources": [
+    {"title": "Fallback Source A Duplicate", "url": "https://source.example.com/a", "canonical_url": "https://source.example.com/a"},
+    {"title": "Fallback Source C", "url": "https://source.example.com/c", "canonical_url": "https://source.example.com/c"}
+  ],
+  "open_failure_urls": [
+    "https://source.example.com/missing"
+  ],
+  "reason_codes": [
+    "conflicting_evidence_detected"
+  ],
+  "expected_stitched_urls": [
+    "https://source.example.com/a",
+    "https://source.example.com/b",
+    "https://source.example.com/c"
+  ],
+  "expected_unknowns": [
+    "https://source.example.com/missing"
+  ]
+}

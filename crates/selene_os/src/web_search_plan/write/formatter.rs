@@ -3,6 +3,8 @@
 use crate::web_search_plan::write::citation_renderer::{
     build_citation_map, citation_keys_for_bullet, parse_evidence_lines, strip_marker_tokens,
 };
+use crate::web_search_plan::parity::presentation_modes::plan_for_mode;
+use crate::web_search_plan::parity::stitching::deep_mode_contradiction_lines;
 use crate::web_search_plan::write::localization::{
     derive_language_tag, enforce_language_contract, normalize_language_tag,
 };
@@ -144,6 +146,7 @@ pub fn format_synthesis_packet(
 
     let citation_build = build_citation_map(answer_text, synthesis_citations)
         .map_err(WriteError::CitationMismatch)?;
+    let presentation_plan = plan_for_mode(format_mode);
 
     let mut rendered_bullets = Vec::new();
     for (index, parsed_line) in parsed_evidence_lines.iter().enumerate() {
@@ -164,6 +167,14 @@ pub fn format_synthesis_packet(
                 index + 1
             )));
         }
+        let citation_keys = if presentation_plan.inline_citations_per_bullet == usize::MAX {
+            citation_keys
+        } else {
+            citation_keys
+                .into_iter()
+                .take(presentation_plan.inline_citations_per_bullet.max(1))
+                .collect::<Vec<String>>()
+        };
 
         let normalized_bullet = normalize_bullet_text(&source_bullet_text);
         rendered_bullets.push(format!(
@@ -185,6 +196,15 @@ pub fn format_synthesis_packet(
     lines.push(String::new());
     lines.push("Evidence:".to_string());
     lines.extend(rendered_bullets.iter().cloned());
+    if presentation_plan.include_conflict_detail {
+        let contradiction_lines =
+            deep_mode_contradiction_lines(&bullet_evidence, &uncertainty_flags, &reason_codes);
+        if !contradiction_lines.is_empty() {
+            lines.push(String::new());
+            lines.push("Contradictions:".to_string());
+            lines.extend(contradiction_lines);
+        }
+    }
     lines.push(String::new());
     lines.push("Citations:".to_string());
 

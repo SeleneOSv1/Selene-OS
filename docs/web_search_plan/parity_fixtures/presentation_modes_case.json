@@ -1,0 +1,28 @@
+{
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700001000000,
+    "trace_id": "trace-run33-presentation",
+    "answer_text": "Direct Answer\nGrounded comparison remains evidence-bound across modes.\n\nEvidence\n- Claim from source A. [chunk:chunk-a] [url:https://example.com/a]\n- Claim from source B. [chunk:chunk-b] [url:https://example.com/b]\n\nCitations\n- url:https://example.com/a\n- url:https://example.com/b",
+    "bullet_evidence": [
+      "Claim from source A.",
+      "Claim from source B."
+    ],
+    "citations": [
+      {"type": "source_url", "value": "https://example.com/a"},
+      {"type": "source_url", "value": "https://example.com/b"}
+    ],
+    "uncertainty_flags": ["conflict_detected"],
+    "reason_codes": ["conflicting_evidence_detected"],
+    "evidence_refs": ["chunk-a", "chunk-b"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "expected_direct_answer_fragment": "Grounded comparison remains evidence-bound across modes.",
+  "expected_citations": [
+    "https://example.com/a",
+    "https://example.com/b"
+  ],
+  "expect_deep_conflict_section": true
+}

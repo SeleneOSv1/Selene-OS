@@ -1,0 +1,5 @@
+{
+  "query": "compare this with that",
+  "expected_missing_field": "entity",
+  "expected_question": "Which entity should this search focus on?"
+}

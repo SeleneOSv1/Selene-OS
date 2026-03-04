@@ -1,0 +1,11 @@
+{
+  "query": "compare selene and atlas compliance risk timeline",
+  "existing_sub_queries": [],
+  "expected_is_complex": true,
+  "expected_sub_queries": [
+    "compare selene and atlas compliance risk timeline",
+    "compare selene and atlas compliance risk timeline key facts",
+    "compare selene and atlas compliance risk timeline source comparison",
+    "compare selene and atlas compliance risk timeline latest status"
+  ]
+}

@@ -14,6 +14,25 @@ use crate::web_search_plan::chunk::{
 use crate::web_search_plan::diag::{
     default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
+use crate::web_search_plan::parity::ambiguity::{
+    select_single_best_clarification, AMBIGUITY_POLICY_VERSION,
+};
+use crate::web_search_plan::parity::diversification::{
+    diversify_for_high_tier, DIVERSIFICATION_POLICY_VERSION, HIGH_TIER_MIN_DISTINCT_DOMAINS,
+};
+use crate::web_search_plan::parity::multi_query::{
+    decompose_query, MAX_SUB_QUERIES, MULTI_QUERY_VERSION,
+};
+use crate::web_search_plan::parity::reformulation::{
+    apply_reformulation_ladder, REFORMULATION_POLICY_VERSION,
+};
+use crate::web_search_plan::parity::reranker::{
+    rerank_candidates as parity_rerank_candidates, RerankInput, RerankWeights,
+    RERANK_WEIGHTS_VERSION,
+};
+use crate::web_search_plan::parity::stitching::{
+    build_stitching_summary, contradiction_summary_json, stitch_sources, STITCHING_POLICY_VERSION,
+};
 use crate::web_search_plan::perf_cost::budgets::{budget_plan_for_tier, ProviderCallBudget};
 use crate::web_search_plan::perf_cost::degrade::{DegradeController, DegradeStep};
 use crate::web_search_plan::perf_cost::tiers::{caps_for_tier, ImportanceTier, TierCaps};
@@ -240,6 +259,8 @@ where
     let tier_caps = caps_for_tier(tier);
     let timeout_envelope = timeout_envelope_for_tier(tier);
     let stage_budget_plan = budget_plan_for_tier(tier);
+    let multi_query_plan = decompose_query(input.query.as_str(), &input.sub_queries);
+    let clarification_question = select_single_best_clarification(input.query.as_str());
 
     let mut effective_open_budget = policy.open_budget.clone();
     effective_open_budget.max_urls_opened_per_query = effective_open_budget
@@ -255,7 +276,32 @@ where
         .max_chunks_total
         .min(tier_caps.max_chunks_total);
 
-    let ranked_candidates = rank_candidates(&input.candidates, &policy.scoring_policy);
+    let mut ranked_candidates = rank_candidates(&input.candidates, &policy.scoring_policy);
+    let diversification_outcome = diversify_for_high_tier(
+        &ranked_candidates,
+        input.importance_tier.as_str(),
+        HIGH_TIER_MIN_DISTINCT_DOMAINS,
+        |ranked| ranked.candidate.domain(),
+    );
+    ranked_candidates = diversification_outcome.reordered;
+
+    let low_quality_candidates = ranked_candidates.is_empty() || ranked_candidates.len() < 2;
+    let reformulation_trigger = low_quality_candidates || !diversification_outcome.threshold_met;
+    let reformulation_outcome = apply_reformulation_ladder(
+        input.query.as_str(),
+        &input.rewrite_attempts,
+        reformulation_trigger,
+        policy.max_rewrite_attempts,
+    );
+    let mut effective_sub_queries = merge_sub_queries(
+        multi_query_plan.sub_queries.clone(),
+        reformulation_outcome.reformulated_queries.clone(),
+    );
+    if effective_sub_queries.is_empty() {
+        effective_sub_queries.push(input.query.clone());
+    }
+    let effective_rewrite_attempts = reformulation_outcome.rewrite_attempts.clone();
+
     let mut max_results_budget = ranked_candidates
         .len()
         .min(tier_caps.max_results_from_search);
@@ -463,7 +509,7 @@ where
     }
 
     if exhausted_candidates {
-        stop_reason = if input.rewrite_attempts.len() >= policy.max_rewrite_attempts {
+        stop_reason = if effective_rewrite_attempts.len() >= policy.max_rewrite_attempts {
             StopReason::RewriteAttemptsExhausted
         } else {
             StopReason::ProviderResultsExhausted
@@ -474,7 +520,7 @@ where
             StopReason::BudgetExhausted | StopReason::KReached
         )
     {
-        stop_reason = if input.rewrite_attempts.len() >= policy.max_rewrite_attempts {
+        stop_reason = if effective_rewrite_attempts.len() >= policy.max_rewrite_attempts {
             StopReason::RewriteAttemptsExhausted
         } else {
             StopReason::ProviderResultsExhausted
@@ -496,8 +542,9 @@ where
         for code in fallback.reason_codes {
             reason_codes.insert(code);
         }
-        if sources.is_empty() {
-            sources = fallback.sources;
+        let stitched_sources = stitch_sources(&sources, &fallback.sources);
+        if !stitched_sources.is_empty() {
+            sources = stitched_sources;
         }
         if content_chunks.is_empty() {
             content_chunks = fallback.content_chunks;
@@ -527,6 +574,21 @@ where
             })
         })
         .collect();
+    let reason_codes_vec = reason_codes.into_iter().collect::<Vec<String>>();
+    let source_titles = sources
+        .iter()
+        .filter_map(|source| source.get("title").and_then(Value::as_str))
+        .map(ToString::to_string)
+        .collect::<Vec<String>>();
+    let open_failure_urls = open_failures
+        .iter()
+        .map(|failure| failure.canonical_url.clone())
+        .collect::<Vec<String>>();
+    let stitching_summary = build_stitching_summary(
+        &source_titles,
+        &open_failure_urls,
+        &reason_codes_vec,
+    );
 
     let budget_summary = json!({
         "max_urls_opened_per_query": budget.policy().max_urls_opened_per_query,
@@ -560,15 +622,40 @@ where
         "policy_snapshot_id": policy.policy_snapshot_id,
         "weights_version": policy.scoring_policy.weights_version,
         "importance_tier": input.importance_tier,
-        "rewrite_attempts": input.rewrite_attempts,
-        "sub_queries": input.sub_queries,
+        "rewrite_attempts": effective_rewrite_attempts,
+        "sub_queries": effective_sub_queries,
         "top_k_selected": top_k_selected,
         "stop_reason": stop_reason.as_str(),
         "open_failures": open_failures_json,
         "degraded_evidence_mode": degraded_evidence_mode,
         "degrade_step": degrade_step.map(|step| step.as_str().to_string()),
-        "reason_codes": reason_codes.into_iter().collect::<Vec<String>>(),
+        "reason_codes": reason_codes_vec,
         "selected_scores": selected_scores_json,
+        "parity": {
+            "multi_query_version": MULTI_QUERY_VERSION,
+            "max_sub_queries": MAX_SUB_QUERIES,
+            "multi_query_complex": multi_query_plan.is_complex,
+            "reformulation_version": REFORMULATION_POLICY_VERSION,
+            "reformulation_triggered": reformulation_outcome.triggered,
+            "reformulation_exhausted": reformulation_outcome.exhausted,
+            "reformulation_attempts_used": reformulation_outcome.attempts_used,
+            "reranker_weights_version": RERANK_WEIGHTS_VERSION,
+            "diversification_version": DIVERSIFICATION_POLICY_VERSION,
+            "min_distinct_domains_high_tier": HIGH_TIER_MIN_DISTINCT_DOMAINS,
+            "distinct_domain_count": diversification_outcome.distinct_domain_count,
+            "diversification_threshold_met": diversification_outcome.threshold_met,
+            "diversification_limited": diversification_outcome.limitation_flag,
+            "ambiguity_policy_version": AMBIGUITY_POLICY_VERSION,
+            "clarification_question": clarification_question.as_ref().map(|question| {
+                json!({
+                    "missing_field": question.missing_field,
+                    "question": question.question,
+                    "uncertainty_reduction_score": question.uncertainty_reduction_score,
+                })
+            }).unwrap_or(Value::Null),
+            "stitching_version": STITCHING_POLICY_VERSION,
+            "stitching_summary": contradiction_summary_json(&stitching_summary),
+        },
         "budget": budget_summary,
     });
 
@@ -667,8 +754,52 @@ fn rank_candidates(candidates: &[SearchCandidate], policy: &ScoringPolicy) -> Ve
             candidate,
         })
         .collect();
+    let tie_break_ranked = sort_ranked_candidates(ranked);
 
-    sort_ranked_candidates(ranked)
+    let rerank_inputs = tie_break_ranked
+        .iter()
+        .enumerate()
+        .map(|(index, ranked)| RerankInput {
+            stable_id: format!(
+                "{}|{}|{}",
+                index, ranked.candidate.canonical_url, ranked.candidate.url
+            ),
+            canonical_url: ranked.candidate.canonical_url.clone(),
+            relevance: ranked.candidate.relevance,
+            trust: ranked.candidate.trust_tier,
+            freshness: ranked.candidate.freshness_score,
+            corroboration: ranked.candidate.corroboration_count,
+            spam_risk: ranked.candidate.spam_risk,
+        })
+        .collect::<Vec<RerankInput>>();
+
+    let reranked_order = parity_rerank_candidates(
+        &rerank_inputs,
+        RerankWeights {
+            w_relevance: policy.weights.w_relevance,
+            w_trust: policy.weights.w_trust_tier,
+            w_freshness: policy.weights.w_freshness,
+            w_corroboration: policy.weights.w_corroboration,
+            w_spam_risk: policy.weights.w_spam_risk,
+        },
+    );
+
+    let mut ranked_by_id = BTreeMap::new();
+    for (index, ranked) in tie_break_ranked.into_iter().enumerate() {
+        let stable_id = format!(
+            "{}|{}|{}",
+            index, ranked.candidate.canonical_url, ranked.candidate.url
+        );
+        ranked_by_id.insert(stable_id, ranked);
+    }
+
+    let mut ordered = Vec::with_capacity(ranked_by_id.len());
+    for reranked in reranked_order {
+        if let Some(entry) = ranked_by_id.remove(&reranked.stable_id) {
+            ordered.push(entry);
+        }
+    }
+    ordered
 }
 
 fn select_snippet_candidates(
@@ -752,6 +883,27 @@ fn format_chunk_build_error(
     });
 
     message
+}
+
+fn merge_sub_queries(base: Vec<String>, rewrites: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut merged = Vec::new();
+    for query in base.into_iter().chain(rewrites.into_iter()) {
+        let normalized = query
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" ")
+            .trim()
+            .to_string();
+        if normalized.is_empty() {
+            continue;
+        }
+        let key = normalized.to_ascii_lowercase();
+        if seen.insert(key) {
+            merged.push(normalized);
+        }
+    }
+    merged
 }
 
 #[cfg(test)]

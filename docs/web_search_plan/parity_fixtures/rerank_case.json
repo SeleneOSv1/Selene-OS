@@ -1,0 +1,39 @@
+{
+  "weights": {
+    "w_relevance": 5,
+    "w_trust": 4,
+    "w_freshness": 3,
+    "w_corroboration": 2,
+    "w_spam_risk": 4
+  },
+  "items": [
+    {
+      "id": "c1",
+      "canonical_url": "https://z.example.com/1",
+      "relevance": 1,
+      "trust": 5,
+      "freshness": 5,
+      "corroboration": 1,
+      "spam_risk": 0
+    },
+    {
+      "id": "c2",
+      "canonical_url": "https://a.example.com/1",
+      "relevance": 1,
+      "trust": 5,
+      "freshness": 5,
+      "corroboration": 1,
+      "spam_risk": 0
+    },
+    {
+      "id": "c3",
+      "canonical_url": "https://b.example.com/1",
+      "relevance": 1,
+      "trust": 4,
+      "freshness": 5,
+      "corroboration": 1,
+      "spam_risk": 0
+    }
+  ],
+  "expected_order": ["c2", "c1", "c3"]
+}
