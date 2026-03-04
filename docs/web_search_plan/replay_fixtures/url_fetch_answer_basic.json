@@ -1,0 +1,100 @@
+{
+  "case_id": "url_fetch_answer_basic",
+  "stop_reason": "success",
+  "simulated_latency_ms": 1800,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000020000,
+    "trace_id": "trace-replay-url-fetch-1",
+    "query": "fetch https://example.com/spec",
+    "retrieved_at_ms": 1700000020000,
+    "provider_runs": [
+      {
+        "provider_id": "url_fetch_core",
+        "endpoint": "url_fetch",
+        "latency_ms": 420,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Example Spec",
+        "url": "https://example.com/spec",
+        "snippet": "The specification states the protocol is deterministic.",
+        "media_type": "document",
+        "provider_id": "url_fetch_core",
+        "rank": 1,
+        "canonical_url": "https://example.com/spec"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-url-001",
+        "source_url": "https://example.com/spec",
+        "canonical_url": "https://example.com/spec",
+        "chunk_index": 0,
+        "text_excerpt": "The specification states the protocol is deterministic.",
+        "text_len_chars": 54
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000020100,
+    "trace_id": "trace-replay-url-fetch-1",
+    "answer_text": "The fetched specification explicitly states deterministic protocol behavior.",
+    "bullet_evidence": [
+      "The fetched source states the protocol is deterministic."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://example.com/spec"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-url-001"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000020200,
+    "trace_id": "trace-replay-url-fetch-1",
+    "formatted_text": "Direct Answer\nThe fetched specification explicitly states deterministic protocol behavior.\nEvidence\n- The fetched source states the protocol is deterministic. [c1]\nCitations\n[c1] https://example.com/spec",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://example.com/spec"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000020300,
+    "trace_id": "trace-replay-url-fetch-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-url-1",
+      "synthesis": "hash-synthesis-url-1",
+      "write": "hash-write-url-1"
+    },
+    "evidence_hash": "hash-evidence-url-1",
+    "response_hash": "hash-write-url-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

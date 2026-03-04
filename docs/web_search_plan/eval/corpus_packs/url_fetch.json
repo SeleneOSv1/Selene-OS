@@ -1,0 +1,19 @@
+{
+  "pack_id": "url_fetch",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "url_fetch_answer_case",
+      "fixture_case_id": "url_fetch_answer_basic",
+      "mode": "url_fetch",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000020000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "95a90899c1cc93ce0f0bc5aabee4ee45855f436bcd7651d83dc2250150a645a9",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

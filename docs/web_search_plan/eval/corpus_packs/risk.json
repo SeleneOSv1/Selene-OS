@@ -1,0 +1,19 @@
+{
+  "pack_id": "risk",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "risk_answer_case",
+      "fixture_case_id": "risk_answer_basic",
+      "mode": "risk",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000070000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "82fdf7a09099db05acd31ef413f77e18d3f2b67c3e0dcf74d1c05d1788ae3837",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

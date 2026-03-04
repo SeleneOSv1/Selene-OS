@@ -1,0 +1,201 @@
+{
+  "head_commit": "30ef3ef38edf68bfc6222ec56cfe824556be802c",
+  "run_timestamp_utc": "2026-03-04T01:25:48Z",
+  "corpus_pack_id": "run32_continuous_eval_v1",
+  "thresholds_version": "run32-v1",
+  "totals": {
+    "cases_passed": 11,
+    "cases_failed": 0
+  },
+  "per_metric": {
+    "citation_coverage": {
+      "passed": 9,
+      "total": 9,
+      "ratio": 1.0
+    },
+    "refusal_correctness": {
+      "passed": 2,
+      "total": 2,
+      "ratio": 1.0
+    },
+    "freshness_compliance": {
+      "passed": 1,
+      "total": 1,
+      "ratio": 1.0
+    },
+    "conflict_handling": {
+      "passed": 2,
+      "total": 2,
+      "ratio": 1.0
+    },
+    "trust_filtering": {
+      "passed": 1,
+      "total": 1,
+      "ratio": 1.0
+    },
+    "determinism_ok": {
+      "passed": 11,
+      "total": 11,
+      "ratio": 1.0
+    }
+  },
+  "per_case_results": [
+    {
+      "case_id": "competitive_answer_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "aef8617151ec0765f02e78302154d40e2b2fb4b667f367d07280a417dc823eb9",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "compliance_trust_filter_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "8dee264f11e52a3a0b4ca51887689b40ec683b828f886d7d1ff11ae7e7a2e41f",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "core_web_answer",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "7562a3a08665bfea78cb9bc18fd12143f48be23fa5766781127f6c93deeb18ac",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "merge_conflict_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "603f39fb84db588b12ba2560064b0feadd954dea1f1f5270ca786071b1563be2",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "news_answer_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "758013acf4ac06ce8b8c81720a6df6c6d84b61de69d8aa7e7a56e03b8329dea7",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "realtime_stale_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "d7c43b0ad20ff927bf4dd2a6d4a43c456cf25d5000f27fda76898ad2dcc7bbd6",
+      "metrics": {
+        "citation_coverage_ratio": 0.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "risk_answer_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "82fdf7a09099db05acd31ef413f77e18d3f2b67c3e0dcf74d1c05d1788ae3837",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "structured_answer_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "4a51362191af4011805ced919bdf3018002c4e2c527cebcc834ae0fa25432858",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "temporal_conflict_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "c004e62fe89c54b1fec91a293960c6edad8a4bdc83e7713ca792440e70b6f972",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "url_fetch_answer_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "95a90899c1cc93ce0f0bc5aabee4ee45855f436bcd7651d83dc2250150a645a9",
+      "metrics": {
+        "citation_coverage_ratio": 1.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    },
+    {
+      "case_id": "web_refusal_case",
+      "pass": true,
+      "reasons": [],
+      "snapshot_hash": "8b8487ee3d58f061123ea7ed43488f577a19cb06f57851c5a491ee0fed1abeac",
+      "metrics": {
+        "citation_coverage_ratio": 0.0,
+        "refusal_correctness": true,
+        "freshness_compliance": true,
+        "conflict_handling": true,
+        "trust_filtering": true,
+        "determinism_ok": true
+      }
+    }
+  ],
+  "failing_case_ids": [],
+  "threshold_failures": [],
+  "overall_pass": true
+}

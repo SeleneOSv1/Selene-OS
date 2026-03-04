@@ -1,0 +1,19 @@
+{
+  "pack_id": "compliance",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "compliance_trust_filter_case",
+      "fixture_case_id": "compliance_filtered_answer",
+      "mode": "compliance",
+      "importance_tier": "high",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000040000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "8dee264f11e52a3a0b4ca51887689b40ec683b828f886d7d1ff11ae7e7a2e41f",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": true
+    }
+  ]
+}

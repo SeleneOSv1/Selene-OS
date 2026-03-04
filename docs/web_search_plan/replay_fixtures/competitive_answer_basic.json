@@ -1,0 +1,125 @@
+{
+  "case_id": "competitive_answer_basic",
+  "stop_reason": "success",
+  "simulated_latency_ms": 2800,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000060000,
+    "trace_id": "trace-replay-competitive-1",
+    "query": "competitive pricing snapshot",
+    "retrieved_at_ms": 1700000060000,
+    "provider_runs": [
+      {
+        "provider_id": "competitive_transform",
+        "endpoint": "structured",
+        "latency_ms": 730,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Competitor A Pricing",
+        "url": "https://pricing.example.com/a",
+        "snippet": "Competitor A monthly plan is 29 USD.",
+        "media_type": "structured",
+        "provider_id": "competitive_transform",
+        "rank": 1,
+        "canonical_url": "https://pricing.example.com/a",
+        "trust_tier": "HIGH"
+      },
+      {
+        "title": "Competitor B Pricing",
+        "url": "https://pricing.example.com/b",
+        "snippet": "Competitor B monthly plan is 35 USD.",
+        "media_type": "structured",
+        "provider_id": "competitive_transform",
+        "rank": 2,
+        "canonical_url": "https://pricing.example.com/b",
+        "trust_tier": "HIGH"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-competitive-001",
+        "source_url": "https://pricing.example.com/a",
+        "canonical_url": "https://pricing.example.com/a",
+        "chunk_index": 0,
+        "text_excerpt": "Competitor A monthly plan is 29 USD.",
+        "text_len_chars": 35
+      },
+      {
+        "chunk_id": "chunk-competitive-002",
+        "source_url": "https://pricing.example.com/b",
+        "canonical_url": "https://pricing.example.com/b",
+        "chunk_index": 1,
+        "text_excerpt": "Competitor B monthly plan is 35 USD.",
+        "text_len_chars": 35
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000060100,
+    "trace_id": "trace-replay-competitive-1",
+    "answer_text": "Competitive pricing evidence includes monthly prices for two comparable products.",
+    "bullet_evidence": [
+      "Competitor A reports a monthly price of 29 USD.",
+      "Competitor B reports a monthly price of 35 USD."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://pricing.example.com/a"
+      },
+      {
+        "type": "source_url",
+        "value": "https://pricing.example.com/b"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-competitive-001", "chunk-competitive-002"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000060200,
+    "trace_id": "trace-replay-competitive-1",
+    "formatted_text": "Direct Answer\nCompetitive pricing evidence includes monthly prices for two comparable products.\nEvidence\n- Competitor A reports a monthly price of 29 USD. [c1]\n- Competitor B reports a monthly price of 35 USD. [c2]\nCitations\n[c1] https://pricing.example.com/a\n[c2] https://pricing.example.com/b",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://pricing.example.com/a",
+      "c2": "https://pricing.example.com/b"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000060300,
+    "trace_id": "trace-replay-competitive-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-competitive-1",
+      "synthesis": "hash-synthesis-competitive-1",
+      "write": "hash-write-competitive-1"
+    },
+    "evidence_hash": "hash-evidence-competitive-1",
+    "response_hash": "hash-write-competitive-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

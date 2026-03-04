@@ -1,0 +1,19 @@
+{
+  "pack_id": "realtime",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "realtime_stale_case",
+      "fixture_case_id": "realtime_stale_refusal",
+      "mode": "realtime",
+      "importance_tier": "high",
+      "expected_outcome": "refusal",
+      "fixed_time_ms": 1700000050000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "d7c43b0ad20ff927bf4dd2a6d4a43c456cf25d5000f27fda76898ad2dcc7bbd6",
+      "expect_stale_refusal": true,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

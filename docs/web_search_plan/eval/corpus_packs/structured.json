@@ -1,0 +1,19 @@
+{
+  "pack_id": "structured",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "structured_answer_case",
+      "fixture_case_id": "structured_answer_basic",
+      "mode": "structured",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000030000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "4a51362191af4011805ced919bdf3018002c4e2c527cebcc834ae0fa25432858",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

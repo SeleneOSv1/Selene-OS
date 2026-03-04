@@ -1,0 +1,8 @@
+{
+  "thresholds_version": "run32-v1",
+  "citation_coverage_min": 1.0,
+  "refusal_correctness_min": 1.0,
+  "freshness_compliance_min": 1.0,
+  "determinism_required": true,
+  "max_allowed_regressions": 0
+}

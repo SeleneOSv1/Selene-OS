@@ -1,0 +1,19 @@
+{
+  "pack_id": "competitive",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "competitive_answer_case",
+      "fixture_case_id": "competitive_answer_basic",
+      "mode": "competitive",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000060000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "aef8617151ec0765f02e78302154d40e2b2fb4b667f367d07280a417dc823eb9",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "pack_id": "temporal",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "temporal_conflict_case",
+      "fixture_case_id": "temporal_conflict_answer",
+      "mode": "temporal",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000080000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "c004e62fe89c54b1fec91a293960c6edad8a4bdc83e7713ca792440e70b6f972",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": true,
+      "expect_trust_filtering": false
+    }
+  ]
+}

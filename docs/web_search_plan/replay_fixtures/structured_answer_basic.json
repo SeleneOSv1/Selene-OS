@@ -1,0 +1,101 @@
+{
+  "case_id": "structured_answer_basic",
+  "stop_reason": "success",
+  "simulated_latency_ms": 2200,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000030000,
+    "trace_id": "trace-replay-structured-1",
+    "query": "structured company registry sample",
+    "retrieved_at_ms": 1700000030000,
+    "provider_runs": [
+      {
+        "provider_id": "company_registry",
+        "endpoint": "structured",
+        "latency_ms": 540,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Registry Record",
+        "url": "https://registry.example.com/entity/selene",
+        "snippet": "The registry record lists Selene OS as active.",
+        "media_type": "structured",
+        "provider_id": "company_registry",
+        "rank": 1,
+        "canonical_url": "https://registry.example.com/entity/selene",
+        "trust_tier": "HIGH"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-structured-001",
+        "source_url": "https://registry.example.com/entity/selene",
+        "canonical_url": "https://registry.example.com/entity/selene",
+        "chunk_index": 0,
+        "text_excerpt": "The registry record lists Selene OS as active.",
+        "text_len_chars": 47
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000030100,
+    "trace_id": "trace-replay-structured-1",
+    "answer_text": "The structured registry entry marks Selene OS as active.",
+    "bullet_evidence": [
+      "The structured registry source indicates Selene OS is active."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://registry.example.com/entity/selene"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-structured-001"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000030200,
+    "trace_id": "trace-replay-structured-1",
+    "formatted_text": "Direct Answer\nThe structured registry entry marks Selene OS as active.\nEvidence\n- The structured registry source indicates Selene OS is active. [c1]\nCitations\n[c1] https://registry.example.com/entity/selene",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://registry.example.com/entity/selene"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000030300,
+    "trace_id": "trace-replay-structured-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-structured-1",
+      "synthesis": "hash-synthesis-structured-1",
+      "write": "hash-write-structured-1"
+    },
+    "evidence_hash": "hash-evidence-structured-1",
+    "response_hash": "hash-write-structured-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

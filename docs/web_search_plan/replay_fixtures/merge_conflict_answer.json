@@ -1,0 +1,125 @@
+{
+  "case_id": "merge_conflict_answer",
+  "stop_reason": "success",
+  "simulated_latency_ms": 3000,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000090000,
+    "trace_id": "trace-replay-merge-conflict-1",
+    "query": "merge memory vs evidence conflict",
+    "retrieved_at_ms": 1700000090000,
+    "provider_runs": [
+      {
+        "provider_id": "merge_mode",
+        "endpoint": "web",
+        "latency_ms": 700,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Current Evidence Statement",
+        "url": "https://evidence.example.com/current",
+        "snippet": "Current evidence states feature rollout is complete.",
+        "media_type": "web",
+        "provider_id": "merge_mode",
+        "rank": 1,
+        "canonical_url": "https://evidence.example.com/current",
+        "trust_tier": "HIGH"
+      },
+      {
+        "title": "Prior Evidence Statement",
+        "url": "https://evidence.example.com/prior",
+        "snippet": "Prior statement in memory says rollout is pending.",
+        "media_type": "web",
+        "provider_id": "merge_mode",
+        "rank": 2,
+        "canonical_url": "https://evidence.example.com/prior",
+        "trust_tier": "HIGH"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-merge-001",
+        "source_url": "https://evidence.example.com/current",
+        "canonical_url": "https://evidence.example.com/current",
+        "chunk_index": 0,
+        "text_excerpt": "Current evidence states feature rollout is complete.",
+        "text_len_chars": 50
+      },
+      {
+        "chunk_id": "chunk-merge-002",
+        "source_url": "https://evidence.example.com/prior",
+        "canonical_url": "https://evidence.example.com/prior",
+        "chunk_index": 1,
+        "text_excerpt": "Prior statement in memory says rollout is pending.",
+        "text_len_chars": 49
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000090100,
+    "trace_id": "trace-replay-merge-conflict-1",
+    "answer_text": "External evidence overrides prior memory when statements conflict.",
+    "bullet_evidence": [
+      "Current evidence states the feature rollout is complete.",
+      "Prior internal statement indicated rollout was pending."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://evidence.example.com/current"
+      },
+      {
+        "type": "source_url",
+        "value": "https://evidence.example.com/prior"
+      }
+    ],
+    "uncertainty_flags": ["conflict_detected"],
+    "reason_codes": ["conflicting_evidence_detected"],
+    "evidence_refs": ["chunk-merge-001", "chunk-merge-002"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000090200,
+    "trace_id": "trace-replay-merge-conflict-1",
+    "formatted_text": "Direct Answer\nExternal evidence overrides prior memory when statements conflict.\nEvidence\n- Current evidence states the feature rollout is complete. [c1]\n- Prior internal statement indicated rollout was pending. [c2]\nCitations\n[c1] https://evidence.example.com/current\n[c2] https://evidence.example.com/prior",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://evidence.example.com/current",
+      "c2": "https://evidence.example.com/prior"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000090300,
+    "trace_id": "trace-replay-merge-conflict-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-merge-1",
+      "synthesis": "hash-synthesis-merge-1",
+      "write": "hash-write-merge-1"
+    },
+    "evidence_hash": "hash-evidence-merge-1",
+    "response_hash": "hash-write-merge-1",
+    "reason_codes": ["conflicting_evidence_detected"],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

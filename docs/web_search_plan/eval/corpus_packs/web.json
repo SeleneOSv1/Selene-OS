@@ -1,0 +1,19 @@
+{
+  "pack_id": "web",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "web_refusal_case",
+      "fixture_case_id": "web_refusal_insufficient",
+      "mode": "web",
+      "importance_tier": "low",
+      "expected_outcome": "refusal",
+      "fixed_time_ms": 1700000010000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "8b8487ee3d58f061123ea7ed43488f577a19cb06f57851c5a491ee0fed1abeac",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

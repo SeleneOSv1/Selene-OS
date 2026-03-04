@@ -1,0 +1,19 @@
+{
+  "pack_id": "merge",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "merge_conflict_case",
+      "fixture_case_id": "merge_conflict_answer",
+      "mode": "merge",
+      "importance_tier": "medium",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000090000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "603f39fb84db588b12ba2560064b0feadd954dea1f1f5270ca786071b1563be2",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": true,
+      "expect_trust_filtering": false
+    }
+  ]
+}

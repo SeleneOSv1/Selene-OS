@@ -1,0 +1,89 @@
+{
+  "case_id": "realtime_stale_refusal",
+  "stop_reason": "provider_results_exhausted",
+  "simulated_latency_ms": 900,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000050000,
+    "trace_id": "trace-replay-realtime-stale-1",
+    "query": "real-time finance quote",
+    "retrieved_at_ms": 1699990000000,
+    "provider_runs": [
+      {
+        "provider_id": "finance_api",
+        "endpoint": "real_time",
+        "latency_ms": 320,
+        "ttl_ms_applied": 300000,
+        "stale": true,
+        "error": {
+          "error_kind": "stale_data",
+          "reason_code": "stale_data"
+        }
+      }
+    ],
+    "sources": [
+      {
+        "title": "Finance API Quote",
+        "url": "https://api.example.com/quote/selene",
+        "snippet": "Cached quote is stale.",
+        "media_type": "structured",
+        "provider_id": "finance_api",
+        "rank": 1,
+        "canonical_url": "https://api.example.com/quote/selene"
+      }
+    ],
+    "content_chunks": [],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000050100,
+    "trace_id": "trace-replay-realtime-stale-1",
+    "answer_text": "Fresh real-time data is unavailable because the latest response is stale.",
+    "bullet_evidence": [
+      "The realtime provider marked the response as stale."
+    ],
+    "citations": [],
+    "uncertainty_flags": ["freshness_violation"],
+    "reason_codes": ["stale_data"],
+    "evidence_refs": [],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000050200,
+    "trace_id": "trace-replay-realtime-stale-1",
+    "formatted_text": "Direct Answer\nFresh real-time data is unavailable because the latest response is stale.\nEvidence\n- The realtime provider marked the response as stale.\nCitations\nNone",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {}
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000050300,
+    "trace_id": "trace-replay-realtime-stale-1",
+    "turn_state_transition": {
+      "from": "TURN_FAILED_CLOSED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-realtime-stale-1",
+      "synthesis": "hash-synthesis-realtime-stale-1",
+      "write": "hash-write-realtime-stale-1"
+    },
+    "evidence_hash": "hash-evidence-realtime-stale-1",
+    "response_hash": "hash-write-realtime-stale-1",
+    "reason_codes": ["stale_data"],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

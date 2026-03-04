@@ -1,0 +1,101 @@
+{
+  "case_id": "risk_answer_basic",
+  "stop_reason": "success",
+  "simulated_latency_ms": 2300,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000070000,
+    "trace_id": "trace-replay-risk-1",
+    "query": "risk score evidence sample",
+    "retrieved_at_ms": 1700000070000,
+    "provider_runs": [
+      {
+        "provider_id": "risk_transform",
+        "endpoint": "structured",
+        "latency_ms": 640,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Regulatory Filing Event",
+        "url": "https://filings.example.com/event",
+        "snippet": "A regulatory event was filed on schedule.",
+        "media_type": "structured",
+        "provider_id": "risk_transform",
+        "rank": 1,
+        "canonical_url": "https://filings.example.com/event",
+        "trust_tier": "OFFICIAL"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-risk-001",
+        "source_url": "https://filings.example.com/event",
+        "canonical_url": "https://filings.example.com/event",
+        "chunk_index": 0,
+        "text_excerpt": "A regulatory event was filed on schedule.",
+        "text_len_chars": 41
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000070100,
+    "trace_id": "trace-replay-risk-1",
+    "answer_text": "Risk evidence references a regulatory filing event with official provenance.",
+    "bullet_evidence": [
+      "An official filing source reports a regulatory event."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://filings.example.com/event"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-risk-001"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000070200,
+    "trace_id": "trace-replay-risk-1",
+    "formatted_text": "Direct Answer\nRisk evidence references a regulatory filing event with official provenance.\nEvidence\n- An official filing source reports a regulatory event. [c1]\nCitations\n[c1] https://filings.example.com/event",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://filings.example.com/event"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000070300,
+    "trace_id": "trace-replay-risk-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-risk-1",
+      "synthesis": "hash-synthesis-risk-1",
+      "write": "hash-write-risk-1"
+    },
+    "evidence_hash": "hash-evidence-risk-1",
+    "response_hash": "hash-write-risk-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}

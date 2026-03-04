@@ -1,0 +1,19 @@
+{
+  "pack_id": "news",
+  "pack_version": "1.0.0",
+  "cases": [
+    {
+      "case_id": "news_answer_case",
+      "fixture_case_id": "news_answer_basic",
+      "mode": "news",
+      "importance_tier": "high",
+      "expected_outcome": "answer",
+      "fixed_time_ms": 1700000005000,
+      "fixed_policy_snapshot_id": "policy-snapshot-fixed-v1",
+      "expected_snapshot_hash": "758013acf4ac06ce8b8c81720a6df6c6d84b61de69d8aa7e7a56e03b8329dea7",
+      "expect_stale_refusal": false,
+      "expect_conflict_flag": false,
+      "expect_trust_filtering": false
+    }
+  ]
+}

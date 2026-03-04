@@ -1,0 +1,125 @@
+{
+  "case_id": "compliance_filtered_answer",
+  "stop_reason": "success",
+  "simulated_latency_ms": 2600,
+  "evidence_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.E",
+    "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+    "created_at_ms": 1700000040000,
+    "trace_id": "trace-replay-compliance-1",
+    "query": "regulatory policy requirement",
+    "retrieved_at_ms": 1700000040000,
+    "provider_runs": [
+      {
+        "provider_id": "regulatory_filter",
+        "endpoint": "structured",
+        "latency_ms": 610,
+        "error": null
+      }
+    ],
+    "sources": [
+      {
+        "title": "Official Guidance",
+        "url": "https://regulator.example.gov/guidance",
+        "snippet": "Official guidance defines the reporting requirement.",
+        "media_type": "structured",
+        "provider_id": "regulatory_filter",
+        "rank": 1,
+        "canonical_url": "https://regulator.example.gov/guidance",
+        "trust_tier": "OFFICIAL"
+      },
+      {
+        "title": "Standards Clarification",
+        "url": "https://standards.example.org/clarification",
+        "snippet": "Standards body clarifies filing scope.",
+        "media_type": "structured",
+        "provider_id": "regulatory_filter",
+        "rank": 2,
+        "canonical_url": "https://standards.example.org/clarification",
+        "trust_tier": "HIGH"
+      }
+    ],
+    "content_chunks": [
+      {
+        "chunk_id": "chunk-compliance-001",
+        "source_url": "https://regulator.example.gov/guidance",
+        "canonical_url": "https://regulator.example.gov/guidance",
+        "chunk_index": 0,
+        "text_excerpt": "Official guidance defines the reporting requirement.",
+        "text_len_chars": 52
+      },
+      {
+        "chunk_id": "chunk-compliance-002",
+        "source_url": "https://standards.example.org/clarification",
+        "canonical_url": "https://standards.example.org/clarification",
+        "chunk_index": 1,
+        "text_excerpt": "Standards body clarifies filing scope.",
+        "text_len_chars": 39
+      }
+    ],
+    "trust_metadata": {
+      "replay_fixture": true
+    }
+  },
+  "synthesis_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.D",
+    "intended_consumers": ["PH1.WRITE"],
+    "created_at_ms": 1700000040100,
+    "trace_id": "trace-replay-compliance-1",
+    "answer_text": "Compliance evidence comes from official and high-trust sources only.",
+    "bullet_evidence": [
+      "Official guidance defines the reporting requirement.",
+      "A standards body source corroborates filing scope."
+    ],
+    "citations": [
+      {
+        "type": "source_url",
+        "value": "https://regulator.example.gov/guidance"
+      },
+      {
+        "type": "source_url",
+        "value": "https://standards.example.org/clarification"
+      }
+    ],
+    "uncertainty_flags": [],
+    "reason_codes": [],
+    "evidence_refs": ["chunk-compliance-001", "chunk-compliance-002"],
+    "synthesis_template_version": "1.0.0"
+  },
+  "write_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.WRITE",
+    "intended_consumers": ["API", "PH1.TTS", "PH1.J"],
+    "created_at_ms": 1700000040200,
+    "trace_id": "trace-replay-compliance-1",
+    "formatted_text": "Direct Answer\nCompliance evidence comes from official and high-trust sources only.\nEvidence\n- Official guidance defines the reporting requirement. [c1]\n- A standards body source corroborates filing scope. [c2]\nCitations\n[c1] https://regulator.example.gov/guidance\n[c2] https://standards.example.org/clarification",
+    "format_mode": "standard",
+    "voice_safe": true,
+    "citation_map": {
+      "c1": "https://regulator.example.gov/guidance",
+      "c2": "https://standards.example.org/clarification"
+    }
+  },
+  "audit_packet": {
+    "schema_version": "1.0.0",
+    "produced_by": "PH1.OS",
+    "intended_consumers": ["PH1.J"],
+    "created_at_ms": 1700000040300,
+    "trace_id": "trace-replay-compliance-1",
+    "turn_state_transition": {
+      "from": "OUTPUT_RENDERED",
+      "to": "AUDIT_COMMITTED"
+    },
+    "packet_hashes": {
+      "evidence": "hash-evidence-compliance-1",
+      "synthesis": "hash-synthesis-compliance-1",
+      "write": "hash-write-compliance-1"
+    },
+    "evidence_hash": "hash-evidence-compliance-1",
+    "response_hash": "hash-write-compliance-1",
+    "reason_codes": [],
+    "policy_snapshot_id": "policy-snapshot-fixed-v1"
+  }
+}
