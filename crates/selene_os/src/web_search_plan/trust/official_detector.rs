@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::web_search_plan::trust::domain_rules::{
-    HIGH_ALLOWLIST, LOW_ALLOWLIST, MEDIUM_ALLOWLIST, OFFICIAL_ALLOWLIST,
+    is_high_host, is_low_host, is_medium_host, is_official_host,
 };
 use url::Url;
 
@@ -92,34 +92,4 @@ pub fn detect_from_url(url: &str) -> OfficialDetection {
         host: Some(host),
         reasons,
     }
-}
-
-fn is_official_host(host: &str) -> bool {
-    OFFICIAL_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-        || host.ends_with(".gov")
-        || host.contains(".gov.")
-        || host.ends_with(".gov.sg")
-        || host.ends_with(".gov.uk")
-}
-
-fn is_high_host(host: &str) -> bool {
-    HIGH_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-        || host.ends_with(".edu")
-        || host.contains(".edu.")
-}
-
-fn is_medium_host(host: &str) -> bool {
-    MEDIUM_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
-}
-
-fn is_low_host(host: &str) -> bool {
-    LOW_ALLOWLIST
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
 }

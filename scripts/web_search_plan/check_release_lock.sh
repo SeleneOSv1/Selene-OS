@@ -69,6 +69,18 @@ run_gate "scripts/web_search_plan/check_parity_enhancements.sh" scripts/web_sear
 run_gate "scripts/web_search_plan/check_gap_closers.sh" scripts/web_search_plan/check_gap_closers.sh
 run_gate "scripts/web_search_plan/check_enterprise_integration_lock.sh" scripts/web_search_plan/check_enterprise_integration_lock.sh
 run_gate "scripts/web_search_plan/check_slo_lock.sh" scripts/web_search_plan/check_slo_lock.sh
+run_gate "cargo run -p selene_os --bin web_search_turn -- --fixture \"test query\"" bash -lc '
+set +e
+cargo run -p selene_os --bin web_search_turn -- --fixture "test query" >/tmp/selene_web_search_turn_fixture.log 2>&1
+status=$?
+set -e
+if [ "$status" -eq 2 ] && grep -q "^FAIL_CLOSED_REASON=" /tmp/selene_web_search_turn_fixture.log; then
+  exit 0
+fi
+cat /tmp/selene_web_search_turn_fixture.log
+echo "expected fixture mode to fail closed with exit=2"
+exit 1
+'
 run_gate "cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet" cargo test -p selene_os web_search_plan::runtime::runtime_tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::tests --quiet" cargo test -p selene_os web_search_plan::tests --quiet
 run_gate "cargo test -p selene_os web_search_plan::release::release_tests --quiet" cargo test -p selene_os web_search_plan::release::release_tests --quiet

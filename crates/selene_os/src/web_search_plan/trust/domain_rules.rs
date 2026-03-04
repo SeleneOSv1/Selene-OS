@@ -135,15 +135,17 @@ pub fn parse_host(url: &str) -> Option<String> {
         .and_then(|parsed| parsed.host_str().map(|value| value.to_ascii_lowercase()))
 }
 
-fn is_official_host(host: &str) -> bool {
+pub(crate) fn is_official_host(host: &str) -> bool {
     OFFICIAL_ALLOWLIST
         .iter()
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
         || host.ends_with(".gov")
         || host.contains(".gov.")
+        || host.ends_with(".gov.sg")
+        || host.ends_with(".gov.uk")
 }
 
-fn is_high_host(host: &str) -> bool {
+pub(crate) fn is_high_host(host: &str) -> bool {
     HIGH_ALLOWLIST
         .iter()
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
@@ -151,13 +153,13 @@ fn is_high_host(host: &str) -> bool {
         || host.contains(".edu.")
 }
 
-fn is_medium_host(host: &str) -> bool {
+pub(crate) fn is_medium_host(host: &str) -> bool {
     MEDIUM_ALLOWLIST
         .iter()
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))
 }
 
-fn is_low_host(host: &str) -> bool {
+pub(crate) fn is_low_host(host: &str) -> bool {
     LOW_ALLOWLIST
         .iter()
         .any(|suffix| host == *suffix || host.ends_with(&format!(".{}", suffix)))

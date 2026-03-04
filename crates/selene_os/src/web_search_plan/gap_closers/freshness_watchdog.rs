@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
-use rust_decimal::prelude::ToPrimitive;
-use rust_decimal::{Decimal, RoundingStrategy};
+use crate::web_search_plan::realtime::freshness::evaluate as evaluate_realtime_freshness;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -59,29 +58,23 @@ pub fn evaluate_freshness_watchdog(
             .unwrap_or("unknown")
             .to_string();
 
-        let published_age_ms = source
+        let source_timestamp_ms = source
             .get("published_at")
             .and_then(Value::as_i64)
-            .map(|published_at| retrieved_at_ms.saturating_sub(published_at));
-        let freshness_age_ms = source
-            .get("freshness_score")
-            .and_then(parse_freshness_score)
-            .map(|score| {
-                let stale_ratio = Decimal::ONE - score;
-                (Decimal::from(threshold_ms) * stale_ratio)
-                    .round_dp_with_strategy(0, RoundingStrategy::MidpointAwayFromZero)
-                    .to_i64()
-                    .unwrap_or(threshold_ms)
-            });
-
-        let age_ms = published_age_ms.or(freshness_age_ms);
-        let Some(age_ms) = age_ms else {
+            .or_else(|| source.get("retrieved_at_ms").and_then(Value::as_i64));
+        let Some(source_timestamp_ms) = source_timestamp_ms else {
             continue;
         };
-        if age_ms > threshold_ms {
+
+        let Ok(assessment) =
+            evaluate_realtime_freshness(retrieved_at_ms, source_timestamp_ms, threshold_ms as u64)
+        else {
+            continue;
+        };
+        if assessment.stale {
             stale_citations.push(StaleCitation {
                 citation_ref,
-                age_ms,
+                age_ms: assessment.age_ms,
                 threshold_ms,
             });
         }
@@ -187,30 +180,6 @@ fn stale_threshold_ms(class: QueryFreshnessClass, importance_tier: &str) -> i64 
             "low" => 90 * 24 * 60 * 60 * 1000,
             _ => 60 * 24 * 60 * 60 * 1000,
         },
-    }
-}
-
-fn parse_freshness_score(value: &Value) -> Option<Decimal> {
-    if let Some(raw) = value.as_f64() {
-        let parsed = Decimal::from_f64_retain(raw)?;
-        if raw > 1.0 {
-            return Some(clamp_unit(parsed / Decimal::from(100u32)));
-        }
-        return Some(clamp_unit(parsed));
-    }
-    if let Some(raw) = value.as_i64() {
-        return Some(clamp_unit(Decimal::from(raw) / Decimal::from(100u32)));
-    }
-    None
-}
-
-fn clamp_unit(value: Decimal) -> Decimal {
-    if value < Decimal::ZERO {
-        Decimal::ZERO
-    } else if value > Decimal::ONE {
-        Decimal::ONE
-    } else {
-        value
     }
 }
 
