@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.SEARCH",
+  "intended_consumers": ["PH1.D", "PH1.WRITE", "PH1.J"],
+  "created_at_ms": 1703000000000,
+  "trace_id": "trace-enterprise-base",
+  "query": "acme enterprise analysis",
+  "retrieved_at_ms": 1703000000000,
+  "provider_runs": [],
+  "sources": [
+    {
+      "title": "Acme financial warning",
+      "url": "https://news.example/acme-financial-warning",
+      "snippet": "Acme disclosed heavy cash burn and net loss while facing lawsuit pressure.",
+      "media_type": "news",
+      "provider_id": "BraveWebSearch",
+      "rank": 1,
+      "canonical_url": "https://news.example/acme-financial-warning",
+      "trust_tier": "high",
+      "freshness_score": 0.92
+    },
+    {
+      "title": "Regulatory penalty report",
+      "url": "https://regulator.example/acme-penalty",
+      "snippet": "Regulator announced enforcement action and financial penalty after compliance breach.",
+      "media_type": "news",
+      "provider_id": "GDELT",
+      "rank": 2,
+      "canonical_url": "https://regulator.example/acme-penalty",
+      "trust_tier": "official",
+      "freshness_score": 0.88
+    },
+    {
+      "title": "Operational incident coverage",
+      "url": "https://status.example/acme-outage",
+      "snippet": "Customers reported outage and service disruption during peak hours.",
+      "media_type": "news",
+      "provider_id": "BraveWebSearch",
+      "rank": 3,
+      "canonical_url": "https://status.example/acme-outage",
+      "trust_tier": "medium",
+      "freshness_score": 0.76
+    }
+  ],
+  "content_chunks": [
+    {
+      "chunk_id": "chunk-risk-1",
+      "source_url": "https://news.example/acme-financial-warning",
+      "text_excerpt": "Acme reported liquidity pressure, net loss, and debt burden concerns.",
+      "contradiction_group_id": null
+    },
+    {
+      "chunk_id": "chunk-risk-2",
+      "source_url": "https://regulator.example/acme-penalty",
+      "text_excerpt": "The enforcement order cites sanctions and compliance breach controls.",
+      "contradiction_group_id": null
+    },
+    {
+      "chunk_id": "chunk-risk-3",
+      "source_url": "https://status.example/acme-outage",
+      "text_excerpt": "Incident timeline confirms prolonged outage and failure in redundant systems.",
+      "contradiction_group_id": null
+    }
+  ],
+  "trust_metadata": {}
+}

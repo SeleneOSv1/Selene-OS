@@ -7,6 +7,7 @@ pub mod competitive;
 pub mod contract_hash;
 pub mod diag;
 pub mod document;
+pub mod enterprise;
 pub mod eval;
 pub mod gap_closers;
 pub mod idempotency_validator;

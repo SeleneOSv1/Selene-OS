@@ -324,6 +324,7 @@ fn test_t5_stop_condition_correctness() {
     assert_eq!(exhausted.stop_reason, StopReason::RewriteAttemptsExhausted);
 
     input.rewrite_attempts.clear();
+    policy.max_rewrite_attempts = 3;
     let provider_exhausted = execute_search_topk_pipeline_with_opener(&input, &policy, |_c| {
         Ok(OpenSuccess {
             final_url: String::new(),

@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "produced_by": "PH1.ANALYTICS",
+  "intended_consumers": ["PH1.D"],
+  "created_at_ms": 1703000000000,
+  "trace_id": "trace-enterprise-base",
+  "inputs": {
+    "evidence_hash": "stub",
+    "policy_snapshot_id": "policy-snapshot-default",
+    "as_of_ms": 1703000000000
+  },
+  "aggregates": [
+    {
+      "metric_id": "acme.net_income",
+      "entity": "Acme",
+      "attribute": "Net_Income",
+      "unit": null,
+      "currency": "USD",
+      "window": null,
+      "method": "mean",
+      "value": {
+        "type": "decimal",
+        "value": "-120.5"
+      },
+      "sample_size": 3,
+      "source_refs": [
+        "https://news.example/acme-financial-warning",
+        "chunk-risk-1"
+      ]
+    }
+  ],
+  "consensus": [
+    {
+      "group_id": "g1",
+      "topic": "acme.net_income",
+      "candidates": [],
+      "chosen": {
+        "type": "decimal",
+        "value": "-120.5"
+      },
+      "agreement_score": "0.80",
+      "outliers": []
+    }
+  ],
+  "confidence": [],
+  "reason_codes": []
+}
