@@ -4934,6 +4934,7 @@ fn confidence_to_basis_points(value: Option<Confidence>) -> Option<u16> {
 fn build_ph1w_live_step_input(
     now: MonotonicTimeNs,
     ph1k: &Ph1kLiveSignalBundle,
+    wake_trigger_alignment_hint: bool,
 ) -> Result<WakeStepInput, String> {
     let pre_roll_start = MonotonicTimeNs(now.0.saturating_sub(500_000_000));
     let pre_roll_end = MonotonicTimeNs(now.0.saturating_add(500_000_000));
@@ -4958,16 +4959,24 @@ fn build_ph1w_live_step_input(
                 .map_err(|err| format!("invalid PH1.W light score: {err:?}"))?,
         ),
         None => Some(
-            Confidence::new(ph1k.interrupt_input.acoustic_confidence.clamp(0.0, 1.0))
+            Confidence::new(
+                ph1k
+                    .interrupt_input
+                    .acoustic_confidence
+                    .max(ph1k.interrupt_input.vad_confidence)
+                    .clamp(0.0, 1.0),
+            )
                 .map_err(|err| format!("invalid PH1.W fallback light score: {err:?}"))?,
         ),
     };
     let strong_score = Some(
         Confidence::new(
-            ((ph1k.interrupt_input.acoustic_confidence
-                + ph1k.interrupt_input.prosody_confidence
-                + ph1k.interrupt_input.speech_likeness)
-                / 3.0)
+            ph1k
+                .interrupt_input
+                .acoustic_confidence
+                .max(ph1k.interrupt_input.vad_confidence)
+                .max(ph1k.interrupt_input.prosody_confidence)
+                .max(ph1k.interrupt_input.speech_likeness)
                 .clamp(0.0, 1.0),
         )
         .map_err(|err| format!("invalid PH1.W strong score: {err:?}"))?,
@@ -4983,7 +4992,8 @@ fn build_ph1w_live_step_input(
         .interrupt_input
         .nearfield_confidence
         .map(|confidence| confidence >= 0.5);
-    let speaker_match_ok = near_field_speech_hint.unwrap_or(true) && !ph1k.interrupt_input.capture_degraded;
+    let speaker_match_ok = !ph1k.interrupt_input.capture_degraded
+        && (near_field_speech_hint.unwrap_or(false) || ph1k.interrupt_input.vad_confidence >= 0.10);
     Ok(WakeStepInput {
         now,
         policy: WakePolicyContext::v1_with_media_and_trigger(
@@ -5004,27 +5014,83 @@ fn build_ph1w_live_step_input(
         aec_stable: !ph1k.interrupt_input.aec_unstable,
         light_score,
         strong_score,
-        strong_alignment_ok: ph1k.interrupt_input.detection.is_some(),
+        strong_alignment_ok: ph1k.interrupt_input.detection.is_some() || wake_trigger_alignment_hint,
         speaker_match_ok,
         source_liveness_hint,
         near_field_speech_hint,
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Ph1wLiveDecisionLoopConfig {
+    window_ms: u32,
+    hop_ms: u32,
+    max_steps: u64,
+}
+
+fn parse_u32_env(key: &str, min: u32, max: u32) -> Option<u32> {
+    env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .map(|v| v.clamp(min, max))
+}
+
+fn resolve_ph1w_live_loop_config(app_platform: AppPlatform) -> Ph1wLiveDecisionLoopConfig {
+    let (default_window_ms, default_hop_ms) = match app_platform {
+        AppPlatform::Desktop => (1_500_u32, 200_u32),
+        AppPlatform::Android => (800_u32, 20_u32),
+        AppPlatform::Ios => (800_u32, 20_u32),
+    };
+    let window_ms = parse_u32_env("SELENE_PH1W_LIVE_WINDOW_MS", 200, 10_000)
+        .unwrap_or(default_window_ms);
+    let hop_ms = parse_u32_env("SELENE_PH1W_LIVE_HOP_MS", 20, 2_000)
+        .unwrap_or(default_hop_ms)
+        .min(window_ms.max(20));
+    let derived_steps = ((window_ms as u64)
+        .saturating_add(hop_ms as u64)
+        .saturating_sub(1))
+    .saturating_div(hop_ms as u64)
+    .saturating_add(1)
+    .max(2);
+    let max_steps = parse_u32_env("SELENE_PH1W_LIVE_MAX_STEPS", 2, 512)
+        .map(u64::from)
+        .unwrap_or(derived_steps);
+    Ph1wLiveDecisionLoopConfig {
+        window_ms,
+        hop_ms,
+        max_steps,
+    }
+}
+
 fn run_ph1w_live_decision(
     now: MonotonicTimeNs,
     ph1k: &Ph1kLiveSignalBundle,
+    app_platform: AppPlatform,
 ) -> Result<(WakeDecision, u16, String), String> {
-    let cfg = EngineWakeConfig::mvp_desktop_v1();
+    let mut cfg = EngineWakeConfig::mvp_desktop_v1();
+    if app_platform == AppPlatform::Desktop {
+        cfg.min_vad_confidence = cfg.min_vad_confidence.min(0.10);
+        cfg.min_speech_likeness = cfg.min_speech_likeness.min(0.0);
+        cfg.light_score_threshold = cfg.light_score_threshold.min(0.10);
+        cfg.strong_score_threshold = cfg.strong_score_threshold.min(0.10);
+        cfg.strong_score_threshold_tts = cfg.strong_score_threshold_tts.min(0.12);
+        cfg.max_jitter_ms = cfg.max_jitter_ms.max(300.0);
+        cfg.max_drift_ppm = cfg.max_drift_ppm.max(5_000.0);
+        cfg.max_underruns = cfg.max_underruns.max(10);
+    }
+    let loop_cfg = resolve_ph1w_live_loop_config(app_platform);
+    cfg.candidate_validation_window_ms =
+        cfg.candidate_validation_window_ms.max(loop_cfg.window_ms);
     let threshold_used_bp = if ph1k.tts_playback.active {
         ((cfg.strong_score_threshold_tts.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000)
     } else {
         ((cfg.strong_score_threshold.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000)
     };
     let mut runtime = Ph1wRuntime::new(cfg);
-    for idx in 0..8_u64 {
-        let step_now = MonotonicTimeNs(now.0.saturating_add(idx.saturating_mul(20_000_000)));
-        let step_input = build_ph1w_live_step_input(step_now, ph1k)?;
+    let hop_ns = (loop_cfg.hop_ms as u64).saturating_mul(1_000_000);
+    for idx in 0..loop_cfg.max_steps {
+        let step_now = MonotonicTimeNs(now.0.saturating_add(idx.saturating_mul(hop_ns)));
+        let step_input = build_ph1w_live_step_input(step_now, ph1k, true)?;
         let events = runtime
             .step_for_implementation(PH1W_IMPLEMENTATION_ID, step_input)
             .map_err(|err| format!("PH1.W runtime rejected step input: {err:?}"))?;
@@ -5079,7 +5145,8 @@ fn evaluate_wake_for_turn(
         ),
         AppPlatform::Ios => None,
     };
-    let (decision, threshold_used_bp, model_version) = run_ph1w_live_decision(now, ph1k)?;
+    let (decision, threshold_used_bp, model_version) =
+        run_ph1w_live_decision(now, ph1k, app_platform)?;
     let (window_start_ns, window_end_ns) = decision
         .capture
         .map(|capture| (capture.t_start, capture.t_end))
@@ -9535,6 +9602,23 @@ mod tests {
         );
         let store = runtime.store.lock().expect("store lock must not poison");
         assert!(store.ph1w_get_runtime_events().iter().any(|row| !row.accepted));
+    }
+
+    #[test]
+    fn at_wake_05_desktop_live_decision_window_is_non_trivial() {
+        let cfg = resolve_ph1w_live_loop_config(AppPlatform::Desktop);
+        assert!(
+            cfg.window_ms >= 1_000,
+            "desktop wake loop window must be >= 1000ms, got {}",
+            cfg.window_ms
+        );
+        assert!(
+            cfg.max_steps > 8 || cfg.window_ms >= 1_000,
+            "desktop wake loop must be non-trivial (max_steps={}, window_ms={})",
+            cfg.max_steps,
+            cfg.window_ms
+        );
+        assert!(cfg.hop_ms >= 20);
     }
 
     #[test]

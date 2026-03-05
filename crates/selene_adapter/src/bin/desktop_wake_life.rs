@@ -39,6 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let producer = DesktopMicProducer::start(config)?;
     let sample_rate_hz = producer.source_sample_rate_hz()?;
     let channels = producer.source_channels()?;
+    let wake_loop = resolve_desktop_wake_loop_config();
+    println!(
+        "wake loop config: window_ms={} hop_ms={} max_steps={} (override: SELENE_PH1W_LIVE_WINDOW_MS/SELENE_PH1W_LIVE_HOP_MS/SELENE_PH1W_LIVE_MAX_STEPS)",
+        wake_loop.window_ms, wake_loop.hop_ms, wake_loop.max_steps
+    );
     producer.wait_until_pre_roll_ready(Duration::from_secs(8))?;
     if cli.capture_seconds > 0 {
         println!(
@@ -69,6 +74,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         capture_ref.clipping_ratio_bp.unwrap_or(0),
         capture_ref.timing_jitter_ms_milli.unwrap_or(0),
         capture_ref.snr_db_milli.unwrap_or(0)
+    );
+    println!(
+        "capture timing: drift_ppm_milli={} underruns={} overruns={} buffer_depth_ms_milli={}",
+        capture_ref.timing_drift_ppm_milli.unwrap_or(0),
+        capture_ref.timing_underruns.unwrap_or(0),
+        capture_ref.timing_overruns.unwrap_or(0),
+        capture_ref.timing_buffer_depth_ms_milli.unwrap_or(0)
+    );
+    println!(
+        "capture scoring: acoustic_confidence_bp={} prosody_confidence_bp={} speech_likeness_bp={} detection_present={}",
+        capture_ref.acoustic_confidence_bp.unwrap_or(0),
+        capture_ref.prosody_confidence_bp.unwrap_or(0),
+        capture_ref.speech_likeness_bp.unwrap_or(0),
+        capture_ref
+            .detection_text
+            .as_deref()
+            .is_some_and(|v| !v.trim().is_empty())
     );
 
     let request = VoiceTurnAdapterRequest {
@@ -168,6 +190,41 @@ fn wake_reason_name(reason_code: u32) -> &'static str {
         c if c == ph1w_reason_codes::W_FAIL_G5_POLICY_BLOCKED.0 => "POLICY_BLOCKED",
         _ => "UNKNOWN",
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WakeLoopConfig {
+    window_ms: u32,
+    hop_ms: u32,
+    max_steps: u64,
+}
+
+fn resolve_desktop_wake_loop_config() -> WakeLoopConfig {
+    let window_ms = parse_u32_env("SELENE_PH1W_LIVE_WINDOW_MS", 200, 10_000).unwrap_or(1_500);
+    let hop_ms = parse_u32_env("SELENE_PH1W_LIVE_HOP_MS", 20, 2_000)
+        .unwrap_or(200)
+        .min(window_ms.max(20));
+    let derived_steps = ((window_ms as u64)
+        .saturating_add(hop_ms as u64)
+        .saturating_sub(1))
+    .saturating_div(hop_ms as u64)
+    .saturating_add(1)
+    .max(2);
+    let max_steps = parse_u32_env("SELENE_PH1W_LIVE_MAX_STEPS", 2, 512)
+        .map(u64::from)
+        .unwrap_or(derived_steps);
+    WakeLoopConfig {
+        window_ms,
+        hop_ms,
+        max_steps,
+    }
+}
+
+fn parse_u32_env(key: &str, min: u32, max: u32) -> Option<u32> {
+    env::var(key)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .map(|v| v.clamp(min, max))
 }
 
 #[derive(Debug, Clone)]
