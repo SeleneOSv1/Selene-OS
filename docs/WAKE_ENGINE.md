@@ -625,3 +625,112 @@ Release gate pass criteria:
 - Performance and power metrics within Section 2 and Section 13 limits.
 - No P0/P1 wake defects open.
 - Rollback drill executed successfully for current candidate artifact.
+
+## Section 19: Current Repo Gap Closure Matrix (Mandatory)
+
+This section records the concrete implementation gaps that must be closed before the wake plan can be considered end-to-end complete.
+
+Gap 1 - Live wake trigger currently synthesizes acceptance:
+- Current state: adapter builds synthetic wake accept event.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::resolve_session_turn_state`, `build_turn_wake_decision`.
+- Required change: replace synthetic `WakeDecision::accept_v1` path with real `Ph1wRuntime` inference output for `WAKE_WORD`.
+
+Gap 2 - PH1.W runtime exists but is not wired into live turn route:
+- Current state: PH1.W runtime is implemented in engine/runtime modules but not invoked in live adapter turn path.
+- Repo anchor: `crates/selene_engines/src/ph1w.rs::Ph1wRuntime`, `crates/selene_adapter/src/lib.rs::run_voice_turn_internal`.
+- Required change: insert PH1.W call boundary between PH1.K signal bundle build and PH1.L session-open step.
+
+Gap 3 - Real microphone capture runtime is missing:
+- Current state: live adapter expects caller-supplied `audio_capture_ref` bundle.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAudioCaptureRef`, `build_ph1k_live_signal_bundle`.
+- Required change: implement platform microphone runtime producers (desktop/android) that fill capture refs from real devices.
+
+Gap 4 - iOS side-button-only policy not enforced at runtime:
+- Current state: `WAKE_WORD` trigger is accepted for iOS in runtime contract/tests.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::parse_trigger`, adapter parity tests.
+- Required change: enforce `IOS -> EXPLICIT only`; reject `IOS + WAKE_WORD` fail-closed.
+
+Gap 5 - Onboarding continue has no explicit wake-enrollment action:
+- Current state: onboarding continue action set includes `VoiceEnrollLock` but no wake-enroll action.
+- Repo anchor: `crates/selene_os/src/app_ingress.rs::AppOnboardingContinueAction`, `crates/selene_adapter/src/lib.rs::parse_onboarding_continue_action`.
+- Required change: add wake-enrollment action and route it through PH1.W onboarding simulation path.
+
+Gap 6 - Wake onboarding gate matrix differs from target strict matrix:
+- Current state: required platform receipts are setup receipts; wake receipt is conditionally checked when complete wake enrollment already exists.
+- Repo anchor: `crates/selene_storage/src/ph1f.rs::ph1onb_required_platform_receipt_kinds`, `ph1onb_complete_commit`.
+- Required change: enforce explicit wake-training completion + sync receipt requirements for Android/Desktop onboarding completion.
+
+Gap 7 - `/v1/voice/turn` API contract is below target:
+- Current state: request/response do not expose plan-required idempotency/session fields and status semantics.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAdapterRequest`, `VoiceTurnAdapterResponse`, `crates/selene_adapter/src/bin/http_adapter.rs::run_voice_turn`.
+- Required change: add contract fields (`idempotency_key`, `session_id`, `turn_id`, decision refs) and status mapping (`200/409/422/401/403`).
+
+Gap 8 - Wake runtime event commit is not wired from live path:
+- Current state: storage commit API exists but is not called by live adapter wake route.
+- Repo anchor: `crates/selene_storage/src/ph1f.rs::ph1w_runtime_event_commit`, adapter live flow in `run_voice_turn_internal`.
+- Required change: commit accepted/rejected wake events from real PH1.W outputs for every wake decision window.
+
+Gap 9 - Wake learning taxonomy is missing in feedback/learn contracts:
+- Current state: learn/feedback coverage is interrupt-centric; no `FalseWake`/`MissedWake`/`LowConfidenceWake` classes.
+- Repo anchor: `crates/selene_kernel_contracts/src/ph1feedback.rs::FeedbackEventType`, `crates/selene_kernel_contracts/src/ph1learn.rs::LearnSignalType`, `crates/selene_storage/src/ph1f.rs::Ph1kFeedbackIssueKind`.
+- Required change: extend contract enums and routing logic for wake failure taxonomy.
+
+Gap 10 - Learning-signal outbox/cloud ACK-NACK contract not implemented:
+- Current state: outbox and worker primarily cover artifact sync queueing.
+- Repo anchor: `crates/selene_storage/src/ph1f.rs::MobileArtifactSyncKind`, `MobileArtifactSyncState`; `crates/selene_os/src/device_artifact_sync.rs`.
+- Required change: add wake-learn signal outbox records, ACK/NACK result mapping, and retry/dead-letter semantics for learn signal batches.
+
+Gap 11 - Artifact ABI compatibility fields/checks are missing:
+- Current state: artifact ledger has `artifact_version/package_hash/payload_ref` but no wake runtime ABI negotiation fields.
+- Repo anchor: `crates/selene_kernel_contracts/src/ph1art.rs::ArtifactLedgerRowInput`, `ArtifactLedgerRow`.
+- Required change: add wake model ABI metadata and enforce load-time compatibility checks.
+
+Gap 12 - Device-side pull/apply loop for improved wake artifacts is missing:
+- Current state: worker performs outbound sync attempts and queue transitions; no wake artifact pull/apply activation loop in this runtime path.
+- Repo anchor: `crates/selene_os/src/device_artifact_sync.rs::run_device_artifact_sync_worker_pass`, `send_http_sync_envelope`.
+- Required change: add pull/apply pipeline and activation with hash/ABI validation + rollback pointer.
+
+Gap 13 - Required perf/power release gate coverage is missing:
+- Current state: wake tests exist for engine/runtime behavior, but no enforced perf/power gate harness for always-listening runtime.
+- Repo anchor: wake unit/wiring tests in `crates/selene_engines/src/ph1w.rs`, `crates/selene_os/src/ph1w.rs`, adapter parity tests in `crates/selene_adapter/src/lib.rs`.
+- Required change: add deterministic perf/power CI gates and block rollout on budget violations.
+
+Gap 14 - `/v1/voice/turn` authentication enforcement is missing:
+- Current state: route accepts state+JSON request without explicit auth middleware/header validation.
+- Repo anchor: `crates/selene_adapter/src/bin/http_adapter.rs::Router::new`, `run_voice_turn`.
+- Required change: enforce bearer token/device auth and map auth failures to `401/403`.
+
+Gap 15 - Wake runtime event schema lacks score/threshold/window telemetry:
+- Current state: wake runtime event records do not persist wake score, threshold used, or audio window timing boundaries.
+- Repo anchor: `crates/selene_storage/src/ph1f.rs::WakeRuntimeEventRecord`.
+- Required change: extend wake event schema + commit API to include model score, threshold, `audio_window_start_ms`, and `audio_window_end_ms`.
+
+Gap 16 - Internal wake reject code path is incomplete:
+- Current state: timeout reject code exists, but no explicit internal-failure reject reason code required by runtime contract.
+- Repo anchor: `crates/selene_engines/src/ph1w.rs::reason_codes`.
+- Required change: add internal reject reason code mapping (for unknown/internal PH1.W failures) and persist it.
+
+Gap 17 - Platform+trigger policy is not enforced at OS trigger model:
+- Current state: trigger model is generic (`WakeWord|Explicit`) and wake-stage requirement is trigger-only, not platform-gated.
+- Repo anchor: `crates/selene_os/src/ph1os.rs::OsVoiceTrigger`, `wake_stage_required`.
+- Required change: enforce platform-aware trigger policy (`IOS => Explicit only`) in OS-level voice context validation.
+
+Gap 18 - Builder does not explicitly bind wake artifact rollout:
+- Current state: rollout/canary/rollback control exists in builder, but no explicit wake artifact binding path is defined.
+- Repo anchor: `crates/selene_os/src/ph1builder.rs`.
+- Required change: add wake artifact target/binding path to builder governed ingest + staged rollout flow.
+
+Gap 19 - Native mobile app implementation is not present in this repository:
+- Current state: no iOS/Android source files are present in this repo.
+- Repo anchor: repository file scan (`.swift/.kt/.java/.xcodeproj/Gradle/Podfile/Info.plist`).
+- Required change: define and maintain separate app-repo contract checklist and CI contract tests against this server API.
+
+Gap 20 - Wake-specific retention and deletion lifecycle is missing:
+- Current state: wake tables persist enrollment/runtime data, but no dedicated wake TTL/purge/delete flows are implemented.
+- Repo anchor: `crates/selene_storage/src/ph1f.rs` wake enrollment/runtime records.
+- Required change: add wake data retention TTL, purge jobs, and user-driven deletion paths for wake enrollment/runtime artifacts.
+
+Gap 21 - Plan contract symbol names are docs-only and not codified:
+- Current state: types like `WakeInferenceRequestV1`, `WakeDecisionV1`, `WakeLearnSignalV1`, `WakeLearnAckV1` are not implemented as concrete code contracts.
+- Repo anchor: `docs/WAKE_ENGINE.md` (plan contract names), missing in `crates/**`.
+- Required change: add these canonical contract types to kernel contracts and wire their validators through runtime paths.
