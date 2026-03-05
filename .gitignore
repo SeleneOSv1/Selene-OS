@@ -24,3 +24,5 @@ Icon?
 .dev/*.md
 .dev/*.csv
 .dev/postgres/
+
+crates/selene_adapter/.dev/
