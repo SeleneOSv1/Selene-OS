@@ -59,6 +59,13 @@ use selene_kernel_contracts::ph1onb::{
     ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT,
     ONB_TERMS_ACCEPT_COMMIT,
 };
+use selene_kernel_contracts::ph1w::{
+    Ph1wRequest, Ph1wResponse, WakeEnrollCompleteCommitRequest, WakeEnrollDeferCommitRequest,
+    WakeEnrollSampleCommitRequest, WakeEnrollStartDraftRequest,
+    WakeEnrollStatus as ContractWakeEnrollStatus, WakeEnrollmentSessionId, WakeRequest,
+    WakeSampleResult, WakeSimulationType, PH1W_CONTRACT_VERSION, WAKE_ENROLL_COMPLETE_COMMIT,
+    WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT, WAKE_ENROLL_START_DRAFT,
+};
 use selene_kernel_contracts::ph1persona::{
     PersonaDeliveryPolicyRef, PersonaPreferenceKey, PersonaPreferenceSignal,
     PersonaProfileValidateRequest, PersonaRequestEnvelope, PersonaValidationStatus,
@@ -89,6 +96,7 @@ use crate::ph1os::{
     OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
     OsVoiceLiveTurnOutcome, OsVoicePlatform, OsVoiceTrigger, OsVoiceTurnContext,
 };
+use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
@@ -244,6 +252,19 @@ pub enum AppOnboardingContinueAction {
         device_id: DeviceId,
         sample_seed: String,
     },
+    WakeEnrollStartDraft {
+        device_id: DeviceId,
+    },
+    WakeEnrollSampleCommit {
+        device_id: DeviceId,
+        sample_pass: bool,
+    },
+    WakeEnrollCompleteCommit {
+        device_id: DeviceId,
+    },
+    WakeEnrollDeferCommit {
+        device_id: DeviceId,
+    },
     EmployeePhotoCaptureSend {
         photo_blob_ref: String,
     },
@@ -340,6 +361,14 @@ impl AppOnboardingContinueRequest {
                     64,
                 )?;
             }
+            AppOnboardingContinueAction::WakeEnrollStartDraft { device_id }
+            | AppOnboardingContinueAction::WakeEnrollCompleteCommit { device_id }
+            | AppOnboardingContinueAction::WakeEnrollDeferCommit { device_id } => {
+                device_id.validate()?;
+            }
+            AppOnboardingContinueAction::WakeEnrollSampleCommit { device_id, .. } => {
+                device_id.validate()?;
+            }
             AppOnboardingContinueAction::EmployeePhotoCaptureSend { photo_blob_ref } => {
                 validate_ascii_token(
                     "app_onboarding_continue_request.employee_photo_capture_send.photo_blob_ref",
@@ -369,6 +398,7 @@ pub enum AppOnboardingContinueNextStep {
     Terms,
     PrimaryDeviceConfirm,
     VoiceEnroll,
+    WakeEnroll,
     SenderVerification,
     EmoPersonaLock,
     AccessProvision,
@@ -1162,7 +1192,11 @@ impl AppServerIngressRuntime {
                 }
                 Ok(AppOnboardingContinueOutcome {
                     onboarding_session_id: onboarding_session_id.as_str().to_string(),
-                    next_step: AppOnboardingContinueNextStep::EmoPersonaLock,
+                    next_step: onboarding_next_step_after_voice_enroll(
+                        store,
+                        &onboarding_session_id,
+                        session.app_platform,
+                    ),
                     blocking_field: None,
                     blocking_question: None,
                     remaining_missing_fields: store
@@ -1172,6 +1206,347 @@ impl AppServerIngressRuntime {
                     remaining_platform_receipt_kinds,
                     voice_artifact_sync_receipt_ref,
                     access_engine_instance_id: None,
+                    onboarding_status: None,
+                })
+            }
+            AppOnboardingContinueAction::WakeEnrollStartDraft { device_id } => {
+                ensure_wake_enrollment_action_allowed(store, &onboarding_session_id, &device_id)?;
+                self.executor.ensure_simulation_chain_active_for_tenant(
+                    store,
+                    &effective_tenant,
+                    &[
+                        WAKE_ENROLL_START_DRAFT,
+                        WAKE_ENROLL_SAMPLE_COMMIT,
+                        WAKE_ENROLL_COMPLETE_COMMIT,
+                        WAKE_ENROLL_DEFER_COMMIT,
+                    ],
+                    "app_onboarding_continue_request.simulation_id",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                )?;
+
+                let user_id = onboarding_user_for_device(store, &device_id)?;
+                let wake_req = Ph1wRequest {
+                    schema_version: PH1W_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: WAKE_ENROLL_START_DRAFT.to_string(),
+                    simulation_type: WakeSimulationType::Draft,
+                    request: WakeRequest::EnrollStartDraft(WakeEnrollStartDraftRequest {
+                        user_id,
+                        device_id,
+                        onboarding_session_id: Some(onboarding_session_id.as_str().to_string()),
+                        allow_ios_wake_override: false,
+                        pass_target: 3,
+                        max_attempts: 8,
+                        enrollment_timeout_ms: 180_000,
+                        idempotency_key,
+                    }),
+                };
+                wake_req
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_status = match wake_out {
+                    Ph1wResponse::Ok(ok) => ok
+                        .enroll_start_result
+                        .ok_or_else(|| {
+                            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                field: "ph1w_response.enroll_start_result",
+                                reason: "wake enroll start result must be present",
+                            })
+                        })?
+                        .wake_enroll_status,
+                    Ph1wResponse::Refuse(_) => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1w_response",
+                                reason: "ONB_WAKE_ENROLL_START_REFUSED",
+                            },
+                        ));
+                    }
+                };
+                let next_step = onboarding_next_step_after_wake_status(wake_status);
+
+                Ok(AppOnboardingContinueOutcome {
+                    onboarding_session_id: onboarding_session_id.as_str().to_string(),
+                    next_step,
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .map(|r| r.missing_fields.clone())
+                        .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+                    voice_artifact_sync_receipt_ref: store
+                        .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+                    access_engine_instance_id: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .and_then(|row| row.access_engine_instance_id.clone()),
+                    onboarding_status: None,
+                })
+            }
+            AppOnboardingContinueAction::WakeEnrollSampleCommit {
+                device_id,
+                sample_pass,
+            } => {
+                ensure_wake_enrollment_action_allowed(store, &onboarding_session_id, &device_id)?;
+                self.executor.ensure_simulation_active_for_tenant(
+                    store,
+                    &effective_tenant,
+                    WAKE_ENROLL_SAMPLE_COMMIT,
+                    "app_onboarding_continue_request.simulation_id",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                )?;
+                let wake_session = store
+                    .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_SAMPLE",
+                        })
+                    })?
+                    .wake_enrollment_session_id
+                    .clone();
+                let wake_session_id = WakeEnrollmentSessionId::new(wake_session)
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_req = Ph1wRequest {
+                    schema_version: PH1W_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: WAKE_ENROLL_SAMPLE_COMMIT.to_string(),
+                    simulation_type: WakeSimulationType::Commit,
+                    request: WakeRequest::EnrollSampleCommit(WakeEnrollSampleCommitRequest {
+                        wake_enrollment_session_id: wake_session_id,
+                        sample_duration_ms: 1_380,
+                        vad_coverage: 0.93,
+                        snr_db: 18.1,
+                        clipping_pct: 0.3,
+                        rms_dbfs: -18.0,
+                        noise_floor_dbfs: -58.0,
+                        peak_dbfs: -3.0,
+                        overlap_ratio: 0.0,
+                        result: if sample_pass {
+                            WakeSampleResult::Pass
+                        } else {
+                            WakeSampleResult::Fail
+                        },
+                        reason_code: if sample_pass {
+                            None
+                        } else {
+                            Some(ReasonCodeId(0x5700_3001))
+                        },
+                        idempotency_key,
+                    }),
+                };
+                wake_req
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_status = match wake_out {
+                    Ph1wResponse::Ok(ok) => ok
+                        .enroll_sample_result
+                        .ok_or_else(|| {
+                            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                field: "ph1w_response.enroll_sample_result",
+                                reason: "wake enroll sample result must be present",
+                            })
+                        })?
+                        .wake_enroll_status,
+                    Ph1wResponse::Refuse(_) => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1w_response",
+                                reason: "ONB_WAKE_ENROLL_SAMPLE_REFUSED",
+                            },
+                        ));
+                    }
+                };
+
+                Ok(AppOnboardingContinueOutcome {
+                    onboarding_session_id: onboarding_session_id.as_str().to_string(),
+                    next_step: onboarding_next_step_after_wake_status(wake_status),
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .map(|r| r.missing_fields.clone())
+                        .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+                    voice_artifact_sync_receipt_ref: store
+                        .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+                    access_engine_instance_id: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .and_then(|row| row.access_engine_instance_id.clone()),
+                    onboarding_status: None,
+                })
+            }
+            AppOnboardingContinueAction::WakeEnrollCompleteCommit { device_id } => {
+                ensure_wake_enrollment_action_allowed(store, &onboarding_session_id, &device_id)?;
+                self.executor.ensure_simulation_active_for_tenant(
+                    store,
+                    &effective_tenant,
+                    WAKE_ENROLL_COMPLETE_COMMIT,
+                    "app_onboarding_continue_request.simulation_id",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                )?;
+                let wake_session = store
+                    .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_COMPLETE",
+                        })
+                    })?
+                    .wake_enrollment_session_id
+                    .clone();
+                let wake_session_id = WakeEnrollmentSessionId::new(wake_session.clone())
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_profile_id = format!(
+                    "wake_profile_{}",
+                    short_hash_hex(&[
+                        onboarding_session_id.as_str(),
+                        wake_session.as_str(),
+                        device_id.as_str(),
+                    ])
+                );
+                let wake_req = Ph1wRequest {
+                    schema_version: PH1W_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: WAKE_ENROLL_COMPLETE_COMMIT.to_string(),
+                    simulation_type: WakeSimulationType::Commit,
+                    request: WakeRequest::EnrollCompleteCommit(WakeEnrollCompleteCommitRequest {
+                        wake_enrollment_session_id: wake_session_id,
+                        wake_profile_id,
+                        idempotency_key,
+                    }),
+                };
+                wake_req
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_status = match wake_out {
+                    Ph1wResponse::Ok(ok) => ok
+                        .enroll_complete_result
+                        .ok_or_else(|| {
+                            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                field: "ph1w_response.enroll_complete_result",
+                                reason: "wake enroll complete result must be present",
+                            })
+                        })?
+                        .wake_enroll_status,
+                    Ph1wResponse::Refuse(_) => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1w_response",
+                                reason: "ONB_WAKE_ENROLL_COMPLETE_REFUSED",
+                            },
+                        ));
+                    }
+                };
+                Ok(AppOnboardingContinueOutcome {
+                    onboarding_session_id: onboarding_session_id.as_str().to_string(),
+                    next_step: onboarding_next_step_after_wake_status(wake_status),
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .map(|r| r.missing_fields.clone())
+                        .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+                    voice_artifact_sync_receipt_ref: store
+                        .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+                    access_engine_instance_id: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .and_then(|row| row.access_engine_instance_id.clone()),
+                    onboarding_status: None,
+                })
+            }
+            AppOnboardingContinueAction::WakeEnrollDeferCommit { device_id } => {
+                ensure_wake_enrollment_action_allowed(store, &onboarding_session_id, &device_id)?;
+                self.executor.ensure_simulation_active_for_tenant(
+                    store,
+                    &effective_tenant,
+                    WAKE_ENROLL_DEFER_COMMIT,
+                    "app_onboarding_continue_request.simulation_id",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_REGISTERED",
+                    "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
+                )?;
+                let wake_session = store
+                    .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
+                    .ok_or_else(|| {
+                        StorageError::ContractViolation(ContractViolation::InvalidValue {
+                            field: "app_onboarding_continue_request.action",
+                            reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_DEFER",
+                        })
+                    })?
+                    .wake_enrollment_session_id
+                    .clone();
+                let wake_session_id = WakeEnrollmentSessionId::new(wake_session)
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_req = Ph1wRequest {
+                    schema_version: PH1W_CONTRACT_VERSION,
+                    correlation_id,
+                    turn_id,
+                    now,
+                    simulation_id: WAKE_ENROLL_DEFER_COMMIT.to_string(),
+                    simulation_type: WakeSimulationType::Commit,
+                    request: WakeRequest::EnrollDeferCommit(WakeEnrollDeferCommitRequest {
+                        wake_enrollment_session_id: wake_session_id,
+                        deferred_until: None,
+                        reason_code: ReasonCodeId(0x5700_3002),
+                        idempotency_key,
+                    }),
+                };
+                wake_req
+                    .validate()
+                    .map_err(StorageError::ContractViolation)?;
+                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                match wake_out {
+                    Ph1wResponse::Ok(ok) => {
+                        if ok.enroll_defer_result.is_none() {
+                            return Err(StorageError::ContractViolation(
+                                ContractViolation::InvalidValue {
+                                    field: "ph1w_response.enroll_defer_result",
+                                    reason: "wake enroll defer result must be present",
+                                },
+                            ));
+                        }
+                    }
+                    Ph1wResponse::Refuse(_) => {
+                        return Err(StorageError::ContractViolation(
+                            ContractViolation::InvalidValue {
+                                field: "ph1w_response",
+                                reason: "ONB_WAKE_ENROLL_DEFER_REFUSED",
+                            },
+                        ));
+                    }
+                };
+                Ok(AppOnboardingContinueOutcome {
+                    onboarding_session_id: onboarding_session_id.as_str().to_string(),
+                    next_step: AppOnboardingContinueNextStep::WakeEnroll,
+                    blocking_field: None,
+                    blocking_question: None,
+                    remaining_missing_fields: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .map(|r| r.missing_fields.clone())
+                        .unwrap_or_default(),
+                    remaining_platform_receipt_kinds: store
+                        .ph1onb_remaining_platform_receipt_kinds(&onboarding_session_id)?,
+                    voice_artifact_sync_receipt_ref: store
+                        .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id),
+                    access_engine_instance_id: store
+                        .ph1onb_session_row(&onboarding_session_id)
+                        .and_then(|row| row.access_engine_instance_id.clone()),
                     onboarding_status: None,
                 })
             }
@@ -1387,7 +1762,11 @@ impl AppServerIngressRuntime {
                 {
                     AppOnboardingContinueNextStep::VoiceEnroll
                 } else {
-                    AppOnboardingContinueNextStep::EmoPersonaLock
+                    onboarding_next_step_after_voice_enroll(
+                        store,
+                        &onboarding_session_id,
+                        session.app_platform,
+                    )
                 }
             }
         };
@@ -1503,6 +1882,11 @@ impl AppServerIngressRuntime {
                 },
             ));
         }
+        ensure_wake_enrollment_completed_for_platform(
+            store,
+            &onboarding_session_id,
+            "ONB_WAKE_ENROLL_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
+        )?;
         let (persona_user_id, persona_speaker_id) = ensure_onboarding_persona_subject(
             store,
             &effective_tenant,
@@ -1841,6 +2225,11 @@ impl AppServerIngressRuntime {
                 },
             ));
         }
+        ensure_wake_enrollment_completed_for_platform(
+            store,
+            &onboarding_session_id,
+            "ONB_WAKE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION",
+        )?;
         let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_onboarding_continue_request.action",
@@ -1955,6 +2344,11 @@ impl AppServerIngressRuntime {
                     reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_COMPLETE",
                 })
             })?;
+        ensure_wake_enrollment_completed_for_platform(
+            store,
+            &onboarding_session_id,
+            "ONB_WAKE_ENROLL_REQUIRED_BEFORE_COMPLETE",
+        )?;
         let session = store
             .ph1onb_session_row(&onboarding_session_id)
             .cloned()
@@ -2996,6 +3390,167 @@ fn onboarding_sender_user_id_for_session(
                 key: session.token_id.as_str().to_string(),
             })?;
     Ok(link.inviter_user_id.clone())
+}
+
+fn wake_enrollment_required_for_platform(app_platform: AppPlatform) -> bool {
+    matches!(app_platform, AppPlatform::Android | AppPlatform::Desktop)
+}
+
+fn wake_enrollment_completed_for_session(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+) -> bool {
+    store
+        .ph1onb_latest_complete_wake_receipt_ref(onboarding_session_id)
+        .is_some()
+}
+
+fn onboarding_next_step_after_voice_enroll(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+    app_platform: AppPlatform,
+) -> AppOnboardingContinueNextStep {
+    if wake_enrollment_required_for_platform(app_platform)
+        && !wake_enrollment_completed_for_session(store, onboarding_session_id)
+    {
+        AppOnboardingContinueNextStep::WakeEnroll
+    } else {
+        AppOnboardingContinueNextStep::EmoPersonaLock
+    }
+}
+
+fn onboarding_next_step_after_wake_status(
+    wake_status: ContractWakeEnrollStatus,
+) -> AppOnboardingContinueNextStep {
+    if wake_status == ContractWakeEnrollStatus::Complete {
+        AppOnboardingContinueNextStep::EmoPersonaLock
+    } else {
+        AppOnboardingContinueNextStep::WakeEnroll
+    }
+}
+
+fn ensure_wake_enrollment_completed_for_platform(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+    missing_reason: &'static str,
+) -> Result<(), StorageError> {
+    let session = store.ph1onb_session_row(onboarding_session_id).ok_or(
+        StorageError::ForeignKeyViolation {
+            table: "onboarding_sessions.onboarding_session_id",
+            key: onboarding_session_id.as_str().to_string(),
+        },
+    )?;
+    if wake_enrollment_required_for_platform(session.app_platform)
+        && !wake_enrollment_completed_for_session(store, onboarding_session_id)
+    {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: missing_reason,
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn onboarding_user_for_device(store: &Ph1fStore, device_id: &DeviceId) -> Result<UserId, StorageError> {
+    store
+        .get_device(device_id)
+        .map(|device| device.user_id.clone())
+        .ok_or_else(|| StorageError::ForeignKeyViolation {
+            table: "devices.device_id",
+            key: device_id.as_str().to_string(),
+        })
+}
+
+fn ensure_wake_enrollment_action_allowed(
+    store: &Ph1fStore,
+    onboarding_session_id: &OnboardingSessionId,
+    device_id: &DeviceId,
+) -> Result<AppPlatform, StorageError> {
+    let session = store.ph1onb_session_row(onboarding_session_id).ok_or(
+        StorageError::ForeignKeyViolation {
+            table: "onboarding_sessions.onboarding_session_id",
+            key: onboarding_session_id.as_str().to_string(),
+        },
+    )?;
+    if session.app_platform == AppPlatform::Ios {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ios_wake_disabled",
+            },
+        ));
+    }
+    if session.status == OnboardingStatus::Complete {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_SESSION_NOT_ACTIVE_FOR_WAKE_ENROLL",
+            },
+        ));
+    }
+    if !session.missing_fields.is_empty() {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_ASK_MISSING_REQUIRED_BEFORE_WAKE_ENROLL",
+            },
+        ));
+    }
+    let remaining_platform_receipt_kinds =
+        store.ph1onb_remaining_platform_receipt_kinds(onboarding_session_id)?;
+    if !remaining_platform_receipt_kinds.is_empty() {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_PLATFORM_SETUP_REQUIRED_BEFORE_WAKE_ENROLL",
+            },
+        ));
+    }
+    if session.terms_status != Some(TermsStatus::Accepted) {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_TERMS_REQUIRED_BEFORE_WAKE_ENROLL",
+            },
+        ));
+    }
+    if !session.primary_device_confirmed {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_WAKE_ENROLL",
+            },
+        ));
+    }
+    let expected_device_id =
+        session
+            .primary_device_device_id
+            .as_ref()
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "app_onboarding_continue_request.action",
+                    reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_WAKE_ENROLL",
+                },
+            ))?;
+    if expected_device_id != device_id {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action.wake_enroll.device_id",
+                reason: "ONB_PRIMARY_DEVICE_DEVICE_MISMATCH_FOR_WAKE_ENROLL",
+            },
+        ));
+    }
+    if onboarding_sender_verification_pending(store, onboarding_session_id)? {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.action",
+                reason: "ONB_SENDER_VERIFICATION_REQUIRED_BEFORE_WAKE_ENROLL",
+            },
+        ));
+    }
+    Ok(session.app_platform)
 }
 
 fn onboarding_default_role_id(invitee_type: InviteeType) -> &'static str {
@@ -7724,6 +8279,10 @@ mod tests {
             (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
             (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
             (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+            (WAKE_ENROLL_START_DRAFT, SimulationType::Draft),
+            (WAKE_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+            (WAKE_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+            (WAKE_ENROLL_DEFER_COMMIT, SimulationType::Commit),
             (EMO_SIM_001, SimulationType::Commit),
             (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
             (ONB_COMPLETE_COMMIT, SimulationType::Commit),
@@ -7752,9 +8311,9 @@ mod tests {
                     token_id,
                     token_signature,
                     Some("tenant_1".to_string()),
-                    AppPlatform::Ios,
+                    AppPlatform::Android,
                     "runc-flow-fp".to_string(),
-                    "ios_instance_runc_flow".to_string(),
+                    "android_instance_runc_flow".to_string(),
                     "nonce_runc_flow".to_string(),
                 )
                 .unwrap(),
@@ -7934,9 +8493,93 @@ mod tests {
             .unwrap();
         assert_eq!(
             voice.next_step,
-            AppOnboardingContinueNextStep::EmoPersonaLock
+            AppOnboardingContinueNextStep::WakeEnroll
         );
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
+
+        let complete_before_wake_err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9915),
+                    onboarding_session_id.clone(),
+                    "runc-flow-complete-before-wake".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::CompleteCommit,
+                )
+                .unwrap(),
+                MonotonicTimeNs(112),
+            )
+            .expect_err("complete must fail before wake enrollment");
+        match complete_before_wake_err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ONB_WAKE_ENROLL_REQUIRED_BEFORE_COMPLETE");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let wake_start = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9902),
+                    onboarding_session_id.clone(),
+                    "runc-flow-wake-start".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::WakeEnrollStartDraft {
+                        device_id: DeviceId::new("runc_flow_inviter_device").unwrap(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(113),
+            )
+            .unwrap();
+        assert_eq!(wake_start.next_step, AppOnboardingContinueNextStep::WakeEnroll);
+
+        for idx in 0..3 {
+            let wake_sample = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(9902),
+                        onboarding_session_id.clone(),
+                        format!("runc-flow-wake-sample-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::WakeEnrollSampleCommit {
+                            device_id: DeviceId::new("runc_flow_inviter_device").unwrap(),
+                            sample_pass: true,
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(114 + idx as u64),
+                )
+                .unwrap();
+            if idx < 2 {
+                assert_eq!(wake_sample.next_step, AppOnboardingContinueNextStep::WakeEnroll);
+            }
+        }
+
+        let wake_complete = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9902),
+                    onboarding_session_id.clone(),
+                    "runc-flow-wake-complete".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::WakeEnrollCompleteCommit {
+                        device_id: DeviceId::new("runc_flow_inviter_device").unwrap(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(118),
+            )
+            .unwrap();
+        assert_eq!(
+            wake_complete.next_step,
+            AppOnboardingContinueNextStep::EmoPersonaLock
+        );
 
         let access_before_emo_err = runtime
             .run_onboarding_continue(
@@ -7949,7 +8592,7 @@ mod tests {
                     AppOnboardingContinueAction::AccessProvisionCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(113),
+                MonotonicTimeNs(119),
             )
             .expect_err("access must fail before emo/persona lock");
         match access_before_emo_err {
@@ -7974,7 +8617,7 @@ mod tests {
                     AppOnboardingContinueAction::CompleteCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(114),
+                MonotonicTimeNs(120),
             )
             .expect_err("complete must fail before emo/persona lock");
         match complete_before_emo_err {
@@ -7996,7 +8639,7 @@ mod tests {
                     AppOnboardingContinueAction::EmoPersonaLock,
                 )
                 .unwrap(),
-                MonotonicTimeNs(115),
+                MonotonicTimeNs(121),
             )
             .unwrap();
         assert_eq!(
@@ -8015,7 +8658,7 @@ mod tests {
                     AppOnboardingContinueAction::CompleteCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(116),
+                MonotonicTimeNs(122),
             )
             .expect_err("complete must fail before access provisioning");
         match complete_before_access_err {
@@ -8037,7 +8680,7 @@ mod tests {
                     AppOnboardingContinueAction::AccessProvisionCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(117),
+                MonotonicTimeNs(123),
             )
             .unwrap();
         assert_eq!(access.next_step, AppOnboardingContinueNextStep::Complete);
@@ -8058,7 +8701,7 @@ mod tests {
                     AppOnboardingContinueAction::CompleteCommit,
                 )
                 .unwrap(),
-                MonotonicTimeNs(118),
+                MonotonicTimeNs(124),
             )
             .unwrap();
         assert_eq!(complete.next_step, AppOnboardingContinueNextStep::Ready);
@@ -8085,6 +8728,79 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn rund_onboarding_rejects_wake_enroll_actions_for_ios() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:rund_ios_wake_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("rund_ios_wake_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+        seed_employee_company_and_position(&mut store, "tenant_1", MonotonicTimeNs(125));
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(126),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(9906),
+                    "rund-ios-wake-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Ios,
+                    "rund-ios-wake-fp".to_string(),
+                    "ios_instance_rund".to_string(),
+                    "nonce_rund_ios_wake".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(127),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(9906),
+                    onboarding_session_id,
+                    "rund-ios-wake-action".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::WakeEnrollStartDraft {
+                        device_id: DeviceId::new("rund_ios_wake_device").unwrap(),
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(128),
+            )
+            .expect_err("ios wake enroll actions must fail closed");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(field, "app_onboarding_continue_request.action");
+                assert_eq!(reason, "ios_wake_disabled");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

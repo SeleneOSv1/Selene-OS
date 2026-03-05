@@ -11437,40 +11437,69 @@ impl Ph1fStore {
 
         let wake_receipt_required =
             matches!(app_platform, AppPlatform::Android | AppPlatform::Desktop);
-        let mut expected_wake_receipt_ref: Option<String> = None;
-        for wake_rec in self.wake_enrollment_sessions.values() {
-            if wake_rec.onboarding_session_id.as_ref() == Some(&onboarding_session_id)
-                && wake_rec.wake_enroll_status == WakeEnrollStatus::Complete
-            {
-                expected_wake_receipt_ref = wake_rec.wake_artifact_sync_receipt_ref.clone();
-                break;
-            }
-        }
-        if let Some(expected_ref) = expected_wake_receipt_ref.as_ref() {
-            if wake_receipt_required {
-                let provided = wake_artifact_sync_receipt_ref.as_ref().ok_or(
-                    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        let latest_completed_wake = self
+            .wake_enrollment_sessions
+            .values()
+            .filter(|wake_rec| {
+                wake_rec.onboarding_session_id.as_ref() == Some(&onboarding_session_id)
+                    && wake_rec.wake_enroll_status == WakeEnrollStatus::Complete
+            })
+            .max_by_key(|wake_rec| (wake_rec.updated_at.0, wake_rec.created_at.0));
+        if wake_receipt_required {
+            let latest_completed_wake =
+                latest_completed_wake.ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_enrollment_status",
+                        reason: "completed wake enrollment is mandatory before completing onboarding",
+                    },
+                ))?;
+            let expected_ref = latest_completed_wake
+                .wake_artifact_sync_receipt_ref
+                .as_ref()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
                         field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
-                        reason: "required when completed wake enrollment exists on wake-required platforms",
-                    }),
-                )?;
-                if provided != expected_ref {
-                    return Err(StorageError::ContractViolation(
-                        ContractViolation::InvalidValue {
-                            field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
-                            reason: "must match latest completed wake enrollment sync receipt",
-                        },
-                    ));
-                }
-            } else if let Some(provided) = wake_artifact_sync_receipt_ref.as_ref() {
-                if provided != expected_ref {
-                    return Err(StorageError::ContractViolation(
-                        ContractViolation::InvalidValue {
-                            field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
-                            reason: "when provided on non-wake-required platforms, must match latest completed wake enrollment sync receipt",
-                        },
-                    ));
-                }
+                        reason: "latest completed wake enrollment must carry sync receipt",
+                    },
+                ))?;
+            let provided = wake_artifact_sync_receipt_ref.as_ref().ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                    reason: "required for mandatory wake enrollment",
+                }),
+            )?;
+            if provided != expected_ref {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "must match latest completed wake enrollment sync receipt",
+                    },
+                ));
+            }
+        } else if let Some(provided) = wake_artifact_sync_receipt_ref.as_ref() {
+            let latest_completed_wake =
+                latest_completed_wake.ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "must not be provided when completed wake enrollment does not exist",
+                    },
+                ))?;
+            let expected_ref = latest_completed_wake
+                .wake_artifact_sync_receipt_ref
+                .as_ref()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "latest completed wake enrollment must carry sync receipt",
+                    },
+                ))?;
+            if provided != expected_ref {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                        reason: "when provided on non-wake-required platforms, must match latest completed wake enrollment sync receipt",
+                    },
+                ));
             }
         }
 
@@ -13391,6 +13420,20 @@ impl Ph1fStore {
     ) -> Option<&WakeEnrollmentSessionRecord> {
         self.wake_enrollment_sessions
             .get(wake_enrollment_session_id)
+    }
+
+    pub fn ph1w_latest_session_for_onboarding_device(
+        &self,
+        onboarding_session_id: &OnboardingSessionId,
+        device_id: &DeviceId,
+    ) -> Option<&WakeEnrollmentSessionRecord> {
+        self.wake_enrollment_sessions
+            .values()
+            .filter(|rec| {
+                rec.onboarding_session_id.as_ref() == Some(onboarding_session_id)
+                    && rec.device_id == *device_id
+            })
+            .max_by_key(|rec| (rec.updated_at.0, rec.created_at.0))
     }
 
     pub fn ph1w_get_samples_for_session(

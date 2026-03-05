@@ -4108,6 +4108,41 @@ fn parse_onboarding_continue_action(
                 sample_seed,
             })
         }
+        "WAKE_ENROLL_START_DRAFT" => {
+            let device_id = device_id
+                .ok_or_else(|| "device_id is required for WAKE_ENROLL_START_DRAFT".to_string())?;
+            let device_id = DeviceId::new(device_id).map_err(|err| {
+                format!("invalid device_id for WAKE_ENROLL_START_DRAFT: {err:?}")
+            })?;
+            Ok(AppOnboardingContinueAction::WakeEnrollStartDraft { device_id })
+        }
+        "WAKE_ENROLL_SAMPLE_COMMIT" => {
+            let device_id = device_id
+                .ok_or_else(|| "device_id is required for WAKE_ENROLL_SAMPLE_COMMIT".to_string())?;
+            let device_id = DeviceId::new(device_id).map_err(|err| {
+                format!("invalid device_id for WAKE_ENROLL_SAMPLE_COMMIT: {err:?}")
+            })?;
+            Ok(AppOnboardingContinueAction::WakeEnrollSampleCommit {
+                device_id,
+                sample_pass: proof_ok.unwrap_or(true),
+            })
+        }
+        "WAKE_ENROLL_COMPLETE_COMMIT" => {
+            let device_id = device_id.ok_or_else(|| {
+                "device_id is required for WAKE_ENROLL_COMPLETE_COMMIT".to_string()
+            })?;
+            let device_id = DeviceId::new(device_id).map_err(|err| {
+                format!("invalid device_id for WAKE_ENROLL_COMPLETE_COMMIT: {err:?}")
+            })?;
+            Ok(AppOnboardingContinueAction::WakeEnrollCompleteCommit { device_id })
+        }
+        "WAKE_ENROLL_DEFER_COMMIT" => {
+            let device_id = device_id
+                .ok_or_else(|| "device_id is required for WAKE_ENROLL_DEFER_COMMIT".to_string())?;
+            let device_id = DeviceId::new(device_id)
+                .map_err(|err| format!("invalid device_id for WAKE_ENROLL_DEFER_COMMIT: {err:?}"))?;
+            Ok(AppOnboardingContinueAction::WakeEnrollDeferCommit { device_id })
+        }
         "EMPLOYEE_PHOTO_CAPTURE_SEND" => {
             let photo_blob_ref = photo_blob_ref
                 .filter(|value| !value.trim().is_empty())
@@ -4139,7 +4174,7 @@ fn parse_onboarding_continue_action(
         "ACCESS_PROVISION_COMMIT" => Ok(AppOnboardingContinueAction::AccessProvisionCommit),
         "COMPLETE_COMMIT" => Ok(AppOnboardingContinueAction::CompleteCommit),
         _ => Err(format!(
-            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|EMPLOYEE_PHOTO_CAPTURE_SEND|EMPLOYEE_SENDER_VERIFY_COMMIT|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
+            "invalid action '{}'; expected ASK_MISSING_SUBMIT|PLATFORM_SETUP_RECEIPT|TERMS_ACCEPT|PRIMARY_DEVICE_CONFIRM|VOICE_ENROLL_LOCK|WAKE_ENROLL_START_DRAFT|WAKE_ENROLL_SAMPLE_COMMIT|WAKE_ENROLL_COMPLETE_COMMIT|WAKE_ENROLL_DEFER_COMMIT|EMPLOYEE_PHOTO_CAPTURE_SEND|EMPLOYEE_SENDER_VERIFY_COMMIT|EMO_PERSONA_LOCK|ACCESS_PROVISION_COMMIT|COMPLETE_COMMIT",
             action
         )),
     }
@@ -4152,6 +4187,7 @@ fn onboarding_continue_next_step_to_api_value(next_step: AppOnboardingContinueNe
         AppOnboardingContinueNextStep::Terms => "TERMS",
         AppOnboardingContinueNextStep::PrimaryDeviceConfirm => "PRIMARY_DEVICE_CONFIRM",
         AppOnboardingContinueNextStep::VoiceEnroll => "VOICE_ENROLL",
+        AppOnboardingContinueNextStep::WakeEnroll => "WAKE_ENROLL",
         AppOnboardingContinueNextStep::SenderVerification => "SENDER_VERIFICATION",
         AppOnboardingContinueNextStep::EmoPersonaLock => "EMO_PERSONA_LOCK",
         AppOnboardingContinueNextStep::AccessProvision => "ACCESS_PROVISION",
@@ -7425,6 +7461,10 @@ mod tests {
         ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
+    use selene_kernel_contracts::ph1w::{
+        WAKE_ENROLL_COMPLETE_COMMIT, WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT,
+        WAKE_ENROLL_START_DRAFT,
+    };
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1rem::{
         Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode,
@@ -8836,6 +8876,443 @@ mod tests {
     }
 
     #[test]
+    fn runi_onboarding_continue_adapter_android_requires_wake_enrollment_before_complete() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runi_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runi_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_employee_company_and_position(&mut store);
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+                (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+                (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+                (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+                (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (WAKE_ENROLL_START_DRAFT, SimulationType::Draft),
+                (WAKE_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (WAKE_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (WAKE_ENROLL_DEFER_COMMIT, SimulationType::Commit),
+                (EMO_SIM_001, SimulationType::Commit),
+                (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+                (ONB_COMPLETE_COMMIT, SimulationType::Commit),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut store,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click_with_employee_prefilled_context(
+                &mut store,
+                &inviter_user_id,
+            )
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 74_001,
+                idempotency_key: "runi-adapter-start".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "ANDROID".to_string(),
+                device_fingerprint: "runi_adapter_fp".to_string(),
+                app_instance_id: "android_instance_runi_adapter".to_string(),
+                deep_link_nonce: "nonce_runi_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+        let onboarding_session_id = start
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-ask-prompt".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ASK_MISSING_SUBMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("first ask-missing turn should prompt");
+        while ask_out.next_step.as_deref() == Some("ASK_MISSING") {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("blocking field must be returned");
+            let field_value = match field_key.as_str() {
+                "working_hours" => "09:00-17:00",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 74_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runi-adapter-ask-{field_key}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "ASK_MISSING_SUBMIT".to_string(),
+                    field_value: Some(field_value.to_string()),
+                    receipt_kind: None,
+                    receipt_ref: None,
+                    signer: None,
+                    payload_hash: None,
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("ask-missing value submit should succeed");
+        }
+        assert_eq!(ask_out.next_step.as_deref(), Some("PLATFORM_SETUP"));
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 74_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runi-adapter-platform-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "PLATFORM_SETUP_RECEIPT".to_string(),
+                    field_value: None,
+                    receipt_kind: Some(receipt_kind.clone()),
+                    receipt_ref: Some(format!("receipt:runi-adapter:{receipt_kind}")),
+                    signer: Some("selene_mobile_app".to_string()),
+                    payload_hash: Some(format!("{:064x}", idx + 1)),
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: None,
+                    proof_ok: None,
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("platform setup receipt should succeed");
+        }
+        assert_eq!(platform_out.next_step.as_deref(), Some("TERMS"));
+
+        runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-terms".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "TERMS_ACCEPT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: Some("terms_v1".to_string()),
+                accepted: Some(true),
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("terms should succeed");
+
+        let device = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-device".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PRIMARY_DEVICE_CONFIRM".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runi_adapter_inviter_device".to_string()),
+                proof_ok: Some(true),
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("device confirm should succeed");
+        assert_eq!(device.next_step.as_deref(), Some("VOICE_ENROLL"));
+
+        let voice = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-voice".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "VOICE_ENROLL_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runi_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: Some("runi_adapter_seed".to_string()),
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("voice enroll should succeed");
+        assert_eq!(voice.next_step.as_deref(), Some("WAKE_ENROLL"));
+
+        let complete_before_wake = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-complete-before-wake".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("complete must fail before wake enrollment completes");
+        assert!(complete_before_wake.contains("ONB_WAKE_ENROLL_REQUIRED_BEFORE_COMPLETE"));
+
+        let wake_start = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-wake-start".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "WAKE_ENROLL_START_DRAFT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runi_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("wake enroll start should succeed");
+        assert_eq!(wake_start.next_step.as_deref(), Some("WAKE_ENROLL"));
+
+        for idx in 0..3 {
+            runtime
+                .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                    correlation_id: 74_001,
+                    onboarding_session_id: onboarding_session_id.clone(),
+                    idempotency_key: format!("runi-adapter-wake-sample-{idx}"),
+                    tenant_id: Some("tenant_1".to_string()),
+                    action: "WAKE_ENROLL_SAMPLE_COMMIT".to_string(),
+                    field_value: None,
+                    receipt_kind: None,
+                    receipt_ref: None,
+                    signer: None,
+                    payload_hash: None,
+                    terms_version_id: None,
+                    accepted: None,
+                    device_id: Some("runi_adapter_inviter_device".to_string()),
+                    proof_ok: Some(true),
+                    sample_seed: None,
+                    photo_blob_ref: None,
+                    sender_decision: None,
+                })
+                .expect("wake enroll sample should succeed");
+        }
+
+        let wake_complete = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-wake-complete".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "WAKE_ENROLL_COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runi_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("wake complete should succeed");
+        assert_eq!(wake_complete.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
+
+        runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-emo".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "EMO_PERSONA_LOCK".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("emo/persona lock should succeed");
+
+        runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: "runi-adapter-access".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ACCESS_PROVISION_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("access provision should succeed");
+
+        let complete = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 74_001,
+                onboarding_session_id,
+                idempotency_key: "runi-adapter-complete".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "COMPLETE_COMMIT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: None,
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect("onboarding complete should succeed after wake enroll");
+        assert_eq!(complete.next_step.as_deref(), Some("READY"));
+    }
+
+    #[test]
+    fn runj_onboarding_continue_adapter_rejects_ios_wake_enroll_action() {
+        let runtime = AdapterRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:runj_adapter_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("runj_adapter_inviter_device").unwrap();
+
+        let (token_id, token_signature) = {
+            let mut store = runtime.store.lock().expect("adapter store lock");
+            seed_identity_and_device(&mut store, &inviter_user_id, &inviter_device_id);
+            seed_employee_company_and_position(&mut store);
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut store,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click_with_employee_prefilled_context(
+                &mut store,
+                &inviter_user_id,
+            )
+        };
+
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(InviteLinkOpenAdapterRequest {
+                correlation_id: 75_001,
+                idempotency_key: "runj-adapter-start".to_string(),
+                token_id,
+                token_signature,
+                tenant_id: Some("tenant_1".to_string()),
+                app_platform: "IOS".to_string(),
+                device_fingerprint: "runj_adapter_fp".to_string(),
+                app_instance_id: "ios_instance_runj_adapter".to_string(),
+                deep_link_nonce: "nonce_runj_adapter".to_string(),
+            })
+            .expect("invite click should start onboarding");
+        let onboarding_session_id = start
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let err = runtime
+            .run_onboarding_continue(OnboardingContinueAdapterRequest {
+                correlation_id: 75_001,
+                onboarding_session_id,
+                idempotency_key: "runj-adapter-wake-start".to_string(),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "WAKE_ENROLL_START_DRAFT".to_string(),
+                field_value: None,
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some("runj_adapter_inviter_device".to_string()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            })
+            .expect_err("ios wake enroll action must fail closed");
+        assert!(err.contains("ios_wake_disabled"));
+    }
+
+    #[test]
     fn rung_onboarding_continue_adapter_parses_sender_verification_actions() {
         let photo = parse_onboarding_continue_action(
             "EMPLOYEE_PHOTO_CAPTURE_SEND",
@@ -8879,6 +9356,27 @@ mod tests {
             AppOnboardingContinueAction::EmployeeSenderVerifyCommit {
                 decision: SenderVerifyDecision::Confirm
             }
+        ));
+
+        let wake_start = parse_onboarding_continue_action(
+            "WAKE_ENROLL_START_DRAFT",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("wake_device_1".to_string()),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("wake start action must parse");
+        assert!(matches!(
+            wake_start,
+            AppOnboardingContinueAction::WakeEnrollStartDraft { .. }
         ));
 
         let err = parse_onboarding_continue_action(
