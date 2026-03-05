@@ -167,6 +167,12 @@ fn at_w_db_02_append_only_enforced() {
             true,
             false,
             Some(ReasonCodeId(0x5700_5001)),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             "w-append-runtime".to_string(),
         )
         .unwrap();
@@ -305,6 +311,12 @@ fn at_w_db_03_idempotency_dedupe_works() {
             false,
             false,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             "w-idem-runtime".to_string(),
         )
         .unwrap();
@@ -320,6 +332,12 @@ fn at_w_db_03_idempotency_dedupe_works() {
             None,
             false,
             false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             "w-idem-runtime".to_string(),
         )
@@ -470,6 +488,12 @@ fn at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger() {
         true,
         false,
         Some(ReasonCodeId(0x5700_5301)),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         "w-current-runtime-1".to_string(),
     )
     .unwrap();
@@ -484,6 +508,12 @@ fn at_w_db_04_current_table_consistency_with_enrollment_and_runtime_ledger() {
         Some("wake_profile_current_v1".to_string()),
         false,
         false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         "w-current-runtime-2".to_string(),
     )

@@ -147,6 +147,26 @@ fn hash_hex_64(s: &str) -> String {
     format!("{:016x}", h)
 }
 
+fn is_lower_hex_sha256_64(value: &str) -> bool {
+    value.len() == 64
+        && value.is_ascii()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+}
+
+fn validate_lower_hex_sha256_field(field: &'static str, value: &str) -> Result<(), StorageError> {
+    if !is_lower_hex_sha256_64(value) {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field,
+                reason: "must be lowercase hex sha256 (64 chars)",
+            },
+        ));
+    }
+    Ok(())
+}
+
 const LINK_TOKEN_SIGNING_KEYS_ENV: &str = "SELENE_LINK_TOKEN_SIGNING_KEYS";
 const LINK_TOKEN_ACTIVE_KEY_ID_ENV: &str = "SELENE_LINK_TOKEN_ACTIVE_KEY_ID";
 const LINK_TOKEN_SIGNATURE_VERSION: &str = "v1";
@@ -1438,6 +1458,13 @@ pub struct Ph1fStore {
     wake_enrollment_samples: Vec<WakeEnrollmentSampleRecord>,
     wake_runtime_events: Vec<WakeRuntimeEventRecord>,
     wake_profile_bindings: BTreeMap<(UserId, DeviceId), String>,
+    wake_artifact_apply_ledger: Vec<WakeArtifactApplyRecord>,
+    wake_artifact_apply_current: BTreeMap<DeviceId, WakeArtifactApplyCurrentRecord>,
+    // Idempotency: (device_id, artifact_version, state, idempotency_key) -> apply_event_id.
+    wake_artifact_apply_idempotency_index:
+        BTreeMap<(DeviceId, ArtifactVersion, WakeArtifactApplyState, String), u64>,
+    // Blocklist projection: (device_id, artifact_version) -> rollback reason.
+    wake_artifact_blocked_versions: BTreeMap<(DeviceId, ArtifactVersion), ReasonCodeId>,
 
     // Idempotency indexes for wake simulations.
     // (user_id, device_id, idempotency_key) -> wake_enrollment_session_id
@@ -1664,6 +1691,7 @@ pub struct Ph1fStore {
     next_access_board_vote_row_id: u64,
     next_access_ap_authoring_review_event_id: u64,
     next_access_ap_rule_review_action_row_id: u64,
+    next_wake_artifact_apply_event_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -2663,6 +2691,40 @@ pub struct MobileArtifactSyncQueueRecord {
     pub idempotency_key: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WakeArtifactApplyState {
+    Staged,
+    Active,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeArtifactApplyRecord {
+    pub schema_version: SchemaVersion,
+    pub apply_event_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub device_id: DeviceId,
+    pub artifact_version: ArtifactVersion,
+    pub package_hash: String,
+    pub payload_ref: String,
+    pub local_cache_ref: Option<String>,
+    pub state: WakeArtifactApplyState,
+    pub activated_at: Option<MonotonicTimeNs>,
+    pub rollback_reason_code: Option<ReasonCodeId>,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeArtifactApplyCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub device_id: DeviceId,
+    pub staged_artifact_version: Option<ArtifactVersion>,
+    pub active_artifact_version: Option<ArtifactVersion>,
+    pub last_known_good_artifact_version: Option<ArtifactVersion>,
+    pub activated_at: Option<MonotonicTimeNs>,
+    pub rollback_reason_code: Option<ReasonCodeId>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BcastRecipientLifecycleAction {
     DraftCreate,
@@ -3104,6 +3166,10 @@ impl Ph1fStore {
             wake_enrollment_samples: Vec::new(),
             wake_runtime_events: Vec::new(),
             wake_profile_bindings: BTreeMap::new(),
+            wake_artifact_apply_ledger: Vec::new(),
+            wake_artifact_apply_current: BTreeMap::new(),
+            wake_artifact_apply_idempotency_index: BTreeMap::new(),
+            wake_artifact_blocked_versions: BTreeMap::new(),
             wake_start_idempotency_index: BTreeMap::new(),
             wake_sample_idempotency_index: BTreeMap::new(),
             wake_complete_idempotency_index: BTreeMap::new(),
@@ -3212,6 +3278,7 @@ impl Ph1fStore {
             next_access_board_vote_row_id: 1,
             next_access_ap_authoring_review_event_id: 1,
             next_access_ap_rule_review_action_row_id: 1,
+            next_wake_artifact_apply_event_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -12806,6 +12873,351 @@ impl Ph1fStore {
         last_error: String,
     ) -> Result<(), StorageError> {
         self.mobile_artifact_sync_dead_letter_commit(now, sync_job_id, worker_id, last_error)
+    }
+
+    pub fn device_artifact_sync_known_device_ids(&self) -> Vec<DeviceId> {
+        self.devices.keys().cloned().collect()
+    }
+
+    pub fn wake_artifact_apply_rows(&self) -> &[WakeArtifactApplyRecord] {
+        &self.wake_artifact_apply_ledger
+    }
+
+    pub fn wake_artifact_apply_current_row(
+        &self,
+        device_id: &DeviceId,
+    ) -> Option<&WakeArtifactApplyCurrentRecord> {
+        self.wake_artifact_apply_current.get(device_id)
+    }
+
+    pub fn wake_artifact_blocked_reason(
+        &self,
+        device_id: &DeviceId,
+        artifact_version: ArtifactVersion,
+    ) -> Option<ReasonCodeId> {
+        self.wake_artifact_blocked_versions
+            .get(&(device_id.clone(), artifact_version))
+            .copied()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn wake_artifact_stage_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        device_id: DeviceId,
+        artifact_version: ArtifactVersion,
+        package_hash: String,
+        payload_ref: String,
+        local_cache_ref: Option<String>,
+        idempotency_key: String,
+    ) -> Result<WakeArtifactApplyRecord, StorageError> {
+        if !self.devices.contains_key(&device_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "wake_artifact_apply.device_id",
+                key: device_id.as_str().to_string(),
+            });
+        }
+        artifact_version.validate()?;
+        validate_lower_hex_sha256_field("wake_artifact_stage_commit.package_hash", &package_hash)?;
+        if payload_ref.trim().is_empty() || payload_ref.len() > 256 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_stage_commit.payload_ref",
+                    reason: "must be non-empty and <= 256 chars",
+                },
+            ));
+        }
+        if let Some(cache_ref) = local_cache_ref.as_ref() {
+            if cache_ref.trim().is_empty() || cache_ref.len() > 512 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "wake_artifact_stage_commit.local_cache_ref",
+                        reason: "must be non-empty and <= 512 chars when present",
+                    },
+                ));
+            }
+        }
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_stage_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+
+        let idem_key = (
+            device_id.clone(),
+            artifact_version,
+            WakeArtifactApplyState::Staged,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self.wake_artifact_apply_idempotency_index.get(&idem_key) {
+            let existing = self
+                .wake_artifact_apply_ledger
+                .iter()
+                .find(|row| row.apply_event_id == *existing_event_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_artifact_apply_ledger.apply_event_id",
+                    key: existing_event_id.to_string(),
+                })?;
+            return Ok(existing);
+        }
+
+        let current = self
+            .wake_artifact_apply_current
+            .entry(device_id.clone())
+            .or_insert(WakeArtifactApplyCurrentRecord {
+                schema_version: SchemaVersion(1),
+                device_id: device_id.clone(),
+                staged_artifact_version: None,
+                active_artifact_version: None,
+                last_known_good_artifact_version: None,
+                activated_at: None,
+                rollback_reason_code: None,
+            });
+        current.staged_artifact_version = Some(artifact_version);
+
+        let apply_event_id = self.next_wake_artifact_apply_event_id;
+        self.next_wake_artifact_apply_event_id =
+            self.next_wake_artifact_apply_event_id.saturating_add(1);
+        let row = WakeArtifactApplyRecord {
+            schema_version: SchemaVersion(1),
+            apply_event_id,
+            created_at: now,
+            device_id: device_id.clone(),
+            artifact_version,
+            package_hash,
+            payload_ref,
+            local_cache_ref,
+            state: WakeArtifactApplyState::Staged,
+            activated_at: None,
+            rollback_reason_code: None,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.wake_artifact_apply_ledger.push(row.clone());
+        self.wake_artifact_apply_idempotency_index
+            .insert(idem_key, apply_event_id);
+        Ok(row)
+    }
+
+    pub fn wake_artifact_activate_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        device_id: DeviceId,
+        artifact_version: ArtifactVersion,
+        idempotency_key: String,
+    ) -> Result<WakeArtifactApplyCurrentRecord, StorageError> {
+        if !self.devices.contains_key(&device_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "wake_artifact_apply.device_id",
+                key: device_id.as_str().to_string(),
+            });
+        }
+        artifact_version.validate()?;
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_activate_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        let idem_key = (
+            device_id.clone(),
+            artifact_version,
+            WakeArtifactApplyState::Active,
+            idempotency_key.clone(),
+        );
+        if self.wake_artifact_apply_idempotency_index.contains_key(&idem_key) {
+            return self
+                .wake_artifact_apply_current
+                .get(&device_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_artifact_apply_current.device_id",
+                    key: device_id.as_str().to_string(),
+                });
+        }
+
+        let staged_row = self
+            .wake_artifact_apply_ledger
+            .iter()
+            .rev()
+            .find(|row| {
+                row.device_id == device_id
+                    && row.artifact_version == artifact_version
+                    && row.state == WakeArtifactApplyState::Staged
+            })
+            .cloned()
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_activate_commit.artifact_version",
+                    reason: "must be staged before activation",
+                },
+            ))?;
+
+        let current = self
+            .wake_artifact_apply_current
+            .entry(device_id.clone())
+            .or_insert(WakeArtifactApplyCurrentRecord {
+                schema_version: SchemaVersion(1),
+                device_id: device_id.clone(),
+                staged_artifact_version: None,
+                active_artifact_version: None,
+                last_known_good_artifact_version: None,
+                activated_at: None,
+                rollback_reason_code: None,
+            });
+
+        if current.active_artifact_version == Some(artifact_version) {
+            self.wake_artifact_apply_idempotency_index.insert(idem_key, 0);
+            return Ok(current.clone());
+        }
+        if current.staged_artifact_version != Some(artifact_version) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_activate_commit.staged_artifact_version",
+                    reason: "must match artifact_version",
+                },
+            ));
+        }
+
+        if let Some(active_version) = current.active_artifact_version {
+            current.last_known_good_artifact_version = Some(active_version);
+        } else if current.last_known_good_artifact_version.is_none() {
+            current.last_known_good_artifact_version = Some(artifact_version);
+        }
+        current.active_artifact_version = Some(artifact_version);
+        current.staged_artifact_version = None;
+        current.activated_at = Some(now);
+        current.rollback_reason_code = None;
+
+        self.wake_artifact_blocked_versions
+            .remove(&(device_id.clone(), artifact_version));
+
+        let apply_event_id = self.next_wake_artifact_apply_event_id;
+        self.next_wake_artifact_apply_event_id =
+            self.next_wake_artifact_apply_event_id.saturating_add(1);
+        self.wake_artifact_apply_ledger.push(WakeArtifactApplyRecord {
+            schema_version: SchemaVersion(1),
+            apply_event_id,
+            created_at: now,
+            device_id: device_id.clone(),
+            artifact_version,
+            package_hash: staged_row.package_hash,
+            payload_ref: staged_row.payload_ref,
+            local_cache_ref: staged_row.local_cache_ref,
+            state: WakeArtifactApplyState::Active,
+            activated_at: Some(now),
+            rollback_reason_code: None,
+            idempotency_key: idempotency_key.clone(),
+        });
+        self.wake_artifact_apply_idempotency_index
+            .insert(idem_key, apply_event_id);
+        Ok(current.clone())
+    }
+
+    pub fn wake_artifact_rollback_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        device_id: DeviceId,
+        artifact_version: ArtifactVersion,
+        rollback_reason_code: ReasonCodeId,
+        idempotency_key: String,
+    ) -> Result<WakeArtifactApplyCurrentRecord, StorageError> {
+        if !self.devices.contains_key(&device_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "wake_artifact_apply.device_id",
+                key: device_id.as_str().to_string(),
+            });
+        }
+        artifact_version.validate()?;
+        if idempotency_key.trim().is_empty() || idempotency_key.len() > 128 {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_rollback_commit.idempotency_key",
+                    reason: "must be non-empty and <= 128 chars",
+                },
+            ));
+        }
+        let idem_key = (
+            device_id.clone(),
+            artifact_version,
+            WakeArtifactApplyState::RolledBack,
+            idempotency_key.clone(),
+        );
+        if self.wake_artifact_apply_idempotency_index.contains_key(&idem_key) {
+            return self
+                .wake_artifact_apply_current
+                .get(&device_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_artifact_apply_current.device_id",
+                    key: device_id.as_str().to_string(),
+                });
+        }
+
+        let source_row = self
+            .wake_artifact_apply_ledger
+            .iter()
+            .rev()
+            .find(|row| row.device_id == device_id && row.artifact_version == artifact_version)
+            .cloned()
+            .ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_artifact_rollback_commit.artifact_version",
+                    reason: "must reference staged/active artifact",
+                },
+            ))?;
+
+        let current = self
+            .wake_artifact_apply_current
+            .entry(device_id.clone())
+            .or_insert(WakeArtifactApplyCurrentRecord {
+                schema_version: SchemaVersion(1),
+                device_id: device_id.clone(),
+                staged_artifact_version: None,
+                active_artifact_version: None,
+                last_known_good_artifact_version: None,
+                activated_at: None,
+                rollback_reason_code: None,
+            });
+        current.active_artifact_version = current.last_known_good_artifact_version;
+        current.staged_artifact_version = None;
+        current.rollback_reason_code = Some(rollback_reason_code);
+        current.activated_at = if current.active_artifact_version.is_some() {
+            Some(now)
+        } else {
+            None
+        };
+
+        self.wake_artifact_blocked_versions.insert(
+            (device_id.clone(), artifact_version),
+            rollback_reason_code,
+        );
+
+        let apply_event_id = self.next_wake_artifact_apply_event_id;
+        self.next_wake_artifact_apply_event_id =
+            self.next_wake_artifact_apply_event_id.saturating_add(1);
+        self.wake_artifact_apply_ledger.push(WakeArtifactApplyRecord {
+            schema_version: SchemaVersion(1),
+            apply_event_id,
+            created_at: now,
+            device_id: device_id.clone(),
+            artifact_version,
+            package_hash: source_row.package_hash,
+            payload_ref: source_row.payload_ref,
+            local_cache_ref: source_row.local_cache_ref,
+            state: WakeArtifactApplyState::RolledBack,
+            activated_at: None,
+            rollback_reason_code: Some(rollback_reason_code),
+            idempotency_key: idempotency_key.clone(),
+        });
+        self.wake_artifact_apply_idempotency_index
+            .insert(idem_key, apply_event_id);
+        Ok(current.clone())
     }
 
     // ------------------------
