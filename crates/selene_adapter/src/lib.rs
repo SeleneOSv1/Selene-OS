@@ -148,6 +148,8 @@ pub mod grpc_api {
     tonic::include_proto!("selene.adapter.v1");
 }
 
+pub mod desktop_mic_producer;
+
 pub mod app_ui_assets {
     pub const APP_HTML: &str = include_str!("web/app.html");
     pub const APP_CSS: &str = include_str!("web/app.css");
@@ -5872,6 +5874,15 @@ fn build_ph1k_live_signal_bundle(
         interrupt_decision,
         ph1c_handoff,
     })
+}
+
+pub fn validate_voice_turn_capture_bundle_for_live_path(
+    request: &VoiceTurnAdapterRequest,
+) -> Result<(), String> {
+    let store = Ph1fStore::new_in_memory();
+    let now = MonotonicTimeNs(request.now_ns.unwrap_or_else(system_time_now_ns).max(1));
+    let _ = build_ph1k_live_signal_bundle(&store, request, now, None, None)?;
+    Ok(())
 }
 
 fn build_voice_id_request_from_ph1k_bundle(

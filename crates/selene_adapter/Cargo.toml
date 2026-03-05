@@ -18,6 +18,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"
+cpal = "0.15"
 
 [build-dependencies]
 tonic-build = "0.12"
@@ -29,3 +30,7 @@ path = "src/bin/http_adapter.rs"
 [[bin]]
 name = "selene_adapter_grpc"
 path = "src/bin/grpc_adapter.rs"
+
+[[bin]]
+name = "desktop_wake_life"
+path = "src/bin/desktop_wake_life.rs"
