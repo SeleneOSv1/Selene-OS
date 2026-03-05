@@ -41,10 +41,7 @@ pub enum Ph1lTurnTrigger {
 }
 
 pub fn trigger_requires_session_open_step(trigger: Ph1lTurnTrigger) -> bool {
-    matches!(
-        trigger,
-        Ph1lTurnTrigger::WakeWord | Ph1lTurnTrigger::Explicit
-    )
+    matches!(trigger, Ph1lTurnTrigger::WakeWord)
 }
 
 pub fn ph1l_step_voice_turn(
@@ -55,6 +52,10 @@ pub fn ph1l_step_voice_turn(
     tts_state: TtsPlaybackState,
     policy_context_ref: PolicyContextRef,
 ) -> Ph1lOutput {
+    let policy_blocks_audible = policy_context_ref.privacy_mode || policy_context_ref.do_not_disturb;
+    if trigger == Ph1lTurnTrigger::Explicit {
+        return runtime.on_explicit(now, policy_blocks_audible);
+    }
     let wake_event = if trigger_requires_session_open_step(trigger) {
         wake_event
     } else {
@@ -355,6 +356,41 @@ impl Ph1lRuntime {
             }
             SessionState::SoftClosed => {
                 // Resume same session.
+                self.pending_question = None;
+                self.pending_since = None;
+                self.soft_closed_since = None;
+                self.close_check_attempts = 0;
+                self.close_check_last_prompt_at = None;
+                self.transition(
+                    now,
+                    SessionState::Active,
+                    reason_codes::L_RESUME_WAKE_SOFT_CLOSE,
+                    policy_blocks_audible,
+                )
+            }
+            _ => self.snapshot(None, None, false),
+        }
+    }
+
+    fn on_explicit(&mut self, now: MonotonicTimeNs, policy_blocks_audible: bool) -> Ph1lOutput {
+        match self.state {
+            SessionState::Closed => {
+                let id = SessionId(self.next_session_id);
+                self.next_session_id = self.next_session_id.saturating_add(1);
+                self.session_id = Some(id);
+                self.pending_question = None;
+                self.pending_since = None;
+                self.soft_closed_since = None;
+                self.close_check_attempts = 0;
+                self.close_check_last_prompt_at = None;
+                self.transition(
+                    now,
+                    SessionState::Active,
+                    reason_codes::L_OPEN_WAKE,
+                    policy_blocks_audible,
+                )
+            }
+            SessionState::SoftClosed => {
                 self.pending_question = None;
                 self.pending_since = None;
                 self.soft_closed_since = None;

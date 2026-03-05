@@ -734,6 +734,12 @@ pub trait Ph1wWakeRepo {
         tts_active_at_trigger: bool,
         media_playback_active_at_trigger: bool,
         suppression_reason_code: Option<ReasonCodeId>,
+        light_score_bp: Option<u16>,
+        strong_score_bp: Option<u16>,
+        threshold_used_bp: Option<u16>,
+        model_version: Option<String>,
+        window_start_ns: Option<MonotonicTimeNs>,
+        window_end_ns: Option<MonotonicTimeNs>,
         idempotency_key: String,
     ) -> Result<WakeRuntimeEventRecord, StorageError>;
 
@@ -2968,6 +2974,12 @@ impl Ph1wWakeRepo for Ph1fStore {
         tts_active_at_trigger: bool,
         media_playback_active_at_trigger: bool,
         suppression_reason_code: Option<ReasonCodeId>,
+        light_score_bp: Option<u16>,
+        strong_score_bp: Option<u16>,
+        threshold_used_bp: Option<u16>,
+        model_version: Option<String>,
+        window_start_ns: Option<MonotonicTimeNs>,
+        window_end_ns: Option<MonotonicTimeNs>,
         idempotency_key: String,
     ) -> Result<WakeRuntimeEventRecord, StorageError> {
         self.ph1w_runtime_event_commit(
@@ -2982,6 +2994,12 @@ impl Ph1wWakeRepo for Ph1fStore {
             tts_active_at_trigger,
             media_playback_active_at_trigger,
             suppression_reason_code,
+            light_score_bp,
+            strong_score_bp,
+            threshold_used_bp,
+            model_version,
+            window_start_ns,
+            window_end_ns,
             idempotency_key,
         )
     }

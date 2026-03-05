@@ -33,6 +33,10 @@ use selene_engines::ph1k::{
 use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
+use selene_engines::ph1w::{
+    reason_codes as ph1w_reason_codes, Ph1wOutputEvent, Ph1wRuntime, SourceLivenessHint,
+    WakeConfig as EngineWakeConfig, WakeStepInput,
+};
 use selene_engines::ph1vision::{
     Ph1VisionConfig as EnginePh1VisionConfig, Ph1VisionRuntime as EnginePh1VisionRuntime,
 };
@@ -94,6 +98,7 @@ use selene_kernel_contracts::ph1vision::{
 };
 use selene_kernel_contracts::ph1w::{
     BoundedAudioSegmentRef, SessionState as WakeSessionState, WakeDecision, WakeGateResults,
+    WakePolicyContext, PH1W_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
@@ -3516,6 +3521,40 @@ impl AdapterRuntime {
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
         )?;
+        let wake_evaluation = evaluate_wake_for_turn(
+            &store,
+            now,
+            &actor_user_id,
+            &runtime_device_id,
+            app_platform,
+            trigger,
+            &ph1k_bundle,
+        )?;
+        if let Some(wake_eval) = wake_evaluation.as_ref() {
+            if !wake_eval.decision.accepted {
+                let session_id_for_reject = latest_session_for_actor_device(
+                    &store,
+                    &actor_user_id,
+                    &runtime_device_id,
+                )
+                .map(|row| row.session_id);
+                commit_wake_runtime_event(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    &runtime_device_id,
+                    session_id_for_reject,
+                    &ph1k_bundle,
+                    wake_eval,
+                )?;
+                return Err(format!(
+                    "wake_rejected reason_code={}",
+                    wake_eval.decision.reason_code.0
+                ));
+            }
+        }
         let session_turn_state = resolve_session_turn_state(
             &mut store,
             now,
@@ -3525,7 +3564,21 @@ impl AdapterRuntime {
             &runtime_device_id,
             trigger,
             &ph1k_bundle,
+            wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
         )?;
+        if let Some(wake_eval) = wake_evaluation.as_ref() {
+            commit_wake_runtime_event(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                &runtime_device_id,
+                session_turn_state.session_id_for_commits,
+                &ph1k_bundle,
+                wake_eval,
+            )?;
+        }
         let voice_id_request = build_voice_id_request_from_ph1k_bundle(
             now,
             actor_user_id.clone(),
@@ -4826,6 +4879,234 @@ struct AdapterSessionTurnState {
     wake_event: Option<WakeDecision>,
 }
 
+#[derive(Debug, Clone)]
+struct WakeEvaluation {
+    decision: WakeDecision,
+    wake_profile_id: Option<String>,
+    threshold_used_bp: u16,
+    model_version: String,
+    window_start_ns: MonotonicTimeNs,
+    window_end_ns: MonotonicTimeNs,
+}
+
+fn confidence_to_basis_points(value: Option<Confidence>) -> Option<u16> {
+    value.map(|score| ((score.0.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000))
+}
+
+fn build_ph1w_live_step_input(
+    now: MonotonicTimeNs,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<WakeStepInput, String> {
+    let pre_roll_start = MonotonicTimeNs(now.0.saturating_sub(500_000_000));
+    let pre_roll_end = MonotonicTimeNs(now.0.saturating_add(500_000_000));
+    let pre_roll = PreRollBufferRef::v1(
+        ph1k.pre_roll_buffer_ref.buffer_id,
+        ph1k.processed_stream_ref.stream_id,
+        pre_roll_start,
+        pre_roll_end,
+    );
+    let vad_event = VadEvent::v1(
+        ph1k.processed_stream_ref.stream_id,
+        pre_roll_start,
+        MonotonicTimeNs(pre_roll_start.0.saturating_add(200_000_000)),
+        Confidence::new(ph1k.interrupt_input.vad_confidence.clamp(0.0, 1.0))
+            .map_err(|err| format!("invalid PH1.W VAD confidence: {err:?}"))?,
+        SpeechLikeness::new(ph1k.interrupt_input.speech_likeness.clamp(0.0, 1.0))
+            .map_err(|err| format!("invalid PH1.W speech likeness: {err:?}"))?,
+    );
+    let light_score = match ph1k.interrupt_input.detection.as_ref() {
+        Some(detection) => Some(
+            Confidence::new(detection.confidence.clamp(0.0, 1.0))
+                .map_err(|err| format!("invalid PH1.W light score: {err:?}"))?,
+        ),
+        None => Some(
+            Confidence::new(ph1k.interrupt_input.acoustic_confidence.clamp(0.0, 1.0))
+                .map_err(|err| format!("invalid PH1.W fallback light score: {err:?}"))?,
+        ),
+    };
+    let strong_score = Some(
+        Confidence::new(
+            ((ph1k.interrupt_input.acoustic_confidence
+                + ph1k.interrupt_input.prosody_confidence
+                + ph1k.interrupt_input.speech_likeness)
+                / 3.0)
+                .clamp(0.0, 1.0),
+        )
+        .map_err(|err| format!("invalid PH1.W strong score: {err:?}"))?,
+    );
+    let source_liveness_hint = if ph1k.interrupt_input.capture_degraded
+        || ph1k.interrupt_input.stream_gap_detected
+    {
+        SourceLivenessHint::ReplaySuspected
+    } else {
+        SourceLivenessHint::Live
+    };
+    let near_field_speech_hint = ph1k
+        .interrupt_input
+        .nearfield_confidence
+        .map(|confidence| confidence >= 0.5);
+    let speaker_match_ok = near_field_speech_hint.unwrap_or(true) && !ph1k.interrupt_input.capture_degraded;
+    Ok(WakeStepInput {
+        now,
+        policy: WakePolicyContext::v1_with_media_and_trigger(
+            WakeSessionState::Active,
+            false,
+            false,
+            ph1k.tts_playback.active,
+            false,
+            false,
+        ),
+        processed_stream: ph1k.processed_stream_ref,
+        pre_roll,
+        vad: Some(vad_event),
+        preceding_silence_ms: Some(250),
+        utterance_start_offset_ms: Some(320),
+        timing: ph1k.timing_stats,
+        device_state: ph1k.device_state.clone(),
+        aec_stable: !ph1k.interrupt_input.aec_unstable,
+        light_score,
+        strong_score,
+        strong_alignment_ok: ph1k.interrupt_input.detection.is_some(),
+        speaker_match_ok,
+        source_liveness_hint,
+        near_field_speech_hint,
+    })
+}
+
+fn run_ph1w_live_decision(
+    now: MonotonicTimeNs,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<(WakeDecision, u16, String), String> {
+    let cfg = EngineWakeConfig::mvp_desktop_v1();
+    let threshold_used_bp = if ph1k.tts_playback.active {
+        ((cfg.strong_score_threshold_tts.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000)
+    } else {
+        ((cfg.strong_score_threshold.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000)
+    };
+    let mut runtime = Ph1wRuntime::new(cfg);
+    for idx in 0..8_u64 {
+        let step_now = MonotonicTimeNs(now.0.saturating_add(idx.saturating_mul(20_000_000)));
+        let step_input = build_ph1w_live_step_input(step_now, ph1k)?;
+        let events = runtime
+            .step_for_implementation(PH1W_IMPLEMENTATION_ID, step_input)
+            .map_err(|err| format!("PH1.W runtime rejected step input: {err:?}"))?;
+        if let Some(decision) = events.into_iter().find_map(|event| match event {
+            Ph1wOutputEvent::Decision(d) => Some(d),
+            Ph1wOutputEvent::StateChanged { .. } => None,
+        }) {
+            return Ok((decision, threshold_used_bp, PH1W_IMPLEMENTATION_ID.to_string()));
+        }
+    }
+    let fallback = WakeDecision::reject_v1(
+        ph1w_reason_codes::W_WAKE_REJECTED_TIMEOUT,
+        WakeGateResults {
+            g0_integrity_ok: false,
+            g1_activity_ok: false,
+            g1a_utterance_start_ok: false,
+            g2_light_ok: false,
+            g3_strong_ok: false,
+            g3a_liveness_ok: false,
+            g4_personalization_ok: false,
+            g5_policy_ok: true,
+        },
+        now,
+        None,
+        None,
+    )
+    .map_err(|err| format!("PH1.W timeout fallback decision invalid: {err:?}"))?;
+    Ok((fallback, threshold_used_bp, PH1W_IMPLEMENTATION_ID.to_string()))
+}
+
+fn evaluate_wake_for_turn(
+    store: &Ph1fStore,
+    now: MonotonicTimeNs,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    app_platform: AppPlatform,
+    trigger: OsVoiceTrigger,
+    ph1k: &Ph1kLiveSignalBundle,
+) -> Result<Option<WakeEvaluation>, String> {
+    if trigger != OsVoiceTrigger::WakeWord {
+        return Ok(None);
+    }
+    if app_platform == AppPlatform::Ios {
+        return Err("ios_wake_disabled".to_string());
+    }
+    let wake_profile_id = match app_platform {
+        AppPlatform::Android | AppPlatform::Desktop => Some(
+            store
+                .ph1w_get_active_wake_profile(actor_user_id, device_id)
+                .ok_or_else(|| "wake_not_enrolled".to_string())?
+                .to_string(),
+        ),
+        AppPlatform::Ios => None,
+    };
+    let (decision, threshold_used_bp, model_version) = run_ph1w_live_decision(now, ph1k)?;
+    let (window_start_ns, window_end_ns) = decision
+        .capture
+        .map(|capture| (capture.t_start, capture.t_end))
+        .unwrap_or((ph1k.pre_roll_buffer_ref.t_start, ph1k.pre_roll_buffer_ref.t_end));
+    Ok(Some(WakeEvaluation {
+        decision,
+        wake_profile_id,
+        threshold_used_bp,
+        model_version,
+        window_start_ns,
+        window_end_ns,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_wake_runtime_event(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    session_id: Option<SessionId>,
+    ph1k: &Ph1kLiveSignalBundle,
+    wake_eval: &WakeEvaluation,
+) -> Result<(), String> {
+    let decision = &wake_eval.decision;
+    let wake_event_id = format!(
+        "wake_evt_{}_{}_{}",
+        correlation_id.0,
+        turn_id.0,
+        if decision.accepted { "accept" } else { "reject" }
+    );
+    let idempotency_key = sanitize_idempotency_token(&format!(
+        "adapter_wake_runtime:{}:{}:{}:{}",
+        correlation_id.0,
+        turn_id.0,
+        if decision.accepted { 1 } else { 0 },
+        decision.reason_code.0
+    ));
+    store
+        .ph1w_runtime_event_commit(
+            now,
+            wake_event_id,
+            session_id,
+            Some(actor_user_id.clone()),
+            device_id.clone(),
+            decision.accepted,
+            decision.reason_code,
+            wake_eval.wake_profile_id.clone(),
+            ph1k.tts_playback.active,
+            false,
+            None,
+            confidence_to_basis_points(decision.light_score),
+            confidence_to_basis_points(decision.strong_score),
+            Some(wake_eval.threshold_used_bp),
+            Some(truncate_ascii(&wake_eval.model_version, 64)),
+            Some(wake_eval.window_start_ns),
+            Some(wake_eval.window_end_ns),
+            idempotency_key,
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
 fn resolve_session_turn_state(
     store: &mut Ph1fStore,
     now: MonotonicTimeNs,
@@ -4835,6 +5116,7 @@ fn resolve_session_turn_state(
     device_id: &DeviceId,
     trigger: OsVoiceTrigger,
     ph1k: &Ph1kLiveSignalBundle,
+    wake_event: Option<WakeDecision>,
 ) -> Result<AdapterSessionTurnState, String> {
     let existing = latest_session_for_actor_device(store, actor_user_id, device_id);
     let next_session_id_seed = store
@@ -4899,7 +5181,7 @@ fn resolve_session_turn_state(
 
     let ph1l_turn_trigger = ph1l_turn_trigger_from_os(trigger);
     let wake_event = if trigger_requires_session_open_step(ph1l_turn_trigger) {
-        Some(build_turn_wake_decision(now, ph1k)?)
+        wake_event
     } else {
         None
     };
@@ -5012,39 +5294,6 @@ fn tts_playback_state_from_bool(active: bool) -> TtsPlaybackState {
     } else {
         TtsPlaybackState::Stopped
     }
-}
-
-fn build_turn_wake_decision(
-    now: MonotonicTimeNs,
-    ph1k: &Ph1kLiveSignalBundle,
-) -> Result<WakeDecision, String> {
-    let capture = BoundedAudioSegmentRef::v1(
-        ph1k.processed_stream_ref.stream_id,
-        ph1k.pre_roll_buffer_ref.buffer_id,
-        ph1k.pre_roll_buffer_ref.t_start,
-        ph1k.pre_roll_buffer_ref.t_end,
-        ph1k.pre_roll_buffer_ref.t_start,
-        ph1k.pre_roll_buffer_ref.t_end,
-    )
-    .map_err(|err| format!("invalid PH1.L wake capture: {err:?}"))?;
-    WakeDecision::accept_v1(
-        selene_os::ph1l::reason_codes::L_OPEN_WAKE,
-        WakeGateResults {
-            g0_integrity_ok: true,
-            g1_activity_ok: true,
-            g1a_utterance_start_ok: true,
-            g2_light_ok: true,
-            g3_strong_ok: true,
-            g3a_liveness_ok: true,
-            g4_personalization_ok: true,
-            g5_policy_ok: true,
-        },
-        now,
-        None,
-        None,
-        capture,
-    )
-    .map_err(|err| format!("invalid PH1.L wake decision: {err:?}"))
 }
 
 fn load_ph1x_thread_state(
@@ -7191,7 +7440,7 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus,
+        DeviceRecord, IdentityRecord, IdentityStatus, WakeSampleResult,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7367,6 +7616,73 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
+    }
+
+    fn seed_wake_enrollment_complete_for_request(
+        runtime: &AdapterRuntime,
+        request: &VoiceTurnAdapterRequest,
+        label: &str,
+    ) {
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("actor_user_id must parse");
+        let app_platform =
+            parse_app_platform(&request.app_platform).expect("app platform must parse");
+        let device_id = DeviceId::new(
+            request
+                .device_id
+                .clone()
+                .expect("device_id must be present for wake enrollment seeding"),
+        )
+        .expect("device id must parse");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        let now = MonotonicTimeNs(request.now_ns.unwrap_or(1).saturating_add(100));
+        ensure_actor_identity_and_device(
+            &mut store,
+            &actor_user_id,
+            Some(&device_id),
+            app_platform,
+            now,
+        )
+        .expect("identity/device seed must succeed");
+        let started = store
+            .ph1w_enroll_start_draft(
+                now,
+                actor_user_id.clone(),
+                device_id.clone(),
+                None,
+                3,
+                8,
+                180_000,
+                format!("{label}_wake_start"),
+            )
+            .expect("wake enrollment start should succeed");
+        for seq in 1_u16..=3_u16 {
+            store
+                .ph1w_enroll_sample_commit(
+                    MonotonicTimeNs(now.0.saturating_add(seq as u64)),
+                    started.wake_enrollment_session_id.clone(),
+                    1_200,
+                    0.95,
+                    18.0,
+                    0.02,
+                    -20.0,
+                    -45.0,
+                    -5.0,
+                    0.0,
+                    WakeSampleResult::Pass,
+                    None,
+                    format!("{label}_wake_sample_{seq}"),
+                )
+                .expect("wake enrollment sample should succeed");
+        }
+        store
+            .ph1w_enroll_complete_commit(
+                MonotonicTimeNs(now.0.saturating_add(10)),
+                started.wake_enrollment_session_id,
+                format!("wake_profile_{}_{}", label, stable_hash_hex_16(actor_user_id.as_str())),
+                format!("{label}_wake_complete"),
+            )
+            .expect("wake enrollment complete should succeed");
     }
 
     fn feedback_event_type_matches(
@@ -8652,13 +8968,76 @@ mod tests {
     }
 
     #[test]
+    fn at_wake_01_desktop_wake_without_enrollment_fails() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wake_desktop_no_enroll".to_string());
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("desktop wake without enrollment must fail");
+        assert_eq!(err, "wake_not_enrolled");
+    }
+
+    #[test]
+    fn at_wake_02_android_wake_without_enrollment_fails() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "ANDROID".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wake_android_no_enroll".to_string());
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("android wake without enrollment must fail");
+        assert_eq!(err, "wake_not_enrolled");
+    }
+
+    #[test]
+    fn at_wake_03_ios_wakeword_is_always_disabled() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wake_ios_disabled".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wake_03");
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("ios wake must fail closed");
+        assert_eq!(err, "ios_wake_disabled");
+    }
+
+    #[test]
+    fn at_wake_04_ph1w_inference_controls_accept_reject() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wake_inference_gate".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wake_04");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.capture_degraded = Some(true);
+        }
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("degraded capture should reject via PH1.W inference");
+        assert!(
+            err.contains("wake_rejected"),
+            "expected wake_rejected from PH1.W inference path, got {err}"
+        );
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(store.ph1w_get_runtime_events().iter().any(|row| !row.accepted));
+    }
+
+    #[test]
     fn at_l_01_wake_opens_new_session_persists_session_id() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
         req.correlation_id = 31_001;
         req.turn_id = 41_001;
         req.now_ns = Some(1_000_000_000);
+        req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_l_01");
         runtime
             .run_voice_turn(req.clone())
             .expect("wake turn must succeed");
@@ -8680,7 +9059,9 @@ mod tests {
         first.correlation_id = 31_002;
         first.turn_id = 41_002;
         first.now_ns = Some(2_000_000_000);
+        first.app_platform = "DESKTOP".to_string();
         first.trigger = "WAKE_WORD".to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &first, "at_l_02");
         runtime
             .run_voice_turn(first.clone())
             .expect("first wake turn must succeed");
@@ -8699,6 +9080,7 @@ mod tests {
         second.correlation_id = 31_003;
         second.turn_id = 41_003;
         second.now_ns = Some(7_000_000_000);
+        second.app_platform = "DESKTOP".to_string();
         second.trigger = "WAKE_WORD".to_string();
         runtime
             .run_voice_turn(second)
@@ -8726,7 +9108,9 @@ mod tests {
         first.correlation_id = 31_004;
         first.turn_id = 41_004;
         first.now_ns = Some(3_000_000_000);
+        first.app_platform = "DESKTOP".to_string();
         first.trigger = "WAKE_WORD".to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &first, "at_l_03");
         runtime
             .run_voice_turn(first.clone())
             .expect("first wake turn must succeed");
@@ -8764,6 +9148,7 @@ mod tests {
         second.correlation_id = 31_005;
         second.turn_id = 41_005;
         second.now_ns = Some(250_000_000_000);
+        second.app_platform = "DESKTOP".to_string();
         second.trigger = "WAKE_WORD".to_string();
         if let Some(capture) = second.audio_capture_ref.as_mut() {
             capture.tts_playback_active = Some(false);
@@ -8792,8 +9177,10 @@ mod tests {
         wake.correlation_id = 31_006;
         wake.turn_id = 41_006;
         wake.now_ns = Some(4_000_000_000);
+        wake.app_platform = "DESKTOP".to_string();
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_session_wake_device".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_l_04");
         runtime
             .run_voice_turn(wake.clone())
             .expect("wake turn must succeed");
@@ -8802,6 +9189,7 @@ mod tests {
         explicit.correlation_id = 31_007;
         explicit.turn_id = 41_007;
         explicit.now_ns = Some(5_000_000_000);
+        explicit.app_platform = "DESKTOP".to_string();
         explicit.trigger = "EXPLICIT".to_string();
         explicit.device_id = Some("adapter_session_explicit_device".to_string());
         runtime
@@ -8831,7 +9219,9 @@ mod tests {
         req.correlation_id = 31_008;
         req.turn_id = 41_008;
         req.now_ns = Some(6_000_000_000);
+        req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_l_05");
         runtime
             .run_voice_turn(req.clone())
             .expect("wake turn must succeed");
@@ -9063,6 +9453,22 @@ mod tests {
             Some(&runtime_device_id),
         )
         .expect("ph1k live signal bundle must build");
+        let wake_evaluation = evaluate_wake_for_turn(
+            &store,
+            now,
+            &actor_user_id,
+            &runtime_device_id,
+            app_platform,
+            trigger,
+            &ph1k_bundle,
+        )
+        .expect("wake gate + inference should resolve for trigger prep");
+        if let Some(wake_eval) = wake_evaluation.as_ref() {
+            assert!(
+                wake_eval.decision.accepted,
+                "trigger prep helper expects accepted wake decisions"
+            );
+        }
         let session_turn_state = resolve_session_turn_state(
             &mut store,
             now,
@@ -9072,6 +9478,7 @@ mod tests {
             &runtime_device_id,
             trigger,
             &ph1k_bundle,
+            wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
         )
         .expect("session turn state must resolve");
         let voice_id_request = build_voice_id_request_from_ph1k_bundle(
@@ -9190,15 +9597,18 @@ mod tests {
         wake.correlation_id = 32_001;
         wake.turn_id = 42_001;
         wake.now_ns = Some(7_000_000_000);
+        wake.app_platform = "DESKTOP".to_string();
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_trigger_wake_1".to_string());
         wake.user_text_final = Some("check trigger parity".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_trigger_01");
         let wake_prepared = prepare_trigger_agent_input_shape(&runtime, wake);
 
         let mut explicit = base_request();
         explicit.correlation_id = 32_002;
         explicit.turn_id = 42_002;
         explicit.now_ns = Some(7_000_000_100);
+        explicit.app_platform = "DESKTOP".to_string();
         explicit.trigger = "EXPLICIT".to_string();
         explicit.device_id = Some("adapter_trigger_explicit_1".to_string());
         explicit.user_text_final = Some("check trigger parity".to_string());
@@ -9220,21 +9630,28 @@ mod tests {
         wake.correlation_id = 32_101;
         wake.turn_id = 42_101;
         wake.now_ns = Some(8_000_000_000);
+        wake.app_platform = "DESKTOP".to_string();
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_trigger_shape_wake".to_string());
         wake.user_text_final = Some("show me weather".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_trigger_02");
         let wake_shape = prepare_trigger_agent_input_shape(&runtime, wake).shape;
 
         let mut explicit = base_request();
         explicit.correlation_id = 32_102;
         explicit.turn_id = 42_102;
         explicit.now_ns = Some(8_000_000_100);
+        explicit.app_platform = "DESKTOP".to_string();
         explicit.trigger = "EXPLICIT".to_string();
         explicit.device_id = Some("adapter_trigger_shape_explicit".to_string());
         explicit.user_text_final = Some("show me weather".to_string());
         let explicit_shape = prepare_trigger_agent_input_shape(&runtime, explicit).shape;
 
-        assert_eq!(wake_shape, explicit_shape);
+        assert!(wake_shape.wake_event_present);
+        assert!(!explicit_shape.wake_event_present);
+        let mut wake_shape_without_wake_flag = wake_shape.clone();
+        wake_shape_without_wake_flag.wake_event_present = explicit_shape.wake_event_present;
+        assert_eq!(wake_shape_without_wake_flag, explicit_shape);
     }
 
     #[test]
@@ -10030,6 +10447,7 @@ mod tests {
         android.app_platform = "ANDROID".to_string();
         android.trigger = "WAKE_WORD".to_string();
         android.device_id = Some("adapter_android_device_1".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &android, "at_adapter_08_android");
         runtime
             .run_voice_turn(android)
             .expect("android voice turn should succeed");
@@ -10379,7 +10797,7 @@ mod tests {
         let runtime = AdapterRuntime::default();
         let mut expected_outcome: Option<String> = None;
         for (idx, platform, trigger, device_id) in [
-            (1_u64, "IOS", "WAKE_WORD", "ios_1"),
+            (1_u64, "IOS", "EXPLICIT", "ios_1"),
             (2_u64, "ANDROID", "WAKE_WORD", "android_1"),
             (3_u64, "DESKTOP", "EXPLICIT", "desktop_1"),
         ] {
@@ -10389,6 +10807,9 @@ mod tests {
             req.app_platform = platform.to_string();
             req.trigger = trigger.to_string();
             req.device_id = Some(device_id.to_string());
+            if trigger == "WAKE_WORD" {
+                seed_wake_enrollment_complete_for_request(&runtime, &req, "at_adapter_21");
+            }
             let out = runtime
                 .run_voice_turn(req)
                 .expect("platform turn should succeed");
@@ -10425,9 +10846,12 @@ mod tests {
         let mut voice_turn = base_request();
         voice_turn.turn_id = 30_001;
         voice_turn.now_ns = Some(20_001);
+        voice_turn.app_platform = "DESKTOP".to_string();
         voice_turn.trigger = "WAKE_WORD".to_string();
+        voice_turn.device_id = Some("adapter_voice_text_wake_desktop".to_string());
         voice_turn.user_text_final = Some("show missed stt report for june".to_string());
         voice_turn.selene_text_final = Some("Opening the report on desktop.".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &voice_turn, "at_adapter_22");
         runtime
             .run_voice_turn(voice_turn)
             .expect("voice turn should succeed");

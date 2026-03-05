@@ -2486,6 +2486,12 @@ pub struct WakeRuntimeEventRecord {
     pub tts_active_at_trigger: bool,
     pub media_playback_active_at_trigger: bool,
     pub suppression_reason_code: Option<ReasonCodeId>,
+    pub light_score_bp: Option<u16>,
+    pub strong_score_bp: Option<u16>,
+    pub threshold_used_bp: Option<u16>,
+    pub model_version: Option<String>,
+    pub window_start_ns: Option<MonotonicTimeNs>,
+    pub window_end_ns: Option<MonotonicTimeNs>,
     pub idempotency_key: String,
 }
 
@@ -13257,6 +13263,12 @@ impl Ph1fStore {
         tts_active_at_trigger: bool,
         media_playback_active_at_trigger: bool,
         suppression_reason_code: Option<ReasonCodeId>,
+        light_score_bp: Option<u16>,
+        strong_score_bp: Option<u16>,
+        threshold_used_bp: Option<u16>,
+        model_version: Option<String>,
+        window_start_ns: Option<MonotonicTimeNs>,
+        window_end_ns: Option<MonotonicTimeNs>,
         idempotency_key: String,
     ) -> Result<WakeRuntimeEventRecord, StorageError> {
         if wake_event_id.trim().is_empty() || wake_event_id.len() > 128 {
@@ -13274,6 +13286,42 @@ impl Ph1fStore {
                     reason: "must be non-empty and <= 128 chars",
                 },
             ));
+        }
+        for (field, value) in [
+            ("ph1w_runtime_event_commit.light_score_bp", light_score_bp),
+            ("ph1w_runtime_event_commit.strong_score_bp", strong_score_bp),
+            ("ph1w_runtime_event_commit.threshold_used_bp", threshold_used_bp),
+        ] {
+            if let Some(v) = value {
+                if v > 10_000 {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field,
+                            reason: "must be <= 10000 basis points",
+                        },
+                    ));
+                }
+            }
+        }
+        if let Some(version) = model_version.as_ref() {
+            if version.trim().is_empty() || version.len() > 64 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1w_runtime_event_commit.model_version",
+                        reason: "must be non-empty and <= 64 chars when present",
+                    },
+                ));
+            }
+        }
+        if let (Some(start), Some(end)) = (window_start_ns, window_end_ns) {
+            if end.0 < start.0 {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "ph1w_runtime_event_commit.window_end_ns",
+                        reason: "must be >= window_start_ns",
+                    },
+                ));
+            }
         }
         if !self.devices.contains_key(&device_id) {
             return Err(StorageError::ForeignKeyViolation {
@@ -13322,6 +13370,12 @@ impl Ph1fStore {
             tts_active_at_trigger,
             media_playback_active_at_trigger,
             suppression_reason_code,
+            light_score_bp,
+            strong_score_bp,
+            threshold_used_bp,
+            model_version,
+            window_start_ns,
+            window_end_ns,
             idempotency_key: idempotency_key.clone(),
         };
 
@@ -23541,6 +23595,12 @@ mod tests {
                 false,
                 false,
                 None,
+                Some(9_100),
+                Some(9_300),
+                Some(8_500),
+                Some("PH1.W.001".to_string()),
+                Some(MonotonicTimeNs(90)),
+                Some(MonotonicTimeNs(100)),
                 "wake-rt-idem".to_string(),
             )
             .unwrap();
@@ -23557,6 +23617,12 @@ mod tests {
                 false,
                 false,
                 None,
+                Some(9_100),
+                Some(9_300),
+                Some(8_500),
+                Some("PH1.W.001".to_string()),
+                Some(MonotonicTimeNs(90)),
+                Some(MonotonicTimeNs(100)),
                 "wake-rt-idem".to_string(),
             )
             .unwrap();
