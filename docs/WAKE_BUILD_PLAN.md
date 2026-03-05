@@ -732,5 +732,30 @@ Gap 20 - Wake-specific retention and deletion lifecycle is missing:
 
 Gap 21 - Plan contract symbol names are docs-only and not codified:
 - Current state: types like `WakeInferenceRequestV1`, `WakeDecisionV1`, `WakeLearnSignalV1`, `WakeLearnAckV1` are not implemented as concrete code contracts.
-- Repo anchor: `docs/WAKE_ENGINE.md` (plan contract names), missing in `crates/**`.
+- Repo anchor: `docs/WAKE_BUILD_PLAN.md` (plan contract names), missing in `crates/**`.
 - Required change: add these canonical contract types to kernel contracts and wire their validators through runtime paths.
+
+Gap 22 - Token-subject and device-binding authorization is missing on `/v1/voice/turn`:
+- Current state: runtime trusts request `actor_user_id/device_id` payload values and auto-provisions identity/device rows when absent.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::run_voice_turn_internal`, `ensure_actor_identity_and_device`.
+- Required change: validate auth token subject/device claims against request fields and fail-closed on mismatch; remove live turn auto-provisioning for identity/device.
+
+Gap 23 - Anti-replay ingress request security is missing:
+- Current state: `/v1/voice/turn` ingress does not enforce signed timestamp window + nonce replay checks.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAdapterRequest`, `crates/selene_adapter/src/bin/http_adapter.rs::run_voice_turn`.
+- Required change: add signed nonce + timestamp contract, replay cache enforcement, and deterministic stale/replay rejection behavior.
+
+Gap 24 - HTTP ingress abuse controls are missing (`rate/quota/429`):
+- Current state: `/v1/voice/turn` route is mounted without explicit quota/rate-limit middleware.
+- Repo anchor: `crates/selene_adapter/src/bin/http_adapter.rs::Router::new`, `crates/selene_os/src/ph1quota.rs::Ph1QuotaWiringConfig`.
+- Required change: enforce per-token/per-device throttles/quotas and deterministic `429` response policy with retry guidance and audit logging.
+
+Gap 25 - Capture-bundle attestation boundary is missing:
+- Current state: PH1.K live bundle consumes raw client-supplied capture metadata directly.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAudioCaptureRef`, `build_ph1k_live_signal_bundle`.
+- Required change: require signed/attested capture bundle provenance and verify tamper-evidence before PH1.K/PH1.W/PH1.L decisions use capture fields.
+
+Gap 26 - Artifact authenticity verification is missing (hash-only today):
+- Current state: artifact contracts persist `package_hash/payload_ref/provenance_ref` but do not define signature trust-root verification flow.
+- Repo anchor: `crates/selene_kernel_contracts/src/ph1art.rs::ArtifactLedgerRowInput`, `crates/selene_os/src/device_artifact_sync.rs`, `crates/selene_os/src/ph1builder.rs`.
+- Required change: add cryptographic signature verification (artifact envelope + trust roots) at artifact ingest, pull/apply, and activation boundaries.
