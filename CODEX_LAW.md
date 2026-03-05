@@ -124,6 +124,8 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
 
 ### E) Mandatory Cleanliness Gates
 - Clean tree at start and end (`git status --porcelain` empty).
+- End-of-task is not complete until changes are committed and pushed to `origin`.
+- A new task must not start until the previous task is pushed and the tree is clean again.
 - No untracked leftovers.
 - If violated, stop and resolve before continuing.
 

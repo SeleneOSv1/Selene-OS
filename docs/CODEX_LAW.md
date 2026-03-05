@@ -10,6 +10,7 @@ Purpose: Non-negotiable operating rules for Codex work in this repo.
 ## Rule: Clean Tree + Push Discipline
 - Start of every run: `git status --short` must be empty. If not, stop and fix first.
 - End of every run: tests PASS, append a PASS line to `docs/03_BUILD_LEDGER.md`, commit only the run files + ledger, push to origin, then `git status --short` must be empty again.
+- A new run must not begin until the previous run has been committed, pushed, and verified clean.
 - No local-only real work.
 - No untracked files left in the repo. Commit real work, otherwise ignore/move it.
 
