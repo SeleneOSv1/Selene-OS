@@ -15,10 +15,10 @@ use selene_storage::ph1f::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let preferred_device_substring = parse_preferred_device_substring();
+    let cli = parse_cli_args();
 
     println!(
-        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>]"
+        "usage: cargo run -p selene_adapter --bin desktop_wake_life -- [--device <substring>] [--seconds <n>]"
     );
 
     let actor_user_id = UserId::new("tenant_1:desktop_life_actor".to_string())
@@ -34,12 +34,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = AdapterRuntime::new(AppServerIngressRuntime::default(), store.clone());
 
     let mut config = DesktopMicProducerConfig::default();
-    config.input_device_name_substring = preferred_device_substring;
+    config.input_device_name_substring = cli.preferred_device_substring;
     let producer = DesktopMicProducer::start(config)?;
+    let sample_rate_hz = producer.source_sample_rate_hz()?;
+    let channels = producer.source_channels()?;
     producer.wait_until_pre_roll_ready(Duration::from_secs(8))?;
+    if cli.capture_seconds > 0 {
+        println!(
+            "capture window active: {}s (speak wake phrase during this window)",
+            cli.capture_seconds
+        );
+        std::thread::sleep(Duration::from_secs(cli.capture_seconds));
+    }
 
     let capture_ref = producer.build_capture_ref()?;
     let now_ns = capture_ref.t_end_ns.max(1);
+    let selected_mic = capture_ref
+        .selected_mic
+        .clone()
+        .unwrap_or_else(|| "unknown_mic".to_string());
+    let pre_roll_ms = capture_ref
+        .t_end_ns
+        .saturating_sub(capture_ref.t_start_ns)
+        .saturating_div(1_000_000);
+    println!(
+        "mic selected: {} sample_rate_hz={} channels={}",
+        selected_mic, sample_rate_hz, channels
+    );
+    println!("pre-roll ready: {}ms (>=1200ms required)", pre_roll_ms);
+    println!(
+        "capture metrics: vad_confidence_bp={} clipping_ratio_bp={} timing_jitter_ms_milli={} snr_db_milli={}",
+        capture_ref.vad_confidence_bp.unwrap_or(0),
+        capture_ref.clipping_ratio_bp.unwrap_or(0),
+        capture_ref.timing_jitter_ms_milli.unwrap_or(0),
+        capture_ref.snr_db_milli.unwrap_or(0)
+    );
 
     let request = VoiceTurnAdapterRequest {
         correlation_id: 88_001,
@@ -121,22 +150,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_preferred_device_substring() -> Option<String> {
+#[derive(Debug, Clone)]
+struct CliArgs {
+    preferred_device_substring: Option<String>,
+    capture_seconds: u64,
+}
+
+fn parse_cli_args() -> CliArgs {
     let args: Vec<String> = env::args().collect();
-    let mut out = None;
+    let mut preferred_device_substring = None;
+    let mut capture_seconds = 0_u64;
     let mut idx = 1;
     while idx < args.len() {
         if args[idx] == "--device" && idx + 1 < args.len() {
             let candidate = args[idx + 1].trim().to_string();
             if !candidate.is_empty() {
-                out = Some(candidate);
+                preferred_device_substring = Some(candidate);
+            }
+            idx += 2;
+            continue;
+        }
+        if args[idx] == "--seconds" && idx + 1 < args.len() {
+            if let Ok(value) = args[idx + 1].parse::<u64>() {
+                capture_seconds = value.min(300);
             }
             idx += 2;
             continue;
         }
         idx += 1;
     }
-    out
+    CliArgs {
+        preferred_device_substring,
+        capture_seconds,
+    }
 }
 
 fn seed_identity_and_device(
