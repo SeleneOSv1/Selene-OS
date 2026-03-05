@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use selene_adapter::desktop_mic_producer::{DesktopMicProducer, DesktopMicProducerConfig};
 use selene_adapter::{AdapterRuntime, VoiceTurnAdapterRequest};
+use selene_engines::ph1w::reason_codes as ph1w_reason_codes;
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::MonotonicTimeNs;
@@ -102,10 +103,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ph1w_get_runtime_events()
             .last()
             .map(|event| {
+                let reason_name = wake_reason_name(event.reason_code.0);
                 format!(
-                    "{} reason_code={} model_version={}",
+                    "{} reason_code={} ({}) model_version={}",
                     if event.accepted { "accept" } else { "reject" },
                     event.reason_code.0,
+                    reason_name,
                     event
                         .model_version
                         .as_deref()
@@ -148,6 +151,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     producer.stop();
     Ok(())
+}
+
+fn wake_reason_name(reason_code: u32) -> &'static str {
+    match reason_code {
+        c if c == ph1w_reason_codes::W_WAKE_ACCEPTED.0 => "ACCEPTED",
+        c if c == ph1w_reason_codes::W_WAKE_REJECTED_TIMEOUT.0 => "TIMEOUT",
+        c if c == ph1w_reason_codes::W_FAIL_G1_NOISE.0 => "NOISE",
+        c if c == ph1w_reason_codes::W_FAIL_G1A_NOT_UTTERANCE_START.0 => "NO_SPEECH",
+        c if c == ph1w_reason_codes::W_FAIL_G2_NOT_WAKE_LIKE.0 => "NOT_WAKE_LIKE",
+        c if c == ph1w_reason_codes::W_FAIL_G3_SCORE_LOW.0 => "SCORE_LOW",
+        c if c == ph1w_reason_codes::W_FAIL_G3_UNSTABLE_SCORE.0 => "UNSTABLE_SCORE",
+        c if c == ph1w_reason_codes::W_FAIL_G3_ALIGNMENT.0 => "ALIGNMENT",
+        c if c == ph1w_reason_codes::W_FAIL_G3A_REPLAY_SUSPECTED.0 => "REPLAY_SUSPECTED",
+        c if c == ph1w_reason_codes::W_FAIL_G4_USER_MISMATCH.0 => "USER_MISMATCH",
+        c if c == ph1w_reason_codes::W_FAIL_G5_POLICY_BLOCKED.0 => "POLICY_BLOCKED",
+        _ => "UNKNOWN",
+    }
 }
 
 #[derive(Debug, Clone)]

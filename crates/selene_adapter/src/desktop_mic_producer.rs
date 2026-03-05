@@ -61,6 +61,13 @@ struct CaptureState {
     rms_ema: f64,
     noise_floor_ema: f64,
     speech_likeness_ema: f64,
+    frame_energy_accum: f64,
+    frame_sample_count: usize,
+    vad_confidence_ema: f64,
+    noise_floor_reference_energy: f64,
+    noise_floor_min_energy: f64,
+    speech_energy_ema: f64,
+    calibration_samples_remaining: u64,
 
     callback_count: u64,
     last_callback_instant: Option<Instant>,
@@ -124,6 +131,13 @@ impl CaptureState {
             rms_ema: 0.0,
             noise_floor_ema: 0.0,
             speech_likeness_ema: 0.0,
+            frame_energy_accum: 0.0,
+            frame_sample_count: 0,
+            vad_confidence_ema: 0.0,
+            noise_floor_reference_energy: 1e-8,
+            noise_floor_min_energy: f64::MAX,
+            speech_energy_ema: 1e-8,
+            calibration_samples_remaining: (TARGET_SAMPLE_RATE_HZ as u64).saturating_mul(2),
             callback_count: 0,
             last_callback_instant: None,
             timing_jitter_ema_ms: 0.0,
@@ -226,7 +240,76 @@ impl CaptureState {
                 self.timing_overruns = self.timing_overruns.saturating_add(1);
             }
             self.ring.push_back(pcm);
+
+            self.frame_energy_accum += sample_sq;
+            self.frame_sample_count = self.frame_sample_count.saturating_add(1);
+
+            let frame_samples_target =
+                ((TARGET_SAMPLE_RATE_HZ as usize).saturating_mul(FRAME_DURATION_MS as usize))
+                    .saturating_div(1_000)
+                    .max(1);
+            if self.frame_sample_count >= frame_samples_target {
+                self.consume_frame_energy();
+            }
         }
+    }
+
+    fn consume_frame_energy(&mut self) {
+        if self.frame_sample_count == 0 {
+            return;
+        }
+        let frame_energy = (self.frame_energy_accum / self.frame_sample_count as f64).max(1e-10);
+        let frame_rms = frame_energy.sqrt();
+
+        if self.calibration_samples_remaining > 0 {
+            self.noise_floor_min_energy = self.noise_floor_min_energy.min(frame_energy);
+            if self.output_samples_seen_for_metrics <= self.frame_sample_count as u64 {
+                self.noise_floor_reference_energy = frame_energy;
+            } else {
+                self.noise_floor_reference_energy =
+                    (self.noise_floor_reference_energy * 0.95) + (frame_energy * 0.05);
+            }
+            self.calibration_samples_remaining = self
+                .calibration_samples_remaining
+                .saturating_sub(self.frame_sample_count as u64);
+            if self.calibration_samples_remaining == 0 {
+                let calibrated_floor = self
+                    .noise_floor_min_energy
+                    .min(self.noise_floor_reference_energy)
+                    .max(1e-10);
+                self.noise_floor_reference_energy = calibrated_floor;
+            }
+        } else {
+            let alpha = if frame_energy <= self.noise_floor_reference_energy {
+                0.08
+            } else {
+                0.002
+            };
+            self.noise_floor_reference_energy = (self.noise_floor_reference_energy * (1.0 - alpha))
+                + (frame_energy * alpha);
+        }
+
+        let noise_floor_energy = self.noise_floor_reference_energy.max(1e-10);
+        let energy_ratio = (frame_energy / noise_floor_energy).max(1.0);
+        let ratio_db = 10.0 * energy_ratio.log10();
+        let energy_speech_score = ((ratio_db - 1.0) / 10.0).clamp(0.0, 1.0);
+        let rms_speech_score = ((frame_rms - 0.01) / 0.12).clamp(0.0, 1.0);
+        let speech_score = (energy_speech_score * 0.7) + (rms_speech_score * 0.3);
+
+        if self.output_samples_seen_for_metrics <= self.frame_sample_count as u64 {
+            self.vad_confidence_ema = speech_score;
+            self.speech_energy_ema = frame_energy.max(noise_floor_energy);
+        } else {
+            self.vad_confidence_ema = (self.vad_confidence_ema * 0.88) + (speech_score * 0.12);
+            if speech_score >= 0.20 {
+                self.speech_energy_ema = (self.speech_energy_ema * 0.92) + (frame_energy * 0.08);
+            } else {
+                self.speech_energy_ema = (self.speech_energy_ema * 0.995) + (frame_energy * 0.005);
+            }
+        }
+
+        self.frame_energy_accum = 0.0;
+        self.frame_sample_count = 0;
     }
 
     fn is_pre_roll_ready(&self) -> bool {
@@ -267,11 +350,16 @@ impl CaptureState {
         let t_candidate_start_ns = t_end_ns.saturating_sub(candidate_offset_ns).max(t_start_ns);
         let t_confirmed_ns = t_end_ns.max(t_candidate_start_ns);
 
-        let rms = self.rms_ema.sqrt().max(1e-6);
-        let noise_floor = self.noise_floor_ema.sqrt().max(1e-6);
-        let snr_db = 20.0 * (rms / noise_floor).log10();
+        let noise_floor = self
+            .noise_floor_reference_energy
+            .max(self.noise_floor_ema.max(1e-10))
+            .sqrt()
+            .max(1e-6);
+        let speech_energy = self.speech_energy_ema.max(noise_floor * noise_floor);
+        let snr_db = 10.0 * (speech_energy / (noise_floor * noise_floor)).log10();
         let snr_db = snr_db.clamp(0.0, 45.0);
-        let vad_conf = ((snr_db - 3.0) / 24.0).clamp(0.0, 1.0);
+        let vad_conf = ((self.vad_confidence_ema * 0.75) + (((snr_db - 1.0) / 10.0).clamp(0.0, 1.0) * 0.25))
+            .clamp(0.0, 1.0);
         let speech_likeness = ((self.speech_likeness_ema - 0.01) / 0.3).clamp(0.0, 1.0);
 
         let clipping_ratio = if self.output_samples_seen_for_metrics == 0 {
