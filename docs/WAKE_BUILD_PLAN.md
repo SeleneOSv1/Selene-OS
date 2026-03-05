@@ -46,7 +46,7 @@ All triggers result in the same action:
 
 Trigger -> Session Open/Resume -> Voice pipeline starts.
 
-Client/server trigger contract (wake lives inside the Selene App):
+Client/server trigger contract (TARGET / OPEN / NOT BUILT YET):
 
 Transport and auth:
 - HTTPS `POST /v1/voice/turn`
@@ -78,6 +78,12 @@ Response semantics:
 - `409`: duplicate `idempotency_key`; return prior `session_id` and `turn_id`.
 - `422`: gating failure (missing required onboarding receipt).
 - `401/403`: auth failure.
+
+Ingress security (required):
+- Validate token subject == actor_user_id and token device claim == device_id
+- Enforce signed nonce + timestamp replay window (deterministic stale/replay rejects)
+- Enforce per-token/per-device quotas with deterministic 429 + Retry-After
+- Remove / forbid auto-provisioning of identity/device inside /v1/voice/turn
 
 Platform runtime budgets (hard requirements):
 
@@ -143,7 +149,9 @@ Wake artifact receipt is generated.
 
 Artifact queued to mobile sync outbox.
 
-Onboarding gate matrix (enforced):
+Onboarding gate matrix (target):
+
+Current enforcement differs from target strict matrix; see Gap 6.
 
 - Desktop:
   - Required receipts: `wake_enrollment_completed`, `wake_artifact_sync_receipt`.
@@ -175,6 +183,11 @@ Privacy and retention for onboarding capture:
 - Feature/embedding retention TTL: 365 days max.
 - Encryption at rest for stored audio/features is mandatory.
 - User delete request must remove enrollment samples, bindings, and derived wake profile artifacts.
+
+Retention & deletion execution (required):
+- Purge workers (cadence defined) for TTL cleanup
+- User-delete execution flow for wake enrollment/runtime/artifacts
+- Deletion receipts + audit verification across all wake tables and artifact payload refs
 
 ## Section 5: Wake Artifact System
 
@@ -259,6 +272,8 @@ Runtime event required fields:
 - `audio_window_start_ms`
 - `audio_window_end_ms`
 
+- Introduce wake_window_id propagated through runtime events, learn signals, outbox records, and cloud ACKs for deterministic traceability.
+
 ## Section 7: Wake Failure Learning
 
 Learning pipeline exists and is expanded with explicit wake taxonomy.
@@ -271,6 +286,10 @@ Required wake learning event taxonomy:
 - `MissedWake`
 - `LowConfidenceWake`
 - `NoisyEnvironment`
+
+Deterministic generation rule (required):
+- Map PH1.W reason_code + trigger/policy context -> WakeLearnSignalV1.event_type + required fields
+- Emit exactly one learn signal per wake decision window
 
 Wake learn signal wire format (`WakeLearnSignalV1`):
 
@@ -319,11 +338,8 @@ Features:
 - Batch dequeue
 - HTTP sync worker
 
-This system is used to send:
-
-- wake artifacts
-- learning signals
-- device sync events
+This system is currently used to send wake artifacts and device sync events.
+Wake learning signal outbox/ACK-NACK remains OPEN (see Gap 10).
 
 ## Section 9: Real Wake Detection (Live Route Implemented)
 
@@ -396,6 +412,12 @@ Audio runtime implementation requirements:
 - Stream clock drift correction required for sessions > 5 minutes.
 - VAD must provide frame-level speech probability for wake quality metrics.
 
+Desktop/Android PH1.K producer contract:
+- Owns microphone lifecycle and capture thread(s)
+- Owns ring buffer + pre-roll fill guarantees
+- Emits health telemetry (clipping, dropout, SNR estimates where available)
+- Must fail-closed on incomplete/invalid capture bundles before WAKE_WORD inference
+
 ## Section 11: Wake Detection Model
 
 Wake detection must use a small keyword spotting model.
@@ -436,6 +458,11 @@ Cloud-side integration contract:
 - Promotion from shadow/canary to active must pass rollout gates.
 - Device pull must verify package hash and ABI compatibility before apply.
 
+Device apply/activation state machine (required):
+- Staged -> Shadow -> Active -> RolledBack
+- Persist last_known_good pointer
+- Automatic rollback triggers on quality regressions and crash regressions
+
 ## Section 13: Wake Accuracy Stabilization
 
 Wake quality is measured by explicit metrics and windows.
@@ -465,6 +492,11 @@ Final target runtime sequence:
 PH1.K -> PH1.W -> PH1.L -> PH1.VOICE.ID -> PH1.C -> PH1.X
 
 Wake's job ends after PH1.L session open.
+
+For WAKE_WORD turns, PH1.W decision is evaluated before PH1.L.
+If REJECT, return wake_rejected and do not open/resume session.
+If ACCEPT, pass WakeDecision into PH1.L to open/resume session.
+After PH1.L emits session state, wake processing ends and PH1.VOICE.ID/PH1.C/PH1.X own the turn.
 
 Runtime state machine for wake/session handoff:
 
