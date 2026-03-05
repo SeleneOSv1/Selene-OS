@@ -113,12 +113,10 @@ What already exists:
 - Reliable mobile artifact outbox
 - Cloud sync worker
 
-What does not yet exist in runtime:
+What is now implemented in runtime:
 
-- Real always-on wake detection in the voice route
-- Local device wake engine implementation
-
-Currently the adapter synthesizes wake acceptance instead of running real wake inference.
+- Live `WAKE_WORD` evaluation runs PH1.W inference in adapter turn flow using PH1.K capture refs.
+- Synthetic adapter wake acceptance is removed; reject decisions fail-closed before session open.
 
 ## Section 4: Wake Training During Onboarding
 
@@ -327,17 +325,9 @@ This system is used to send:
 - learning signals
 - device sync events
 
-## Section 9: Real Wake Detection (Missing)
+## Section 9: Real Wake Detection (Live Route Implemented)
 
-The repository currently does not run real wake detection in the live voice route.
-
-Current state:
-
-Adapter builds a synthetic `WakeDecision::accept`.
-
-Required change:
-
-`WAKE_WORD` trigger must call `Ph1wRuntime` inference using the audio buffer.
+`WAKE_WORD` calls `Ph1wRuntime` inference; `ACCEPT` continues and `REJECT` prevents session open.
 
 Strict PH1.W runtime contract (required):
 
@@ -630,25 +620,19 @@ Release gate pass criteria:
 
 This section records the concrete implementation gaps that must be closed before the wake plan can be considered end-to-end complete.
 
-Gap 1 - Live wake trigger currently synthesizes acceptance:
-- Current state: adapter builds synthetic wake accept event.
-- Repo anchor: `crates/selene_adapter/src/lib.rs::resolve_session_turn_state`, `build_turn_wake_decision`.
-- Required change: replace synthetic `WakeDecision::accept_v1` path with real `Ph1wRuntime` inference output for `WAKE_WORD`.
+Gap 1 - Live wake trigger currently synthesizes acceptance: CLOSED in b54a3e512317a308930a0021f62889e3bbb219ae - Live `WAKE_WORD` decisions now come from `Ph1wRuntime` inference output in adapter turn flow.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::run_voice_turn_internal`, `evaluate_wake_for_turn`.
 
-Gap 2 - PH1.W runtime exists but is not wired into live turn route:
-- Current state: PH1.W runtime is implemented in engine/runtime modules but not invoked in live adapter turn path.
+Gap 2 - PH1.W runtime exists but is not wired into live turn route: CLOSED in b54a3e512317a308930a0021f62889e3bbb219ae - PH1.W is invoked in live adapter turn flow before PH1.L session-open handling.
 - Repo anchor: `crates/selene_engines/src/ph1w.rs::Ph1wRuntime`, `crates/selene_adapter/src/lib.rs::run_voice_turn_internal`.
-- Required change: insert PH1.W call boundary between PH1.K signal bundle build and PH1.L session-open step.
 
 Gap 3 - Real microphone capture runtime is missing:
 - Current state: live adapter expects caller-supplied `audio_capture_ref` bundle.
 - Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAudioCaptureRef`, `build_ph1k_live_signal_bundle`.
 - Required change: implement platform microphone runtime producers (desktop/android) that fill capture refs from real devices.
 
-Gap 4 - iOS side-button-only policy not enforced at runtime:
-- Current state: `WAKE_WORD` trigger is accepted for iOS in runtime contract/tests.
-- Repo anchor: `crates/selene_adapter/src/lib.rs::parse_trigger`, adapter parity tests.
-- Required change: enforce `IOS -> EXPLICIT only`; reject `IOS + WAKE_WORD` fail-closed.
+Gap 4 - iOS side-button-only policy: CLOSED in b54a3e512317a308930a0021f62889e3bbb219ae - iOS + `WAKE_WORD` is rejected fail-closed (`ios_wake_disabled`); iOS uses side-button `EXPLICIT` only.
+- Repo anchor: `crates/selene_adapter/src/lib.rs::evaluate_wake_for_turn`, adapter wake parity tests.
 
 Gap 5 - Onboarding continue has no explicit wake-enrollment action:
 - Current state: onboarding continue action set includes `VoiceEnrollLock` but no wake-enroll action.
@@ -665,10 +649,8 @@ Gap 7 - `/v1/voice/turn` API contract is below target:
 - Repo anchor: `crates/selene_adapter/src/lib.rs::VoiceTurnAdapterRequest`, `VoiceTurnAdapterResponse`, `crates/selene_adapter/src/bin/http_adapter.rs::run_voice_turn`.
 - Required change: add contract fields (`idempotency_key`, `session_id`, `turn_id`, decision refs) and status mapping (`200/409/422/401/403`).
 
-Gap 8 - Wake runtime event commit is not wired from live path:
-- Current state: storage commit API exists but is not called by live adapter wake route.
+Gap 8 - Wake runtime event commit wiring: CLOSED in b54a3e512317a308930a0021f62889e3bbb219ae - Live adapter path now commits wake runtime events for both accepted and rejected decisions.
 - Repo anchor: `crates/selene_storage/src/ph1f.rs::ph1w_runtime_event_commit`, adapter live flow in `run_voice_turn_internal`.
-- Required change: commit accepted/rejected wake events from real PH1.W outputs for every wake decision window.
 
 Gap 9 - Wake learning taxonomy is missing in feedback/learn contracts:
 - Current state: learn/feedback coverage is interrupt-centric; no `FalseWake`/`MissedWake`/`LowConfidenceWake` classes.
@@ -700,10 +682,8 @@ Gap 14 - `/v1/voice/turn` authentication enforcement is missing:
 - Repo anchor: `crates/selene_adapter/src/bin/http_adapter.rs::Router::new`, `run_voice_turn`.
 - Required change: enforce bearer token/device auth and map auth failures to `401/403`.
 
-Gap 15 - Wake runtime event schema lacks score/threshold/window telemetry:
-- Current state: wake runtime event records do not persist wake score, threshold used, or audio window timing boundaries.
+Gap 15 - Wake runtime event schema telemetry: CLOSED in b54a3e512317a308930a0021f62889e3bbb219ae - Wake runtime events now persist score, threshold, model version, and audio window timing boundaries.
 - Repo anchor: `crates/selene_storage/src/ph1f.rs::WakeRuntimeEventRecord`.
-- Required change: extend wake event schema + commit API to include model score, threshold, `audio_window_start_ms`, and `audio_window_end_ms`.
 
 Gap 16 - Internal wake reject code path is incomplete:
 - Current state: timeout reject code exists, but no explicit internal-failure reject reason code required by runtime contract.
