@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::ph1art::ArtifactVersion;
 use crate::ph1j::{CorrelationId, DeviceId, TurnId};
 use crate::ph1l::SessionId;
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
@@ -515,6 +516,523 @@ impl Validate for WakeLearnSignalV1 {
             return Err(ContractViolation::InvalidValue {
                 field: "wake_learn_signal_v1.timestamp_ms",
                 reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WakeFeatureType {
+    LogMel,
+    Mfcc13Delta,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeFeatureConfigV1 {
+    pub schema_version: SchemaVersion,
+    pub feature_config_id: String,
+    pub sample_rate_hz: u32,
+    pub mono: bool,
+    pub frame_ms: u16,
+    pub hop_ms: u16,
+    pub mel_bins: u16,
+    pub primary_feature: WakeFeatureType,
+    pub fallback_feature: Option<WakeFeatureType>,
+    pub gain_normalization_enabled: bool,
+    pub gain_norm_target_rms_dbfs_milli: i32,
+    pub per_utterance_cmvn: bool,
+}
+
+impl WakeFeatureConfigV1 {
+    pub fn locked_default_v1(feature_config_id: String) -> Result<Self, ContractViolation> {
+        Self::v1(
+            feature_config_id,
+            16_000,
+            true,
+            25,
+            10,
+            40,
+            WakeFeatureType::LogMel,
+            Some(WakeFeatureType::Mfcc13Delta),
+            true,
+            -26_000,
+            true,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        feature_config_id: String,
+        sample_rate_hz: u32,
+        mono: bool,
+        frame_ms: u16,
+        hop_ms: u16,
+        mel_bins: u16,
+        primary_feature: WakeFeatureType,
+        fallback_feature: Option<WakeFeatureType>,
+        gain_normalization_enabled: bool,
+        gain_norm_target_rms_dbfs_milli: i32,
+        per_utterance_cmvn: bool,
+    ) -> Result<Self, ContractViolation> {
+        let cfg = Self {
+            schema_version: PH1LEARN_CONTRACT_VERSION,
+            feature_config_id,
+            sample_rate_hz,
+            mono,
+            frame_ms,
+            hop_ms,
+            mel_bins,
+            primary_feature,
+            fallback_feature,
+            gain_normalization_enabled,
+            gain_norm_target_rms_dbfs_milli,
+            per_utterance_cmvn,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+}
+
+impl Validate for WakeFeatureConfigV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LEARN_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.schema_version",
+                reason: "must match PH1LEARN_CONTRACT_VERSION",
+            });
+        }
+        validate_token(
+            "wake_feature_config_v1.feature_config_id",
+            &self.feature_config_id,
+            96,
+        )?;
+        if self.sample_rate_hz != 16_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.sample_rate_hz",
+                reason: "locked default requires 16000 Hz",
+            });
+        }
+        if !self.mono {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.mono",
+                reason: "locked default requires mono=true",
+            });
+        }
+        if self.frame_ms != 25 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.frame_ms",
+                reason: "locked default requires frame_ms=25",
+            });
+        }
+        if self.hop_ms != 10 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.hop_ms",
+                reason: "locked default requires hop_ms=10",
+            });
+        }
+        if self.mel_bins != 40 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.mel_bins",
+                reason: "locked default requires mel_bins=40",
+            });
+        }
+        if self.primary_feature != WakeFeatureType::LogMel {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.primary_feature",
+                reason: "locked default requires primary_feature=LogMel",
+            });
+        }
+        if let Some(fallback) = self.fallback_feature {
+            if fallback != WakeFeatureType::Mfcc13Delta {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_feature_config_v1.fallback_feature",
+                    reason: "fallback_feature must be Mfcc13Delta when present",
+                });
+            }
+        }
+        if !self.gain_normalization_enabled {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.gain_normalization_enabled",
+                reason: "must be true",
+            });
+        }
+        if !(-60_000..=-1).contains(&self.gain_norm_target_rms_dbfs_milli) {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.gain_norm_target_rms_dbfs_milli",
+                reason: "must be in [-60000, -1]",
+            });
+        }
+        if !self.per_utterance_cmvn {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_feature_config_v1.per_utterance_cmvn",
+                reason: "must be true",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WakeTrainDatasetScopeV1 {
+    GlobalCorpus,
+    PerUserAdaptation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum WakeTrainDatasetPartitionV1 {
+    Train,
+    Validation,
+    Test,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainDatasetSliceV1 {
+    pub schema_version: SchemaVersion,
+    pub dataset_snapshot_id: String,
+    pub slice_id: String,
+    pub scope: WakeTrainDatasetScopeV1,
+    pub partition: WakeTrainDatasetPartitionV1,
+    pub platform_slice: Option<String>,
+    pub positive_count: u32,
+    pub negative_count: u32,
+    pub unique_user_count: u32,
+    pub unique_device_count: u32,
+    pub no_user_leakage: bool,
+    pub no_device_leakage: bool,
+    pub no_time_adjacent_leakage: bool,
+    pub window_start_ms: u64,
+    pub window_end_ms: u64,
+}
+
+impl WakeTrainDatasetSliceV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        dataset_snapshot_id: String,
+        slice_id: String,
+        scope: WakeTrainDatasetScopeV1,
+        partition: WakeTrainDatasetPartitionV1,
+        platform_slice: Option<String>,
+        positive_count: u32,
+        negative_count: u32,
+        unique_user_count: u32,
+        unique_device_count: u32,
+        no_user_leakage: bool,
+        no_device_leakage: bool,
+        no_time_adjacent_leakage: bool,
+        window_start_ms: u64,
+        window_end_ms: u64,
+    ) -> Result<Self, ContractViolation> {
+        let slice = Self {
+            schema_version: PH1LEARN_CONTRACT_VERSION,
+            dataset_snapshot_id,
+            slice_id,
+            scope,
+            partition,
+            platform_slice,
+            positive_count,
+            negative_count,
+            unique_user_count,
+            unique_device_count,
+            no_user_leakage,
+            no_device_leakage,
+            no_time_adjacent_leakage,
+            window_start_ms,
+            window_end_ms,
+        };
+        slice.validate()?;
+        Ok(slice)
+    }
+}
+
+impl Validate for WakeTrainDatasetSliceV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LEARN_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.schema_version",
+                reason: "must match PH1LEARN_CONTRACT_VERSION",
+            });
+        }
+        validate_token(
+            "wake_train_dataset_slice_v1.dataset_snapshot_id",
+            &self.dataset_snapshot_id,
+            128,
+        )?;
+        validate_token("wake_train_dataset_slice_v1.slice_id", &self.slice_id, 128)?;
+        if let Some(platform_slice) = self.platform_slice.as_ref() {
+            validate_token(
+                "wake_train_dataset_slice_v1.platform_slice",
+                platform_slice,
+                32,
+            )?;
+        }
+        if self.positive_count.saturating_add(self.negative_count) == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.counts",
+                reason: "at least one example is required",
+            });
+        }
+        if self.unique_device_count == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.unique_device_count",
+                reason: "must be > 0",
+            });
+        }
+        if matches!(self.scope, WakeTrainDatasetScopeV1::PerUserAdaptation)
+            && self.unique_user_count == 0
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.unique_user_count",
+                reason: "per-user adaptation slices require at least one user",
+            });
+        }
+        if !self.no_user_leakage {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.no_user_leakage",
+                reason: "must be true",
+            });
+        }
+        if !self.no_device_leakage {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.no_device_leakage",
+                reason: "must be true",
+            });
+        }
+        if !self.no_time_adjacent_leakage {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.no_time_adjacent_leakage",
+                reason: "must be true",
+            });
+        }
+        if self.window_start_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.window_start_ms",
+                reason: "must be > 0",
+            });
+        }
+        if self.window_end_ms < self.window_start_ms {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_dataset_slice_v1.window_end_ms",
+                reason: "must be >= window_start_ms",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainEvalReportV1 {
+    pub schema_version: SchemaVersion,
+    pub report_id: String,
+    pub dataset_snapshot_id: String,
+    pub model_version: String,
+    pub threshold_profile_id: String,
+    pub far_per_listening_hour_milli: u32,
+    pub frr_bp: u16,
+    pub miss_rate_bp: u16,
+    pub latency_proxy_ms: u16,
+    pub threshold_calibration_error_bp: u16,
+    pub reject_reason_distribution_ref: String,
+    pub generated_at_ms: u64,
+}
+
+impl WakeTrainEvalReportV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        report_id: String,
+        dataset_snapshot_id: String,
+        model_version: String,
+        threshold_profile_id: String,
+        far_per_listening_hour_milli: u32,
+        frr_bp: u16,
+        miss_rate_bp: u16,
+        latency_proxy_ms: u16,
+        threshold_calibration_error_bp: u16,
+        reject_reason_distribution_ref: String,
+        generated_at_ms: u64,
+    ) -> Result<Self, ContractViolation> {
+        let report = Self {
+            schema_version: PH1LEARN_CONTRACT_VERSION,
+            report_id,
+            dataset_snapshot_id,
+            model_version,
+            threshold_profile_id,
+            far_per_listening_hour_milli,
+            frr_bp,
+            miss_rate_bp,
+            latency_proxy_ms,
+            threshold_calibration_error_bp,
+            reject_reason_distribution_ref,
+            generated_at_ms,
+        };
+        report.validate()?;
+        Ok(report)
+    }
+}
+
+impl Validate for WakeTrainEvalReportV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LEARN_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_eval_report_v1.schema_version",
+                reason: "must match PH1LEARN_CONTRACT_VERSION",
+            });
+        }
+        validate_token("wake_train_eval_report_v1.report_id", &self.report_id, 128)?;
+        validate_token(
+            "wake_train_eval_report_v1.dataset_snapshot_id",
+            &self.dataset_snapshot_id,
+            128,
+        )?;
+        validate_token(
+            "wake_train_eval_report_v1.model_version",
+            &self.model_version,
+            64,
+        )?;
+        validate_token(
+            "wake_train_eval_report_v1.threshold_profile_id",
+            &self.threshold_profile_id,
+            96,
+        )?;
+        if self.frr_bp > 10_000
+            || self.miss_rate_bp > 10_000
+            || self.threshold_calibration_error_bp > 10_000
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_eval_report_v1",
+                reason: "basis-point values must be <= 10000",
+            });
+        }
+        if self.latency_proxy_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_eval_report_v1.latency_proxy_ms",
+                reason: "must be > 0",
+            });
+        }
+        validate_token(
+            "wake_train_eval_report_v1.reject_reason_distribution_ref",
+            &self.reject_reason_distribution_ref,
+            192,
+        )?;
+        if self.generated_at_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_eval_report_v1.generated_at_ms",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakePackManifestV1 {
+    pub schema_version: SchemaVersion,
+    pub model_version: String,
+    pub model_abi: String,
+    pub feature_config_id: String,
+    pub threshold_profile_id: String,
+    pub artifact_version: ArtifactVersion,
+    pub package_hash: String,
+    pub payload_ref: String,
+    pub provenance_ref: String,
+    pub train_data_snapshot_id: String,
+    pub eval_metrics_summary: WakeTrainEvalReportV1,
+    pub rollback_to_artifact_version: Option<ArtifactVersion>,
+    pub offline_pipeline_only: bool,
+}
+
+impl WakePackManifestV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        model_version: String,
+        model_abi: String,
+        feature_config_id: String,
+        threshold_profile_id: String,
+        artifact_version: ArtifactVersion,
+        package_hash: String,
+        payload_ref: String,
+        provenance_ref: String,
+        train_data_snapshot_id: String,
+        eval_metrics_summary: WakeTrainEvalReportV1,
+        rollback_to_artifact_version: Option<ArtifactVersion>,
+        offline_pipeline_only: bool,
+    ) -> Result<Self, ContractViolation> {
+        let manifest = Self {
+            schema_version: PH1LEARN_CONTRACT_VERSION,
+            model_version,
+            model_abi,
+            feature_config_id,
+            threshold_profile_id,
+            artifact_version,
+            package_hash,
+            payload_ref,
+            provenance_ref,
+            train_data_snapshot_id,
+            eval_metrics_summary,
+            rollback_to_artifact_version,
+            offline_pipeline_only,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+}
+
+impl Validate for WakePackManifestV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LEARN_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_pack_manifest_v1.schema_version",
+                reason: "must match PH1LEARN_CONTRACT_VERSION",
+            });
+        }
+        validate_token("wake_pack_manifest_v1.model_version", &self.model_version, 64)?;
+        validate_token("wake_pack_manifest_v1.model_abi", &self.model_abi, 64)?;
+        validate_token(
+            "wake_pack_manifest_v1.feature_config_id",
+            &self.feature_config_id,
+            96,
+        )?;
+        validate_token(
+            "wake_pack_manifest_v1.threshold_profile_id",
+            &self.threshold_profile_id,
+            96,
+        )?;
+        self.artifact_version.validate()?;
+        validate_lower_hex_sha256(
+            "wake_pack_manifest_v1.package_hash",
+            &self.package_hash,
+        )?;
+        validate_token("wake_pack_manifest_v1.payload_ref", &self.payload_ref, 256)?;
+        validate_token(
+            "wake_pack_manifest_v1.provenance_ref",
+            &self.provenance_ref,
+            128,
+        )?;
+        validate_token(
+            "wake_pack_manifest_v1.train_data_snapshot_id",
+            &self.train_data_snapshot_id,
+            128,
+        )?;
+        self.eval_metrics_summary.validate()?;
+        if self.eval_metrics_summary.dataset_snapshot_id != self.train_data_snapshot_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_pack_manifest_v1.eval_metrics_summary.dataset_snapshot_id",
+                reason: "must match train_data_snapshot_id",
+            });
+        }
+        if let Some(rollback) = self.rollback_to_artifact_version {
+            rollback.validate()?;
+            if rollback >= self.artifact_version {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_pack_manifest_v1.rollback_to_artifact_version",
+                    reason: "must be < artifact_version when present",
+                });
+            }
+        }
+        if !self.offline_pipeline_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_pack_manifest_v1.offline_pipeline_only",
+                reason: "must be true",
             });
         }
         Ok(())
@@ -1319,6 +1837,25 @@ fn validate_text(
     Ok(())
 }
 
+fn validate_lower_hex_sha256(field: &'static str, value: &str) -> Result<(), ContractViolation> {
+    if value.len() != 64 {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be a 64-char lowercase SHA-256 hex string",
+        });
+    }
+    if value
+        .chars()
+        .any(|c| !matches!(c, '0'..='9' | 'a'..='f'))
+    {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must contain lowercase hex chars only",
+        });
+    }
+    Ok(())
+}
+
 fn default_learn_case_path(signal_type: LearnSignalType) -> LearnCasePath {
     match signal_type {
         LearnSignalType::UserCorrection
@@ -1595,5 +2132,81 @@ mod tests {
         .unwrap();
         assert_eq!(improvement.source_path, LearnCasePath::Improvement);
         assert_eq!(improvement.gold_status, LearnGoldStatus::Pending);
+    }
+
+    #[test]
+    fn at_learn_09_wake_feature_config_locked_default_validates() {
+        let cfg = WakeFeatureConfigV1::locked_default_v1("wake_feature_cfg_v1".to_string())
+            .expect("locked default feature config should validate");
+        assert_eq!(cfg.sample_rate_hz, 16_000);
+        assert_eq!(cfg.frame_ms, 25);
+        assert_eq!(cfg.hop_ms, 10);
+        assert_eq!(cfg.mel_bins, 40);
+        assert_eq!(cfg.primary_feature, WakeFeatureType::LogMel);
+
+        let invalid = WakeFeatureConfigV1::v1(
+            "wake_feature_cfg_invalid".to_string(),
+            8_000,
+            true,
+            25,
+            10,
+            40,
+            WakeFeatureType::LogMel,
+            Some(WakeFeatureType::Mfcc13Delta),
+            true,
+            -26_000,
+            true,
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn at_learn_10_wake_pack_manifest_requires_offline_boundary() {
+        let eval = WakeTrainEvalReportV1::v1(
+            "wake_eval_report_v1".to_string(),
+            "wake_dataset_snapshot_v1".to_string(),
+            "wake_model_v1".to_string(),
+            "wake_threshold_v1".to_string(),
+            14,
+            120,
+            160,
+            140,
+            45,
+            "wake_reject_dist_v1".to_string(),
+            1_700_000_000_000,
+        )
+        .expect("eval report should validate");
+
+        let ok = WakePackManifestV1::v1(
+            "wake_model_v1".to_string(),
+            "wake_abi_v1".to_string(),
+            "wake_feature_cfg_v1".to_string(),
+            "wake_threshold_v1".to_string(),
+            ArtifactVersion(2),
+            "4a6588bde3f9fcd4cea3f238d10ef00f8fbecc6453e28307fc1ff11337f6925f".to_string(),
+            "wake_payload_ref_v1".to_string(),
+            "wake_provenance_v1".to_string(),
+            "wake_dataset_snapshot_v1".to_string(),
+            eval.clone(),
+            Some(ArtifactVersion(1)),
+            true,
+        );
+        assert!(ok.is_ok());
+
+        let not_offline = WakePackManifestV1::v1(
+            "wake_model_v1".to_string(),
+            "wake_abi_v1".to_string(),
+            "wake_feature_cfg_v1".to_string(),
+            "wake_threshold_v1".to_string(),
+            ArtifactVersion(2),
+            "4a6588bde3f9fcd4cea3f238d10ef00f8fbecc6453e28307fc1ff11337f6925f".to_string(),
+            "wake_payload_ref_v1".to_string(),
+            "wake_provenance_v1".to_string(),
+            "wake_dataset_snapshot_v1".to_string(),
+            eval,
+            Some(ArtifactVersion(1)),
+            false,
+        );
+        assert!(not_offline.is_err());
     }
 }

@@ -59,6 +59,7 @@ pub mod ph1tenant;
 pub mod ph1tts;
 pub mod ph1vision;
 pub mod ph1w;
+pub mod ph1wake_training;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;

@@ -13870,6 +13870,14 @@ impl Ph1fStore {
             .get(wake_enrollment_session_id)
     }
 
+    pub fn ph1w_all_enrollment_session_rows(&self) -> Vec<&WakeEnrollmentSessionRecord> {
+        self.wake_enrollment_sessions.values().collect()
+    }
+
+    pub fn ph1w_all_enrollment_sample_rows(&self) -> &[WakeEnrollmentSampleRecord] {
+        &self.wake_enrollment_samples
+    }
+
     pub fn ph1w_latest_session_for_onboarding_device(
         &self,
         onboarding_session_id: &OnboardingSessionId,
