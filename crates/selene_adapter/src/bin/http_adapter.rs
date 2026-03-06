@@ -1071,21 +1071,52 @@ where
 mod tests {
     use super::*;
 
+    use axum::body::to_bytes;
     use axum::http::header::AUTHORIZATION;
+    use selene_adapter::VoiceTurnAudioCaptureRef;
+    use selene_kernel_contracts::ph1_voice_id::{
+        UserId, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
+        VOICE_ID_ENROLL_START_DRAFT,
+    };
+    use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
+    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::common::SessionState;
+    use selene_kernel_contracts::ph1link::{
+        InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
+    };
+    use selene_kernel_contracts::ph1onb::{
+        ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
+        ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
+    };
+    use selene_kernel_contracts::ph1position::TenantId;
+    use selene_kernel_contracts::ph1simcat::{
+        SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
+        SimulationVersion,
+    };
+    use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
     use selene_os::app_ingress::AppServerIngressRuntime;
-    use selene_storage::ph1f::Ph1fStore;
+    use selene_storage::ph1f::{
+        DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, TenantCompanyLifecycleState,
+        TenantCompanyRecord,
+    };
 
     fn test_runtime() -> AdapterRuntime {
+        test_runtime_with_store().0
+    }
+
+    fn test_runtime_with_store() -> (AdapterRuntime, Arc<Mutex<Ph1fStore>>) {
         let seed = system_time_now_ms();
         let journal_path =
             std::env::temp_dir().join(format!("selene_ingress_http_test_{seed}.jsonl"));
-        AdapterRuntime::new_with_persistence(
+        let store = Arc::new(Mutex::new(Ph1fStore::new_in_memory()));
+        let runtime = AdapterRuntime::new_with_persistence(
             AppServerIngressRuntime::default(),
-            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            store.clone(),
             journal_path,
             true,
         )
-        .expect("test runtime must bootstrap")
+        .expect("test runtime must bootstrap");
+        (runtime, store)
     }
 
     fn test_state_with_config(config: IngressSecurityConfig) -> HttpAdapterState {
@@ -1094,6 +1125,20 @@ mod tests {
             ingress_security: Arc::new(Mutex::new(IngressSecurityState::default())),
             ingress_security_config: config,
         }
+    }
+
+    fn test_state_with_config_and_store(
+        config: IngressSecurityConfig,
+    ) -> (HttpAdapterState, Arc<Mutex<Ph1fStore>>) {
+        let (runtime, store) = test_runtime_with_store();
+        (
+            HttpAdapterState {
+                runtime: Arc::new(Mutex::new(runtime)),
+                ingress_security: Arc::new(Mutex::new(IngressSecurityState::default())),
+                ingress_security_config: config,
+            },
+            store,
+        )
     }
 
     fn base_voice_request() -> VoiceTurnAdapterRequest {
@@ -1153,6 +1198,192 @@ mod tests {
             photo_blob_ref: None,
             sender_decision: None,
         }
+    }
+
+    fn ios_voice_request(actor_user_id: String, device_id: String) -> VoiceTurnAdapterRequest {
+        VoiceTurnAdapterRequest {
+            correlation_id: 88_001,
+            turn_id: 98_001,
+            app_platform: "IOS".to_string(),
+            trigger: "EXPLICIT".to_string(),
+            actor_user_id,
+            tenant_id: Some("tenant_1".to_string()),
+            device_id: Some(device_id),
+            now_ns: Some(3),
+            thread_key: None,
+            project_id: None,
+            pinned_context_refs: None,
+            thread_policy_flags: None,
+            user_text_partial: None,
+            user_text_final: Some("Selene, are we ready?".to_string()),
+            selene_text_partial: None,
+            selene_text_final: None,
+            audio_capture_ref: Some(VoiceTurnAudioCaptureRef {
+                stream_id: 11,
+                pre_roll_buffer_id: 1,
+                t_start_ns: 1,
+                t_end_ns: 3,
+                t_candidate_start_ns: 2,
+                t_confirmed_ns: 3,
+                locale_tag: Some("en-US".to_string()),
+                device_route: Some("BUILT_IN".to_string()),
+                selected_mic: Some("ios_mic_default".to_string()),
+                selected_speaker: Some("ios_speaker_default".to_string()),
+                tts_playback_active: Some(true),
+                detection_text: Some("stop".to_string()),
+                detection_confidence_bp: Some(9_600),
+                vad_confidence_bp: Some(9_400),
+                acoustic_confidence_bp: Some(9_300),
+                prosody_confidence_bp: Some(9_200),
+                speech_likeness_bp: Some(9_500),
+                echo_safe_confidence_bp: Some(9_100),
+                nearfield_confidence_bp: Some(9_000),
+                capture_degraded: Some(false),
+                stream_gap_detected: Some(false),
+                aec_unstable: Some(false),
+                device_changed: Some(false),
+                snr_db_milli: Some(22_000),
+                clipping_ratio_bp: Some(80),
+                echo_delay_ms_milli: Some(26_000),
+                packet_loss_bp: Some(25),
+                double_talk_bp: Some(400),
+                erle_db_milli: Some(20_000),
+                device_failures_24h: Some(0),
+                device_recoveries_24h: Some(0),
+                device_mean_recovery_ms: Some(100),
+                device_reliability_bp: Some(9_900),
+                timing_jitter_ms_milli: Some(7_000),
+                timing_drift_ppm_milli: Some(3_000),
+                timing_buffer_depth_ms_milli: Some(35_000),
+                timing_underruns: Some(0),
+                timing_overruns: Some(0),
+            }),
+            visual_input_ref: None,
+        }
+    }
+
+    fn seed_identity_and_device(store: &mut Ph1fStore, user_id: &UserId, device_id: &DeviceId) {
+        store
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "phone".to_string(),
+                    MonotonicTimeNs(1),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+
+    fn seed_simulation_catalog_status(
+        store: &mut Ph1fStore,
+        tenant: &str,
+        simulation_id: &str,
+        simulation_type: SimulationType,
+        status: SimulationStatus,
+    ) {
+        let event = SimulationCatalogEventInput::v1(
+            MonotonicTimeNs(1),
+            TenantId::new(tenant.to_string()).unwrap(),
+            SimulationId::new(simulation_id.to_string()).unwrap(),
+            SimulationVersion(1),
+            simulation_type,
+            status,
+            "PH1.TEST".to_string(),
+            "reads_v1".to_string(),
+            "writes_v1".to_string(),
+            ReasonCodeId(1),
+            None,
+        )
+        .unwrap();
+        store.append_simulation_catalog_event(event).unwrap();
+    }
+
+    fn seed_invite_link_for_click(store: &mut Ph1fStore, inviter_user_id: &UserId) -> (String, String) {
+        let now = MonotonicTimeNs(system_time_now_ms().max(1) * 1_000_000);
+        let (link, _) = store
+            .ph1link_invite_generate_draft(
+                now,
+                inviter_user_id.clone(),
+                InviteeType::Friend,
+                Some("tenant_1".to_string()),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        (
+            link.token_id.as_str().to_string(),
+            link.token_signature.clone(),
+        )
+    }
+
+    fn seed_company_position_minimum(store: &mut Ph1fStore) {
+        let tenant_id = TenantId::new("tenant_1".to_string()).unwrap();
+        store
+            .ph1tenant_company_upsert(TenantCompanyRecord {
+                schema_version: selene_kernel_contracts::SchemaVersion(1),
+                tenant_id: tenant_id.clone(),
+                company_id: "company_1".to_string(),
+                legal_name: "Selene Co".to_string(),
+                jurisdiction: "US".to_string(),
+                lifecycle_state: TenantCompanyLifecycleState::Active,
+                created_at: MonotonicTimeNs(1),
+                updated_at: MonotonicTimeNs(1),
+            })
+            .unwrap();
+        let position = selene_kernel_contracts::ph1position::PositionRecord::v1(
+            tenant_id,
+            "company_1".to_string(),
+            selene_kernel_contracts::ph1position::PositionId::new("position_1").unwrap(),
+            "Operator".to_string(),
+            "Operations".to_string(),
+            "US".to_string(),
+            selene_kernel_contracts::ph1position::PositionScheduleType::FullTime,
+            "profile_ops".to_string(),
+            "band_l2".to_string(),
+            selene_kernel_contracts::ph1position::PositionLifecycleState::Active,
+            MonotonicTimeNs(1),
+            MonotonicTimeNs(1),
+        )
+        .unwrap();
+        store.ph1position_upsert(position).unwrap();
+    }
+
+    fn ask_missing_value(field_key: &str) -> String {
+        match field_key {
+            "tenant_id" => "tenant_1",
+            "company_id" => "company_1",
+            "position_id" => "position_1",
+            "location_id" => "loc_1",
+            "start_date" => "2026-03-01",
+            "working_hours" => "09:00-17:00",
+            "compensation_tier_ref" => "band_l2",
+            "jurisdiction_tags" => "US,CA",
+            _ => "value_1",
+        }
+        .to_string()
+    }
+
+    async fn decode_json_response<T>(response: Response) -> T
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body must read");
+        serde_json::from_slice(&bytes).expect("response json must parse")
     }
 
     fn bearer_for(subject: &str, device: &str) -> String {
@@ -1350,5 +1581,426 @@ mod tests {
         let headers = security_headers(None, "req-8", "idem-8", now_ms, "nonce-8");
         let response = run_onboarding_continue(State(state), headers, Json(request)).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn ingress_iphone_invite_onboarding_and_explicit_voice_turn_e2e() {
+        let (state, store) = test_state_with_config_and_store(IngressSecurityConfig::from_env());
+        let inviter_user_id = UserId::new("tenant_1:iphone_e2e_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("iphone_e2e_inviter_device".to_string()).unwrap();
+        let iphone_device_id = inviter_device_id.as_str().to_string();
+
+        let (token_id, token_signature) = {
+            let mut guard = store.lock().expect("store lock must succeed");
+            seed_identity_and_device(&mut guard, &inviter_user_id, &inviter_device_id);
+            seed_company_position_minimum(&mut guard);
+            for (simulation_id, simulation_type) in [
+                (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+                (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+                (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+                (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+                (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_START_DRAFT, SimulationType::Draft),
+                (VOICE_ID_ENROLL_SAMPLE_COMMIT, SimulationType::Commit),
+                (VOICE_ID_ENROLL_COMPLETE_COMMIT, SimulationType::Commit),
+                (EMO_SIM_001, SimulationType::Commit),
+                (ONB_ACCESS_INSTANCE_CREATE_COMMIT, SimulationType::Commit),
+                (ONB_COMPLETE_COMMIT, SimulationType::Commit),
+            ] {
+                seed_simulation_catalog_status(
+                    &mut guard,
+                    "tenant_1",
+                    simulation_id,
+                    simulation_type,
+                    SimulationStatus::Active,
+                );
+            }
+            seed_invite_link_for_click(&mut guard, &inviter_user_id)
+        };
+
+        let invite_request = InviteLinkOpenAdapterRequest {
+            correlation_id: 91_001,
+            idempotency_key: "iphone-e2e-invite".to_string(),
+            token_id: token_id.clone(),
+            token_signature,
+            tenant_id: Some("tenant_1".to_string()),
+            app_platform: "IOS".to_string(),
+            device_fingerprint: "iphone-e2e-fingerprint".to_string(),
+            app_instance_id: iphone_device_id.clone(),
+            deep_link_nonce: "iphone-e2e-deep-link".to_string(),
+        };
+        let now_ms = system_time_now_ms();
+        let invite_headers = security_headers(
+            Some(bearer_for(&invite_request.token_id, &invite_request.app_instance_id)),
+            "iphone-e2e-req-invite",
+            "iphone-e2e-idem-invite",
+            now_ms,
+            "iphone-e2e-nonce-invite",
+        );
+        let invite_response =
+            run_invite_click(State(state.clone()), invite_headers, Json(invite_request)).await;
+        assert_eq!(invite_response.status(), StatusCode::OK);
+        let invite_body: InviteLinkOpenAdapterResponse = decode_json_response(invite_response).await;
+        assert_eq!(invite_body.status, "ok");
+        assert_eq!(invite_body.outcome, "ONBOARDING_STARTED");
+        let onboarding_session_id = invite_body
+            .onboarding_session_id
+            .expect("onboarding session id must be present");
+
+        let onb_bearer = bearer_for(&onboarding_session_id, &iphone_device_id);
+        let mut onb_step_request_counter = 0_u64;
+
+        let ask_prompt_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_002,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-ask-prompt".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "ASK_MISSING_SUBMIT".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let ask_prompt_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-ask-prompt",
+            "iphone-e2e-idem-ask-prompt",
+            now_ms.saturating_add(1),
+            "iphone-e2e-nonce-ask-prompt",
+        );
+        let ask_prompt_response = run_onboarding_continue(
+            State(state.clone()),
+            ask_prompt_headers,
+            Json(ask_prompt_request),
+        )
+        .await;
+        assert_eq!(ask_prompt_response.status(), StatusCode::OK);
+        let mut ask_out: OnboardingContinueAdapterResponse =
+            decode_json_response(ask_prompt_response).await;
+
+        while ask_out.next_step.as_deref() == Some("ASK_MISSING") {
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ASK_MISSING must include blocking_field");
+            onb_step_request_counter = onb_step_request_counter.saturating_add(1);
+            let request = OnboardingContinueAdapterRequest {
+                correlation_id: 91_002 + onb_step_request_counter,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: format!("iphone-e2e-ask-value-{onb_step_request_counter}"),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "ASK_MISSING_SUBMIT".to_string(),
+                field_value: Some(ask_missing_value(field_key.as_str())),
+                receipt_kind: None,
+                receipt_ref: None,
+                signer: None,
+                payload_hash: None,
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some(iphone_device_id.clone()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            };
+            let headers = security_headers(
+                Some(onb_bearer.clone()),
+                format!("iphone-e2e-req-ask-{onb_step_request_counter}").as_str(),
+                format!("iphone-e2e-idem-ask-{onb_step_request_counter}").as_str(),
+                now_ms.saturating_add(10 + onb_step_request_counter),
+                format!("iphone-e2e-nonce-ask-{onb_step_request_counter}").as_str(),
+            );
+            let response = run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            ask_out = decode_json_response(response).await;
+        }
+
+        assert_eq!(ask_out.next_step.as_deref(), Some("PLATFORM_SETUP"));
+        assert!(
+            ask_out
+                .remaining_platform_receipt_kinds
+                .iter()
+                .any(|kind| kind == "ios_side_button_configured"),
+            "iOS onboarding must require ios_side_button_configured"
+        );
+
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            let request = OnboardingContinueAdapterRequest {
+                correlation_id: 91_100 + idx as u64,
+                onboarding_session_id: onboarding_session_id.clone(),
+                idempotency_key: format!("iphone-e2e-platform-{idx}"),
+                tenant_id: Some("tenant_1".to_string()),
+                action: "PLATFORM_SETUP_RECEIPT".to_string(),
+                field_value: None,
+                receipt_kind: Some(receipt_kind.clone()),
+                receipt_ref: Some(format!("receipt:iphone-e2e:{receipt_kind}")),
+                signer: Some("selene_mobile_app".to_string()),
+                payload_hash: Some(format!("{:064x}", idx + 1)),
+                terms_version_id: None,
+                accepted: None,
+                device_id: Some(iphone_device_id.clone()),
+                proof_ok: None,
+                sample_seed: None,
+                photo_blob_ref: None,
+                sender_decision: None,
+            };
+            let headers = security_headers(
+                Some(onb_bearer.clone()),
+                format!("iphone-e2e-req-platform-{idx}").as_str(),
+                format!("iphone-e2e-idem-platform-{idx}").as_str(),
+                now_ms.saturating_add(100 + idx as u64),
+                format!("iphone-e2e-nonce-platform-{idx}").as_str(),
+            );
+            let response = run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            platform_out = decode_json_response(response).await;
+        }
+        assert_eq!(platform_out.next_step.as_deref(), Some("TERMS"));
+
+        let terms_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_201,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-terms".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "TERMS_ACCEPT".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: Some("terms_v1".to_string()),
+            accepted: Some(true),
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let terms_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-terms",
+            "iphone-e2e-idem-terms",
+            now_ms.saturating_add(200),
+            "iphone-e2e-nonce-terms",
+        );
+        let terms_response =
+            run_onboarding_continue(State(state.clone()), terms_headers, Json(terms_request)).await;
+        assert_eq!(terms_response.status(), StatusCode::OK);
+        let terms_out: OnboardingContinueAdapterResponse = decode_json_response(terms_response).await;
+        assert_eq!(terms_out.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
+
+        let device_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_202,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-device".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "PRIMARY_DEVICE_CONFIRM".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: Some(true),
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let device_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-device",
+            "iphone-e2e-idem-device",
+            now_ms.saturating_add(201),
+            "iphone-e2e-nonce-device",
+        );
+        let device_response =
+            run_onboarding_continue(State(state.clone()), device_headers, Json(device_request)).await;
+        assert_eq!(device_response.status(), StatusCode::OK);
+        let device_out: OnboardingContinueAdapterResponse = decode_json_response(device_response).await;
+        assert_eq!(device_out.next_step.as_deref(), Some("VOICE_ENROLL"));
+
+        let voice_enroll_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_203,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-voice-enroll".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "VOICE_ENROLL_LOCK".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: Some("iphone_e2e_seed".to_string()),
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let voice_enroll_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-voice-enroll",
+            "iphone-e2e-idem-voice-enroll",
+            now_ms.saturating_add(202),
+            "iphone-e2e-nonce-voice-enroll",
+        );
+        let voice_enroll_response = run_onboarding_continue(
+            State(state.clone()),
+            voice_enroll_headers,
+            Json(voice_enroll_request),
+        )
+        .await;
+        assert_eq!(voice_enroll_response.status(), StatusCode::OK);
+        let voice_enroll_out: OnboardingContinueAdapterResponse =
+            decode_json_response(voice_enroll_response).await;
+        assert_eq!(voice_enroll_out.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
+
+        let emo_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_204,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-emo".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "EMO_PERSONA_LOCK".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let emo_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-emo",
+            "iphone-e2e-idem-emo",
+            now_ms.saturating_add(203),
+            "iphone-e2e-nonce-emo",
+        );
+        let emo_response = run_onboarding_continue(State(state.clone()), emo_headers, Json(emo_request)).await;
+        assert_eq!(emo_response.status(), StatusCode::OK);
+        let emo_out: OnboardingContinueAdapterResponse = decode_json_response(emo_response).await;
+        assert_eq!(emo_out.next_step.as_deref(), Some("ACCESS_PROVISION"));
+
+        let access_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_205,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-access".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "ACCESS_PROVISION_COMMIT".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let access_headers = security_headers(
+            Some(onb_bearer.clone()),
+            "iphone-e2e-req-access",
+            "iphone-e2e-idem-access",
+            now_ms.saturating_add(204),
+            "iphone-e2e-nonce-access",
+        );
+        let access_response =
+            run_onboarding_continue(State(state.clone()), access_headers, Json(access_request)).await;
+        assert_eq!(access_response.status(), StatusCode::OK);
+        let access_out: OnboardingContinueAdapterResponse =
+            decode_json_response(access_response).await;
+        assert_eq!(access_out.next_step.as_deref(), Some("COMPLETE"));
+
+        let complete_request = OnboardingContinueAdapterRequest {
+            correlation_id: 91_206,
+            onboarding_session_id: onboarding_session_id.clone(),
+            idempotency_key: "iphone-e2e-complete".to_string(),
+            tenant_id: Some("tenant_1".to_string()),
+            action: "COMPLETE_COMMIT".to_string(),
+            field_value: None,
+            receipt_kind: None,
+            receipt_ref: None,
+            signer: None,
+            payload_hash: None,
+            terms_version_id: None,
+            accepted: None,
+            device_id: Some(iphone_device_id.clone()),
+            proof_ok: None,
+            sample_seed: None,
+            photo_blob_ref: None,
+            sender_decision: None,
+        };
+        let complete_headers = security_headers(
+            Some(onb_bearer),
+            "iphone-e2e-req-complete",
+            "iphone-e2e-idem-complete",
+            now_ms.saturating_add(205),
+            "iphone-e2e-nonce-complete",
+        );
+        let complete_response = run_onboarding_continue(
+            State(state.clone()),
+            complete_headers,
+            Json(complete_request),
+        )
+        .await;
+        assert_eq!(complete_response.status(), StatusCode::OK);
+        let complete_out: OnboardingContinueAdapterResponse =
+            decode_json_response(complete_response).await;
+        assert_eq!(complete_out.next_step.as_deref(), Some("READY"));
+        assert_eq!(complete_out.onboarding_status.as_deref(), Some("COMPLETE"));
+
+        let mut voice_request =
+            ios_voice_request(inviter_user_id.as_str().to_string(), iphone_device_id.clone());
+        voice_request.correlation_id = 91_300;
+        voice_request.turn_id = 91_301;
+        voice_request.now_ns = Some(7_000_000_000);
+        let voice_headers = security_headers(
+            Some(bearer_for(&voice_request.actor_user_id, &iphone_device_id)),
+            "iphone-e2e-req-voice",
+            "iphone-e2e-idem-voice",
+            now_ms.saturating_add(300),
+            "iphone-e2e-nonce-voice",
+        );
+        let voice_response =
+            run_voice_turn(State(state.clone()), voice_headers, Json(voice_request)).await;
+        assert_eq!(voice_response.status(), StatusCode::OK);
+        let voice_body: VoiceTurnAdapterResponse = decode_json_response(voice_response).await;
+        assert_eq!(voice_body.status, "ok");
+
+        let actor_user = inviter_user_id.clone();
+        let actor_device = DeviceId::new(iphone_device_id.clone()).unwrap();
+        let has_open_session = {
+            let guard = store.lock().expect("store lock must succeed");
+            guard.session_rows().values().any(|row| {
+                row.user_id == actor_user
+                    && row.device_id == actor_device
+                    && row.session_state != SessionState::Closed
+            })
+        };
+        assert!(
+            has_open_session,
+            "iOS EXPLICIT voice turn should open/resume a non-closed session"
+        );
     }
 }
