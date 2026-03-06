@@ -15,6 +15,7 @@ const TRAIN_SPLIT_BP: u16 = 8_000;
 const VALIDATION_SPLIT_BP: u16 = 1_000;
 const SPLIT_DENOMINATOR_BP: u16 = 10_000;
 const DEFAULT_CALIBRATION_THRESHOLD_BP: u16 = 8_000;
+const DSCNN_DEPTHWISE_KERNEL_SIZE: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeTrainingStep1Config {
@@ -351,6 +352,235 @@ pub struct WakeTrainingStep2Output {
     pub wakepack_candidate: WakeCandidatePackageV1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WakeTrainingStep3Config {
+    pub offline_pipeline_only: bool,
+    pub time_adjacent_window_ms: u64,
+    pub default_latency_proxy_ms: u16,
+    pub random_seed: u64,
+    pub epoch_count: u16,
+    pub learning_rate_milli: u16,
+    pub hidden_channels: u16,
+    pub target_frame_count: u16,
+}
+
+impl Default for WakeTrainingStep3Config {
+    fn default() -> Self {
+        Self {
+            offline_pipeline_only: true,
+            time_adjacent_window_ms: 30_000,
+            default_latency_proxy_ms: 120,
+            random_seed: 0x5E1E_C0A3_u64,
+            epoch_count: 32,
+            learning_rate_milli: 25,
+            hidden_channels: 12,
+            target_frame_count: 96,
+        }
+    }
+}
+
+impl Validate for WakeTrainingStep3Config {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if !self.offline_pipeline_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.offline_pipeline_only",
+                reason: "must be true",
+            });
+        }
+        if self.time_adjacent_window_ms == 0 || self.time_adjacent_window_ms > 3_600_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.time_adjacent_window_ms",
+                reason: "must be in [1, 3600000]",
+            });
+        }
+        if self.default_latency_proxy_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.default_latency_proxy_ms",
+                reason: "must be > 0",
+            });
+        }
+        if self.epoch_count == 0 || self.epoch_count > 512 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.epoch_count",
+                reason: "must be in [1, 512]",
+            });
+        }
+        if self.learning_rate_milli == 0 || self.learning_rate_milli > 5_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.learning_rate_milli",
+                reason: "must be in [1, 5000]",
+            });
+        }
+        if self.hidden_channels == 0 || self.hidden_channels > 128 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.hidden_channels",
+                reason: "must be in [1, 128]",
+            });
+        }
+        if self.target_frame_count < 8 || self.target_frame_count > 1_024 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_config.target_frame_count",
+                reason: "must be in [8, 1024]",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainingStep3Request {
+    pub dataset_snapshot_id: String,
+    pub feature_config_id: String,
+    pub model_version: String,
+    pub model_abi: String,
+    pub artifact_version: ArtifactVersion,
+    pub provenance_ref: String,
+    pub rollback_to_artifact_version: Option<ArtifactVersion>,
+    pub offline_pipeline_only: bool,
+    pub pcm_by_ref: BTreeMap<String, Vec<i16>>,
+}
+
+impl WakeTrainingStep3Request {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        dataset_snapshot_id: String,
+        feature_config_id: String,
+        model_version: String,
+        model_abi: String,
+        artifact_version: ArtifactVersion,
+        provenance_ref: String,
+        rollback_to_artifact_version: Option<ArtifactVersion>,
+        offline_pipeline_only: bool,
+        pcm_by_ref: BTreeMap<String, Vec<i16>>,
+    ) -> Result<Self, ContractViolation> {
+        let req = Self {
+            dataset_snapshot_id,
+            feature_config_id,
+            model_version,
+            model_abi,
+            artifact_version,
+            provenance_ref,
+            rollback_to_artifact_version,
+            offline_pipeline_only,
+            pcm_by_ref,
+        };
+        req.validate()?;
+        Ok(req)
+    }
+}
+
+impl Validate for WakeTrainingStep3Request {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token(
+            "wake_training_step3_request.dataset_snapshot_id",
+            &self.dataset_snapshot_id,
+            128,
+        )?;
+        validate_token(
+            "wake_training_step3_request.feature_config_id",
+            &self.feature_config_id,
+            96,
+        )?;
+        validate_token(
+            "wake_training_step3_request.model_version",
+            &self.model_version,
+            64,
+        )?;
+        validate_token("wake_training_step3_request.model_abi", &self.model_abi, 64)?;
+        self.artifact_version.validate()?;
+        validate_token(
+            "wake_training_step3_request.provenance_ref",
+            &self.provenance_ref,
+            128,
+        )?;
+        if let Some(rollback) = self.rollback_to_artifact_version {
+            rollback.validate()?;
+            if rollback >= self.artifact_version {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_training_step3_request.rollback_to_artifact_version",
+                    reason: "must be < artifact_version when present",
+                });
+            }
+        }
+        if !self.offline_pipeline_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step3_request.offline_pipeline_only",
+                reason: "must be true",
+            });
+        }
+        for (pcm_ref, pcm) in &self.pcm_by_ref {
+            validate_token("wake_training_step3_request.pcm_by_ref.key", pcm_ref, 256)?;
+            if pcm.is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_training_step3_request.pcm_by_ref.value",
+                    reason: "pcm vectors must be non-empty",
+                });
+            }
+            if pcm.len() > 320_000 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_training_step3_request.pcm_by_ref.value",
+                    reason: "pcm vectors must be <= 320000 samples",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeFeatureTensorRowV1 {
+    pub row_id: String,
+    pub example_id: String,
+    pub source_kind: String,
+    pub label: String,
+    pub user_id: Option<String>,
+    pub device_id: String,
+    pub platform: Option<String>,
+    pub wake_window_id: Option<String>,
+    pub partition: WakeTrainDatasetPartitionV1,
+    pub frame_count: u16,
+    pub mel_bins: u16,
+    pub tensor_bins: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTensorBuildSummaryV1 {
+    pub total_dataset_rows: u32,
+    pub extractable_rows: u32,
+    pub tensor_row_count: u32,
+    pub excluded_non_extractable_rows: u32,
+    pub excluded_missing_pcm_rows: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeDsCnnTrainingSummaryV1 {
+    pub random_seed: u64,
+    pub epoch_count: u16,
+    pub learning_rate_milli: u16,
+    pub hidden_channels: u16,
+    pub train_example_count: u32,
+    pub validation_example_count: u32,
+    pub test_example_count: u32,
+    pub final_train_loss_milli: u32,
+    pub validation_loss_milli: u32,
+    pub test_accuracy_bp: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainingStep3Output {
+    pub feature_config: WakeFeatureConfigV1,
+    pub dataset_rows: Vec<WakeDatasetRowV1>,
+    pub dataset_slices: Vec<WakeTrainDatasetSliceV1>,
+    pub dataset_summary: WakeDatasetAssemblySummaryV1,
+    pub tensor_rows: Vec<WakeFeatureTensorRowV1>,
+    pub tensor_summary: WakeTensorBuildSummaryV1,
+    pub training_summary: WakeDsCnnTrainingSummaryV1,
+    pub threshold_calibration: WakeThresholdCalibrationV1,
+    pub eval_report: WakeTrainEvalReportV1,
+    pub wake_pack_manifest: WakePackManifestV1,
+    pub wakepack_candidate: WakeCandidatePackageV1,
+}
+
 pub fn build_wake_training_step1(
     store: &Ph1fStore,
     request: &WakeTrainingStep1Request,
@@ -517,6 +747,1005 @@ pub fn build_wake_training_step2(
     })
 }
 
+pub fn build_wake_training_step3(
+    store: &Ph1fStore,
+    request: &WakeTrainingStep3Request,
+    config: &WakeTrainingStep3Config,
+) -> Result<WakeTrainingStep3Output, ContractViolation> {
+    request.validate()?;
+    config.validate()?;
+    if !request.offline_pipeline_only || !config.offline_pipeline_only {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step3.offline_pipeline_only",
+            reason: "runtime path must be OFFLINE_PIPELINE_ONLY",
+        });
+    }
+
+    let feature_config = WakeFeatureConfigV1::locked_default_v1(request.feature_config_id.clone())?;
+    let mut examples = collect_dataset_examples(store);
+    if examples.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step3.dataset_examples",
+            reason: "must include at least one wake dataset example",
+        });
+    }
+    examples.sort_by(|a, b| a.example_id.cmp(&b.example_id));
+
+    let (assignments, leakage_report) =
+        assign_dataset_partitions(&examples, config.time_adjacent_window_ms)?;
+    enforce_leakage_guards(&leakage_report)?;
+
+    let mut dataset_slices = build_global_slices(
+        &examples,
+        &assignments,
+        request.dataset_snapshot_id.as_str(),
+        &leakage_report,
+    )?;
+    dataset_slices.extend(build_per_user_adaptation_slices(
+        &examples,
+        request.dataset_snapshot_id.as_str(),
+    )?);
+    if dataset_slices.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step3.dataset_slices",
+            reason: "must produce at least one dataset slice",
+        });
+    }
+
+    let dataset_rows = convert_to_dataset_rows(&examples);
+    let dataset_summary = build_dataset_summary(&examples, &leakage_report);
+    let (tensor_rows, tensor_summary) = build_feature_tensors_for_step3(
+        &examples,
+        &assignments,
+        &feature_config,
+        config.target_frame_count,
+        &request.pcm_by_ref,
+    )?;
+    if tensor_rows.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step3.tensor_rows",
+            reason: "must include at least one extractable tensor row",
+        });
+    }
+
+    let (model, training_summary) = train_dscnn_baseline(&tensor_rows, config)?;
+    let example_meta_by_id: BTreeMap<String, (Option<String>, Option<u16>)> = examples
+        .iter()
+        .map(|example| {
+            (
+                example.example_id.clone(),
+                (example.reason_ref.clone(), example.latency_proxy_ms),
+            )
+        })
+        .collect();
+    let scored_examples = score_dscnn_model(&model, &tensor_rows, &example_meta_by_id)?;
+    let threshold_calibration = calibrate_threshold_profile_from_model_scores(
+        request.dataset_snapshot_id.as_str(),
+        request.model_version.as_str(),
+        feature_config.feature_config_id.as_str(),
+        &scored_examples,
+    );
+
+    let eval_report = build_eval_report_step3(
+        request,
+        &tensor_rows,
+        &scored_examples,
+        &threshold_calibration,
+        &dataset_slices,
+        config.default_latency_proxy_ms,
+    )?;
+
+    let wakepack_candidate = build_wakepack_real_package(
+        request,
+        &feature_config,
+        &threshold_calibration,
+        &eval_report,
+        &training_summary,
+        &dataset_summary,
+        &tensor_summary,
+        &model,
+    )?;
+
+    let wake_pack_manifest = WakePackManifestV1::v1(
+        request.model_version.clone(),
+        request.model_abi.clone(),
+        feature_config.feature_config_id.clone(),
+        threshold_calibration.threshold_profile_id.clone(),
+        request.artifact_version,
+        wakepack_candidate.package_hash.clone(),
+        wakepack_candidate.payload_ref.clone(),
+        request.provenance_ref.clone(),
+        request.dataset_snapshot_id.clone(),
+        eval_report.clone(),
+        request.rollback_to_artifact_version,
+        true,
+    )?;
+
+    Ok(WakeTrainingStep3Output {
+        feature_config,
+        dataset_rows,
+        dataset_slices,
+        dataset_summary,
+        tensor_rows,
+        tensor_summary,
+        training_summary,
+        threshold_calibration,
+        eval_report,
+        wake_pack_manifest,
+        wakepack_candidate,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct DsCnnModel {
+    frame_count: usize,
+    mel_bins: usize,
+    hidden_channels: usize,
+    depthwise_kernel: Vec<[f32; DSCNN_DEPTHWISE_KERNEL_SIZE]>,
+    depthwise_bias: Vec<f32>,
+    pointwise_kernel: Vec<Vec<f32>>,
+    pointwise_bias: Vec<f32>,
+    output_kernel: Vec<f32>,
+    output_bias: f32,
+}
+
+#[derive(Debug, Clone)]
+struct DsCnnForwardCache {
+    depth_linear: Vec<f32>,
+    depth_act: Vec<f32>,
+    point_linear: Vec<f32>,
+    pooled: Vec<f32>,
+    score: f32,
+}
+
+#[derive(Debug, Clone)]
+struct DsCnnScoredExample {
+    example_id: String,
+    partition: WakeTrainDatasetPartitionV1,
+    label_positive: bool,
+    score_bp: u16,
+    reason_ref: Option<String>,
+    latency_proxy_ms: Option<u16>,
+}
+
+fn build_feature_tensors_for_step3(
+    examples: &[WakeDatasetExample],
+    assignments: &BTreeMap<String, WakeTrainDatasetPartitionV1>,
+    feature_config: &WakeFeatureConfigV1,
+    target_frame_count: u16,
+    pcm_by_ref: &BTreeMap<String, Vec<i16>>,
+) -> Result<(Vec<WakeFeatureTensorRowV1>, WakeTensorBuildSummaryV1), ContractViolation> {
+    feature_config.validate()?;
+    let mut tensor_rows = Vec::new();
+    let mut extractable_rows = 0u32;
+    let mut excluded_non_extractable_rows = 0u32;
+    let mut excluded_missing_pcm_rows = 0u32;
+    let target_frame_count_usize = target_frame_count as usize;
+    let mel_bins = feature_config.mel_bins as usize;
+
+    for example in examples {
+        let Some(partition) = assignments.get(example.example_id.as_str()).copied() else {
+            continue;
+        };
+        if !matches!(example.extractability, WakeDatasetExtractability::RawPcmAvailable) {
+            excluded_non_extractable_rows = excluded_non_extractable_rows.saturating_add(1);
+            continue;
+        }
+        extractable_rows = extractable_rows.saturating_add(1);
+        let Some(pcm_ref) = example.extractable_pcm_ref.as_ref() else {
+            excluded_missing_pcm_rows = excluded_missing_pcm_rows.saturating_add(1);
+            continue;
+        };
+        let Some(pcm) = pcm_by_ref.get(pcm_ref.as_str()) else {
+            excluded_missing_pcm_rows = excluded_missing_pcm_rows.saturating_add(1);
+            continue;
+        };
+        let bins = extract_log_mel_feature_bins(feature_config, pcm)?;
+        let normalized_bins =
+            normalize_feature_bins_frame_count(&bins, target_frame_count_usize, mel_bins);
+        tensor_rows.push(WakeFeatureTensorRowV1 {
+            row_id: format!(
+                "tensor_{}",
+                stable_hex_short(
+                    format!(
+                        "{}:{}:{}",
+                        example.example_id, target_frame_count, feature_config.feature_config_id
+                    )
+                    .as_bytes()
+                )
+            ),
+            example_id: example.example_id.clone(),
+            source_kind: source_kind_token(example.source_kind).to_string(),
+            label: label_token(example.label).to_string(),
+            user_id: example.user_id.clone(),
+            device_id: example.device_id.clone(),
+            platform: example.platform.clone(),
+            wake_window_id: example.wake_window_id.clone(),
+            partition,
+            frame_count: target_frame_count,
+            mel_bins: feature_config.mel_bins,
+            tensor_bins: normalized_bins,
+        });
+    }
+
+    tensor_rows.sort_by(|a, b| a.row_id.cmp(&b.row_id));
+    let summary = WakeTensorBuildSummaryV1 {
+        total_dataset_rows: examples.len() as u32,
+        extractable_rows,
+        tensor_row_count: tensor_rows.len() as u32,
+        excluded_non_extractable_rows,
+        excluded_missing_pcm_rows,
+    };
+    Ok((tensor_rows, summary))
+}
+
+fn normalize_feature_bins_frame_count(
+    bins: &[Vec<u16>],
+    target_frame_count: usize,
+    mel_bins: usize,
+) -> Vec<u16> {
+    let mut out = vec![0u16; target_frame_count.saturating_mul(mel_bins)];
+    for (frame_idx, frame) in bins.iter().take(target_frame_count).enumerate() {
+        for (mel_idx, bin) in frame.iter().take(mel_bins).enumerate() {
+            out[frame_idx * mel_bins + mel_idx] = *bin;
+        }
+    }
+    out
+}
+
+fn train_dscnn_baseline(
+    tensor_rows: &[WakeFeatureTensorRowV1],
+    config: &WakeTrainingStep3Config,
+) -> Result<(DsCnnModel, WakeDsCnnTrainingSummaryV1), ContractViolation> {
+    if tensor_rows.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "train_dscnn_baseline.tensor_rows",
+            reason: "must be non-empty",
+        });
+    }
+    let frame_count = tensor_rows[0].frame_count as usize;
+    let mel_bins = tensor_rows[0].mel_bins as usize;
+    let hidden_channels = config.hidden_channels as usize;
+    if frame_count == 0 || mel_bins == 0 {
+        return Err(ContractViolation::InvalidValue {
+            field: "train_dscnn_baseline.shape",
+            reason: "frame_count and mel_bins must be > 0",
+        });
+    }
+    for row in tensor_rows {
+        if row.frame_count as usize != frame_count
+            || row.mel_bins as usize != mel_bins
+            || row.tensor_bins.len() != frame_count.saturating_mul(mel_bins)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "train_dscnn_baseline.tensor_rows",
+                reason: "all rows must share the same tensor shape",
+            });
+        }
+    }
+
+    let mut train_rows = Vec::new();
+    let mut validation_rows = Vec::new();
+    let mut test_rows = Vec::new();
+    for row in tensor_rows {
+        match row.partition {
+            WakeTrainDatasetPartitionV1::Train => train_rows.push(row),
+            WakeTrainDatasetPartitionV1::Validation => validation_rows.push(row),
+            WakeTrainDatasetPartitionV1::Test => test_rows.push(row),
+        }
+    }
+    if train_rows.is_empty() || !contains_both_labels(&train_rows) {
+        for fallback in validation_rows.iter().chain(test_rows.iter()) {
+            if !train_rows.iter().any(|row| row.row_id == fallback.row_id) {
+                train_rows.push(*fallback);
+            }
+            if contains_both_labels(&train_rows) {
+                break;
+            }
+        }
+    }
+    if train_rows.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "train_dscnn_baseline.train_rows",
+            reason: "must include at least one TRAIN tensor row",
+        });
+    }
+    if !contains_both_labels(&train_rows) {
+        return Err(ContractViolation::InvalidValue {
+            field: "train_dscnn_baseline.train_rows",
+            reason: "TRAIN rows (after deterministic fallback) must include both POSITIVE and NEGATIVE labels",
+        });
+    }
+
+    let mut seed = config.random_seed;
+    let mut model = DsCnnModel {
+        frame_count,
+        mel_bins,
+        hidden_channels,
+        depthwise_kernel: (0..mel_bins)
+            .map(|_| {
+                [
+                    seeded_weight(&mut seed, 0.08),
+                    seeded_weight(&mut seed, 0.08),
+                    seeded_weight(&mut seed, 0.08),
+                ]
+            })
+            .collect(),
+        depthwise_bias: (0..mel_bins).map(|_| seeded_weight(&mut seed, 0.02)).collect(),
+        pointwise_kernel: (0..hidden_channels)
+            .map(|_| (0..mel_bins).map(|_| seeded_weight(&mut seed, 0.05)).collect())
+            .collect(),
+        pointwise_bias: (0..hidden_channels).map(|_| seeded_weight(&mut seed, 0.02)).collect(),
+        output_kernel: (0..hidden_channels)
+            .map(|_| seeded_weight(&mut seed, 0.05))
+            .collect(),
+        output_bias: seeded_weight(&mut seed, 0.02),
+    };
+
+    let mut final_train_loss = 0.0f32;
+    let lr = config.learning_rate_milli as f32 / 1000.0;
+    for _epoch in 0..config.epoch_count {
+        let mut grad_depthwise_kernel = vec![[0.0f32; DSCNN_DEPTHWISE_KERNEL_SIZE]; mel_bins];
+        let mut grad_depthwise_bias = vec![0.0f32; mel_bins];
+        let mut grad_pointwise_kernel = vec![vec![0.0f32; mel_bins]; hidden_channels];
+        let mut grad_pointwise_bias = vec![0.0f32; hidden_channels];
+        let mut grad_output_kernel = vec![0.0f32; hidden_channels];
+        let mut grad_output_bias = 0.0f32;
+        let mut total_loss = 0.0f32;
+
+        for row in &train_rows {
+            let input = tensor_bins_as_f32(row.tensor_bins.as_slice());
+            let y = label_token_is_positive(row.label.as_str()) as u8 as f32;
+            let forward = dscnn_forward(&model, input.as_slice());
+            let score = forward.score.clamp(1e-6, 1.0 - 1e-6);
+            total_loss += -(y * score.ln() + (1.0 - y) * (1.0 - score).ln());
+            let dlogit = score - y;
+
+            for h in 0..hidden_channels {
+                grad_output_kernel[h] += dlogit * forward.pooled[h];
+            }
+            grad_output_bias += dlogit;
+
+            let mut ddepth_act = vec![0.0f32; frame_count * mel_bins];
+            for h in 0..hidden_channels {
+                let dpooled = dlogit * model.output_kernel[h];
+                for t in 0..frame_count {
+                    let pidx = point_idx(h, t, frame_count);
+                    let mut dpoint_linear = dpooled / frame_count as f32;
+                    if forward.point_linear[pidx] <= 0.0 {
+                        dpoint_linear = 0.0;
+                    }
+                    grad_pointwise_bias[h] += dpoint_linear;
+                    for c in 0..mel_bins {
+                        let didx = depth_idx(c, t, frame_count);
+                        grad_pointwise_kernel[h][c] += dpoint_linear * forward.depth_act[didx];
+                        ddepth_act[didx] += dpoint_linear * model.pointwise_kernel[h][c];
+                    }
+                }
+            }
+
+            for c in 0..mel_bins {
+                for t in 0..frame_count {
+                    let didx = depth_idx(c, t, frame_count);
+                    let mut ddepth_linear = ddepth_act[didx];
+                    if forward.depth_linear[didx] <= 0.0 {
+                        ddepth_linear = 0.0;
+                    }
+                    grad_depthwise_bias[c] += ddepth_linear;
+                    for k in 0..DSCNN_DEPTHWISE_KERNEL_SIZE {
+                        let src_t = t as isize + k as isize - 1;
+                        if src_t < 0 || src_t >= frame_count as isize {
+                            continue;
+                        }
+                        let src_idx = src_t as usize * mel_bins + c;
+                        grad_depthwise_kernel[c][k] += ddepth_linear * input[src_idx];
+                    }
+                }
+            }
+        }
+
+        final_train_loss = total_loss / train_rows.len() as f32;
+        let inv_n = 1.0f32 / train_rows.len() as f32;
+        for c in 0..mel_bins {
+            for k in 0..DSCNN_DEPTHWISE_KERNEL_SIZE {
+                model.depthwise_kernel[c][k] -= lr * grad_depthwise_kernel[c][k] * inv_n;
+            }
+            model.depthwise_bias[c] -= lr * grad_depthwise_bias[c] * inv_n;
+        }
+        for h in 0..hidden_channels {
+            for c in 0..mel_bins {
+                model.pointwise_kernel[h][c] -= lr * grad_pointwise_kernel[h][c] * inv_n;
+            }
+            model.pointwise_bias[h] -= lr * grad_pointwise_bias[h] * inv_n;
+            model.output_kernel[h] -= lr * grad_output_kernel[h] * inv_n;
+        }
+        model.output_bias -= lr * grad_output_bias * inv_n;
+    }
+
+    let validation_loss = average_partition_loss(&model, &validation_rows);
+    let (test_loss, test_accuracy_bp) = partition_loss_and_accuracy(&model, &test_rows);
+    let summary = WakeDsCnnTrainingSummaryV1 {
+        random_seed: config.random_seed,
+        epoch_count: config.epoch_count,
+        learning_rate_milli: config.learning_rate_milli,
+        hidden_channels: config.hidden_channels,
+        train_example_count: train_rows.len() as u32,
+        validation_example_count: validation_rows.len() as u32,
+        test_example_count: test_rows.len() as u32,
+        final_train_loss_milli: (final_train_loss.max(0.0) * 1000.0).round() as u32,
+        validation_loss_milli: (validation_loss.max(0.0) * 1000.0).round() as u32,
+        test_accuracy_bp,
+    };
+    let _ = test_loss;
+    Ok((model, summary))
+}
+
+fn score_dscnn_model(
+    model: &DsCnnModel,
+    tensor_rows: &[WakeFeatureTensorRowV1],
+    example_meta_by_id: &BTreeMap<String, (Option<String>, Option<u16>)>,
+) -> Result<Vec<DsCnnScoredExample>, ContractViolation> {
+    let mut out = Vec::new();
+    for row in tensor_rows {
+        if row.tensor_bins.len() != model.frame_count.saturating_mul(model.mel_bins) {
+            return Err(ContractViolation::InvalidValue {
+                field: "score_dscnn_model.tensor_bins",
+                reason: "tensor shape mismatch",
+            });
+        }
+        let forward = dscnn_forward(model, tensor_bins_as_f32(row.tensor_bins.as_slice()).as_slice());
+        let (reason_ref, latency_proxy_ms) = example_meta_by_id
+            .get(row.example_id.as_str())
+            .cloned()
+            .unwrap_or((None, None));
+        out.push(DsCnnScoredExample {
+            example_id: row.example_id.clone(),
+            partition: row.partition,
+            label_positive: label_token_is_positive(row.label.as_str()),
+            score_bp: (forward.score * 10_000.0).round().clamp(0.0, 10_000.0) as u16,
+            reason_ref,
+            latency_proxy_ms,
+        });
+    }
+    out.sort_by(|a, b| a.example_id.cmp(&b.example_id));
+    Ok(out)
+}
+
+fn calibrate_threshold_profile_from_model_scores(
+    dataset_snapshot_id: &str,
+    model_version: &str,
+    feature_config_id: &str,
+    scored_examples: &[DsCnnScoredExample],
+) -> WakeThresholdCalibrationV1 {
+    let mut calibration_examples = scored_examples
+        .iter()
+        .filter(|row| row.partition == WakeTrainDatasetPartitionV1::Validation)
+        .collect::<Vec<_>>();
+    if !contains_both_labels_scored(&calibration_examples) {
+        calibration_examples = scored_examples.iter().collect::<Vec<_>>();
+    }
+
+    let mut positive_scores = calibration_examples
+        .iter()
+        .filter(|row| row.label_positive)
+        .map(|row| row.score_bp)
+        .collect::<Vec<_>>();
+    let mut negative_scores = calibration_examples
+        .iter()
+        .filter(|row| !row.label_positive)
+        .map(|row| row.score_bp)
+        .collect::<Vec<_>>();
+    positive_scores.sort_unstable();
+    negative_scores.sort_unstable();
+
+    let mut not_measured_metrics = Vec::new();
+    let (calibrated_threshold_bp, calibration_error_bp) = if !positive_scores.is_empty()
+        && !negative_scores.is_empty()
+    {
+        let mut candidates = BTreeSet::new();
+        candidates.insert(0u16);
+        candidates.insert(10_000u16);
+        for score in positive_scores.iter().chain(negative_scores.iter()) {
+            candidates.insert(*score);
+        }
+        let mut best_threshold = DEFAULT_CALIBRATION_THRESHOLD_BP;
+        let mut best_errors = u32::MAX;
+        for candidate in candidates {
+            let false_reject = positive_scores
+                .iter()
+                .filter(|score| **score < candidate)
+                .count() as u32;
+            let false_accept = negative_scores
+                .iter()
+                .filter(|score| **score >= candidate)
+                .count() as u32;
+            let errors = false_reject.saturating_add(false_accept);
+            if errors < best_errors
+                || (errors == best_errors
+                    && abs_u16_diff(candidate, DEFAULT_CALIBRATION_THRESHOLD_BP)
+                        < abs_u16_diff(best_threshold, DEFAULT_CALIBRATION_THRESHOLD_BP))
+            {
+                best_errors = errors;
+                best_threshold = candidate;
+            }
+        }
+        let total = (positive_scores.len() + negative_scores.len()) as u32;
+        let error_bp = best_errors.saturating_mul(10_000).saturating_div(total.max(1)) as u16;
+        (best_threshold, error_bp)
+    } else {
+        not_measured_metrics.push("threshold_calibration_scored_examples_missing".to_string());
+        (DEFAULT_CALIBRATION_THRESHOLD_BP, 0)
+    };
+
+    let threshold_profile_id = format!(
+        "wake_threshold_profile_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}",
+                dataset_snapshot_id, model_version, feature_config_id, calibrated_threshold_bp
+            )
+            .as_bytes()
+        )
+    );
+    let threshold_calibration_summary_ref = format!(
+        "wake_threshold_calibration_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}:{}",
+                dataset_snapshot_id,
+                calibrated_threshold_bp,
+                calibration_error_bp,
+                positive_scores.len(),
+                negative_scores.len()
+            )
+            .as_bytes()
+        )
+    );
+    WakeThresholdCalibrationV1 {
+        threshold_profile_id,
+        calibrated_threshold_bp,
+        calibration_error_bp,
+        positive_scored_count: positive_scores.len() as u32,
+        negative_scored_count: negative_scores.len() as u32,
+        threshold_calibration_summary_ref,
+        not_measured_metrics,
+    }
+}
+
+fn build_eval_report_step3(
+    request: &WakeTrainingStep3Request,
+    tensor_rows: &[WakeFeatureTensorRowV1],
+    scored_examples: &[DsCnnScoredExample],
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    dataset_slices: &[WakeTrainDatasetSliceV1],
+    default_latency_proxy_ms: u16,
+) -> Result<WakeTrainEvalReportV1, ContractViolation> {
+    let mut eval_rows = scored_examples
+        .iter()
+        .filter(|row| row.partition == WakeTrainDatasetPartitionV1::Test)
+        .collect::<Vec<_>>();
+    if !contains_both_labels_scored(&eval_rows) {
+        eval_rows = scored_examples.iter().collect::<Vec<_>>();
+    }
+    let positives = eval_rows.iter().filter(|row| row.label_positive).count() as u32;
+    let negatives = eval_rows.iter().filter(|row| !row.label_positive).count() as u32;
+    let false_reject = eval_rows
+        .iter()
+        .filter(|row| row.label_positive && row.score_bp < threshold_calibration.calibrated_threshold_bp)
+        .count() as u32;
+    let false_accept = eval_rows
+        .iter()
+        .filter(|row| !row.label_positive && row.score_bp >= threshold_calibration.calibrated_threshold_bp)
+        .count() as u32;
+
+    let mut not_measured = threshold_calibration.not_measured_metrics.clone();
+    if positives == 0 {
+        not_measured.push("frr_not_measured_no_positive_scores".to_string());
+    }
+    if negatives == 0 {
+        not_measured.push("far_not_measured_no_negative_scores".to_string());
+    }
+    not_measured.push("platform_slice_summary_open".to_string());
+
+    let frr_bp = false_reject
+        .saturating_mul(10_000)
+        .saturating_div(positives.max(1)) as u16;
+    let far_per_listening_hour_milli = false_accept
+        .saturating_mul(1_000)
+        .saturating_div(negatives.max(1));
+    let miss_rate_bp = frr_bp;
+    let latency_proxy_ms = {
+        let mut sum = 0u64;
+        let mut count = 0u64;
+        let mut latency_by_example = BTreeMap::new();
+        for row in scored_examples {
+            if let Some(latency) = row.latency_proxy_ms {
+                latency_by_example.insert(row.example_id.clone(), latency);
+            }
+        }
+        for tensor in tensor_rows {
+            if let Some(latency) = latency_by_example.get(tensor.example_id.as_str()) {
+                sum = sum.saturating_add(*latency as u64);
+                count = count.saturating_add(1);
+            }
+        }
+        if count == 0 {
+            default_latency_proxy_ms
+        } else {
+            (sum / count) as u16
+        }
+    };
+    let (train_example_count, validation_example_count, test_example_count) =
+        global_partition_counts(dataset_slices);
+
+    let reject_reason_distribution_ref = {
+        let mut counts = BTreeMap::new();
+        for row in scored_examples {
+            if row.label_positive {
+                continue;
+            }
+            let key = row
+                .reason_ref
+                .clone()
+                .unwrap_or_else(|| "wake_reason_unknown".to_string());
+            *counts.entry(key).or_insert(0u32) += 1;
+        }
+        let mut canonical = String::new();
+        for (reason, count) in counts {
+            canonical.push_str(reason.as_str());
+            canonical.push(':');
+            canonical.push_str(count.to_string().as_str());
+            canonical.push('|');
+        }
+        format!("wake_reject_dist_{}", stable_hex_short(canonical.as_bytes()))
+    };
+    let generated_at_ms = 1_700_000_000_000u64
+        .saturating_add(scored_examples.len() as u64)
+        .max(1);
+    let not_measured_metrics_ref = if not_measured.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "wake_not_measured_{}",
+            stable_hex_short(not_measured.join("|").as_bytes())
+        ))
+    };
+
+    WakeTrainEvalReportV1::v2(
+        format!("wake_eval_step3_{}", request.dataset_snapshot_id),
+        request.dataset_snapshot_id.clone(),
+        request.model_version.clone(),
+        threshold_calibration.threshold_profile_id.clone(),
+        far_per_listening_hour_milli,
+        frr_bp,
+        miss_rate_bp,
+        latency_proxy_ms,
+        Some(threshold_calibration.calibrated_threshold_bp),
+        threshold_calibration.calibration_error_bp,
+        threshold_calibration.threshold_calibration_summary_ref.clone(),
+        reject_reason_distribution_ref,
+        train_example_count,
+        validation_example_count,
+        test_example_count,
+        None,
+        not_measured_metrics_ref,
+        generated_at_ms,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_wakepack_real_package(
+    request: &WakeTrainingStep3Request,
+    feature_config: &WakeFeatureConfigV1,
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    eval_report: &WakeTrainEvalReportV1,
+    training_summary: &WakeDsCnnTrainingSummaryV1,
+    dataset_summary: &WakeDatasetAssemblySummaryV1,
+    tensor_summary: &WakeTensorBuildSummaryV1,
+    model: &DsCnnModel,
+) -> Result<WakeCandidatePackageV1, ContractViolation> {
+    let candidate_package_id = format!(
+        "wake_dscnn_candidate_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}",
+                request.dataset_snapshot_id,
+                request.model_version,
+                threshold_calibration.threshold_profile_id,
+                request.artifact_version.0
+            )
+            .as_bytes()
+        )
+    );
+    let payload_ref = format!(
+        "wakepack/candidate/{}/{}.wpk",
+        request.dataset_snapshot_id, candidate_package_id
+    );
+
+    let payload_bytes = serialize_wakepack_payload(
+        request,
+        feature_config,
+        threshold_calibration,
+        eval_report,
+        training_summary,
+        dataset_summary,
+        tensor_summary,
+        model,
+    );
+    let payload_len_bytes = u32::try_from(payload_bytes.len()).map_err(|_| {
+        ContractViolation::InvalidValue {
+            field: "wake_training_step3.candidate_payload_len_bytes",
+            reason: "must be <= u32::MAX",
+        }
+    })?;
+    let package_hash = sha256_hex(payload_bytes.as_slice());
+    Ok(WakeCandidatePackageV1 {
+        candidate_package_id,
+        payload_ref,
+        package_hash,
+        payload_len_bytes,
+        payload_bytes,
+        candidate_only: true,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serialize_wakepack_payload(
+    request: &WakeTrainingStep3Request,
+    feature_config: &WakeFeatureConfigV1,
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    eval_report: &WakeTrainEvalReportV1,
+    training_summary: &WakeDsCnnTrainingSummaryV1,
+    dataset_summary: &WakeDatasetAssemblySummaryV1,
+    tensor_summary: &WakeTensorBuildSummaryV1,
+    model: &DsCnnModel,
+) -> Vec<u8> {
+    let mut lines = Vec::new();
+    lines.push("wakepack_format=WAKEPACK_V1".to_string());
+    lines.push("model_arch=DS_CNN_BASELINE".to_string());
+    lines.push(format!("dataset_snapshot_id={}", request.dataset_snapshot_id));
+    lines.push(format!("model_version={}", request.model_version));
+    lines.push(format!("model_abi={}", request.model_abi));
+    lines.push(format!("feature_config_id={}", feature_config.feature_config_id));
+    lines.push(format!(
+        "threshold_profile_id={}",
+        threshold_calibration.threshold_profile_id
+    ));
+    lines.push(format!(
+        "threshold_calibrated_bp={}",
+        threshold_calibration.calibrated_threshold_bp
+    ));
+    lines.push(format!(
+        "eval_far_per_listening_hour_milli={}",
+        eval_report.far_per_listening_hour_milli
+    ));
+    lines.push(format!("eval_frr_bp={}", eval_report.frr_bp));
+    lines.push(format!("eval_miss_rate_bp={}", eval_report.miss_rate_bp));
+    lines.push(format!(
+        "eval_latency_proxy_ms={}",
+        eval_report.latency_proxy_ms
+    ));
+    lines.push(format!("train_rows={}", training_summary.train_example_count));
+    lines.push(format!("val_rows={}", training_summary.validation_example_count));
+    lines.push(format!("test_rows={}", training_summary.test_example_count));
+    lines.push(format!(
+        "tensor_rows={}",
+        tensor_summary.tensor_row_count
+    ));
+    lines.push(format!("dataset_rows={}", dataset_summary.total_rows));
+    lines.push(format!("frame_count={}", model.frame_count));
+    lines.push(format!("mel_bins={}", model.mel_bins));
+    lines.push(format!("hidden_channels={}", model.hidden_channels));
+    lines.push(format!(
+        "training_seed={}",
+        training_summary.random_seed
+    ));
+    lines.push(format!(
+        "training_epochs={}",
+        training_summary.epoch_count
+    ));
+    lines.push(format!(
+        "training_lr_milli={}",
+        training_summary.learning_rate_milli
+    ));
+    lines.push("offline_pipeline_only=true".to_string());
+    lines.push("depthwise_kernel=".to_string() + encode_dscnn_depthwise(model).as_str());
+    lines.push("depthwise_bias=".to_string() + encode_f32_vec(model.depthwise_bias.as_slice()).as_str());
+    lines.push("pointwise_kernel=".to_string() + encode_dscnn_pointwise(model).as_str());
+    lines.push("pointwise_bias=".to_string() + encode_f32_vec(model.pointwise_bias.as_slice()).as_str());
+    lines.push("output_kernel=".to_string() + encode_f32_vec(model.output_kernel.as_slice()).as_str());
+    lines.push(format!("output_bias={}", format_f32(model.output_bias)));
+    lines.join("\n").into_bytes()
+}
+
+fn encode_dscnn_depthwise(model: &DsCnnModel) -> String {
+    let mut out = String::new();
+    for kernel in &model.depthwise_kernel {
+        out.push('[');
+        for (idx, value) in kernel.iter().enumerate() {
+            if idx > 0 {
+                out.push(',');
+            }
+            out.push_str(format_f32(*value).as_str());
+        }
+        out.push(']');
+    }
+    out
+}
+
+fn encode_dscnn_pointwise(model: &DsCnnModel) -> String {
+    let mut out = String::new();
+    for kernel_row in &model.pointwise_kernel {
+        out.push('[');
+        out.push_str(encode_f32_vec(kernel_row.as_slice()).as_str());
+        out.push(']');
+    }
+    out
+}
+
+fn encode_f32_vec(values: &[f32]) -> String {
+    let mut out = String::new();
+    for (idx, value) in values.iter().enumerate() {
+        if idx > 0 {
+            out.push(',');
+        }
+        out.push_str(format_f32(*value).as_str());
+    }
+    out
+}
+
+fn format_f32(value: f32) -> String {
+    format!("{:.8}", value)
+}
+
+fn contains_both_labels(rows: &[&WakeFeatureTensorRowV1]) -> bool {
+    let has_positive = rows
+        .iter()
+        .any(|row| label_token_is_positive(row.label.as_str()));
+    let has_negative = rows
+        .iter()
+        .any(|row| !label_token_is_positive(row.label.as_str()));
+    has_positive && has_negative
+}
+
+fn contains_both_labels_scored(rows: &[&DsCnnScoredExample]) -> bool {
+    let has_positive = rows.iter().any(|row| row.label_positive);
+    let has_negative = rows.iter().any(|row| !row.label_positive);
+    has_positive && has_negative
+}
+
+fn average_partition_loss(model: &DsCnnModel, rows: &[&WakeFeatureTensorRowV1]) -> f32 {
+    if rows.is_empty() {
+        return 0.0;
+    }
+    let mut loss = 0.0f32;
+    for row in rows {
+        let input = tensor_bins_as_f32(row.tensor_bins.as_slice());
+        let y = label_token_is_positive(row.label.as_str()) as u8 as f32;
+        let score = dscnn_forward(model, input.as_slice()).score.clamp(1e-6, 1.0 - 1e-6);
+        loss += -(y * score.ln() + (1.0 - y) * (1.0 - score).ln());
+    }
+    loss / rows.len() as f32
+}
+
+fn partition_loss_and_accuracy(model: &DsCnnModel, rows: &[&WakeFeatureTensorRowV1]) -> (f32, u16) {
+    if rows.is_empty() {
+        return (0.0, 0);
+    }
+    let mut loss = 0.0f32;
+    let mut correct = 0u32;
+    for row in rows {
+        let input = tensor_bins_as_f32(row.tensor_bins.as_slice());
+        let y_pos = label_token_is_positive(row.label.as_str());
+        let score = dscnn_forward(model, input.as_slice()).score.clamp(1e-6, 1.0 - 1e-6);
+        let y = y_pos as u8 as f32;
+        loss += -(y * score.ln() + (1.0 - y) * (1.0 - score).ln());
+        if (score >= 0.5) == y_pos {
+            correct = correct.saturating_add(1);
+        }
+    }
+    let loss_avg = loss / rows.len() as f32;
+    let accuracy_bp = correct.saturating_mul(10_000).saturating_div(rows.len() as u32) as u16;
+    (loss_avg, accuracy_bp)
+}
+
+fn seeded_weight(seed: &mut u64, scale: f32) -> f32 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    let unit = (*seed as f64 / u64::MAX as f64) as f32;
+    (unit * 2.0 - 1.0) * scale
+}
+
+fn dscnn_forward(model: &DsCnnModel, input: &[f32]) -> DsCnnForwardCache {
+    let frames = model.frame_count;
+    let mel = model.mel_bins;
+    let hidden = model.hidden_channels;
+
+    let mut depth_linear = vec![0.0f32; frames * mel];
+    let mut depth_act = vec![0.0f32; frames * mel];
+    for c in 0..mel {
+        for t in 0..frames {
+            let mut z = model.depthwise_bias[c];
+            for k in 0..DSCNN_DEPTHWISE_KERNEL_SIZE {
+                let src_t = t as isize + k as isize - 1;
+                if src_t < 0 || src_t >= frames as isize {
+                    continue;
+                }
+                let src_idx = src_t as usize * mel + c;
+                z += input[src_idx] * model.depthwise_kernel[c][k];
+            }
+            let idx = depth_idx(c, t, frames);
+            depth_linear[idx] = z;
+            depth_act[idx] = z.max(0.0);
+        }
+    }
+
+    let mut point_linear = vec![0.0f32; hidden * frames];
+    let mut point_act = vec![0.0f32; hidden * frames];
+    let mut pooled = vec![0.0f32; hidden];
+    for h in 0..hidden {
+        let mut pooled_sum = 0.0f32;
+        for t in 0..frames {
+            let mut z = model.pointwise_bias[h];
+            for c in 0..mel {
+                z += depth_act[depth_idx(c, t, frames)] * model.pointwise_kernel[h][c];
+            }
+            let pidx = point_idx(h, t, frames);
+            point_linear[pidx] = z;
+            point_act[pidx] = z.max(0.0);
+            pooled_sum += point_act[pidx];
+        }
+        pooled[h] = pooled_sum / frames as f32;
+    }
+    let mut logit = model.output_bias;
+    for h in 0..hidden {
+        logit += pooled[h] * model.output_kernel[h];
+    }
+    let score = sigmoid(logit);
+    DsCnnForwardCache {
+        depth_linear,
+        depth_act,
+        point_linear,
+        pooled,
+        score,
+    }
+}
+
+fn sigmoid(x: f32) -> f32 {
+    if x >= 0.0 {
+        let z = (-x).exp();
+        1.0 / (1.0 + z)
+    } else {
+        let z = x.exp();
+        z / (1.0 + z)
+    }
+}
+
+fn tensor_bins_as_f32(bins: &[u16]) -> Vec<f32> {
+    bins.iter().map(|v| *v as f32 / 10_000.0).collect()
+}
+
+fn label_token_is_positive(label: &str) -> bool {
+    label == "POSITIVE"
+}
+
+fn depth_idx(channel: usize, frame: usize, frame_count: usize) -> usize {
+    channel * frame_count + frame
+}
+
+fn point_idx(hidden: usize, frame: usize, frame_count: usize) -> usize {
+    hidden * frame_count + frame
+}
+
+fn abs_u16_diff(left: u16, right: u16) -> u16 {
+    if left >= right {
+        left - right
+    } else {
+        right - left
+    }
+}
+
 pub fn extract_log_mel_feature_bins(
     feature_config: &WakeFeatureConfigV1,
     pcm_s16: &[i16],
@@ -594,11 +1823,14 @@ struct WakeDatasetExample {
     example_id: String,
     user_id: Option<String>,
     device_id: String,
+    platform: Option<String>,
     timestamp_ms: u64,
     label: WakeDatasetLabel,
     source_kind: WakeDatasetSourceKind,
+    wake_window_id: Option<String>,
     score_bp: Option<u16>,
     reason_ref: Option<String>,
+    extractable_pcm_ref: Option<String>,
     extractability: WakeDatasetExtractability,
     latency_proxy_ms: Option<u16>,
 }
@@ -613,6 +1845,7 @@ struct WakeLeakageGuardReport {
 fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
     let mut session_user_by_id: BTreeMap<String, String> = BTreeMap::new();
     let mut session_device_by_id: BTreeMap<String, String> = BTreeMap::new();
+    let mut device_platform_by_id: BTreeMap<String, String> = BTreeMap::new();
     for session in store.ph1w_all_enrollment_session_rows() {
         session_user_by_id.insert(
             session.wake_enrollment_session_id.clone(),
@@ -622,6 +1855,12 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             session.wake_enrollment_session_id.clone(),
             session.device_id.as_str().to_string(),
         );
+        if let Some(device_record) = store.get_device(&session.device_id) {
+            device_platform_by_id.insert(
+                session.device_id.as_str().to_string(),
+                device_record.device_type.clone(),
+            );
+        }
     }
 
     let mut examples = Vec::new();
@@ -643,23 +1882,30 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             ),
             user_id: Some(user_id.clone()),
             device_id: device_id.clone(),
+            platform: device_platform_by_id.get(device_id.as_str()).cloned(),
             timestamp_ms: ns_to_ms(sample.captured_at.0),
             label: WakeDatasetLabel::Positive,
             source_kind: WakeDatasetSourceKind::EnrollmentPass,
+            wake_window_id: None,
             score_bp: score_from_enrollment_sample(sample.vad_coverage, sample.snr_db, sample.clipping_pct),
             reason_ref: sample
                 .reason_code
                 .map(|reason| reason_ref_from_code(reason.0)),
+            extractable_pcm_ref: extractable_pcm_ref_from_enrollment_sample(sample),
             extractability: extractability_from_enrollment_sample(sample),
             latency_proxy_ms: Some(sample.sample_duration_ms),
         });
     }
 
     for event in store.ph1w_get_runtime_events() {
+        let device_id = event.device_id.as_str().to_string();
+        let runtime_pcm_ref =
+            extractable_pcm_ref_from_runtime_event_idempotency(event.idempotency_key.as_str());
         examples.push(WakeDatasetExample {
             example_id: format!("runtime:{}", event.wake_event_id),
             user_id: event.user_id.as_ref().map(|user_id| user_id.as_str().to_string()),
-            device_id: event.device_id.as_str().to_string(),
+            device_id: device_id.clone(),
+            platform: device_platform_by_id.get(device_id.as_str()).cloned(),
             timestamp_ms: ns_to_ms(event.created_at.0),
             label: if event.accepted {
                 WakeDatasetLabel::Positive
@@ -671,9 +1917,15 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             } else {
                 WakeDatasetSourceKind::RuntimeRejected
             },
+            wake_window_id: Some(event.wake_event_id.clone()),
             score_bp: event.strong_score_bp.or(event.light_score_bp),
             reason_ref: Some(reason_ref_from_code(event.reason_code.0)),
-            extractability: WakeDatasetExtractability::MetadataOnly,
+            extractable_pcm_ref: runtime_pcm_ref.clone(),
+            extractability: if runtime_pcm_ref.is_some() {
+                WakeDatasetExtractability::RawPcmAvailable
+            } else {
+                WakeDatasetExtractability::MetadataOnly
+            },
             latency_proxy_ms: event
                 .window_start_ns
                 .zip(event.window_end_ns)
@@ -685,15 +1937,19 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
         let Some(label) = wake_learn_label(signal.event_type) else {
             continue;
         };
+        let device_id = signal.device_id.as_str().to_string();
         examples.push(WakeDatasetExample {
             example_id: format!("learn:{}", signal.signal_id),
             user_id: None,
-            device_id: signal.device_id.as_str().to_string(),
+            device_id: device_id.clone(),
+            platform: device_platform_by_id.get(device_id.as_str()).cloned(),
             timestamp_ms: signal.timestamp_ms,
             label,
             source_kind: WakeDatasetSourceKind::LearnSignal,
+            wake_window_id: Some(signal.wake_window_id.clone()),
             score_bp: signal.score_bp,
             reason_ref: signal.reason_code.map(|reason| reason_ref_from_code(reason.0)),
+            extractable_pcm_ref: None,
             extractability: WakeDatasetExtractability::MetadataOnly,
             latency_proxy_ms: None,
         });
@@ -723,10 +1979,30 @@ fn reason_ref_from_code(reason_code_raw: u32) -> String {
 fn extractability_from_enrollment_sample(
     sample: &WakeEnrollmentSampleRecord,
 ) -> WakeDatasetExtractability {
-    if sample.idempotency_key.starts_with("pcm:") {
+    if extractable_pcm_ref_from_enrollment_sample(sample).is_some() {
         WakeDatasetExtractability::RawPcmAvailable
     } else {
         WakeDatasetExtractability::MetadataOnly
+    }
+}
+
+fn extractable_pcm_ref_from_enrollment_sample(sample: &WakeEnrollmentSampleRecord) -> Option<String> {
+    let trimmed = sample.idempotency_key.trim();
+    let pcm_ref = trimmed.strip_prefix("pcm:")?;
+    if pcm_ref.is_empty() {
+        None
+    } else {
+        Some(pcm_ref.to_string())
+    }
+}
+
+fn extractable_pcm_ref_from_runtime_event_idempotency(idempotency_key: &str) -> Option<String> {
+    let trimmed = idempotency_key.trim();
+    let pcm_ref = trimmed.strip_prefix("pcm:")?;
+    if pcm_ref.is_empty() {
+        None
+    } else {
+        Some(pcm_ref.to_string())
     }
 }
 
@@ -1732,7 +3008,7 @@ mod tests {
                 0.0,
                 WakeSampleResult::Pass,
                 None,
-                "idem_sample_a".to_string(),
+                "pcm:wake_pcm_enroll_a".to_string(),
             )
             .unwrap();
         store
@@ -1772,7 +3048,7 @@ mod tests {
                 Some("wake_model_v1".to_string()),
                 Some(MonotonicTimeNs(t0.0 + 95_000_000)),
                 Some(MonotonicTimeNs(t0.0 + 100_000_000)),
-                "idem_evt_a".to_string(),
+                "pcm:wake_pcm_rt_accept".to_string(),
             )
             .unwrap();
         store
@@ -1794,7 +3070,7 @@ mod tests {
                 Some("wake_model_v1".to_string()),
                 Some(MonotonicTimeNs(t0.0 + 135_000_000)),
                 Some(MonotonicTimeNs(t0.0 + 140_000_000)),
-                "idem_evt_b".to_string(),
+                "pcm:wake_pcm_rt_reject".to_string(),
             )
             .unwrap();
 
@@ -1849,6 +3125,39 @@ mod tests {
             "wake_provenance_v2".to_string(),
             Some(ArtifactVersion(2)),
             true,
+        )
+        .unwrap()
+    }
+
+    fn step3_pcm_fixtures() -> BTreeMap<String, Vec<i16>> {
+        let mut map = BTreeMap::new();
+        map.insert("wake_pcm_enroll_a".to_string(), pcm_fixture(4_800, 1_100, 0));
+        map.insert("wake_pcm_rt_accept".to_string(), pcm_fixture(5_500, 1_100, 1_300));
+        map.insert("wake_pcm_rt_reject".to_string(), pcm_fixture(1_000, 1_100, 3_700));
+        map
+    }
+
+    fn pcm_fixture(amplitude: i16, sample_count: usize, phase_stride: u32) -> Vec<i16> {
+        let mut out = Vec::with_capacity(sample_count);
+        for idx in 0..sample_count {
+            let phase = ((idx as u32).wrapping_mul(17).wrapping_add(phase_stride)) % 128;
+            let carrier = phase as i16 - 64;
+            out.push(carrier.saturating_mul(amplitude).saturating_div(64));
+        }
+        out
+    }
+
+    fn valid_step3_request() -> WakeTrainingStep3Request {
+        WakeTrainingStep3Request::v1(
+            "wake_dataset_snapshot_v3".to_string(),
+            "wake_feature_cfg_v1".to_string(),
+            "wake_model_v3".to_string(),
+            "wake_abi_v1".to_string(),
+            ArtifactVersion(4),
+            "wake_provenance_v3".to_string(),
+            Some(ArtifactVersion(3)),
+            true,
+            step3_pcm_fixtures(),
         )
         .unwrap()
     }
@@ -1914,11 +3223,14 @@ mod tests {
                 example_id: "example_1".to_string(),
                 user_id: Some("user_shared".to_string()),
                 device_id: "device_a".to_string(),
+                platform: Some("desktop".to_string()),
                 timestamp_ms: 1_000,
                 label: WakeDatasetLabel::Positive,
                 source_kind: WakeDatasetSourceKind::EnrollmentPass,
+                wake_window_id: None,
                 score_bp: Some(9_100),
                 reason_ref: None,
+                extractable_pcm_ref: Some("wake_pcm_example_1".to_string()),
                 extractability: WakeDatasetExtractability::RawPcmAvailable,
                 latency_proxy_ms: Some(1_200),
             },
@@ -1926,11 +3238,14 @@ mod tests {
                 example_id: "example_2".to_string(),
                 user_id: Some("user_shared".to_string()),
                 device_id: "device_b".to_string(),
+                platform: Some("desktop".to_string()),
                 timestamp_ms: 1_020,
                 label: WakeDatasetLabel::Negative,
                 source_kind: WakeDatasetSourceKind::RuntimeRejected,
+                wake_window_id: Some("wake_evt_example_2".to_string()),
                 score_bp: Some(4_000),
                 reason_ref: Some("wake_reason_0x00001002".to_string()),
+                extractable_pcm_ref: None,
                 extractability: WakeDatasetExtractability::MetadataOnly,
                 latency_proxy_ms: Some(120),
             },
@@ -2033,11 +3348,14 @@ mod tests {
                 example_id: "example_1".to_string(),
                 user_id: Some("user_shared".to_string()),
                 device_id: "device_a".to_string(),
+                platform: Some("desktop".to_string()),
                 timestamp_ms: 1_000,
                 label: WakeDatasetLabel::Positive,
                 source_kind: WakeDatasetSourceKind::EnrollmentPass,
+                wake_window_id: None,
                 score_bp: Some(9_100),
                 reason_ref: None,
+                extractable_pcm_ref: Some("wake_pcm_example_1".to_string()),
                 extractability: WakeDatasetExtractability::RawPcmAvailable,
                 latency_proxy_ms: Some(1_200),
             },
@@ -2045,11 +3363,14 @@ mod tests {
                 example_id: "example_2".to_string(),
                 user_id: Some("user_shared".to_string()),
                 device_id: "device_b".to_string(),
+                platform: Some("desktop".to_string()),
                 timestamp_ms: 1_020,
                 label: WakeDatasetLabel::Negative,
                 source_kind: WakeDatasetSourceKind::RuntimeRejected,
+                wake_window_id: Some("wake_evt_example_2".to_string()),
                 score_bp: Some(4_000),
                 reason_ref: Some("wake_reason_0x00001002".to_string()),
+                extractable_pcm_ref: None,
                 extractability: WakeDatasetExtractability::MetadataOnly,
                 latency_proxy_ms: Some(120),
             },
@@ -2128,5 +3449,99 @@ mod tests {
         let config = WakeTrainingStep2Config::default();
         let err = build_wake_training_step2(&store, &request, &config).unwrap_err();
         assert!(matches!(err, ContractViolation::InvalidValue { .. }));
+    }
+
+    #[test]
+    fn at_wake_training_step3_a_tensor_generation_is_deterministic() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config::default();
+        let first = build_wake_training_step3(&store, &request, &config).unwrap();
+        let second = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert_eq!(first.tensor_rows, second.tensor_rows);
+        assert_eq!(first.tensor_summary, second.tensor_summary);
+    }
+
+    #[test]
+    fn at_wake_training_step3_b_non_extractable_rows_excluded_but_counted() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config::default();
+        let output = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert!(output.tensor_summary.total_dataset_rows > output.tensor_summary.tensor_row_count);
+        assert!(output.tensor_summary.excluded_non_extractable_rows > 0);
+        assert_eq!(output.dataset_summary.total_rows, 5);
+    }
+
+    #[test]
+    fn at_wake_training_step3_c_dscnn_training_emits_non_empty_payload() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config::default();
+        let output = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert!(!output.wakepack_candidate.payload_bytes.is_empty());
+        assert!(output.training_summary.final_train_loss_milli > 0);
+        assert!(output.wakepack_candidate.payload_len_bytes > 0);
+    }
+
+    #[test]
+    fn at_wake_training_step3_d_threshold_uses_trained_scores() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config::default();
+        let output = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert_eq!(
+            output.eval_report.threshold_profile_id,
+            output.threshold_calibration.threshold_profile_id
+        );
+        assert_eq!(
+            output.eval_report.threshold_profile_calibrated_bp,
+            Some(output.threshold_calibration.calibrated_threshold_bp)
+        );
+        assert!(output.threshold_calibration.positive_scored_count > 0);
+        assert!(output.threshold_calibration.negative_scored_count > 0);
+    }
+
+    #[test]
+    fn at_wake_training_step3_e_wakepack_hash_is_deterministic() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config::default();
+        let first = build_wake_training_step3(&store, &request, &config).unwrap();
+        let second = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert_eq!(first.wakepack_candidate.package_hash, second.wakepack_candidate.package_hash);
+        assert_eq!(first.wakepack_candidate.payload_bytes, second.wakepack_candidate.payload_bytes);
+        assert!(first.wake_pack_manifest.validate().is_ok());
+    }
+
+    #[test]
+    fn at_wake_training_step3_f_offline_boundary_enforced() {
+        let store = seeded_store();
+        let mut request = valid_step3_request();
+        request.offline_pipeline_only = false;
+        let config = WakeTrainingStep3Config::default();
+        let err = build_wake_training_step3(&store, &request, &config).unwrap_err();
+        assert!(matches!(err, ContractViolation::InvalidValue { .. }));
+    }
+
+    #[test]
+    fn at_wake_training_step3_g_reproducible_with_same_seed() {
+        let store = seeded_store();
+        let request = valid_step3_request();
+        let config = WakeTrainingStep3Config {
+            random_seed: 0xCAFE_BABE_2026_0306,
+            ..WakeTrainingStep3Config::default()
+        };
+        let first = build_wake_training_step3(&store, &request, &config).unwrap();
+        let second = build_wake_training_step3(&store, &request, &config).unwrap();
+        assert_eq!(
+            first.threshold_calibration.calibrated_threshold_bp,
+            second.threshold_calibration.calibrated_threshold_bp
+        );
+        assert_eq!(
+            first.wakepack_candidate.package_hash,
+            second.wakepack_candidate.package_hash
+        );
+        assert_eq!(first.training_summary, second.training_summary);
     }
 }
