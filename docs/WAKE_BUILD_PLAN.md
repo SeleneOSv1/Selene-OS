@@ -171,6 +171,124 @@ Invite link -> Selene intro -> App Store/TestFlight -> app install -> app opens 
 Desktop:
 Invite link -> Selene intro -> desktop app open/install -> onboarding -> wake enrollment -> ready
 
+## Section 2B: Selene iPhone App V1 Architecture (TARGET / OPEN / NOT BUILT YET)
+
+This section defines the iPhone V1 architecture boundary so iPhone build work stays aligned with Wake/session/onboarding server truth.
+
+App role:
+- Thin native client only.
+- Receives invite/open links, runs onboarding, manages session entry, captures mic audio, performs local audio handling, sends cloud requests, renders chat/history/results, and plays responses.
+- iPhone app is not the intelligence layer; cloud remains authoritative.
+
+Core iPhone product rule:
+- `WAKE_WORD` is blocked on iPhone.
+- `EXPLICIT` trigger only.
+- Side-button/push-to-talk opens or resumes session.
+
+Cloud vs device authority:
+- Cloud authoritative domains: identity truth, access permissions, NLP/LLM reasoning, simulation matching, execution, onboarding truth, business state, and audit truth.
+- Device allowed fast local assist state only: local voice-recognition assist data, recent thread cache, session resume hints, device/audio pipeline state, pending unsent request state, secure auth tokens.
+- Device must not override cloud truth.
+
+Main screens:
+- Invite/launch screen: consumes invite token, shows inviter/tenant context, starts onboarding via `/v1/invite/click`.
+- Onboarding flow: executes server-directed `next_step` loop through `/v1/onboarding/continue`.
+- Main chat screen: single thread for voice+text with runtime states (`idle|listening|uploading|processing|speaking|failed|interrupted`).
+- Minimal settings/device screen: permissions, push token, connectivity, logout/reset.
+
+Input/session model:
+- Voice and text share one thread/session model.
+- Voice path: explicit trigger -> local capture + cleanup + telemetry -> build `audio_capture_ref` bundle -> `/v1/voice/turn` with `trigger=EXPLICIT`.
+- Session is first-class in UI state (`exists`, `active/soft-closed/closed`, current runtime state), but server remains source of truth.
+- App must never invent session transitions.
+
+Layered app architecture:
+- Layer 1 UI: SwiftUI screens.
+- Layer 2 App state/view models: onboarding state, thread state, local messages, connection state, voice state, resume hints.
+- Layer 3 Domain controllers: invite, onboarding, session, voice turn, message sync.
+- Layer 4 Platform services: deep link handling, mic capture, audio cleanup/playback, interruption handling, push token registration, local persistence, Keychain, optional local speaker-assist.
+- Layer 5 API client: `/v1/invite/click`, `/v1/onboarding/continue`, `/v1/voice/turn` + required ingress headers.
+
+Native iPhone technology baseline:
+- Swift + SwiftUI
+- AVFoundation/AVAudioEngine
+- URLSession
+- Keychain
+- Universal Links/Deep Links
+- UserNotifications
+- App Groups or lightweight local storage only when required
+
+Local storage rules:
+- Store only: secure auth credentials, invite token until consumed, lightweight thread cache, pending unsent requests, small device state, push token/receipt state, optional local speaker-assist data, optional resume hints.
+- Phone is not the system of record.
+
+Local device acceleration responsibilities (assist-only):
+- Mic routing detection, noise suppression, echo reduction, endpointing/VAD support, pre-roll buffering, response playback buffering, interruption handling, session resume assist.
+- Optional local speaker-recognition assist and rendering hints are performance aids only and must not override cloud decisions.
+
+Local outbox and sync engine (required):
+- Deterministic local outbox states: `Queued -> Sending -> AwaitingAck -> Acked -> RetryableFailure -> TerminalFailure`.
+- Every operation must track: `operation_id`, `request_id`, `idempotency_key`, `device_id`, `local_created_at`, `send_attempt_count`, `server_ack_state`.
+- Maintain append-only operation journal for crash/restart/network recovery.
+- Dedicated sync state manager controls online/offline detection, reconnect, outbox flush gating, and parallel-sync prevention.
+
+Learning upload and profile/config update responsibilities:
+- Device may queue approved learning artifacts for upload; cloud decides accept/reject/promotion.
+- Device must support versioned profile/config apply pipeline: `download -> verify -> stage -> apply -> confirm -> acknowledge`.
+- Failed apply must rollback to last-known-good version.
+- Versioned local profile store entries must include: `profile_id`, `version`, `checksum_or_signature`, `applied_at`, `previous_version_ref`, `rollback_candidate`.
+
+Exact contract sections that must be specified before coding:
+- Network/ingress contract: required headers, bearer binding, nonce/timestamp/idempotency rules, status matrix, retry and `Retry-After`.
+- Onboarding client state machine: exact `next_step` loop, action->payload map, receipt order, required/optional steps, stop/fail conditions.
+- Session continuity contract: open/soft-closed/closed behavior, foreground resume, relaunch restore, thread restore, behavior before explicit `session_id/turn_id` exposure.
+- Voice capture contract: exact `audio_capture_ref` fields, required telemetry, fail-closed behavior for incomplete bundles, minimum V1 path.
+- Error matrix: deterministic handling for `401/403/409/422/429/400`, offline, reconnect, resend, stale timestamp.
+- Chat UX state contract: exact UI transitions for listening/uploading/processing/speaking/failure/cancel.
+- Push/deep-link routing contract: installed vs not-installed behavior, push-tap resume, post-open routing rules.
+- Security boundary contract: no local authority, no local wake behavior on iPhone, secure token handling, minimal retention.
+- V1 non-goals must stay explicit.
+
+V1 required scope:
+- invite open
+- onboarding
+- iPhone receipt handling
+- chat screen
+- typed input
+- explicit voice turn
+- response rendering/playback
+- session continuity
+- local audio handling for stable voice entry
+
+V1 non-goals:
+- full file uploads
+- rich attachments
+- advanced account settings
+- multi-device sync UI
+- enterprise admin UI
+- Android support in same repo
+- scope expansion outside approved V1 path
+
+Build steps (12-step execution plan):
+1. Freeze iPhone ingress contract spec (`/v1/invite/click`, `/v1/onboarding/continue`, `/v1/voice/turn`) with header/error matrix.
+2. Create app skeleton + core layer scaffolding (UI/state/domain/services/api client).
+3. Implement universal/deep-link intake and invite token preservation.
+4. Implement invite/launch screen and `/v1/invite/click` flow.
+5. Implement onboarding state machine client and `/v1/onboarding/continue` action router.
+6. Implement iPhone platform receipt submission sequence including `ios_side_button_configured`.
+7. Implement main chat thread model and typed input path.
+8. Implement explicit voice entry path with native audio capture, cleanup, and `audio_capture_ref` bundle generation.
+9. Integrate `/v1/voice/turn` explicit flow and session-open/resume UI transitions.
+10. Implement local outbox + operation journal + sync state manager with deterministic retry/ack handling.
+11. Implement profile/config update apply pipeline with verification and rollback to last-known-good.
+12. Add end-to-end app-level reliability hardening: reconnect recovery, deep-link resume, interruption handling, and final UX/state polish.
+
+Done criteria for iPhone V1 architecture slice:
+- All iPhone voice entry remains `EXPLICIT` only and server-side `WAKE_WORD` rejection is preserved.
+- Onboarding is fully server-directed with deterministic `next_step` handling and required iPhone receipts.
+- Outbox/journal/sync behavior prevents duplicate execution and preserves pending operations through restart/offline events.
+- App remains cloud-authoritative by design (no local policy/session authority).
+
 ## Section 3: Current Repo Reality
 
 From the current repository state:
@@ -790,6 +908,20 @@ Scope:
 
 Done criteria:
 - Improved artifacts are produced, promoted, downloaded, verified, and applied with rollback safety.
+
+Phase 4 - iPhone native client V1 execution (external app repo)
+
+Owner: iPhone app team + server contract owners
+
+Dependencies:
+- Phase 1-3 server/runtime contracts stable for iPhone explicit path.
+- Section 2B iPhone contract pack frozen.
+
+Scope:
+- Execute Section 2B 12-step iPhone V1 plan from ingress contract freeze to local outbox/sync, profile apply/rollback safety, and UX hardening.
+
+Done criteria:
+- iPhone V1 ships as explicit-only native client with deterministic onboarding/session/thread behavior and fail-closed ingress compliance.
 
 ## Section 18: Required Test Matrix and Release Gates
 
