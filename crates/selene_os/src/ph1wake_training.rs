@@ -4,18 +4,27 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 use selene_kernel_contracts::ph1art::ArtifactVersion;
+use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::ph1learn::{
     LearnSignalType, WakeFeatureConfigV1, WakePackManifestV1, WakeTrainDatasetPartitionV1,
     WakeTrainDatasetScopeV1, WakeTrainDatasetSliceV1, WakeTrainEvalReportV1,
 };
-use selene_kernel_contracts::{ContractViolation, Validate};
-use selene_storage::ph1f::{Ph1fStore, WakeEnrollmentSampleRecord, WakeSampleResult};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
+use selene_storage::ph1f::{
+    Ph1fStore, StorageError, WakeEnrollmentSampleRecord, WakePromotionCurrentRecord,
+    WakePromotionState, WakeSampleResult,
+};
 
 const TRAIN_SPLIT_BP: u16 = 8_000;
 const VALIDATION_SPLIT_BP: u16 = 1_000;
 const SPLIT_DENOMINATOR_BP: u16 = 10_000;
 const DEFAULT_CALIBRATION_THRESHOLD_BP: u16 = 8_000;
 const DSCNN_DEPTHWISE_KERNEL_SIZE: usize = 3;
+pub const WAKE_PROMOTION_REASON_GATE_PASS: ReasonCodeId = ReasonCodeId(0x57A1_4000);
+pub const WAKE_PROMOTION_REASON_METRIC_NOT_MEASURED: ReasonCodeId = ReasonCodeId(0x57A1_4001);
+pub const WAKE_PROMOTION_REASON_GATE_FAILED: ReasonCodeId = ReasonCodeId(0x57A1_4002);
+pub const WAKE_PROMOTION_REASON_GATE_REQUIRES_ROLLBACK: ReasonCodeId = ReasonCodeId(0x57A1_4003);
+pub const WAKE_PROMOTION_REASON_ROLLBACK_TARGET_MISSING: ReasonCodeId = ReasonCodeId(0x57A1_4004);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeTrainingStep1Config {
@@ -579,6 +588,384 @@ pub struct WakeTrainingStep3Output {
     pub eval_report: WakeTrainEvalReportV1,
     pub wake_pack_manifest: WakePackManifestV1,
     pub wakepack_candidate: WakeCandidatePackageV1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WakePromotionGateOutcomeV1 {
+    PassToShadow,
+    PassToCanary,
+    PassToActive,
+    Block,
+    RequireRollback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakePromotionGateDecisionV1 {
+    pub outcome: WakePromotionGateOutcomeV1,
+    pub reason_code: ReasonCodeId,
+    pub target_state: WakePromotionState,
+    pub not_measured_metrics_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WakePromotionGatePolicyV1 {
+    pub require_measured_metrics: bool,
+    pub max_far_per_listening_hour_milli: u32,
+    pub max_frr_bp: u16,
+    pub max_miss_rate_bp: u16,
+    pub max_latency_proxy_ms: u16,
+    pub max_threshold_calibration_error_bp: u16,
+    pub rollback_far_per_listening_hour_milli: u32,
+    pub rollback_frr_bp: u16,
+    pub rollback_miss_rate_bp: u16,
+    pub rollback_latency_proxy_ms: u16,
+    pub rollback_threshold_calibration_error_bp: u16,
+}
+
+impl Default for WakePromotionGatePolicyV1 {
+    fn default() -> Self {
+        Self {
+            require_measured_metrics: true,
+            max_far_per_listening_hour_milli: 250,
+            max_frr_bp: 1_500,
+            max_miss_rate_bp: 1_500,
+            max_latency_proxy_ms: 350,
+            max_threshold_calibration_error_bp: 1_000,
+            rollback_far_per_listening_hour_milli: 500,
+            rollback_frr_bp: 3_000,
+            rollback_miss_rate_bp: 3_000,
+            rollback_latency_proxy_ms: 600,
+            rollback_threshold_calibration_error_bp: 2_000,
+        }
+    }
+}
+
+impl Validate for WakePromotionGatePolicyV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.max_far_per_listening_hour_milli == 0
+            || self.max_frr_bp == 0
+            || self.max_miss_rate_bp == 0
+            || self.max_latency_proxy_ms == 0
+            || self.max_threshold_calibration_error_bp == 0
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_promotion_gate_policy_v1",
+                reason: "all max thresholds must be > 0",
+            });
+        }
+        if self.max_frr_bp > 10_000
+            || self.max_miss_rate_bp > 10_000
+            || self.max_threshold_calibration_error_bp > 10_000
+            || self.rollback_frr_bp > 10_000
+            || self.rollback_miss_rate_bp > 10_000
+            || self.rollback_threshold_calibration_error_bp > 10_000
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_promotion_gate_policy_v1",
+                reason: "basis-point thresholds must be <= 10000",
+            });
+        }
+        if self.rollback_far_per_listening_hour_milli < self.max_far_per_listening_hour_milli
+            || self.rollback_frr_bp < self.max_frr_bp
+            || self.rollback_miss_rate_bp < self.max_miss_rate_bp
+            || self.rollback_latency_proxy_ms < self.max_latency_proxy_ms
+            || self.rollback_threshold_calibration_error_bp < self.max_threshold_calibration_error_bp
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_promotion_gate_policy_v1.rollback_thresholds",
+                reason: "rollback thresholds must be >= max thresholds",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeRollbackDrillResultV1 {
+    pub rollback_ready: bool,
+    pub candidate_artifact_version: ArtifactVersion,
+    pub rollback_target_artifact_version: Option<ArtifactVersion>,
+    pub active_artifact_version: Option<ArtifactVersion>,
+    pub last_known_good_artifact_version: Option<ArtifactVersion>,
+    pub reason_code: Option<ReasonCodeId>,
+}
+
+pub fn evaluate_wake_promotion_gate(
+    eval_report: &WakeTrainEvalReportV1,
+    target_state: WakePromotionState,
+    policy: &WakePromotionGatePolicyV1,
+) -> Result<WakePromotionGateDecisionV1, ContractViolation> {
+    eval_report.validate()?;
+    policy.validate()?;
+    if !matches!(
+        target_state,
+        WakePromotionState::Shadow | WakePromotionState::Canary | WakePromotionState::Active
+    ) {
+        return Err(ContractViolation::InvalidValue {
+            field: "evaluate_wake_promotion_gate.target_state",
+            reason: "must be SHADOW/CANARY/ACTIVE",
+        });
+    }
+
+    if policy.require_measured_metrics && eval_report.not_measured_metrics_ref.is_some() {
+        return Ok(WakePromotionGateDecisionV1 {
+            outcome: WakePromotionGateOutcomeV1::Block,
+            reason_code: WAKE_PROMOTION_REASON_METRIC_NOT_MEASURED,
+            target_state,
+            not_measured_metrics_ref: eval_report.not_measured_metrics_ref.clone(),
+        });
+    }
+
+    let rollback_threshold_breached = eval_report.far_per_listening_hour_milli
+        > policy.rollback_far_per_listening_hour_milli
+        || eval_report.frr_bp > policy.rollback_frr_bp
+        || eval_report.miss_rate_bp > policy.rollback_miss_rate_bp
+        || eval_report.latency_proxy_ms > policy.rollback_latency_proxy_ms
+        || eval_report.threshold_calibration_error_bp
+            > policy.rollback_threshold_calibration_error_bp;
+    if target_state == WakePromotionState::Active && rollback_threshold_breached {
+        return Ok(WakePromotionGateDecisionV1 {
+            outcome: WakePromotionGateOutcomeV1::RequireRollback,
+            reason_code: WAKE_PROMOTION_REASON_GATE_REQUIRES_ROLLBACK,
+            target_state,
+            not_measured_metrics_ref: eval_report.not_measured_metrics_ref.clone(),
+        });
+    }
+
+    let max_threshold_breached = eval_report.far_per_listening_hour_milli
+        > policy.max_far_per_listening_hour_milli
+        || eval_report.frr_bp > policy.max_frr_bp
+        || eval_report.miss_rate_bp > policy.max_miss_rate_bp
+        || eval_report.latency_proxy_ms > policy.max_latency_proxy_ms
+        || eval_report.threshold_calibration_error_bp > policy.max_threshold_calibration_error_bp;
+    if max_threshold_breached {
+        return Ok(WakePromotionGateDecisionV1 {
+            outcome: WakePromotionGateOutcomeV1::Block,
+            reason_code: WAKE_PROMOTION_REASON_GATE_FAILED,
+            target_state,
+            not_measured_metrics_ref: eval_report.not_measured_metrics_ref.clone(),
+        });
+    }
+
+    let outcome = match target_state {
+        WakePromotionState::Shadow => WakePromotionGateOutcomeV1::PassToShadow,
+        WakePromotionState::Canary => WakePromotionGateOutcomeV1::PassToCanary,
+        WakePromotionState::Active => WakePromotionGateOutcomeV1::PassToActive,
+        _ => unreachable!("validated target_state"),
+    };
+    Ok(WakePromotionGateDecisionV1 {
+        outcome,
+        reason_code: WAKE_PROMOTION_REASON_GATE_PASS,
+        target_state,
+        not_measured_metrics_ref: eval_report.not_measured_metrics_ref.clone(),
+    })
+}
+
+pub fn wake_promote_candidate_to_shadow(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    manifest: &WakePackManifestV1,
+    cohort_assignment_ref: Option<String>,
+    policy: &WakePromotionGatePolicyV1,
+    decision_ref: String,
+    idempotency_key: String,
+) -> Result<WakePromotionCurrentRecord, StorageError> {
+    manifest.validate().map_err(StorageError::ContractViolation)?;
+    let gate = evaluate_wake_promotion_gate(
+        &manifest.eval_metrics_summary,
+        WakePromotionState::Shadow,
+        policy,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    if gate.outcome != WakePromotionGateOutcomeV1::PassToShadow {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "wake_promote_candidate_to_shadow.gate",
+                reason: "gate must PASS_TO_SHADOW",
+            },
+        ));
+    }
+    store.wake_promotion_transition_commit(
+        now,
+        manifest.artifact_version,
+        WakePromotionState::Shadow,
+        Some(now),
+        cohort_assignment_ref,
+        None,
+        None,
+        decision_ref,
+        idempotency_key,
+        false,
+    )
+}
+
+pub fn wake_promote_shadow_to_canary(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    manifest: &WakePackManifestV1,
+    cohort_assignment_ref: Option<String>,
+    policy: &WakePromotionGatePolicyV1,
+    decision_ref: String,
+    idempotency_key: String,
+) -> Result<WakePromotionCurrentRecord, StorageError> {
+    manifest.validate().map_err(StorageError::ContractViolation)?;
+    let gate = evaluate_wake_promotion_gate(
+        &manifest.eval_metrics_summary,
+        WakePromotionState::Canary,
+        policy,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    if gate.outcome != WakePromotionGateOutcomeV1::PassToCanary {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "wake_promote_shadow_to_canary.gate",
+                reason: "gate must PASS_TO_CANARY",
+            },
+        ));
+    }
+    store.wake_promotion_transition_commit(
+        now,
+        manifest.artifact_version,
+        WakePromotionState::Canary,
+        Some(now),
+        cohort_assignment_ref,
+        None,
+        None,
+        decision_ref,
+        idempotency_key,
+        false,
+    )
+}
+
+pub fn wake_promote_canary_to_active(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    manifest: &WakePackManifestV1,
+    policy: &WakePromotionGatePolicyV1,
+    rollout_device_ids: &[DeviceId],
+    decision_ref: String,
+    idempotency_key: String,
+) -> Result<WakePromotionCurrentRecord, StorageError> {
+    manifest.validate().map_err(StorageError::ContractViolation)?;
+    let gate = evaluate_wake_promotion_gate(
+        &manifest.eval_metrics_summary,
+        WakePromotionState::Active,
+        policy,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    if gate.outcome != WakePromotionGateOutcomeV1::PassToActive {
+        return Err(StorageError::ContractViolation(
+            ContractViolation::InvalidValue {
+                field: "wake_promote_canary_to_active.gate",
+                reason: "gate must PASS_TO_ACTIVE",
+            },
+        ));
+    }
+    for device_id in rollout_device_ids {
+        let drill = run_wake_rollback_drill(store, device_id, manifest.artifact_version)?;
+        if !drill.rollback_ready {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promote_canary_to_active.rollback_drill",
+                    reason: "last_known_good rollback drill must pass for all rollout devices",
+                },
+            ));
+        }
+    }
+    store.wake_promotion_transition_commit(
+        now,
+        manifest.artifact_version,
+        WakePromotionState::Active,
+        Some(now),
+        None,
+        None,
+        None,
+        decision_ref,
+        idempotency_key,
+        true,
+    )
+}
+
+pub fn wake_block_candidate_version(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    artifact_version: ArtifactVersion,
+    blocked_reason_code: ReasonCodeId,
+    decision_ref: String,
+    idempotency_key: String,
+) -> Result<WakePromotionCurrentRecord, StorageError> {
+    store.wake_promotion_transition_commit(
+        now,
+        artifact_version,
+        WakePromotionState::Blocked,
+        None,
+        None,
+        Some(blocked_reason_code),
+        None,
+        decision_ref,
+        idempotency_key,
+        false,
+    )
+}
+
+pub fn wake_rollback_active_version(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    artifact_version: ArtifactVersion,
+    rollback_reason_code: ReasonCodeId,
+    decision_ref: String,
+    idempotency_key: String,
+) -> Result<WakePromotionCurrentRecord, StorageError> {
+    store.wake_promotion_transition_commit(
+        now,
+        artifact_version,
+        WakePromotionState::RolledBack,
+        None,
+        None,
+        None,
+        Some(rollback_reason_code),
+        decision_ref,
+        idempotency_key,
+        false,
+    )
+}
+
+pub fn run_wake_rollback_drill(
+    store: &Ph1fStore,
+    device_id: &DeviceId,
+    candidate_artifact_version: ArtifactVersion,
+) -> Result<WakeRollbackDrillResultV1, StorageError> {
+    candidate_artifact_version
+        .validate()
+        .map_err(StorageError::ContractViolation)?;
+    let Some(current) = store.wake_artifact_apply_current_row(device_id) else {
+        return Ok(WakeRollbackDrillResultV1 {
+            rollback_ready: false,
+            candidate_artifact_version,
+            rollback_target_artifact_version: None,
+            active_artifact_version: None,
+            last_known_good_artifact_version: None,
+            reason_code: Some(WAKE_PROMOTION_REASON_ROLLBACK_TARGET_MISSING),
+        });
+    };
+    let rollback_target = current
+        .last_known_good_artifact_version
+        .or(current.active_artifact_version);
+    let rollback_ready = rollback_target.is_some()
+        && rollback_target != Some(candidate_artifact_version)
+        && current.last_known_good_artifact_version.is_some();
+    Ok(WakeRollbackDrillResultV1 {
+        rollback_ready,
+        candidate_artifact_version,
+        rollback_target_artifact_version: rollback_target,
+        active_artifact_version: current.active_artifact_version,
+        last_known_good_artifact_version: current.last_known_good_artifact_version,
+        reason_code: if rollback_ready {
+            None
+        } else {
+            Some(WAKE_PROMOTION_REASON_ROLLBACK_TARGET_MISSING)
+        },
+    })
 }
 
 pub fn build_wake_training_step1(
@@ -3162,6 +3549,98 @@ mod tests {
         .unwrap()
     }
 
+    fn promotion_manifest_with_metrics(
+        artifact_version: ArtifactVersion,
+        far_per_listening_hour_milli: u32,
+        frr_bp: u16,
+        miss_rate_bp: u16,
+        latency_proxy_ms: u16,
+        threshold_calibration_error_bp: u16,
+        not_measured_metrics_ref: Option<String>,
+    ) -> WakePackManifestV1 {
+        let eval = WakeTrainEvalReportV1::v2(
+            format!("wake_eval_promote_v{}", artifact_version.0),
+            format!("wake_dataset_snapshot_promote_v{}", artifact_version.0),
+            format!("wake_model_promote_v{}", artifact_version.0),
+            format!("wake_threshold_promote_v{}", artifact_version.0),
+            far_per_listening_hour_milli,
+            frr_bp,
+            miss_rate_bp,
+            latency_proxy_ms,
+            Some(8_100),
+            threshold_calibration_error_bp,
+            format!("wake_calibration_ref_v{}", artifact_version.0),
+            format!("wake_reject_dist_ref_v{}", artifact_version.0),
+            120,
+            20,
+            25,
+            None,
+            not_measured_metrics_ref,
+            1_700_000_002_000 + artifact_version.0 as u64,
+        )
+        .unwrap();
+        WakePackManifestV1::v1(
+            format!("wake_model_promote_v{}", artifact_version.0),
+            "wake_abi_v1".to_string(),
+            "wake_feature_cfg_v1".to_string(),
+            eval.threshold_profile_id.clone(),
+            artifact_version,
+            "4a6588bde3f9fcd4cea3f238d10ef00f8fbecc6453e28307fc1ff11337f6925f".to_string(),
+            format!("wake_payload_ref_promote_v{}", artifact_version.0),
+            format!("wake_provenance_ref_promote_v{}", artifact_version.0),
+            eval.dataset_snapshot_id.clone(),
+            eval,
+            Some(ArtifactVersion(artifact_version.0.saturating_sub(1).max(1))),
+            true,
+        )
+        .unwrap()
+    }
+
+    fn seed_device_apply_chain_for_rollback_drill(store: &mut Ph1fStore, device_id: &DeviceId) {
+        let hash_v1 =
+            "1111111111111111111111111111111111111111111111111111111111111111".to_string();
+        let hash_v2 =
+            "2222222222222222222222222222222222222222222222222222222222222222".to_string();
+        store
+            .wake_artifact_stage_commit(
+                MonotonicTimeNs(2_000),
+                device_id.clone(),
+                ArtifactVersion(1),
+                hash_v1,
+                "wake_payload_ref_v1".to_string(),
+                None,
+                "wake_stage_v1".to_string(),
+            )
+            .unwrap();
+        store
+            .wake_artifact_activate_commit(
+                MonotonicTimeNs(2_001),
+                device_id.clone(),
+                ArtifactVersion(1),
+                "wake_activate_v1".to_string(),
+            )
+            .unwrap();
+        store
+            .wake_artifact_stage_commit(
+                MonotonicTimeNs(2_002),
+                device_id.clone(),
+                ArtifactVersion(2),
+                hash_v2,
+                "wake_payload_ref_v2".to_string(),
+                None,
+                "wake_stage_v2".to_string(),
+            )
+            .unwrap();
+        store
+            .wake_artifact_activate_commit(
+                MonotonicTimeNs(2_003),
+                device_id.clone(),
+                ArtifactVersion(2),
+                "wake_activate_v2".to_string(),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn at_wake_training_step1_a_feature_config_validates() {
         let cfg = WakeFeatureConfigV1::locked_default_v1("wake_feature_cfg_v1".to_string()).unwrap();
@@ -3543,5 +4022,220 @@ mod tests {
             second.wakepack_candidate.package_hash
         );
         assert_eq!(first.training_summary, second.training_summary);
+    }
+
+    #[test]
+    fn at_wake_training_step4_a_candidate_to_shadow_and_canary_to_active_passes() {
+        let mut store = seeded_store();
+        let device_a = DeviceId::new("device_a".to_string()).unwrap();
+        let artifact_version = ArtifactVersion(20);
+        let policy = WakePromotionGatePolicyV1::default();
+        let manifest = promotion_manifest_with_metrics(artifact_version, 90, 900, 900, 140, 320, None);
+
+        store
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(3_000),
+                artifact_version,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_ready".to_string(),
+                "wake_promo_candidate_step4".to_string(),
+                false,
+            )
+            .unwrap();
+        let shadow = wake_promote_candidate_to_shadow(
+            &mut store,
+            MonotonicTimeNs(3_001),
+            &manifest,
+            Some("cohort_shadow_5pct".to_string()),
+            &policy,
+            "wake_gate_shadow_step4".to_string(),
+            "wake_promo_shadow_step4".to_string(),
+        )
+        .unwrap();
+        assert_eq!(shadow.state, WakePromotionState::Shadow);
+
+        let canary = wake_promote_shadow_to_canary(
+            &mut store,
+            MonotonicTimeNs(3_002),
+            &manifest,
+            Some("cohort_canary_10pct".to_string()),
+            &policy,
+            "wake_gate_canary_step4".to_string(),
+            "wake_promo_canary_step4".to_string(),
+        )
+        .unwrap();
+        assert_eq!(canary.state, WakePromotionState::Canary);
+
+        seed_device_apply_chain_for_rollback_drill(&mut store, &device_a);
+        let active = wake_promote_canary_to_active(
+            &mut store,
+            MonotonicTimeNs(3_003),
+            &manifest,
+            &policy,
+            &[device_a],
+            "wake_gate_active_step4".to_string(),
+            "wake_promo_active_step4".to_string(),
+        )
+        .unwrap();
+        assert_eq!(active.state, WakePromotionState::Active);
+        assert_eq!(store.wake_promotion_active_artifact_version(), Some(artifact_version));
+    }
+
+    #[test]
+    fn at_wake_training_step4_b_missing_required_metrics_blocks_gate() {
+        let policy = WakePromotionGatePolicyV1::default();
+        let manifest = promotion_manifest_with_metrics(
+            ArtifactVersion(21),
+            90,
+            900,
+            900,
+            140,
+            320,
+            Some("wake_not_measured_metrics_ref".to_string()),
+        );
+        let gate = evaluate_wake_promotion_gate(
+            &manifest.eval_metrics_summary,
+            WakePromotionState::Shadow,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(gate.outcome, WakePromotionGateOutcomeV1::Block);
+        assert_eq!(gate.reason_code, WAKE_PROMOTION_REASON_METRIC_NOT_MEASURED);
+    }
+
+    #[test]
+    fn at_wake_training_step4_c_severe_regression_requires_rollback() {
+        let policy = WakePromotionGatePolicyV1::default();
+        let manifest =
+            promotion_manifest_with_metrics(ArtifactVersion(22), 750, 3_500, 3_500, 650, 2_100, None);
+        let gate = evaluate_wake_promotion_gate(
+            &manifest.eval_metrics_summary,
+            WakePromotionState::Active,
+            &policy,
+        )
+        .unwrap();
+        assert_eq!(gate.outcome, WakePromotionGateOutcomeV1::RequireRollback);
+        assert_eq!(gate.reason_code, WAKE_PROMOTION_REASON_GATE_REQUIRES_ROLLBACK);
+    }
+
+    #[test]
+    fn at_wake_training_step4_d_blocked_versions_require_explicit_revalidation() {
+        let mut store = seeded_store();
+        let policy = WakePromotionGatePolicyV1::default();
+        let artifact_version = ArtifactVersion(23);
+        let manifest = promotion_manifest_with_metrics(artifact_version, 120, 900, 900, 160, 300, None);
+        store
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(3_100),
+                artifact_version,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_step4d".to_string(),
+                "wake_promo_candidate_step4d".to_string(),
+                false,
+            )
+            .unwrap();
+        wake_block_candidate_version(
+            &mut store,
+            MonotonicTimeNs(3_101),
+            artifact_version,
+            ReasonCodeId(0x57A1_5001),
+            "wake_gate_block_step4d".to_string(),
+            "wake_promo_block_step4d".to_string(),
+        )
+        .unwrap();
+
+        let blocked_err = wake_promote_candidate_to_shadow(
+            &mut store,
+            MonotonicTimeNs(3_102),
+            &manifest,
+            None,
+            &policy,
+            "wake_gate_shadow_step4d".to_string(),
+            "wake_promo_shadow_step4d".to_string(),
+        )
+        .expect_err("blocked version must fail until explicit revalidation");
+        assert!(matches!(blocked_err, StorageError::ContractViolation(_)));
+
+        store
+            .wake_promotion_revalidate_blocked_version(
+                artifact_version,
+                "wake_revalidation_step4d".to_string(),
+                "wake_revalidation_idem_step4d".to_string(),
+            )
+            .unwrap();
+        store
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(3_102),
+                artifact_version,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_step4d_revalidated".to_string(),
+                "wake_promo_candidate_step4d_revalidated".to_string(),
+                false,
+            )
+            .unwrap();
+        let shadow = wake_promote_candidate_to_shadow(
+            &mut store,
+            MonotonicTimeNs(3_103),
+            &manifest,
+            None,
+            &policy,
+            "wake_gate_shadow_step4d_retry".to_string(),
+            "wake_promo_shadow_step4d_retry".to_string(),
+        )
+        .unwrap();
+        assert_eq!(shadow.state, WakePromotionState::Shadow);
+    }
+
+    #[test]
+    fn at_wake_training_step4_e_rollback_drill_fails_without_last_known_good() {
+        let store = seeded_store();
+        let device_a = DeviceId::new("device_a".to_string()).unwrap();
+        let drill = run_wake_rollback_drill(&store, &device_a, ArtifactVersion(24)).unwrap();
+        assert!(!drill.rollback_ready);
+        assert_eq!(
+            drill.reason_code,
+            Some(WAKE_PROMOTION_REASON_ROLLBACK_TARGET_MISSING)
+        );
+    }
+
+    #[test]
+    fn at_wake_training_step4_f_rollback_drill_passes_with_valid_pointer() {
+        let mut store = seeded_store();
+        let device_a = DeviceId::new("device_a".to_string()).unwrap();
+        seed_device_apply_chain_for_rollback_drill(&mut store, &device_a);
+        let drill = run_wake_rollback_drill(&store, &device_a, ArtifactVersion(25)).unwrap();
+        assert!(drill.rollback_ready);
+        assert!(drill.last_known_good_artifact_version.is_some());
+        assert!(drill.rollback_target_artifact_version.is_some());
+    }
+
+    #[test]
+    fn at_wake_training_step4_g_invalid_transition_path_fails_closed() {
+        let mut store = seeded_store();
+        let policy = WakePromotionGatePolicyV1::default();
+        let manifest = promotion_manifest_with_metrics(ArtifactVersion(26), 100, 800, 800, 150, 200, None);
+        let err = wake_promote_shadow_to_canary(
+            &mut store,
+            MonotonicTimeNs(3_200),
+            &manifest,
+            None,
+            &policy,
+            "wake_gate_canary_without_shadow".to_string(),
+            "wake_promo_canary_without_shadow".to_string(),
+        )
+        .expect_err("shadow->canary without prior shadow state must fail");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
     }
 }

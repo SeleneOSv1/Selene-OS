@@ -1468,6 +1468,17 @@ pub struct Ph1fStore {
         BTreeMap<(DeviceId, ArtifactVersion, WakeArtifactApplyState, String), u64>,
     // Blocklist projection: (device_id, artifact_version) -> rollback reason.
     wake_artifact_blocked_versions: BTreeMap<(DeviceId, ArtifactVersion), ReasonCodeId>,
+    // Wake candidate/promotion governance ledger and projections.
+    wake_promotion_ledger: Vec<WakePromotionRecord>,
+    wake_promotion_current: BTreeMap<ArtifactVersion, WakePromotionCurrentRecord>,
+    wake_promotion_active_artifact_version: Option<ArtifactVersion>,
+    // Idempotency: (artifact_version, state, idempotency_key) -> promotion_event_id.
+    wake_promotion_idempotency_index:
+        BTreeMap<(ArtifactVersion, WakePromotionState, String), u64>,
+    // Blocklist projection: artifact_version -> block reason.
+    wake_promotion_blocked_versions: BTreeMap<ArtifactVersion, ReasonCodeId>,
+    // Idempotency: (artifact_version, idempotency_key) -> decision_ref.
+    wake_promotion_revalidation_idempotency_index: BTreeMap<(ArtifactVersion, String), String>,
 
     // Idempotency indexes for wake simulations.
     // (user_id, device_id, idempotency_key) -> wake_enrollment_session_id
@@ -1699,6 +1710,7 @@ pub struct Ph1fStore {
     next_access_ap_authoring_review_event_id: u64,
     next_access_ap_rule_review_action_row_id: u64,
     next_wake_artifact_apply_event_id: u64,
+    next_wake_promotion_event_id: u64,
     next_wake_learn_signal_row_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
@@ -2757,6 +2769,44 @@ pub struct WakeArtifactApplyCurrentRecord {
     pub rollback_reason_code: Option<ReasonCodeId>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WakePromotionState {
+    Candidate,
+    Shadow,
+    Canary,
+    Active,
+    Blocked,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakePromotionRecord {
+    pub schema_version: SchemaVersion,
+    pub promotion_event_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub artifact_version: ArtifactVersion,
+    pub state: WakePromotionState,
+    pub promoted_at: Option<MonotonicTimeNs>,
+    pub blocked_reason_code: Option<ReasonCodeId>,
+    pub rollback_reason_code: Option<ReasonCodeId>,
+    pub cohort_assignment_ref: Option<String>,
+    pub decision_ref: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakePromotionCurrentRecord {
+    pub schema_version: SchemaVersion,
+    pub artifact_version: ArtifactVersion,
+    pub state: WakePromotionState,
+    pub promoted_at: Option<MonotonicTimeNs>,
+    pub blocked_reason_code: Option<ReasonCodeId>,
+    pub rollback_reason_code: Option<ReasonCodeId>,
+    pub cohort_assignment_ref: Option<String>,
+    pub last_promotion_decision_ref: String,
+    pub last_idempotency_key: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BcastRecipientLifecycleAction {
     DraftCreate,
@@ -3203,6 +3253,12 @@ impl Ph1fStore {
             wake_artifact_apply_current: BTreeMap::new(),
             wake_artifact_apply_idempotency_index: BTreeMap::new(),
             wake_artifact_blocked_versions: BTreeMap::new(),
+            wake_promotion_ledger: Vec::new(),
+            wake_promotion_current: BTreeMap::new(),
+            wake_promotion_active_artifact_version: None,
+            wake_promotion_idempotency_index: BTreeMap::new(),
+            wake_promotion_blocked_versions: BTreeMap::new(),
+            wake_promotion_revalidation_idempotency_index: BTreeMap::new(),
             wake_start_idempotency_index: BTreeMap::new(),
             wake_sample_idempotency_index: BTreeMap::new(),
             wake_complete_idempotency_index: BTreeMap::new(),
@@ -3314,6 +3370,7 @@ impl Ph1fStore {
             next_access_ap_authoring_review_event_id: 1,
             next_access_ap_rule_review_action_row_id: 1,
             next_wake_artifact_apply_event_id: 1,
+            next_wake_promotion_event_id: 1,
             next_wake_learn_signal_row_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
@@ -13254,6 +13311,273 @@ impl Ph1fStore {
         self.wake_artifact_apply_idempotency_index
             .insert(idem_key, apply_event_id);
         Ok(current.clone())
+    }
+
+    pub fn wake_promotion_rows(&self) -> &[WakePromotionRecord] {
+        &self.wake_promotion_ledger
+    }
+
+    pub fn wake_promotion_current_row(
+        &self,
+        artifact_version: ArtifactVersion,
+    ) -> Option<&WakePromotionCurrentRecord> {
+        self.wake_promotion_current.get(&artifact_version)
+    }
+
+    pub fn wake_promotion_active_artifact_version(&self) -> Option<ArtifactVersion> {
+        self.wake_promotion_active_artifact_version
+    }
+
+    pub fn wake_promotion_blocked_reason(
+        &self,
+        artifact_version: ArtifactVersion,
+    ) -> Option<ReasonCodeId> {
+        self.wake_promotion_blocked_versions
+            .get(&artifact_version)
+            .copied()
+    }
+
+    pub fn wake_promotion_revalidate_blocked_version(
+        &mut self,
+        artifact_version: ArtifactVersion,
+        decision_ref: String,
+        idempotency_key: String,
+    ) -> Result<(), StorageError> {
+        artifact_version.validate()?;
+        Self::validate_ph1learn_bounded_text(
+            "wake_promotion_revalidate_blocked_version.decision_ref",
+            &decision_ref,
+            128,
+        )?;
+        Self::validate_ph1learn_idempotency(
+            "wake_promotion_revalidate_blocked_version.idempotency_key",
+            &idempotency_key,
+        )?;
+        let idem_idx = (artifact_version, idempotency_key.clone());
+        if let Some(existing_decision_ref) =
+            self.wake_promotion_revalidation_idempotency_index.get(&idem_idx)
+        {
+            if *existing_decision_ref != decision_ref {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "wake_promotion_revalidate_blocked_version.decision_ref",
+                        reason: "must match existing decision_ref for idempotency replay",
+                    },
+                ));
+            }
+            return Ok(());
+        }
+        if !self.wake_promotion_blocked_versions.contains_key(&artifact_version) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_revalidate_blocked_version.artifact_version",
+                    reason: "must reference a blocked artifact_version",
+                },
+            ));
+        }
+        self.wake_promotion_blocked_versions.remove(&artifact_version);
+        self.wake_promotion_revalidation_idempotency_index
+            .insert(idem_idx, decision_ref.clone());
+        if let Some(current) = self.wake_promotion_current.get_mut(&artifact_version) {
+            if current.state == WakePromotionState::Blocked {
+                current.blocked_reason_code = None;
+                current.last_promotion_decision_ref = decision_ref;
+                current.last_idempotency_key = idempotency_key;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn wake_promotion_transition_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        artifact_version: ArtifactVersion,
+        to_state: WakePromotionState,
+        promoted_at: Option<MonotonicTimeNs>,
+        cohort_assignment_ref: Option<String>,
+        blocked_reason_code: Option<ReasonCodeId>,
+        rollback_reason_code: Option<ReasonCodeId>,
+        decision_ref: String,
+        idempotency_key: String,
+        active_gate_passed: bool,
+    ) -> Result<WakePromotionCurrentRecord, StorageError> {
+        artifact_version.validate()?;
+        Self::validate_ph1learn_bounded_text(
+            "wake_promotion_transition_commit.decision_ref",
+            &decision_ref,
+            128,
+        )?;
+        Self::validate_ph1learn_idempotency(
+            "wake_promotion_transition_commit.idempotency_key",
+            &idempotency_key,
+        )?;
+        if let Some(cohort_ref) = cohort_assignment_ref.as_ref() {
+            Self::validate_ph1learn_bounded_text(
+                "wake_promotion_transition_commit.cohort_assignment_ref",
+                cohort_ref,
+                128,
+            )?;
+        }
+        if to_state == WakePromotionState::Blocked && blocked_reason_code.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.blocked_reason_code",
+                    reason: "must be present when state=Blocked",
+                },
+            ));
+        }
+        if to_state != WakePromotionState::Blocked && blocked_reason_code.is_some() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.blocked_reason_code",
+                    reason: "must be absent unless state=Blocked",
+                },
+            ));
+        }
+        if to_state == WakePromotionState::RolledBack && rollback_reason_code.is_none() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.rollback_reason_code",
+                    reason: "must be present when state=RolledBack",
+                },
+            ));
+        }
+        if to_state != WakePromotionState::RolledBack && rollback_reason_code.is_some() {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.rollback_reason_code",
+                    reason: "must be absent unless state=RolledBack",
+                },
+            ));
+        }
+        if to_state == WakePromotionState::Active && !active_gate_passed {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.active_gate_passed",
+                    reason: "must be true before ACTIVE transition",
+                },
+            ));
+        }
+
+        let idem_key = (artifact_version, to_state, idempotency_key.clone());
+        if self.wake_promotion_idempotency_index.contains_key(&idem_key) {
+            return self
+                .wake_promotion_current
+                .get(&artifact_version)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_promotion_current.artifact_version",
+                    key: artifact_version.0.to_string(),
+                });
+        }
+
+        if to_state != WakePromotionState::Blocked
+            && self
+                .wake_promotion_blocked_versions
+                .contains_key(&artifact_version)
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.artifact_version",
+                    reason: "blocked artifact_version requires explicit revalidation before promotion",
+                },
+            ));
+        }
+
+        let from_state = self
+            .wake_promotion_current
+            .get(&artifact_version)
+            .map(|row| row.state);
+        if !Self::wake_promotion_transition_allowed(from_state, to_state) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.state",
+                    reason: "invalid promotion state transition",
+                },
+            ));
+        }
+
+        let promoted_at = if matches!(
+            to_state,
+            WakePromotionState::Shadow | WakePromotionState::Canary | WakePromotionState::Active
+        ) {
+            Some(promoted_at.unwrap_or(now))
+        } else {
+            promoted_at
+        };
+
+        if to_state == WakePromotionState::Blocked {
+            let block_reason = blocked_reason_code.ok_or(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_promotion_transition_commit.blocked_reason_code",
+                    reason: "must be present when state=Blocked",
+                },
+            ))?;
+            self.wake_promotion_blocked_versions
+                .insert(artifact_version, block_reason);
+        } else {
+            self.wake_promotion_blocked_versions.remove(&artifact_version);
+        }
+
+        if to_state == WakePromotionState::Active {
+            self.wake_promotion_active_artifact_version = Some(artifact_version);
+        } else if matches!(to_state, WakePromotionState::Blocked | WakePromotionState::RolledBack)
+            && self.wake_promotion_active_artifact_version == Some(artifact_version)
+        {
+            self.wake_promotion_active_artifact_version = None;
+        }
+
+        let current = WakePromotionCurrentRecord {
+            schema_version: SchemaVersion(1),
+            artifact_version,
+            state: to_state,
+            promoted_at,
+            blocked_reason_code,
+            rollback_reason_code,
+            cohort_assignment_ref: cohort_assignment_ref.clone(),
+            last_promotion_decision_ref: decision_ref.clone(),
+            last_idempotency_key: idempotency_key.clone(),
+        };
+        self.wake_promotion_current
+            .insert(artifact_version, current.clone());
+
+        let promotion_event_id = self.next_wake_promotion_event_id;
+        self.next_wake_promotion_event_id = self.next_wake_promotion_event_id.saturating_add(1);
+        self.wake_promotion_ledger.push(WakePromotionRecord {
+            schema_version: SchemaVersion(1),
+            promotion_event_id,
+            created_at: now,
+            artifact_version,
+            state: to_state,
+            promoted_at,
+            blocked_reason_code,
+            rollback_reason_code,
+            cohort_assignment_ref,
+            decision_ref,
+            idempotency_key: idempotency_key.clone(),
+        });
+        self.wake_promotion_idempotency_index
+            .insert(idem_key, promotion_event_id);
+        Ok(current)
+    }
+
+    fn wake_promotion_transition_allowed(
+        from: Option<WakePromotionState>,
+        to: WakePromotionState,
+    ) -> bool {
+        matches!(
+            (from, to),
+            (None, WakePromotionState::Candidate)
+                | (None, WakePromotionState::Blocked)
+                | (Some(WakePromotionState::Candidate), WakePromotionState::Shadow)
+                | (Some(WakePromotionState::Shadow), WakePromotionState::Canary)
+                | (Some(WakePromotionState::Canary), WakePromotionState::Active)
+                | (Some(WakePromotionState::Active), WakePromotionState::RolledBack)
+                | (Some(WakePromotionState::Blocked), WakePromotionState::Candidate)
+                | (Some(WakePromotionState::RolledBack), WakePromotionState::Candidate)
+                | (Some(_), WakePromotionState::Blocked)
+        )
     }
 
     // ------------------------
@@ -24702,6 +25026,314 @@ mod tests {
             )
             .expect_err("bundle commit over SLO must fail closed");
         assert!(matches!(err, StorageError::ContractViolation(_)));
+    }
+
+    #[test]
+    fn at_f_wake_promotion_01_candidate_shadow_canary_active_path() {
+        let mut s = Ph1fStore::new_in_memory();
+        let v = ArtifactVersion(10);
+        let now = MonotonicTimeNs(100);
+
+        let candidate = s
+            .wake_promotion_transition_commit(
+                now,
+                v,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_pass".to_string(),
+                "wake_promo_candidate_1".to_string(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(candidate.state, WakePromotionState::Candidate);
+
+        let shadow = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(120),
+                v,
+                WakePromotionState::Shadow,
+                None,
+                Some("cohort_shadow_5pct".to_string()),
+                None,
+                None,
+                "wake_gate_shadow_pass".to_string(),
+                "wake_promo_shadow_1".to_string(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(shadow.state, WakePromotionState::Shadow);
+        assert!(shadow.promoted_at.is_some());
+
+        let canary = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(140),
+                v,
+                WakePromotionState::Canary,
+                None,
+                Some("cohort_canary_10pct".to_string()),
+                None,
+                None,
+                "wake_gate_canary_pass".to_string(),
+                "wake_promo_canary_1".to_string(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(canary.state, WakePromotionState::Canary);
+
+        let active = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(160),
+                v,
+                WakePromotionState::Active,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_active_pass".to_string(),
+                "wake_promo_active_1".to_string(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(active.state, WakePromotionState::Active);
+        assert_eq!(s.wake_promotion_active_artifact_version(), Some(v));
+        assert_eq!(s.wake_promotion_rows().len(), 4);
+    }
+
+    #[test]
+    fn at_f_wake_promotion_02_invalid_transitions_fail_closed() {
+        let mut s = Ph1fStore::new_in_memory();
+        let v = ArtifactVersion(11);
+        let err = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(100),
+                v,
+                WakePromotionState::Active,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_active_skip".to_string(),
+                "wake_promo_invalid_1".to_string(),
+                true,
+            )
+            .expect_err("active from empty state must fail");
+        assert!(matches!(err, StorageError::ContractViolation(_)));
+
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(101),
+            v,
+            WakePromotionState::Candidate,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_candidate_pass".to_string(),
+            "wake_promo_candidate_2".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(102),
+            v,
+            WakePromotionState::Shadow,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_shadow_pass".to_string(),
+            "wake_promo_shadow_2".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(103),
+            v,
+            WakePromotionState::Canary,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_canary_pass".to_string(),
+            "wake_promo_canary_2".to_string(),
+            false,
+        )
+        .unwrap();
+        let active_gate_err = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(104),
+                v,
+                WakePromotionState::Active,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_active_fail".to_string(),
+                "wake_promo_active_2".to_string(),
+                false,
+            )
+            .expect_err("active transition without gate pass must fail");
+        assert!(matches!(
+            active_gate_err,
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "wake_promotion_transition_commit.active_gate_passed",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn at_f_wake_promotion_03_blocked_version_requires_revalidation() {
+        let mut s = Ph1fStore::new_in_memory();
+        let v = ArtifactVersion(12);
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(200),
+            v,
+            WakePromotionState::Candidate,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_candidate_pass".to_string(),
+            "wake_promo_candidate_3".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(201),
+            v,
+            WakePromotionState::Blocked,
+            None,
+            None,
+            Some(ReasonCodeId(0x57A0_9001)),
+            None,
+            "wake_gate_block".to_string(),
+            "wake_promo_block_1".to_string(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            s.wake_promotion_blocked_reason(v),
+            Some(ReasonCodeId(0x57A0_9001))
+        );
+
+        let blocked_err = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(202),
+                v,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_retry".to_string(),
+                "wake_promo_candidate_3_retry".to_string(),
+                false,
+            )
+            .expect_err("blocked artifact must require explicit revalidation");
+        assert!(matches!(blocked_err, StorageError::ContractViolation(_)));
+
+        s.wake_promotion_revalidate_blocked_version(
+            v,
+            "wake_revalidation_decision".to_string(),
+            "wake_revalidate_1".to_string(),
+        )
+        .unwrap();
+        assert_eq!(s.wake_promotion_blocked_reason(v), None);
+
+        let candidate = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(203),
+                v,
+                WakePromotionState::Candidate,
+                None,
+                None,
+                None,
+                None,
+                "wake_gate_candidate_after_revalidate".to_string(),
+                "wake_promo_candidate_3_after_revalidate".to_string(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(candidate.state, WakePromotionState::Candidate);
+    }
+
+    #[test]
+    fn at_f_wake_promotion_04_active_to_rollback_clears_active_pointer() {
+        let mut s = Ph1fStore::new_in_memory();
+        let v = ArtifactVersion(13);
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(300),
+            v,
+            WakePromotionState::Candidate,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_candidate_pass".to_string(),
+            "wake_promo_candidate_4".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(301),
+            v,
+            WakePromotionState::Shadow,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_shadow_pass".to_string(),
+            "wake_promo_shadow_4".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(302),
+            v,
+            WakePromotionState::Canary,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_canary_pass".to_string(),
+            "wake_promo_canary_4".to_string(),
+            false,
+        )
+        .unwrap();
+        s.wake_promotion_transition_commit(
+            MonotonicTimeNs(303),
+            v,
+            WakePromotionState::Active,
+            None,
+            None,
+            None,
+            None,
+            "wake_gate_active_pass".to_string(),
+            "wake_promo_active_4".to_string(),
+            true,
+        )
+        .unwrap();
+        assert_eq!(s.wake_promotion_active_artifact_version(), Some(v));
+
+        let rolled_back = s
+            .wake_promotion_transition_commit(
+                MonotonicTimeNs(304),
+                v,
+                WakePromotionState::RolledBack,
+                None,
+                None,
+                None,
+                Some(ReasonCodeId(0x57A0_9002)),
+                "wake_gate_rollback_required".to_string(),
+                "wake_promo_rollback_4".to_string(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(rolled_back.state, WakePromotionState::RolledBack);
+        assert_eq!(s.wake_promotion_active_artifact_version(), None);
     }
 
     // Ensures we still compile against other crate contracts used elsewhere.
