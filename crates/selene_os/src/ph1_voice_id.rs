@@ -743,6 +743,12 @@ fn learn_signal_type_label(signal_type: LearnSignalType) -> &'static str {
         LearnSignalType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
         LearnSignalType::VoiceIdDrift => "VoiceIdDrift",
         LearnSignalType::VoiceIdLowQuality => "VoiceIdLowQuality",
+        LearnSignalType::WakeAccepted => "WakeAccepted",
+        LearnSignalType::WakeRejected => "WakeRejected",
+        LearnSignalType::FalseWake => "FalseWake",
+        LearnSignalType::MissedWake => "MissedWake",
+        LearnSignalType::LowConfidenceWake => "LowConfidenceWake",
+        LearnSignalType::NoisyEnvironment => "NoisyEnvironment",
     }
 }
 

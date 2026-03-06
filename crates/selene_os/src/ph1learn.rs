@@ -937,7 +937,13 @@ fn required_voice_artifact_families(signals: &[LearnSignal]) -> BTreeSet<VoiceAr
             | LearnSignalType::ToolFail
             | LearnSignalType::VocabularyRepeat
             | LearnSignalType::BargeIn
-            | LearnSignalType::DeliverySwitch => {}
+            | LearnSignalType::DeliverySwitch
+            | LearnSignalType::WakeAccepted
+            | LearnSignalType::WakeRejected
+            | LearnSignalType::FalseWake
+            | LearnSignalType::MissedWake
+            | LearnSignalType::LowConfidenceWake
+            | LearnSignalType::NoisyEnvironment => {}
         }
     }
     families

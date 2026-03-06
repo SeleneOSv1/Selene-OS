@@ -55,7 +55,9 @@ use selene_kernel_contracts::ph1k::{
     VadDecisionConfidenceBand,
 };
 use selene_kernel_contracts::ph1l::SessionId;
-use selene_kernel_contracts::ph1learn::LearnSignalType;
+use selene_kernel_contracts::ph1learn::{
+    is_wake_learn_signal_type, LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger,
+};
 use selene_kernel_contracts::ph1link::{
     deterministic_device_fingerprint_hash_hex, deterministic_payload_hash_hex, AppPlatform,
     DraftId, DraftStatus, InviteeType, LinkRecord, LinkStatus, PrefilledContext,
@@ -1457,6 +1459,7 @@ pub struct Ph1fStore {
     wake_enrollment_sessions: BTreeMap<String, WakeEnrollmentSessionRecord>,
     wake_enrollment_samples: Vec<WakeEnrollmentSampleRecord>,
     wake_runtime_events: Vec<WakeRuntimeEventRecord>,
+    wake_learn_signals: Vec<WakeLearnSignalRecord>,
     wake_profile_bindings: BTreeMap<(UserId, DeviceId), String>,
     wake_artifact_apply_ledger: Vec<WakeArtifactApplyRecord>,
     wake_artifact_apply_current: BTreeMap<DeviceId, WakeArtifactApplyCurrentRecord>,
@@ -1477,6 +1480,10 @@ pub struct Ph1fStore {
     wake_defer_idempotency_index: BTreeMap<(String, String), WakeEnrollStatus>,
     // (device_id, idempotency_key) -> wake_event_id
     wake_runtime_event_idempotency_index: BTreeMap<(DeviceId, String), String>,
+    // (device_id, signal_id) -> wake_learn_signal_row_id
+    wake_learn_signal_index: BTreeMap<(DeviceId, String), u64>,
+    // receipt_ref -> wake_learn_signal_row_id
+    wake_learn_signal_receipt_index: BTreeMap<String, u64>,
 
     // ------------------------
     // PH1.VOICE.ID (Voice enrollment) - enrollment/session persistence + profile artifacts.
@@ -1692,6 +1699,7 @@ pub struct Ph1fStore {
     next_access_ap_authoring_review_event_id: u64,
     next_access_ap_rule_review_action_row_id: u64,
     next_wake_artifact_apply_event_id: u64,
+    next_wake_learn_signal_row_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -2523,6 +2531,29 @@ pub struct WakeRuntimeEventRecord {
     pub idempotency_key: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeLearnSignalRecord {
+    pub schema_version: SchemaVersion,
+    pub wake_learn_signal_row_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub signal_id: String,
+    pub idempotency_key: String,
+    pub wake_window_id: String,
+    pub event_type: LearnSignalType,
+    pub device_id: DeviceId,
+    pub session_id: Option<SessionId>,
+    pub trigger: WakeLearnTrigger,
+    pub model_version: Option<String>,
+    pub score_bp: Option<u16>,
+    pub threshold_bp: Option<u16>,
+    pub reason_code: Option<ReasonCodeId>,
+    pub snr_db_milli: Option<i32>,
+    pub vad_coverage_bp: Option<u16>,
+    pub timestamp_ms: u64,
+    pub outbox_receipt_ref: String,
+    pub outbox_sync_job_id: Option<String>,
+}
+
 // PH1.VOICE.ID (voice enrollment) deterministic persistence records.
 const VID_ENROLL_REASON_MAX_ATTEMPTS: ReasonCodeId = ReasonCodeId(0x5649_0201);
 const VID_ENROLL_REASON_TIMEOUT: ReasonCodeId = ReasonCodeId(0x5649_0202);
@@ -2660,6 +2691,7 @@ pub enum MobileArtifactSyncKind {
     VoiceArtifactManifest,
     WakeArtifactManifest,
     EmoArtifactManifest,
+    WakeLearnSignal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3165,6 +3197,7 @@ impl Ph1fStore {
             wake_enrollment_sessions: BTreeMap::new(),
             wake_enrollment_samples: Vec::new(),
             wake_runtime_events: Vec::new(),
+            wake_learn_signals: Vec::new(),
             wake_profile_bindings: BTreeMap::new(),
             wake_artifact_apply_ledger: Vec::new(),
             wake_artifact_apply_current: BTreeMap::new(),
@@ -3175,6 +3208,8 @@ impl Ph1fStore {
             wake_complete_idempotency_index: BTreeMap::new(),
             wake_defer_idempotency_index: BTreeMap::new(),
             wake_runtime_event_idempotency_index: BTreeMap::new(),
+            wake_learn_signal_index: BTreeMap::new(),
+            wake_learn_signal_receipt_index: BTreeMap::new(),
             voice_enrollment_sessions: BTreeMap::new(),
             voice_enrollment_samples: Vec::new(),
             voice_profiles: BTreeMap::new(),
@@ -3279,6 +3314,7 @@ impl Ph1fStore {
             next_access_ap_authoring_review_event_id: 1,
             next_access_ap_rule_review_action_row_id: 1,
             next_wake_artifact_apply_event_id: 1,
+            next_wake_learn_signal_row_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -13862,6 +13898,155 @@ impl Ph1fStore {
         &self.wake_runtime_events
     }
 
+    pub fn wake_learn_signal_rows(&self) -> &[WakeLearnSignalRecord] {
+        &self.wake_learn_signals
+    }
+
+    pub fn wake_learn_signal_row_for_receipt(
+        &self,
+        receipt_ref: &str,
+    ) -> Option<&WakeLearnSignalRecord> {
+        let row_id = self.wake_learn_signal_receipt_index.get(receipt_ref)?;
+        self.wake_learn_signals
+            .iter()
+            .find(|row| row.wake_learn_signal_row_id == *row_id)
+    }
+
+    pub fn wake_learn_signal_commit_and_enqueue(
+        &mut self,
+        now: MonotonicTimeNs,
+        signal: WakeLearnSignalV1,
+    ) -> Result<WakeLearnSignalRecord, StorageError> {
+        signal.validate()?;
+        if !is_wake_learn_signal_type(signal.event_type) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "wake_learn_signal_commit_and_enqueue.event_type",
+                    reason: "must be a wake learn event type",
+                },
+            ));
+        }
+        if !self.devices.contains_key(&signal.device_id) {
+            return Err(StorageError::ForeignKeyViolation {
+                table: "wake_learn_signals.device_id",
+                key: signal.device_id.as_str().to_string(),
+            });
+        }
+        if let Some(session_id) = signal.session_id {
+            if !self.sessions.contains_key(&session_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "wake_learn_signals.session_id",
+                    key: session_id.0.to_string(),
+                });
+            }
+        }
+
+        let signal_idx = (signal.device_id.clone(), signal.signal_id.clone());
+        if let Some(existing_row_id) = self.wake_learn_signal_index.get(&signal_idx) {
+            if let Some(mut existing) = self
+                .wake_learn_signals
+                .iter()
+                .find(|row| row.wake_learn_signal_row_id == *existing_row_id)
+                .cloned()
+            {
+                if self
+                    .mobile_artifact_sync_queue_row_for_receipt(&existing.outbox_receipt_ref)
+                    .is_none()
+                {
+                    self.enqueue_mobile_artifact_sync(
+                        now,
+                        MobileArtifactSyncKind::WakeLearnSignal,
+                        existing.outbox_receipt_ref.clone(),
+                        Self::learn_signal_type_name(existing.event_type).to_string(),
+                        None,
+                        None,
+                        existing.device_id.clone(),
+                        existing.idempotency_key.clone(),
+                    )?;
+                }
+                existing.outbox_sync_job_id = self
+                    .mobile_artifact_sync_receipt_index
+                    .get(&existing.outbox_receipt_ref)
+                    .cloned();
+                return Ok(existing.clone());
+            }
+            return Err(StorageError::ForeignKeyViolation {
+                table: "wake_learn_signals.wake_learn_signal_row_id",
+                key: existing_row_id.to_string(),
+            });
+        }
+
+        Self::validate_ph1learn_idempotency(
+            "wake_learn_signals.idempotency_key",
+            &signal.idempotency_key,
+        )?;
+        Self::validate_ph1learn_bounded_text(
+            "wake_learn_signals.wake_window_id",
+            &signal.wake_window_id,
+            96,
+        )?;
+
+        let signal_type_label = Self::learn_signal_type_name(signal.event_type).to_string();
+        let receipt_ref = format!(
+            "wake_learn_signal_{}",
+            hash_hex_64(&format!(
+                "{}:{}:{}:{}",
+                signal.device_id.as_str(),
+                signal.signal_id,
+                signal.wake_window_id,
+                signal.idempotency_key
+            ))
+        );
+        let row_id = self.next_wake_learn_signal_row_id;
+        self.next_wake_learn_signal_row_id = self.next_wake_learn_signal_row_id.saturating_add(1);
+        let mut row = WakeLearnSignalRecord {
+            schema_version: SchemaVersion(1),
+            wake_learn_signal_row_id: row_id,
+            created_at: now,
+            signal_id: signal.signal_id.clone(),
+            idempotency_key: signal.idempotency_key.clone(),
+            wake_window_id: signal.wake_window_id,
+            event_type: signal.event_type,
+            device_id: signal.device_id.clone(),
+            session_id: signal.session_id,
+            trigger: signal.trigger,
+            model_version: signal.model_version,
+            score_bp: signal.score_bp,
+            threshold_bp: signal.threshold_bp,
+            reason_code: signal.reason_code,
+            snr_db_milli: signal.snr_db_milli,
+            vad_coverage_bp: signal.vad_coverage_bp,
+            timestamp_ms: signal.timestamp_ms,
+            outbox_receipt_ref: receipt_ref.clone(),
+            outbox_sync_job_id: None,
+        };
+        self.wake_learn_signals.push(row.clone());
+        self.wake_learn_signal_index.insert(signal_idx, row_id);
+        self.wake_learn_signal_receipt_index.insert(receipt_ref, row_id);
+        self.enqueue_mobile_artifact_sync(
+            now,
+            MobileArtifactSyncKind::WakeLearnSignal,
+            row.outbox_receipt_ref.clone(),
+            signal_type_label,
+            None,
+            None,
+            signal.device_id,
+            signal.idempotency_key,
+        )?;
+        row.outbox_sync_job_id = self
+            .mobile_artifact_sync_receipt_index
+            .get(&row.outbox_receipt_ref)
+            .cloned();
+        if let Some(stored) = self
+            .wake_learn_signals
+            .iter_mut()
+            .find(|stored| stored.wake_learn_signal_row_id == row_id)
+        {
+            stored.outbox_sync_job_id = row.outbox_sync_job_id.clone();
+        }
+        Ok(row)
+    }
+
     pub fn attempt_overwrite_wake_enrollment_sample(
         &mut self,
         _wake_enrollment_session_id: &str,
@@ -19123,6 +19308,12 @@ impl Ph1fStore {
             LearnSignalType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
             LearnSignalType::VoiceIdDrift => "VoiceIdDrift",
             LearnSignalType::VoiceIdLowQuality => "VoiceIdLowQuality",
+            LearnSignalType::WakeAccepted => "WakeAccepted",
+            LearnSignalType::WakeRejected => "WakeRejected",
+            LearnSignalType::FalseWake => "FalseWake",
+            LearnSignalType::MissedWake => "MissedWake",
+            LearnSignalType::LowConfidenceWake => "LowConfidenceWake",
+            LearnSignalType::NoisyEnvironment => "NoisyEnvironment",
         }
     }
 
@@ -19144,6 +19335,12 @@ impl Ph1fStore {
             "VoiceIdConfusionPair" => Some(LearnSignalType::VoiceIdConfusionPair),
             "VoiceIdDrift" => Some(LearnSignalType::VoiceIdDrift),
             "VoiceIdLowQuality" => Some(LearnSignalType::VoiceIdLowQuality),
+            "WakeAccepted" => Some(LearnSignalType::WakeAccepted),
+            "WakeRejected" => Some(LearnSignalType::WakeRejected),
+            "FalseWake" => Some(LearnSignalType::FalseWake),
+            "MissedWake" => Some(LearnSignalType::MissedWake),
+            "LowConfidenceWake" => Some(LearnSignalType::LowConfidenceWake),
+            "NoisyEnvironment" => Some(LearnSignalType::NoisyEnvironment),
             _ => None,
         }
     }

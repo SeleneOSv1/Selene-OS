@@ -81,7 +81,7 @@ use selene_kernel_contracts::ph1k::{
 use selene_kernel_contracts::ph1l::{
     Ph1lInput, SessionId, SessionSnapshot, TtsPlaybackState, UserActivitySignals,
 };
-use selene_kernel_contracts::ph1learn::LearnSignalType;
+use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1n::{Chat as Ph1nChat, Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
@@ -3551,6 +3551,17 @@ impl AdapterRuntime {
                     &ph1k_bundle,
                     wake_eval,
                 )?;
+                commit_wake_learn_signal(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &runtime_device_id,
+                    session_id_for_reject,
+                    trigger,
+                    &ph1k_bundle,
+                    wake_eval,
+                )?;
                 return Err(format!(
                     "wake_rejected reason_code={}",
                     wake_eval.decision.reason_code.0
@@ -3577,6 +3588,17 @@ impl AdapterRuntime {
                 &actor_user_id,
                 &runtime_device_id,
                 session_turn_state.session_id_for_commits,
+                &ph1k_bundle,
+                wake_eval,
+            )?;
+            commit_wake_learn_signal(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &runtime_device_id,
+                session_turn_state.session_id_for_commits,
+                trigger,
                 &ph1k_bundle,
                 wake_eval,
             )?;
@@ -5212,6 +5234,113 @@ fn commit_wake_runtime_event(
     Ok(())
 }
 
+fn map_wake_decision_to_learn_signal_type(
+    decision: &WakeDecision,
+    threshold_used_bp: u16,
+) -> LearnSignalType {
+    if decision.accepted {
+        return LearnSignalType::WakeAccepted;
+    }
+    if decision.reason_code == ph1w_reason_codes::W_FAIL_G1_NOISE {
+        return LearnSignalType::NoisyEnvironment;
+    }
+    let low_confidence_reason = matches!(
+        decision.reason_code,
+        ph1w_reason_codes::W_FAIL_G3_SCORE_LOW | ph1w_reason_codes::W_FAIL_G3_UNSTABLE_SCORE
+    );
+    let near_threshold = confidence_to_basis_points(decision.strong_score)
+        .map(|score_bp| score_bp.saturating_add(300) >= threshold_used_bp)
+        .unwrap_or(false);
+    if low_confidence_reason || near_threshold {
+        return LearnSignalType::LowConfidenceWake;
+    }
+    LearnSignalType::WakeRejected
+}
+
+fn wake_learn_trigger(trigger: OsVoiceTrigger) -> WakeLearnTrigger {
+    match trigger {
+        OsVoiceTrigger::WakeWord => WakeLearnTrigger::WakeWord,
+        OsVoiceTrigger::Explicit => WakeLearnTrigger::Explicit,
+    }
+}
+
+fn wake_window_id_for_signal(device_id: &DeviceId, wake_eval: &WakeEvaluation) -> String {
+    let suffix = stable_hash_hex_16(&format!(
+        "{}:{}:{}:{}:{}",
+        device_id.as_str(),
+        wake_eval.window_start_ns.0,
+        wake_eval.window_end_ns.0,
+        wake_eval.decision.reason_code.0,
+        if wake_eval.decision.accepted { 1 } else { 0 }
+    ));
+    format!("wake_window_{suffix}")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_wake_learn_signal(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    device_id: &DeviceId,
+    session_id: Option<SessionId>,
+    trigger: OsVoiceTrigger,
+    ph1k: &Ph1kLiveSignalBundle,
+    wake_eval: &WakeEvaluation,
+) -> Result<(), String> {
+    let decision = &wake_eval.decision;
+    let event_type = map_wake_decision_to_learn_signal_type(decision, wake_eval.threshold_used_bp);
+    let signal_id = format!(
+        "wake_sig_{}_{}_{}",
+        correlation_id.0,
+        turn_id.0,
+        if decision.accepted { "accept" } else { "reject" }
+    );
+    let idempotency_key = sanitize_idempotency_token(&format!(
+        "adapter_wake_learn:{}:{}:{}:{}",
+        correlation_id.0,
+        turn_id.0,
+        decision.reason_code.0,
+        wake_eval.window_start_ns.0
+    ));
+    let wake_window_id = wake_window_id_for_signal(device_id, wake_eval);
+    let score_bp =
+        confidence_to_basis_points(decision.strong_score).or(confidence_to_basis_points(decision.light_score));
+    let snr_db_milli = Some(
+        (ph1k
+            .interrupt_input
+            .adaptive_policy_input
+            .quality_metrics
+            .snr_db
+            * 1000.0)
+            .round() as i32,
+    );
+    let vad_coverage_bp =
+        Some(((ph1k.interrupt_input.vad_confidence.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000));
+    let timestamp_ms = (now.0 / 1_000_000).max(1);
+    let signal = WakeLearnSignalV1::v1(
+        signal_id,
+        idempotency_key,
+        wake_window_id,
+        event_type,
+        device_id.clone(),
+        session_id,
+        wake_learn_trigger(trigger),
+        Some(truncate_ascii(&wake_eval.model_version, 64)),
+        score_bp,
+        Some(wake_eval.threshold_used_bp),
+        Some(decision.reason_code),
+        snr_db_milli,
+        vad_coverage_bp,
+        timestamp_ms,
+    )
+    .map_err(|err| format!("wake learn signal contract invalid: {err:?}"))?;
+    store
+        .wake_learn_signal_commit_and_enqueue(now, signal)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
 fn resolve_session_turn_state(
     store: &mut Ph1fStore,
     now: MonotonicTimeNs,
@@ -6687,6 +6816,12 @@ fn learn_signal_type_str(signal_type: LearnSignalType) -> &'static str {
         LearnSignalType::VoiceIdConfusionPair => "VoiceIdConfusionPair",
         LearnSignalType::VoiceIdDrift => "VoiceIdDrift",
         LearnSignalType::VoiceIdLowQuality => "VoiceIdLowQuality",
+        LearnSignalType::WakeAccepted => "WakeAccepted",
+        LearnSignalType::WakeRejected => "WakeRejected",
+        LearnSignalType::FalseWake => "FalseWake",
+        LearnSignalType::MissedWake => "MissedWake",
+        LearnSignalType::LowConfidenceWake => "LowConfidenceWake",
+        LearnSignalType::NoisyEnvironment => "NoisyEnvironment",
     }
 }
 
@@ -7558,7 +7693,7 @@ mod tests {
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
-        DeviceRecord, IdentityRecord, IdentityStatus, WakeSampleResult,
+        DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, WakeSampleResult,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -9602,6 +9737,66 @@ mod tests {
         );
         let store = runtime.store.lock().expect("store lock must not poison");
         assert!(store.ph1w_get_runtime_events().iter().any(|row| !row.accepted));
+    }
+
+    #[test]
+    fn at_wakelearn_01_accept_enqueues_wakeaccepted_signal() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 33_001;
+        req.turn_id = 43_001;
+        req.now_ns = Some(9_000_000_000);
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wakelearn_accept".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wakelearn_01");
+        runtime
+            .run_voice_turn(req)
+            .expect("accepted wake turn should succeed");
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(
+            store
+                .wake_learn_signal_rows()
+                .iter()
+                .any(|row| row.event_type == LearnSignalType::WakeAccepted)
+        );
+        assert!(store.device_artifact_sync_queue_rows().iter().any(|row| {
+            row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal
+        }));
+    }
+
+    #[test]
+    fn at_wakelearn_02_reject_enqueues_wakerejected_family_signal() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        req.correlation_id = 33_002;
+        req.turn_id = 43_002;
+        req.now_ns = Some(9_000_000_100);
+        req.app_platform = "DESKTOP".to_string();
+        req.trigger = "WAKE_WORD".to_string();
+        req.device_id = Some("adapter_wakelearn_reject".to_string());
+        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wakelearn_02");
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.capture_degraded = Some(true);
+        }
+        let err = runtime
+            .run_voice_turn(req)
+            .expect_err("rejected wake turn should fail");
+        assert!(err.contains("wake_rejected"));
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        assert!(store.wake_learn_signal_rows().iter().any(|row| {
+            matches!(
+                row.event_type,
+                LearnSignalType::WakeRejected
+                    | LearnSignalType::LowConfidenceWake
+                    | LearnSignalType::NoisyEnvironment
+            )
+        }));
+        assert!(store.device_artifact_sync_queue_rows().iter().any(|row| {
+            row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal
+        }));
     }
 
     #[test]

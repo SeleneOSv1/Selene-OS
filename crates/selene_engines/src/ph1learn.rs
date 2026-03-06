@@ -386,6 +386,12 @@ fn artifact_target_from_signal(signal_type: LearnSignalType) -> LearnArtifactTar
         LearnSignalType::VoiceIdConfusionPair => LearnArtifactTarget::VoiceIdConfusionPairPack,
         LearnSignalType::VoiceIdDrift => LearnArtifactTarget::VoiceIdProfileDeltaPack,
         LearnSignalType::VoiceIdLowQuality => LearnArtifactTarget::VoiceIdProfileDeltaPack,
+        LearnSignalType::WakeAccepted => LearnArtifactTarget::ListenEnvironmentProfile,
+        LearnSignalType::WakeRejected => LearnArtifactTarget::ListenEnvironmentProfile,
+        LearnSignalType::FalseWake => LearnArtifactTarget::ListenEnvironmentProfile,
+        LearnSignalType::MissedWake => LearnArtifactTarget::ListenEnvironmentProfile,
+        LearnSignalType::LowConfidenceWake => LearnArtifactTarget::ListenEnvironmentProfile,
+        LearnSignalType::NoisyEnvironment => LearnArtifactTarget::ListenEnvironmentProfile,
     }
 }
 
@@ -423,6 +429,12 @@ fn score_signal(signal: &LearnSignal) -> i16 {
         LearnSignalType::VoiceIdConfusionPair => 900,
         LearnSignalType::VoiceIdDrift => 700,
         LearnSignalType::VoiceIdLowQuality => 660,
+        LearnSignalType::WakeAccepted => 320,
+        LearnSignalType::WakeRejected => 840,
+        LearnSignalType::FalseWake => 980,
+        LearnSignalType::MissedWake => 960,
+        LearnSignalType::LowConfidenceWake => 820,
+        LearnSignalType::NoisyEnvironment => 760,
     };
 
     let frequency_component = (signal.occurrence_count as i32 * 25).min(1200);

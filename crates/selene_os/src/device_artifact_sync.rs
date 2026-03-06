@@ -101,6 +101,8 @@ pub struct DeviceArtifactSyncEnvelope {
     pub enqueued_at_ns: u64,
     pub attempt_count: u16,
     pub idempotency_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake_learn_signal: Option<DeviceWakeLearnSignalEnvelope>,
 }
 
 impl DeviceArtifactSyncEnvelope {
@@ -120,8 +122,28 @@ impl DeviceArtifactSyncEnvelope {
             enqueued_at_ns: row.enqueued_at.0,
             attempt_count: row.attempt_count,
             idempotency_key: row.idempotency_key.clone(),
+            wake_learn_signal: None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DeviceWakeLearnSignalEnvelope {
+    pub schema_version: u8,
+    pub signal_id: String,
+    pub idempotency_key: String,
+    pub wake_window_id: String,
+    pub event_type: String,
+    pub device_id: String,
+    pub session_id: Option<String>,
+    pub trigger: String,
+    pub model_version: Option<String>,
+    pub score_bp: Option<u16>,
+    pub threshold_bp: Option<u16>,
+    pub reason_code: Option<u64>,
+    pub snr_db_milli: Option<i32>,
+    pub vad_coverage_bp: Option<u16>,
+    pub timestamp_ms: u64,
 }
 
 fn sync_kind_label(kind: MobileArtifactSyncKind) -> &'static str {
@@ -131,6 +153,7 @@ fn sync_kind_label(kind: MobileArtifactSyncKind) -> &'static str {
         MobileArtifactSyncKind::VoiceArtifactManifest => "VoiceArtifactManifest",
         MobileArtifactSyncKind::WakeArtifactManifest => "WakeArtifactManifest",
         MobileArtifactSyncKind::EmoArtifactManifest => "EmoArtifactManifest",
+        MobileArtifactSyncKind::WakeLearnSignal => "WakeLearnSignal",
     }
 }
 
@@ -143,6 +166,7 @@ pub struct DeviceArtifactSyncSendReceipt {
 pub struct DeviceArtifactSyncSendError {
     pub message: String,
     pub retry_after_ms: u32,
+    pub fatal: bool,
 }
 
 impl DeviceArtifactSyncSendError {
@@ -157,6 +181,21 @@ impl DeviceArtifactSyncSendError {
         Self {
             message: bounded_msg,
             retry_after_ms: bounded_retry_after,
+            fatal: false,
+        }
+    }
+
+    pub fn fatal(message: impl Into<String>) -> Self {
+        let msg = message.into();
+        let bounded_msg = if msg.len() > 256 {
+            msg.chars().take(256).collect::<String>()
+        } else {
+            msg
+        };
+        Self {
+            message: bounded_msg,
+            retry_after_ms: DEVICE_SYNC_RETRY_AFTER_MS_DEFAULT,
+            fatal: true,
         }
     }
 }
@@ -348,6 +387,10 @@ pub enum DeviceArtifactSyncSenderRuntime {
         message: String,
         retry_after_ms: u32,
     },
+    #[cfg(test)]
+    AlwaysFatalNack {
+        message: String,
+    },
 }
 
 impl Default for DeviceArtifactSyncSenderRuntime {
@@ -372,6 +415,13 @@ impl DeviceArtifactSyncSenderRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub fn always_fatal_nack_for_tests(message: &str) -> Self {
+        Self::AlwaysFatalNack {
+            message: message.to_string(),
+        }
+    }
+
     pub fn send(
         &self,
         envelope: &DeviceArtifactSyncEnvelope,
@@ -386,6 +436,10 @@ impl DeviceArtifactSyncSenderRuntime {
             } => Err(DeviceArtifactSyncSendError::retryable(
                 message.clone(),
                 *retry_after_ms,
+            )),
+            #[cfg(test)]
+            Self::AlwaysFatalNack { message } => Err(DeviceArtifactSyncSendError::fatal(
+                message.clone(),
             )),
             Self::Http(config) => send_http_sync_envelope(config, envelope),
         }
@@ -456,7 +510,32 @@ fn run_device_artifact_sync_worker_pass_with_metrics_internal(
         return Ok(metrics);
     }
     for row in dequeued {
-        let envelope = DeviceArtifactSyncEnvelope::from_row(&row);
+        let mut envelope = DeviceArtifactSyncEnvelope::from_row(&row);
+        if row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal {
+            let wake_signal = store
+                .wake_learn_signal_row_for_receipt(&row.receipt_ref)
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "wake_learn_signals.outbox_receipt_ref",
+                    key: row.receipt_ref.clone(),
+                })?;
+            envelope.wake_learn_signal = Some(DeviceWakeLearnSignalEnvelope {
+                schema_version: 1,
+                signal_id: wake_signal.signal_id.clone(),
+                idempotency_key: wake_signal.idempotency_key.clone(),
+                wake_window_id: wake_signal.wake_window_id.clone(),
+                event_type: format!("{:?}", wake_signal.event_type),
+                device_id: wake_signal.device_id.as_str().to_string(),
+                session_id: wake_signal.session_id.map(|id| id.0.to_string()),
+                trigger: format!("{:?}", wake_signal.trigger),
+                model_version: wake_signal.model_version.clone(),
+                score_bp: wake_signal.score_bp,
+                threshold_bp: wake_signal.threshold_bp,
+                reason_code: wake_signal.reason_code.map(|code| code.0 as u64),
+                snr_db_milli: wake_signal.snr_db_milli,
+                vad_coverage_bp: wake_signal.vad_coverage_bp,
+                timestamp_ms: wake_signal.timestamp_ms,
+            });
+        }
         match sender.send(&envelope) {
             Ok(_receipt) => {
                 store.device_artifact_sync_ack_commit(
@@ -467,7 +546,15 @@ fn run_device_artifact_sync_worker_pass_with_metrics_internal(
                 metrics.acked_count = metrics.acked_count.saturating_add(1);
             }
             Err(err) => {
-                if row.attempt_count >= max_attempts {
+                if err.fatal {
+                    store.device_artifact_sync_dead_letter_commit(
+                        now,
+                        &row.sync_job_id,
+                        Some(worker_id.as_str()),
+                        err.message,
+                    )?;
+                    metrics.dead_lettered_count = metrics.dead_lettered_count.saturating_add(1);
+                } else if row.attempt_count >= max_attempts {
                     store.device_artifact_sync_dead_letter_commit(
                         now,
                         &row.sync_job_id,
@@ -1014,26 +1101,48 @@ fn send_http_sync_envelope(
     if let Some(token) = config.bearer_token.as_ref() {
         req = req.set("authorization", &format!("Bearer {}", token));
     }
+    let is_wake_learn = envelope.sync_kind == "WakeLearnSignal";
     match req.send_string(&payload) {
         Ok(resp) => {
-            if (200..=299).contains(&resp.status()) {
+            let status = resp.status();
+            let retry_after_header = resp.header("retry-after").map(|v| v.to_string());
+            if is_wake_learn {
+                let body = resp.into_string().ok();
+                return handle_wake_learn_sync_http_response(
+                    status,
+                    retry_after_header.as_deref(),
+                    body.as_deref(),
+                    envelope.sync_job_id.as_str(),
+                );
+            }
+            if (200..=299).contains(&status) {
                 Ok(DeviceArtifactSyncSendReceipt {
                     remote_ack_ref: Some(format!(
                         "http:{}:{}",
-                        resp.status(),
+                        status,
                         envelope.sync_job_id
                     )),
                 })
             } else {
-                let retry_after = parse_retry_after_ms(resp.header("retry-after"));
+                let retry_after = parse_retry_after_ms(retry_after_header.as_deref());
                 Err(DeviceArtifactSyncSendError::retryable(
-                    format!("sync failed with http status {}", resp.status()),
+                    format!("sync failed with http status {}", status),
                     retry_after,
                 ))
             }
         }
         Err(ureq::Error::Status(code, resp)) => {
-            let retry_after = parse_retry_after_ms(resp.header("retry-after"));
+            let retry_after_header = resp.header("retry-after").map(|v| v.to_string());
+            if is_wake_learn {
+                let body = resp.into_string().ok();
+                return handle_wake_learn_sync_http_response(
+                    code,
+                    retry_after_header.as_deref(),
+                    body.as_deref(),
+                    envelope.sync_job_id.as_str(),
+                );
+            }
+            let retry_after = parse_retry_after_ms(retry_after_header.as_deref());
             Err(DeviceArtifactSyncSendError::retryable(
                 format!("sync failed with http status {}", code),
                 retry_after,
@@ -1043,6 +1152,62 @@ fn send_http_sync_envelope(
             format!("sync transport error: {}", err),
             DEVICE_SYNC_RETRY_AFTER_MS_DEFAULT,
         )),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+struct WakeLearnSyncHttpResponse {
+    status: String,
+    ack_ref: Option<String>,
+    retry_after_ms: Option<u32>,
+    error_code: Option<String>,
+}
+
+fn handle_wake_learn_sync_http_response(
+    status: u16,
+    retry_after_header: Option<&str>,
+    body: Option<&str>,
+    sync_job_id: &str,
+) -> Result<DeviceArtifactSyncSendReceipt, DeviceArtifactSyncSendError> {
+    let retry_after_header_ms = parse_retry_after_ms(retry_after_header);
+    if let Some(raw) = body {
+        if let Ok(parsed) = serde_json::from_str::<WakeLearnSyncHttpResponse>(raw) {
+            match parsed.status.as_str() {
+                "ACK" => {
+                    return Ok(DeviceArtifactSyncSendReceipt {
+                        remote_ack_ref: parsed
+                            .ack_ref
+                            .or_else(|| Some(format!("wake_learn_ack:{}", sync_job_id))),
+                    });
+                }
+                "NACK_RETRYABLE" => {
+                    return Err(DeviceArtifactSyncSendError::retryable(
+                        parsed
+                            .error_code
+                            .unwrap_or_else(|| "wake_learn_nack_retryable".to_string()),
+                        parsed.retry_after_ms.unwrap_or(retry_after_header_ms),
+                    ));
+                }
+                "NACK_FATAL" => {
+                    return Err(DeviceArtifactSyncSendError::fatal(
+                        parsed
+                            .error_code
+                            .unwrap_or_else(|| "wake_learn_nack_fatal".to_string()),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    if (200..=299).contains(&status) {
+        Ok(DeviceArtifactSyncSendReceipt {
+            remote_ack_ref: Some(format!("http:{}:{}", status, sync_job_id)),
+        })
+    } else {
+        Err(DeviceArtifactSyncSendError::retryable(
+            format!("sync failed with http status {}", status),
+            retry_after_header_ms,
+        ))
     }
 }
 
@@ -1061,6 +1226,7 @@ fn parse_retry_after_ms(retry_after_header: Option<&str>) -> u32 {
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1art::ArtifactVersion;
+    use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
     use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, Ph1LinkRequest};
@@ -1257,6 +1423,37 @@ mod tests {
                 format!("seed-activate-{}", idem_suffix),
             )
             .unwrap();
+    }
+
+    fn seed_wake_learn_signal(
+        store: &mut Ph1fStore,
+        now: MonotonicTimeNs,
+        device_id: &DeviceId,
+        signal_id: &str,
+        idempotency_key: &str,
+        event_type: LearnSignalType,
+    ) -> String {
+        let signal = WakeLearnSignalV1::v1(
+            signal_id.to_string(),
+            idempotency_key.to_string(),
+            format!("wake_window_{}", signal_id),
+            event_type,
+            device_id.clone(),
+            None,
+            WakeLearnTrigger::WakeWord,
+            Some("PH1.W.001".to_string()),
+            Some(6_300),
+            Some(6_500),
+            Some(ReasonCodeId(0x5700_0030)),
+            Some(18_000),
+            Some(7_500),
+            (now.0 / 1_000_000).max(1),
+        )
+        .unwrap();
+        let row = store
+            .wake_learn_signal_commit_and_enqueue(now, signal)
+            .unwrap();
+        row.outbox_receipt_ref
     }
 
     #[test]
@@ -1495,5 +1692,134 @@ mod tests {
             .wake_artifact_apply_current_row(&d)
             .expect("apply current must exist");
         assert_eq!(current.active_artifact_version, Some(ArtifactVersion(1)));
+    }
+
+    #[test]
+    fn at_device_sync_wakelearn_01_duplicate_signal_id_is_idempotent() {
+        let mut store = Ph1fStore::new_in_memory();
+        let u = user("tenant_1:user_wakelearn_idem");
+        let d = device("device_wakelearn_idem");
+        seed_identity_and_device(&mut store, &u, &d);
+        let now = MonotonicTimeNs(90);
+        let receipt = seed_wake_learn_signal(
+            &mut store,
+            now,
+            &d,
+            "wake_sig_idem",
+            "wake_sig_idem_1",
+            LearnSignalType::WakeRejected,
+        );
+        let _receipt2 = seed_wake_learn_signal(
+            &mut store,
+            MonotonicTimeNs(91),
+            &d,
+            "wake_sig_idem",
+            "wake_sig_idem_1_duplicate",
+            LearnSignalType::WakeRejected,
+        );
+        let rows = store.wake_learn_signal_rows();
+        assert_eq!(rows.len(), 1);
+        let queue_rows: Vec<_> = store
+            .device_artifact_sync_queue_rows()
+            .iter()
+            .filter(|row| row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal)
+            .collect();
+        assert_eq!(queue_rows.len(), 1);
+        assert_eq!(queue_rows[0].receipt_ref, receipt);
+    }
+
+    #[test]
+    fn at_device_sync_wakelearn_02_ack_marks_item_acked() {
+        let mut store = Ph1fStore::new_in_memory();
+        let u = user("tenant_1:user_wakelearn_ack");
+        let d = device("device_wakelearn_ack");
+        seed_identity_and_device(&mut store, &u, &d);
+        let receipt = seed_wake_learn_signal(
+            &mut store,
+            MonotonicTimeNs(100),
+            &d,
+            "wake_sig_ack",
+            "wake_sig_ack_1",
+            LearnSignalType::WakeAccepted,
+        );
+        let metrics = run_device_artifact_sync_worker_pass_with_metrics_internal(
+            &mut store,
+            MonotonicTimeNs(101),
+            "worker_wakelearn_ack".to_string(),
+            &DeviceArtifactSyncSenderRuntime::LoopbackAck,
+            &DeviceArtifactPullRuntime::Disabled,
+            3,
+        )
+        .unwrap();
+        let row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("wake learn queue row must exist");
+        assert_eq!(row.state, MobileArtifactSyncState::Acked);
+        assert_eq!(metrics.acked_count, 1);
+        assert_eq!(metrics.retry_scheduled_count, 0);
+        assert_eq!(metrics.dead_lettered_count, 0);
+    }
+
+    #[test]
+    fn at_device_sync_wakelearn_03_retryable_nack_schedules_retry() {
+        let mut store = Ph1fStore::new_in_memory();
+        let u = user("tenant_1:user_wakelearn_retry");
+        let d = device("device_wakelearn_retry");
+        seed_identity_and_device(&mut store, &u, &d);
+        let receipt = seed_wake_learn_signal(
+            &mut store,
+            MonotonicTimeNs(110),
+            &d,
+            "wake_sig_retry",
+            "wake_sig_retry_1",
+            LearnSignalType::WakeRejected,
+        );
+        let metrics = run_device_artifact_sync_worker_pass_with_metrics_internal(
+            &mut store,
+            MonotonicTimeNs(111),
+            "worker_wakelearn_retry".to_string(),
+            &DeviceArtifactSyncSenderRuntime::always_fail_for_tests("nack_retryable", 7_000),
+            &DeviceArtifactPullRuntime::Disabled,
+            3,
+        )
+        .unwrap();
+        let row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("wake learn queue row must exist");
+        assert_eq!(row.state, MobileArtifactSyncState::InFlight);
+        assert_eq!(row.last_error.as_deref(), Some("nack_retryable"));
+        assert_eq!(metrics.retry_scheduled_count, 1);
+        assert_eq!(metrics.dead_lettered_count, 0);
+    }
+
+    #[test]
+    fn at_device_sync_wakelearn_04_fatal_nack_dead_letters_immediately() {
+        let mut store = Ph1fStore::new_in_memory();
+        let u = user("tenant_1:user_wakelearn_fatal");
+        let d = device("device_wakelearn_fatal");
+        seed_identity_and_device(&mut store, &u, &d);
+        let receipt = seed_wake_learn_signal(
+            &mut store,
+            MonotonicTimeNs(120),
+            &d,
+            "wake_sig_fatal",
+            "wake_sig_fatal_1",
+            LearnSignalType::NoisyEnvironment,
+        );
+        let metrics = run_device_artifact_sync_worker_pass_with_metrics_internal(
+            &mut store,
+            MonotonicTimeNs(121),
+            "worker_wakelearn_fatal".to_string(),
+            &DeviceArtifactSyncSenderRuntime::always_fatal_nack_for_tests("nack_fatal"),
+            &DeviceArtifactPullRuntime::Disabled,
+            5,
+        )
+        .unwrap();
+        let row = store
+            .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+            .expect("wake learn queue row must exist");
+        assert_eq!(row.state, MobileArtifactSyncState::DeadLetter);
+        assert_eq!(row.last_error.as_deref(), Some("nack_fatal"));
+        assert_eq!(metrics.dead_lettered_count, 1);
     }
 }

@@ -2,7 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::ph1j::{CorrelationId, TurnId};
+use crate::ph1j::{CorrelationId, DeviceId, TurnId};
+use crate::ph1l::SessionId;
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1LEARN_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
@@ -42,6 +43,31 @@ pub enum LearnSignalType {
     VoiceIdConfusionPair,
     VoiceIdDrift,
     VoiceIdLowQuality,
+    // Wake learn taxonomy.
+    WakeAccepted,
+    WakeRejected,
+    FalseWake,
+    MissedWake,
+    LowConfidenceWake,
+    NoisyEnvironment,
+}
+
+pub fn is_wake_learn_signal_type(signal_type: LearnSignalType) -> bool {
+    matches!(
+        signal_type,
+        LearnSignalType::WakeAccepted
+            | LearnSignalType::WakeRejected
+            | LearnSignalType::FalseWake
+            | LearnSignalType::MissedWake
+            | LearnSignalType::LowConfidenceWake
+            | LearnSignalType::NoisyEnvironment
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WakeLearnTrigger {
+    WakeWord,
+    Explicit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -363,6 +389,134 @@ impl Validate for LearnSignal {
             }
         }
 
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeLearnSignalV1 {
+    pub schema_version: SchemaVersion,
+    pub signal_id: String,
+    pub idempotency_key: String,
+    pub wake_window_id: String,
+    pub event_type: LearnSignalType,
+    pub device_id: DeviceId,
+    pub session_id: Option<SessionId>,
+    pub trigger: WakeLearnTrigger,
+    pub model_version: Option<String>,
+    pub score_bp: Option<u16>,
+    pub threshold_bp: Option<u16>,
+    pub reason_code: Option<ReasonCodeId>,
+    pub snr_db_milli: Option<i32>,
+    pub vad_coverage_bp: Option<u16>,
+    pub timestamp_ms: u64,
+}
+
+impl WakeLearnSignalV1 {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        signal_id: String,
+        idempotency_key: String,
+        wake_window_id: String,
+        event_type: LearnSignalType,
+        device_id: DeviceId,
+        session_id: Option<SessionId>,
+        trigger: WakeLearnTrigger,
+        model_version: Option<String>,
+        score_bp: Option<u16>,
+        threshold_bp: Option<u16>,
+        reason_code: Option<ReasonCodeId>,
+        snr_db_milli: Option<i32>,
+        vad_coverage_bp: Option<u16>,
+        timestamp_ms: u64,
+    ) -> Result<Self, ContractViolation> {
+        let signal = Self {
+            schema_version: PH1LEARN_CONTRACT_VERSION,
+            signal_id,
+            idempotency_key,
+            wake_window_id,
+            event_type,
+            device_id,
+            session_id,
+            trigger,
+            model_version,
+            score_bp,
+            threshold_bp,
+            reason_code,
+            snr_db_milli,
+            vad_coverage_bp,
+            timestamp_ms,
+        };
+        signal.validate()?;
+        Ok(signal)
+    }
+}
+
+impl Validate for WakeLearnSignalV1 {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1LEARN_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_learn_signal_v1.schema_version",
+                reason: "must match PH1LEARN_CONTRACT_VERSION",
+            });
+        }
+        validate_token("wake_learn_signal_v1.signal_id", &self.signal_id, 96)?;
+        validate_token(
+            "wake_learn_signal_v1.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        validate_token(
+            "wake_learn_signal_v1.wake_window_id",
+            &self.wake_window_id,
+            96,
+        )?;
+        if !is_wake_learn_signal_type(self.event_type) {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_learn_signal_v1.event_type",
+                reason: "must be a wake learn signal type",
+            });
+        }
+        self.device_id.validate()?;
+        if let Some(session_id) = self.session_id {
+            if session_id.0 == 0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_learn_signal_v1.session_id",
+                    reason: "must be > 0 when present",
+                });
+            }
+        }
+        if let Some(model_version) = self.model_version.as_ref() {
+            validate_token("wake_learn_signal_v1.model_version", model_version, 64)?;
+        }
+        for (field, value) in [
+            ("wake_learn_signal_v1.score_bp", self.score_bp),
+            ("wake_learn_signal_v1.threshold_bp", self.threshold_bp),
+            ("wake_learn_signal_v1.vad_coverage_bp", self.vad_coverage_bp),
+        ] {
+            if let Some(v) = value {
+                if v > 10_000 {
+                    return Err(ContractViolation::InvalidValue {
+                        field,
+                        reason: "must be <= 10000 basis points",
+                    });
+                }
+            }
+        }
+        if let Some(snr_db_milli) = self.snr_db_milli {
+            if !(-20_000..=80_000).contains(&snr_db_milli) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_learn_signal_v1.snr_db_milli",
+                    reason: "must be within -20000..=80000",
+                });
+            }
+        }
+        if self.timestamp_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_learn_signal_v1.timestamp_ms",
+                reason: "must be > 0",
+            });
+        }
         Ok(())
     }
 }
@@ -1175,14 +1329,20 @@ fn default_learn_case_path(signal_type: LearnSignalType) -> LearnCasePath {
         | LearnSignalType::VoiceIdDriftAlert
         | LearnSignalType::VoiceIdReauthFriction
         | LearnSignalType::VoiceIdDrift
-        | LearnSignalType::VoiceIdLowQuality => LearnCasePath::Improvement,
+        | LearnSignalType::VoiceIdLowQuality
+        | LearnSignalType::WakeAccepted => LearnCasePath::Improvement,
         LearnSignalType::SttReject
         | LearnSignalType::ToolFail
         | LearnSignalType::VoiceIdFalseReject
         | LearnSignalType::VoiceIdFalseAccept
         | LearnSignalType::VoiceIdMultiSpeaker
         | LearnSignalType::VoiceIdConfusionPair
-        | LearnSignalType::VoiceIdSpoofRisk => LearnCasePath::Defect,
+        | LearnSignalType::VoiceIdSpoofRisk
+        | LearnSignalType::WakeRejected
+        | LearnSignalType::FalseWake
+        | LearnSignalType::MissedWake
+        | LearnSignalType::LowConfidenceWake
+        | LearnSignalType::NoisyEnvironment => LearnCasePath::Defect,
     }
 }
 
