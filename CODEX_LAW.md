@@ -120,6 +120,18 @@ Execution must never be probabilistic.
 - If uncertain about contract meaning, state order, gate sequencing, simulation boundaries, or engine interaction: stop and ask JD.
 - Guessing is forbidden.
 
+## Permanent Rule: Engineering Quality Standard
+- All code delivered by Codex must aim for production-grade quality.
+- Warnings must be fixed, not ignored, unless explicitly approved by JD.
+- Do not use shortcuts, lazy fixes, temporary hacks, or workaround-style patches when a proper implementation is reasonably achievable within scope.
+- Prefer the most efficient, accurate, maintainable, and fully-wired solution that fits Selene's architecture.
+- Preserve maximum required functionality; do not silently reduce scope to make a patch easier.
+- If a proper implementation is too large for the current run, Codex must state that clearly and stop at a clean architectural boundary rather than shipping a weak partial workaround.
+- Clean builds are the target standard; warning-free is the default expectation.
+
+Enforcement note:
+- Before final commit, Codex should run relevant checks and treat warnings as issues to resolve where practical and in-scope.
+
 ## 5-Step Process for Conflicts / Upgrades to Prior Code
 1. Raise Change Request
 - Declare conflict and why existing code must change.
