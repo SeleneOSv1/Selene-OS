@@ -60,6 +60,7 @@ Execution must never be probabilistic.
 - Existing files are read-only by default.
 - Additive new files/modules/tests are allowed by default.
 - Editing existing files requires explicit file-scope approval.
+- This default-deny governs change runs; read-only/reporting runs must keep files untouched and end clean.
 
 3. Spine Lock (High Risk Core)
 - Spine code is immutable without explicit JD approval.
@@ -75,8 +76,8 @@ Execution must never be probabilistic.
 - If extra files are needed: stop and ask JD first.
 
 6. Baseline Gate
-- Run baseline tests for affected domain before edits.
-- If baseline is red: stop immediately. No coding until green.
+- For change runs, run baseline tests for the affected domain before edits.
+- If baseline is red on a change run: stop immediately, report baseline failure, and do not code until green.
 
 7. Change Class Gate
 - Class A: additive new modules only -> allowed.
@@ -170,6 +171,7 @@ Enforcement note:
 - Any out-of-scope file => stop and request approval.
 
 ### D) Mandatory Proof Checklist Before Commit
+- Applies when the run includes file edits (change run).
 - Baseline commands passed
 - Targeted tests passed
 - Required contract/reason/idempotency/state-machine checks passed
@@ -180,8 +182,9 @@ Enforcement note:
 ### E) Mandatory Cleanliness Gates
 - Clean tree at start and end (`git status --porcelain` empty).
 - Start of every run: `git status --porcelain` must be empty. If not, stop and resolve it first.
-- End of every run: tests/checks must pass, append a PASS line to `docs/03_BUILD_LEDGER.md`, commit only the run files plus the ledger entry, push to `origin`, then verify `git status --porcelain` is empty again.
-- End-of-task is not complete until changes are committed and pushed to `origin`.
+- End of change runs: tests/checks must pass, append a PASS line to `docs/03_BUILD_LEDGER.md`, commit only the run files plus the ledger entry, push to `origin`, then verify `git status --porcelain` is empty again.
+- End of read-only/no-change runs: no commit and no ledger append; provide clean-tree proof (`git status --porcelain` empty).
+- End-of-task is not complete until the applicable end condition above is satisfied.
 - A new task must not start until the previous task is pushed and the tree is clean again.
 - No local-only real work.
 - No untracked leftovers.
@@ -190,7 +193,7 @@ Enforcement note:
 ### F) Hard Fail Conditions (Immediate Stop)
 - Attempted Python usage
 - Missing required approval for B/C changes
-- Baseline failing before edits
+- Baseline failing before edits on a change run
 - Out-of-scope file touched
 - Unknown reason code introduced
 - State/gate ordering changed without approval
