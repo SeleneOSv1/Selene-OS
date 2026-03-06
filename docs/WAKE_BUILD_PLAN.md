@@ -200,6 +200,20 @@ Artifacts contain:
 - `package_hash`
 - `payload_ref`
 
+WakePack manifest (TARGET / OPEN / NOT BUILT YET):
+
+- `model_version`
+- `model_abi`
+- `feature_config_id`
+- `threshold_profile_id`
+- `artifact_version`
+- `package_hash`
+- `payload_ref`
+- `provenance_ref`
+- `train_data_snapshot_id`
+- `eval_metrics_summary`
+- `rollback_to_artifact_version`
+
 Artifacts are synced through the Mobile Artifact Sync system.
 
 Outbox states:
@@ -232,6 +246,13 @@ Downgrade semantics:
 - Revert to last known good artifact with compatible ABI.
 - Mark failed artifact version as blocked for 24 hours minimum.
 - Preserve idempotency and receipt lineage across downgrade.
+
+Promotion + rollback hardening (required):
+
+- Replay-safe canary cohorts must use deterministic cohort assignment and stable cohort keys.
+- Failed versions must enter a blocked-version list before retrying activation.
+- A rollback drill must pass before full promotion.
+- Full promotion must verify `last_known_good` pointer integrity for every activated device.
 
 Artifact privacy and deletion:
 
@@ -439,6 +460,61 @@ Detection model requirements:
 - Threshold profile must be versioned and tied to `model_version`.
 - Threshold updates require artifact ledger commit and rollout policy compliance.
 
+Wake training dataset builder contract (TARGET / OPEN / NOT BUILT YET):
+
+Inputs:
+- onboarding wake enrollment samples
+- wake runtime events
+- wake learn signals
+- curated non-wake speech/background negatives
+
+Dataset construction rules:
+- positives = completed wake enrollment `PASS` samples + `WakeAccepted` windows.
+- negatives = `WakeRejected` / `NoisyEnvironment` windows + curated non-wake speech.
+- `FalseWake` / `MissedWake` adjudications join once verified evidence exists.
+- train/val/test must enforce no user leakage.
+- train/val/test must enforce no device leakage where possible.
+- train/val/test must enforce no time-adjacent leakage.
+
+Split policy:
+- global corpus for shared wake robustness.
+- per-user adaptation corpus for personalized thresholds/features.
+- per-platform validation slices (`DESKTOP`, `ANDROID`) with policy-equivalent trigger context.
+
+Feature extraction lock (TARGET / OPEN / NOT BUILT YET):
+
+Locked default:
+- `sample_rate = 16000`
+- mono audio
+- `frame_ms = 25`
+- `hop_ms = 10`
+- `mel_bins = 40`
+- primary feature = log-mel
+- fallback feature = MFCC-13 + deltas (only if needed)
+
+Normalization rules:
+- gain normalization to bounded target RMS before feature extraction.
+- per-utterance CMVN is mandatory.
+- `feature_config_id` must be embedded in WakePack manifests and runtime telemetry.
+
+Model architecture decision (TARGET / OPEN / NOT BUILT YET):
+
+Primary model:
+- DS-CNN (depthwise separable CNN), INT8-ready.
+
+Fallback model:
+- compact CNN-LSTM.
+
+Architecture rationale:
+- DS-CNN is primary for low-latency and low-power always-listening suitability on desktop now and Android next.
+- CNN-LSTM is fallback when temporal robustness gains justify higher latency/power cost.
+
+Expected tradeoffs:
+- latency: DS-CNN lower, CNN-LSTM higher.
+- power: DS-CNN lower, CNN-LSTM higher.
+- robustness: CNN-LSTM can improve temporal/noise resilience.
+- platform suitability: DS-CNN preferred for mobile/edge constraints; CNN-LSTM limited to gated fallback profiles.
+
 ## Section 12: Wake Learning Loop
 
 Continuous learning pipeline:
@@ -463,9 +539,41 @@ Device apply/activation state machine (required):
 - Persist last_known_good pointer
 - Automatic rollback triggers on quality regressions and crash regressions
 
+Offline training boundary (hard rule):
+
+- Training and evaluation are `OFFLINE_PIPELINE_ONLY`.
+- Runtime never retrains in-turn.
+- Runtime only consumes verified active WakePack artifacts.
+- Runtime emits events/signals; offline pipeline converts them into candidate artifacts.
+
+Training pipeline role split (TARGET / OPEN / NOT BUILT YET):
+
+- PH1.LEARN aggregates signals.
+- Training job builds candidate WakePack artifacts.
+- Builder/governance validates candidate artifacts and rollout eligibility.
+- Artifact ledger commit records approved candidates and lineage.
+- Promotion path executes `Shadow -> Canary -> Active` with deterministic gates.
+- Device pull/apply activates approved artifacts with rollback safety.
+
 ## Section 13: Wake Accuracy Stabilization
 
 Wake quality is measured by explicit metrics and windows.
+
+Training candidate required evaluation metrics (TARGET / OPEN / NOT BUILT YET):
+
+- FAR (false accepts per listening hour).
+- FRR (false rejects for true wake attempts).
+- `miss_rate` for true wake opportunities.
+- wake decision latency proxy.
+- threshold calibration quality.
+- reject reason distribution.
+
+Evaluation protocol:
+
+- Fixed held-out validation sets are mandatory and excluded from training.
+- Platform-specific held-out slices are mandatory (`DESKTOP`, `ANDROID`).
+- Promotion is blocked if any required evaluation metric regresses beyond configured thresholds.
+- Threshold calibration outputs must be versioned and tied to `threshold_profile_id`.
 
 Per-device rolling 7 day metrics:
 
