@@ -104,6 +104,73 @@ Hard fail thresholds:
 - Android CPU > 5.0% for 5 minutes or RSS > 96 MB.
 - Battery drain above target by > 50% for two consecutive 30 minute windows.
 
+## Section 2A: Universal Invite Link Architecture (TARGET / OPEN / NOT BUILT YET)
+
+A) Canonical invite link
+
+- One universal invite link format: `https://<selene_host>/invite/<token>`.
+- One invite token source of truth: token resolution is authoritative for inviter, invitee, tenant, expiry, platform permissions, and ownership mode.
+- Token resolution must return deterministic app-open context used by `LINK_INVITE_OPEN_ACTIVATE_COMMIT` and `ONB_SESSION_START_DRAFT`.
+
+B) Selene intro step
+
+- First page introduces Selene and identifies who sent the invite.
+- User must explicitly approve continue before install/open routing.
+- Intro step detects platform and device class (`enterprise-managed iPhone`, `personal iPhone`, `Desktop`) and selects install/open route.
+- Invite token is preserved unchanged through intro and routing.
+
+C) Routing matrix
+
+1. Enterprise-managed iPhone
+- Route through enterprise-managed install/assignment path (MDM-owned).
+- After install/open, app re-enters with invite token and calls `/v1/invite/click`.
+- Continue canonical onboarding through `/v1/onboarding/continue`.
+- iPhone remains `EXPLICIT` only; `WAKE_WORD` is blocked.
+
+2. Personal iPhone
+- Route to App Store/TestFlight install path.
+- After install/open, app re-enters through universal/deep link carrying invite token.
+- Continue canonical onboarding through `/v1/invite/click` then `/v1/onboarding/continue`.
+- iPhone remains `EXPLICIT` only; `WAKE_WORD` is blocked.
+
+3. Desktop
+- Route to desktop app open/installer path.
+- If app is already installed, deep-link directly with invite token.
+- Continue canonical onboarding through `/v1/invite/click` then `/v1/onboarding/continue`.
+- Desktop wake enrollment remains required before `WAKE_WORD` is enabled.
+
+D) Unified onboarding rule
+
+- All invite paths converge into one canonical onboarding engine.
+- Platform-specific receipts and gating are enforced only inside the canonical onboarding engine.
+- No duplicate onboarding systems allowed.
+
+E) Ownership model
+
+- `enterprise-managed device`: enterprise controls install, assignment, and policy envelope before onboarding continue.
+- `personal device`: user-controlled install path, then token-bound onboarding under tenant policy.
+- `desktop device`: direct app open/install path, then token-bound onboarding with desktop wake enrollment requirement.
+
+F) Hard rules
+
+- one universal invite link only
+- one invite token source of truth only
+- one onboarding engine only
+- install path may differ, onboarding engine must not fork
+- iPhone wake word remains blocked
+- desktop wake training remains required
+
+Copy-ready flow blocks:
+
+Enterprise-managed iPhone:
+Invite link -> Selene intro -> enterprise approval -> MDM install/assign -> app opens -> onboarding -> ios_side_button_configured -> ready
+
+Personal iPhone:
+Invite link -> Selene intro -> App Store/TestFlight -> app install -> app opens -> onboarding -> ios_side_button_configured -> ready
+
+Desktop:
+Invite link -> Selene intro -> desktop app open/install -> onboarding -> wake enrollment -> ready
+
 ## Section 3: Current Repo Reality
 
 From the current repository state:
