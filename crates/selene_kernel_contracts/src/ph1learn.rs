@@ -831,8 +831,15 @@ pub struct WakeTrainEvalReportV1 {
     pub frr_bp: u16,
     pub miss_rate_bp: u16,
     pub latency_proxy_ms: u16,
+    pub threshold_profile_calibrated_bp: Option<u16>,
     pub threshold_calibration_error_bp: u16,
+    pub threshold_calibration_summary_ref: String,
     pub reject_reason_distribution_ref: String,
+    pub train_example_count: u32,
+    pub validation_example_count: u32,
+    pub test_example_count: u32,
+    pub platform_slice_summary_ref: Option<String>,
+    pub not_measured_metrics_ref: Option<String>,
     pub generated_at_ms: u64,
 }
 
@@ -851,6 +858,49 @@ impl WakeTrainEvalReportV1 {
         reject_reason_distribution_ref: String,
         generated_at_ms: u64,
     ) -> Result<Self, ContractViolation> {
+        Self::v2(
+            report_id,
+            dataset_snapshot_id,
+            model_version,
+            threshold_profile_id,
+            far_per_listening_hour_milli,
+            frr_bp,
+            miss_rate_bp,
+            latency_proxy_ms,
+            None,
+            threshold_calibration_error_bp,
+            "open:not_measured_threshold_calibration".to_string(),
+            reject_reason_distribution_ref,
+            0,
+            0,
+            0,
+            None,
+            Some("open:not_measured_step1_eval_fields".to_string()),
+            generated_at_ms,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v2(
+        report_id: String,
+        dataset_snapshot_id: String,
+        model_version: String,
+        threshold_profile_id: String,
+        far_per_listening_hour_milli: u32,
+        frr_bp: u16,
+        miss_rate_bp: u16,
+        latency_proxy_ms: u16,
+        threshold_profile_calibrated_bp: Option<u16>,
+        threshold_calibration_error_bp: u16,
+        threshold_calibration_summary_ref: String,
+        reject_reason_distribution_ref: String,
+        train_example_count: u32,
+        validation_example_count: u32,
+        test_example_count: u32,
+        platform_slice_summary_ref: Option<String>,
+        not_measured_metrics_ref: Option<String>,
+        generated_at_ms: u64,
+    ) -> Result<Self, ContractViolation> {
         let report = Self {
             schema_version: PH1LEARN_CONTRACT_VERSION,
             report_id,
@@ -861,8 +911,15 @@ impl WakeTrainEvalReportV1 {
             frr_bp,
             miss_rate_bp,
             latency_proxy_ms,
+            threshold_profile_calibrated_bp,
             threshold_calibration_error_bp,
+            threshold_calibration_summary_ref,
             reject_reason_distribution_ref,
+            train_example_count,
+            validation_example_count,
+            test_example_count,
+            platform_slice_summary_ref,
+            not_measured_metrics_ref,
             generated_at_ms,
         };
         report.validate()?;
@@ -896,6 +953,7 @@ impl Validate for WakeTrainEvalReportV1 {
         )?;
         if self.frr_bp > 10_000
             || self.miss_rate_bp > 10_000
+            || self.threshold_profile_calibrated_bp.unwrap_or(0) > 10_000
             || self.threshold_calibration_error_bp > 10_000
         {
             return Err(ContractViolation::InvalidValue {
@@ -914,10 +972,39 @@ impl Validate for WakeTrainEvalReportV1 {
             &self.reject_reason_distribution_ref,
             192,
         )?;
+        validate_token(
+            "wake_train_eval_report_v1.threshold_calibration_summary_ref",
+            &self.threshold_calibration_summary_ref,
+            192,
+        )?;
+        if let Some(platform_slice_summary_ref) = self.platform_slice_summary_ref.as_ref() {
+            validate_token(
+                "wake_train_eval_report_v1.platform_slice_summary_ref",
+                platform_slice_summary_ref,
+                192,
+            )?;
+        }
+        if let Some(not_measured_metrics_ref) = self.not_measured_metrics_ref.as_ref() {
+            validate_token(
+                "wake_train_eval_report_v1.not_measured_metrics_ref",
+                not_measured_metrics_ref,
+                192,
+            )?;
+        }
         if self.generated_at_ms == 0 {
             return Err(ContractViolation::InvalidValue {
                 field: "wake_train_eval_report_v1.generated_at_ms",
                 reason: "must be > 0",
+            });
+        }
+        if self.train_example_count == 0
+            && self.validation_example_count == 0
+            && self.test_example_count == 0
+            && self.not_measured_metrics_ref.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_train_eval_report_v1.counts",
+                reason: "counts can be all-zero only when not_measured_metrics_ref is set",
             });
         }
         Ok(())

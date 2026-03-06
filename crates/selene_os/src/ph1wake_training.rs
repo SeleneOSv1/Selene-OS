@@ -9,11 +9,12 @@ use selene_kernel_contracts::ph1learn::{
     WakeTrainDatasetScopeV1, WakeTrainDatasetSliceV1, WakeTrainEvalReportV1,
 };
 use selene_kernel_contracts::{ContractViolation, Validate};
-use selene_storage::ph1f::{Ph1fStore, WakeSampleResult};
+use selene_storage::ph1f::{Ph1fStore, WakeEnrollmentSampleRecord, WakeSampleResult};
 
 const TRAIN_SPLIT_BP: u16 = 8_000;
 const VALIDATION_SPLIT_BP: u16 = 1_000;
 const SPLIT_DENOMINATOR_BP: u16 = 10_000;
+const DEFAULT_CALIBRATION_THRESHOLD_BP: u16 = 8_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WakeTrainingStep1Config {
@@ -161,6 +162,195 @@ pub struct WakeTrainingStep1Output {
     pub wake_pack_manifest: WakePackManifestV1,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WakeTrainingStep2Config {
+    pub offline_pipeline_only: bool,
+    pub time_adjacent_window_ms: u64,
+    pub default_latency_proxy_ms: u16,
+}
+
+impl Default for WakeTrainingStep2Config {
+    fn default() -> Self {
+        Self {
+            offline_pipeline_only: true,
+            time_adjacent_window_ms: 30_000,
+            default_latency_proxy_ms: 120,
+        }
+    }
+}
+
+impl Validate for WakeTrainingStep2Config {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if !self.offline_pipeline_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step2_config.offline_pipeline_only",
+                reason: "must be true",
+            });
+        }
+        if self.time_adjacent_window_ms == 0 || self.time_adjacent_window_ms > 3_600_000 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step2_config.time_adjacent_window_ms",
+                reason: "must be in [1, 3600000]",
+            });
+        }
+        if self.default_latency_proxy_ms == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step2_config.default_latency_proxy_ms",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainingStep2Request {
+    pub dataset_snapshot_id: String,
+    pub feature_config_id: String,
+    pub model_version: String,
+    pub model_abi: String,
+    pub artifact_version: ArtifactVersion,
+    pub provenance_ref: String,
+    pub rollback_to_artifact_version: Option<ArtifactVersion>,
+    pub offline_pipeline_only: bool,
+}
+
+impl WakeTrainingStep2Request {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        dataset_snapshot_id: String,
+        feature_config_id: String,
+        model_version: String,
+        model_abi: String,
+        artifact_version: ArtifactVersion,
+        provenance_ref: String,
+        rollback_to_artifact_version: Option<ArtifactVersion>,
+        offline_pipeline_only: bool,
+    ) -> Result<Self, ContractViolation> {
+        let req = Self {
+            dataset_snapshot_id,
+            feature_config_id,
+            model_version,
+            model_abi,
+            artifact_version,
+            provenance_ref,
+            rollback_to_artifact_version,
+            offline_pipeline_only,
+        };
+        req.validate()?;
+        Ok(req)
+    }
+}
+
+impl Validate for WakeTrainingStep2Request {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_token(
+            "wake_training_step2_request.dataset_snapshot_id",
+            &self.dataset_snapshot_id,
+            128,
+        )?;
+        validate_token(
+            "wake_training_step2_request.feature_config_id",
+            &self.feature_config_id,
+            96,
+        )?;
+        validate_token(
+            "wake_training_step2_request.model_version",
+            &self.model_version,
+            64,
+        )?;
+        validate_token("wake_training_step2_request.model_abi", &self.model_abi, 64)?;
+        self.artifact_version.validate()?;
+        validate_token(
+            "wake_training_step2_request.provenance_ref",
+            &self.provenance_ref,
+            128,
+        )?;
+        if let Some(rollback) = self.rollback_to_artifact_version {
+            rollback.validate()?;
+            if rollback >= self.artifact_version {
+                return Err(ContractViolation::InvalidValue {
+                    field: "wake_training_step2_request.rollback_to_artifact_version",
+                    reason: "must be < artifact_version when present",
+                });
+            }
+        }
+        if !self.offline_pipeline_only {
+            return Err(ContractViolation::InvalidValue {
+                field: "wake_training_step2_request.offline_pipeline_only",
+                reason: "must be true",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeDatasetRowV1 {
+    pub row_id: String,
+    pub source_kind: String,
+    pub label: String,
+    pub user_id: Option<String>,
+    pub device_id: String,
+    pub timestamp_ms: u64,
+    pub score_bp: Option<u16>,
+    pub reason_ref: Option<String>,
+    pub extractability: String,
+    pub extractable: bool,
+    pub latency_proxy_ms: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeLeakageGuardSummaryV1 {
+    pub no_user_leakage: bool,
+    pub no_device_leakage: bool,
+    pub no_time_adjacent_leakage: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeDatasetAssemblySummaryV1 {
+    pub total_rows: u32,
+    pub positive_rows: u32,
+    pub negative_rows: u32,
+    pub source_counts: BTreeMap<String, u32>,
+    pub label_counts: BTreeMap<String, u32>,
+    pub extractability_counts: BTreeMap<String, u32>,
+    pub leakage_guards: WakeLeakageGuardSummaryV1,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeThresholdCalibrationV1 {
+    pub threshold_profile_id: String,
+    pub calibrated_threshold_bp: u16,
+    pub calibration_error_bp: u16,
+    pub positive_scored_count: u32,
+    pub negative_scored_count: u32,
+    pub threshold_calibration_summary_ref: String,
+    pub not_measured_metrics: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeCandidatePackageV1 {
+    pub candidate_package_id: String,
+    pub payload_ref: String,
+    pub package_hash: String,
+    pub payload_len_bytes: u32,
+    pub payload_bytes: Vec<u8>,
+    pub candidate_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeTrainingStep2Output {
+    pub feature_config: WakeFeatureConfigV1,
+    pub dataset_rows: Vec<WakeDatasetRowV1>,
+    pub dataset_slices: Vec<WakeTrainDatasetSliceV1>,
+    pub dataset_summary: WakeDatasetAssemblySummaryV1,
+    pub threshold_calibration: WakeThresholdCalibrationV1,
+    pub eval_report: WakeTrainEvalReportV1,
+    pub wake_pack_manifest: WakePackManifestV1,
+    pub wakepack_candidate: WakeCandidatePackageV1,
+}
+
 pub fn build_wake_training_step1(
     store: &Ph1fStore,
     request: &WakeTrainingStep1Request,
@@ -185,7 +375,8 @@ pub fn build_wake_training_step1(
     }
     examples.sort_by(|a, b| a.example_id.cmp(&b.example_id));
 
-    let (assignments, leakage_report) = assign_dataset_partitions(&examples, config)?;
+    let (assignments, leakage_report) =
+        assign_dataset_partitions(&examples, config.time_adjacent_window_ms)?;
     enforce_leakage_guards(&leakage_report)?;
 
     let mut dataset_slices = build_global_slices(
@@ -226,6 +417,103 @@ pub fn build_wake_training_step1(
         dataset_slices,
         eval_report,
         wake_pack_manifest,
+    })
+}
+
+pub fn build_wake_training_step2(
+    store: &Ph1fStore,
+    request: &WakeTrainingStep2Request,
+    config: &WakeTrainingStep2Config,
+) -> Result<WakeTrainingStep2Output, ContractViolation> {
+    request.validate()?;
+    config.validate()?;
+    if !request.offline_pipeline_only || !config.offline_pipeline_only {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step2.offline_pipeline_only",
+            reason: "runtime path must be OFFLINE_PIPELINE_ONLY",
+        });
+    }
+
+    let feature_config = WakeFeatureConfigV1::locked_default_v1(request.feature_config_id.clone())?;
+    let mut examples = collect_dataset_examples(store);
+    if examples.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step2.dataset_examples",
+            reason: "must include at least one wake dataset example",
+        });
+    }
+    examples.sort_by(|a, b| a.example_id.cmp(&b.example_id));
+
+    let (assignments, leakage_report) =
+        assign_dataset_partitions(&examples, config.time_adjacent_window_ms)?;
+    enforce_leakage_guards(&leakage_report)?;
+
+    let mut dataset_slices = build_global_slices(
+        &examples,
+        &assignments,
+        request.dataset_snapshot_id.as_str(),
+        &leakage_report,
+    )?;
+    dataset_slices.extend(build_per_user_adaptation_slices(
+        &examples,
+        request.dataset_snapshot_id.as_str(),
+    )?);
+    if dataset_slices.is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field: "wake_training_step2.dataset_slices",
+            reason: "must produce at least one dataset slice",
+        });
+    }
+
+    let threshold_calibration = calibrate_threshold_profile(
+        request.dataset_snapshot_id.as_str(),
+        request.model_version.as_str(),
+        feature_config.feature_config_id.as_str(),
+        &examples,
+    );
+
+    let eval_report = build_eval_report_step2(
+        request,
+        &examples,
+        &dataset_slices,
+        &threshold_calibration,
+        config.default_latency_proxy_ms,
+    )?;
+
+    let dataset_summary = build_dataset_summary(&examples, &leakage_report);
+    let wakepack_candidate = build_wakepack_candidate_package(
+        request,
+        &feature_config,
+        &threshold_calibration,
+        &eval_report,
+        &dataset_summary,
+        &dataset_slices,
+    )?;
+
+    let wake_pack_manifest = WakePackManifestV1::v1(
+        request.model_version.clone(),
+        request.model_abi.clone(),
+        feature_config.feature_config_id.clone(),
+        threshold_calibration.threshold_profile_id.clone(),
+        request.artifact_version,
+        wakepack_candidate.package_hash.clone(),
+        wakepack_candidate.payload_ref.clone(),
+        request.provenance_ref.clone(),
+        request.dataset_snapshot_id.clone(),
+        eval_report.clone(),
+        request.rollback_to_artifact_version,
+        true,
+    )?;
+
+    Ok(WakeTrainingStep2Output {
+        feature_config,
+        dataset_rows: convert_to_dataset_rows(&examples),
+        dataset_slices,
+        dataset_summary,
+        threshold_calibration,
+        eval_report,
+        wake_pack_manifest,
+        wakepack_candidate,
     })
 }
 
@@ -287,6 +575,20 @@ enum WakeDatasetLabel {
     Negative,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum WakeDatasetSourceKind {
+    EnrollmentPass,
+    RuntimeAccepted,
+    RuntimeRejected,
+    LearnSignal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeDatasetExtractability {
+    RawPcmAvailable,
+    MetadataOnly,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WakeDatasetExample {
     example_id: String,
@@ -294,6 +596,11 @@ struct WakeDatasetExample {
     device_id: String,
     timestamp_ms: u64,
     label: WakeDatasetLabel,
+    source_kind: WakeDatasetSourceKind,
+    score_bp: Option<u16>,
+    reason_ref: Option<String>,
+    extractability: WakeDatasetExtractability,
+    latency_proxy_ms: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,6 +645,13 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             device_id: device_id.clone(),
             timestamp_ms: ns_to_ms(sample.captured_at.0),
             label: WakeDatasetLabel::Positive,
+            source_kind: WakeDatasetSourceKind::EnrollmentPass,
+            score_bp: score_from_enrollment_sample(sample.vad_coverage, sample.snr_db, sample.clipping_pct),
+            reason_ref: sample
+                .reason_code
+                .map(|reason| reason_ref_from_code(reason.0)),
+            extractability: extractability_from_enrollment_sample(sample),
+            latency_proxy_ms: Some(sample.sample_duration_ms),
         });
     }
 
@@ -352,6 +666,18 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             } else {
                 WakeDatasetLabel::Negative
             },
+            source_kind: if event.accepted {
+                WakeDatasetSourceKind::RuntimeAccepted
+            } else {
+                WakeDatasetSourceKind::RuntimeRejected
+            },
+            score_bp: event.strong_score_bp.or(event.light_score_bp),
+            reason_ref: Some(reason_ref_from_code(event.reason_code.0)),
+            extractability: WakeDatasetExtractability::MetadataOnly,
+            latency_proxy_ms: event
+                .window_start_ns
+                .zip(event.window_end_ns)
+                .map(|(start, end)| ns_to_ms(end.0.saturating_sub(start.0)) as u16),
         });
     }
 
@@ -365,10 +691,43 @@ fn collect_dataset_examples(store: &Ph1fStore) -> Vec<WakeDatasetExample> {
             device_id: signal.device_id.as_str().to_string(),
             timestamp_ms: signal.timestamp_ms,
             label,
+            source_kind: WakeDatasetSourceKind::LearnSignal,
+            score_bp: signal.score_bp,
+            reason_ref: signal.reason_code.map(|reason| reason_ref_from_code(reason.0)),
+            extractability: WakeDatasetExtractability::MetadataOnly,
+            latency_proxy_ms: None,
         });
     }
 
     examples
+}
+
+fn score_from_enrollment_sample(vad_coverage: f32, snr_db: f32, clipping_pct: f32) -> Option<u16> {
+    if !vad_coverage.is_finite() || !snr_db.is_finite() || !clipping_pct.is_finite() {
+        return None;
+    }
+    let vad_component = (vad_coverage.clamp(0.0, 1.0) * 6_000.0).round() as i32;
+    let snr_component = ((snr_db.clamp(0.0, 30.0) / 30.0) * 4_000.0).round() as i32;
+    let clipping_penalty = (clipping_pct.clamp(0.0, 1.0) * 2_000.0).round() as i32;
+    let raw = vad_component
+        .saturating_add(snr_component)
+        .saturating_sub(clipping_penalty)
+        .clamp(0, 10_000);
+    Some(raw as u16)
+}
+
+fn reason_ref_from_code(reason_code_raw: u32) -> String {
+    format!("wake_reason_0x{reason_code_raw:08x}")
+}
+
+fn extractability_from_enrollment_sample(
+    sample: &WakeEnrollmentSampleRecord,
+) -> WakeDatasetExtractability {
+    if sample.idempotency_key.starts_with("pcm:") {
+        WakeDatasetExtractability::RawPcmAvailable
+    } else {
+        WakeDatasetExtractability::MetadataOnly
+    }
 }
 
 fn wake_learn_label(signal_type: LearnSignalType) -> Option<WakeDatasetLabel> {
@@ -385,7 +744,7 @@ fn wake_learn_label(signal_type: LearnSignalType) -> Option<WakeDatasetLabel> {
 
 fn assign_dataset_partitions(
     examples: &[WakeDatasetExample],
-    config: &WakeTrainingStep1Config,
+    time_adjacent_window_ms: u64,
 ) -> Result<(BTreeMap<String, WakeTrainDatasetPartitionV1>, WakeLeakageGuardReport), ContractViolation>
 {
     let mut base_device_partition: BTreeMap<String, WakeTrainDatasetPartitionV1> = BTreeMap::new();
@@ -457,7 +816,7 @@ fn assign_dataset_partitions(
     let report = evaluate_leakage_report(
         examples,
         &assignment,
-        config.time_adjacent_window_ms,
+        time_adjacent_window_ms,
         device_conflict,
     );
     Ok((assignment, report))
@@ -734,6 +1093,441 @@ fn build_eval_report(
     )
 }
 
+fn convert_to_dataset_rows(examples: &[WakeDatasetExample]) -> Vec<WakeDatasetRowV1> {
+    examples
+        .iter()
+        .map(|example| WakeDatasetRowV1 {
+            row_id: example.example_id.clone(),
+            source_kind: source_kind_token(example.source_kind).to_string(),
+            label: label_token(example.label).to_string(),
+            user_id: example.user_id.clone(),
+            device_id: example.device_id.clone(),
+            timestamp_ms: example.timestamp_ms,
+            score_bp: example.score_bp,
+            reason_ref: example.reason_ref.clone(),
+            extractability: extractability_token(example.extractability).to_string(),
+            extractable: matches!(example.extractability, WakeDatasetExtractability::RawPcmAvailable),
+            latency_proxy_ms: example.latency_proxy_ms,
+        })
+        .collect()
+}
+
+fn build_dataset_summary(
+    examples: &[WakeDatasetExample],
+    leakage_report: &WakeLeakageGuardReport,
+) -> WakeDatasetAssemblySummaryV1 {
+    let mut source_counts: BTreeMap<String, u32> = BTreeMap::new();
+    let mut label_counts: BTreeMap<String, u32> = BTreeMap::new();
+    let mut extractability_counts: BTreeMap<String, u32> = BTreeMap::new();
+    for example in examples {
+        *source_counts
+            .entry(source_kind_token(example.source_kind).to_string())
+            .or_default() += 1;
+        *label_counts
+            .entry(label_token(example.label).to_string())
+            .or_default() += 1;
+        *extractability_counts
+            .entry(extractability_token(example.extractability).to_string())
+            .or_default() += 1;
+    }
+    WakeDatasetAssemblySummaryV1 {
+        total_rows: examples.len() as u32,
+        positive_rows: examples
+            .iter()
+            .filter(|example| example.label == WakeDatasetLabel::Positive)
+            .count() as u32,
+        negative_rows: examples
+            .iter()
+            .filter(|example| example.label == WakeDatasetLabel::Negative)
+            .count() as u32,
+        source_counts,
+        label_counts,
+        extractability_counts,
+        leakage_guards: WakeLeakageGuardSummaryV1 {
+            no_user_leakage: leakage_report.no_user_leakage,
+            no_device_leakage: leakage_report.no_device_leakage,
+            no_time_adjacent_leakage: leakage_report.no_time_adjacent_leakage,
+        },
+    }
+}
+
+fn calibrate_threshold_profile(
+    dataset_snapshot_id: &str,
+    model_version: &str,
+    feature_config_id: &str,
+    examples: &[WakeDatasetExample],
+) -> WakeThresholdCalibrationV1 {
+    let mut positive_scores = examples
+        .iter()
+        .filter(|example| example.label == WakeDatasetLabel::Positive)
+        .filter_map(|example| example.score_bp)
+        .collect::<Vec<_>>();
+    let mut negative_scores = examples
+        .iter()
+        .filter(|example| example.label == WakeDatasetLabel::Negative)
+        .filter_map(|example| example.score_bp)
+        .collect::<Vec<_>>();
+    positive_scores.sort_unstable();
+    negative_scores.sort_unstable();
+
+    let mut not_measured_metrics = Vec::new();
+    let (calibrated_threshold_bp, calibration_error_bp) = if !positive_scores.is_empty()
+        && !negative_scores.is_empty()
+    {
+        let positive_low_tail = quantile_bp(&positive_scores, 1, 10);
+        let negative_high_tail = quantile_bp(&negative_scores, 9, 10);
+        let threshold = ((positive_low_tail as u32 + negative_high_tail as u32) / 2) as u16;
+        let overlap_bp = negative_high_tail.saturating_sub(positive_low_tail);
+        (threshold, overlap_bp)
+    } else {
+        not_measured_metrics.push("threshold_calibration_scored_examples_missing".to_string());
+        (DEFAULT_CALIBRATION_THRESHOLD_BP, 0)
+    };
+
+    let threshold_profile_id = format!(
+        "wake_threshold_profile_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}",
+                dataset_snapshot_id, model_version, feature_config_id, calibrated_threshold_bp
+            )
+            .as_bytes()
+        )
+    );
+    let threshold_calibration_summary_ref = format!(
+        "wake_threshold_calibration_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}:{}",
+                dataset_snapshot_id,
+                calibrated_threshold_bp,
+                calibration_error_bp,
+                positive_scores.len(),
+                negative_scores.len()
+            )
+            .as_bytes()
+        )
+    );
+
+    WakeThresholdCalibrationV1 {
+        threshold_profile_id,
+        calibrated_threshold_bp,
+        calibration_error_bp,
+        positive_scored_count: positive_scores.len() as u32,
+        negative_scored_count: negative_scores.len() as u32,
+        threshold_calibration_summary_ref,
+        not_measured_metrics,
+    }
+}
+
+fn build_eval_report_step2(
+    request: &WakeTrainingStep2Request,
+    examples: &[WakeDatasetExample],
+    dataset_slices: &[WakeTrainDatasetSliceV1],
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    default_latency_proxy_ms: u16,
+) -> Result<WakeTrainEvalReportV1, ContractViolation> {
+    let positive_scored = examples
+        .iter()
+        .filter(|example| example.label == WakeDatasetLabel::Positive)
+        .filter_map(|example| example.score_bp)
+        .collect::<Vec<_>>();
+    let negative_scored = examples
+        .iter()
+        .filter(|example| example.label == WakeDatasetLabel::Negative)
+        .filter_map(|example| example.score_bp)
+        .collect::<Vec<_>>();
+
+    let false_reject_count = positive_scored
+        .iter()
+        .filter(|score| **score < threshold_calibration.calibrated_threshold_bp)
+        .count() as u32;
+    let false_accept_count = negative_scored
+        .iter()
+        .filter(|score| **score >= threshold_calibration.calibrated_threshold_bp)
+        .count() as u32;
+
+    let mut not_measured = threshold_calibration.not_measured_metrics.clone();
+    if positive_scored.is_empty() {
+        not_measured.push("frr_not_measured_no_positive_scores".to_string());
+    }
+    if negative_scored.is_empty() {
+        not_measured.push("far_not_measured_no_negative_scores".to_string());
+    }
+    not_measured.push("platform_slice_summary_open".to_string());
+
+    let frr_bp = if positive_scored.is_empty() {
+        0
+    } else {
+        false_reject_count
+            .saturating_mul(10_000)
+            .saturating_div(positive_scored.len() as u32) as u16
+    };
+    let far_per_listening_hour_milli = if negative_scored.is_empty() {
+        0
+    } else {
+        false_accept_count
+            .saturating_mul(1_000)
+            .saturating_div(negative_scored.len() as u32)
+    };
+    let miss_rate_bp = frr_bp;
+    let latency_proxy_ms = average_latency_proxy_ms(examples).unwrap_or(default_latency_proxy_ms);
+    let (train_example_count, validation_example_count, test_example_count) =
+        global_partition_counts(dataset_slices);
+
+    let reject_reason_distribution_ref = build_reject_reason_distribution_ref(examples);
+    let generated_at_ms = examples
+        .iter()
+        .map(|example| example.timestamp_ms)
+        .max()
+        .unwrap_or(1);
+    let not_measured_metrics_ref = if not_measured.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "wake_not_measured_{}",
+            stable_hex_short(not_measured.join("|").as_bytes())
+        ))
+    };
+
+    WakeTrainEvalReportV1::v2(
+        format!("wake_eval_step2_{}", request.dataset_snapshot_id),
+        request.dataset_snapshot_id.clone(),
+        request.model_version.clone(),
+        threshold_calibration.threshold_profile_id.clone(),
+        far_per_listening_hour_milli,
+        frr_bp,
+        miss_rate_bp,
+        latency_proxy_ms,
+        Some(threshold_calibration.calibrated_threshold_bp),
+        threshold_calibration.calibration_error_bp,
+        threshold_calibration.threshold_calibration_summary_ref.clone(),
+        reject_reason_distribution_ref,
+        train_example_count,
+        validation_example_count,
+        test_example_count,
+        None,
+        not_measured_metrics_ref,
+        generated_at_ms,
+    )
+}
+
+fn build_wakepack_candidate_package(
+    request: &WakeTrainingStep2Request,
+    feature_config: &WakeFeatureConfigV1,
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    eval_report: &WakeTrainEvalReportV1,
+    dataset_summary: &WakeDatasetAssemblySummaryV1,
+    dataset_slices: &[WakeTrainDatasetSliceV1],
+) -> Result<WakeCandidatePackageV1, ContractViolation> {
+    let candidate_package_id = format!(
+        "wake_candidate_{}",
+        stable_hex_short(
+            format!(
+                "{}:{}:{}:{}",
+                request.dataset_snapshot_id,
+                request.model_version,
+                threshold_calibration.threshold_profile_id,
+                request.artifact_version.0
+            )
+            .as_bytes()
+        )
+    );
+    let payload_ref = format!(
+        "wakepack/candidate/{}/{}.txt",
+        request.dataset_snapshot_id, candidate_package_id
+    );
+
+    let payload = build_candidate_payload_text(
+        request,
+        feature_config,
+        threshold_calibration,
+        eval_report,
+        dataset_summary,
+        dataset_slices,
+    );
+    let payload_bytes = payload.into_bytes();
+    let payload_len_bytes = u32::try_from(payload_bytes.len()).map_err(|_| {
+        ContractViolation::InvalidValue {
+            field: "wake_training_step2.candidate_payload_len_bytes",
+            reason: "must be <= u32::MAX",
+        }
+    })?;
+    let package_hash = sha256_hex(payload_bytes.as_slice());
+
+    Ok(WakeCandidatePackageV1 {
+        candidate_package_id,
+        payload_ref,
+        package_hash,
+        payload_len_bytes,
+        payload_bytes,
+        candidate_only: true,
+    })
+}
+
+fn build_candidate_payload_text(
+    request: &WakeTrainingStep2Request,
+    feature_config: &WakeFeatureConfigV1,
+    threshold_calibration: &WakeThresholdCalibrationV1,
+    eval_report: &WakeTrainEvalReportV1,
+    dataset_summary: &WakeDatasetAssemblySummaryV1,
+    dataset_slices: &[WakeTrainDatasetSliceV1],
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("wakepack_candidate_version=1".to_string());
+    lines.push(format!("dataset_snapshot_id={}", request.dataset_snapshot_id));
+    lines.push(format!("model_version={}", request.model_version));
+    lines.push(format!("model_abi={}", request.model_abi));
+    lines.push(format!(
+        "feature_config_id={}",
+        feature_config.feature_config_id
+    ));
+    lines.push(format!(
+        "threshold_profile_id={}",
+        threshold_calibration.threshold_profile_id
+    ));
+    lines.push(format!(
+        "threshold_calibrated_bp={}",
+        threshold_calibration.calibrated_threshold_bp
+    ));
+    lines.push(format!(
+        "threshold_calibration_error_bp={}",
+        threshold_calibration.calibration_error_bp
+    ));
+    lines.push(format!(
+        "eval_far_per_listening_hour_milli={}",
+        eval_report.far_per_listening_hour_milli
+    ));
+    lines.push(format!("eval_frr_bp={}", eval_report.frr_bp));
+    lines.push(format!("eval_miss_rate_bp={}", eval_report.miss_rate_bp));
+    lines.push(format!(
+        "eval_latency_proxy_ms={}",
+        eval_report.latency_proxy_ms
+    ));
+    lines.push(format!(
+        "dataset_total_rows={}",
+        dataset_summary.total_rows
+    ));
+    lines.push(format!(
+        "dataset_positive_rows={}",
+        dataset_summary.positive_rows
+    ));
+    lines.push(format!(
+        "dataset_negative_rows={}",
+        dataset_summary.negative_rows
+    ));
+    lines.push(format!(
+        "dataset_slice_count={}",
+        dataset_slices.len()
+    ));
+    for slice in dataset_slices {
+        lines.push(format!(
+            "slice:{}:{:?}:{:?}:{}:{}:{}",
+            slice.slice_id,
+            slice.scope,
+            slice.partition,
+            slice.positive_count,
+            slice.negative_count,
+            slice.unique_device_count
+        ));
+    }
+    lines.push("offline_pipeline_only=true".to_string());
+    lines.join("\n")
+}
+
+fn global_partition_counts(dataset_slices: &[WakeTrainDatasetSliceV1]) -> (u32, u32, u32) {
+    let mut train = 0u32;
+    let mut validation = 0u32;
+    let mut test = 0u32;
+    for slice in dataset_slices {
+        if slice.scope != WakeTrainDatasetScopeV1::GlobalCorpus {
+            continue;
+        }
+        let count = slice.positive_count.saturating_add(slice.negative_count);
+        match slice.partition {
+            WakeTrainDatasetPartitionV1::Train => train = train.saturating_add(count),
+            WakeTrainDatasetPartitionV1::Validation => {
+                validation = validation.saturating_add(count)
+            }
+            WakeTrainDatasetPartitionV1::Test => test = test.saturating_add(count),
+        }
+    }
+    (train, validation, test)
+}
+
+fn average_latency_proxy_ms(examples: &[WakeDatasetExample]) -> Option<u16> {
+    let mut sum = 0u64;
+    let mut count = 0u64;
+    for example in examples {
+        let Some(latency) = example.latency_proxy_ms else {
+            continue;
+        };
+        sum = sum.saturating_add(latency as u64);
+        count = count.saturating_add(1);
+    }
+    if count == 0 {
+        None
+    } else {
+        Some((sum / count) as u16)
+    }
+}
+
+fn build_reject_reason_distribution_ref(examples: &[WakeDatasetExample]) -> String {
+    let mut counts: BTreeMap<String, u32> = BTreeMap::new();
+    for example in examples {
+        if example.label != WakeDatasetLabel::Negative {
+            continue;
+        }
+        let key = example
+            .reason_ref
+            .clone()
+            .unwrap_or_else(|| "wake_reason_unknown".to_string());
+        *counts.entry(key).or_default() += 1;
+    }
+    let mut canonical = String::new();
+    for (reason_ref, count) in counts {
+        canonical.push_str(reason_ref.as_str());
+        canonical.push(':');
+        canonical.push_str(count.to_string().as_str());
+        canonical.push('|');
+    }
+    format!(
+        "wake_reject_dist_{}",
+        stable_hex_short(canonical.as_bytes())
+    )
+}
+
+fn quantile_bp(sorted_values: &[u16], numerator: usize, denominator: usize) -> u16 {
+    if sorted_values.is_empty() {
+        return 0;
+    }
+    let idx = ((sorted_values.len().saturating_sub(1)).saturating_mul(numerator)) / denominator;
+    sorted_values[idx]
+}
+
+fn source_kind_token(source_kind: WakeDatasetSourceKind) -> &'static str {
+    match source_kind {
+        WakeDatasetSourceKind::EnrollmentPass => "ENROLLMENT_PASS",
+        WakeDatasetSourceKind::RuntimeAccepted => "RUNTIME_ACCEPTED",
+        WakeDatasetSourceKind::RuntimeRejected => "RUNTIME_REJECTED",
+        WakeDatasetSourceKind::LearnSignal => "LEARN_SIGNAL",
+    }
+}
+
+fn label_token(label: WakeDatasetLabel) -> &'static str {
+    match label {
+        WakeDatasetLabel::Positive => "POSITIVE",
+        WakeDatasetLabel::Negative => "NEGATIVE",
+    }
+}
+
+fn extractability_token(extractability: WakeDatasetExtractability) -> &'static str {
+    match extractability {
+        WakeDatasetExtractability::RawPcmAvailable => "RAW_PCM_AVAILABLE",
+        WakeDatasetExtractability::MetadataOnly => "METADATA_ONLY",
+    }
+}
+
 fn partition_from_key(key: &str) -> WakeTrainDatasetPartitionV1 {
     let bucket = stable_bucket_bp(key.as_bytes());
     if bucket < TRAIN_SPLIT_BP {
@@ -757,6 +1551,16 @@ fn stable_hex_short(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     let mut out = String::with_capacity(16);
     for b in digest.iter().take(8) {
+        out.push(hex_char((b >> 4) & 0x0F));
+        out.push(hex_char(b & 0x0F));
+    }
+    out
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(64);
+    for b in digest {
         out.push(hex_char((b >> 4) & 0x0F));
         out.push(hex_char(b & 0x0F));
     }
@@ -1035,6 +1839,20 @@ mod tests {
         .unwrap()
     }
 
+    fn valid_step2_request() -> WakeTrainingStep2Request {
+        WakeTrainingStep2Request::v1(
+            "wake_dataset_snapshot_v2".to_string(),
+            "wake_feature_cfg_v1".to_string(),
+            "wake_model_v2".to_string(),
+            "wake_abi_v1".to_string(),
+            ArtifactVersion(3),
+            "wake_provenance_v2".to_string(),
+            Some(ArtifactVersion(2)),
+            true,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_wake_training_step1_a_feature_config_validates() {
         let cfg = WakeFeatureConfigV1::locked_default_v1("wake_feature_cfg_v1".to_string()).unwrap();
@@ -1098,6 +1916,11 @@ mod tests {
                 device_id: "device_a".to_string(),
                 timestamp_ms: 1_000,
                 label: WakeDatasetLabel::Positive,
+                source_kind: WakeDatasetSourceKind::EnrollmentPass,
+                score_bp: Some(9_100),
+                reason_ref: None,
+                extractability: WakeDatasetExtractability::RawPcmAvailable,
+                latency_proxy_ms: Some(1_200),
             },
             WakeDatasetExample {
                 example_id: "example_2".to_string(),
@@ -1105,6 +1928,11 @@ mod tests {
                 device_id: "device_b".to_string(),
                 timestamp_ms: 1_020,
                 label: WakeDatasetLabel::Negative,
+                source_kind: WakeDatasetSourceKind::RuntimeRejected,
+                score_bp: Some(4_000),
+                reason_ref: Some("wake_reason_0x00001002".to_string()),
+                extractability: WakeDatasetExtractability::MetadataOnly,
+                latency_proxy_ms: Some(120),
             },
         ];
         let mut assignment = BTreeMap::new();
@@ -1135,5 +1963,170 @@ mod tests {
         let second = extract_log_mel_feature_bins(&cfg, &fixture).unwrap();
         assert_eq!(first, second);
         assert!(first.iter().flatten().any(|bin| *bin > 0));
+    }
+
+    #[test]
+    fn at_wake_training_step2_a_dataset_assembly_is_deterministic() {
+        let store = seeded_store();
+        let request = valid_step2_request();
+        let config = WakeTrainingStep2Config::default();
+
+        let first = build_wake_training_step2(&store, &request, &config).unwrap();
+        let second = build_wake_training_step2(&store, &request, &config).unwrap();
+
+        assert_eq!(first.dataset_rows, second.dataset_rows);
+        assert_eq!(first.dataset_slices, second.dataset_slices);
+        assert_eq!(first.dataset_summary, second.dataset_summary);
+        assert_eq!(first.threshold_calibration, second.threshold_calibration);
+        assert_eq!(first.eval_report, second.eval_report);
+        assert_eq!(first.wakepack_candidate.package_hash, second.wakepack_candidate.package_hash);
+    }
+
+    #[test]
+    fn at_wake_training_step2_b_positive_negative_counts_are_stable() {
+        let store = seeded_store();
+        let request = valid_step2_request();
+        let config = WakeTrainingStep2Config::default();
+
+        let output = build_wake_training_step2(&store, &request, &config).unwrap();
+        assert_eq!(output.dataset_summary.total_rows, 5);
+        assert_eq!(output.dataset_summary.positive_rows, 3);
+        assert_eq!(output.dataset_summary.negative_rows, 2);
+        assert_eq!(
+            output
+                .dataset_summary
+                .source_counts
+                .get("ENROLLMENT_PASS")
+                .copied(),
+            Some(2)
+        );
+        assert_eq!(
+            output
+                .dataset_summary
+                .source_counts
+                .get("RUNTIME_ACCEPTED")
+                .copied(),
+            Some(1)
+        );
+        assert_eq!(
+            output
+                .dataset_summary
+                .source_counts
+                .get("RUNTIME_REJECTED")
+                .copied(),
+            Some(1)
+        );
+        assert_eq!(
+            output
+                .dataset_summary
+                .source_counts
+                .get("LEARN_SIGNAL")
+                .copied(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn at_wake_training_step2_c_leakage_guard_catches_overlap() {
+        let examples = vec![
+            WakeDatasetExample {
+                example_id: "example_1".to_string(),
+                user_id: Some("user_shared".to_string()),
+                device_id: "device_a".to_string(),
+                timestamp_ms: 1_000,
+                label: WakeDatasetLabel::Positive,
+                source_kind: WakeDatasetSourceKind::EnrollmentPass,
+                score_bp: Some(9_100),
+                reason_ref: None,
+                extractability: WakeDatasetExtractability::RawPcmAvailable,
+                latency_proxy_ms: Some(1_200),
+            },
+            WakeDatasetExample {
+                example_id: "example_2".to_string(),
+                user_id: Some("user_shared".to_string()),
+                device_id: "device_b".to_string(),
+                timestamp_ms: 1_020,
+                label: WakeDatasetLabel::Negative,
+                source_kind: WakeDatasetSourceKind::RuntimeRejected,
+                score_bp: Some(4_000),
+                reason_ref: Some("wake_reason_0x00001002".to_string()),
+                extractability: WakeDatasetExtractability::MetadataOnly,
+                latency_proxy_ms: Some(120),
+            },
+        ];
+        let mut assignment = BTreeMap::new();
+        assignment.insert(
+            "example_1".to_string(),
+            WakeTrainDatasetPartitionV1::Train,
+        );
+        assignment.insert(
+            "example_2".to_string(),
+            WakeTrainDatasetPartitionV1::Validation,
+        );
+
+        let report = evaluate_leakage_report(&examples, &assignment, 30_000, false);
+        assert!(!report.no_user_leakage);
+        assert!(enforce_leakage_guards(&report).is_err());
+    }
+
+    #[test]
+    fn at_wake_training_step2_d_threshold_calibration_is_stable() {
+        let store = seeded_store();
+        let mut examples = collect_dataset_examples(&store);
+        examples.sort_by(|a, b| a.example_id.cmp(&b.example_id));
+
+        let first = calibrate_threshold_profile(
+            "wake_dataset_snapshot_v2",
+            "wake_model_v2",
+            "wake_feature_cfg_v1",
+            &examples,
+        );
+        let second = calibrate_threshold_profile(
+            "wake_dataset_snapshot_v2",
+            "wake_model_v2",
+            "wake_feature_cfg_v1",
+            &examples,
+        );
+        assert_eq!(first.threshold_profile_id, second.threshold_profile_id);
+        assert_eq!(first.calibrated_threshold_bp, second.calibrated_threshold_bp);
+        assert!(first.calibrated_threshold_bp > 0);
+    }
+
+    #[test]
+    fn at_wake_training_step2_e_eval_report_populated_and_valid() {
+        let store = seeded_store();
+        let request = valid_step2_request();
+        let config = WakeTrainingStep2Config::default();
+        let output = build_wake_training_step2(&store, &request, &config).unwrap();
+
+        assert!(output.eval_report.validate().is_ok());
+        assert_eq!(
+            output.eval_report.threshold_profile_id,
+            output.threshold_calibration.threshold_profile_id
+        );
+        assert!(output.eval_report.generated_at_ms > 0);
+    }
+
+    #[test]
+    fn at_wake_training_step2_f_wakepack_candidate_and_manifest_validate() {
+        let store = seeded_store();
+        let request = valid_step2_request();
+        let config = WakeTrainingStep2Config::default();
+        let output = build_wake_training_step2(&store, &request, &config).unwrap();
+
+        assert!(output.wake_pack_manifest.validate().is_ok());
+        assert_eq!(output.wakepack_candidate.package_hash.len(), 64);
+        assert!(output.wakepack_candidate.candidate_only);
+        assert!(output.wake_pack_manifest.offline_pipeline_only);
+    }
+
+    #[test]
+    fn at_wake_training_step2_g_offline_boundary_enforced() {
+        let store = seeded_store();
+        let mut request = valid_step2_request();
+        request.offline_pipeline_only = false;
+        let config = WakeTrainingStep2Config::default();
+        let err = build_wake_training_step2(&store, &request, &config).unwrap_err();
+        assert!(matches!(err, ContractViolation::InvalidValue { .. }));
     }
 }
