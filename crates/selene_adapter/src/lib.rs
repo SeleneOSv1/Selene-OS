@@ -88,7 +88,6 @@ use selene_kernel_contracts::ph1onb::{
     OnboardingNextStep, OnboardingSessionId, SenderVerifyDecision,
 };
 use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcomeUtilizationEntry};
-use selene_kernel_contracts::ph1pae::PaeMode;
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
@@ -5671,45 +5670,6 @@ fn sanitize_audio_device_token(value: &str) -> String {
     }
 }
 
-fn default_interrupt_phrases_for_locale(locale_tag: &str) -> Vec<String> {
-    match locale_tag.to_ascii_lowercase().as_str() {
-        "en-us" | "en" => vec![
-            "wait".to_string(),
-            "selene wait".to_string(),
-            "hold on".to_string(),
-            "stop".to_string(),
-            "pause".to_string(),
-            "cancel that".to_string(),
-            "just a second".to_string(),
-        ],
-        "es-es" | "es" => vec![
-            "espera".to_string(),
-            "selene espera".to_string(),
-            "alto".to_string(),
-            "pausa".to_string(),
-            "cancela eso".to_string(),
-        ],
-        "zh-cn" | "zh" => vec![
-            "等一下".to_string(),
-            "停一下".to_string(),
-            "暂停".to_string(),
-            "先别说".to_string(),
-        ],
-        "tr-tr" | "tr" => vec![
-            "bekle".to_string(),
-            "dur".to_string(),
-            "selene bekle".to_string(),
-            "bir saniye".to_string(),
-        ],
-        _ => vec![
-            "wait".to_string(),
-            "hold on".to_string(),
-            "stop".to_string(),
-            "pause".to_string(),
-        ],
-    }
-}
-
 fn locale_key(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('_', "-")
 }
@@ -5733,86 +5693,6 @@ fn resolve_interrupt_locale_tag_from_capture(
         .ok_or_else(|| "ph1k live capture missing locale_tag".to_string())?;
     InterruptLocaleTag::new(truncate_ascii(raw, 32))
         .map_err(|err| format!("ph1k locale_tag invalid: {err:?}"))
-}
-
-fn learned_interrupt_phrases_from_runtime(
-    store: &Ph1fStore,
-    tenant_scope: Option<&str>,
-    device_id: Option<&DeviceId>,
-    locale_tag: &InterruptLocaleTag,
-) -> Vec<String> {
-    let tenant_scope = tenant_scope
-        .map(|v| truncate_ascii(v, 64))
-        .filter(|v| !v.is_empty());
-    let mut out = Vec::new();
-    for row in store.ph1k_runtime_event_rows().iter().rev() {
-        if row.event_kind != Ph1kRuntimeEventKind::InterruptCandidate {
-            continue;
-        }
-        if let Some(tenant_scope) = tenant_scope.as_ref() {
-            if row.tenant_id != *tenant_scope {
-                continue;
-            }
-        }
-        if let Some(device_id) = device_id {
-            if row.device_id != *device_id {
-                continue;
-            }
-        }
-        let Some(ext) = row.interrupt_extended.as_ref() else {
-            continue;
-        };
-        if !locale_matches(ext.interrupt_locale_tag.as_str(), locale_tag.as_str()) {
-            continue;
-        }
-        let Some(phrase_text) = row.phrase_text.as_ref() else {
-            continue;
-        };
-        let phrase_text = truncate_utf8(phrase_text.trim(), 128);
-        if phrase_text.is_empty() {
-            continue;
-        }
-        if out.iter().any(|item| item == &phrase_text) {
-            continue;
-        }
-        out.push(phrase_text);
-        if out.len() >= 24 {
-            break;
-        }
-    }
-    out
-}
-
-fn resolve_ph1k_pae_mode_from_feedback(
-    store: &Ph1fStore,
-    tenant_scope: Option<&str>,
-    device_id: Option<&DeviceId>,
-) -> PaeMode {
-    let tenant_scope = tenant_scope
-        .map(|v| truncate_ascii(v, 64))
-        .filter(|v| !v.is_empty());
-    for row in store.ph1k_feedback_capture_rows().iter().rev() {
-        if let Some(tenant_scope) = tenant_scope.as_ref() {
-            if row.tenant_id != *tenant_scope {
-                continue;
-            }
-        }
-        if let Some(device_id) = device_id {
-            if row.device_id != *device_id {
-                continue;
-            }
-        }
-        return row.pae_mode_to;
-    }
-    PaeMode::Shadow
-}
-
-fn ph1k_pae_mode_label(mode: PaeMode) -> &'static str {
-    match mode {
-        PaeMode::Shadow => "shadow",
-        PaeMode::Assist => "assist",
-        PaeMode::Lead => "lead",
-    }
 }
 
 fn build_interrupt_matcher_and_binding(
