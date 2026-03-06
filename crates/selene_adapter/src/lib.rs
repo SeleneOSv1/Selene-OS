@@ -1049,7 +1049,14 @@ impl AdapterRuntime {
         &self,
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, String> {
-        self.run_voice_turn_internal(request, true)
+        self.run_voice_turn_internal(request, true, true)
+    }
+
+    pub fn run_voice_turn_ingress(
+        &self,
+        request: VoiceTurnAdapterRequest,
+    ) -> Result<VoiceTurnAdapterResponse, String> {
+        self.run_voice_turn_internal(request, true, false)
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -3468,6 +3475,7 @@ impl AdapterRuntime {
         &self,
         request: VoiceTurnAdapterRequest,
         persist_on_success: bool,
+        allow_identity_auto_provision: bool,
     ) -> Result<VoiceTurnAdapterResponse, String> {
         let request_for_journal = request.clone();
         let mut user_text_partial =
@@ -3510,6 +3518,7 @@ impl AdapterRuntime {
             Some(&runtime_device_id),
             app_platform,
             now,
+            allow_identity_auto_provision,
         )?;
         let tenant_id_for_ph1c = resolve_tenant_scope(
             request.tenant_id.clone(),
@@ -3930,7 +3939,7 @@ impl AdapterRuntime {
                     line_no + 1
                 ));
             }
-            self.run_voice_turn_internal(entry.request, false)
+            self.run_voice_turn_internal(entry.request, false, true)
                 .map_err(|err| format!("journal replay failed at line {}: {}", line_no + 1, err))?;
         }
         Ok(())
@@ -4354,8 +4363,12 @@ fn ensure_actor_identity_and_device(
     device_id: Option<&DeviceId>,
     app_platform: AppPlatform,
     now: MonotonicTimeNs,
+    allow_auto_provision: bool,
 ) -> Result<(), String> {
     if store.get_identity(actor_user_id).is_none() {
+        if !allow_auto_provision {
+            return Err("auth_identity_unknown".to_string());
+        }
         store
             .insert_identity(IdentityRecord::v1(
                 actor_user_id.clone(),
@@ -4368,6 +4381,9 @@ fn ensure_actor_identity_and_device(
     }
     if let Some(device_id) = device_id {
         if store.get_device(device_id).is_none() {
+            if !allow_auto_provision {
+                return Err("auth_device_unknown".to_string());
+            }
             store
                 .insert_device(
                     DeviceRecord::v1(
@@ -7895,6 +7911,7 @@ mod tests {
             Some(&device_id),
             app_platform,
             now,
+            true,
         )
         .expect("identity/device seed must succeed");
         let started = store
@@ -10226,6 +10243,7 @@ mod tests {
             Some(&runtime_device_id),
             app_platform,
             now,
+            true,
         )
         .expect("identity/device seed must succeed");
         let tenant_id_for_ph1c = resolve_tenant_scope(
@@ -10543,6 +10561,7 @@ mod tests {
                 None,
                 AppPlatform::Desktop,
                 MonotonicTimeNs(1),
+                true,
             )
             .expect("identity + device seed should succeed");
             seed_simulation_catalog_status(
@@ -10618,6 +10637,7 @@ mod tests {
                 None,
                 AppPlatform::Desktop,
                 MonotonicTimeNs(1),
+                true,
             )
             .expect("identity + device seed should succeed");
             seed_simulation_catalog_status(
@@ -10726,6 +10746,7 @@ mod tests {
                 None,
                 AppPlatform::Desktop,
                 MonotonicTimeNs(1),
+                true,
             )
             .expect("identity + device seed should succeed");
             store
@@ -10815,6 +10836,7 @@ mod tests {
                 None,
                 AppPlatform::Desktop,
                 MonotonicTimeNs(1),
+                true,
             )
             .expect("identity + device seed should succeed");
             let seeded_state = KernelThreadState::empty_v1()
