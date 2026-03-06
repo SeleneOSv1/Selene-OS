@@ -9,6 +9,49 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
 - If a task would require Python, stop and report exactly:
   - `Python is disallowed by CODEX_LAW.md`
 
+## Repository Locality Rule
+- Single Codex session: always use the main repo path only.
+- Main repo path: `/Users/xiamo/Documents/A-Selene/Selene-OS`.
+- Never create worktrees or extra repo folders for this repository.
+
+## Architectural Boundary: Probabilistic Reasoning vs Deterministic Execution
+Selene must follow this architectural boundary:
+
+Probabilistic Layer (Allowed):
+- Language generation
+- Reasoning
+- Summarization
+- Research
+- Data analysis
+- Document/photo explanation
+- Connector read-only queries
+- Tone/personality shaping
+
+These may be model-driven and non-deterministic.
+
+Deterministic Boundary (Mandatory):
+- Intent -> dispatch classification
+- Access control decisions
+- Simulation execution
+- State mutation
+- Ledger writes
+- Artifact activation
+- Provider promotion/demotion
+- Onboarding progression
+- Message sending
+- Any irreversible action
+
+All execution must:
+- Pass Access checks
+- Require ACTIVE simulation IDs (when applicable)
+- Be idempotent
+- Be replay-safe
+- Be auditable
+- Fail closed on any inconsistency
+
+Language may be probabilistic.
+Execution must never be probabilistic.
+
 ## 13 Core Rules
 1. Authority
 - JD is the only authority for breaking or modifying shared existing behavior.
@@ -124,8 +167,11 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
 
 ### E) Mandatory Cleanliness Gates
 - Clean tree at start and end (`git status --porcelain` empty).
+- Start of every run: `git status --porcelain` must be empty. If not, stop and resolve it first.
+- End of every run: tests/checks must pass, append a PASS line to `docs/03_BUILD_LEDGER.md`, commit only the run files plus the ledger entry, push to `origin`, then verify `git status --porcelain` is empty again.
 - End-of-task is not complete until changes are committed and pushed to `origin`.
 - A new task must not start until the previous task is pushed and the tree is clean again.
+- No local-only real work.
 - No untracked leftovers.
 - If violated, stop and resolve before continuing.
 
@@ -145,3 +191,6 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
 - No hidden drift.
 - No silent corruption.
 - No contract breakage without explicit JD approval.
+
+## Override
+- These laws apply by default unless JD explicitly overrides them.
