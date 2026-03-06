@@ -625,6 +625,7 @@ impl SimulationExecutor {
         let mut seq = vec!["PH1.K".to_string()];
         if trigger == OsVoiceTrigger::WakeWord {
             seq.push("PH1.W".to_string());
+            seq.push("PH1.L".to_string());
         }
         seq.extend([
             "PH1.VOICE.ID".to_string(),

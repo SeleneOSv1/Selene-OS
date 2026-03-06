@@ -2515,6 +2515,7 @@ fn expected_always_on_sequence(
                 &[
                     "PH1.K",
                     "PH1.W",
+                    "PH1.L",
                     "PH1.VOICE.ID",
                     "PH1.C",
                     "PH1.SRL",
@@ -3166,6 +3167,7 @@ mod tests {
         vec![
             "PH1.K".to_string(),
             "PH1.W".to_string(),
+            "PH1.L".to_string(),
             "PH1.VOICE.ID".to_string(),
             "PH1.C".to_string(),
             "PH1.SRL".to_string(),
@@ -3244,6 +3246,7 @@ mod tests {
             forwarded.always_on_sequence,
             always_on_voice_sequence_wake()
         );
+        assert!(forwarded.always_on_sequence.contains(&"PH1.L".to_string()));
         assert_eq!(
             forwarded.optional_sequence_invoked,
             vec!["PH1.PRUNE".to_string(), "PH1.DIAG".to_string()]
@@ -3456,6 +3459,7 @@ mod tests {
         let bad_sequence = vec![
             "PH1.K".to_string(),
             "PH1.W".to_string(),
+            "PH1.L".to_string(),
             "PH1.VOICE.ID".to_string(),
             "PH1.C".to_string(),
             "PH1.SRL".to_string(),
@@ -3781,6 +3785,7 @@ mod tests {
             vec![
                 "PH1.K".to_string(),
                 "PH1.W".to_string(),
+                "PH1.L".to_string(),
                 "PH1.VOICE.ID".to_string(),
                 "PH1.C".to_string(),
                 "PH1.SRL".to_string(),

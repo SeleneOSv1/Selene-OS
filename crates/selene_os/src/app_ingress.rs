@@ -3714,6 +3714,7 @@ fn expected_always_on_voice_sequence(trigger: OsVoiceTrigger) -> Vec<String> {
     let mut seq = vec!["PH1.K".to_string()];
     if trigger.wake_stage_required() {
         seq.push("PH1.W".to_string());
+        seq.push("PH1.L".to_string());
     }
     seq.extend([
         "PH1.VOICE.ID".to_string(),
@@ -5533,6 +5534,10 @@ mod tests {
             .top_level_bundle
             .always_on_sequence
             .contains(&"PH1.W".to_string()));
+        assert!(forwarded
+            .top_level_bundle
+            .always_on_sequence
+            .contains(&"PH1.L".to_string()));
     }
 
     #[test]
@@ -5566,6 +5571,10 @@ mod tests {
             .top_level_bundle
             .always_on_sequence
             .contains(&"PH1.W".to_string()));
+        assert!(!forwarded
+            .top_level_bundle
+            .always_on_sequence
+            .contains(&"PH1.L".to_string()));
     }
 
     #[test]
