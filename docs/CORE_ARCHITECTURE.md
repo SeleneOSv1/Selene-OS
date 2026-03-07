@@ -217,3 +217,395 @@
 - `[GOV-001] [CURRENT]` This document is the parent architecture for all Selene client platforms.
 - `[GOV-002] [CURRENT]` Platform-specific documents may extend this model but must not contradict it.
 - `[GOV-003] [CURRENT]` Future build runs must align to this session-first law before adding new feature surface.
+
+## 23) Appendix A - Selene Architecture v3 Verbatim Body (Reference Copy)
+- This appendix preserves the full v3 constitutional prose body as requested.
+- Normative implementation truth remains governed by Sections 0-22 status-tagged requirements and matrices.
+
+### Selene Client Runtime Architecture — Universal Device Session Model (v3)
+
+#### 0. Status Legend
+CURRENT — Implemented and expected to be true in runtime behavior.
+TARGET — Approved architectural direction not yet fully implemented.
+GAP — Known missing or partial area that must be completed.
+
+This document is the full system law specification for the Selene runtime architecture.
+All platform implementations, engines, simulations, and subsystems must comply with the rules defined here.
+
+### PART I — FOUNDATIONAL SYSTEM LAWS
+
+#### 1. Core Architecture Law
+Selene is a cloud-authoritative distributed intelligence system.
+Client devices serve as interaction terminals, while the Selene cloud runtime is the authoritative execution environment.
+
+Authoritative domains owned exclusively by the cloud runtime include:
+- identity verification
+- access authorization
+- session lifecycle control
+- simulation discovery and execution
+- memory governance
+- artifact creation and activation
+- learning evaluation and promotion
+- audit and proof capture
+
+Client devices must never finalize system truth.
+All authoritative state transitions occur only inside the cloud runtime.
+
+#### 2. Universal Client Principle
+All Selene clients must implement a single universal runtime interaction model regardless of device type.
+
+Supported platforms:
+- iPhone
+- Android
+- Desktop
+- Tablet (TARGET platform class)
+
+Every client must support the following capabilities:
+- session entry and resume
+- turn submission
+- response rendering
+- deterministic synchronization
+
+Hardware interaction may differ, but system logic must remain identical.
+
+#### 3. Session-First System Law
+All Selene execution originates from a cloud-controlled session.
+
+Sessions coordinate:
+- identity scope
+- access policy
+- memory eligibility
+- simulation execution
+
+Devices may open or resume sessions but never own session state.
+Sessions are therefore the primary execution container for all Selene system behavior.
+
+#### 4. Trigger Policy by Platform
+Trigger policy determines how a session begins.
+
+Platform trigger rules:
+- iPhone — explicit trigger only
+- Android — wake word or explicit
+- Desktop — wake word or explicit
+- Tablet — TARGET behavior mirrors Android
+
+Trigger differences affect entry only.
+Once a session begins, execution behavior is identical across all platforms.
+
+#### 5. Client Responsibilities
+Clients are responsible for interaction and reliability.
+
+Responsibilities include:
+- capturing voice, text, files, and images
+- submitting turns to the cloud
+- rendering responses
+- maintaining retry outbox
+- synchronizing with cloud runtime
+
+Clients must never execute simulations or mutate system state.
+
+#### 6. Client Interaction Capabilities
+Clients must support rich interaction capabilities including:
+- voice interaction
+- text interaction
+- file uploads
+- image uploads
+- camera capture
+- structured visualization
+- PDF generation
+- printer workflows
+
+All interaction must pass through the session runtime pipeline.
+
+#### 7. Local Assist Scope
+Clients may store assist caches for speed.
+
+Allowed caches include:
+- conversation display cache
+- retry outbox
+- voice assist embeddings
+
+Local data must always be replaceable by cloud truth.
+
+#### 8. Cross-Platform Capability Rule
+All platforms must expose equivalent Selene capability.
+Device switching must preserve:
+- session state
+- turn order
+- memory context
+
+#### 9. Canonical Runtime Pipeline
+Every interaction follows the deterministic execution pipeline:
+
+ingress validation
+platform policy validation
+session resolution
+identity verification
+onboarding eligibility
+memory eligibility
+access authorization
+simulation eligibility
+execution
+audit capture
+response synchronization
+
+No feature may bypass this pipeline.
+
+### PART II — SESSION & EXECUTION MODEL
+
+#### 10. Multi-Platform Design Consequence
+Selene operates as a single distributed system accessed through multiple device terminals.
+Platforms must not introduce divergent runtime behavior.
+
+#### 11. Architecture Alignment Phase
+Before feature expansion, runtime implementation must align with architecture.
+
+Alignment tasks include:
+- canonical session contract exposure
+- PH1.OS trigger enforcement
+- capture attestation
+- artifact signature verification
+
+#### 12. Client Ingress Contract
+Canonical ingress endpoints:
+- /v1/invite/click
+- /v1/onboarding/continue
+- /v1/voice/turn
+
+Requests must include:
+- auth token
+- request id
+- nonce
+- timestamp
+- idempotency key
+
+#### 13. Universal Session Payload
+Responses must include:
+- session_id
+- turn_id
+- session_state
+
+These identifiers drive synchronization and audit.
+
+#### 14. Trigger vs Session Model
+Triggers vary by device.
+Session execution must remain identical across platforms.
+
+#### 15. Capability Parity
+All platforms must support:
+- voice interaction
+- text
+- file upload
+- structured outputs
+- cross-device continuation
+
+#### 16. Synchronization Model
+Clients must implement deterministic distributed synchronization.
+
+Required components:
+- durable outbox
+- operation journal
+- retry logic
+
+Cloud acknowledgement finalizes execution.
+
+#### 17. Learning & Update Loop
+Learning is cloud-governed.
+Clients submit signals.
+Cloud evaluates and promotes learning artifacts.
+
+Clients apply updates via:
+- download
+- verify
+- stage
+- apply
+- confirm
+- rollback
+
+### PART III — IDENTITY, MEMORY, AND ARTIFACT GOVERNANCE
+
+#### 18. Cloud Authority Boundary
+Cloud runtime is the single authority for system state.
+Clients are treated as untrusted environments.
+
+#### 19. Platform Inventory
+Supported platforms:
+- iPhone
+- Android
+- Desktop
+- Tablet (TARGET)
+
+All must follow the same runtime architecture.
+
+#### 20. Architecture Scope Boundary
+This document defines architectural laws.
+Implementation details belong in subsystem documents.
+
+#### 21. Implementation Alignment
+Architecture correction must precede feature expansion.
+
+#### 22. Voice Enrollment Authority
+Voice enrollment establishes identity scope.
+Clients capture samples.
+Cloud validates and locks voice identity.
+
+#### 23. Platform Divergence Matrix
+Platform differences affect hardware interaction only.
+Execution pipeline remains identical.
+
+#### 24. Personality Engine
+Personality categories:
+- Passive
+- Domineering
+- Undetermined
+
+Current behavior influences tone only.
+
+#### 25. Session Lifecycle
+Session states:
+- Closed
+- Open
+- Active
+- SoftClosed
+- Suspended
+
+Default inactivity threshold: 30 seconds.
+
+#### 26. Canonical Identifier Exposure
+session_id and turn_id must appear in all responses.
+
+#### 27. Memory Authority
+Memory is identity-scoped and cloud authoritative.
+
+#### 28. Memory Persistence
+Ledger-first model with materialized memory view.
+
+Retention classes:
+- Hot (72h)
+- Medium (30d)
+- Cold (indefinite)
+
+#### 29. Local Assist Cache
+Client caches accelerate interaction but never override cloud truth.
+
+#### 30. Learning Artifact Pipeline
+Learning signals → evaluation → artifact creation → distribution.
+
+#### 31. Offline / Reconnect Model
+Clients reconcile state through idempotent operations.
+
+#### 32. Link Generation Model
+Links generated only through cloud simulations.
+Delivery path uses BCAST engine.
+
+#### 33. Device vs Cloud Boundary
+Devices capture and render.
+Cloud decides and executes.
+
+#### 34. Cross-Platform Capability Parity
+System capability must remain consistent across devices.
+
+#### 35. Retention & Lifecycle Governance
+All system artifacts follow governed retention policies.
+
+#### 36. Known Architectural Gaps
+Current gaps include:
+- session identifier exposure
+- Android wake parity
+- cross-device session continuity
+- tablet runtime support
+
+### PART IV — ADVANCED SYSTEM GOVERNANCE
+
+#### 37. Governing Architecture Rule
+This document is the constitutional law of Selene runtime architecture.
+All implementations must comply.
+
+#### 38. Engine Ownership of Gaps
+Each architectural gap must have a responsible engine owner.
+
+Examples:
+- PH1.W — wake
+- PH1.K — audio capture
+- PH1.L — session lifecycle
+- PH1.M — memory
+- PH1.EMO — personality
+- PH1.OS — platform policy
+
+#### 39. Build-Phase Transition Rule
+Implementation phases:
+- Phase 0 — architecture correction
+- Phase 1 — runtime parity
+- Phase 2 — platform expansion
+
+Feature expansion must not occur before architecture alignment.
+
+## 24) Appendix B - Engine Ownership of Gaps (Explicit Narrative Block)
+The following engine-level narratives define current ownership focus for unresolved architecture gaps.
+
+### PH1.W — Wake Engine
+- Android wake runtime parity remains incomplete.
+- Wake artifact retention, purge, and delete lifecycle is not fully implemented.
+- Reject-reason coverage and wake runtime parity across platforms require further completion.
+
+### PH1.K — Voice Runtime I/O
+- Android microphone runtime parity with the desktop path is still incomplete.
+- Capture-bundle trust and attestation boundaries require additional hardening.
+
+### PH1.L — Session Lifecycle Engine
+- Session lifecycle logic is implemented, but current reopen scope is effectively actor plus device.
+- True cross-device shared session continuity remains a future architectural target.
+- Public session identifier exposure is still incomplete in some API responses.
+- Session close confirmation behavior and inter-device continuity require additional design and implementation work.
+
+### PH1.VOICE.ID — Voice Identity Engine
+- Voice enrollment and identity assertion are implemented in onboarding.
+- Native device-side capture contract and enrollment UX still require full implementation in client applications.
+- Device-side enrollment flow must stay aligned to cloud enrollment authority.
+
+### PH1.EMO / PH1.EMO.CORE — Personality Engine
+- Personality classification and persona lock exist.
+- Current implementation affects tone and response style only.
+- The stronger permanent opposite-response model is not currently implemented.
+
+### PH1.M — Memory Engine
+- Core memory authority and identity-scoped storage are implemented.
+- Full retention, purge, and delete lifecycle policies are not yet complete.
+- Hot, medium, and cold memory behavior must be finalized and enforced consistently.
+
+### PH1.OS — Platform Orchestration Layer
+- Platform-aware trigger policy needs stronger centralized enforcement.
+- Tablet platform modeling is still emerging and must be fully integrated.
+- Cross-device switching and universal session-first enforcement must remain consistent at orchestration level.
+
+### PH1.F — Persistence Foundation
+- Persistence is largely complete but carries unfinished lifecycle responsibilities for session artifacts, memory retention, wake artifacts, and compliance records.
+- Additional lifecycle enforcement and purge workers are expected.
+
+### PH1.J — Audit and Proof Layer
+- Black-box compliance and proof capture must remain explicitly bound into authoritative runtime flow.
+- Session-bound audit, proof, and compliance capture require stronger explicit treatment.
+
+### Simulation and Link Execution Path
+- Link generation and delivery are implemented through simulation dispatch and broadcast execution.
+- Public client-facing generate/send APIs are product-layer decisions outside this parent law unless explicitly added.
+
+## 25) Appendix C - Phase 0 / 1 / 2 Section Text (Explicit)
+Architecture-correction sequencing is mandatory and must be preserved in planning and execution.
+
+### Phase 0 — Architecture Correction
+- Correct any runtime wiring that contradicts the parent architecture.
+- Close constitutional mismatches before any new feature expansion.
+
+### Phase 1 — Runtime Parity
+- Achieve deterministic parity across supported runtime paths and platform policy enforcement.
+- Ensure canonical contract behavior, auditability, and reliability standards are met.
+
+### Phase 2 — Platform Expansion
+- Expand platform implementations only after architecture correction and runtime parity are complete.
+- Preserve session-first and cloud-authoritative laws while extending platform surface.
+
+Feature expansion must not occur before architecture alignment.
+
+## 26) Appendix D - Selene Architecture v3 Completion Note (Paragraph)
+This specification defines Selene as a distributed AI operating system architecture built on deterministic execution pipeline, simulation-governed execution, cloud authority, identity-scoped memory, artifact governance, and distributed synchronization. This document serves as the complete architecture blueprint for Selene runtime development.
