@@ -5,6 +5,48 @@
 - `TARGET`: Approved architectural direction; not fully implemented yet.
 - `GAP`: Known missing or partial area that must be completed.
 
+## 0.1) v3 Constitutional Integration (Authoritative Overlay)
+- This document is the full system-law specification for Selene runtime architecture.
+- All platform implementations, engines, simulations, and subsystems must comply with this document.
+- v3 constitutional wording is integrated here as an overlay without replacing requirement IDs, status truth labels, or acceptance matrices.
+- If v3 wording conflicts with implementation reality, the governing status labels (`CURRENT`/`TARGET`/`GAP`) remain authoritative until code closes the gap.
+
+### 0.1.1) v3 Clause Crosswalk (Preserves Existing Truth States)
+
+| v3 Clause | Canonical Requirement IDs / Sections | Effective Status |
+|---|---|---|
+| 1 Core Architecture Law | `CAR-001..005`, `CAR-040..042`, Section 17 | CURRENT |
+| 2 Universal Client Principle | `CAR-010..012`, `CAR-060..062` | CURRENT/TARGET |
+| 3 Session-First System Law | `SES-001..003`, `CAR-020..021` | CURRENT |
+| 4 Trigger Policy by Platform | `TRG-001..005` | CURRENT/TARGET |
+| 5-7 Client responsibilities, capabilities, assist scope | `CAR-030..034`, `CAR-050`, Section 8 | CURRENT/TARGET |
+| 8 Cross-platform capability rule | `CAR-060..062` | CURRENT/TARGET |
+| 9 Canonical runtime pipeline | `CAR-020..021` | CURRENT |
+| 10-11 Multi-platform consequence + architecture alignment phase | `CAR-010`, `GOV-003`, Section 21 matrix | CURRENT |
+| 12 Ingress contract family | `NET-001..012`, Section 7.1 matrix | CURRENT |
+| 13 Canonical session payload exposure | `SES-020..022`, `NET-013` | TARGET/GAP |
+| 14-17 Trigger/session separation + sync + learning/apply loop | `TRG-005`, `SYNC-001..004`, `LUP-001..003` | CURRENT |
+| 18-21 Cloud authority, platform inventory, scope boundary, correction-first rule | `CAR-040..042`, `CAR-002`, `CAR-061`, `GOV-001..003` | CURRENT/TARGET |
+| 22-24 Voice enrollment, divergence matrix, personality semantics | `ONB-001..014`, `EMO-001..005` | CURRENT/TARGET/GAP |
+| 25 Session lifecycle law | `SES-030..035`, `SES-004..005` | CURRENT/TARGET/GAP |
+| 26 Canonical identifier exposure | `SES-020..022`, `NET-013` | TARGET/GAP |
+| 27-29 Memory authority, persistence, local cache boundary | `MEM-001..024` | CURRENT/TARGET |
+| 30-31 Learning artifact + offline/reconnect model | `LUP-001..003`, `SYNC-001..004` | CURRENT |
+| 32 Link generation model | `LNK-001..003` | CURRENT |
+| 33-34 Device/cloud boundary + capability parity | `CAR-050..051`, `CAR-060..062` | CURRENT/TARGET |
+| 35 Retention/lifecycle governance | `RET-001..002` | GAP/CURRENT |
+| 36 Known architectural gaps | `GAP-001..007` | GAP |
+| 37 Governing architecture rule | `GOV-001..003` | CURRENT |
+| 38 Engine ownership of gaps | Section 21 Acceptance/Ownership Matrix | CURRENT |
+| 39 Build-phase transition rule | `GOV-003`, Section 21 ownership acceptance sequencing | CURRENT |
+
+### 0.1.2) v3 Part Crosswalk (Logical Grouping)
+- `PART I — FOUNDATIONAL SYSTEM LAWS`: Sections 1-5, 8-11, 17-18.
+- `PART II — SESSION & EXECUTION MODEL`: Sections 6-7, 12, 14-16.
+- `PART III — IDENTITY, MEMORY, AND ARTIFACT GOVERNANCE`: Sections 9-13, 19-20.
+- `PART IV — ADVANCED SYSTEM GOVERNANCE`: Sections 21-22.
+- Section numbering and requirement IDs remain unchanged to preserve traceability to code/tests/ledger entries.
+
 ## 1) Core Architecture Laws
 - `[CAR-001] [CURRENT]` Selene operates through client applications on supported device classes: iPhone, Android phone, Desktop.
 - `[CAR-002] [TARGET]` Tablet is a formal platform class in the parent architecture and must be added to contracts and runtime policy enforcement.
