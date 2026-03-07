@@ -1,1149 +1,177 @@
-Selene Client Runtime Architecture — Universal Device Session Model
-
-Core rule
-
-Selene must operate through client applications running on supported device classes.
-
-These device classes include:
-
-iPhone
-
-Android phone
-
-Tablet
-
-Desktop
-
-Each device runs a Selene client application.
-
-These clients are the only user-facing terminals for speaking to Selene, hearing Selene, and interacting with Selene.
-
-The client is not the authority layer.
-The cloud remains the authority layer.
-
-Universal client principle
-
-All Selene clients must follow the same core model.
-
-No matter whether the device is:
-
-iPhone
-
-Android
-
-Tablet
-
-Desktop
-
-The purpose of the client is the same:
-
-capture user input
-
-open or resume a cloud session
-
-send turns to Selene cloud
-
-receive responses from Selene cloud
-
-render output
-
-play audio output
-
-maintain lightweight local assist state
-
-sync approved updates from cloud
-
-queue and retry operations safely
-
-The cloud session is the real session.
-The device is only the terminal into that session.
-
-Universal session rule
-
-All meaningful Selene work must come from an open or resumed session.
-
-That includes:
-
-simulation-based processing
-
-web search
-
-link generation
-
-link delivery
-
-onboarding actions
-
-message handling
-
-future tools and workflows
-
-Builder and repair workflows
-
-The session is not owned by the phone, tablet, or desktop.
-The session is cloud-based.
-
-The device may:
-
-open a session
-
-resume a session
-
-reflect session state
-
-cache session hints for speed
-
-But the device must never invent session truth.
-
-All future functions, simulations, and tools must be born from session context.
-
-Session is the central runtime container through which Selene brings together its engines, memory, access checks, tools, and execution paths.
-
-Trigger policy by platform
-
-All clients follow the same session-first model, but trigger entry differs by platform.
-
-iPhone:
-
-EXPLICIT only
-
-side button or approved explicit action opens or resumes session
-
-no wake word
-
-Android:
-
-wake word allowed
-
-explicit entry allowed
-
-wake or explicit opens or resumes session
-
-Tablet:
-
-wake word allowed
-
-explicit entry allowed
-
-wake or explicit opens or resumes session
-
-Desktop:
-
-wake word allowed
-
-explicit entry allowed
-
-wake or explicit opens or resumes session
-
-This trigger difference must not change the cloud session model.
-It only changes how the client enters the session.
-
-Client responsibilities shared across all platforms
-
-Every Selene client should own the same core responsibilities:
-
-audio capture
-
-audio preprocessing
-
-voice entry handling
-
-session entry or resume request
-
-chat or thread rendering
-
-audio playback
-
-local outbox and retry management
-
-lightweight local cache
-
-safe synchronization with cloud
-
-receipt and device-state submission
-
-safe apply of approved cloud updates
-
-The exact trigger UX may vary by platform, but the core client responsibilities stay the same.
-
-Client interaction capabilities
-
-Selene clients are the primary interaction layer between the user and Selene.
-
-Beyond voice interaction, the client applications must support rich interaction capabilities equal to or stronger than modern intelligent applications.
-
-These capabilities include:
-
-visual result rendering such as tables, charts, and structured data visualizations
-
-ability to upload PDF files
-
-ability to upload images
-
-ability to upload documents and media for cloud processing
-
-ability to generate and display printable documents such as PDF files
-
-ability to send documents to local printers connected to the device
-
-ability to open and control device hardware features such as camera and microphone
-
-ability to capture images for tasks such as scanning invoices, receipts, or documents
-
-ability to upload captured media to Selene cloud for processing
-
-ability to display structured outputs including reports, dashboards, and formatted documents
-
-ability to support interactive workflows such as approving actions, confirming tasks, or selecting options
-
-These capabilities must remain platform-native but functionally equivalent across device classes.
-
-For example:
-
-an invoice may be captured using the camera
-
-Selene processes the image in the cloud
-
-the result may be rendered as a table or chart
-
-a PDF summary may be generated
-
-the user may print the document through the device printer
-
-All6. Cloud responsibilities shared across all platforms
-
-The cloud is authoritative for:
-
-identity truth
-
-access control
-
-NLP understanding
-
-LLM reasoning
-
-simulation matching
-
-simulation execution
-
-session truth
-
-onboarding truth
-
-link generation
-
-link delivery
-
-learning evaluation
-
-profile promotion
-
-artifact authority
-
-audit logging
-
-Selene Builder services must also operate from this cloud-authoritative layer.
-
-Builder responsibilities include:
-
-diagnosing what does not work
-
-producing fix paths for broken system behavior
-
-supporting repair and upgrade workflows under the same session-first architecture
-
-No device should override cloud truth.
-
-Client-side local assist scopen
-
-profile promotion
-
-artifact authority
-
-audit logging
-
-No device should override cloud truth.
-
-Client-side local assist scope
-
-The client may keep local data only for speed, continuity, and UX quality.
-
-This includes:
-
-voice-recognition assist data
-
-wake personalization where supported
-
-recent thread cache
-
-session resume hints
-
-audio pipeline state
-
-pending outbox items
-
-secure auth tokens
-
-push token state
-
-device capability state
-
-approved local profile versions
-
-This local state is never authoritative.
-
-Same capability rule across device classes
-
-Selene should provide the same functional capability shape across client classes.
-
-That means:
-
-a user can speak to Selene from iPhone, Android, Tablet, or Desktop
-
-a user can open or resume a cloud session from any supported client
-
-a user can continue workflows from that session regardless of client class
-
-a user can request cloud actions from that session regardless of entry device
-
-The main difference between platforms is trigger method, not system capability.
-
-Canonical runtime flow
-
-The universal runtime flow is:
-
-trigger entry on client
-
-client captures audio or text
-
-client submits turn to cloud
-
-cloud validates ingress security and request integrity
-
-cloud resolves or opens session context
-
-cloud handles voice identity and onboarding gate requirements
-
-cloud applies memory, access, understanding, and execution rules
-
-cloud returns result
-
-client renders and optionally speaks result
-
-client records sync and operation outcome state
-
-This flow must be treated as the canonical Selene client runtime model.
-
-Multi-platform design consequence
-
-The iPhone app, Android app, Tablet app, and Desktop app should not be designed as separate product concepts.
-
-They are platform-specific expressions of the same client architecture.
-
-Therefore:
-
-there should be one parent client-runtime architecture
-
-platform documents should inherit from that parent model
-
-iPhone-specific differences should be limited mainly to trigger and platform constraints
-
-Android/Desktop/Tablet differences should be limited mainly to wake support and platform-specific hardware behavior
-
-What must be aligned next
-
-The system should be updated so that:
-
-Tablet becomes a formal platform in contracts and design
-
-platform-aware trigger policy is enforced centrally
-
-iPhone remains explicit-only
-
-Android, Tablet, and Desktop support wake plus explicit
-
-all client architecture documents follow the same parent session model
-
-all future client builds preserve cloud-authoritative session truth
-
-Client ingress contract (cross-platform)
-
-All Selene clients must interact with the cloud through the same ingress contract family.
-
-These ingress routes are canonical across device classes:
-
-/v1/invite/click
-
-/v1/onboarding/continue
-
-/v1/voice/turn
-
-All client implementations must respect the same request semantics, security headers, and idempotency rules defined by the server.
-
-Clients must never bypass or simulate these flows locally.
-
-The ingress contract must remain cross-platform consistent so that iPhone, Android, Tablet, and Desktop clients behave identically at the protocol layer.
-
-Universal session payload contract
-
-All clients must consume the same canonical session payload model.
-
-The server must provide consistent identifiers and state semantics so that every client understands session lifecycle in the same way.
-
-The session payload should include canonical identifiers such as:
-
-session_id
-
-turn_id
-
-session_state
-
-These identifiers must behave consistently across all device classes.
-
-Clients may cache hints for UI continuity but must treat server responses as the source of truth.
-
-Device trigger policy vs session model
-
-Trigger entry is platform-specific but the session lifecycle is universal.
-
-Platform trigger rules:
-
-iPhone – explicit entry only
-
-Android – wake word or explicit
-
-Tablet – wake word or explicit
-
-Desktop – wake word or explicit
-
-These trigger differences must never fork the cloud session model.
-
-Regardless of how a session is opened, the session lifecycle and processing path must remain identical.
-
-Cross-platform parity rule
-
-All Selene clients must implement the same functional capability set.
-
-Clients must support:
-
-voice entry
-
-session open and resume
-
-turn submission
-
-response rendering
-
-cloud synchronization
-
-operation retry and deduplication
-
-inter-device switching across the same user journey
-
-A user must be able to begin interaction on one supported device and continue smoothly on anot16. Sync, outbox, and deduplication rule
-
-All Selene clients must implement a deterministic synchronization model.
-
-Each client must include:
-
-a durable outbox
-
-operation journaling
-
-idempotent resend behavior
-
-cloud acknowledgement before completion
-
-conflict-safe retry logic
-
-inter-device synchronization that preserves one consistent user history and session view
-
-If device state and cloud state diverge, the cloud state always wins.
-
-When a user switches between devices, synchronization must preserve correctness with:
-
-no missing information
-
-no duplicated operations
-
-no conflicting session history
-
-no broken continuity between devices
-
-Learning and update loopand deduplication rule
-
-All Selene clients must implement a deterministic synchronization model.
-
-Each client must include:
-
-a durable outbox
-
-operation journaling
-
-idempotent resend behavior
-
-cloud acknowledgement before completion
-
-conflict-safe retry logic
-
-If device state and cloud state diverge, the cloud state always wins.
-
-Learning and update loop
-
-All clients may participate in the Selene learning and update loop.
-
-Clients may:
-
-upload approved learning artifacts
-
-receive approved profile or configuration updates
-
-stage updates locally
-
-apply updates safely
-
-rollback updates if required
-
-The cloud remains responsible for evaluating learning signals and promoting official updates.
-
-Cloud authority boundary
-
-The cloud is the authoritative source for all critical system state.
-
-No client may override cloud truth for:
-
-identity
-
-access control
-
-session state
-
-onboarding state
-
-simulation execution
-
-learning promotion
-
-artifact authority
-
-Clients may cache assist data only for speed and UX continuity.
-
-Platform inventory
-
-The Selene client ecosystem includes the following platform classes:
-
-iPhone
-
-Android phone
-
-Tablet
-
-Desktop
-
-Tablet devices follow the Android-style wake policy unless otherwise defined by platform constraints.
-
-All platform classes must adhere to the same session model and client-runtime architecture.
-
-Scope boundaries for this architecture
-
-This parent architecture defines the universal client runtime model but does not define:
-
-exact UI layouts
-
-screen-level UX behavior
-
-public administrative APIs
-
-invite generation administration endpoints
-
-local model packaging formats
-
-These decisions belong in platform-specific documents or later design stages.
-
-Immediate next step
-
-Use this document as the governing parent architecture for all Selene clients.
-
-Platform-specific documents (iPhone, Android, Tablet, Desktop) must inherit from this model and only specify platform differences where required by OS or hardware constraints.
-
-Voice enrollment authority contract
-
-Voice enrollment is a mandatory onboarding stage for all Selene users.
-
-Before onboarding can complete:
-
-voice enrollment must reach a locked state
-
-voice enrollment artifacts must be synchronized with the cloud
-
-voice recognition profiles must be created and stored under the user's identity scope
-
-Clients participate only as capture terminals during enrollment.
-
-The authoritative enrollment process is executed and validated by the cloud.
-
-Once locked, the enrolled voice profile becomes part of the identity recognition system used during future sessions.
-
-Platform divergence matrix
-
-Some onboarding steps differ by platform.
-
-The canonical onboarding order is:
-
-invite or open
-
-onboarding session start
-
-required platform receipts
-
-missing fields, terms, primary-device confirmation, and sender verification if required
-
-voice enrollment
-
-wake enrollment where platform requires it
-
-personality lock
-
-access-related onboarding steps
-
-complete
-
-ready
-
-Voice enrollment is required for all platforms.
-
-Wake enrollment behavior differs:
-
-iPhone – wake enrollment disabled
-
-Android – wake enrollment required
-
-Tablet – wake enrollment required unless a later platform contract says otherwise
-
-Desktop – wake enrollment required
-
-Platform receipts also differ.
-
-iPhone requires ios_side_button_configured
-
-Android/Desktop require wake configuration receipts
-
-Despite these differences, the overall onboarding progression and cloud authority remain the same.
-
-Personality lock semantics
-
-During onboarding Selene performs a personality classification step.
-
-The classification categories include:
-
-Passive
-
-Domineering
-
-Undetermined
-
-This classification is stored as an authoritative onboarding record in the cloud.
-
-Personality influences response tone only in the current implemented system.
-
-Personality must never influence:
-
-access control
-
-simulation execution
-
-security checks
-
-system authority
-
-Current implemented behavior is tone and style guidance only.
-
-A stronger permanent opposite-response contract is not yet the implemented system rule.
-
-The Personality engine therefore requires additional future25. Session lifecycle contract
-
-Selene sessions are cloud-owned objects with defined lifecycle states.
-
-The canonical session states include:
-
-Closed
-
-Open
-
-Active
-
-SoftClosed
-
-Suspended
-
-Session transitions are controlled by the server.
-
-Typical lifecycle:
-
-trigger entry opens Closed → Active
-
-continued interaction keeps session Active
-
-inactivity moves Active → SoftClosed
-
-extended inactivity moves SoftClosed → Closed
-
-system conditions may move session → Suspended
-
-A session should remain open while the speaker is still engaged with the topic.
-
-The inactivity period must be configurable, for example 30 seconds or another configured duration, but the governing principle does not change.
-
-The principle is:
-
-once a session opens, it remains open until the user stops speaking for the configured inactivity period
-
-Before a session fully closes, Selene should confirm whether the user has finished with the topic where the interaction model requires it.
-
-Clients must treat the server lifecycle as the source of truth.
-
-Current repo-grounded reopen behavior is effectively scoped by actor plus device.
-
-True cross-device shared session continuity is still a future alignment target rather than the current fully implemented public contract.
-
-Client session identifier exposureice.
-
-True cross-device shared session continuity is still a future alignment target rather than the current fully implemented public contract.
-
-Client session identifier exposure
-
-The client runtime model assumes explicit session identifiers are available.
-
-Canonical identifiers should include:
-
-session_id
-
-turn_id
-
-session_state
-
-These identifiers allow consistent session continuity across clients.
-
-Clients must not infer or invent session identifiers locally.
-
-Memory authority and identity scope
-
-Selene memory is cloud-authoritative and identity-scoped.
-
-Memory records are stored by user identity rather than session.
-
-Sessions may reference memory but do not own it.
-
-Authoritative memory read and write requires confirmed voice identity.
-
-Without confirmed identity, the system must not enter authoritative user-memory scope.
-
-Memory access is filtered by:
-
-identity scope
-
-memory sensitivity policy
-
-confidence level
-
-permission requirements
-
-Sensitive memory requires additional permission checks before use.
-
-Memory persistence model
-
-Selene memory uses a ledger + materialized current-state model.
-
-Memory events are append-only in the ledger.
-
-The current view reflects the latest active memory state.
-
-Memory events may include:
-
-Stored
-
-Updated
-
-Forgotten
-
-Selene memory should be understood in temperature bands.
-
-Hot memory:
-
-retained for 72 hours
-
-Medium memory:
-
-retained for 30 days
-
-Cold memory:
-
-retained indefinitely unless policy or deletion rules state otherwise
-
-Memory provenance may include session identifiers but storage is keyed by user identity.
-
-When a session closes, the session lifecycle may end while cloud memory persists according to memory policy.
-
-Any remaining device-side cache remains assist-only and non-authoritative.
-
-Every active session should be able to access allowed memory under the memory engine rules.
-
-Local assist cache vs cloud truth
-
-Clients may keep lightweight local caches for performance.
-
-Examples include:
-
-recent thread history
-
-session resume hints
-
-audio pipeline state
-
-voice recognition assist data
-
-approved profile versions
-
-operation outbox state
-
-Local caches are never authoritative.
-
-If cloud and device state diverge, cloud state always overrides the device.
-
-Learning and update pipeline
-
-Selene devices participate in a bidirectional learning and update loop.
-
-Upload direction:
-
-clients may upload learning artifacts or telemetry
-
-cloud evaluates validity
-
-cloud decides promotion or rejection
-
-Download direction:
-
-cloud distributes approved updates
-
-clients verify and stage updates
-
-clients apply updates safely
-
-clients confirm or rollback updates
-
-Device-side update application must follow a strict sequence:
-
-download
-
-verify
-
-stage
-
-apply
-
-confirm
-
-rollback if required
-
-The cloud remains responsible for promotion and governance of all learned behavior.
-
-Offline, reconnect, and deduplication model
-
-All clients must implement deterministic synchronization behavior.
-
-Each client must include:
-
-an operation outbox
-
-an operation journal
-
-retry state management
-
-idempotent resend behavior
-
-cloud acknowledgement before completion
-
-Reconnect sequence:
-
-refresh authentication
-
-refresh session truth
-
-flush pending operations
-
-upload queued artifacts
-
-pull approved updates
-
-apply updates safely
-
-refresh UI state
-
-Duplicate execution must be prevented using stable idempotency identities.
-
-Link generation and delivery model
-
-Link generation and delivery are cloud-owned operations.
-
-Typical flow:
-
-user requests link from an active session
-
-cloud verifies identity and permissions
-
-cloud executes link-generation simulation
-
-cloud optionally executes link-delivery workflow
-
-cloud records audit and proof state
-
-client renders result
-
-Clients must never generate authoritative links locally.
-
-This architecture does not define a public client-facing invite generate or send API.
-
-Current repo-grounded behavior uses internal cloud simulation and delivery paths for authoritative generation and sending.
-
-Device vs cloud responsibility boundary
-
-Devices may perform:
-
-audio capture
-
-audio preprocessing
-
-local caching
-
-retry and sync operations
-
-playback and rendering
-
-assist functions
-
-camera capture
-
-document upload
-
-printer access through local device interfaces
-
-Cloud must perform:
-
-identity verification
-
-access control
-
-session lifecycle authority
-
-onboarding authority
-
-simulation execution
-
-memory authority
-
-learning governance
-
-artifact authority
-
-audit logging
-
-black-box compliance and proof capture for authoritative system events
-
-Cross-platform capability parity sync operations
-
-playback and rendering
-
-assist functions
-
-Cloud must perform:
-
-identity verification
-
-access control
-
-session lifecycle authority
-
-onboarding authority
-
-simulation execution
-
-memory authority
-
-learning governance
-
-artifact authority
-
-audit logging
-
-Cross-platform capability parity
-
-Across iPhone, Android, Tablet, and Desktop the following must remain identical:
-
-cloud authority
-
-session-first runtime model
-
-ingress contract family
-
-onboarding flow
-
-voice enrollment authority
-
-memory authority
-
-sync and retry model
-
-response rendering flow
-
-Allowed platform differences are limited to trigger mechanisms, hardware behavior, and operating system constraints.
-
-Retention, purge, and delete lifecycle
-
-Retention, purge, and delete behavior must be defined across:
-
-wake-related artifacts
-
-memory records
-
-device-local assist cache
-
-operation journals and outbox state
-
-session-bound compliance and proof records
-
-Where retention and deletion execution is not yet fully implemented, the gap must remain explicit and must not be silently assumed complete.
-
-Known architectural gaps
-
-Current system gaps include:
-
-explicit session identifiers not yet exposed in some client responses
-
-true cross-device shared session continuity not fully implemented
-
-Android wake runtime parity still incomplete
-
-tablet platform modeling still emerging
-
-personality behavior currently limited to tone influence
-
-retention and purge lifecycle policies still evolving
-
-native app implementation remains outside this repo in several areas
-
-These gaps should be resolved progressively while preserving the core architecture defined in this document.
-
-Governing architecture rule
-
-This document defines the universal runtime architecture for all Selene clients.
-
-All platform implementations must comply with these rules.
-
-Platform-specific documents may extend but must never contradict this parent architecture.
-
-Engine ownership of current gaps
-
-The following engines or subsystems currently require additional work or alignment. Listing engine ownership clarifies where future engineering effort must focus.
-
-PH1.W — Wake Engine
-
-Android wake runtime parity is still incomplete.
-
-Wake artifact retention, purge, and delete lifecycle is not fully implemented.
-
-Reject-reason coverage and wake runtime parity across platforms require further completion.
-
-PH1.K — Voice Runtime I/O
-
-Android microphone runtime parity with the desktop path is still incomplete.
-
-Capture bundle trust and attestation boundaries still require additional hardening.
-
-PH1.L — Session Lifecycle Engine
-
-Session lifecycle logic is implemented but current reopen scope is effectively actor plus device.
-
-True cross-device shared session continuity remains a future architectural target.
-
-Public session identifier exposure is still incomplete in some API responses.
-
-Session close confirmation behavior and inter-device smooth continuity require additional design and implementation work.
-
-PH1.VOICE.ID — Voice Identity Engine
-
-Voice enrollment and identity assertion are implemented in onboarding.
-
-However, the native device-side capture contract and enrollment UX still require full implementation in client applications.
-
-Device-side enrollment flow must be aligned with the cloud enrollment authority contract.
-
-PH1.EMO / PH1.EMO.CORE — Personality Engine
-
-Personality classification and persona lock exist.
-
-Current implementation affects tone and response style only.
-
-The stronger “react opposite permanently” behavior is not currently implemented.
-
-This engine requires additional design and build work before a deeper long-term personality model can be considered complete.
-
-PH1.M — Memory Engine
-
-Core memory authority and identity-scoped storage are implemented.
-
-However, full retention, purge, and delete lifecycle policies are not yet complete.
-
-Hot, medium, and cold memory behavior must be finalized and enforced consistently.
-
-Memory governance rules must be finalized alongside wake and artifact lifecycle policies.
-
-PH1.OS — Platform Orchestration Layer
-
-Platform-aware trigger policy needs stronger centralized enforcement.
-
-Tablet platform modeling is still emerging and must be fully integrated into the platform model.
-
-Cross-device switching and universal session-first enforcement across all future functions must be kept consistent at the orchestration layer.
-
-PH1.F — Persistence Foundation
-
-The persistence layer is largely complete but carries unfinished lifecycle responsibilities for session artifacts, memory retention, wake artifacts, and compliance records.
-
-Additional lifecycle enforcement and purge workers may be required.
-
-PH1.J — Audit and Proof Layer
-
-Black-box compliance and future proof capture must be clearly bound into the authoritative runtime flow.
-
-Session-bound audit, proof, and compliance capture require stronger explicit architectural treatment.
-
-Simulation and Link Execution Path
-
-Link generation and delivery are implemented through simulation dispatch and broadcast execution.
-
-Public client-facing generation APIs are not currently defined in this architecture and remain a product-layer decision.
-
-BCAST engine remains the authoritative delivery path for link sending under the current design.
-
-Build-phase transition rule
-
-The architecture must be corrected first before further feature expansion.
-
-The first implementation run should therefore focus on aligning the current system to this target architecture.
-
-After the architecture correction run, future work should proceed in structured build runs.
-
-Those runs should include:
-
-architecture correction where current wiring is wrong or incomplete
-
-engine-specific improvement runs where more functionality is required
-
-platform implementation runs for native clients
-
-session and synchronization hardening runs
-
-memory, audit, and compliance completion runs
-
-Codex should later help propose how many implementation runs are required, but all such runs must remain aligned with this parent architecture and must preserve the session-first system law.
+# Selene Client Runtime Architecture - Universal Device Session Model
+
+## 0) Status Legend
+- `CURRENT`: Implemented and expected to be true in active runtime behavior.
+- `TARGET`: Approved architectural direction; not fully implemented yet.
+- `GAP`: Known missing or partial area that must be completed.
+
+## 1) Core Architecture Laws
+- `[CAR-001] [CURRENT]` Selene operates through client applications on supported device classes: iPhone, Android phone, Desktop.
+- `[CAR-002] [TARGET]` Tablet is a formal platform class in the parent architecture and must be added to contracts and runtime policy enforcement.
+- `[CAR-003] [CURRENT]` The client is never the authority layer; cloud is always authoritative for identity, access, session truth, execution, and audit.
+- `[CAR-004] [CURRENT]` The client is the user terminal for speaking, hearing, viewing, and interacting with Selene.
+- `[CAR-005] [CURRENT]` Universal behavior across clients is mandatory: capture input, open or resume session, submit turns, render response, play audio, and synchronize safely.
+
+## 2) Universal Client Principle
+- `[CAR-010] [CURRENT]` iPhone, Android, Desktop clients follow one shared model and must not fork core runtime semantics.
+- `[CAR-011] [TARGET]` Tablet follows the same shared model once platform contract support is added.
+- `[CAR-012] [CURRENT]` Device-local state is assist-only and may improve speed/continuity but may not overwrite cloud truth.
+
+## 3) Trigger Policy by Platform
+- `[TRG-001] [CURRENT]` iPhone is explicit-only: side-button or approved explicit action opens/resumes session; wake word is blocked.
+- `[TRG-002] [CURRENT]` Android supports wake word and explicit entry; both are session-entry methods.
+- `[TRG-003] [CURRENT]` Desktop supports wake word and explicit entry; both are session-entry methods.
+- `[TRG-004] [TARGET]` Tablet supports wake word and explicit entry, aligned to Android-style policy unless constrained by OS policy.
+- `[TRG-005] [CURRENT]` Trigger differences affect entry method only; they must never fork session lifecycle semantics.
+
+## 4) Session-First System Law
+- `[SES-001] [CURRENT]` All meaningful Selene work must execute from an open/resumed cloud session context.
+- `[SES-002] [CURRENT]` Session context is required for simulation processing, web operations, link workflows, onboarding actions, and future tools.
+- `[SES-003] [CURRENT]` Devices may open/resume/reflect sessions and cache hints; devices may not invent session truth.
+- `[SES-004] [TARGET]` Session inactivity policy standard: default soft-close transition at 30 seconds of inactivity, configurable by governed policy.
+- `[SES-005] [TARGET]` Before final close, system should confirm if user is finished when interaction policy requires close-check behavior.
+- `[SES-006] [CURRENT]` Current reopen behavior is effectively scoped by actor plus device.
+- `[SES-007] [GAP]` True cross-device shared session continuity is not yet fully implemented as a public contract.
+
+## 5) Canonical Runtime Flow
+- `[CAR-020] [CURRENT]` Canonical flow is: trigger -> capture input -> submit turn -> ingress validation -> resolve/open session -> apply identity/onboarding gates -> memory/access/understanding/execution -> return result -> client render/playback -> sync outcome state.
+- `[CAR-021] [CURRENT]` This canonical flow is the parent runtime model for all client classes.
+
+## 6) Universal Session Payload Contract
+- `[SES-020] [TARGET]` Canonical client-visible session payload must include `session_id`, `turn_id`, and `session_state` with stable semantics across platforms.
+- `[SES-021] [CURRENT]` Clients must not infer or fabricate identifiers; server values are authoritative.
+- `[SES-022] [GAP]` Some current API responses still do not expose full session identifiers in client-facing payloads.
+
+## 7) Client Ingress Contract (Cross-Platform)
+- `[NET-001] [CURRENT]` Canonical ingress route family:
+  - `/v1/invite/click`
+  - `/v1/onboarding/continue`
+  - `/v1/voice/turn`
+- `[NET-002] [CURRENT]` Clients must follow server-defined security semantics and fail closed on invalid security fields.
+- `[NET-003] [CURRENT]` Clients must never bypass these flows locally.
+
+### 7.1 Protocol Contract Matrix
+
+| Requirement ID | Endpoint | Required Headers | Idempotency | Replay Guard | Request Core Fields | Response Core Fields | Status |
+|---|---|---|---|---|---|---|---|
+| `NET-010` | `/v1/invite/click` | `Authorization`, `X-Request-Id`, `X-Nonce`, `X-Timestamp-Ms`, `X-Idempotency-Key` | Required | Nonce + timestamp window | invite token/signature, app platform, app instance/device identity context | onboarding session start + next step | CURRENT |
+| `NET-011` | `/v1/onboarding/continue` | `Authorization`, `X-Request-Id`, `X-Nonce`, `X-Timestamp-Ms`, `X-Idempotency-Key` | Required | Nonce + timestamp window | onboarding session id, action, platform receipts and action payload | next step, blockers, status deltas | CURRENT |
+| `NET-012` | `/v1/voice/turn` | `Authorization`, `X-Request-Id`, `X-Nonce`, `X-Timestamp-Ms`, `X-Idempotency-Key` | Required | Nonce + timestamp window | trigger, actor, device, capture references, user/voice payload | turn outcome and response payload | CURRENT |
+| `NET-013` | `/v1/voice/turn` session identifiers | Same as above | Same as above | Same as above | Same as above | explicit `session_id`, `turn_id`, `session_state` in response contract | TARGET |
+
+## 8) Shared Client Responsibilities
+- `[CAR-030] [CURRENT]` All clients must support audio capture, preprocessing, voice entry handling, session entry/resume request, response rendering, and playback.
+- `[CAR-031] [CURRENT]` All clients must implement local outbox and deterministic retry behavior.
+- `[CAR-032] [CURRENT]` All clients must maintain lightweight assist cache only (never authoritative).
+- `[CAR-033] [CURRENT]` All clients must submit required platform receipts and device state proofs to cloud onboarding/session paths.
+- `[CAR-034] [TARGET]` All clients should expose functionally equivalent rich interaction capabilities (file upload, image capture, structured result rendering, print workflows) with platform-native UX.
+
+## 9) Shared Cloud Responsibilities
+- `[CAR-040] [CURRENT]` Cloud authoritative domains: identity, access, NLP/LLM reasoning, simulation selection/execution, session truth, onboarding truth, learning governance, artifact authority, and audit logging.
+- `[CAR-041] [CURRENT]` Builder/repair workflows belong to cloud authority layer and must remain session-first.
+- `[CAR-042] [CURRENT]` No device override of cloud truth is permitted.
+
+## 10) Onboarding + Voice Enrollment Authority
+- `[ONB-001] [CURRENT]` Voice enrollment is mandatory before onboarding completion.
+- `[ONB-002] [CURRENT]` Voice enrollment must reach locked state and produce synchronized artifact receipt before complete.
+- `[ONB-003] [CURRENT]` Voice profile identity scope is cloud-authoritative; clients act as capture terminals.
+- `[ONB-004] [CURRENT]` Canonical onboarding order includes: invite/open -> onboarding start -> required receipts -> missing fields/terms/primary device/sender verification (if required) -> voice enrollment -> wake enrollment where required -> personality lock -> access step -> complete -> ready.
+
+### 10.1 Platform Divergence Matrix
+- `[ONB-010] [CURRENT]` iPhone: wake enrollment disabled; `ios_side_button_configured` receipt required.
+- `[ONB-011] [CURRENT]` Android: wake enrollment required.
+- `[ONB-012] [TARGET]` Tablet: wake enrollment required unless a later platform contract defines a constrained policy.
+- `[ONB-013] [CURRENT]` Desktop: wake enrollment required.
+- `[ONB-014] [CURRENT]` Despite platform divergence, onboarding authority and progression remain cloud-governed.
+
+## 11) Personality Lock Semantics
+- `[EMO-001] [CURRENT]` Personality classification categories: `Passive`, `Domineering`, `Undetermined`.
+- `[EMO-002] [CURRENT]` Personality lock is authoritative in onboarding record state.
+- `[EMO-003] [CURRENT]` Personality affects tone/style only in current implementation.
+- `[EMO-004] [CURRENT]` Personality must never influence access control, simulation execution authorization, security checks, or system authority.
+- `[EMO-005] [GAP]` Strong permanent opposite-response behavior is not currently implemented and requires separate design/build.
+
+## 12) Session Lifecycle Contract
+- `[SES-030] [CURRENT]` Canonical session states: `Closed`, `Open`, `Active`, `SoftClosed`, `Suspended`.
+- `[SES-031] [CURRENT]` Session state transitions are server-controlled.
+- `[SES-032] [TARGET]` Policy standard for inactivity: open session remains active until user stops speaking for configured inactivity period; default target is 30s for inactivity transition logic.
+- `[SES-033] [TARGET]` Session close confirmation behavior should be policy-driven and applied before full close where required.
+- `[SES-034] [CURRENT]` Clients reflect server lifecycle state and never synthesize state transitions.
+- `[SES-035] [GAP]` Cross-device shared session continuity remains a future alignment target.
+
+## 13) Memory Authority and Session Memory Handling
+- `[MEM-001] [CURRENT]` Memory is cloud-authoritative and identity-scoped.
+- `[MEM-002] [CURRENT]` Memory storage is keyed by user identity; sessions reference memory but do not own memory records.
+- `[MEM-003] [CURRENT]` Authoritative memory read/write requires confirmed voice identity.
+- `[MEM-004] [CURRENT]` Sensitive memory requires permission checks before use.
+
+### 13.1 Retention Classes (Normative)
+- `[MEM-010] [TARGET]` Hot memory retention minimum: 72 hours.
+- `[MEM-011] [TARGET]` Medium memory retention minimum: 30 days.
+- `[MEM-012] [TARGET]` Cold memory retention: indefinite until policy/delete command requires removal.
+
+### 13.2 How Memory Must Behave Across Sessions
+- `[MEM-020] [TARGET]` On session open/resume, memory load must run through identity scope checks and policy filters before candidate hydration.
+- `[MEM-021] [TARGET]` During active session, memory read path must enforce sensitivity/use-policy/confidence gates for every turn.
+- `[MEM-022] [TARGET]` Memory writes generated during session must append to ledger first, then materialize current state deterministically.
+- `[MEM-023] [TARGET]` On session close, session lifecycle may end while cloud memory persists by retention class policy.
+- `[MEM-024] [CURRENT]` Device memory/cache remains assist-only; cloud memory remains authoritative on divergence.
+
+## 14) Offline, Sync, Outbox, and Deduplication
+- `[SYNC-001] [CURRENT]` Every client must implement durable outbox, operation journal, retry state, idempotent resend, and cloud-acknowledged completion.
+- `[SYNC-002] [CURRENT]` If local and cloud diverge, cloud state wins.
+- `[SYNC-003] [CURRENT]` Reconnect sequence must include auth refresh, session truth refresh, pending flush, upload queue drain, approved update pull/apply, and UI refresh.
+- `[SYNC-004] [CURRENT]` Duplicate execution must be prevented via stable idempotency identities.
+
+## 15) Learning and Update Loop
+- `[LUP-001] [CURRENT]` Clients may upload approved learning artifacts/telemetry; cloud decides acceptance/promotion.
+- `[LUP-002] [CURRENT]` Clients may receive approved profile/config updates and must apply with safe sequence: download -> verify -> stage -> apply -> confirm -> rollback when required.
+- `[LUP-003] [CURRENT]` Promotion/governance authority remains cloud-side.
+
+## 16) Link Generation and Delivery Model
+- `[LNK-001] [CURRENT]` Link generation and delivery are cloud-owned operations executed under session context.
+- `[LNK-002] [CURRENT]` Clients render outcomes but must not generate authoritative links locally.
+- `[LNK-003] [CURRENT]` Public client-facing invite generation API is not defined in this parent architecture.
+
+## 17) Device vs Cloud Responsibility Boundary
+- `[CAR-050] [CURRENT]` Device responsibilities: capture, preprocessing, rendering/playback, assist caching, sync/outbox behavior, platform hardware integration.
+- `[CAR-051] [CURRENT]` Cloud responsibilities: identity/access/session/onboarding authority, simulation execution, memory authority, learning governance, artifact authority, audit/compliance.
+
+## 18) Cross-Platform Capability Parity
+- `[CAR-060] [CURRENT]` iPhone, Android, Desktop must preserve one functional shape: cloud authority, session-first runtime, ingress family, onboarding authority, voice-enrollment authority, memory authority, sync/retry model.
+- `[CAR-061] [TARGET]` Tablet must be fully integrated into the same parity contract.
+- `[CAR-062] [CURRENT]` Allowed platform differences are limited to trigger mechanics, hardware handling, and OS constraints.
+
+## 19) Retention, Purge, and Delete Lifecycle
+- `[RET-001] [GAP]` Retention/purge/delete execution must be explicit for wake artifacts, memory records, device assist cache, operation journals/outbox state, and session-bound compliance records.
+- `[RET-002] [CURRENT]` Unimplemented lifecycle areas must remain explicitly marked as gaps.
+
+## 20) Known Architectural Gaps
+- `[GAP-001] [GAP]` Explicit session identifiers are not yet exposed in all client-facing response contracts.
+- `[GAP-002] [GAP]` True cross-device shared session continuity is not fully implemented.
+- `[GAP-003] [GAP]` Android wake runtime parity remains incomplete.
+- `[GAP-004] [GAP]` Tablet platform modeling remains incomplete in runtime contracts.
+- `[GAP-005] [GAP]` Personality behavior remains tone-scoped only.
+- `[GAP-006] [GAP]` Retention/purge/delete lifecycle policy implementation remains incomplete.
+- `[GAP-007] [CURRENT]` Native app implementation spans separate repositories and must align to this parent architecture.
+
+## 21) Acceptance Criteria and Ownership Matrix
+
+| Area | Requirement IDs | Acceptance Criteria (Proof of Completion) | Owner |
+|---|---|---|---|
+| Core universal model | `CAR-001..005`, `CAR-020..021` | Client and server docs agree on one runtime flow; no contradictory platform forks in parent docs | PH1.OS |
+| Trigger policy | `TRG-001..005` | Central platform-aware trigger validation exists; iPhone wake blocked; non-iPhone wake/explicit policy enforced | PH1.OS, PH1.W |
+| Session lifecycle | `SES-001..007`, `SES-030..035` | Session state transitions and reopen rules pass deterministic tests; cross-device continuity gaps explicitly tracked | PH1.L, PH1.F |
+| Session payload | `SES-020..022`, `NET-013` | Public contract exposes canonical ids (`session_id`,`turn_id`,`session_state`) with compatibility plan | PH1.L, adapter ingress |
+| Ingress protocol | `NET-001..012` | Endpoint matrix enforced with bearer binding, nonce/timestamp replay checks, idempotency, and deterministic failure mapping | adapter ingress, PH1.QUOTA |
+| Onboarding + voice/wake | `ONB-001..014` | Onboarding progression enforces platform matrix, voice lock receipt, wake rules by platform, and completion gates | PH1.ONB, PH1.VOICE.ID, PH1.W |
+| Personality semantics | `EMO-001..005` | Personality lock remains tone-only; no bypass of access/simulation/security paths; stronger behavior marked as future scope | PH1.EMO, PH1.PERSONA |
+| Memory handling | `MEM-001..024` | Identity-gated recall/write, policy filters, session-aware load behavior, retention classes implemented and test-covered | PH1.M, PH1.F |
+| Sync and dedup | `SYNC-001..004` | Durable outbox/journal and idempotent retry paths proven in integration tests | client runtime, PH1.F |
+| Learning/update loop | `LUP-001..003` | Bidirectional update loop enforced with safe apply/rollback and cloud promotion governance | PH1.LEARN, artifact sync |
+| Retention lifecycle | `RET-001..002` | Purge/delete workers and verification receipts exist for defined data classes | PH1.F, PH1.J |
+
+## 22) Governing Rule
+- `[GOV-001] [CURRENT]` This document is the parent architecture for all Selene client platforms.
+- `[GOV-002] [CURRENT]` Platform-specific documents may extend this model but must not contradict it.
+- `[GOV-003] [CURRENT]` Future build runs must align to this session-first law before adding new feature surface.
