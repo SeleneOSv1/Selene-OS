@@ -1,14 +1,13 @@
 #![forbid(unsafe_code)]
 
 use selene_adapter::desktop_mic_producer::synthetic_capture_ref_for_tests;
-use selene_adapter::{
-    validate_voice_turn_capture_bundle_for_live_path, VoiceTurnAdapterRequest,
-};
+use selene_adapter::{validate_voice_turn_capture_bundle_for_live_path, VoiceTurnAdapterRequest};
 
 fn base_request_with_capture() -> VoiceTurnAdapterRequest {
     VoiceTurnAdapterRequest {
         correlation_id: 9001,
         turn_id: 9001,
+        device_turn_sequence: None,
         app_platform: "DESKTOP".to_string(),
         trigger: "EXPLICIT".to_string(),
         actor_user_id: "tenant_1:test_actor".to_string(),

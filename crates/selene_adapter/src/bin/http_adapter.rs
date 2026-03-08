@@ -15,7 +15,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use selene_engines::ph1e::startup_outbound_self_check_logs;
 use selene_adapter::{
     app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
     InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
@@ -24,6 +23,7 @@ use selene_adapter::{
     UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
     VoiceTurnAdapterResponse, VoiceTurnIngressError,
 };
+use selene_engines::ph1e::startup_outbound_self_check_logs;
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
 use selene_kernel_contracts::ph1link::AppPlatform;
@@ -67,12 +67,7 @@ impl IngressSecurityConfig {
     fn from_env() -> Self {
         Self {
             max_stale_ms: parse_u64_env("SELENE_INGRESS_MAX_STALE_MS", 300_000, 1_000, 86_400_000),
-            max_future_ms: parse_u64_env(
-                "SELENE_INGRESS_MAX_FUTURE_MS",
-                30_000,
-                1_000,
-                86_400_000,
-            ),
+            max_future_ms: parse_u64_env("SELENE_INGRESS_MAX_FUTURE_MS", 30_000, 1_000, 86_400_000),
             replay_ttl_ms: parse_u64_env(
                 "SELENE_INGRESS_REPLAY_TTL_MS",
                 600_000,
@@ -86,18 +81,8 @@ impl IngressSecurityConfig {
                 1_000,
                 86_400_000,
             ),
-            quota_per_token: parse_u32_env(
-                "SELENE_INGRESS_QUOTA_PER_TOKEN",
-                120,
-                1,
-                1_000_000,
-            ),
-            quota_per_device: parse_u32_env(
-                "SELENE_INGRESS_QUOTA_PER_DEVICE",
-                120,
-                1,
-                1_000_000,
-            ),
+            quota_per_token: parse_u32_env("SELENE_INGRESS_QUOTA_PER_TOKEN", 120, 1, 1_000_000),
+            quota_per_device: parse_u32_env("SELENE_INGRESS_QUOTA_PER_DEVICE", 120, 1, 1_000_000),
         }
     }
 }
@@ -528,7 +513,9 @@ async fn run_voice_turn(
     let idempotency_key =
         match required_header_token(&headers, "idempotency-key", "missing_idempotency_key") {
             Ok(v) => v,
-            Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
+            Err(reject) => {
+                return voice_turn_security_reject_response(reject, Some(request.turn_id))
+            }
         };
     let timestamp_ms = match required_header_u64(
         &headers,
@@ -543,28 +530,27 @@ async fn run_voice_turn(
         Ok(v) => v,
         Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
     };
-    let runtime_execution_envelope =
-        match runtime_execution_envelope_from_voice_turn_request(
-            &request,
-            &request_id,
-            &idempotency_key,
-            &device_id,
-        ) {
-            Ok(envelope) => envelope,
-            Err(err) => {
-                return voice_turn_ingress_error_response(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    VoiceTurnIngressError {
-                        failure_class: FailureClass::InvalidPayload,
-                        reason_code: "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
-                        reason: Some(err),
-                        session_id: None,
-                        turn_id: Some(request.turn_id),
-                        session_state: None,
-                    },
-                )
-            }
-        };
+    let runtime_execution_envelope = match runtime_execution_envelope_from_voice_turn_request(
+        &request,
+        &request_id,
+        &idempotency_key,
+        &device_id,
+    ) {
+        Ok(envelope) => envelope,
+        Err(err) => {
+            return voice_turn_ingress_error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                VoiceTurnIngressError {
+                    failure_class: FailureClass::InvalidPayload,
+                    reason_code: "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
+                    reason: Some(err),
+                    session_id: None,
+                    turn_id: Some(request.turn_id),
+                    session_state: None,
+                },
+            )
+        }
+    };
     let request_id_for_security = runtime_execution_envelope.request_id.clone();
     let idempotency_key_for_security = runtime_execution_envelope.idempotency_key.clone();
     let nonce_for_security = nonce.clone();
@@ -603,7 +589,8 @@ async fn run_voice_turn(
             )
         }
     };
-    match runtime.run_voice_turn_ingress_with_execution_envelope(request, runtime_execution_envelope)
+    match runtime
+        .run_voice_turn_ingress_with_execution_envelope(request, runtime_execution_envelope)
     {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
         Err(error) => {
@@ -1024,10 +1011,10 @@ fn runtime_execution_envelope_from_voice_turn_request(
     };
     let actor_identity = UserId::new(request.actor_user_id.clone())
         .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
-    let device_identity =
-        DeviceId::new(device_id.to_string()).map_err(|err| format!("invalid device_id: {err:?}"))?;
+    let device_identity = DeviceId::new(device_id.to_string())
+        .map_err(|err| format!("invalid device_id: {err:?}"))?;
     let turn_id = TurnId(request.turn_id);
-    RuntimeExecutionEnvelope::v1(
+    RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
         request_id.to_string(),
         format!("trace:voice-turn:{}:{}", request_id, request.turn_id),
         idempotency_key.to_string(),
@@ -1036,7 +1023,11 @@ fn runtime_execution_envelope_from_voice_turn_request(
         platform,
         None,
         turn_id,
+        request
+            .device_turn_sequence
+            .or(Some(request.turn_id.max(1))),
         AdmissionState::IngressValidated,
+        None,
     )
     .map_err(|err| format!("invalid runtime_execution_envelope: {err:?}"))
 }
@@ -1084,6 +1075,7 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         session_id: None,
         turn_id,
         session_state: None,
+        session_attach_outcome: None,
         failure_class: Some(failure_class_for_security_reject(reject.kind)),
         reason: Some(reason.clone()),
         next_move: "respond".to_string(),
@@ -1127,10 +1119,7 @@ fn onboarding_continue_security_reject_response(reject: SecurityReject) -> Respo
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
-fn voice_turn_ingress_error_response(
-    status: StatusCode,
-    error: VoiceTurnIngressError,
-) -> Response {
+fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngressError) -> Response {
     (
         status,
         Json(VoiceTurnAdapterResponse {
@@ -1139,6 +1128,7 @@ fn voice_turn_ingress_error_response(
             session_id: error.session_id,
             turn_id: error.turn_id,
             session_state: error.session_state,
+            session_attach_outcome: None,
             failure_class: Some(error.failure_class),
             reason: error.reason,
             next_move: "respond".to_string(),
@@ -1211,19 +1201,19 @@ mod tests {
     use axum::body::to_bytes;
     use axum::http::header::AUTHORIZATION;
     use selene_adapter::VoiceTurnAudioCaptureRef;
+    use selene_kernel_contracts::common::SessionState;
     use selene_kernel_contracts::ph1_voice_id::{
         UserId, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
         VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
     use selene_kernel_contracts::ph1j::DeviceId;
-    use selene_kernel_contracts::common::SessionState;
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
     use selene_kernel_contracts::ph1onb::{
-        ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT,
-        ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
+        ONB_ACCESS_INSTANCE_CREATE_COMMIT, ONB_COMPLETE_COMMIT, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT,
+        ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1simcat::{
@@ -1282,6 +1272,7 @@ mod tests {
         VoiceTurnAdapterRequest {
             correlation_id: 10_001,
             turn_id: 20_001,
+            device_turn_sequence: None,
             app_platform: "DESKTOP".to_string(),
             trigger: "EXPLICIT".to_string(),
             actor_user_id: "tenant_a:user_ingress_test".to_string(),
@@ -1341,6 +1332,7 @@ mod tests {
         VoiceTurnAdapterRequest {
             correlation_id: 88_001,
             turn_id: 98_001,
+            device_turn_sequence: None,
             app_platform: "IOS".to_string(),
             trigger: "EXPLICIT".to_string(),
             actor_user_id,
@@ -1447,7 +1439,10 @@ mod tests {
         store.append_simulation_catalog_event(event).unwrap();
     }
 
-    fn seed_invite_link_for_click(store: &mut Ph1fStore, inviter_user_id: &UserId) -> (String, String) {
+    fn seed_invite_link_for_click(
+        store: &mut Ph1fStore,
+        inviter_user_id: &UserId,
+    ) -> (String, String) {
         let now = MonotonicTimeNs(system_time_now_ms().max(1) * 1_000_000);
         let (link, _) = store
             .ph1link_invite_generate_draft(
@@ -1610,7 +1605,8 @@ mod tests {
             now_ms,
             "nonce-3",
         );
-        let first = run_voice_turn(State(state.clone()), headers.clone(), Json(request.clone())).await;
+        let first =
+            run_voice_turn(State(state.clone()), headers.clone(), Json(request.clone())).await;
         assert_ne!(first.status(), StatusCode::CONFLICT);
         let second = run_voice_turn(State(state), headers, Json(request)).await;
         assert_eq!(second.status(), StatusCode::CONFLICT);
@@ -1771,7 +1767,10 @@ mod tests {
         };
         let now_ms = system_time_now_ms();
         let invite_headers = security_headers(
-            Some(bearer_for(&invite_request.token_id, &invite_request.app_instance_id)),
+            Some(bearer_for(
+                &invite_request.token_id,
+                &invite_request.app_instance_id,
+            )),
             "iphone-e2e-req-invite",
             "iphone-e2e-idem-invite",
             now_ms,
@@ -1780,7 +1779,8 @@ mod tests {
         let invite_response =
             run_invite_click(State(state.clone()), invite_headers, Json(invite_request)).await;
         assert_eq!(invite_response.status(), StatusCode::OK);
-        let invite_body: InviteLinkOpenAdapterResponse = decode_json_response(invite_response).await;
+        let invite_body: InviteLinkOpenAdapterResponse =
+            decode_json_response(invite_response).await;
         assert_eq!(invite_body.status, "ok");
         assert_eq!(invite_body.outcome, "ONBOARDING_STARTED");
         let onboarding_session_id = invite_body
@@ -1858,7 +1858,8 @@ mod tests {
                 now_ms.saturating_add(10 + onb_step_request_counter),
                 format!("iphone-e2e-nonce-ask-{onb_step_request_counter}").as_str(),
             );
-            let response = run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
+            let response =
+                run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
             assert_eq!(response.status(), StatusCode::OK);
             ask_out = decode_json_response(response).await;
         }
@@ -1901,7 +1902,8 @@ mod tests {
                 now_ms.saturating_add(100 + idx as u64),
                 format!("iphone-e2e-nonce-platform-{idx}").as_str(),
             );
-            let response = run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
+            let response =
+                run_onboarding_continue(State(state.clone()), headers, Json(request)).await;
             assert_eq!(response.status(), StatusCode::OK);
             platform_out = decode_json_response(response).await;
         }
@@ -1936,8 +1938,12 @@ mod tests {
         let terms_response =
             run_onboarding_continue(State(state.clone()), terms_headers, Json(terms_request)).await;
         assert_eq!(terms_response.status(), StatusCode::OK);
-        let terms_out: OnboardingContinueAdapterResponse = decode_json_response(terms_response).await;
-        assert_eq!(terms_out.next_step.as_deref(), Some("PRIMARY_DEVICE_CONFIRM"));
+        let terms_out: OnboardingContinueAdapterResponse =
+            decode_json_response(terms_response).await;
+        assert_eq!(
+            terms_out.next_step.as_deref(),
+            Some("PRIMARY_DEVICE_CONFIRM")
+        );
 
         let device_request = OnboardingContinueAdapterRequest {
             correlation_id: 91_202,
@@ -1966,9 +1972,11 @@ mod tests {
             "iphone-e2e-nonce-device",
         );
         let device_response =
-            run_onboarding_continue(State(state.clone()), device_headers, Json(device_request)).await;
+            run_onboarding_continue(State(state.clone()), device_headers, Json(device_request))
+                .await;
         assert_eq!(device_response.status(), StatusCode::OK);
-        let device_out: OnboardingContinueAdapterResponse = decode_json_response(device_response).await;
+        let device_out: OnboardingContinueAdapterResponse =
+            decode_json_response(device_response).await;
         assert_eq!(device_out.next_step.as_deref(), Some("VOICE_ENROLL"));
 
         let voice_enroll_request = OnboardingContinueAdapterRequest {
@@ -2006,7 +2014,10 @@ mod tests {
         assert_eq!(voice_enroll_response.status(), StatusCode::OK);
         let voice_enroll_out: OnboardingContinueAdapterResponse =
             decode_json_response(voice_enroll_response).await;
-        assert_eq!(voice_enroll_out.next_step.as_deref(), Some("EMO_PERSONA_LOCK"));
+        assert_eq!(
+            voice_enroll_out.next_step.as_deref(),
+            Some("EMO_PERSONA_LOCK")
+        );
 
         let emo_request = OnboardingContinueAdapterRequest {
             correlation_id: 91_204,
@@ -2034,7 +2045,8 @@ mod tests {
             now_ms.saturating_add(203),
             "iphone-e2e-nonce-emo",
         );
-        let emo_response = run_onboarding_continue(State(state.clone()), emo_headers, Json(emo_request)).await;
+        let emo_response =
+            run_onboarding_continue(State(state.clone()), emo_headers, Json(emo_request)).await;
         assert_eq!(emo_response.status(), StatusCode::OK);
         let emo_out: OnboardingContinueAdapterResponse = decode_json_response(emo_response).await;
         assert_eq!(emo_out.next_step.as_deref(), Some("ACCESS_PROVISION"));
@@ -2066,7 +2078,8 @@ mod tests {
             "iphone-e2e-nonce-access",
         );
         let access_response =
-            run_onboarding_continue(State(state.clone()), access_headers, Json(access_request)).await;
+            run_onboarding_continue(State(state.clone()), access_headers, Json(access_request))
+                .await;
         assert_eq!(access_response.status(), StatusCode::OK);
         let access_out: OnboardingContinueAdapterResponse =
             decode_json_response(access_response).await;
@@ -2110,8 +2123,10 @@ mod tests {
         assert_eq!(complete_out.next_step.as_deref(), Some("READY"));
         assert_eq!(complete_out.onboarding_status.as_deref(), Some("COMPLETE"));
 
-        let mut voice_request =
-            ios_voice_request(inviter_user_id.as_str().to_string(), iphone_device_id.clone());
+        let mut voice_request = ios_voice_request(
+            inviter_user_id.as_str().to_string(),
+            iphone_device_id.clone(),
+        );
         voice_request.correlation_id = 91_300;
         voice_request.turn_id = 91_301;
         voice_request.now_ns = Some(7_000_000_000);

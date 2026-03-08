@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "tenant_1:desktop_life_actor_{}",
         run_seed % 1_000_000
     ))
-        .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
+    .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
     let device_id = DeviceId::new(format!("desktop_life_device_{}", run_seed % 1_000_000))
         .map_err(|err| format!("invalid device_id: {err:?}"))?;
 
@@ -127,6 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let request = VoiceTurnAdapterRequest {
         correlation_id: (run_seed % 9_000_000).saturating_add(80_000),
         turn_id: (run_seed % 9_000_000).saturating_add(80_000),
+        device_turn_sequence: None,
         app_platform: "DESKTOP".to_string(),
         trigger: "WAKE_WORD".to_string(),
         actor_user_id: actor_user_id.as_str().to_string(),
@@ -168,10 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if event.accepted { "accept" } else { "reject" },
                     event.reason_code.0,
                     reason_name,
-                    event
-                        .model_version
-                        .as_deref()
-                        .unwrap_or("unknown_model")
+                    event.model_version.as_deref().unwrap_or("unknown_model")
                 )
             })
             .unwrap_or_else(|| "reject reason_code=NO_WAKE_RUNTIME_EVENT".to_string());
@@ -197,8 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|row| {
                 format!(
                     "session_id={} state={:?}",
-                    row.session_id.0,
-                    row.session_state
+                    row.session_id.0, row.session_state
                 )
             })
             .unwrap_or_else(|| "session_id=NONE state=Closed".to_string());
@@ -700,7 +697,11 @@ fn seed_identity_and_device(
     Ok(())
 }
 
-fn seed_wake_profile(store: &mut Ph1fStore, user_id: &UserId, device_id: &DeviceId) -> Result<(), String> {
+fn seed_wake_profile(
+    store: &mut Ph1fStore,
+    user_id: &UserId,
+    device_id: &DeviceId,
+) -> Result<(), String> {
     let started = store
         .ph1w_enroll_start_draft(
             MonotonicTimeNs(10),

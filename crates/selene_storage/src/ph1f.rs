@@ -752,11 +752,20 @@ pub struct SessionRecord {
     pub schema_version: SchemaVersion,
     pub session_id: SessionId,
     pub user_id: UserId,
+    pub attached_devices: BTreeSet<DeviceId>,
+    pub last_attached_device_id: DeviceId,
     pub device_id: DeviceId,
     pub session_state: SessionState,
     pub opened_at: MonotonicTimeNs,
     pub last_activity_at: MonotonicTimeNs,
     pub closed_at: Option<MonotonicTimeNs>,
+    pub last_turn_id: Option<TurnId>,
+    pub active_turn_id: Option<TurnId>,
+    pub lease_owner_id: Option<String>,
+    pub lease_acquired_at: Option<MonotonicTimeNs>,
+    pub lease_expires_at: Option<MonotonicTimeNs>,
+    pub device_turn_sequences: BTreeMap<DeviceId, u64>,
+    pub device_last_idempotency_keys: BTreeMap<DeviceId, String>,
 }
 
 impl SessionRecord {
@@ -769,18 +778,50 @@ impl SessionRecord {
         last_activity_at: MonotonicTimeNs,
         closed_at: Option<MonotonicTimeNs>,
     ) -> Result<Self, ContractViolation> {
+        let mut attached_devices = BTreeSet::new();
+        attached_devices.insert(device_id.clone());
         let s = Self {
             schema_version: SchemaVersion(1),
             session_id,
             user_id,
+            attached_devices,
+            last_attached_device_id: device_id.clone(),
             device_id,
             session_state,
             opened_at,
             last_activity_at,
             closed_at,
+            last_turn_id: None,
+            active_turn_id: None,
+            lease_owner_id: None,
+            lease_acquired_at: None,
+            lease_expires_at: None,
+            device_turn_sequences: BTreeMap::new(),
+            device_last_idempotency_keys: BTreeMap::new(),
         };
         s.validate()?;
         Ok(s)
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        self.session_state != SessionState::Closed
+    }
+
+    pub fn lease_is_active_at(&self, now: MonotonicTimeNs) -> bool {
+        matches!(
+            (self.lease_owner_id.as_ref(), self.lease_expires_at),
+            (Some(_), Some(expires_at)) if expires_at.0 >= now.0
+        )
+    }
+
+    pub fn device_turn_sequence_for(&self, device_id: &DeviceId) -> Option<u64> {
+        self.device_turn_sequences.get(device_id).copied()
+    }
+
+    pub fn last_idempotency_key_for(&self, device_id: &DeviceId) -> Option<&str> {
+        self.device_last_idempotency_keys
+            .get(device_id)
+            .map(String::as_str)
     }
 }
 
@@ -797,6 +838,139 @@ impl Validate for SessionRecord {
                 return Err(ContractViolation::InvalidValue {
                     field: "session_record.closed_at",
                     reason: "must be >= opened_at",
+                });
+            }
+        }
+        if self.attached_devices.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_record.attached_devices",
+                reason: "must contain at least one attached device",
+            });
+        }
+        if !self.attached_devices.contains(&self.device_id) {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_record.attached_devices",
+                reason: "must include the origin device_id",
+            });
+        }
+        if !self
+            .attached_devices
+            .contains(&self.last_attached_device_id)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_record.last_attached_device_id",
+                reason: "must exist in attached_devices",
+            });
+        }
+        self.last_attached_device_id.validate()?;
+        for device_id in &self.attached_devices {
+            device_id.validate()?;
+        }
+        if let Some(last_turn_id) = self.last_turn_id {
+            last_turn_id.validate()?;
+        }
+        if let Some(active_turn_id) = self.active_turn_id {
+            active_turn_id.validate()?;
+        }
+        if self.session_state == SessionState::Closed {
+            if self.active_turn_id.is_some() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.active_turn_id",
+                    reason: "must be None when session_state=Closed",
+                });
+            }
+            if self.lease_owner_id.is_some()
+                || self.lease_acquired_at.is_some()
+                || self.lease_expires_at.is_some()
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.lease_owner_id",
+                    reason: "lease fields must be None when session_state=Closed",
+                });
+            }
+        }
+        match (
+            self.lease_owner_id.as_ref(),
+            self.lease_acquired_at,
+            self.lease_expires_at,
+        ) {
+            (None, None, None) => {}
+            (Some(owner_id), Some(acquired_at), Some(expires_at)) => {
+                if owner_id.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "session_record.lease_owner_id",
+                        reason: "must not be empty when provided",
+                    });
+                }
+                if owner_id.len() > 128 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "session_record.lease_owner_id",
+                        reason: "must be <= 128 chars",
+                    });
+                }
+                if !owner_id.is_ascii() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "session_record.lease_owner_id",
+                        reason: "must be ASCII",
+                    });
+                }
+                if expires_at.0 < acquired_at.0 {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "session_record.lease_expires_at",
+                        reason: "must be >= lease_acquired_at",
+                    });
+                }
+            }
+            _ => {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.lease_owner_id",
+                    reason: "lease_owner_id, lease_acquired_at, and lease_expires_at must be provided together",
+                });
+            }
+        }
+        if self.active_turn_id.is_some() && self.lease_owner_id.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "session_record.active_turn_id",
+                reason: "requires an active lease owner",
+            });
+        }
+        for (device_id, sequence) in &self.device_turn_sequences {
+            if !self.attached_devices.contains(device_id) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_turn_sequences",
+                    reason: "all device_turn_sequences keys must exist in attached_devices",
+                });
+            }
+            if *sequence == 0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_turn_sequences",
+                    reason: "device turn sequence values must be > 0",
+                });
+            }
+        }
+        for (device_id, idempotency_key) in &self.device_last_idempotency_keys {
+            if !self.attached_devices.contains(device_id) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_last_idempotency_keys",
+                    reason: "all device_last_idempotency_keys keys must exist in attached_devices",
+                });
+            }
+            if idempotency_key.trim().is_empty() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_last_idempotency_keys",
+                    reason: "idempotency keys must not be empty",
+                });
+            }
+            if idempotency_key.len() > 128 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_last_idempotency_keys",
+                    reason: "idempotency keys must be <= 128 chars",
+                });
+            }
+            if !idempotency_key.is_ascii() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "session_record.device_last_idempotency_keys",
+                    reason: "idempotency keys must be ASCII",
                 });
             }
         }
@@ -1473,8 +1647,7 @@ pub struct Ph1fStore {
     wake_promotion_current: BTreeMap<ArtifactVersion, WakePromotionCurrentRecord>,
     wake_promotion_active_artifact_version: Option<ArtifactVersion>,
     // Idempotency: (artifact_version, state, idempotency_key) -> promotion_event_id.
-    wake_promotion_idempotency_index:
-        BTreeMap<(ArtifactVersion, WakePromotionState, String), u64>,
+    wake_promotion_idempotency_index: BTreeMap<(ArtifactVersion, WakePromotionState, String), u64>,
     // Blocklist projection: artifact_version -> block reason.
     wake_promotion_blocked_versions: BTreeMap<ArtifactVersion, ReasonCodeId>,
     // Idempotency: (artifact_version, idempotency_key) -> decision_ref.
@@ -3471,6 +3644,14 @@ impl Ph1fStore {
                 key: record.device_id.as_str().to_string(),
             });
         }
+        for device_id in &record.attached_devices {
+            if !self.devices.contains_key(device_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "sessions.attached_devices",
+                    key: device_id.as_str().to_string(),
+                });
+            }
+        }
 
         if let Some(k) = idempotency_key {
             if k.trim().is_empty() {
@@ -3494,6 +3675,21 @@ impl Ph1fStore {
                 return Ok(record.session_id);
             }
             self.session_lifecycle_idempotency_index.insert(idem);
+        }
+
+        if record.is_recoverable()
+            && self.sessions.values().any(|row| {
+                row.user_id == record.user_id
+                    && row.session_id != record.session_id
+                    && row.is_recoverable()
+            })
+        {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "sessions.session_id",
+                    reason: "only one recoverable session is allowed per user_id",
+                },
+            ));
         }
 
         if let Some(existing) = self.sessions.get(&record.session_id) {
@@ -3528,6 +3724,43 @@ impl Ph1fStore {
                         reason: "must be monotonic per session",
                     },
                 ));
+            }
+            for device_id in &existing.attached_devices {
+                if !record.attached_devices.contains(device_id) {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "sessions.attached_devices",
+                            reason: "attached_devices may not drop previously attached devices",
+                        },
+                    ));
+                }
+            }
+            for (device_id, existing_sequence) in &existing.device_turn_sequences {
+                let next_sequence = record
+                    .device_turn_sequences
+                    .get(device_id)
+                    .copied()
+                    .unwrap_or(*existing_sequence);
+                if next_sequence < *existing_sequence {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "sessions.device_turn_sequences",
+                            reason: "device turn sequence values must be monotonic",
+                        },
+                    ));
+                }
+            }
+            if let (Some(existing_turn_id), Some(record_turn_id)) =
+                (existing.last_turn_id, record.last_turn_id)
+            {
+                if record_turn_id.0 < existing_turn_id.0 {
+                    return Err(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "sessions.last_turn_id",
+                            reason: "must be monotonic per session",
+                        },
+                    ));
+                }
             }
             if !is_allowed_session_transition(existing.session_state, record.session_state) {
                 return Err(StorageError::ContractViolation(
@@ -4616,7 +4849,8 @@ impl Ph1fStore {
             }
         }
         if let Some(simulation_idempotency_key) = &input.simulation_idempotency_key {
-            if simulation_idempotency_key.trim().is_empty() || simulation_idempotency_key.len() > 256
+            if simulation_idempotency_key.trim().is_empty()
+                || simulation_idempotency_key.len() > 256
             {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -4627,7 +4861,8 @@ impl Ph1fStore {
             }
         }
         if let Some(dispatch_outcome_proof_ref) = &input.dispatch_outcome_proof_ref {
-            if dispatch_outcome_proof_ref.trim().is_empty() || dispatch_outcome_proof_ref.len() > 256
+            if dispatch_outcome_proof_ref.trim().is_empty()
+                || dispatch_outcome_proof_ref.len() > 256
             {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -4646,7 +4881,10 @@ impl Ph1fStore {
             ));
         }
         if let Some(idempotency_key) = &input.idempotency_key {
-            validate_builder_idempotency_key("agent_execution_ledger.idempotency_key", idempotency_key)?;
+            validate_builder_idempotency_key(
+                "agent_execution_ledger.idempotency_key",
+                idempotency_key,
+            )?;
             let idx = (
                 input.tenant_id.clone(),
                 input.user_id.clone(),
@@ -4714,8 +4952,11 @@ impl Ph1fStore {
         user_id: &UserId,
         thread_key: &str,
     ) -> Option<&AgentExecutionCurrentRecord> {
-        self.agent_execution_current
-            .get(&(tenant_id.to_string(), user_id.clone(), thread_key.to_string()))
+        self.agent_execution_current.get(&(
+            tenant_id.to_string(),
+            user_id.clone(),
+            thread_key.to_string(),
+        ))
     }
 
     pub fn agent_execution_ledger_rows_for_correlation(
@@ -4755,7 +4996,8 @@ impl Ph1fStore {
                         });
                     }
                 }
-                self.agent_execution_idempotency_index.insert(idx, row.row_id);
+                self.agent_execution_idempotency_index
+                    .insert(idx, row.row_id);
             }
         }
         Ok(())
@@ -11606,13 +11848,12 @@ impl Ph1fStore {
             })
             .max_by_key(|wake_rec| (wake_rec.updated_at.0, wake_rec.created_at.0));
         if wake_receipt_required {
-            let latest_completed_wake =
-                latest_completed_wake.ok_or(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "ph1onb_complete_commit.wake_enrollment_status",
-                        reason: "completed wake enrollment is mandatory before completing onboarding",
-                    },
-                ))?;
+            let latest_completed_wake = latest_completed_wake.ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.wake_enrollment_status",
+                    reason: "completed wake enrollment is mandatory before completing onboarding",
+                }),
+            )?;
             let expected_ref = latest_completed_wake
                 .wake_artifact_sync_receipt_ref
                 .as_ref()
@@ -11622,12 +11863,15 @@ impl Ph1fStore {
                         reason: "latest completed wake enrollment must carry sync receipt",
                     },
                 ))?;
-            let provided = wake_artifact_sync_receipt_ref.as_ref().ok_or(
-                StorageError::ContractViolation(ContractViolation::InvalidValue {
-                    field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
-                    reason: "required for mandatory wake enrollment",
-                }),
-            )?;
+            let provided =
+                wake_artifact_sync_receipt_ref
+                    .as_ref()
+                    .ok_or(StorageError::ContractViolation(
+                        ContractViolation::InvalidValue {
+                            field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                            reason: "required for mandatory wake enrollment",
+                        },
+                    ))?;
             if provided != expected_ref {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
@@ -11637,13 +11881,12 @@ impl Ph1fStore {
                 ));
             }
         } else if let Some(provided) = wake_artifact_sync_receipt_ref.as_ref() {
-            let latest_completed_wake =
-                latest_completed_wake.ok_or(StorageError::ContractViolation(
-                    ContractViolation::InvalidValue {
-                        field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
-                        reason: "must not be provided when completed wake enrollment does not exist",
-                    },
-                ))?;
+            let latest_completed_wake = latest_completed_wake.ok_or(
+                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "ph1onb_complete_commit.wake_artifact_sync_receipt_ref",
+                    reason: "must not be provided when completed wake enrollment does not exist",
+                }),
+            )?;
             let expected_ref = latest_completed_wake
                 .wake_artifact_sync_receipt_ref
                 .as_ref()
@@ -13123,7 +13366,10 @@ impl Ph1fStore {
             WakeArtifactApplyState::Active,
             idempotency_key.clone(),
         );
-        if self.wake_artifact_apply_idempotency_index.contains_key(&idem_key) {
+        if self
+            .wake_artifact_apply_idempotency_index
+            .contains_key(&idem_key)
+        {
             return self
                 .wake_artifact_apply_current
                 .get(&device_id)
@@ -13165,7 +13411,8 @@ impl Ph1fStore {
             });
 
         if current.active_artifact_version == Some(artifact_version) {
-            self.wake_artifact_apply_idempotency_index.insert(idem_key, 0);
+            self.wake_artifact_apply_idempotency_index
+                .insert(idem_key, 0);
             return Ok(current.clone());
         }
         if current.staged_artifact_version != Some(artifact_version) {
@@ -13193,20 +13440,21 @@ impl Ph1fStore {
         let apply_event_id = self.next_wake_artifact_apply_event_id;
         self.next_wake_artifact_apply_event_id =
             self.next_wake_artifact_apply_event_id.saturating_add(1);
-        self.wake_artifact_apply_ledger.push(WakeArtifactApplyRecord {
-            schema_version: SchemaVersion(1),
-            apply_event_id,
-            created_at: now,
-            device_id: device_id.clone(),
-            artifact_version,
-            package_hash: staged_row.package_hash,
-            payload_ref: staged_row.payload_ref,
-            local_cache_ref: staged_row.local_cache_ref,
-            state: WakeArtifactApplyState::Active,
-            activated_at: Some(now),
-            rollback_reason_code: None,
-            idempotency_key: idempotency_key.clone(),
-        });
+        self.wake_artifact_apply_ledger
+            .push(WakeArtifactApplyRecord {
+                schema_version: SchemaVersion(1),
+                apply_event_id,
+                created_at: now,
+                device_id: device_id.clone(),
+                artifact_version,
+                package_hash: staged_row.package_hash,
+                payload_ref: staged_row.payload_ref,
+                local_cache_ref: staged_row.local_cache_ref,
+                state: WakeArtifactApplyState::Active,
+                activated_at: Some(now),
+                rollback_reason_code: None,
+                idempotency_key: idempotency_key.clone(),
+            });
         self.wake_artifact_apply_idempotency_index
             .insert(idem_key, apply_event_id);
         Ok(current.clone())
@@ -13241,7 +13489,10 @@ impl Ph1fStore {
             WakeArtifactApplyState::RolledBack,
             idempotency_key.clone(),
         );
-        if self.wake_artifact_apply_idempotency_index.contains_key(&idem_key) {
+        if self
+            .wake_artifact_apply_idempotency_index
+            .contains_key(&idem_key)
+        {
             return self
                 .wake_artifact_apply_current
                 .get(&device_id)
@@ -13286,28 +13537,27 @@ impl Ph1fStore {
             None
         };
 
-        self.wake_artifact_blocked_versions.insert(
-            (device_id.clone(), artifact_version),
-            rollback_reason_code,
-        );
+        self.wake_artifact_blocked_versions
+            .insert((device_id.clone(), artifact_version), rollback_reason_code);
 
         let apply_event_id = self.next_wake_artifact_apply_event_id;
         self.next_wake_artifact_apply_event_id =
             self.next_wake_artifact_apply_event_id.saturating_add(1);
-        self.wake_artifact_apply_ledger.push(WakeArtifactApplyRecord {
-            schema_version: SchemaVersion(1),
-            apply_event_id,
-            created_at: now,
-            device_id: device_id.clone(),
-            artifact_version,
-            package_hash: source_row.package_hash,
-            payload_ref: source_row.payload_ref,
-            local_cache_ref: source_row.local_cache_ref,
-            state: WakeArtifactApplyState::RolledBack,
-            activated_at: None,
-            rollback_reason_code: Some(rollback_reason_code),
-            idempotency_key: idempotency_key.clone(),
-        });
+        self.wake_artifact_apply_ledger
+            .push(WakeArtifactApplyRecord {
+                schema_version: SchemaVersion(1),
+                apply_event_id,
+                created_at: now,
+                device_id: device_id.clone(),
+                artifact_version,
+                package_hash: source_row.package_hash,
+                payload_ref: source_row.payload_ref,
+                local_cache_ref: source_row.local_cache_ref,
+                state: WakeArtifactApplyState::RolledBack,
+                activated_at: None,
+                rollback_reason_code: Some(rollback_reason_code),
+                idempotency_key: idempotency_key.clone(),
+            });
         self.wake_artifact_apply_idempotency_index
             .insert(idem_key, apply_event_id);
         Ok(current.clone())
@@ -13354,8 +13604,9 @@ impl Ph1fStore {
             &idempotency_key,
         )?;
         let idem_idx = (artifact_version, idempotency_key.clone());
-        if let Some(existing_decision_ref) =
-            self.wake_promotion_revalidation_idempotency_index.get(&idem_idx)
+        if let Some(existing_decision_ref) = self
+            .wake_promotion_revalidation_idempotency_index
+            .get(&idem_idx)
         {
             if *existing_decision_ref != decision_ref {
                 return Err(StorageError::ContractViolation(
@@ -13367,7 +13618,10 @@ impl Ph1fStore {
             }
             return Ok(());
         }
-        if !self.wake_promotion_blocked_versions.contains_key(&artifact_version) {
+        if !self
+            .wake_promotion_blocked_versions
+            .contains_key(&artifact_version)
+        {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "wake_promotion_revalidate_blocked_version.artifact_version",
@@ -13375,7 +13629,8 @@ impl Ph1fStore {
                 },
             ));
         }
-        self.wake_promotion_blocked_versions.remove(&artifact_version);
+        self.wake_promotion_blocked_versions
+            .remove(&artifact_version);
         self.wake_promotion_revalidation_idempotency_index
             .insert(idem_idx, decision_ref.clone());
         if let Some(current) = self.wake_promotion_current.get_mut(&artifact_version) {
@@ -13461,7 +13716,10 @@ impl Ph1fStore {
         }
 
         let idem_key = (artifact_version, to_state, idempotency_key.clone());
-        if self.wake_promotion_idempotency_index.contains_key(&idem_key) {
+        if self
+            .wake_promotion_idempotency_index
+            .contains_key(&idem_key)
+        {
             return self
                 .wake_promotion_current
                 .get(&artifact_version)
@@ -13480,7 +13738,8 @@ impl Ph1fStore {
             return Err(StorageError::ContractViolation(
                 ContractViolation::InvalidValue {
                     field: "wake_promotion_transition_commit.artifact_version",
-                    reason: "blocked artifact_version requires explicit revalidation before promotion",
+                    reason:
+                        "blocked artifact_version requires explicit revalidation before promotion",
                 },
             ));
         }
@@ -13517,13 +13776,16 @@ impl Ph1fStore {
             self.wake_promotion_blocked_versions
                 .insert(artifact_version, block_reason);
         } else {
-            self.wake_promotion_blocked_versions.remove(&artifact_version);
+            self.wake_promotion_blocked_versions
+                .remove(&artifact_version);
         }
 
         if to_state == WakePromotionState::Active {
             self.wake_promotion_active_artifact_version = Some(artifact_version);
-        } else if matches!(to_state, WakePromotionState::Blocked | WakePromotionState::RolledBack)
-            && self.wake_promotion_active_artifact_version == Some(artifact_version)
+        } else if matches!(
+            to_state,
+            WakePromotionState::Blocked | WakePromotionState::RolledBack
+        ) && self.wake_promotion_active_artifact_version == Some(artifact_version)
         {
             self.wake_promotion_active_artifact_version = None;
         }
@@ -13570,12 +13832,24 @@ impl Ph1fStore {
             (from, to),
             (None, WakePromotionState::Candidate)
                 | (None, WakePromotionState::Blocked)
-                | (Some(WakePromotionState::Candidate), WakePromotionState::Shadow)
+                | (
+                    Some(WakePromotionState::Candidate),
+                    WakePromotionState::Shadow
+                )
                 | (Some(WakePromotionState::Shadow), WakePromotionState::Canary)
                 | (Some(WakePromotionState::Canary), WakePromotionState::Active)
-                | (Some(WakePromotionState::Active), WakePromotionState::RolledBack)
-                | (Some(WakePromotionState::Blocked), WakePromotionState::Candidate)
-                | (Some(WakePromotionState::RolledBack), WakePromotionState::Candidate)
+                | (
+                    Some(WakePromotionState::Active),
+                    WakePromotionState::RolledBack
+                )
+                | (
+                    Some(WakePromotionState::Blocked),
+                    WakePromotionState::Candidate
+                )
+                | (
+                    Some(WakePromotionState::RolledBack),
+                    WakePromotionState::Candidate
+                )
                 | (Some(_), WakePromotionState::Blocked)
         )
     }
@@ -14091,7 +14365,10 @@ impl Ph1fStore {
         for (field, value) in [
             ("ph1w_runtime_event_commit.light_score_bp", light_score_bp),
             ("ph1w_runtime_event_commit.strong_score_bp", strong_score_bp),
-            ("ph1w_runtime_event_commit.threshold_used_bp", threshold_used_bp),
+            (
+                "ph1w_runtime_event_commit.threshold_used_bp",
+                threshold_used_bp,
+            ),
         ] {
             if let Some(v) = value {
                 if v > 10_000 {
@@ -14354,7 +14631,8 @@ impl Ph1fStore {
         };
         self.wake_learn_signals.push(row.clone());
         self.wake_learn_signal_index.insert(signal_idx, row_id);
-        self.wake_learn_signal_receipt_index.insert(receipt_ref, row_id);
+        self.wake_learn_signal_receipt_index
+            .insert(receipt_ref, row_id);
         self.enqueue_mobile_artifact_sync(
             now,
             MobileArtifactSyncKind::WakeLearnSignal,
@@ -17004,7 +17282,7 @@ impl Ph1fStore {
                     table: "conversation_ledger.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1c.session_scope",
@@ -17321,7 +17599,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1nlp.session_scope",
@@ -17765,7 +18043,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1d.session_scope",
@@ -18165,7 +18443,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1x.session_scope",
@@ -18748,7 +19026,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1write.session_scope",
@@ -18918,7 +19196,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1tts.session_scope",
@@ -19232,7 +19510,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1e.session_scope",
@@ -19460,7 +19738,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1persona.session_scope",
@@ -19831,7 +20109,7 @@ impl Ph1fStore {
                     table: "audit_events.session_id",
                     key: sid.0.to_string(),
                 })?;
-            if session.user_id != *user_id || session.device_id != *device_id {
+            if session.user_id != *user_id || !session.attached_devices.contains(device_id) {
                 return Err(StorageError::ContractViolation(
                     ContractViolation::InvalidValue {
                         field: "ph1feedback.session_scope",

@@ -32,6 +32,7 @@ impl VoiceIngress for GrpcVoiceIngress {
         let adapter_request = VoiceTurnAdapterRequest {
             correlation_id: req.correlation_id,
             turn_id: req.turn_id,
+            device_turn_sequence: None,
             app_platform: req.app_platform,
             trigger: req.trigger,
             actor_user_id: req.actor_user_id,

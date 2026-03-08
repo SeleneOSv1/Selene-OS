@@ -75,4 +75,6 @@ pub mod runtime_execution;
 pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
-pub use runtime_execution::{AdmissionState, FailureClass, RuntimeExecutionEnvelope};
+pub use runtime_execution::{
+    AdmissionState, FailureClass, RuntimeExecutionEnvelope, SessionAttachOutcome,
+};

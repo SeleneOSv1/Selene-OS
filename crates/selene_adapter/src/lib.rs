@@ -33,12 +33,12 @@ use selene_engines::ph1k::{
 use selene_engines::ph1n::{Ph1nConfig as EnginePh1nConfig, Ph1nRuntime as EnginePh1nRuntime};
 use selene_engines::ph1pattern::{Ph1PatternConfig as EnginePatternConfig, Ph1PatternRuntime};
 use selene_engines::ph1rll::{Ph1RllConfig as EngineRllConfig, Ph1RllRuntime};
+use selene_engines::ph1vision::{
+    Ph1VisionConfig as EnginePh1VisionConfig, Ph1VisionRuntime as EnginePh1VisionRuntime,
+};
 use selene_engines::ph1w::{
     reason_codes as ph1w_reason_codes, Ph1wOutputEvent, Ph1wRuntime, SourceLivenessHint,
     WakeConfig as EngineWakeConfig, WakeStepInput,
-};
-use selene_engines::ph1vision::{
-    Ph1VisionConfig as EnginePh1VisionConfig, Ph1VisionRuntime as EnginePh1VisionRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
     DeviceTrustLevel, Ph1VoiceIdRequest, Ph1VoiceIdResponse, UserId,
@@ -91,9 +91,6 @@ use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcome
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
-use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, FailureClass, RuntimeExecutionEnvelope,
-};
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
@@ -104,6 +101,9 @@ use selene_kernel_contracts::ph1w::{
 };
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
+};
+use selene_kernel_contracts::runtime_execution::{
+    AdmissionState, FailureClass, RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -245,6 +245,7 @@ pub struct VoiceTurnThreadPolicyFlags {
 pub struct VoiceTurnAdapterRequest {
     pub correlation_id: u64,
     pub turn_id: u64,
+    pub device_turn_sequence: Option<u64>,
     pub app_platform: String,
     pub trigger: String,
     pub actor_user_id: String,
@@ -270,6 +271,7 @@ pub struct VoiceTurnAdapterResponse {
     pub session_id: Option<String>,
     pub turn_id: Option<u64>,
     pub session_state: Option<String>,
+    pub session_attach_outcome: Option<SessionAttachOutcome>,
     pub failure_class: Option<FailureClass>,
     pub reason: Option<String>,
     pub next_move: String,
@@ -592,6 +594,7 @@ pub struct UiChatTranscriptResponse {
 pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
     store: Arc<Mutex<Ph1fStore>>,
+    session_retry_cache: Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
     sync_worker_counters: Arc<Mutex<AdapterSyncWorkerCounters>>,
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
@@ -603,11 +606,19 @@ pub struct AdapterRuntime {
     ph1d_runtime: EnginePh1dRuntime,
     ph1d_live_adapter: Option<EnvPh1dLiveAdapter>,
     persistence: Option<AdapterPersistenceConfig>,
+    runtime_node_id: String,
+    session_lease_ttl_ms: u64,
 }
 
 #[derive(Debug, Clone)]
 struct AdapterPersistenceConfig {
     journal_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct AdapterRetryCacheKey {
+    actor_user_id: UserId,
+    idempotency_key: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -994,6 +1005,7 @@ impl Default for AdapterRuntime {
         Self {
             ingress: AppServerIngressRuntime::default(),
             store: Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -1005,6 +1017,8 @@ impl Default for AdapterRuntime {
             ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
             ph1d_live_adapter,
             persistence: None,
+            runtime_node_id: runtime_node_id_from_env(),
+            session_lease_ttl_ms: parse_u64_env("SELENE_SESSION_LEASE_TTL_MS", 30_000),
         }
     }
 }
@@ -1028,6 +1042,7 @@ impl AdapterRuntime {
         Self {
             ingress,
             store,
+            session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -1039,6 +1054,8 @@ impl AdapterRuntime {
             ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
             ph1d_live_adapter,
             persistence: None,
+            runtime_node_id: runtime_node_id_from_env(),
+            session_lease_ttl_ms: parse_u64_env("SELENE_SESSION_LEASE_TTL_MS", 30_000),
         }
     }
 
@@ -1052,6 +1069,7 @@ impl AdapterRuntime {
         let runtime = Self {
             ingress,
             store,
+            session_retry_cache: Arc::new(Mutex::new(BTreeMap::new())),
             sync_worker_counters: Arc::new(Mutex::new(AdapterSyncWorkerCounters::default())),
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
@@ -1063,6 +1081,8 @@ impl AdapterRuntime {
             ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
             ph1d_live_adapter,
             persistence: Some(AdapterPersistenceConfig { journal_path }),
+            runtime_node_id: runtime_node_id_from_env(),
+            session_lease_ttl_ms: parse_u64_env("SELENE_SESSION_LEASE_TTL_MS", 30_000),
         };
         runtime.ensure_persistence_ready()?;
         runtime.replay_journal_into_store()?;
@@ -1082,16 +1102,18 @@ impl AdapterRuntime {
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
         let runtime_execution_envelope =
-            fallback_runtime_execution_envelope_for_voice_turn_request(&request).map_err(|err| {
-                voice_turn_ingress_error(
-                    FailureClass::InvalidPayload,
-                    "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
-                    Some(format!("invalid runtime_execution_envelope: {err:?}")),
-                    None,
-                    Some(request.turn_id),
-                    None,
-                )
-            })?;
+            fallback_runtime_execution_envelope_for_voice_turn_request(&request).map_err(
+                |err| {
+                    voice_turn_ingress_error(
+                        FailureClass::InvalidPayload,
+                        "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
+                        Some(format!("invalid runtime_execution_envelope: {err:?}")),
+                        None,
+                        Some(request.turn_id),
+                        None,
+                    )
+                },
+            )?;
         self.run_voice_turn_internal(request, Some(runtime_execution_envelope), true, false)
     }
 
@@ -3543,13 +3565,16 @@ impl AdapterRuntime {
             .device_id
             .as_ref()
             .map(|id| {
-                DeviceId::new(id.clone()).map_err(|err| {
-                    pre_session_error(format!("invalid device_id: {err:?}"))
-                })
+                DeviceId::new(id.clone())
+                    .map_err(|err| pre_session_error(format!("invalid device_id: {err:?}")))
             })
             .transpose()?;
         let correlation_id = CorrelationId(request.correlation_id.into());
         let turn_id = TurnId(request.turn_id);
+        let device_turn_sequence = request
+            .device_turn_sequence
+            .unwrap_or(request.turn_id)
+            .max(1);
         let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
         let runtime_device_id = match request_device_id {
             Some(id) => id,
@@ -3562,31 +3587,46 @@ impl AdapterRuntime {
             })?,
         };
         let mut runtime_execution_envelope = match runtime_execution_envelope {
-            Some(envelope) => RuntimeExecutionEnvelope::v1(
-                envelope.request_id,
-                envelope.trace_id,
-                envelope.idempotency_key,
-                actor_user_id.clone(),
-                runtime_device_id.clone(),
-                app_platform,
-                envelope.session_id,
-                turn_id,
-                AdmissionState::IngressValidated,
-            )
-            .map_err(|err| {
-                pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
-            })?,
+            Some(envelope) => {
+                RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
+                    envelope.request_id,
+                    envelope.trace_id,
+                    envelope.idempotency_key,
+                    actor_user_id.clone(),
+                    runtime_device_id.clone(),
+                    app_platform,
+                    envelope.session_id,
+                    turn_id,
+                    envelope.device_turn_sequence.or(Some(device_turn_sequence)),
+                    AdmissionState::IngressValidated,
+                    envelope.session_attach_outcome,
+                )
+                .map_err(|err| {
+                    pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
+                })?
+            }
             None => fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
                 correlation_id,
                 turn_id,
                 app_platform,
                 &actor_user_id,
                 &runtime_device_id,
+                Some(device_turn_sequence),
+                None,
             )
             .map_err(|err| {
                 pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
             })?,
         };
+        if let Some(response) = cached_retry_response_for_actor(
+            &self.session_retry_cache,
+            &actor_user_id,
+            &runtime_execution_envelope.idempotency_key,
+        )
+        .map_err(pre_session_error.clone())?
+        {
+            return Ok(response);
+        }
 
         let mut store = self
             .store
@@ -3626,12 +3666,10 @@ impl AdapterRuntime {
         .map_err(pre_session_error.clone())?;
         if let Some(wake_eval) = wake_evaluation.as_ref() {
             if !wake_eval.decision.accepted {
-                let session_id_for_reject = latest_session_for_actor_device(
-                    &store,
-                    &actor_user_id,
-                    &runtime_device_id,
-                )
-                .map(|row| row.session_id);
+                let session_id_for_reject =
+                    latest_canonical_session_for_actor(&store, &actor_user_id)
+                        .map_err(pre_session_error.clone())?
+                        .map(|row| row.session_id);
                 commit_wake_runtime_event(
                     &mut store,
                     now,
@@ -3669,7 +3707,7 @@ impl AdapterRuntime {
                 ));
             }
         }
-        let session_turn_state = resolve_session_turn_state(
+        let session_turn_state = match resolve_session_turn_state(
             &mut store,
             now,
             correlation_id,
@@ -3679,10 +3717,21 @@ impl AdapterRuntime {
             trigger,
             &ph1k_bundle,
             wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+            &runtime_execution_envelope.idempotency_key,
+            device_turn_sequence,
+            &self.runtime_node_id,
+            self.session_lease_ttl_ms,
+            &self.session_retry_cache,
         )
-        .map_err(pre_session_error.clone())?;
-        let response_session_id =
-            session_turn_state.session_snapshot.session_id.map(session_id_to_string);
+        .map_err(pre_session_error.clone())?
+        {
+            AdapterSessionResolution::Proceed(state) => state,
+            AdapterSessionResolution::Retry(response) => return Ok(response),
+        };
+        let response_session_id = session_turn_state
+            .session_snapshot
+            .session_id
+            .map(session_id_to_string);
         let response_session_state = session_turn_state.session_snapshot.session_state;
         let post_session_error = |reason: String| {
             classify_voice_turn_runtime_error(
@@ -3693,13 +3742,17 @@ impl AdapterRuntime {
             )
         };
         runtime_execution_envelope = runtime_execution_envelope
-            .with_session_and_admission_state(
+            .with_session_device_turn_and_attach_outcome(
                 session_turn_state.session_snapshot.session_id,
                 AdmissionState::SessionResolved,
+                Some(session_turn_state.device_turn_sequence),
+                Some(session_turn_state.session_attach_outcome),
             )
-            .map_err(|err| post_session_error(format!(
-                "invalid runtime_execution_envelope after session resolve: {err:?}"
-            )))?;
+            .map_err(|err| {
+                post_session_error(format!(
+                    "invalid runtime_execution_envelope after session resolve: {err:?}"
+                ))
+            })?;
         if let Some(wake_eval) = wake_evaluation.as_ref() {
             commit_wake_runtime_event(
                 &mut store,
@@ -3847,9 +3900,7 @@ impl AdapterRuntime {
                 flags.do_not_disturb,
                 flags.strict_safety,
             )
-            .map_err(|err| {
-                post_session_error(format!("invalid thread policy flags: {err:?}"))
-            })?;
+            .map_err(|err| post_session_error(format!("invalid thread policy flags: {err:?}")))?;
             base_thread_state = base_thread_state
                 .with_thread_policy_flags(Some(kernel_flags))
                 .map_err(|err| {
@@ -3973,7 +4024,27 @@ impl AdapterRuntime {
             )
             .map_err(post_session_error.clone())?;
         }
+        finalize_session_turn_record(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &runtime_device_id,
+            session_turn_state.session_id_for_commits,
+            session_turn_state.device_turn_sequence,
+            &runtime_execution_envelope.idempotency_key,
+            &self.runtime_node_id,
+            self.session_lease_ttl_ms,
+        )
+        .map_err(post_session_error.clone())?;
         let response = execution_outcome_to_adapter_response(execution_outcome);
+        cache_authoritative_turn_response(
+            &self.session_retry_cache,
+            &actor_user_id,
+            &runtime_execution_envelope.idempotency_key,
+            &response,
+        )
+        .map_err(post_session_error.clone())?;
         if persist_on_success {
             self.append_journal_entry(request_for_journal)
                 .map_err(post_session_error)?;
@@ -4072,13 +4143,14 @@ impl AdapterRuntime {
                     line_no + 1
                 ));
             }
-            self.run_voice_turn_internal(entry.request, None, false, true).map_err(|err| {
-                format!(
-                    "journal replay failed at line {}: {}",
-                    line_no + 1,
-                    err.to_runtime_reason()
-                )
-            })?;
+            self.run_voice_turn_internal(entry.request, None, false, true)
+                .map_err(|err| {
+                    format!(
+                        "journal replay failed at line {}: {}",
+                        line_no + 1,
+                        err.to_runtime_reason()
+                    )
+                })?;
         }
         Ok(())
     }
@@ -4282,6 +4354,8 @@ fn classify_voice_turn_runtime_error(
         FailureClass::PolicyViolation
     } else if reason.contains("replayed_request") {
         FailureClass::ReplayRejected
+    } else if reason.contains("retry_result_missing") {
+        FailureClass::RetryableRuntime
     } else if reason.contains("session_conflict") {
         FailureClass::SessionConflict
     } else if reason.contains("lock poisoned") {
@@ -4334,6 +4408,10 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request(
         app_platform,
         &actor_user_id,
         &device_id,
+        request
+            .device_turn_sequence
+            .or(Some(request.turn_id.max(1))),
+        None,
     )
 }
 
@@ -4343,8 +4421,10 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
     app_platform: AppPlatform,
     actor_user_id: &UserId,
     device_id: &DeviceId,
+    device_turn_sequence: Option<u64>,
+    session_attach_outcome: Option<SessionAttachOutcome>,
 ) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
-    RuntimeExecutionEnvelope::v1(
+    RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
         format!("corr-{}", correlation_id.0),
         format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
         format!("turn:{}:{}", correlation_id.0, turn_id.0),
@@ -4353,7 +4433,9 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
         app_platform,
         None,
         turn_id,
+        device_turn_sequence,
         AdmissionState::IngressValidated,
+        session_attach_outcome,
     )
 }
 
@@ -4882,6 +4964,7 @@ fn execution_outcome_to_adapter_response(
             .map(session_id_to_string),
         turn_id: Some(execution.runtime_execution_envelope.turn_id.0),
         session_state: Some(session_state_to_api_value(execution.session_state)),
+        session_attach_outcome: execution.runtime_execution_envelope.session_attach_outcome,
         failure_class: None,
         reason: voice_outcome_reason(&execution.voice_outcome),
         next_move: next_move_label(&execution).to_string(),
@@ -5256,6 +5339,20 @@ struct AdapterSessionTurnState {
     session_snapshot: SessionSnapshot,
     session_id_for_commits: Option<SessionId>,
     wake_event: Option<WakeDecision>,
+    session_attach_outcome: SessionAttachOutcome,
+    device_turn_sequence: u64,
+}
+
+#[derive(Debug, Clone)]
+enum AdapterSessionResolution {
+    Proceed(AdapterSessionTurnState),
+    Retry(VoiceTurnAdapterResponse),
+}
+
+#[derive(Debug, Clone)]
+struct CanonicalActorSessionSelection {
+    latest: Option<SessionRecord>,
+    latest_recoverable: Option<SessionRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -5301,19 +5398,17 @@ fn build_ph1w_live_step_input(
         ),
         None => Some(
             Confidence::new(
-                ph1k
-                    .interrupt_input
+                ph1k.interrupt_input
                     .acoustic_confidence
                     .max(ph1k.interrupt_input.vad_confidence)
                     .clamp(0.0, 1.0),
             )
-                .map_err(|err| format!("invalid PH1.W fallback light score: {err:?}"))?,
+            .map_err(|err| format!("invalid PH1.W fallback light score: {err:?}"))?,
         ),
     };
     let strong_score = Some(
         Confidence::new(
-            ph1k
-                .interrupt_input
+            ph1k.interrupt_input
                 .acoustic_confidence
                 .max(ph1k.interrupt_input.vad_confidence)
                 .max(ph1k.interrupt_input.prosody_confidence)
@@ -5322,13 +5417,12 @@ fn build_ph1w_live_step_input(
         )
         .map_err(|err| format!("invalid PH1.W strong score: {err:?}"))?,
     );
-    let source_liveness_hint = if ph1k.interrupt_input.capture_degraded
-        || ph1k.interrupt_input.stream_gap_detected
-    {
-        SourceLivenessHint::ReplaySuspected
-    } else {
-        SourceLivenessHint::Live
-    };
+    let source_liveness_hint =
+        if ph1k.interrupt_input.capture_degraded || ph1k.interrupt_input.stream_gap_detected {
+            SourceLivenessHint::ReplaySuspected
+        } else {
+            SourceLivenessHint::Live
+        };
     let near_field_speech_hint = ph1k
         .interrupt_input
         .nearfield_confidence
@@ -5355,7 +5449,8 @@ fn build_ph1w_live_step_input(
         aec_stable: !ph1k.interrupt_input.aec_unstable,
         light_score,
         strong_score,
-        strong_alignment_ok: ph1k.interrupt_input.detection.is_some() || wake_trigger_alignment_hint,
+        strong_alignment_ok: ph1k.interrupt_input.detection.is_some()
+            || wake_trigger_alignment_hint,
         speaker_match_ok,
         source_liveness_hint,
         near_field_speech_hint,
@@ -5382,8 +5477,8 @@ fn resolve_ph1w_live_loop_config(app_platform: AppPlatform) -> Ph1wLiveDecisionL
         AppPlatform::Android => (800_u32, 20_u32),
         AppPlatform::Ios => (800_u32, 20_u32),
     };
-    let window_ms = parse_u32_env("SELENE_PH1W_LIVE_WINDOW_MS", 200, 10_000)
-        .unwrap_or(default_window_ms);
+    let window_ms =
+        parse_u32_env("SELENE_PH1W_LIVE_WINDOW_MS", 200, 10_000).unwrap_or(default_window_ms);
     let hop_ms = parse_u32_env("SELENE_PH1W_LIVE_HOP_MS", 20, 2_000)
         .unwrap_or(default_hop_ms)
         .min(window_ms.max(20));
@@ -5420,8 +5515,7 @@ fn run_ph1w_live_decision(
         cfg.max_underruns = cfg.max_underruns.max(10);
     }
     let loop_cfg = resolve_ph1w_live_loop_config(app_platform);
-    cfg.candidate_validation_window_ms =
-        cfg.candidate_validation_window_ms.max(loop_cfg.window_ms);
+    cfg.candidate_validation_window_ms = cfg.candidate_validation_window_ms.max(loop_cfg.window_ms);
     let threshold_used_bp = if ph1k.tts_playback.active {
         ((cfg.strong_score_threshold_tts.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000)
     } else {
@@ -5439,7 +5533,11 @@ fn run_ph1w_live_decision(
             Ph1wOutputEvent::Decision(d) => Some(d),
             Ph1wOutputEvent::StateChanged { .. } => None,
         }) {
-            return Ok((decision, threshold_used_bp, PH1W_IMPLEMENTATION_ID.to_string()));
+            return Ok((
+                decision,
+                threshold_used_bp,
+                PH1W_IMPLEMENTATION_ID.to_string(),
+            ));
         }
     }
     let fallback = WakeDecision::reject_v1(
@@ -5459,7 +5557,11 @@ fn run_ph1w_live_decision(
         None,
     )
     .map_err(|err| format!("PH1.W timeout fallback decision invalid: {err:?}"))?;
-    Ok((fallback, threshold_used_bp, PH1W_IMPLEMENTATION_ID.to_string()))
+    Ok((
+        fallback,
+        threshold_used_bp,
+        PH1W_IMPLEMENTATION_ID.to_string(),
+    ))
 }
 
 fn evaluate_wake_for_turn(
@@ -5491,7 +5593,10 @@ fn evaluate_wake_for_turn(
     let (window_start_ns, window_end_ns) = decision
         .capture
         .map(|capture| (capture.t_start, capture.t_end))
-        .unwrap_or((ph1k.pre_roll_buffer_ref.t_start, ph1k.pre_roll_buffer_ref.t_end));
+        .unwrap_or((
+            ph1k.pre_roll_buffer_ref.t_start,
+            ph1k.pre_roll_buffer_ref.t_end,
+        ));
     Ok(Some(WakeEvaluation {
         decision,
         wake_profile_id,
@@ -5519,7 +5624,11 @@ fn commit_wake_runtime_event(
         "wake_evt_{}_{}_{}",
         correlation_id.0,
         turn_id.0,
-        if decision.accepted { "accept" } else { "reject" }
+        if decision.accepted {
+            "accept"
+        } else {
+            "reject"
+        }
     );
     let idempotency_key = sanitize_idempotency_token(&format!(
         "adapter_wake_runtime:{}:{}:{}:{}",
@@ -5613,18 +5722,19 @@ fn commit_wake_learn_signal(
         "wake_sig_{}_{}_{}",
         correlation_id.0,
         turn_id.0,
-        if decision.accepted { "accept" } else { "reject" }
+        if decision.accepted {
+            "accept"
+        } else {
+            "reject"
+        }
     );
     let idempotency_key = sanitize_idempotency_token(&format!(
         "adapter_wake_learn:{}:{}:{}:{}",
-        correlation_id.0,
-        turn_id.0,
-        decision.reason_code.0,
-        wake_eval.window_start_ns.0
+        correlation_id.0, turn_id.0, decision.reason_code.0, wake_eval.window_start_ns.0
     ));
     let wake_window_id = wake_window_id_for_signal(device_id, wake_eval);
-    let score_bp =
-        confidence_to_basis_points(decision.strong_score).or(confidence_to_basis_points(decision.light_score));
+    let score_bp = confidence_to_basis_points(decision.strong_score)
+        .or(confidence_to_basis_points(decision.light_score));
     let snr_db_milli = Some(
         (ph1k
             .interrupt_input
@@ -5634,8 +5744,10 @@ fn commit_wake_learn_signal(
             * 1000.0)
             .round() as i32,
     );
-    let vad_coverage_bp =
-        Some(((ph1k.interrupt_input.vad_confidence.clamp(0.0, 1.0) * 10_000.0).round() as u16).min(10_000));
+    let vad_coverage_bp = Some(
+        ((ph1k.interrupt_input.vad_confidence.clamp(0.0, 1.0) * 10_000.0).round() as u16)
+            .min(10_000),
+    );
     let timestamp_ms = (now.0 / 1_000_000).max(1);
     let signal = WakeLearnSignalV1::v1(
         signal_id,
@@ -5670,8 +5782,43 @@ fn resolve_session_turn_state(
     trigger: OsVoiceTrigger,
     ph1k: &Ph1kLiveSignalBundle,
     wake_event: Option<WakeDecision>,
-) -> Result<AdapterSessionTurnState, String> {
-    let existing = latest_session_for_actor_device(store, actor_user_id, device_id);
+    idempotency_key: &str,
+    device_turn_sequence: u64,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+    session_retry_cache: &Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+) -> Result<AdapterSessionResolution, String> {
+    let selection = canonical_actor_session_selection(store, actor_user_id)?;
+    if let Some(existing) = selection.latest_recoverable.as_ref() {
+        match existing.device_turn_sequence_for(device_id) {
+            Some(previous_sequence) if device_turn_sequence < previous_sequence => {
+                return Err("session_conflict stale_device_turn".to_string());
+            }
+            Some(previous_sequence) if device_turn_sequence == previous_sequence => {
+                if existing.last_idempotency_key_for(device_id) == Some(idempotency_key) {
+                    let response = cached_retry_response_for_actor(
+                        session_retry_cache,
+                        actor_user_id,
+                        idempotency_key,
+                    )?
+                    .ok_or_else(|| "retry_result_missing".to_string())?;
+                    return Ok(AdapterSessionResolution::Retry(response));
+                }
+                return Err("session_conflict duplicate_device_turn_sequence".to_string());
+            }
+            _ => {}
+        }
+        acquire_or_refresh_session_lease(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            device_id,
+            existing,
+            runtime_node_id,
+            session_lease_ttl_ms,
+        )?;
+    }
     let next_session_id_seed = store
         .session_rows()
         .keys()
@@ -5680,7 +5827,7 @@ fn resolve_session_turn_state(
         .unwrap_or(0)
         .saturating_add(1)
         .max(1);
-    let (state, session_id) = match existing.as_ref() {
+    let (state, session_id) = match selection.latest_recoverable.as_ref() {
         Some(rec) if rec.session_state != SessionState::Closed => {
             (rec.session_state, Some(rec.session_id))
         }
@@ -5695,7 +5842,7 @@ fn resolve_session_turn_state(
     .map_err(|err| format!("invalid PH1.L persisted state: {err:?}"))?;
 
     let policy_context_ref = PolicyContextRef::v1(false, false, SafetyTier::Standard);
-    if let Some(rec) = existing.as_ref() {
+    if let Some(rec) = selection.latest_recoverable.as_ref() {
         let silence_ms = now
             .0
             .saturating_sub(rec.last_activity_at.0)
@@ -5728,6 +5875,9 @@ fn resolve_session_turn_state(
                 idle_prev_session_id,
                 &idle_out,
                 "idle",
+                runtime_node_id,
+                session_lease_ttl_ms,
+                false,
             )?;
         }
     }
@@ -5747,6 +5897,13 @@ fn resolve_session_turn_state(
         tts_playback_state_from_bool(ph1k.tts_playback.active),
         policy_context_ref,
     );
+    let session_attach_outcome = match selection.latest_recoverable.as_ref() {
+        Some(rec) if rec.attached_devices.contains(device_id) => {
+            SessionAttachOutcome::ExistingSessionReused
+        }
+        Some(_) => SessionAttachOutcome::ExistingSessionAttached,
+        None => SessionAttachOutcome::NewSessionCreated,
+    };
     persist_session_snapshot(
         store,
         now,
@@ -5757,17 +5914,22 @@ fn resolve_session_turn_state(
         active_prev_session_id,
         &active_out,
         "turn",
+        runtime_node_id,
+        session_lease_ttl_ms,
+        true,
     )?;
     let session_id_for_commits = if active_out.snapshot.session_state == SessionState::Closed {
         active_prev_session_id
     } else {
         active_out.snapshot.session_id
     };
-    Ok(AdapterSessionTurnState {
+    Ok(AdapterSessionResolution::Proceed(AdapterSessionTurnState {
         session_snapshot: active_out.snapshot,
         session_id_for_commits,
         wake_event,
-    })
+        session_attach_outcome,
+        device_turn_sequence,
+    }))
 }
 
 fn ph1l_turn_trigger_from_os(trigger: OsVoiceTrigger) -> Ph1lTurnTrigger {
@@ -5777,17 +5939,199 @@ fn ph1l_turn_trigger_from_os(trigger: OsVoiceTrigger) -> Ph1lTurnTrigger {
     }
 }
 
-fn latest_session_for_actor_device(
+fn canonical_actor_session_selection(
     store: &Ph1fStore,
     actor_user_id: &UserId,
-    device_id: &DeviceId,
-) -> Option<SessionRecord> {
-    store
+) -> Result<CanonicalActorSessionSelection, String> {
+    let mut latest: Option<SessionRecord> = None;
+    let mut latest_recoverable: Option<SessionRecord> = None;
+    let recoverable_count = store
         .session_rows()
         .values()
-        .filter(|row| &row.user_id == actor_user_id && &row.device_id == device_id)
+        .filter(|row| &row.user_id == actor_user_id && row.is_recoverable())
+        .count();
+    if recoverable_count > 1 {
+        return Err("session_conflict canonical_session_owner_uncertain".to_string());
+    }
+    for row in store
+        .session_rows()
+        .values()
+        .filter(|row| &row.user_id == actor_user_id)
+    {
+        let better_than_latest = latest
+            .as_ref()
+            .map(|existing| {
+                (row.last_activity_at.0, row.session_id.0)
+                    > (existing.last_activity_at.0, existing.session_id.0)
+            })
+            .unwrap_or(true);
+        if better_than_latest {
+            latest = Some(row.clone());
+        }
+        if row.is_recoverable() {
+            let better_than_recoverable = latest_recoverable
+                .as_ref()
+                .map(|existing| {
+                    (row.last_activity_at.0, row.session_id.0)
+                        > (existing.last_activity_at.0, existing.session_id.0)
+                })
+                .unwrap_or(true);
+            if better_than_recoverable {
+                latest_recoverable = Some(row.clone());
+            }
+        }
+    }
+    Ok(CanonicalActorSessionSelection {
+        latest,
+        latest_recoverable,
+    })
+}
+
+fn latest_canonical_session_for_actor(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+) -> Result<Option<SessionRecord>, String> {
+    let selection = canonical_actor_session_selection(store, actor_user_id)?;
+    Ok(selection.latest_recoverable.or(selection.latest))
+}
+
+fn session_lease_expires_at(now: MonotonicTimeNs, session_lease_ttl_ms: u64) -> MonotonicTimeNs {
+    MonotonicTimeNs(
+        now.0
+            .saturating_add(session_lease_ttl_ms.max(1).saturating_mul(1_000_000)),
+    )
+}
+
+fn cached_retry_response_for_actor(
+    session_retry_cache: &Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+    actor_user_id: &UserId,
+    idempotency_key: &str,
+) -> Result<Option<VoiceTurnAdapterResponse>, String> {
+    let cache = session_retry_cache
+        .lock()
+        .map_err(|_| "adapter retry cache lock poisoned".to_string())?;
+    Ok(cache
+        .get(&AdapterRetryCacheKey {
+            actor_user_id: actor_user_id.clone(),
+            idempotency_key: idempotency_key.to_string(),
+        })
         .cloned()
-        .max_by_key(|row| (row.last_activity_at.0, row.session_id.0))
+        .map(|mut response| {
+            response.session_attach_outcome = Some(SessionAttachOutcome::RetryReusedResult);
+            response
+        }))
+}
+
+fn cache_authoritative_turn_response(
+    session_retry_cache: &Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+    actor_user_id: &UserId,
+    idempotency_key: &str,
+    response: &VoiceTurnAdapterResponse,
+) -> Result<(), String> {
+    let mut cache = session_retry_cache
+        .lock()
+        .map_err(|_| "adapter retry cache lock poisoned".to_string())?;
+    cache.insert(
+        AdapterRetryCacheKey {
+            actor_user_id: actor_user_id.clone(),
+            idempotency_key: idempotency_key.to_string(),
+        },
+        response.clone(),
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn acquire_or_refresh_session_lease(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    device_id: &DeviceId,
+    session_record: &SessionRecord,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+) -> Result<(), String> {
+    let mut leased_record = session_record.clone();
+    if leased_record.lease_is_active_at(now) {
+        if leased_record.lease_owner_id.as_deref() != Some(runtime_node_id) {
+            return Err("session_conflict session_lease_conflict".to_string());
+        }
+        if let Some(active_turn_id) = leased_record.active_turn_id {
+            if active_turn_id != turn_id {
+                return Err("session_conflict session_single_writer_conflict".to_string());
+            }
+        }
+    }
+    leased_record.attached_devices.insert(device_id.clone());
+    leased_record.last_attached_device_id = device_id.clone();
+    leased_record.lease_owner_id = Some(truncate_ascii(runtime_node_id, 128));
+    leased_record.lease_acquired_at = Some(now);
+    leased_record.lease_expires_at = Some(session_lease_expires_at(now, session_lease_ttl_ms));
+    leased_record.active_turn_id = Some(turn_id);
+    store
+        .upsert_session_lifecycle(
+            leased_record,
+            Some(sanitize_idempotency_token(&format!(
+                "adapter_session_lease:{}:{}:{}",
+                correlation_id.0, turn_id.0, session_record.session_id.0
+            ))),
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_session_turn_record(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    device_id: &DeviceId,
+    session_id: Option<SessionId>,
+    device_turn_sequence: u64,
+    idempotency_key: &str,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+) -> Result<(), String> {
+    let Some(session_id) = session_id else {
+        return Ok(());
+    };
+    let Some(mut record) = store.get_session(&session_id).cloned() else {
+        return Ok(());
+    };
+    record.attached_devices.insert(device_id.clone());
+    record.last_attached_device_id = device_id.clone();
+    record.last_turn_id = Some(turn_id);
+    record.last_activity_at = now;
+    record
+        .device_turn_sequences
+        .insert(device_id.clone(), device_turn_sequence);
+    record
+        .device_last_idempotency_keys
+        .insert(device_id.clone(), truncate_ascii(idempotency_key, 128));
+    if record.session_state == SessionState::Closed {
+        record.active_turn_id = None;
+        record.lease_owner_id = None;
+        record.lease_acquired_at = None;
+        record.lease_expires_at = None;
+        record.closed_at = Some(now);
+    } else {
+        record.active_turn_id = None;
+        record.lease_owner_id = Some(truncate_ascii(runtime_node_id, 128));
+        record.lease_acquired_at = Some(now);
+        record.lease_expires_at = Some(session_lease_expires_at(now, session_lease_ttl_ms));
+    }
+    store
+        .upsert_session_lifecycle(
+            record,
+            Some(sanitize_idempotency_token(&format!(
+                "adapter_session_finalize:{}:{}:{}",
+                correlation_id.0, turn_id.0, session_id.0
+            ))),
+        )
+        .map_err(storage_error_to_string)?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5801,6 +6145,9 @@ fn persist_session_snapshot(
     previous_session_id: Option<SessionId>,
     out: &selene_kernel_contracts::ph1l::Ph1lOutput,
     stage: &str,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+    hold_active_turn: bool,
 ) -> Result<(), String> {
     let session_id = if out.snapshot.session_state == SessionState::Closed {
         previous_session_id
@@ -5810,25 +6157,43 @@ fn persist_session_snapshot(
     let Some(session_id) = session_id else {
         return Ok(());
     };
-    let opened_at = store
-        .get_session(&session_id)
-        .map(|row| row.opened_at)
-        .unwrap_or(now);
-    let closed_at = if out.snapshot.session_state == SessionState::Closed {
+    let mut record = match store.get_session(&session_id).cloned() {
+        Some(existing) => existing,
+        None => SessionRecord::v1(
+            session_id,
+            actor_user_id.clone(),
+            device_id.clone(),
+            out.snapshot.session_state,
+            now,
+            now,
+            None,
+        )
+        .map_err(|err| format!("invalid PH1.L session record: {err:?}"))?,
+    };
+    record.session_state = out.snapshot.session_state;
+    record.last_activity_at = now;
+    record.attached_devices.insert(device_id.clone());
+    record.last_attached_device_id = device_id.clone();
+    record.closed_at = if out.snapshot.session_state == SessionState::Closed {
         Some(now)
     } else {
         None
     };
-    let record = SessionRecord::v1(
-        session_id,
-        actor_user_id.clone(),
-        device_id.clone(),
-        out.snapshot.session_state,
-        opened_at,
-        now,
-        closed_at,
-    )
-    .map_err(|err| format!("invalid PH1.L session record: {err:?}"))?;
+    if out.snapshot.session_state == SessionState::Closed {
+        record.active_turn_id = None;
+        record.lease_owner_id = None;
+        record.lease_acquired_at = None;
+        record.lease_expires_at = None;
+    } else {
+        if record.lease_owner_id.is_none() || !record.lease_is_active_at(now) {
+            record.lease_owner_id = Some(truncate_ascii(runtime_node_id, 128));
+            record.lease_acquired_at = Some(now);
+        }
+        record.lease_expires_at = Some(session_lease_expires_at(now, session_lease_ttl_ms));
+        if hold_active_turn {
+            record.active_turn_id = Some(turn_id);
+        }
+    }
     store
         .upsert_session_lifecycle(
             record,
@@ -5912,6 +6277,22 @@ fn parse_bool_env(key: &str, default: bool) -> bool {
         ),
         Err(_) => default,
     }
+}
+
+fn parse_u64_env(key: &str, default: u64) -> u64 {
+    env::var(key)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+fn runtime_node_id_from_env() -> String {
+    env::var("SELENE_RUNTIME_NODE_ID")
+        .ok()
+        .map(|value| truncate_ascii(value.trim(), 128))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "adapter_runtime_node_v1".to_string())
 }
 
 fn build_ph1d_live_adapter_from_env() -> Option<EnvPh1dLiveAdapter> {
@@ -7854,8 +8235,6 @@ fn build_builder_detail(
 mod tests {
     use super::*;
     use selene_engines::device_vault::DeviceVault;
-    use std::ffi::OsString;
-    use std::sync::{Mutex, OnceLock};
     use selene_kernel_contracts::ph1_voice_id::{
         VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
@@ -7874,10 +8253,6 @@ mod tests {
         ONB_EMPLOYEE_PHOTO_CAPTURE_SEND_COMMIT, ONB_EMPLOYEE_SENDER_VERIFY_COMMIT,
         ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT, ONB_TERMS_ACCEPT_COMMIT,
     };
-    use selene_kernel_contracts::ph1w::{
-        WAKE_ENROLL_COMPLETE_COMMIT, WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT,
-        WAKE_ENROLL_START_DRAFT,
-    };
     use selene_kernel_contracts::ph1position::TenantId;
     use selene_kernel_contracts::ph1rem::{
         Ph1RemRequest, Ph1RemResponse, ReminderChannel, ReminderLocalTimeMode,
@@ -7888,6 +8263,10 @@ mod tests {
         SimulationCatalogEventInput, SimulationId, SimulationStatus, SimulationType,
         SimulationVersion,
     };
+    use selene_kernel_contracts::ph1w::{
+        WAKE_ENROLL_COMPLETE_COMMIT, WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT,
+        WAKE_ENROLL_START_DRAFT,
+    };
     use selene_kernel_contracts::ph1x::{
         IdentityContext, PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
     };
@@ -7895,6 +8274,8 @@ mod tests {
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
         DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, WakeSampleResult,
     };
+    use std::ffi::OsString;
+    use std::sync::{Mutex, OnceLock};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     struct ScopedEnvVar {
@@ -7966,6 +8347,7 @@ mod tests {
         VoiceTurnAdapterRequest {
             correlation_id: 10_001,
             turn_id: 20_001,
+            device_turn_sequence: None,
             app_platform: "IOS".to_string(),
             trigger: "EXPLICIT".to_string(),
             actor_user_id: "tenant_a:user_adapter_test".to_string(),
@@ -8071,6 +8453,47 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_identity_and_device_for_request(
+        runtime: &AdapterRuntime,
+        request: &VoiceTurnAdapterRequest,
+    ) {
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(
+            request
+                .device_id
+                .clone()
+                .expect("device id must be present for seed"),
+        )
+        .expect("device id must parse");
+        let mut store = runtime.store.lock().expect("store lock must not poison");
+        if store.get_identity(&actor_user_id).is_none() {
+            store
+                .insert_identity(IdentityRecord::v1(
+                    actor_user_id.clone(),
+                    None,
+                    None,
+                    MonotonicTimeNs(1),
+                    IdentityStatus::Active,
+                ))
+                .expect("identity seed must succeed");
+        }
+        if store.get_device(&device_id).is_none() {
+            store
+                .insert_device(
+                    DeviceRecord::v1(
+                        device_id,
+                        actor_user_id,
+                        "phone".to_string(),
+                        MonotonicTimeNs(1),
+                        None,
+                    )
+                    .expect("device seed must validate"),
+                )
+                .expect("device seed must succeed");
+        }
+    }
+
     fn seed_wake_enrollment_complete_for_request(
         runtime: &AdapterRuntime,
         request: &VoiceTurnAdapterRequest,
@@ -8133,7 +8556,11 @@ mod tests {
             .ph1w_enroll_complete_commit(
                 MonotonicTimeNs(now.0.saturating_add(10)),
                 started.wake_enrollment_session_id,
-                format!("wake_profile_{}_{}", label, stable_hash_hex_16(actor_user_id.as_str())),
+                format!(
+                    "wake_profile_{}_{}",
+                    label,
+                    stable_hash_hex_16(actor_user_id.as_str())
+                ),
                 format!("{label}_wake_complete"),
             )
             .expect("wake enrollment complete should succeed");
@@ -9324,10 +9751,7 @@ mod tests {
                     SimulationStatus::Active,
                 );
             }
-            seed_invite_link_for_click_with_employee_prefilled_context(
-                &mut store,
-                &inviter_user_id,
-            )
+            seed_invite_link_for_click_with_employee_prefilled_context(&mut store, &inviter_user_id)
         };
 
         let start = runtime
@@ -9679,10 +10103,7 @@ mod tests {
                     SimulationStatus::Active,
                 );
             }
-            seed_invite_link_for_click_with_employee_prefilled_context(
-                &mut store,
-                &inviter_user_id,
-            )
+            seed_invite_link_for_click_with_employee_prefilled_context(&mut store, &inviter_user_id)
         };
 
         let start = runtime
@@ -9937,7 +10358,10 @@ mod tests {
             "expected wake_rejected from PH1.W inference path, got {err}"
         );
         let store = runtime.store.lock().expect("store lock must not poison");
-        assert!(store.ph1w_get_runtime_events().iter().any(|row| !row.accepted));
+        assert!(store
+            .ph1w_get_runtime_events()
+            .iter()
+            .any(|row| !row.accepted));
     }
 
     #[test]
@@ -9956,15 +10380,14 @@ mod tests {
             .expect("accepted wake turn should succeed");
 
         let store = runtime.store.lock().expect("store lock must not poison");
-        assert!(
-            store
-                .wake_learn_signal_rows()
-                .iter()
-                .any(|row| row.event_type == LearnSignalType::WakeAccepted)
-        );
-        assert!(store.device_artifact_sync_queue_rows().iter().any(|row| {
-            row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal
-        }));
+        assert!(store
+            .wake_learn_signal_rows()
+            .iter()
+            .any(|row| row.event_type == LearnSignalType::WakeAccepted));
+        assert!(store
+            .device_artifact_sync_queue_rows()
+            .iter()
+            .any(|row| { row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal }));
     }
 
     #[test]
@@ -9995,9 +10418,10 @@ mod tests {
                     | LearnSignalType::NoisyEnvironment
             )
         }));
-        assert!(store.device_artifact_sync_queue_rows().iter().any(|row| {
-            row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal
-        }));
+        assert!(store
+            .device_artifact_sync_queue_rows()
+            .iter()
+            .any(|row| { row.sync_kind == MobileArtifactSyncKind::WakeLearnSignal }));
     }
 
     #[test]
@@ -10035,14 +10459,17 @@ mod tests {
         let device_id = DeviceId::new(req.device_id.expect("device id must be present"))
             .expect("device id must parse");
         let store = runtime.store.lock().expect("store lock must not poison");
-        let session = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+        let session = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
             .expect("wake turn must persist a session row");
         assert_eq!(session.session_state, SessionState::Active);
+        assert!(session.attached_devices.contains(&device_id));
+        assert_eq!(session.last_attached_device_id, device_id);
         assert!(store.get_session(&session.session_id).is_some());
     }
 
     #[test]
-    fn at_l_02_next_turn_reuses_session_id_when_active() {
+    fn at_l_02_next_turn_reuses_canonical_actor_session_when_active() {
         let runtime = AdapterRuntime::default();
         let mut first = base_request();
         first.correlation_id = 31_002;
@@ -10060,7 +10487,8 @@ mod tests {
             .expect("device id must parse");
         let first_session_id = {
             let store = runtime.store.lock().expect("store lock must not poison");
-            latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            latest_canonical_session_for_actor(&store, &actor_user_id)
+                .expect("canonical session lookup must succeed")
                 .expect("first turn must persist session")
                 .session_id
         };
@@ -10076,18 +10504,19 @@ mod tests {
             .expect("second wake turn must succeed");
 
         let store = runtime.store.lock().expect("store lock must not poison");
-        let second_session_id = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
-            .expect("second turn must persist session")
-            .session_id;
-        assert_eq!(second_session_id, first_session_id);
+        let second_session = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
+            .expect("second turn must persist session");
+        assert_eq!(second_session.session_id, first_session_id);
         assert_eq!(
             store
                 .session_rows()
                 .values()
-                .filter(|row| row.user_id == actor_user_id && row.device_id == device_id)
+                .filter(|row| row.user_id == actor_user_id && row.is_recoverable())
                 .count(),
             1
         );
+        assert!(second_session.attached_devices.contains(&device_id));
     }
 
     #[test]
@@ -10109,7 +10538,8 @@ mod tests {
             .expect("device id must parse");
         let first_session = {
             let store = runtime.store.lock().expect("store lock must not poison");
-            latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+            latest_canonical_session_for_actor(&store, &actor_user_id)
+                .expect("canonical session lookup must succeed")
                 .expect("first turn must persist session")
         };
 
@@ -10147,10 +10577,12 @@ mod tests {
             .expect("turn after timeout must succeed");
 
         let store = runtime.store.lock().expect("store lock must not poison");
-        let latest = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+        let latest = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
             .expect("latest session must exist");
         assert_ne!(latest.session_id, first_session.session_id);
         assert_eq!(latest.session_state, SessionState::Active);
+        assert!(latest.attached_devices.contains(&device_id));
         let previous = store
             .get_session(&first_session.session_id)
             .expect("prior session row must still exist");
@@ -10159,7 +10591,7 @@ mod tests {
     }
 
     #[test]
-    fn at_l_04_explicit_trigger_opens_session_same_as_wake() {
+    fn at_l_04_cross_device_attach_reuses_canonical_session() {
         let runtime = AdapterRuntime::default();
 
         let mut wake = base_request();
@@ -10170,7 +10602,7 @@ mod tests {
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_session_wake_device".to_string());
         seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_l_04");
-        runtime
+        let wake_response = runtime
             .run_voice_turn(wake.clone())
             .expect("wake turn must succeed");
 
@@ -10181,7 +10613,7 @@ mod tests {
         explicit.app_platform = "DESKTOP".to_string();
         explicit.trigger = "EXPLICIT".to_string();
         explicit.device_id = Some("adapter_session_explicit_device".to_string());
-        runtime
+        let explicit_response = runtime
             .run_voice_turn(explicit.clone())
             .expect("explicit turn must succeed");
 
@@ -10192,17 +10624,28 @@ mod tests {
             DeviceId::new(explicit.device_id.expect("explicit device id must exist"))
                 .expect("valid id");
         let store = runtime.store.lock().expect("store lock must not poison");
-        let wake_session = latest_session_for_actor_device(&store, &actor_user_id, &wake_device)
-            .expect("wake-triggered session must exist");
-        let explicit_session =
-            latest_session_for_actor_device(&store, &actor_user_id, &explicit_device)
-                .expect("explicit-triggered session must exist");
-        assert_eq!(wake_session.session_state, SessionState::Active);
-        assert_eq!(explicit_session.session_state, SessionState::Active);
+        let canonical_session = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
+            .expect("canonical actor session must exist");
+        assert_eq!(wake_response.session_id, explicit_response.session_id);
+        assert_eq!(
+            wake_response.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+        assert_eq!(
+            explicit_response.session_attach_outcome,
+            Some(SessionAttachOutcome::ExistingSessionAttached)
+        );
+        assert_eq!(canonical_session.session_state, SessionState::Active);
+        assert!(canonical_session.attached_devices.contains(&wake_device));
+        assert!(canonical_session
+            .attached_devices
+            .contains(&explicit_device));
+        assert_eq!(canonical_session.last_attached_device_id, explicit_device);
     }
 
     #[test]
-    fn at_l_05_session_id_is_present_in_audit_and_memory_provenance() {
+    fn at_l_05_session_outputs_are_authoritative_and_reconcilable() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
         req.correlation_id = 31_008;
@@ -10211,7 +10654,7 @@ mod tests {
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
         seed_wake_enrollment_complete_for_request(&runtime, &req, "at_l_05");
-        runtime
+        let response = runtime
             .run_voice_turn(req.clone())
             .expect("wake turn must succeed");
 
@@ -10219,9 +10662,22 @@ mod tests {
         let device_id = DeviceId::new(req.device_id.expect("device id must be present"))
             .expect("device id must parse");
         let mut store = runtime.store.lock().expect("store lock must not poison");
-        let session_id = latest_session_for_actor_device(&store, &actor_user_id, &device_id)
+        let session_id = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
             .expect("session row must exist")
             .session_id;
+        assert_eq!(response.session_id, Some(session_id_to_string(session_id)));
+        assert_eq!(response.turn_id, Some(41_008));
+        assert_eq!(response.session_state.as_deref(), Some("ACTIVE"));
+        assert_eq!(
+            response.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+        assert!(store
+            .get_session(&session_id)
+            .expect("session row must exist")
+            .attached_devices
+            .contains(&device_id));
 
         let correlation_id = CorrelationId(req.correlation_id.into());
         assert!(
@@ -10274,6 +10730,252 @@ mod tests {
     }
 
     #[test]
+    fn at_l_06_stale_device_turn_is_rejected_deterministically() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_009;
+        first.turn_id = 41_009;
+        first.device_turn_sequence = Some(1);
+        seed_identity_and_device_for_request(&runtime, &first);
+        let first_response = runtime
+            .run_voice_turn_ingress(first)
+            .expect("first explicit turn must succeed");
+        assert_eq!(
+            first_response.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+
+        let mut second = base_request();
+        second.correlation_id = 31_010;
+        second.turn_id = 41_010;
+        second.device_turn_sequence = Some(2);
+        runtime
+            .run_voice_turn_ingress(second)
+            .expect("second explicit turn must succeed");
+
+        let mut stale = base_request();
+        stale.correlation_id = 31_011;
+        stale.turn_id = 41_011;
+        stale.device_turn_sequence = Some(1);
+        let error = runtime
+            .run_voice_turn_ingress(stale)
+            .expect_err("stale device turn must fail");
+        assert_eq!(error.failure_class, FailureClass::SessionConflict);
+        assert!(error.reason_code.contains("STALE_DEVICE_TURN"));
+    }
+
+    #[test]
+    fn at_l_07_lawful_retry_reuses_prior_authoritative_result() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.correlation_id = 31_012;
+        request.turn_id = 41_012;
+        request.device_turn_sequence = Some(7);
+        seed_identity_and_device_for_request(&runtime, &request);
+
+        let first = runtime
+            .run_voice_turn_ingress(request.clone())
+            .expect("first turn must succeed");
+        let second = runtime
+            .run_voice_turn_ingress(request)
+            .expect("retry turn must reuse prior result");
+
+        assert_eq!(second.session_id, first.session_id);
+        assert_eq!(second.turn_id, first.turn_id);
+        assert_eq!(second.session_state, first.session_state);
+        assert_eq!(second.response_text, first.response_text);
+        assert_eq!(
+            second.session_attach_outcome,
+            Some(SessionAttachOutcome::RetryReusedResult)
+        );
+    }
+
+    #[test]
+    fn at_l_08_session_lease_owner_blocks_conflicting_node_until_expiry() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_013;
+        first.turn_id = 41_013;
+        first.device_turn_sequence = Some(1);
+        seed_identity_and_device_for_request(&runtime, &first);
+        let first_response = runtime
+            .run_voice_turn_ingress(first.clone())
+            .expect("first turn must succeed");
+        let actor_user_id = UserId::new(first.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id");
+        let session_id = SessionId(
+            first_response
+                .session_id
+                .as_deref()
+                .expect("session id must exist")
+                .parse::<u128>()
+                .expect("session id must parse"),
+        );
+
+        {
+            let mut store = runtime.store.lock().expect("store lock must not poison");
+            let mut leased = store
+                .get_session(&session_id)
+                .expect("session row must exist")
+                .clone();
+            leased.attached_devices.insert(device_id.clone());
+            leased.last_attached_device_id = device_id.clone();
+            leased.lease_owner_id = Some("other_runtime_node".to_string());
+            leased.lease_acquired_at = Some(MonotonicTimeNs(2_000_000_000));
+            leased.lease_expires_at = Some(MonotonicTimeNs(20_000_000_000));
+            leased.active_turn_id = Some(TurnId(99_999));
+            store
+                .upsert_session_lifecycle(leased, Some("at_l_08_force_other_lease".to_string()))
+                .expect("forced lease must upsert");
+        }
+
+        let mut blocked = base_request();
+        blocked.correlation_id = 31_014;
+        blocked.turn_id = 41_014;
+        blocked.now_ns = Some(3_000_000_000);
+        blocked.device_turn_sequence = Some(2);
+        let blocked_error = runtime
+            .run_voice_turn_ingress(blocked.clone())
+            .expect_err("active foreign lease must block mutation");
+        assert_eq!(blocked_error.failure_class, FailureClass::SessionConflict);
+        assert!(blocked_error.reason_code.contains("SESSION_LEASE_CONFLICT"));
+
+        {
+            let mut store = runtime.store.lock().expect("store lock must not poison");
+            let mut expired = store
+                .get_session(&session_id)
+                .expect("session row must exist")
+                .clone();
+            expired.lease_acquired_at = Some(MonotonicTimeNs(1));
+            expired.lease_expires_at = Some(MonotonicTimeNs(1));
+            store
+                .upsert_session_lifecycle(expired, Some("at_l_08_expire_lease".to_string()))
+                .expect("expired lease must upsert");
+        }
+
+        let recovered = runtime
+            .run_voice_turn_ingress(blocked)
+            .expect("expired lease must allow safe recovery");
+        assert_eq!(recovered.session_id, Some(session_id_to_string(session_id)));
+        assert_eq!(
+            latest_canonical_session_for_actor(
+                &runtime.store.lock().expect("store lock must not poison"),
+                &actor_user_id
+            )
+            .expect("canonical session lookup must succeed")
+            .expect("session must still exist")
+            .lease_owner_id
+            .as_deref(),
+            Some(runtime.runtime_node_id.as_str())
+        );
+    }
+
+    #[test]
+    fn at_l_09_single_writer_conflict_is_explicit() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_015;
+        first.turn_id = 41_015;
+        first.device_turn_sequence = Some(1);
+        seed_identity_and_device_for_request(&runtime, &first);
+        let first_response = runtime
+            .run_voice_turn_ingress(first.clone())
+            .expect("first turn must succeed");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id");
+        let session_id = SessionId(
+            first_response
+                .session_id
+                .as_deref()
+                .expect("session id must exist")
+                .parse::<u128>()
+                .expect("session id must parse"),
+        );
+
+        {
+            let mut store = runtime.store.lock().expect("store lock must not poison");
+            let mut active = store
+                .get_session(&session_id)
+                .expect("session row must exist")
+                .clone();
+            active.attached_devices.insert(device_id.clone());
+            active.last_attached_device_id = device_id;
+            active.lease_owner_id = Some(runtime.runtime_node_id.clone());
+            active.lease_acquired_at = Some(MonotonicTimeNs(2_000_000_000));
+            active.lease_expires_at = Some(MonotonicTimeNs(20_000_000_000));
+            active.active_turn_id = Some(TurnId(88_888));
+            store
+                .upsert_session_lifecycle(active, Some("at_l_09_force_active_turn".to_string()))
+                .expect("forced active turn must upsert");
+        }
+
+        let mut conflicting = base_request();
+        conflicting.correlation_id = 31_016;
+        conflicting.turn_id = 41_016;
+        conflicting.now_ns = Some(3_000_000_000);
+        conflicting.device_turn_sequence = Some(2);
+        let error = runtime
+            .run_voice_turn_ingress(conflicting)
+            .expect_err("parallel writer must fail closed");
+        assert_eq!(error.failure_class, FailureClass::SessionConflict);
+        assert!(error.reason_code.contains("SINGLE_WRITER_CONFLICT"));
+    }
+
+    #[test]
+    fn at_l_10_deterministic_turn_ordering_tracks_multiple_attached_devices() {
+        let runtime = AdapterRuntime::default();
+
+        let mut device_a_first = base_request();
+        device_a_first.correlation_id = 31_017;
+        device_a_first.turn_id = 41_017;
+        device_a_first.device_id = Some("session_order_device_a".to_string());
+        device_a_first.device_turn_sequence = Some(1);
+        seed_identity_and_device_for_request(&runtime, &device_a_first);
+        let first = runtime
+            .run_voice_turn_ingress(device_a_first.clone())
+            .expect("device A first turn must succeed");
+
+        let mut device_b_first = base_request();
+        device_b_first.correlation_id = 31_018;
+        device_b_first.turn_id = 41_018;
+        device_b_first.device_id = Some("session_order_device_b".to_string());
+        device_b_first.device_turn_sequence = Some(1);
+        seed_identity_and_device_for_request(&runtime, &device_b_first);
+        let second = runtime
+            .run_voice_turn_ingress(device_b_first.clone())
+            .expect("device B attach turn must succeed");
+
+        let mut device_a_second = base_request();
+        device_a_second.correlation_id = 31_019;
+        device_a_second.turn_id = 41_019;
+        device_a_second.device_id = Some("session_order_device_a".to_string());
+        device_a_second.device_turn_sequence = Some(2);
+        let third = runtime
+            .run_voice_turn_ingress(device_a_second.clone())
+            .expect("device A second turn must succeed");
+
+        let actor_user_id =
+            UserId::new(device_a_first.actor_user_id.clone()).expect("actor id must parse");
+        let device_a = DeviceId::new(device_a_first.device_id.expect("device A must exist"))
+            .expect("device A");
+        let device_b = DeviceId::new(device_b_first.device_id.expect("device B must exist"))
+            .expect("device B");
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let session = latest_canonical_session_for_actor(&store, &actor_user_id)
+            .expect("canonical session lookup must succeed")
+            .expect("canonical session must exist");
+
+        assert_eq!(first.session_id, second.session_id);
+        assert_eq!(second.session_id, third.session_id);
+        assert_eq!(session.device_turn_sequence_for(&device_a), Some(2));
+        assert_eq!(session.device_turn_sequence_for(&device_b), Some(1));
+        assert_eq!(session.last_turn_id, Some(TurnId(41_019)));
+        assert!(session.attached_devices.contains(&device_a));
+        assert!(session.attached_devices.contains(&device_b));
+    }
+
+    #[test]
     fn at_mem_01_probable_identity_returns_empty_memory_candidates() {
         let runtime = AdapterRuntime::default();
         let mut req = base_request();
@@ -10289,7 +10991,7 @@ mod tests {
 
     #[test]
     fn at_mem_04_memory_provenance_contains_session_id() {
-        at_l_05_session_id_is_present_in_audit_and_memory_provenance();
+        at_l_05_session_outputs_are_authoritative_and_reconcilable();
     }
 
     #[test]
@@ -10459,7 +11161,7 @@ mod tests {
                 "trigger prep helper expects accepted wake decisions"
             );
         }
-        let session_turn_state = resolve_session_turn_state(
+        let session_turn_state = match resolve_session_turn_state(
             &mut store,
             now,
             correlation_id,
@@ -10469,8 +11171,22 @@ mod tests {
             trigger,
             &ph1k_bundle,
             wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+            "prepare_trigger_agent_input_shape",
+            request
+                .device_turn_sequence
+                .unwrap_or(request.turn_id)
+                .max(1),
+            &runtime.runtime_node_id,
+            runtime.session_lease_ttl_ms,
+            &runtime.session_retry_cache,
         )
-        .expect("session turn state must resolve");
+        .expect("session turn state must resolve")
+        {
+            AdapterSessionResolution::Proceed(state) => state,
+            AdapterSessionResolution::Retry(_) => {
+                panic!("trigger prep helper does not expect retry reuse path")
+            }
+        };
         let voice_id_request = build_voice_id_request_from_ph1k_bundle(
             now,
             actor_user_id.clone(),
@@ -10692,8 +11408,14 @@ mod tests {
             "at_adapter_03bb",
             &[("brave_search_api_key", "test_brave_key")],
             &[
-                ("BRAVE_SEARCH_WEB_URL", "http://127.0.0.1:9/res/v1/web/search"),
-                ("BRAVE_SEARCH_NEWS_URL", "http://127.0.0.1:9/res/v1/news/search"),
+                (
+                    "BRAVE_SEARCH_WEB_URL",
+                    "http://127.0.0.1:9/res/v1/web/search",
+                ),
+                (
+                    "BRAVE_SEARCH_NEWS_URL",
+                    "http://127.0.0.1:9/res/v1/news/search",
+                ),
             ],
             || {
                 let runtime = AdapterRuntime::default();
