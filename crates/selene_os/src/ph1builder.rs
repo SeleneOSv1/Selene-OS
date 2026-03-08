@@ -22,6 +22,11 @@ use selene_kernel_contracts::ph1pattern::{
 use selene_kernel_contracts::ph1rll::{
     RllArtifactCandidate, RllOptimizationTarget, RllRecommendationItem,
 };
+use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::runtime_law::{
+    RuntimeLawBuilderInput, RuntimeLawEvaluationContext, RuntimeLawOverrideState,
+    RuntimeProtectedActionClass,
+};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{BuilderProposalLedgerRowInput, StorageError};
 use selene_storage::repo::BuilderSeleneRepo;
@@ -33,6 +38,7 @@ use crate::ph1pattern::{
 use crate::ph1rll::{
     Ph1RllEngine, Ph1RllWiring, Ph1RllWiringConfig, RllOfflineInput, RllWiringOutcome,
 };
+use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -1311,6 +1317,25 @@ pub enum BuilderAutoRollbackOutcome {
     RolledBack(BuilderReleaseState),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderGovernedPromotionOutcome {
+    pub release_state: BuilderReleaseState,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuilderGovernedActivationHandoffOutcome {
+    pub handoff: BuilderRuntimeActivationHandoff,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BuilderGovernedRefusal {
+    Builder(BuilderRefusal),
+    Contract(ContractViolation),
+    Law(RuntimeLawDecision),
+}
+
 pub fn promote_with_judge_gates(
     controller: &BuilderReleaseController,
     current: &BuilderReleaseState,
@@ -1335,6 +1360,57 @@ pub fn promote_with_judge_gates(
         });
     }
     controller.promote(current, approval, now, idempotency_key)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn promote_with_judge_gates_governed(
+    runtime_law: &RuntimeLawRuntime,
+    envelope: &RuntimeExecutionEnvelope,
+    controller: &BuilderReleaseController,
+    current: &BuilderReleaseState,
+    approval: &BuilderApprovalState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+    idempotency_key: Option<String>,
+    override_state: Option<RuntimeLawOverrideState>,
+) -> Result<BuilderGovernedPromotionOutcome, BuilderGovernedRefusal> {
+    let release_state = promote_with_judge_gates(
+        controller,
+        current,
+        approval,
+        judge_gates,
+        prompt_rate_kpis,
+        now,
+        idempotency_key,
+    )
+    .map_err(BuilderGovernedRefusal::Builder)?;
+    let builder_input = RuntimeLawBuilderInput::v1(
+        Some(approval.clone()),
+        Some(release_state.clone()),
+        None,
+    )
+    .map_err(BuilderGovernedRefusal::Contract)?;
+    let law_context = RuntimeLawEvaluationContext::v1(
+        Some(builder_input),
+        None,
+        None,
+        override_state,
+        now,
+        false,
+    )
+    .map_err(BuilderGovernedRefusal::Contract)?;
+    let runtime_execution_envelope = runtime_law
+        .govern_completion(
+            envelope,
+            RuntimeProtectedActionClass::BuilderDeployment,
+            &law_context,
+        )
+        .map_err(BuilderGovernedRefusal::Law)?;
+    Ok(BuilderGovernedPromotionOutcome {
+        release_state,
+        runtime_execution_envelope,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1421,6 +1497,54 @@ pub fn publish_runtime_activation_handoff(
         reason_code,
         now,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn publish_runtime_activation_handoff_governed(
+    runtime_law: &RuntimeLawRuntime,
+    envelope: &RuntimeExecutionEnvelope,
+    binding: &BuilderGovernedReleaseBinding,
+    approval: &BuilderApprovalState,
+    release: &BuilderReleaseState,
+    judge_gates: BuilderRolloutJudgeGates,
+    prompt_rate_kpis: Option<BuilderPromptRateKpis>,
+    now: MonotonicTimeNs,
+    override_state: Option<RuntimeLawOverrideState>,
+) -> Result<BuilderGovernedActivationHandoffOutcome, BuilderGovernedRefusal> {
+    let handoff = publish_runtime_activation_handoff(
+        binding,
+        release,
+        judge_gates,
+        prompt_rate_kpis,
+        now,
+    )
+    .map_err(BuilderGovernedRefusal::Contract)?;
+    let builder_input = RuntimeLawBuilderInput::v1(
+        Some(approval.clone()),
+        Some(release.clone()),
+        None,
+    )
+    .map_err(BuilderGovernedRefusal::Contract)?;
+    let law_context = RuntimeLawEvaluationContext::v1(
+        Some(builder_input),
+        None,
+        None,
+        override_state,
+        now,
+        false,
+    )
+    .map_err(BuilderGovernedRefusal::Contract)?;
+    let runtime_execution_envelope = runtime_law
+        .govern_completion(
+            envelope,
+            RuntimeProtectedActionClass::BuilderDeployment,
+            &law_context,
+        )
+        .map_err(BuilderGovernedRefusal::Law)?;
+    Ok(BuilderGovernedActivationHandoffOutcome {
+        handoff,
+        runtime_execution_envelope,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3410,6 +3534,11 @@ impl BuilderProposalAuditCheck for BuilderPatchProposal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_law::RuntimeLawRuntime;
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1l::SessionId;
+    use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_kernel_contracts::ph1pattern::{
         PatternMineOfflineOk, PatternProposalEmitOk, PatternValidationStatus, Ph1PatternRequest,
         Ph1PatternResponse,
@@ -3417,6 +3546,10 @@ mod tests {
     use selene_kernel_contracts::ph1rll::{
         Ph1RllRequest, Ph1RllResponse, RllArtifactRecommendOk, RllPolicyRankOfflineOk,
         RllValidationStatus,
+    };
+    use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
+    use selene_kernel_contracts::runtime_law::{
+        RuntimeLawOverrideState, RuntimeLawResponseClass, RuntimeProtectedActionClass,
     };
     use selene_storage::ph1f::Ph1fStore;
 
@@ -4561,6 +4694,40 @@ mod tests {
         .unwrap()
     }
 
+    fn builder_law_envelope(request_id: &str, turn: u64) -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            request_id.to_string(),
+            format!("trace_{request_id}"),
+            format!("idem_{request_id}"),
+            UserId::new("tenant_1:builder_operator".to_string()).unwrap(),
+            DeviceId::new("device_builder_1".to_string()).unwrap(),
+            AppPlatform::Desktop,
+            selene_kernel_contracts::runtime_execution::PlatformRuntimeContext::default_for_platform(
+                AppPlatform::Desktop,
+            )
+            .unwrap(),
+            Some(SessionId(7_700)),
+            TurnId(turn),
+            Some(turn),
+            AdmissionState::ExecutionAdmitted,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn valid_builder_override(expires_at: u64) -> RuntimeLawOverrideState {
+        RuntimeLawOverrideState::v1(
+            "operator_builder_1".to_string(),
+            Some("approver_builder_2".to_string()),
+            "OVERRIDE_BUILDER_DEPLOY".to_string(),
+            MonotonicTimeNs(expires_at),
+            true,
+            true,
+            true,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_builder_os_18_staged_rollout_enforces_shadow_canary1_canary2_full_progression() {
         let controller = BuilderReleaseController;
@@ -4815,6 +4982,86 @@ mod tests {
         assert_eq!(
             refusal.reason_code,
             reason_codes::PH1_BUILDER_ROLLOUT_PROMPT_RATE_GATE_FAILED
+        );
+    }
+
+    #[test]
+    fn at_builder_os_24_runtime_law_governs_builder_deployment_with_real_inputs() {
+        let controller = BuilderReleaseController;
+        let runtime_law = RuntimeLawRuntime::default();
+        let approval = approved_state_for("p24", 2_400);
+        let release = active_release_for("p24", BuilderReleaseStage::Canary, 2_401);
+        let out = promote_with_judge_gates_governed(
+            &runtime_law,
+            &builder_law_envelope("builder_law_24", 2_402),
+            &controller,
+            &release,
+            &approval,
+            BuilderRolloutJudgeGates::v1(true, true, true, true),
+            Some(BuilderPromptRateKpis::v1(80, 0, 9_000, 300).unwrap()),
+            MonotonicTimeNs(2_403),
+            Some("builder_law_24".to_string()),
+            None,
+        )
+        .unwrap();
+        let law_state = out
+            .runtime_execution_envelope
+            .law_state
+            .expect("builder deployment must attach runtime law state");
+        assert_eq!(
+            law_state.protected_action_class,
+            RuntimeProtectedActionClass::BuilderDeployment
+        );
+        assert_eq!(
+            law_state.final_law_response_class,
+            RuntimeLawResponseClass::Allow
+        );
+        assert_eq!(out.release_state.stage, BuilderReleaseStage::Ramp25);
+    }
+
+    #[test]
+    fn at_builder_os_25_runtime_law_override_state_is_live_for_builder_deployment() {
+        let runtime_law = RuntimeLawRuntime::default();
+        let approval = approved_state_for("p25", 2_500);
+        let mut release = production_release_for("proposal_p25", 2_501);
+        release.rollback_ready = false;
+        let out = publish_runtime_activation_handoff_governed(
+            &runtime_law,
+            &builder_law_envelope("builder_law_25", 2_502),
+            &BuilderGovernedReleaseBinding::v1(
+                CorrelationId(7_501),
+                TurnId(7_502),
+                "proposal_p25".to_string(),
+                "rc_p25".to_string(),
+                GovArtifactKind::Blueprint,
+                "voice_threshold_pack".to_string(),
+                GovArtifactVersion(10),
+                GovRequestedAction::Activate,
+                ReasonCodeId(0x4700_2501),
+                BuilderVerificationSuite::v1(true, true, true, true),
+                MonotonicTimeNs(2_503),
+            )
+            .unwrap(),
+            &approval,
+            &release,
+            BuilderRolloutJudgeGates::v1(true, true, true, true),
+            Some(BuilderPromptRateKpis::v1(80, 0, 9_000, 300).unwrap()),
+            MonotonicTimeNs(2_504),
+            Some(valid_builder_override(2_600)),
+        )
+        .unwrap();
+        let law_state = out
+            .runtime_execution_envelope
+            .law_state
+            .expect("builder activation must attach runtime law state");
+        assert!(law_state.override_state.is_some());
+        assert_eq!(
+            law_state.final_law_response_class,
+            RuntimeLawResponseClass::AllowWithWarning
+        );
+        assert_eq!(
+            law_state.protected_action_class,
+            RuntimeProtectedActionClass::BuilderDeployment
         );
     }
 }

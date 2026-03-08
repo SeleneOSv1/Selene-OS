@@ -14,7 +14,14 @@ use selene_kernel_contracts::ph1selfheal::{
     stable_card_id, FailureEvent, FixCard, FixKind, FixSource, ProblemCard, ProblemCardState,
     SelfHealValidationStatus,
 };
+use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::runtime_law::{
+    RuntimeLawEvaluationContext, RuntimeLawLearningInput, RuntimeLawOverrideState,
+    RuntimeProtectedActionClass,
+};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
+
+use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -410,6 +417,51 @@ pub enum LearnWiringOutcome {
     NotInvokedNoSignals,
     Refused(LearnRefuse),
     Forwarded(LearnForwardBundle),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LearnGovernedPromotionOutcome {
+    pub bundle: LearnForwardBundle,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LearnGovernedRefusal {
+    Contract(ContractViolation),
+    Law(RuntimeLawDecision),
+}
+
+pub fn govern_learn_bundle_promotion(
+    runtime_law: &RuntimeLawRuntime,
+    envelope: &RuntimeExecutionEnvelope,
+    bundle: &LearnForwardBundle,
+    evaluated_at: MonotonicTimeNs,
+    override_state: Option<RuntimeLawOverrideState>,
+    dry_run_requested: bool,
+) -> Result<LearnGovernedPromotionOutcome, LearnGovernedRefusal> {
+    bundle.validate().map_err(LearnGovernedRefusal::Contract)?;
+    let learning_input = RuntimeLawLearningInput::v1(Some(bundle.artifact_package_build.clone()))
+        .map_err(LearnGovernedRefusal::Contract)?;
+    let law_context = RuntimeLawEvaluationContext::v1(
+        None,
+        Some(learning_input),
+        None,
+        override_state,
+        evaluated_at,
+        dry_run_requested,
+    )
+    .map_err(LearnGovernedRefusal::Contract)?;
+    let runtime_execution_envelope = runtime_law
+        .govern_completion(
+            envelope,
+            RuntimeProtectedActionClass::LearningPromotion,
+            &law_context,
+        )
+        .map_err(LearnGovernedRefusal::Law)?;
+    Ok(LearnGovernedPromotionOutcome {
+        bundle: bundle.clone(),
+        runtime_execution_envelope,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1061,15 +1113,24 @@ fn validate_token(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_law::RuntimeLawRuntime;
     use selene_kernel_contracts::ph1feedback::{
         FeedbackConfidenceBucket, FeedbackEventType, FeedbackPathType, FeedbackToolStatus,
     };
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1l::SessionId;
+    use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_kernel_contracts::ph1learn::{
         LearnArtifactCandidate, LearnArtifactPackageBuildOk, LearnScope, LearnSignalAggregateOk,
         LearnSignalType,
     };
     use selene_kernel_contracts::ph1selfheal::{
         FailureContainmentAction, FailureEvent, ProblemCardState,
+    };
+    use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
+    use selene_kernel_contracts::runtime_law::{
+        RuntimeLawResponseClass, RuntimeProtectedActionClass,
     };
     use selene_kernel_contracts::MonotonicTimeNs;
     use selene_kernel_contracts::ReasonCodeId;
@@ -1621,6 +1682,27 @@ mod tests {
         .unwrap()
     }
 
+    fn learn_law_envelope(request_id: &str, turn: u64) -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            request_id.to_string(),
+            format!("trace_{request_id}"),
+            format!("idem_{request_id}"),
+            UserId::new("tenant_1:learn_operator".to_string()).unwrap(),
+            DeviceId::new("device_learn_1".to_string()).unwrap(),
+            AppPlatform::Desktop,
+            selene_kernel_contracts::runtime_execution::PlatformRuntimeContext::default_for_platform(
+                AppPlatform::Desktop,
+            )
+            .unwrap(),
+            Some(SessionId(8_800)),
+            TurnId(turn),
+            Some(turn),
+            AdmissionState::ExecutionAdmitted,
+            None,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_learn_09_mapper_builds_problem_and_fix_cards_deterministically() {
         let wiring =
@@ -1716,6 +1798,51 @@ mod tests {
                 );
             }
             _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_learn_11_runtime_law_governs_learning_promotion_with_real_input() {
+        let wiring =
+            Ph1LearnWiring::new(Ph1LearnWiringConfig::mvp_v1(true), DeterministicLearnEngine)
+                .unwrap();
+        let input = LearnTurnInput::v1(
+            CorrelationId(5311),
+            TurnId(511),
+            "tenant_1".to_string(),
+            vec![signal("sig_111", LearnSignalType::UserCorrection)],
+            vec![LearnTargetEngine::VoiceId],
+            true,
+            true,
+        )
+        .unwrap();
+        let out = wiring.run_turn(&input).unwrap();
+        let LearnWiringOutcome::Forwarded(bundle) = out else {
+            panic!("expected forwarded learn bundle");
+        };
+        let runtime_law = RuntimeLawRuntime::default();
+        let refusal = govern_learn_bundle_promotion(
+            &runtime_law,
+            &learn_law_envelope("learn_law_11", 511),
+            &bundle,
+            MonotonicTimeNs(130),
+            None,
+            false,
+        )
+        .unwrap_err();
+        match refusal {
+            LearnGovernedRefusal::Law(decision) => {
+                assert_eq!(
+                    decision.law_state.protected_action_class,
+                    RuntimeProtectedActionClass::LearningPromotion
+                );
+                assert_eq!(decision.response_class, RuntimeLawResponseClass::Block);
+                assert_eq!(
+                    bundle.artifact_package_build.validation_status,
+                    LearnValidationStatus::Ok
+                );
+            }
+            other => panic!("expected runtime law refusal, got {other:?}"),
         }
     }
 }

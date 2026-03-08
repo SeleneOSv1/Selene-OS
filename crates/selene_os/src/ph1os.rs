@@ -33,6 +33,10 @@ use selene_kernel_contracts::ph1vision::VisualSourceKind;
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
 };
+use selene_kernel_contracts::runtime_law::{
+    RuntimeLawEvaluationContext, RuntimeLawLearningInput, RuntimeLawOverrideState,
+    RuntimeLawSelfHealInput, RuntimeProtectedActionClass,
+};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, SchemaVersion, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 use serde_json::{json, Value};
@@ -55,6 +59,7 @@ use crate::ph1learn::{
 use crate::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringOutcome};
 use crate::ph1pae::{map_pae_bundle_to_promotion_decision, PaeForwardBundle, PaeTurnInput};
 use crate::ph1vision::VisionForwardBundle;
+use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -1477,6 +1482,18 @@ pub struct OsSelfHealChainInput {
     pub evaluated_at: MonotonicTimeNs,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct GovernedSelfHealCardChain {
+    pub chain: SelfHealCardChain,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GovernedSelfHealChainRefusal {
+    Contract(ContractViolation),
+    Law(RuntimeLawDecision),
+}
+
 pub fn build_self_heal_chain_from_engine_outputs(
     input: &OsSelfHealChainInput,
 ) -> Result<SelfHealCardChain, ContractViolation> {
@@ -1530,6 +1547,45 @@ pub fn build_self_heal_chain_from_engine_outputs(
     )?;
 
     SelfHealCardChain::v1(failure_event, problem_card, fix_card, promotion_decision)
+}
+
+pub fn build_governed_self_heal_chain_from_engine_outputs(
+    runtime_law: &RuntimeLawRuntime,
+    envelope: &RuntimeExecutionEnvelope,
+    input: &OsSelfHealChainInput,
+    override_state: Option<RuntimeLawOverrideState>,
+) -> Result<GovernedSelfHealCardChain, GovernedSelfHealChainRefusal> {
+    let chain = build_self_heal_chain_from_engine_outputs(input)
+        .map_err(GovernedSelfHealChainRefusal::Contract)?;
+    let learning_input = RuntimeLawLearningInput::v1(Some(
+        input.learn_bundle.artifact_package_build.clone(),
+    ))
+    .map_err(GovernedSelfHealChainRefusal::Contract)?;
+    let self_heal_input = RuntimeLawSelfHealInput::v1(
+        Some(chain.fix_card.clone()),
+        Some(chain.promotion_decision.clone()),
+    )
+    .map_err(GovernedSelfHealChainRefusal::Contract)?;
+    let law_context = RuntimeLawEvaluationContext::v1(
+        None,
+        Some(learning_input),
+        Some(self_heal_input),
+        override_state,
+        input.evaluated_at,
+        false,
+    )
+    .map_err(GovernedSelfHealChainRefusal::Contract)?;
+    let runtime_execution_envelope = runtime_law
+        .govern_completion(
+            envelope,
+            RuntimeProtectedActionClass::SelfHealRemediation,
+            &law_context,
+        )
+        .map_err(GovernedSelfHealChainRefusal::Law)?;
+    Ok(GovernedSelfHealCardChain {
+        chain,
+        runtime_execution_envelope,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2989,6 +3045,7 @@ fn is_engine_id_token(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::ph1doc::DocForwardBundle;
+    use crate::runtime_law::RuntimeLawRuntime;
     use crate::ph1vision::VisionForwardBundle;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
@@ -3036,6 +3093,9 @@ mod tests {
     };
     use selene_kernel_contracts::ph1vision::{
         VisionEvidenceItem, VisualSourceId, VisualSourceKind, VisualSourceRef,
+    };
+    use selene_kernel_contracts::runtime_law::{
+        RuntimeLawResponseClass, RuntimeProtectedActionClass,
     };
     use selene_kernel_contracts::ReasonCodeId;
     use selene_kernel_contracts::{MonotonicTimeNs, SessionState};
@@ -5121,6 +5181,24 @@ mod tests {
         }
     }
 
+    fn self_heal_law_envelope(request_id: &str, turn: u64) -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            request_id.to_string(),
+            format!("trace_{request_id}"),
+            format!("idem_{request_id}"),
+            UserId::new("tenant_1:selfheal_operator".to_string()).unwrap(),
+            DeviceId::new("device_selfheal_1".to_string()).unwrap(),
+            AppPlatform::Desktop,
+            PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop).unwrap(),
+            Some(SessionId(9_900)),
+            TurnId(turn),
+            Some(turn),
+            AdmissionState::ExecutionAdmitted,
+            None,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_os_34_self_heal_chain_completeness_and_release_gate_pass() {
         let input = sample_self_heal_chain_input(false, None);
@@ -5215,6 +5293,30 @@ mod tests {
                 );
             }
             _ => panic!("expected invalid-value violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_39_runtime_law_governs_self_heal_chain_with_real_inputs() {
+        let input = sample_self_heal_chain_input(false, None);
+        let runtime_law = RuntimeLawRuntime::default();
+        let refusal = build_governed_self_heal_chain_from_engine_outputs(
+            &runtime_law,
+            &self_heal_law_envelope("selfheal_law_39", 539),
+            &input,
+            None,
+        )
+        .unwrap_err();
+        match refusal {
+            GovernedSelfHealChainRefusal::Law(decision) => {
+                assert_eq!(
+                    decision.law_state.protected_action_class,
+                    RuntimeProtectedActionClass::SelfHealRemediation
+                );
+                assert_eq!(decision.response_class, RuntimeLawResponseClass::Block);
+                assert_eq!(decision.reason_codes, vec!["LAW_SELF_HEAL_UNSAFE".to_string()]);
+            }
+            other => panic!("expected runtime law refusal, got {other:?}"),
         }
     }
 }
