@@ -1,5 +1,7 @@
 # Engine Closure Execution Plan (Hybrid, End-to-End)
 
+Architecture baseline updated to System_Core + Build Sections 01–09.
+
 ## 0) Purpose
 - Define one canonical execution playbook to move Selene OS from current build state to production readiness.
 - Prevent drift/loss of direction by combining:
@@ -27,8 +29,11 @@
   - `PH1.D`
 
 ## 2) Canonical Control Files
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
-- `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/07_ENGINE_REGISTRY.md`
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/06_ENGINE_MAP.md`
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/08_SIMULATION_CATALOG.md`
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/09_BLUEPRINT_REGISTRY.md`

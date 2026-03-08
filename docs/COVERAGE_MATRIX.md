@@ -1,5 +1,7 @@
 # Coverage Matrix (Option B)
 
+Architecture baseline updated to System_Core + Build Sections 01–09.
+
 | engine_id | db_wiring_doc (path) | ecm_doc (path) | simulations_owned (list of simulation_ids) | blueprints_referenced_by (process_ids) | db_wiring_status | ecm_status | sim_catalog_status | blueprint_status | blockers |
 |---|---|---|---|---|---|---|---|---|---|
 | PH1.F | docs/DB_WIRING/PH1_F.md | docs/ECM/PH1_F.md | [] | [] | DONE | DONE | NA | NA | none (PH1.K-level code depth locked in `crates/selene_kernel_contracts/src/ph1f.rs`, `crates/selene_engines/src/ph1f.rs`, `crates/selene_os/src/ph1f.rs`) |

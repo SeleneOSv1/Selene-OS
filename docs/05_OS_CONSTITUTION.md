@@ -1,4 +1,15 @@
-Selene OS Constitution (High-Level Law + Canonical Pointers)
+Selene OS Constitution (LEGACY ARCHITECTURE (ARCHIVED REFERENCE))
+
+## Canonical Architecture Law Stack
+
+- `System_Core` -> [docs/CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
+- `Build Sections 01–09` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
+- `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
+- `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
+
+## LEGACY ARCHITECTURE (ARCHIVED REFERENCE)
+
+This document is retained as archived reference for the previous Option-B architecture control plane. The remainder of this file is legacy pointer material and is no longer canonical architecture law.
 
 Conventions (Execution-Grade)
 
@@ -73,7 +84,7 @@ Section 1: Constitutional Laws (High-Level)
 - Breaches must flow through `PH1.HEALTH` visibility, `PH1.FEEDBACK` capture, `PH1.LEARN` aggregation, `PH1.PAE` promotion/demotion, and governed `PH1.BUILDER` remediation proposals.
 - Recurring unresolved issues must remain open and escalated until live recurrence-proof confirms they are fixed.
 
-Section 2: Canonical Pointer Map (Authoritative References)
+Section 2: Legacy Pointer Map (Archived References)
 
 Memory
 - `PH1.M`: `docs/12_MEMORY_ARCHITECTURE.md`

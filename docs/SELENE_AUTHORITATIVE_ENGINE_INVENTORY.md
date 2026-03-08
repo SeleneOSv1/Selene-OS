@@ -1,18 +1,7 @@
-# Selene Engine Registry (LEGACY ARCHITECTURE (ARCHIVED REFERENCE))
-
-## Canonical Architecture Law Stack
-
-- `System_Core` -> [docs/CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
-- `Build Sections 01–09` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
-- `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
-- `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
-
-## LEGACY ARCHITECTURE (ARCHIVED REFERENCE)
-
-This file is retained as archived reference for the previous Option-B engine-registry control plane. The canonical standalone engine inventory now lives in [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md).
+# Selene Engine Registry (Authoritative)
 
 Purpose:
-- Maintain the engine inventory captured for current Option B scope.
+- Maintain the authoritative engine inventory for current Option B scope.
 - Point each engine to its canonical DB wiring and ECM contracts.
 
 Status source:

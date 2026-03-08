@@ -1,6 +1,15 @@
 # Selene OS Docs Index
 
-## Read order
+## Canonical Architecture Law Stack
+1. `System_Core` -> [docs/CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
+2. `Build Sections 01–09` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
+3. `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
+4. `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
+
+## LEGACY ARCHITECTURE (ARCHIVED REFERENCE)
+The Option-B documentation listed below is retained as archived reference and is no longer the canonical Selene architecture law stack.
+
+## Legacy Read order
 1. [00_DESIGN_TRUTH_OPTION_B](00_DESIGN_TRUTH_OPTION_B.md)
 2. [07_ENGINE_REGISTRY](07_ENGINE_REGISTRY.md)
 3. [08_SIMULATION_CATALOG](08_SIMULATION_CATALOG.md)
@@ -23,6 +32,10 @@
 20. [40_WEB_SEARCH_PLAN](40_WEB_SEARCH_PLAN.md) (web/news intelligence build plan; deterministic, evidence-grounded retrieval + synthesis)
 
 ## Quick links
+- [CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
+- [BUILD_SECTIONS/](BUILD_SECTIONS/)
+- [SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
+- [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
 - [01_ARCHITECTURE.md](01_ARCHITECTURE.md)
 - [00_DESIGN_TRUTH_OPTION_B.md](00_DESIGN_TRUTH_OPTION_B.md)
 - [02_BUILD_PLAN.md](02_BUILD_PLAN.md)

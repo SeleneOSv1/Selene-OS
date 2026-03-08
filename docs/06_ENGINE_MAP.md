@@ -1,5 +1,16 @@
 # Engine Map (Navigation Only, Non-Canonical)
 
+## Canonical Architecture Law Stack
+
+- `System_Core` -> [docs/CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
+- `Build Sections 01–09` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
+- `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
+- `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
+
+## LEGACY ARCHITECTURE (ARCHIVED REFERENCE)
+
+This file remains an archived navigation layer for the previous Option-B documentation control plane. The legacy references below are non-canonical.
+
 Purpose:
 - Provide quick navigation to canonical engine/runtime docs.
 - Do not store authoritative runtime policy, sequencing, or ownership truth here.
@@ -8,7 +19,7 @@ Non-canonical rule:
 - This file is pointer-only.
 - Canonical runtime and governance truth must live in the docs linked below.
 
-## Canonical Control Docs
+## Legacy Control Docs
 
 - Design truth and canonical ownership rules: `docs/00_DESIGN_TRUTH_OPTION_B.md`
 - High-level law and policy pointers: `docs/05_OS_CONSTITUTION.md`
@@ -19,7 +30,7 @@ Non-canonical rule:
 - Design lock status (authoritative): `docs/11_DESIGN_LOCK_SEQUENCE.md`
 - Coverage/status matrix (authoritative): `docs/COVERAGE_MATRIX.md`
 
-## Canonical Runtime Boundary Docs
+## Legacy Runtime Boundary Docs
 
 - Top-level orchestration/runtime class boundaries:
   - `docs/DB_WIRING/PH1_OS.md`
@@ -30,7 +41,7 @@ Non-canonical rule:
 - Kernel runtime envelopes:
   - `docs/04_KERNEL_CONTRACTS.md`
 
-## Canonical Domain Navigation
+## Legacy Domain Navigation
 
 - Blueprint process records: `docs/BLUEPRINTS/*.md`
 - Memory architecture contract: `docs/12_MEMORY_ARCHITECTURE.md`
