@@ -85,6 +85,9 @@ use selene_kernel_contracts::ph1x::{
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
 };
+use selene_kernel_contracts::runtime_governance::{
+    GovernanceDecisionLogEntry, GovernanceProtectedActionClass,
+};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
@@ -101,6 +104,7 @@ use crate::ph1os::{
 };
 use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
+use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
 };
@@ -576,6 +580,7 @@ pub struct AppServerIngressRuntime {
     ph1x_runtime: Ph1xRuntime,
     ph1e_runtime: Ph1eRuntime,
     ph1simfinder_runtime: Ph1SimFinderRuntime,
+    runtime_governance: RuntimeGovernanceRuntime,
     agent_input_packet_build_count: RefCell<u64>,
     last_agent_input_packet: RefCell<Option<AgentInputPacket>>,
     last_finder_terminal_packet: RefCell<Option<FinderTerminalPacket>>,
@@ -589,15 +594,59 @@ impl Default for AppServerIngressRuntime {
 
 impl AppServerIngressRuntime {
     pub fn new(executor: SimulationExecutor) -> Self {
+        Self::new_with_runtime_governance(executor, RuntimeGovernanceRuntime::default())
+    }
+
+    pub fn new_with_runtime_governance(
+        executor: SimulationExecutor,
+        runtime_governance: RuntimeGovernanceRuntime,
+    ) -> Self {
         Self {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
             ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
             ph1simfinder_runtime: Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1()),
+            runtime_governance,
             agent_input_packet_build_count: RefCell::new(0),
             last_agent_input_packet: RefCell::new(None),
             last_finder_terminal_packet: RefCell::new(None),
         }
+    }
+
+    pub fn runtime_governance(&self) -> &RuntimeGovernanceRuntime {
+        &self.runtime_governance
+    }
+
+    pub fn runtime_governance_policy_version(&self) -> &str {
+        self.runtime_governance.policy_version()
+    }
+
+    pub fn runtime_governance_decision_log_snapshot(&self) -> Vec<GovernanceDecisionLogEntry> {
+        self.runtime_governance.decision_log_snapshot()
+    }
+
+    pub fn govern_persistence_signal(
+        &self,
+        envelope: Option<&RuntimeExecutionEnvelope>,
+        action_class: GovernanceProtectedActionClass,
+        signal_reason: &str,
+        note: Option<String>,
+    ) -> RuntimeGovernanceDecision {
+        self.runtime_governance.govern_persistence_signal(
+            envelope,
+            action_class,
+            signal_reason,
+            note,
+        )
+    }
+
+    pub fn observe_runtime_governance_node_policy_version(
+        &self,
+        node_id: &str,
+        observed_policy_version: Option<&str>,
+    ) -> RuntimeGovernanceDecision {
+        self.runtime_governance
+            .observe_node_policy_version(node_id, observed_policy_version)
     }
 
     pub fn run_voice_turn(
@@ -605,6 +654,15 @@ impl AppServerIngressRuntime {
         store: &mut Ph1fStore,
         request: AppVoiceIngressRequest,
     ) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
+        self.run_voice_turn_with_governed_envelope(store, request)
+            .map(|(outcome, _)| outcome)
+    }
+
+    fn run_voice_turn_with_governed_envelope(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+    ) -> Result<(OsVoiceLiveTurnOutcome, RuntimeExecutionEnvelope), StorageError> {
         let resolved_enrolled_speakers =
             locked_enrolled_speakers_from_store(store, request.tenant_id.as_deref())?;
         let top_level_turn_input = OsTopLevelTurnInput::v1(
@@ -623,12 +681,24 @@ impl AppServerIngressRuntime {
         )
         .map_err(StorageError::ContractViolation)?;
 
+        let governed_runtime_execution_envelope = self
+            .runtime_governance
+            .govern_voice_turn_execution(
+                &request
+                    .runtime_execution_envelope
+                    .with_admission_state(AdmissionState::ExecutionAdmitted)
+                    .map_err(StorageError::ContractViolation)?,
+            )
+            .map_err(|decision| {
+                runtime_governance_storage_error(
+                    "app_voice_ingress_request.runtime_execution_envelope",
+                    &decision,
+                )
+            })?;
+
         let live_turn_input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
             top_level_turn_input,
-            request
-                .runtime_execution_envelope
-                .with_admission_state(AdmissionState::ExecutionAdmitted)
-                .map_err(StorageError::ContractViolation)?,
+            governed_runtime_execution_envelope.clone(),
             request.voice_id_request,
             request.actor_user_id,
             request.tenant_id,
@@ -638,9 +708,10 @@ impl AppServerIngressRuntime {
         )
         .map_err(StorageError::ContractViolation)?;
 
-        // Default app/server voice ingress path.
-        self.executor
-            .execute_os_voice_live_turn(store, live_turn_input)
+        let outcome = self
+            .executor
+            .execute_os_voice_live_turn(store, live_turn_input)?;
+        Ok((outcome, governed_runtime_execution_envelope))
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -1084,6 +1155,19 @@ impl AppServerIngressRuntime {
                 device_id,
                 proof_ok,
             } => {
+                self.runtime_governance
+                    .govern_protected_action_proof(
+                        GovernanceProtectedActionClass::PrimaryDeviceConfirmation,
+                        None,
+                        Some(turn_id.0),
+                        proof_ok,
+                    )
+                    .map_err(|decision| {
+                        runtime_governance_storage_error(
+                            "app_onboarding_continue_request.action.primary_device_confirm.proof_ok",
+                            &decision,
+                        )
+                    })?;
                 self.executor.ensure_simulation_active_for_tenant(
                     store,
                     &effective_tenant,
@@ -2562,12 +2646,30 @@ impl AppServerIngressRuntime {
         request: AppVoiceIngressRequest,
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<(OsVoiceLiveTurnOutcome, Option<Ph1xRequest>), StorageError> {
+        self.run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)
+            .map(|(voice_outcome, _, ph1x_request)| (voice_outcome, ph1x_request))
+    }
+
+    fn run_voice_turn_and_build_ph1x_request_internal(
+        &self,
+        store: &mut Ph1fStore,
+        request: AppVoiceIngressRequest,
+        x_build: AppVoicePh1xBuildInput,
+    ) -> Result<
+        (
+            OsVoiceLiveTurnOutcome,
+            RuntimeExecutionEnvelope,
+            Option<Ph1xRequest>,
+        ),
+        StorageError,
+    > {
         let correlation_id = request.correlation_id;
         let turn_id = request.turn_id;
         let app_platform = request.app_platform.clone();
         let request_session_id = request.voice_id_request.session_state_ref.session_id;
         let request_tenant_id = request.tenant_id.clone();
-        let outcome = self.run_voice_turn(store, request)?;
+        let (outcome, governed_runtime_execution_envelope) =
+            self.run_voice_turn_with_governed_envelope(store, request)?;
 
         let ph1x_request = match &outcome {
             OsVoiceLiveTurnOutcome::Forwarded(forwarded) => {
@@ -2585,7 +2687,7 @@ impl AppServerIngressRuntime {
             OsVoiceLiveTurnOutcome::NotInvokedDisabled | OsVoiceLiveTurnOutcome::Refused(_) => None,
         };
 
-        Ok((outcome, ph1x_request))
+        Ok((outcome, governed_runtime_execution_envelope, ph1x_request))
     }
 
     pub fn run_voice_turn_end_to_end(
@@ -2598,17 +2700,12 @@ impl AppServerIngressRuntime {
         let turn_id = request.turn_id;
         let request_session_id = request.voice_id_request.session_state_ref.session_id;
         let request_session_state = request.voice_id_request.session_state_ref.session_state;
-        let runtime_execution_envelope = request
-            .runtime_execution_envelope
-            .clone()
-            .with_admission_state(AdmissionState::ExecutionAdmitted)
-            .map_err(StorageError::ContractViolation)?;
         let actor_user_id = request.actor_user_id.clone();
         let actor_device_id = request.device_id.clone();
         let actor_tenant_id = request.tenant_id.clone();
         let dispatch_now = x_build.now;
-        let (voice_outcome, ph1x_request) =
-            self.run_voice_turn_and_build_ph1x_request(store, request, x_build)?;
+        let (voice_outcome, runtime_execution_envelope, ph1x_request) =
+            self.run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)?;
         let Some(ph1x_request) = ph1x_request else {
             return Ok(app_voice_turn_execution_outcome_from_voice_only(
                 runtime_execution_envelope,
@@ -3303,6 +3400,69 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             tool_response: None,
             response_text: None,
             reason_code: None,
+        },
+    }
+}
+
+fn runtime_governance_storage_error(
+    field: &'static str,
+    decision: &RuntimeGovernanceDecision,
+) -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field,
+        reason: runtime_governance_reason_literal(decision),
+    })
+}
+
+fn runtime_governance_reason_literal(decision: &RuntimeGovernanceDecision) -> &'static str {
+    match decision.reason_code.as_str() {
+        crate::runtime_governance::reason_codes::GOV_ENVELOPE_SESSION_REQUIRED => {
+            "governance_policy_block GOV_ENVELOPE_SESSION_REQUIRED"
+        }
+        crate::runtime_governance::reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED => {
+            "governance_policy_block GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED"
+        }
+        crate::runtime_governance::reason_codes::GOV_PERSISTENCE_DEGRADED => {
+            "governance_degrade GOV_PERSISTENCE_DEGRADED"
+        }
+        crate::runtime_governance::reason_codes::GOV_PERSISTENCE_STALE_REJECTED => {
+            "session_conflict GOV_PERSISTENCE_STALE_REJECTED"
+        }
+        crate::runtime_governance::reason_codes::GOV_PERSISTENCE_QUARANTINE_REQUIRED => {
+            "session_conflict GOV_PERSISTENCE_QUARANTINE_REQUIRED"
+        }
+        crate::runtime_governance::reason_codes::GOV_PROOF_REQUIRED => {
+            "governance_policy_block GOV_PROOF_REQUIRED"
+        }
+        crate::runtime_governance::reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN => {
+            "governance_safe_mode GOV_GOVERNANCE_INTEGRITY_UNCERTAIN"
+        }
+        crate::runtime_governance::reason_codes::GOV_POLICY_VERSION_DRIFT => {
+            "governance_degrade GOV_POLICY_VERSION_DRIFT"
+        }
+        crate::runtime_governance::reason_codes::GOV_SUBSYSTEM_CERTIFICATION_REGRESSED => {
+            "governance_safe_mode GOV_SUBSYSTEM_CERTIFICATION_REGRESSED"
+        }
+        crate::runtime_governance::reason_codes::GOV_SAFE_MODE_ACTIVE => {
+            "governance_safe_mode GOV_SAFE_MODE_ACTIVE"
+        }
+        _ => match decision.response_class {
+            selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Quarantine => {
+                "session_conflict runtime_governance_quarantine"
+            }
+            selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Block => {
+                "governance_policy_block runtime_governance_block"
+            }
+            selene_kernel_contracts::runtime_governance::GovernanceResponseClass::SafeMode => {
+                "governance_safe_mode runtime_governance_safe_mode"
+            }
+            selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Degrade => {
+                "governance_degrade runtime_governance_degrade"
+            }
+            selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Allow
+            | selene_kernel_contracts::runtime_governance::GovernanceResponseClass::AllowWithWarning => {
+                "runtime_governance runtime_governance_allowed"
+            }
         },
     }
 }
@@ -4767,6 +4927,7 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_governance::RuntimeGovernanceConfig;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1e::{Ph1eProviderConfig, Ph1eProxyConfig, Ph1eProxyMode};
     use selene_kernel_contracts::ph1_voice_id::{
@@ -10067,6 +10228,239 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    #[test]
+    fn run_gov_voice_turn_safe_mode_blocks_execution_and_records_decision() {
+        let runtime = AppServerIngressRuntime::new_with_runtime_governance(
+            SimulationExecutor::default(),
+            crate::runtime_governance::RuntimeGovernanceRuntime::new(
+                RuntimeGovernanceConfig::mvp_v1().with_force_integrity_failure(true),
+            ),
+        );
+        let actor_user_id = UserId::new("tenant_1:gov_safe_mode_user").unwrap();
+        let device_id = DeviceId::new("gov_safe_mode_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(88_001),
+            TurnId(89_001),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(1), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+
+        let err = runtime
+            .run_voice_turn(&mut store, request)
+            .expect_err("forced governance integrity failure must block voice execution");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_ingress_request.runtime_execution_envelope"
+                );
+                assert_eq!(
+                    reason,
+                    "governance_safe_mode GOV_GOVERNANCE_INTEGRITY_UNCERTAIN"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(runtime
+            .runtime_governance_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_code
+                    == crate::runtime_governance::reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN
+            }));
+    }
+
+    #[test]
+    fn run_gov_primary_device_confirmation_requires_proof_and_records_decision() {
+        let runtime = AppServerIngressRuntime::default();
+        let inviter_user_id = UserId::new("tenant_1:gov_proof_inviter").unwrap();
+        let inviter_device_id = DeviceId::new("gov_proof_device").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &inviter_user_id, &inviter_device_id);
+        seed_employee_company_and_position(&mut store, "tenant_1", MonotonicTimeNs(89));
+
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_OPEN_ACTIVATE_COMMIT, SimulationType::Commit),
+            (ONB_SESSION_START_DRAFT, SimulationType::Draft),
+            (LINK_INVITE_DRAFT_UPDATE_COMMIT, SimulationType::Commit),
+            (ONB_TERMS_ACCEPT_COMMIT, SimulationType::Commit),
+            (ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let (token_id, token_signature) = seed_invite_link_for_click(
+            &mut store,
+            &inviter_user_id,
+            "tenant_1",
+            MonotonicTimeNs(90),
+        );
+        let start = runtime
+            .run_invite_link_open_and_start_onboarding(
+                &mut store,
+                AppInviteLinkOpenRequest::v1(
+                    CorrelationId(88_101),
+                    "gov-proof-start".to_string(),
+                    token_id,
+                    token_signature,
+                    Some("tenant_1".to_string()),
+                    AppPlatform::Android,
+                    "gov-proof-fp".to_string(),
+                    "android_instance_gov_proof".to_string(),
+                    "nonce_gov_proof".to_string(),
+                )
+                .unwrap(),
+                MonotonicTimeNs(91),
+            )
+            .unwrap();
+        let onboarding_session_id = OnboardingSessionId::new(start.onboarding_session_id).unwrap();
+
+        let mut ask_out = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(88_101),
+                    onboarding_session_id.clone(),
+                    "gov-proof-ask-prompt".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::AskMissingSubmit { field_value: None },
+                )
+                .unwrap(),
+                MonotonicTimeNs(92),
+            )
+            .unwrap();
+        for idx in 0..8 {
+            if ask_out.next_step != AppOnboardingContinueNextStep::AskMissing {
+                break;
+            }
+            let field_key = ask_out
+                .blocking_field
+                .clone()
+                .expect("ask-missing step must include one blocking field");
+            let field_value = match field_key.as_str() {
+                "tenant_id" => "tenant_1",
+                "company_id" => "company_1",
+                "position_id" => "position_1",
+                "location_id" => "loc_1",
+                "start_date" => "2026-03-01",
+                "working_hours" => "09:00-17:00",
+                "compensation_tier_ref" => "band_l2",
+                "jurisdiction_tags" => "US,CA",
+                _ => "value_1",
+            };
+            ask_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(88_101),
+                        onboarding_session_id.clone(),
+                        format!("gov-proof-ask-value-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::AskMissingSubmit {
+                            field_value: Some(field_value.to_string()),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(93 + idx as u64),
+                )
+                .unwrap();
+        }
+        let required_receipts = ask_out.remaining_platform_receipt_kinds.clone();
+        let mut platform_out = ask_out;
+        for (idx, receipt_kind) in required_receipts.iter().enumerate() {
+            platform_out = runtime
+                .run_onboarding_continue(
+                    &mut store,
+                    AppOnboardingContinueRequest::v1(
+                        CorrelationId(88_101),
+                        onboarding_session_id.clone(),
+                        format!("gov-proof-platform-{idx}"),
+                        Some("tenant_1".to_string()),
+                        AppOnboardingContinueAction::PlatformSetupReceipt {
+                            receipt_kind: receipt_kind.clone(),
+                            receipt_ref: format!("receipt:gov-proof:{receipt_kind}"),
+                            signer: "selene_mobile_app".to_string(),
+                            payload_hash: format!("{:064x}", idx + 1),
+                        },
+                    )
+                    .unwrap(),
+                    MonotonicTimeNs(101 + idx as u64),
+                )
+                .unwrap();
+        }
+        assert_eq!(platform_out.next_step, AppOnboardingContinueNextStep::Terms);
+
+        let terms = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(88_101),
+                    onboarding_session_id.clone(),
+                    "gov-proof-terms".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::TermsAccept {
+                        terms_version_id: "terms_v1".to_string(),
+                        accepted: true,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(110),
+            )
+            .unwrap();
+        assert_eq!(
+            terms.next_step,
+            AppOnboardingContinueNextStep::PrimaryDeviceConfirm
+        );
+
+        let err = runtime
+            .run_onboarding_continue(
+                &mut store,
+                AppOnboardingContinueRequest::v1(
+                    CorrelationId(88_101),
+                    onboarding_session_id,
+                    "gov-proof-device".to_string(),
+                    Some("tenant_1".to_string()),
+                    AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                        device_id: inviter_device_id,
+                        proof_ok: false,
+                    },
+                )
+                .unwrap(),
+                MonotonicTimeNs(111),
+            )
+            .expect_err("primary device confirmation must fail closed without proof");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_onboarding_continue_request.action.primary_device_confirm.proof_ok"
+                );
+                assert_eq!(reason, "governance_policy_block GOV_PROOF_REQUIRED");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(runtime
+            .runtime_governance_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_code == crate::runtime_governance::reason_codes::GOV_PROOF_REQUIRED
+            }));
     }
 
     #[test]

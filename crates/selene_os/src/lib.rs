@@ -63,6 +63,7 @@ pub mod ph1wake_training;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
+pub mod runtime_governance;
 pub mod section40_exit;
 pub mod simulation_executor;
 pub mod web_search_plan;

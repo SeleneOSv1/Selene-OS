@@ -71,6 +71,7 @@ pub mod ph1write;
 pub mod ph1x;
 pub mod provider_secrets;
 pub mod runtime_execution;
+pub mod runtime_governance;
 
 pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
@@ -79,4 +80,11 @@ pub use runtime_execution::{
     AdmissionState, ClientCompatibilityStatus, ClientIntegrityStatus, DeviceCapability,
     DeviceClass, DeviceTrustClass, FailureClass, NetworkProfile, PlatformRuntimeContext,
     PlatformTriggerPolicy, RuntimeEntryTrigger, RuntimeExecutionEnvelope, SessionAttachOutcome,
+};
+pub use runtime_governance::{
+    GovernanceCertificationStatus, GovernanceClusterConsistency, GovernanceDecisionLogEntry,
+    GovernanceDecisionOutcome, GovernanceDriftSignal, GovernanceExecutionState,
+    GovernancePolicyWindow, GovernanceProtectedActionClass, GovernanceResponseClass,
+    GovernanceRuleCategory, GovernanceRuleDescriptor, GovernanceSeverity,
+    GovernanceSubsystemCertification,
 };
