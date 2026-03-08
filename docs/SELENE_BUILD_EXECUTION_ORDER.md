@@ -324,6 +324,74 @@ Readiness condition:
 
 The runtime must be able to detect, classify, explain, and safely respond to architectural violations before the system is considered lawfully operational.
 
+Phase 10 — Numeric and Consensus Computation
+
+10. Build Section 10 — Numeric and Consensus Computation Engine
+
+Implements deterministic scoring, ranking, normalization, confidence handling, consensus evaluation, and conflict-resolution math for runtime paths that require repeatable quantitative correctness.
+
+Includes:
+
+deterministic scoring
+
+deterministic ranking
+
+consensus evaluation
+
+outlier detection
+
+quantitative normalization
+
+budget and quota computation
+
+confidence handling
+
+ComputationPacket output
+
+auditable replay
+
+Readiness condition:
+
+The runtime must be able to produce deterministic, replayable, and auditable quantitative outcomes without delegating final numeric authority to probabilistic reasoning.
+
+Phase 11 — Runtime Law
+
+11. Build Section 11 — Runtime Law Engine
+
+Implements the final cross-system runtime law decision layer over Build Sections 01–10.
+
+Includes:
+
+protected action classes
+
+final runtime response classes
+
+law severity model
+
+cross-subsystem law aggregation
+
+proof-critical enforcement
+
+replay and persistence law enforcement
+
+learning, builder, and self-heal law enforcement
+
+quarantine control
+
+safe mode control
+
+law rule registry
+
+law policy versioning
+
+decision log
+
+cluster-wide law consistency checks
+
+Readiness condition:
+
+The runtime must be able to produce one final deterministic law decision for protected execution before the system is considered fully aligned and lawfully complete.
+
 Dependency Enforcement Rule
 
 Engineering work must follow this order strictly.
@@ -386,7 +454,7 @@ System_Core defines the constitutional architecture.
 
 Selene Core Contracts define compressed implementation law.
 
-Build Sections 01–09 define the engineering execution plan.
+Build Sections 01–11 define the engineering execution plan.
 
 This document defines the only valid order in which those sections may be built.
 

@@ -3,7 +3,7 @@
 ## Canonical Architecture Law Stack
 
 - `System_Core` -> [docs/CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md)
-- `Build Sections 01–09` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
+- `Build Sections 01–11` -> [docs/BUILD_SECTIONS/](BUILD_SECTIONS/)
 - `Build Execution Order` -> [docs/SELENE_BUILD_EXECUTION_ORDER.md](SELENE_BUILD_EXECUTION_ORDER.md)
 - `Authoritative Engine Inventory` -> [docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
 
