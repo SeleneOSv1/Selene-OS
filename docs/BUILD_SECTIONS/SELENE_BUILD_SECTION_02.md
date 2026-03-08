@@ -271,6 +271,24 @@ supporting session migration when required
 
 ensuring that a single partition owns session mutation authority
 
+Cluster Coordination Foundations
+
+The Session Engine must support the cluster-coordination foundations required for safe distributed session ownership.
+
+Responsibilities include:
+
+supporting cluster-visible session ownership state
+
+supporting node identity references for owning runtime nodes
+
+supporting lease state visibility across runtime instances
+
+supporting deterministic coordination signals for failover, transfer, and recovery
+
+preventing ambiguous multi-node ownership of the same session
+
+This ensures distributed session control remains coordinated rather than inferred independently by each node.
+
 Session Lease Model
 
 To guarantee the single-writer rule in distributed environments, the Session Engine must implement a lease model.
@@ -288,6 +306,24 @@ lease transfer when execution moves to another node
 recovery from stale or expired leases
 
 This prevents split-brain session mutation across runtime nodes.
+
+Failover and Recovery Coordination
+
+The Session Engine must support deterministic coordination during node failure and runtime recovery events.
+
+Responsibilities include:
+
+coordinating safe lease recovery after node failure
+
+supporting failover reassignment when the owning node becomes unavailable
+
+preventing duplicate active ownership during failover windows
+
+supporting deterministic recovery posture when cluster state is uncertain
+
+recording failover and recovery coordination outcomes in session-governed state
+
+This ensures node failure does not create split-brain session mutation or ambiguous recovery behavior.
 
 Session Ownership Transfer Protocol
 
@@ -399,6 +435,30 @@ cross_device_attaches
 
 These metrics allow operational monitoring of session health and runtime behavior.
 
+Session Coordination State
+
+The Session Engine must expose cluster-coordination posture for each governed session.
+
+Example coordination states include:
+
+PRIMARY_OWNED
+
+TRANSFER_PENDING
+
+FAILOVER_RECOVERING
+
+OWNERSHIP_UNCERTAIN
+
+Responsibilities include:
+
+making ownership posture explicit to downstream runtime systems
+
+supporting deterministic refusal when ownership certainty is insufficient
+
+supporting safe degraded behavior during coordination uncertainty
+
+This ensures distributed session safety is visible rather than implicit.
+
 Session Consistency Levels
 
 The Session Engine must support explicit consistency levels so operators and downstream systems know the current session safety posture.
@@ -475,6 +535,22 @@ corrupted snapshot-state detection
 
 Execution must fail safe if session integrity is compromised.
 
+Cluster Coordination Certification Targets
+
+The Session Engine must expose certification targets for distributed ownership correctness.
+
+Example certification targets include:
+
+single-owner visibility compliance
+
+lease failover safety compliance
+
+ownership transfer compliance
+
+coordination-state exposure compliance
+
+These targets make cluster-coordination correctness measurable rather than assumed.
+
 Session Certification Targets
 
 The Session Engine must expose certification goals that can later be validated by the Runtime Governance Layer.
@@ -548,6 +624,12 @@ Deterministic turn ordering is maintained.
 Device timeline tracking is enforced.
 
 Session ownership transfer works safely.
+
+Cluster-coordination and failover foundations exist.
+
+Coordination-state exposure exists.
+
+Cluster-coordination certification targets are defined.
 
 Session snapshots support crash and restart recovery.
 
