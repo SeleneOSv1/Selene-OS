@@ -108,6 +108,7 @@ use selene_storage::ph1f::{
 };
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
+use crate::ph1comp::Ph1CompRuntime;
 use crate::ph1j::{Ph1jRuntime, ProtectedProofWriteRequest};
 use crate::ph1onb::{OnbVoiceEnrollFinalize, OnbVoiceEnrollLiveRequest, OnbVoiceEnrollSampleStep};
 use crate::ph1os::{
@@ -594,6 +595,7 @@ pub struct AppServerIngressRuntime {
     ph1e_runtime: Ph1eRuntime,
     ph1simfinder_runtime: Ph1SimFinderRuntime,
     ph1j_runtime: Ph1jRuntime,
+    ph1comp_runtime: Ph1CompRuntime,
     runtime_governance: RuntimeGovernanceRuntime,
     runtime_law: RuntimeLawRuntime,
     agent_input_packet_build_count: RefCell<u64>,
@@ -652,6 +654,7 @@ impl AppServerIngressRuntime {
             ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
             ph1simfinder_runtime: Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1()),
             ph1j_runtime,
+            ph1comp_runtime: Ph1CompRuntime,
             runtime_governance,
             runtime_law,
             agent_input_packet_build_count: RefCell::new(0),
@@ -2995,6 +2998,12 @@ impl AppServerIngressRuntime {
                     reason_code: Some(packet.reason_code),
                 },
                 FinderTerminalPacket::MissingSimulation(packet) => {
+                    let runtime_execution_envelope = missing_simulation_runtime_execution_envelope(
+                        &self.ph1comp_runtime,
+                        &runtime_execution_envelope,
+                        &packet,
+                        dispatch_now.0 as i64,
+                    )?;
                     let tenant_id = normalized_tenant_scope_for_dev_intake(
                         store,
                         &actor_user_id,
@@ -3036,7 +3045,7 @@ impl AppServerIngressRuntime {
                         )?;
                     }
                     AppVoiceTurnExecutionOutcome {
-                        runtime_execution_envelope: runtime_execution_envelope.clone(),
+                        runtime_execution_envelope,
                         voice_outcome,
                         session_state: request_session_state,
                         next_move: AppVoiceTurnNextMove::Refused,
@@ -3905,6 +3914,29 @@ fn attach_runtime_execution_envelope_to_voice_outcome(
             Ok(OsVoiceLiveTurnOutcome::Forwarded(forwarded))
         }
     }
+}
+
+fn missing_simulation_runtime_execution_envelope(
+    ph1comp_runtime: &Ph1CompRuntime,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    packet: &selene_kernel_contracts::ph1simfinder::MissingSimulationPacket,
+    created_at_ms: i64,
+) -> Result<RuntimeExecutionEnvelope, StorageError> {
+    let (_, computation_state) = ph1comp_runtime
+        .build_missing_simulation_packet_and_state(
+            runtime_execution_envelope,
+            packet,
+            created_at_ms,
+        )
+        .map_err(|_| {
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_voice_turn_execution_outcome.runtime_execution_envelope.computation_state",
+                reason: "ph1comp_missing_simulation_computation_failed",
+            })
+        })?;
+    runtime_execution_envelope
+        .with_computation_state(Some(computation_state))
+        .map_err(StorageError::ContractViolation)
 }
 
 fn runtime_execution_envelope_with_identity_state_for_voice_outcome(
@@ -8559,6 +8591,16 @@ mod tests {
             out.response_text.as_deref(),
             Some("I can't do that yet; I've submitted it for review.")
         );
+        let computation_state = out
+            .runtime_execution_envelope
+            .computation_state
+            .as_ref()
+            .expect("missing simulation path must attach computation state");
+        assert_eq!(
+            computation_state.formula_version_refs,
+            vec!["ph1.comp.missing_simulation.v1".to_string()]
+        );
+        assert!(computation_state.selected_result.is_some());
         match runtime
             .debug_last_finder_terminal_packet()
             .expect("finder packet should be captured")

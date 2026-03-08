@@ -2,7 +2,8 @@
 
 use crate::web_search_plan::analytics::decimal::{decimal_to_string, round_decimal};
 use crate::web_search_plan::analytics::types::{
-    Aggregate, AggregateGroup, ConfidenceFactors, ConfidenceItem, ConsensusGroup,
+    Aggregate, AggregateGroup, ComputationConfidenceBucket, ConfidenceFactors, ConfidenceItem,
+    ConsensusGroup,
 };
 use rust_decimal::Decimal;
 use std::collections::BTreeMap;
@@ -75,11 +76,25 @@ pub fn build_confidence(
                 conflict: decimal_to_string(conflict_factor),
                 outliers: decimal_to_string(outlier_factor),
             },
+            bucket: Some(confidence_bucket(score)),
+            minimum_threshold_met: Some(score >= Decimal::new(55, 2)),
         });
     }
 
     output.sort_by(|left, right| left.claim_key.cmp(&right.claim_key));
     output
+}
+
+fn confidence_bucket(score: Decimal) -> ComputationConfidenceBucket {
+    if score >= Decimal::new(80, 2) {
+        ComputationConfidenceBucket::High
+    } else if score >= Decimal::new(60, 2) {
+        ComputationConfidenceBucket::Medium
+    } else if score >= Decimal::new(40, 2) {
+        ComputationConfidenceBucket::Low
+    } else {
+        ComputationConfidenceBucket::Insufficient
+    }
 }
 
 fn sample_size_factor(sample_size: u32) -> Decimal {

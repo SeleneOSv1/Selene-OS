@@ -8,6 +8,7 @@ pub mod ph1builder;
 pub mod ph1c;
 pub mod ph1cache;
 pub mod ph1capreq;
+pub mod ph1comp;
 pub mod ph1context;
 pub mod ph1cost;
 pub mod ph1d;

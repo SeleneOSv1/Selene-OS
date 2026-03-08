@@ -2,12 +2,12 @@
 
 use crate::web_search_plan::analytics::currency_normalize::CurrencyRateTable;
 use crate::web_search_plan::analytics::decimal::{
-    decimal_to_numeric_value, max, mean, median, min, percentile, stddev, trimmed_mean,
+    decimal_to_numeric_value, decimal_to_string, max, mean, median, min, percentile, stddev, trimmed_mean,
     weighted_mean,
 };
 use crate::web_search_plan::analytics::types::{
     Aggregate, AggregateBuildResult, AggregateGroup, AggregateMethod, AggregateWindow,
-    NumericSample,
+    NormalizationKind, NormalizationTraceEntry, NumericSample,
 };
 use crate::web_search_plan::analytics::unit_normalize::UnitConversionTable;
 use rust_decimal::Decimal;
@@ -48,10 +48,12 @@ pub fn compute_aggregates(
 
     let mut reason_codes = BTreeSet::new();
     let mut final_groups: Vec<AggregateGroup> = Vec::new();
+    let mut normalization_trace = Vec::new();
 
     for ((metric_id, entity, attribute), entries) in grouped {
-        let (normalized, had_unit_mismatch, had_currency_mismatch) =
+        let (normalized, group_trace, had_unit_mismatch, had_currency_mismatch) =
             normalize_group(entries, unit_table, currency_table);
+        normalization_trace.extend(group_trace);
         if had_unit_mismatch || had_currency_mismatch {
             reason_codes.insert("policy_violation".to_string());
         }
@@ -171,6 +173,9 @@ pub fn compute_aggregates(
                 value: decimal_to_numeric_value(value),
                 sample_size: group.samples.len() as u32,
                 source_refs: source_refs.clone(),
+                rank: None,
+                threshold_met: None,
+                priority_score: None,
             });
         }
     }
@@ -197,6 +202,7 @@ pub fn compute_aggregates(
     AggregateBuildResult {
         aggregates,
         groups: final_groups,
+        normalization_trace,
         reason_codes: reason_codes.into_iter().collect(),
     }
 }
@@ -215,9 +221,10 @@ fn normalize_group(
     mut samples: Vec<NumericSample>,
     unit_table: &UnitConversionTable,
     currency_table: &CurrencyRateTable,
-) -> (Vec<NumericSample>, bool, bool) {
+) -> (Vec<NumericSample>, Vec<NormalizationTraceEntry>, bool, bool) {
     let mut unit_mismatch = false;
     let mut currency_mismatch = false;
+    let mut normalization_trace = Vec::new();
 
     let unit_values = samples
         .iter()
@@ -251,6 +258,16 @@ fn normalize_group(
                         if let Some(converted) =
                             unit_table.convert(sample.value_decimal, unit.as_str(), target.as_str())
                         {
+                            normalization_trace.push(NormalizationTraceEntry {
+                                normalization_kind: NormalizationKind::Unit,
+                                rule_id: format!("unit:{}->{}", unit, target),
+                                input_label: format!("{}:{}", sample.entity, sample.attribute),
+                                source_value: decimal_to_string(sample.value_decimal),
+                                normalized_value: decimal_to_string(converted),
+                                source_unit: Some(unit.clone()),
+                                canonical_unit: Some(target.clone()),
+                                applied: true,
+                            });
                             sample.value_decimal = converted;
                             sample.unit = Some(target.clone());
                         }
@@ -302,6 +319,16 @@ fn normalize_group(
                             currency.as_str(),
                             target.as_str(),
                         ) {
+                            normalization_trace.push(NormalizationTraceEntry {
+                                normalization_kind: NormalizationKind::Currency,
+                                rule_id: format!("currency:{}->{}", currency, target),
+                                input_label: format!("{}:{}", sample.entity, sample.attribute),
+                                source_value: decimal_to_string(sample.value_decimal),
+                                normalized_value: decimal_to_string(converted),
+                                source_unit: Some(currency.clone()),
+                                canonical_unit: Some(target.clone()),
+                                applied: true,
+                            });
                             sample.value_decimal = converted;
                             sample.currency = Some(target.clone());
                         }
@@ -315,5 +342,5 @@ fn normalize_group(
         }
     }
 
-    (samples, unit_mismatch, currency_mismatch)
+    (samples, normalization_trace, unit_mismatch, currency_mismatch)
 }

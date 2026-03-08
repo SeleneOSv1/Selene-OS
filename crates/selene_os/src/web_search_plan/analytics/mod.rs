@@ -9,7 +9,7 @@ pub mod packet_builder;
 pub mod types;
 pub mod unit_normalize;
 
-use crate::web_search_plan::analytics::packet_builder::build_computation_packet;
+use crate::ph1comp::Ph1CompRuntime;
 use crate::web_search_plan::analytics::types::{
     AnalyticsError, AnalyticsErrorKind, AnalyticsRequest, ComputationPacket,
 };
@@ -24,12 +24,13 @@ pub fn run_numeric_consensus(
     evidence_packet: Value,
     structured_rows: Vec<StructuredRow>,
 ) -> Result<ComputationPacket, AnalyticsError> {
-    build_computation_packet(AnalyticsRequest {
+    Ph1CompRuntime.build_analytics_computation_packet(AnalyticsRequest {
         trace_id: trace_id.into(),
         created_at_ms,
         intended_consumers: vec![
             "PH1.D".to_string(),
             "PH1.WRITE".to_string(),
+            "PH1.LAW".to_string(),
             "PH1.J".to_string(),
         ],
         policy_snapshot_id: policy_snapshot_id.into(),

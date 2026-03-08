@@ -4,8 +4,8 @@ use crate::web_search_plan::analytics::decimal::{
     decimal_to_numeric_value, decimal_to_string, is_outlier, mad, median,
 };
 use crate::web_search_plan::analytics::types::{
-    AggregateGroup, ConsensusBuildResult, ConsensusCandidate, ConsensusGroup, ConsensusOutlier,
-    NumericValue,
+    AggregateGroup, ConsensusBuildResult, ConsensusCandidate, ConsensusGroup, ConsensusMethod,
+    ConsensusOutlier, NumericValue,
 };
 use crate::web_search_plan::contract_hash::sha256_hex;
 use rust_decimal::Decimal;
@@ -105,9 +105,19 @@ pub fn build_consensus(groups: &[AggregateGroup]) -> ConsensusBuildResult {
             group_id,
             topic,
             candidates,
-            chosen,
+            chosen: chosen.clone(),
             agreement_score: decimal_to_string(agreement_score),
             outliers,
+            consensus_method: Some(ConsensusMethod::Weighted),
+            minimum_threshold_met: Some(agreement_score > Decimal::new(5, 1)),
+            selected_result_id: chosen
+                .as_ref()
+                .map(|value| format!("consensus:{}", numeric_key(value))),
+            conflict_resolution_rationale: if chosen.is_none() && !weighted.is_empty() {
+                Some("weighted_consensus_unresolved".to_string())
+            } else {
+                Some("weighted_consensus_selected".to_string())
+            },
         });
     }
 
@@ -189,6 +199,7 @@ fn detect_outliers(group: &AggregateGroup) -> Vec<ConsensusOutlier> {
         .map(|(value, sources)| ConsensusOutlier {
             value,
             sources: sources.into_iter().collect(),
+            decision: Some("down_weighted".to_string()),
         })
         .collect::<Vec<ConsensusOutlier>>();
 

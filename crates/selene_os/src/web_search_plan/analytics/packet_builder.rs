@@ -144,6 +144,18 @@ pub fn build_computation_packet(
             evidence_hash,
             policy_snapshot_id: request.policy_snapshot_id,
             as_of_ms: request.as_of_ms,
+            input_count: aggregate_result.groups.iter().map(|group| group.samples.len() as u32).sum(),
+            input_labels: aggregate_result
+                .groups
+                .iter()
+                .map(|group| format!("{}:{}", group.entity, group.attribute))
+                .collect(),
+            normalization_trace: aggregate_result.normalization_trace.clone(),
+            formula_version_refs: vec![
+                "ph1.comp.analytics.aggregate.v1".to_string(),
+                "ph1.comp.analytics.consensus.v1".to_string(),
+                "ph1.comp.analytics.confidence.v1".to_string(),
+            ],
         },
         aggregates: aggregate_result.aggregates,
         consensus: consensus_result.groups,

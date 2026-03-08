@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
+use crate::ph1comp::ComputationExecutionState;
 use crate::ph1d::PolicyContextRef;
 use crate::ph1j::{
     DeviceId, ProofChainStatus, ProofFailureClass, ProofVerificationPosture, ProofWriteOutcome,
@@ -1033,6 +1034,7 @@ pub struct RuntimeExecutionEnvelope {
     pub persistence_state: Option<PersistenceExecutionState>,
     pub governance_state: Option<GovernanceExecutionState>,
     pub proof_state: Option<ProofExecutionState>,
+    pub computation_state: Option<ComputationExecutionState>,
     pub identity_state: Option<IdentityExecutionState>,
     pub memory_state: Option<MemoryExecutionState>,
     pub authority_state: Option<AuthorityExecutionState>,
@@ -1227,6 +1229,7 @@ impl RuntimeExecutionEnvelope {
             persistence_state,
             governance_state,
             proof_state: None,
+            computation_state: None,
             identity_state: None,
             memory_state: None,
             authority_state: None,
@@ -1324,6 +1327,16 @@ impl RuntimeExecutionEnvelope {
         Ok(next)
     }
 
+    pub fn with_computation_state(
+        &self,
+        computation_state: Option<ComputationExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.computation_state = computation_state;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn with_memory_state(
         &self,
         memory_state: Option<MemoryExecutionState>,
@@ -1409,6 +1422,9 @@ impl Validate for RuntimeExecutionEnvelope {
             state.validate()?;
         }
         if let Some(state) = self.proof_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.computation_state.as_ref() {
             state.validate()?;
         }
         if let Some(state) = self.identity_state.as_ref() {
