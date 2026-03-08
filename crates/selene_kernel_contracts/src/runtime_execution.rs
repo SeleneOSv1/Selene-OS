@@ -574,6 +574,139 @@ impl SessionAttachOutcome {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PersistenceRecoveryMode {
+    Normal,
+    Recovering,
+    DegradedRecovery,
+    QuarantinedLocalState,
+}
+
+impl PersistenceRecoveryMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PersistenceRecoveryMode::Normal => "NORMAL",
+            PersistenceRecoveryMode::Recovering => "RECOVERING",
+            PersistenceRecoveryMode::DegradedRecovery => "DEGRADED_RECOVERY",
+            PersistenceRecoveryMode::QuarantinedLocalState => "QUARANTINED_LOCAL_STATE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PersistenceAcknowledgementState {
+    PendingCloudAcknowledgement,
+    AuthoritativelyAcknowledged,
+    StaleRejected,
+    QuarantinedLocalState,
+}
+
+impl PersistenceAcknowledgementState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement => {
+                "PENDING_CLOUD_ACKNOWLEDGEMENT"
+            }
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged => {
+                "AUTHORITATIVELY_ACKNOWLEDGED"
+            }
+            PersistenceAcknowledgementState::StaleRejected => "STALE_REJECTED",
+            PersistenceAcknowledgementState::QuarantinedLocalState => {
+                "QUARANTINED_LOCAL_STATE"
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PersistenceConflictSeverity {
+    Info,
+    Retryable,
+    StaleRejected,
+    QuarantineRequired,
+}
+
+impl PersistenceConflictSeverity {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PersistenceConflictSeverity::Info => "INFO",
+            PersistenceConflictSeverity::Retryable => "RETRYABLE",
+            PersistenceConflictSeverity::StaleRejected => "STALE_REJECTED",
+            PersistenceConflictSeverity::QuarantineRequired => "QUARANTINE_REQUIRED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReconciliationDecision {
+    RetrySameOperation,
+    ReusePriorAuthoritativeOutcome,
+    RejectStaleOperation,
+    RequestFreshSessionState,
+    QuarantineLocalState,
+}
+
+impl ReconciliationDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ReconciliationDecision::RetrySameOperation => "RETRY_SAME_OPERATION",
+            ReconciliationDecision::ReusePriorAuthoritativeOutcome => {
+                "REUSE_PRIOR_AUTHORITATIVE_OUTCOME"
+            }
+            ReconciliationDecision::RejectStaleOperation => "REJECT_STALE_OPERATION",
+            ReconciliationDecision::RequestFreshSessionState => "REQUEST_FRESH_SESSION_STATE",
+            ReconciliationDecision::QuarantineLocalState => "QUARANTINE_LOCAL_STATE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PersistenceExecutionState {
+    pub recovery_mode: PersistenceRecoveryMode,
+    pub acknowledgement_state: PersistenceAcknowledgementState,
+    pub reconciliation_decision: Option<ReconciliationDecision>,
+    pub conflict_severity: Option<PersistenceConflictSeverity>,
+    pub cross_node_dedupe_applied: bool,
+    pub audit_ref: Option<String>,
+}
+
+impl PersistenceExecutionState {
+    pub fn v1(
+        recovery_mode: PersistenceRecoveryMode,
+        acknowledgement_state: PersistenceAcknowledgementState,
+        reconciliation_decision: Option<ReconciliationDecision>,
+        conflict_severity: Option<PersistenceConflictSeverity>,
+        cross_node_dedupe_applied: bool,
+        audit_ref: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            recovery_mode,
+            acknowledgement_state,
+            reconciliation_decision,
+            conflict_severity,
+            cross_node_dedupe_applied,
+            audit_ref,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for PersistenceExecutionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_optional_ascii_token(
+            "persistence_execution_state.audit_ref",
+            &self.audit_ref,
+            256,
+        )?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeExecutionEnvelope {
     pub request_id: String,
@@ -588,6 +721,7 @@ pub struct RuntimeExecutionEnvelope {
     pub device_turn_sequence: Option<u64>,
     pub admission_state: AdmissionState,
     pub session_attach_outcome: Option<SessionAttachOutcome>,
+    pub persistence_state: Option<PersistenceExecutionState>,
 }
 
 impl RuntimeExecutionEnvelope {
@@ -693,6 +827,39 @@ impl RuntimeExecutionEnvelope {
         admission_state: AdmissionState,
         session_attach_outcome: Option<SessionAttachOutcome>,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
+            request_id,
+            trace_id,
+            idempotency_key,
+            actor_identity,
+            device_identity,
+            platform,
+            platform_context,
+            session_id,
+            turn_id,
+            device_turn_sequence,
+            admission_state,
+            session_attach_outcome,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
+        request_id: String,
+        trace_id: String,
+        idempotency_key: String,
+        actor_identity: UserId,
+        device_identity: DeviceId,
+        platform: AppPlatform,
+        platform_context: PlatformRuntimeContext,
+        session_id: Option<SessionId>,
+        turn_id: TurnId,
+        device_turn_sequence: Option<u64>,
+        admission_state: AdmissionState,
+        session_attach_outcome: Option<SessionAttachOutcome>,
+        persistence_state: Option<PersistenceExecutionState>,
+    ) -> Result<Self, ContractViolation> {
         let envelope = Self {
             request_id,
             trace_id,
@@ -706,6 +873,7 @@ impl RuntimeExecutionEnvelope {
             device_turn_sequence,
             admission_state,
             session_attach_outcome,
+            persistence_state,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -715,7 +883,7 @@ impl RuntimeExecutionEnvelope {
         &self,
         admission_state: AdmissionState,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
             self.request_id.clone(),
             self.trace_id.clone(),
             self.idempotency_key.clone(),
@@ -728,6 +896,7 @@ impl RuntimeExecutionEnvelope {
             self.device_turn_sequence,
             admission_state,
             self.session_attach_outcome,
+            self.persistence_state.clone(),
         )
     }
 
@@ -736,7 +905,7 @@ impl RuntimeExecutionEnvelope {
         session_id: Option<SessionId>,
         admission_state: AdmissionState,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
             self.request_id.clone(),
             self.trace_id.clone(),
             self.idempotency_key.clone(),
@@ -749,6 +918,7 @@ impl RuntimeExecutionEnvelope {
             self.device_turn_sequence,
             admission_state,
             self.session_attach_outcome,
+            self.persistence_state.clone(),
         )
     }
 
@@ -759,7 +929,7 @@ impl RuntimeExecutionEnvelope {
         device_turn_sequence: Option<u64>,
         session_attach_outcome: Option<SessionAttachOutcome>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
             self.request_id.clone(),
             self.trace_id.clone(),
             self.idempotency_key.clone(),
@@ -772,6 +942,7 @@ impl RuntimeExecutionEnvelope {
             device_turn_sequence,
             admission_state,
             session_attach_outcome,
+            self.persistence_state.clone(),
         )
     }
 
@@ -779,7 +950,7 @@ impl RuntimeExecutionEnvelope {
         &self,
         session_attach_outcome: Option<SessionAttachOutcome>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
             self.request_id.clone(),
             self.trace_id.clone(),
             self.idempotency_key.clone(),
@@ -792,6 +963,28 @@ impl RuntimeExecutionEnvelope {
             self.device_turn_sequence,
             self.admission_state,
             session_attach_outcome,
+            self.persistence_state.clone(),
+        )
+    }
+
+    pub fn with_persistence_state(
+        &self,
+        persistence_state: Option<PersistenceExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_and_persistence_state(
+            self.request_id.clone(),
+            self.trace_id.clone(),
+            self.idempotency_key.clone(),
+            self.actor_identity.clone(),
+            self.device_identity.clone(),
+            self.platform,
+            self.platform_context.clone(),
+            self.session_id,
+            self.turn_id,
+            self.device_turn_sequence,
+            self.admission_state,
+            self.session_attach_outcome,
+            persistence_state,
         )
     }
 }
@@ -842,6 +1035,9 @@ impl Validate for RuntimeExecutionEnvelope {
                 field: "runtime_execution_envelope.device_turn_sequence",
                 reason: "must be > 0 when provided",
             });
+        }
+        if let Some(state) = self.persistence_state.as_ref() {
+            state.validate()?;
         }
         Ok(())
     }

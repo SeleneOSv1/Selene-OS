@@ -5,7 +5,7 @@ use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -106,7 +106,9 @@ use selene_kernel_contracts::runtime_execution::{
     default_device_class_for_platform, default_hardware_capability_profile,
     supported_capabilities_for_platform, AdmissionState, ClientCompatibilityStatus,
     ClientIntegrityStatus, DeviceCapability, DeviceClass, DeviceTrustClass, FailureClass,
-    NetworkProfile, PlatformRuntimeContext, PlatformTriggerPolicy, RuntimeEntryTrigger,
+    NetworkProfile, PersistenceAcknowledgementState, PersistenceConflictSeverity,
+    PersistenceExecutionState, PersistenceRecoveryMode, PlatformRuntimeContext,
+    PlatformTriggerPolicy, ReconciliationDecision, RuntimeEntryTrigger,
     RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
 use selene_kernel_contracts::{
@@ -305,7 +307,7 @@ pub struct VoiceTurnProvenance {
     pub cache_status: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VoiceTurnIngressError {
     pub failure_class: FailureClass,
     pub reason_code: String,
@@ -321,6 +323,160 @@ impl VoiceTurnIngressError {
             .clone()
             .unwrap_or_else(|| self.reason_code.clone())
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterPersistenceRuntime {
+    legacy_journal_path: PathBuf,
+    state_path: PathBuf,
+    #[serde(skip)]
+    state: Arc<Mutex<AdapterPersistenceState>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterPersistenceState {
+    schema_version: u8,
+    recovery_mode: PersistenceRecoveryMode,
+    outbox_records: BTreeMap<String, AdapterOutboxRecord>,
+    operation_journal: Vec<AdapterOperationJournalEntry>,
+    authoritative_outcomes: BTreeMap<String, AdapterAuthoritativeOutcomeRecord>,
+    audit_trail: Vec<AdapterPersistenceAuditEntry>,
+    next_journal_sequence: u64,
+    next_audit_sequence: u64,
+    last_reconciled_at_ns: Option<u64>,
+}
+
+impl Default for AdapterPersistenceState {
+    fn default() -> Self {
+        Self {
+            schema_version: 2,
+            recovery_mode: PersistenceRecoveryMode::Normal,
+            outbox_records: BTreeMap::new(),
+            operation_journal: Vec::new(),
+            authoritative_outcomes: BTreeMap::new(),
+            audit_trail: Vec::new(),
+            next_journal_sequence: 1,
+            next_audit_sequence: 1,
+            last_reconciled_at_ns: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterOutboxRecord {
+    operation_id: String,
+    request_id: String,
+    trace_id: String,
+    actor_user_id: String,
+    idempotency_key: String,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    device_id: String,
+    device_turn_sequence: Option<u64>,
+    submission_timestamp_ns: u64,
+    retry_counter: u32,
+    acknowledgement_state: PersistenceAcknowledgementState,
+    cleared_from_active_outbox_at_ns: Option<u64>,
+    last_reconciliation_decision: Option<ReconciliationDecision>,
+    last_conflict_severity: Option<PersistenceConflictSeverity>,
+    request: VoiceTurnAdapterRequest,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterOperationJournalEntry {
+    sequence: u64,
+    operation_id: String,
+    request_id: String,
+    trace_id: String,
+    actor_user_id: String,
+    idempotency_key: String,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    device_id: String,
+    device_turn_sequence: Option<u64>,
+    at_ns: u64,
+    acknowledgement_state: PersistenceAcknowledgementState,
+    recovery_mode: PersistenceRecoveryMode,
+    reconciliation_decision: Option<ReconciliationDecision>,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    event_kind: AdapterOperationJournalEventKind,
+    detail: Option<String>,
+    runtime_node_id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum AdapterOperationJournalEventKind {
+    Created,
+    SubmissionAttempted,
+    RetryAttempted,
+    Acknowledged,
+    TerminalFailure,
+    Quarantined,
+    RecoveryModeTransition,
+    DedupeReused,
+    FreshSessionStateRequested,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterAuthoritativeOutcomeRecord {
+    actor_user_id: String,
+    idempotency_key: String,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    session_state: Option<String>,
+    device_id: String,
+    device_turn_sequence: Option<u64>,
+    acknowledged_at_ns: u64,
+    runtime_node_id: String,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    result: AdapterPersistedAuthoritativeResult,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum AdapterPersistedAuthoritativeResult {
+    Success(VoiceTurnAdapterResponse),
+    Failure(VoiceTurnIngressError),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct AdapterPersistenceAuditEntry {
+    sequence: u64,
+    at_ns: u64,
+    operation_id: Option<String>,
+    actor_user_id: Option<String>,
+    idempotency_key: Option<String>,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    decision: AdapterPersistenceAuditDecision,
+    recovery_mode: PersistenceRecoveryMode,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    runtime_node_id: String,
+    note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum AdapterPersistenceAuditDecision {
+    ReconciliationDecision,
+    DedupeOutcome,
+    QuarantineAction,
+    RecoveryModeTransition,
+    AcknowledgementOutcome,
+    LegacyJournalReplay,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedPersistenceOperation {
+    operation_id: String,
+    persistence_state: PersistenceExecutionState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersistenceInvocationMode {
+    Standard,
+    ExistingOutboxReplay,
+    LegacyJournalReplay,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -617,14 +773,9 @@ pub struct AdapterRuntime {
     ph1c_runtime: EnginePh1cRuntime,
     ph1d_runtime: EnginePh1dRuntime,
     ph1d_live_adapter: Option<EnvPh1dLiveAdapter>,
-    persistence: Option<AdapterPersistenceConfig>,
+    persistence: Option<AdapterPersistenceRuntime>,
     runtime_node_id: String,
     session_lease_ttl_ms: u64,
-}
-
-#[derive(Debug, Clone)]
-struct AdapterPersistenceConfig {
-    journal_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1078,6 +1229,11 @@ impl AdapterRuntime {
         auto_builder_enabled: bool,
     ) -> Result<Self, String> {
         let ph1d_live_adapter = build_ph1d_live_adapter_from_env();
+        let persistence = AdapterPersistenceRuntime {
+            legacy_journal_path: journal_path.clone(),
+            state_path: adapter_persistence_state_path(&journal_path),
+            state: Arc::new(Mutex::new(AdapterPersistenceState::default())),
+        };
         let runtime = Self {
             ingress,
             store,
@@ -1092,12 +1248,12 @@ impl AdapterRuntime {
             ph1c_runtime: EnginePh1cRuntime::new(EnginePh1cConfig::mvp_desktop_v1()),
             ph1d_runtime: EnginePh1dRuntime::new(selene_engines::ph1d::Ph1dConfig::mvp_v1()),
             ph1d_live_adapter,
-            persistence: Some(AdapterPersistenceConfig { journal_path }),
+            persistence: Some(persistence),
             runtime_node_id: runtime_node_id_from_env(),
             session_lease_ttl_ms: parse_u64_env("SELENE_SESSION_LEASE_TTL_MS", 30_000),
         };
         runtime.ensure_persistence_ready()?;
-        runtime.replay_journal_into_store()?;
+        runtime.bootstrap_persistence_runtime()?;
         Ok(runtime)
     }
 
@@ -1105,7 +1261,7 @@ impl AdapterRuntime {
         &self,
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, String> {
-        self.run_voice_turn_internal(request, None, true, true)
+        self.run_voice_turn_internal(request, None, true, true, PersistenceInvocationMode::Standard)
             .map_err(|err| err.to_runtime_reason())
     }
 
@@ -1126,7 +1282,13 @@ impl AdapterRuntime {
                     )
                 },
             )?;
-        self.run_voice_turn_internal(request, Some(runtime_execution_envelope), true, false)
+        self.run_voice_turn_internal(
+            request,
+            Some(runtime_execution_envelope),
+            true,
+            false,
+            PersistenceInvocationMode::Standard,
+        )
     }
 
     pub fn run_voice_turn_ingress_with_execution_envelope(
@@ -1134,7 +1296,13 @@ impl AdapterRuntime {
         request: VoiceTurnAdapterRequest,
         runtime_execution_envelope: RuntimeExecutionEnvelope,
     ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
-        self.run_voice_turn_internal(request, Some(runtime_execution_envelope), true, false)
+        self.run_voice_turn_internal(
+            request,
+            Some(runtime_execution_envelope),
+            true,
+            false,
+            PersistenceInvocationMode::Standard,
+        )
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -3555,6 +3723,7 @@ impl AdapterRuntime {
         runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
         persist_on_success: bool,
         allow_identity_auto_provision: bool,
+        persistence_mode: PersistenceInvocationMode,
     ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
         let request_for_journal = request.clone();
         let response_turn_id = Some(request.turn_id);
@@ -3634,6 +3803,35 @@ impl AdapterRuntime {
                 pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
             })?,
         };
+        if persistence_mode != PersistenceInvocationMode::LegacyJournalReplay {
+            if let Some(reused_result) = self
+                .try_reuse_persisted_authoritative_result(
+                    now,
+                    &actor_user_id,
+                    &runtime_execution_envelope.idempotency_key,
+                )
+                .map_err(pre_session_error.clone())?
+            {
+                return reused_result;
+            }
+        }
+        let prepared_persistence = self
+            .prepare_persistence_operation(
+                &request,
+                &runtime_execution_envelope,
+                now,
+                persistence_mode,
+            )
+            .map_err(pre_session_error.clone())?;
+        if let Some(prepared) = prepared_persistence.as_ref() {
+            runtime_execution_envelope = runtime_execution_envelope
+                .with_persistence_state(Some(prepared.persistence_state.clone()))
+                .map_err(|err| {
+                    pre_session_error(format!(
+                        "invalid runtime_execution_envelope persistence_state: {err:?}"
+                    ))
+                })?;
+        }
         if let Some(response) = cached_retry_response_for_actor(
             &self.session_retry_cache,
             &actor_user_id,
@@ -3641,51 +3839,147 @@ impl AdapterRuntime {
         )
         .map_err(pre_session_error.clone())?
         {
-            return Ok(response);
+            let result = Ok(response);
+            if let Some(prepared) = prepared_persistence.as_ref() {
+                self.finalize_persistence_operation(
+                    prepared,
+                    now,
+                    &runtime_device_id,
+                    &runtime_execution_envelope.idempotency_key,
+                    &result,
+                )
+                .map_err(pre_session_error.clone())?;
+            }
+            return result;
         }
 
-        let mut store = self
-            .store
-            .lock()
-            .map_err(|_| pre_session_error("adapter store lock poisoned".to_string()))?;
-        ensure_actor_identity_and_device(
-            &mut store,
-            &actor_user_id,
-            Some(&runtime_device_id),
-            app_platform,
-            now,
-            allow_identity_auto_provision,
-        )
-        .map_err(pre_session_error.clone())?;
-        let tenant_id_for_ph1c = resolve_tenant_scope(
-            request.tenant_id.clone(),
-            &actor_user_id,
-            Some(&runtime_device_id),
-        );
-        let ph1k_bundle = build_ph1k_live_signal_bundle(
-            &store,
-            &request,
-            now,
-            tenant_id_for_ph1c.as_deref(),
-            Some(&runtime_device_id),
-        )
-        .map_err(pre_session_error.clone())?;
-        let wake_evaluation = evaluate_wake_for_turn(
-            &store,
-            now,
-            &actor_user_id,
-            &runtime_device_id,
-            app_platform,
-            trigger,
-            &ph1k_bundle,
-        )
-        .map_err(pre_session_error.clone())?;
-        if let Some(wake_eval) = wake_evaluation.as_ref() {
-            if !wake_eval.decision.accepted {
-                let session_id_for_reject =
-                    latest_canonical_session_for_actor(&store, &actor_user_id)
-                        .map_err(pre_session_error.clone())?
-                        .map(|row| row.session_id);
+        let execution_result = (|| {
+            let mut store = self
+                .store
+                .lock()
+                .map_err(|_| pre_session_error("adapter store lock poisoned".to_string()))?;
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                Some(&runtime_device_id),
+                app_platform,
+                now,
+                allow_identity_auto_provision,
+            )
+            .map_err(pre_session_error.clone())?;
+            let tenant_id_for_ph1c = resolve_tenant_scope(
+                request.tenant_id.clone(),
+                &actor_user_id,
+                Some(&runtime_device_id),
+            );
+            let ph1k_bundle = build_ph1k_live_signal_bundle(
+                &store,
+                &request,
+                now,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+            )
+            .map_err(pre_session_error.clone())?;
+            let wake_evaluation = evaluate_wake_for_turn(
+                &store,
+                now,
+                &actor_user_id,
+                &runtime_device_id,
+                app_platform,
+                trigger,
+                &ph1k_bundle,
+            )
+            .map_err(pre_session_error.clone())?;
+            if let Some(wake_eval) = wake_evaluation.as_ref() {
+                if !wake_eval.decision.accepted {
+                    let session_id_for_reject =
+                        latest_canonical_session_for_actor(&store, &actor_user_id)
+                            .map_err(pre_session_error.clone())?
+                            .map(|row| row.session_id);
+                    commit_wake_runtime_event(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        &runtime_device_id,
+                        session_id_for_reject,
+                        &ph1k_bundle,
+                        wake_eval,
+                    )
+                    .map_err(pre_session_error.clone())?;
+                    commit_wake_learn_signal(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_id_for_reject,
+                        trigger,
+                        &ph1k_bundle,
+                        wake_eval,
+                    )
+                    .map_err(pre_session_error.clone())?;
+                    return Err(voice_turn_ingress_error(
+                        FailureClass::PolicyViolation,
+                        format!("WAKE_REJECTED_{}", wake_eval.decision.reason_code.0),
+                        Some(format!(
+                            "wake_rejected reason_code={}",
+                            wake_eval.decision.reason_code.0
+                        )),
+                        session_id_for_reject.map(session_id_to_string),
+                        response_turn_id,
+                        None,
+                    ));
+                }
+            }
+            let session_turn_state = match resolve_session_turn_state(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                &runtime_device_id,
+                trigger,
+                &ph1k_bundle,
+                wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+                &runtime_execution_envelope.idempotency_key,
+                device_turn_sequence,
+                &self.runtime_node_id,
+                self.session_lease_ttl_ms,
+                &self.session_retry_cache,
+            )
+            .map_err(pre_session_error.clone())?
+            {
+                AdapterSessionResolution::Proceed(state) => state,
+                AdapterSessionResolution::Retry(response) => return Ok(response),
+            };
+            let response_session_id = session_turn_state
+                .session_snapshot
+                .session_id
+                .map(session_id_to_string);
+            let response_session_state = session_turn_state.session_snapshot.session_state;
+            let post_session_error = |reason: String| {
+                classify_voice_turn_runtime_error(
+                    &reason,
+                    response_turn_id,
+                    response_session_id.clone(),
+                    Some(response_session_state),
+                )
+            };
+            runtime_execution_envelope = runtime_execution_envelope
+                .with_session_device_turn_and_attach_outcome(
+                    session_turn_state.session_snapshot.session_id,
+                    AdmissionState::SessionResolved,
+                    Some(session_turn_state.device_turn_sequence),
+                    Some(session_turn_state.session_attach_outcome),
+                )
+                .map_err(|err| {
+                    post_session_error(format!(
+                        "invalid runtime_execution_envelope after session resolve: {err:?}"
+                    ))
+                })?;
+            if let Some(wake_eval) = wake_evaluation.as_ref() {
                 commit_wake_runtime_event(
                     &mut store,
                     now,
@@ -3693,379 +3987,1103 @@ impl AdapterRuntime {
                     turn_id,
                     &actor_user_id,
                     &runtime_device_id,
-                    session_id_for_reject,
+                    session_turn_state.session_id_for_commits,
                     &ph1k_bundle,
                     wake_eval,
                 )
-                .map_err(pre_session_error.clone())?;
+                .map_err(post_session_error.clone())?;
                 commit_wake_learn_signal(
                     &mut store,
                     now,
                     correlation_id,
                     turn_id,
                     &runtime_device_id,
-                    session_id_for_reject,
+                    session_turn_state.session_id_for_commits,
                     trigger,
                     &ph1k_bundle,
                     wake_eval,
                 )
-                .map_err(pre_session_error.clone())?;
-                return Err(voice_turn_ingress_error(
-                    FailureClass::PolicyViolation,
-                    format!("WAKE_REJECTED_{}", wake_eval.decision.reason_code.0),
-                    Some(format!(
-                        "wake_rejected reason_code={}",
-                        wake_eval.decision.reason_code.0
-                    )),
-                    session_id_for_reject.map(session_id_to_string),
-                    response_turn_id,
-                    None,
-                ));
+                .map_err(post_session_error.clone())?;
             }
-        }
-        let session_turn_state = match resolve_session_turn_state(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &actor_user_id,
-            &runtime_device_id,
-            trigger,
-            &ph1k_bundle,
-            wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
-            &runtime_execution_envelope.idempotency_key,
-            device_turn_sequence,
-            &self.runtime_node_id,
-            self.session_lease_ttl_ms,
-            &self.session_retry_cache,
-        )
-        .map_err(pre_session_error.clone())?
-        {
-            AdapterSessionResolution::Proceed(state) => state,
-            AdapterSessionResolution::Retry(response) => return Ok(response),
-        };
-        let response_session_id = session_turn_state
-            .session_snapshot
-            .session_id
-            .map(session_id_to_string);
-        let response_session_state = session_turn_state.session_snapshot.session_state;
-        let post_session_error = |reason: String| {
-            classify_voice_turn_runtime_error(
-                &reason,
-                response_turn_id,
-                response_session_id.clone(),
-                Some(response_session_state),
+            let voice_id_request = build_voice_id_request_from_ph1k_bundle(
+                now,
+                actor_user_id.clone(),
+                &ph1k_bundle,
+                session_turn_state.session_snapshot,
+                session_turn_state.wake_event.clone(),
             )
-        };
-        runtime_execution_envelope = runtime_execution_envelope
-            .with_session_device_turn_and_attach_outcome(
-                session_turn_state.session_snapshot.session_id,
-                AdmissionState::SessionResolved,
-                Some(session_turn_state.device_turn_sequence),
-                Some(session_turn_state.session_attach_outcome),
+            .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
+            let ph1c_live_outcome = if upstream_transcript_supplied {
+                None
+            } else {
+                self.run_ph1c_live_turn(
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    tenant_id_for_ph1c.as_deref(),
+                    session_turn_state.session_snapshot.session_state,
+                    &ph1k_bundle,
+                )
+            };
+            if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+                if user_text_partial.is_none() {
+                    user_text_partial = ph1c.partial_text.clone();
+                }
+                if user_text_final.is_none() {
+                    user_text_final = ph1c.final_text.clone();
+                }
+                self.commit_ph1c_live_outcome(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    tenant_id_for_ph1c.as_deref(),
+                    Some(&runtime_device_id),
+                    session_turn_state.session_id_for_commits,
+                    ph1c,
+                )
+                .map_err(post_session_error.clone())?;
+            }
+            self.run_ph1vision_os_orchestration_step(
+                &request,
+                correlation_id,
+                turn_id,
+                tenant_id_for_ph1c.as_deref(),
+                user_text_final.as_deref(),
             )
-            .map_err(|err| {
-                post_session_error(format!(
-                    "invalid runtime_execution_envelope after session resolve: {err:?}"
-                ))
-            })?;
-        if let Some(wake_eval) = wake_evaluation.as_ref() {
-            commit_wake_runtime_event(
+            .map_err(post_session_error.clone())?;
+
+            self.commit_ph1k_live_runtime_events(
                 &mut store,
                 now,
                 correlation_id,
                 turn_id,
+                tenant_id_for_ph1c.as_deref(),
+                &runtime_device_id,
+                session_turn_state.session_id_for_commits,
+                &ph1k_bundle,
+            )
+            .map_err(post_session_error.clone())?;
+            self.emit_ph1k_feedback_capture(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                tenant_id_for_ph1c.as_deref(),
                 &actor_user_id,
                 &runtime_device_id,
                 session_turn_state.session_id_for_commits,
                 &ph1k_bundle,
-                wake_eval,
             )
             .map_err(post_session_error.clone())?;
-            commit_wake_learn_signal(
-                &mut store,
+            if let Err(err) = append_ph1k_live_eval_snapshot_csv(
+                &store,
                 now,
                 correlation_id,
                 turn_id,
-                &runtime_device_id,
-                session_turn_state.session_id_for_commits,
+                tenant_id_for_ph1c.as_deref().unwrap_or("tenant_default"),
+                &ph1k_bundle,
+            ) {
+                eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
+            }
+
+            let ingress_request = AppVoiceIngressRequest::v1_with_runtime_execution_envelope(
+                correlation_id,
+                turn_id,
+                runtime_execution_envelope.clone(),
+                app_platform,
                 trigger,
-                &ph1k_bundle,
-                wake_eval,
+                voice_id_request,
+                actor_user_id.clone(),
+                tenant_id_for_ph1c.clone(),
+                Some(runtime_device_id.clone()),
+                Vec::new(),
+                empty_observation(),
+            )
+            .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
+            let nlp_output = build_nlp_output_for_voice_turn(
+                &request,
+                user_text_final.as_deref(),
+                tenant_id_for_ph1c.as_deref(),
             )
             .map_err(post_session_error.clone())?;
-        }
-        let voice_id_request = build_voice_id_request_from_ph1k_bundle(
-            now,
-            actor_user_id.clone(),
-            &ph1k_bundle,
-            session_turn_state.session_snapshot,
-            session_turn_state.wake_event.clone(),
-        )
-        .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
-        let ph1c_live_outcome = if upstream_transcript_supplied {
-            None
-        } else {
-            self.run_ph1c_live_turn(
-                correlation_id,
-                turn_id,
-                &actor_user_id,
-                tenant_id_for_ph1c.as_deref(),
-                session_turn_state.session_snapshot.session_state,
-                &ph1k_bundle,
-            )
-        };
-        if let Some(ph1c) = ph1c_live_outcome.as_ref() {
-            if user_text_partial.is_none() {
-                user_text_partial = ph1c.partial_text.clone();
+            let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
+            let mut base_thread_state =
+                load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
+            if request.project_id.is_some() || request.pinned_context_refs.is_some() {
+                let project_id = resolve_adapter_project_id(request.project_id.as_deref());
+                let pinned_context_refs =
+                    resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
+                base_thread_state = base_thread_state
+                    .with_project_context(project_id, pinned_context_refs)
+                    .map_err(|err| {
+                        post_session_error(format!("invalid thread project context: {err:?}"))
+                    })?;
             }
-            if user_text_final.is_none() {
-                user_text_final = ph1c.final_text.clone();
-            }
-            self.commit_ph1c_live_outcome(
-                &mut store,
-                now,
-                correlation_id,
-                turn_id,
-                &actor_user_id,
-                tenant_id_for_ph1c.as_deref(),
-                Some(&runtime_device_id),
-                session_turn_state.session_id_for_commits,
-                ph1c,
-            )
-            .map_err(post_session_error.clone())?;
-        }
-        self.run_ph1vision_os_orchestration_step(
-            &request,
-            correlation_id,
-            turn_id,
-            tenant_id_for_ph1c.as_deref(),
-            user_text_final.as_deref(),
-        )
-        .map_err(post_session_error.clone())?;
-
-        self.commit_ph1k_live_runtime_events(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            tenant_id_for_ph1c.as_deref(),
-            &runtime_device_id,
-            session_turn_state.session_id_for_commits,
-            &ph1k_bundle,
-        )
-        .map_err(post_session_error.clone())?;
-        self.emit_ph1k_feedback_capture(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            tenant_id_for_ph1c.as_deref(),
-            &actor_user_id,
-            &runtime_device_id,
-            session_turn_state.session_id_for_commits,
-            &ph1k_bundle,
-        )
-        .map_err(post_session_error.clone())?;
-        if let Err(err) = append_ph1k_live_eval_snapshot_csv(
-            &store,
-            now,
-            correlation_id,
-            turn_id,
-            tenant_id_for_ph1c.as_deref().unwrap_or("tenant_default"),
-            &ph1k_bundle,
-        ) {
-            eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
-        }
-
-        let ingress_request = AppVoiceIngressRequest::v1_with_runtime_execution_envelope(
-            correlation_id,
-            turn_id,
-            runtime_execution_envelope.clone(),
-            app_platform,
-            trigger,
-            voice_id_request,
-            actor_user_id.clone(),
-            tenant_id_for_ph1c.clone(),
-            Some(runtime_device_id.clone()),
-            Vec::new(),
-            empty_observation(),
-        )
-        .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
-        let nlp_output = build_nlp_output_for_voice_turn(
-            &request,
-            user_text_final.as_deref(),
-            tenant_id_for_ph1c.as_deref(),
-        )
-        .map_err(post_session_error.clone())?;
-        let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
-        let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
-        if request.project_id.is_some() || request.pinned_context_refs.is_some() {
-            let project_id = resolve_adapter_project_id(request.project_id.as_deref());
-            let pinned_context_refs =
-                resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
-            base_thread_state = base_thread_state
-                .with_project_context(project_id, pinned_context_refs)
-                .map_err(|err| {
-                    post_session_error(format!("invalid thread project context: {err:?}"))
-                })?;
-        }
-        if let Some(flags) = request.thread_policy_flags.as_ref() {
-            let kernel_flags = ThreadPolicyFlags::v1(
-                flags.privacy_mode,
-                flags.do_not_disturb,
-                flags.strict_safety,
-            )
-            .map_err(|err| post_session_error(format!("invalid thread policy flags: {err:?}")))?;
-            base_thread_state = base_thread_state
-                .with_thread_policy_flags(Some(kernel_flags))
+            if let Some(flags) = request.thread_policy_flags.as_ref() {
+                let kernel_flags = ThreadPolicyFlags::v1(
+                    flags.privacy_mode,
+                    flags.do_not_disturb,
+                    flags.strict_safety,
+                )
                 .map_err(|err| {
                     post_session_error(format!("invalid thread policy flags: {err:?}"))
                 })?;
+                base_thread_state = base_thread_state
+                    .with_thread_policy_flags(Some(kernel_flags))
+                    .map_err(|err| {
+                        post_session_error(format!("invalid thread policy flags: {err:?}"))
+                    })?;
+            }
+            let confirm_answer =
+                infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
+            let locale = request
+                .audio_capture_ref
+                .as_ref()
+                .and_then(|capture| capture.locale_tag.as_deref())
+                .map(|raw| truncate_ascii(raw.trim(), 16))
+                .filter(|value| !value.is_empty());
+            let x_build = AppVoicePh1xBuildInput {
+                now,
+                thread_key: Some(thread_key.clone()),
+                thread_state: base_thread_state,
+                session_state: session_turn_state.session_snapshot.session_state,
+                policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+                memory_candidates: Vec::new(),
+                confirm_answer,
+                nlp_output: Some(nlp_output),
+                tool_response: None,
+                interruption: None,
+                locale,
+                last_failure_reason_code: None,
+            };
+            let execution_outcome = self
+                .ingress
+                .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
+                .map_err(|err| post_session_error(storage_error_to_string(err)))?;
+            if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
+                persist_ph1x_thread_state(
+                    &mut store,
+                    now,
+                    &actor_user_id,
+                    &thread_key,
+                    ph1x_response.thread_state.clone(),
+                    ph1x_response.reason_code,
+                    correlation_id,
+                    turn_id,
+                )
+                .map_err(post_session_error.clone())?;
+            }
+            self.commit_ph1d_runtime_outcome(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
+                session_turn_state.session_snapshot.session_state,
+                user_text_final.as_deref(),
+                &execution_outcome.voice_outcome,
+            )
+            .map_err(post_session_error.clone())?;
+            if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                &runtime_device_id,
+                user_text_final.as_deref(),
+                &execution_outcome,
+            ) {
+                eprintln!("selene_adapter read-only incident emission failed: {err}");
+            }
+            self.record_transcript_updates(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
+                user_text_partial,
+                user_text_final,
+                selene_text_partial,
+                selene_text_final,
+            )
+            .map_err(post_session_error.clone())?;
+            if let Some(ph1c) = ph1c_live_outcome.as_ref() {
+                self.emit_ph1c_gold_capture_and_learning(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    tenant_id_for_ph1c.as_deref(),
+                    Some(&runtime_device_id),
+                    session_turn_state.session_id_for_commits,
+                    ph1c,
+                )
+                .map_err(post_session_error.clone())?;
+                self.emit_ph1d_gold_capture_and_learning(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    tenant_id_for_ph1c.as_deref(),
+                    Some(&runtime_device_id),
+                    session_turn_state.session_id_for_commits,
+                    &ph1c.provider_call_trace,
+                    ph1c.final_text.clone(),
+                    ph1c_language_locale(&ph1c.response),
+                )
+                .map_err(post_session_error.clone())?;
+                self.emit_ph1c_live_telemetry(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    ph1c,
+                    tenant_id_for_ph1c.as_deref(),
+                )
+                .map_err(post_session_error.clone())?;
+            }
+            finalize_session_turn_record(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &runtime_device_id,
+                session_turn_state.session_id_for_commits,
+                session_turn_state.device_turn_sequence,
+                &runtime_execution_envelope.idempotency_key,
+                &self.runtime_node_id,
+                self.session_lease_ttl_ms,
+            )
+            .map_err(post_session_error.clone())?;
+            let response = execution_outcome_to_adapter_response(execution_outcome);
+            cache_authoritative_turn_response(
+                &self.session_retry_cache,
+                &actor_user_id,
+                &runtime_execution_envelope.idempotency_key,
+                &response,
+            )
+            .map_err(post_session_error.clone())?;
+            if persist_on_success {
+                self.append_legacy_journal_entry(request_for_journal.clone())
+                    .map_err(post_session_error)?;
+            }
+            Ok(response)
+        })();
+
+        if let Some(prepared) = prepared_persistence.as_ref() {
+            self.finalize_persistence_operation(
+                prepared,
+                now,
+                &runtime_device_id,
+                &runtime_execution_envelope.idempotency_key,
+                &execution_result,
+            )
+            .map_err(pre_session_error.clone())?;
         }
-        let confirm_answer =
-            infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
-        let locale = request
-            .audio_capture_ref
-            .as_ref()
-            .and_then(|capture| capture.locale_tag.as_deref())
-            .map(|raw| truncate_ascii(raw.trim(), 16))
-            .filter(|value| !value.is_empty());
-        let x_build = AppVoicePh1xBuildInput {
-            now,
-            thread_key: Some(thread_key.clone()),
-            thread_state: base_thread_state,
-            session_state: session_turn_state.session_snapshot.session_state,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: Vec::new(),
-            confirm_answer,
-            nlp_output: Some(nlp_output),
-            tool_response: None,
-            interruption: None,
-            locale,
-            last_failure_reason_code: None,
+
+        execution_result
+    }
+
+    fn try_reuse_persisted_authoritative_result(
+        &self,
+        now: MonotonicTimeNs,
+        actor_user_id: &UserId,
+        idempotency_key: &str,
+    ) -> Result<Option<Result<VoiceTurnAdapterResponse, VoiceTurnIngressError>>, String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(None);
         };
-        let execution_outcome = self
-            .ingress
-            .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
-            .map_err(|err| post_session_error(storage_error_to_string(err)))?;
-        if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
-            persist_ph1x_thread_state(
-                &mut store,
-                now,
-                &actor_user_id,
-                &thread_key,
-                ph1x_response.thread_state.clone(),
-                ph1x_response.reason_code,
-                correlation_id,
-                turn_id,
-            )
-            .map_err(post_session_error.clone())?;
+        let lookup_key = actor_idempotency_lookup_key(actor_user_id.as_str(), idempotency_key);
+        let operation_id = derived_operation_id(actor_user_id.as_str(), idempotency_key);
+        let mut guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        let Some(outcome) = guard.authoritative_outcomes.get(&lookup_key).cloned() else {
+            return Ok(None);
+        };
+        if let Some(record) = guard.outbox_records.get_mut(&operation_id) {
+            record.session_id = outcome.session_id.clone();
+            record.turn_id = outcome.turn_id;
+            record.acknowledgement_state = PersistenceAcknowledgementState::AuthoritativelyAcknowledged;
+            record.cleared_from_active_outbox_at_ns = Some(now.0);
+            record.last_reconciliation_decision =
+                Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome);
+            record.last_conflict_severity = Some(PersistenceConflictSeverity::Info);
         }
-        self.commit_ph1d_runtime_outcome(
-            &mut store,
+        let recovery_mode = guard.recovery_mode;
+        append_persistence_operation_journal_locked(
+            &mut guard,
             now,
-            correlation_id,
-            turn_id,
-            &actor_user_id,
-            tenant_id_for_ph1c.as_deref(),
-            Some(&runtime_device_id),
-            session_turn_state.session_id_for_commits,
-            session_turn_state.session_snapshot.session_state,
-            user_text_final.as_deref(),
-            &execution_outcome.voice_outcome,
-        )
-        .map_err(post_session_error.clone())?;
-        if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &actor_user_id,
-            tenant_id_for_ph1c.as_deref(),
-            &runtime_device_id,
-            user_text_final.as_deref(),
-            &execution_outcome,
-        ) {
-            eprintln!("selene_adapter read-only incident emission failed: {err}");
-        }
-        self.record_transcript_updates(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &actor_user_id,
-            Some(&runtime_device_id),
-            session_turn_state.session_id_for_commits,
-            user_text_partial,
-            user_text_final,
-            selene_text_partial,
-            selene_text_final,
-        )
-        .map_err(post_session_error.clone())?;
-        if let Some(ph1c) = ph1c_live_outcome.as_ref() {
-            self.emit_ph1c_gold_capture_and_learning(
-                &mut store,
-                now,
-                correlation_id,
-                turn_id,
-                &actor_user_id,
-                tenant_id_for_ph1c.as_deref(),
-                Some(&runtime_device_id),
-                session_turn_state.session_id_for_commits,
-                ph1c,
-            )
-            .map_err(post_session_error.clone())?;
-            self.emit_ph1d_gold_capture_and_learning(
-                &mut store,
-                now,
-                correlation_id,
-                turn_id,
-                &actor_user_id,
-                tenant_id_for_ph1c.as_deref(),
-                Some(&runtime_device_id),
-                session_turn_state.session_id_for_commits,
-                &ph1c.provider_call_trace,
-                ph1c.final_text.clone(),
-                ph1c_language_locale(&ph1c.response),
-            )
-            .map_err(post_session_error.clone())?;
-            self.emit_ph1c_live_telemetry(
-                &mut store,
-                now,
-                correlation_id,
-                turn_id,
-                ph1c,
-                tenant_id_for_ph1c.as_deref(),
-            )
-            .map_err(post_session_error.clone())?;
-        }
-        finalize_session_turn_record(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &runtime_device_id,
-            session_turn_state.session_id_for_commits,
-            session_turn_state.device_turn_sequence,
-            &runtime_execution_envelope.idempotency_key,
+            AdapterOperationJournalEventKind::DedupeReused,
+            &operation_id,
+            actor_user_id.as_str(),
+            idempotency_key,
+            outcome.session_id.clone(),
+            outcome.turn_id,
+            &outcome.device_id,
+            outcome.device_turn_sequence,
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged,
+            recovery_mode,
+            Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome),
+            Some(PersistenceConflictSeverity::Info),
+            None,
             &self.runtime_node_id,
-            self.session_lease_ttl_ms,
-        )
-        .map_err(post_session_error.clone())?;
-        let response = execution_outcome_to_adapter_response(execution_outcome);
-        cache_authoritative_turn_response(
-            &self.session_retry_cache,
-            &actor_user_id,
-            &runtime_execution_envelope.idempotency_key,
-            &response,
-        )
-        .map_err(post_session_error.clone())?;
-        if persist_on_success {
-            self.append_journal_entry(request_for_journal)
-                .map_err(post_session_error)?;
+        );
+        let cross_node = outcome.runtime_node_id != self.runtime_node_id;
+        append_persistence_audit_locked(
+            &mut guard,
+            now,
+            AdapterPersistenceAuditDecision::DedupeOutcome,
+            Some(operation_id.clone()),
+            Some(actor_user_id.as_str().to_string()),
+            Some(idempotency_key.to_string()),
+            outcome.session_id.clone(),
+            outcome.turn_id,
+            Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome),
+            Some(PersistenceConflictSeverity::Info),
+            &self.runtime_node_id,
+            Some(if cross_node {
+                format!(
+                    "cross-node dedupe reused authoritative outcome from node {}",
+                    outcome.runtime_node_id
+                )
+            } else {
+                "dedupe reused authoritative outcome on same node".to_string()
+            }),
+        );
+        let next_recovery_mode = recompute_persistence_recovery_mode_locked(&guard);
+        set_persistence_recovery_mode_locked(
+            &mut guard,
+            now,
+            next_recovery_mode,
+            &self.runtime_node_id,
+            Some("dedupe reuse completed".to_string()),
+        );
+        self.save_persistence_state_to_disk_locked(&guard)?;
+        Ok(Some(match outcome.result {
+            AdapterPersistedAuthoritativeResult::Success(mut response) => {
+                response.session_attach_outcome = Some(SessionAttachOutcome::RetryReusedResult);
+                Ok(response)
+            }
+            AdapterPersistedAuthoritativeResult::Failure(error) => Err(error),
+        }))
+    }
+
+    fn prepare_persistence_operation(
+        &self,
+        request: &VoiceTurnAdapterRequest,
+        runtime_execution_envelope: &RuntimeExecutionEnvelope,
+        now: MonotonicTimeNs,
+        persistence_mode: PersistenceInvocationMode,
+    ) -> Result<Option<PreparedPersistenceOperation>, String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(None);
+        };
+        if persistence_mode == PersistenceInvocationMode::LegacyJournalReplay {
+            return Ok(None);
         }
-        Ok(response)
+        let operation_id = derived_operation_id(
+            request.actor_user_id.as_str(),
+            &runtime_execution_envelope.idempotency_key,
+        );
+        let mut guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        let mut reconciliation_decision = None;
+        let conflict_severity = None;
+        match persistence_mode {
+            PersistenceInvocationMode::Standard => {
+                if let Some(existing_snapshot) = guard.outbox_records.get(&operation_id).cloned() {
+                    validate_outbox_record(&existing_snapshot)?;
+                    let recovery_mode = guard.recovery_mode;
+                    if !outbox_record_request_matches(
+                        &existing_snapshot,
+                        request,
+                        runtime_execution_envelope,
+                    ) {
+                        {
+                            let existing = guard
+                                .outbox_records
+                                .get_mut(&operation_id)
+                                .expect("existing outbox row must still exist");
+                            existing.acknowledgement_state =
+                                PersistenceAcknowledgementState::QuarantinedLocalState;
+                            existing.cleared_from_active_outbox_at_ns = Some(now.0);
+                            existing.last_reconciliation_decision =
+                                Some(ReconciliationDecision::QuarantineLocalState);
+                            existing.last_conflict_severity =
+                                Some(PersistenceConflictSeverity::QuarantineRequired);
+                        }
+                        append_persistence_operation_journal_locked(
+                            &mut guard,
+                            now,
+                            AdapterOperationJournalEventKind::Quarantined,
+                            &operation_id,
+                            &existing_snapshot.actor_user_id,
+                            &existing_snapshot.idempotency_key,
+                            existing_snapshot.session_id.clone(),
+                            existing_snapshot.turn_id,
+                            &existing_snapshot.device_id,
+                            existing_snapshot.device_turn_sequence,
+                            PersistenceAcknowledgementState::QuarantinedLocalState,
+                            recovery_mode,
+                            Some(ReconciliationDecision::QuarantineLocalState),
+                            Some(PersistenceConflictSeverity::QuarantineRequired),
+                            Some("outbox_request_mismatch".to_string()),
+                            &self.runtime_node_id,
+                        );
+                        append_persistence_audit_locked(
+                            &mut guard,
+                            now,
+                            AdapterPersistenceAuditDecision::QuarantineAction,
+                            Some(operation_id.clone()),
+                            Some(existing_snapshot.actor_user_id.clone()),
+                            Some(existing_snapshot.idempotency_key.clone()),
+                            existing_snapshot.session_id.clone(),
+                            existing_snapshot.turn_id,
+                            Some(ReconciliationDecision::QuarantineLocalState),
+                            Some(PersistenceConflictSeverity::QuarantineRequired),
+                            &self.runtime_node_id,
+                            Some("outbox request mismatch quarantined local state".to_string()),
+                        );
+                        set_persistence_recovery_mode_locked(
+                            &mut guard,
+                            now,
+                            PersistenceRecoveryMode::QuarantinedLocalState,
+                            &self.runtime_node_id,
+                            Some("outbox request mismatch".to_string()),
+                        );
+                        self.save_persistence_state_to_disk_locked(&guard)?;
+                        return Err("persistence_quarantine_required outbox_request_mismatch"
+                            .to_string());
+                    }
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::SubmissionAttempted,
+                        &operation_id,
+                        &existing_snapshot.actor_user_id,
+                        &existing_snapshot.idempotency_key,
+                        existing_snapshot.session_id.clone(),
+                        existing_snapshot.turn_id,
+                        &existing_snapshot.device_id,
+                        existing_snapshot.device_turn_sequence,
+                        existing_snapshot.acknowledgement_state,
+                        recovery_mode,
+                        None,
+                        None,
+                        Some("resubmitted_pending_operation".to_string()),
+                        &self.runtime_node_id,
+                    );
+                } else {
+                    let record = AdapterOutboxRecord {
+                        operation_id: operation_id.clone(),
+                        request_id: runtime_execution_envelope.request_id.clone(),
+                        trace_id: runtime_execution_envelope.trace_id.clone(),
+                        actor_user_id: request.actor_user_id.clone(),
+                        idempotency_key: runtime_execution_envelope.idempotency_key.clone(),
+                        session_id: runtime_execution_envelope
+                            .session_id
+                            .map(session_id_to_string),
+                        turn_id: Some(runtime_execution_envelope.turn_id.0),
+                        device_id: runtime_execution_envelope.device_identity.as_str().to_string(),
+                        device_turn_sequence: runtime_execution_envelope.device_turn_sequence,
+                        submission_timestamp_ns: now.0,
+                        retry_counter: 0,
+                        acknowledgement_state:
+                            PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+                        cleared_from_active_outbox_at_ns: None,
+                        last_reconciliation_decision: None,
+                        last_conflict_severity: None,
+                        request: request.clone(),
+                    };
+                    validate_outbox_record(&record)?;
+                    guard.outbox_records.insert(operation_id.clone(), record.clone());
+                    let recovery_mode = guard.recovery_mode;
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::Created,
+                        &operation_id,
+                        &record.actor_user_id,
+                        &record.idempotency_key,
+                        record.session_id.clone(),
+                        record.turn_id,
+                        &record.device_id,
+                        record.device_turn_sequence,
+                        record.acknowledgement_state,
+                        recovery_mode,
+                        None,
+                        None,
+                        None,
+                        &self.runtime_node_id,
+                    );
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::SubmissionAttempted,
+                        &operation_id,
+                        &record.actor_user_id,
+                        &record.idempotency_key,
+                        record.session_id.clone(),
+                        record.turn_id,
+                        &record.device_id,
+                        record.device_turn_sequence,
+                        record.acknowledgement_state,
+                        recovery_mode,
+                        None,
+                        None,
+                        None,
+                        &self.runtime_node_id,
+                    );
+                }
+            }
+            PersistenceInvocationMode::ExistingOutboxReplay => {
+                let existing_snapshot = guard
+                    .outbox_records
+                    .get(&operation_id)
+                    .cloned()
+                    .ok_or_else(|| "persistence_outbox_missing_for_replay".to_string())?;
+                validate_outbox_record(&existing_snapshot)?;
+                let recovery_mode = guard.recovery_mode;
+                if !outbox_record_request_matches(
+                    &existing_snapshot,
+                    request,
+                    runtime_execution_envelope,
+                ) {
+                    {
+                        let existing = guard
+                            .outbox_records
+                            .get_mut(&operation_id)
+                            .expect("existing outbox row must still exist");
+                        existing.acknowledgement_state =
+                            PersistenceAcknowledgementState::QuarantinedLocalState;
+                        existing.cleared_from_active_outbox_at_ns = Some(now.0);
+                        existing.last_reconciliation_decision =
+                            Some(ReconciliationDecision::QuarantineLocalState);
+                        existing.last_conflict_severity =
+                            Some(PersistenceConflictSeverity::QuarantineRequired);
+                    }
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::Quarantined,
+                        &operation_id,
+                        &existing_snapshot.actor_user_id,
+                        &existing_snapshot.idempotency_key,
+                        existing_snapshot.session_id.clone(),
+                        existing_snapshot.turn_id,
+                        &existing_snapshot.device_id,
+                        existing_snapshot.device_turn_sequence,
+                        PersistenceAcknowledgementState::QuarantinedLocalState,
+                        recovery_mode,
+                        Some(ReconciliationDecision::QuarantineLocalState),
+                        Some(PersistenceConflictSeverity::QuarantineRequired),
+                        Some("replay_request_mismatch".to_string()),
+                        &self.runtime_node_id,
+                    );
+                    append_persistence_audit_locked(
+                        &mut guard,
+                        now,
+                        AdapterPersistenceAuditDecision::QuarantineAction,
+                        Some(operation_id.clone()),
+                        Some(existing_snapshot.actor_user_id.clone()),
+                        Some(existing_snapshot.idempotency_key.clone()),
+                        existing_snapshot.session_id.clone(),
+                        existing_snapshot.turn_id,
+                        Some(ReconciliationDecision::QuarantineLocalState),
+                        Some(PersistenceConflictSeverity::QuarantineRequired),
+                        &self.runtime_node_id,
+                        Some("replay request mismatch quarantined local persistence".to_string()),
+                    );
+                    set_persistence_recovery_mode_locked(
+                        &mut guard,
+                        now,
+                        PersistenceRecoveryMode::QuarantinedLocalState,
+                        &self.runtime_node_id,
+                        Some("replay request mismatch".to_string()),
+                    );
+                    self.save_persistence_state_to_disk_locked(&guard)?;
+                    return Err("persistence_quarantine_required replay_request_mismatch"
+                        .to_string());
+                }
+                {
+                    let existing = guard
+                        .outbox_records
+                        .get_mut(&operation_id)
+                        .expect("existing outbox row must still exist");
+                    existing.retry_counter = existing.retry_counter.saturating_add(1);
+                }
+                reconciliation_decision = Some(ReconciliationDecision::RetrySameOperation);
+                if existing_snapshot.session_id.is_some() {
+                    reconciliation_decision = Some(ReconciliationDecision::RequestFreshSessionState);
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::FreshSessionStateRequested,
+                        &operation_id,
+                        &existing_snapshot.actor_user_id,
+                        &existing_snapshot.idempotency_key,
+                        existing_snapshot.session_id.clone(),
+                        existing_snapshot.turn_id,
+                        &existing_snapshot.device_id,
+                        existing_snapshot.device_turn_sequence,
+                        existing_snapshot.acknowledgement_state,
+                        recovery_mode,
+                        reconciliation_decision,
+                        None,
+                        Some("session snapshot refresh requested before replay".to_string()),
+                        &self.runtime_node_id,
+                    );
+                }
+                append_persistence_operation_journal_locked(
+                    &mut guard,
+                    now,
+                    AdapterOperationJournalEventKind::RetryAttempted,
+                    &operation_id,
+                    &existing_snapshot.actor_user_id,
+                    &existing_snapshot.idempotency_key,
+                    existing_snapshot.session_id.clone(),
+                    existing_snapshot.turn_id,
+                    &existing_snapshot.device_id,
+                    existing_snapshot.device_turn_sequence,
+                    existing_snapshot.acknowledgement_state,
+                    recovery_mode,
+                    reconciliation_decision,
+                    None,
+                    None,
+                    &self.runtime_node_id,
+                );
+                set_persistence_recovery_mode_locked(
+                    &mut guard,
+                    now,
+                    PersistenceRecoveryMode::Recovering,
+                    &self.runtime_node_id,
+                    Some("reconciling pending outbox operation".to_string()),
+                );
+            }
+            PersistenceInvocationMode::LegacyJournalReplay => unreachable!(),
+        }
+        let audit_ref = if reconciliation_decision.is_some() {
+            Some(
+                append_persistence_audit_locked(
+                    &mut guard,
+                    now,
+                    AdapterPersistenceAuditDecision::ReconciliationDecision,
+                    Some(operation_id.clone()),
+                    Some(request.actor_user_id.clone()),
+                    Some(runtime_execution_envelope.idempotency_key.clone()),
+                    runtime_execution_envelope.session_id.map(session_id_to_string),
+                    Some(runtime_execution_envelope.turn_id.0),
+                    reconciliation_decision,
+                    conflict_severity,
+                    &self.runtime_node_id,
+                    Some("reconciliation policy decision recorded".to_string()),
+                )
+                .to_string(),
+            )
+        } else {
+            None
+        };
+        self.save_persistence_state_to_disk_locked(&guard)?;
+        Ok(Some(PreparedPersistenceOperation {
+            operation_id,
+            persistence_state: PersistenceExecutionState::v1(
+                guard.recovery_mode,
+                PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+                reconciliation_decision,
+                conflict_severity,
+                false,
+                audit_ref,
+            )
+            .map_err(|err| format!("invalid persistence execution state: {err:?}"))?,
+        }))
+    }
+
+    fn finalize_persistence_operation(
+        &self,
+        prepared: &PreparedPersistenceOperation,
+        now: MonotonicTimeNs,
+        runtime_device_id: &DeviceId,
+        idempotency_key: &str,
+        result: &Result<VoiceTurnAdapterResponse, VoiceTurnIngressError>,
+    ) -> Result<(), String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(());
+        };
+        let mut guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        let record_snapshot = guard
+            .outbox_records
+            .get(&prepared.operation_id)
+            .cloned()
+            .ok_or_else(|| "persistence_outbox_missing_for_finalize".to_string())?;
+        match result {
+            Ok(response) => {
+                {
+                    let record = guard
+                        .outbox_records
+                        .get_mut(&prepared.operation_id)
+                        .expect("outbox record must still exist");
+                    record.session_id = response.session_id.clone();
+                    record.turn_id = response.turn_id;
+                    record.acknowledgement_state =
+                        PersistenceAcknowledgementState::AuthoritativelyAcknowledged;
+                    record.cleared_from_active_outbox_at_ns = Some(now.0);
+                    record.last_reconciliation_decision =
+                        prepared.persistence_state.reconciliation_decision;
+                    record.last_conflict_severity = Some(PersistenceConflictSeverity::Info);
+                }
+                guard.authoritative_outcomes.insert(
+                    actor_idempotency_lookup_key(&record_snapshot.actor_user_id, idempotency_key),
+                    AdapterAuthoritativeOutcomeRecord {
+                        actor_user_id: record_snapshot.actor_user_id.clone(),
+                        idempotency_key: idempotency_key.to_string(),
+                        session_id: response.session_id.clone(),
+                        turn_id: response.turn_id,
+                        session_state: response.session_state.clone(),
+                        device_id: runtime_device_id.as_str().to_string(),
+                        device_turn_sequence: record_snapshot.device_turn_sequence,
+                        acknowledged_at_ns: now.0,
+                        runtime_node_id: self.runtime_node_id.clone(),
+                        conflict_severity: Some(PersistenceConflictSeverity::Info),
+                        result: AdapterPersistedAuthoritativeResult::Success(response.clone()),
+                    },
+                );
+                let recovery_mode = guard.recovery_mode;
+                append_persistence_operation_journal_locked(
+                    &mut guard,
+                    now,
+                    AdapterOperationJournalEventKind::Acknowledged,
+                    &prepared.operation_id,
+                    &record_snapshot.actor_user_id,
+                    idempotency_key,
+                    response.session_id.clone(),
+                    response.turn_id,
+                    &record_snapshot.device_id,
+                    record_snapshot.device_turn_sequence,
+                    PersistenceAcknowledgementState::AuthoritativelyAcknowledged,
+                    recovery_mode,
+                    prepared.persistence_state.reconciliation_decision,
+                    Some(PersistenceConflictSeverity::Info),
+                    None,
+                    &self.runtime_node_id,
+                );
+                append_persistence_audit_locked(
+                    &mut guard,
+                    now,
+                    AdapterPersistenceAuditDecision::AcknowledgementOutcome,
+                    Some(prepared.operation_id.clone()),
+                    Some(record_snapshot.actor_user_id.clone()),
+                    Some(idempotency_key.to_string()),
+                    response.session_id.clone(),
+                    response.turn_id,
+                    prepared.persistence_state.reconciliation_decision,
+                    Some(PersistenceConflictSeverity::Info),
+                    &self.runtime_node_id,
+                    Some("authoritative acknowledgement recorded".to_string()),
+                );
+            }
+            Err(error) => {
+                let retryable = error.failure_class == FailureClass::RetryableRuntime
+                    || (error.failure_class == FailureClass::SessionConflict
+                        && !is_stale_conflict_reason(&error.reason_code));
+                if retryable {
+                    {
+                        let record = guard
+                            .outbox_records
+                            .get_mut(&prepared.operation_id)
+                            .expect("outbox record must still exist");
+                        record.retry_counter = record.retry_counter.saturating_add(1);
+                        record.last_reconciliation_decision =
+                            Some(ReconciliationDecision::RetrySameOperation);
+                        record.last_conflict_severity =
+                            Some(PersistenceConflictSeverity::Retryable);
+                    }
+                    let recovery_mode = guard.recovery_mode;
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::RetryAttempted,
+                        &prepared.operation_id,
+                        &record_snapshot.actor_user_id,
+                        idempotency_key,
+                        record_snapshot.session_id.clone(),
+                        record_snapshot.turn_id,
+                        &record_snapshot.device_id,
+                        record_snapshot.device_turn_sequence,
+                        record_snapshot.acknowledgement_state,
+                        recovery_mode,
+                        Some(ReconciliationDecision::RetrySameOperation),
+                        Some(PersistenceConflictSeverity::Retryable),
+                        error.reason.clone(),
+                        &self.runtime_node_id,
+                    );
+                    set_persistence_recovery_mode_locked(
+                        &mut guard,
+                        now,
+                        PersistenceRecoveryMode::DegradedRecovery,
+                        &self.runtime_node_id,
+                        Some("retryable persistence failure retained in outbox".to_string()),
+                    );
+                } else {
+                    let ack_state = terminal_persistence_failure_state(error);
+                    let conflict_severity = terminal_persistence_failure_severity(error);
+                    {
+                        let record = guard
+                            .outbox_records
+                            .get_mut(&prepared.operation_id)
+                            .expect("outbox record must still exist");
+                        record.session_id = error.session_id.clone();
+                        record.turn_id = error.turn_id;
+                        record.acknowledgement_state = ack_state;
+                        record.cleared_from_active_outbox_at_ns = Some(now.0);
+                        record.last_reconciliation_decision =
+                            prepared.persistence_state.reconciliation_decision;
+                        record.last_conflict_severity = Some(conflict_severity);
+                    }
+                    guard.authoritative_outcomes.insert(
+                        actor_idempotency_lookup_key(&record_snapshot.actor_user_id, idempotency_key),
+                        AdapterAuthoritativeOutcomeRecord {
+                            actor_user_id: record_snapshot.actor_user_id.clone(),
+                            idempotency_key: idempotency_key.to_string(),
+                            session_id: error.session_id.clone(),
+                            turn_id: error.turn_id,
+                            session_state: error.session_state.clone(),
+                            device_id: runtime_device_id.as_str().to_string(),
+                            device_turn_sequence: record_snapshot.device_turn_sequence,
+                            acknowledged_at_ns: now.0,
+                            runtime_node_id: self.runtime_node_id.clone(),
+                            conflict_severity: Some(conflict_severity),
+                            result: AdapterPersistedAuthoritativeResult::Failure(error.clone()),
+                        },
+                    );
+                    let recovery_mode = guard.recovery_mode;
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        now,
+                        AdapterOperationJournalEventKind::TerminalFailure,
+                        &prepared.operation_id,
+                        &record_snapshot.actor_user_id,
+                        idempotency_key,
+                        error.session_id.clone(),
+                        error.turn_id,
+                        &record_snapshot.device_id,
+                        record_snapshot.device_turn_sequence,
+                        ack_state,
+                        recovery_mode,
+                        prepared.persistence_state.reconciliation_decision,
+                        Some(conflict_severity),
+                        error.reason.clone(),
+                        &self.runtime_node_id,
+                    );
+                    append_persistence_audit_locked(
+                        &mut guard,
+                        now,
+                        AdapterPersistenceAuditDecision::AcknowledgementOutcome,
+                        Some(prepared.operation_id.clone()),
+                        Some(record_snapshot.actor_user_id.clone()),
+                        Some(idempotency_key.to_string()),
+                        error.session_id.clone(),
+                        error.turn_id,
+                        prepared.persistence_state.reconciliation_decision,
+                        Some(conflict_severity),
+                        &self.runtime_node_id,
+                        Some("terminal authoritative failure recorded".to_string()),
+                    );
+                }
+            }
+        }
+        let next_recovery_mode = recompute_persistence_recovery_mode_locked(&guard);
+        set_persistence_recovery_mode_locked(
+            &mut guard,
+            now,
+            next_recovery_mode,
+            &self.runtime_node_id,
+            Some("persistence finalization completed".to_string()),
+        );
+        self.save_persistence_state_to_disk_locked(&guard)
+    }
+
+    fn sync_authoritative_outcomes_into_retry_cache(
+        &self,
+        state: &AdapterPersistenceState,
+    ) -> Result<(), String> {
+        let mut cache = self
+            .session_retry_cache
+            .lock()
+            .map_err(|_| "adapter retry cache lock poisoned".to_string())?;
+        cache.clear();
+        for outcome in state.authoritative_outcomes.values() {
+            if let AdapterPersistedAuthoritativeResult::Success(response) = &outcome.result {
+                cache.insert(
+                    AdapterRetryCacheKey {
+                        actor_user_id: UserId::new(outcome.actor_user_id.clone())
+                            .map_err(|err| format!("invalid persisted actor_user_id: {err:?}"))?,
+                        idempotency_key: outcome.idempotency_key.clone(),
+                    },
+                    response.clone(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn reconcile_pending_outbox_records(&self) -> Result<(), String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(());
+        };
+        let pending_operation_ids = {
+            let mut guard = persistence
+                .state
+                .lock()
+                .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+            let pending = sorted_pending_outbox_operation_ids(&guard);
+            if !pending.is_empty() {
+                set_persistence_recovery_mode_locked(
+                    &mut guard,
+                    MonotonicTimeNs(1),
+                    PersistenceRecoveryMode::Recovering,
+                    &self.runtime_node_id,
+                    Some(format!("reconciling {} pending operations", pending.len())),
+                );
+                self.save_persistence_state_to_disk_locked(&guard)?;
+            }
+            pending
+        };
+        for operation_id in pending_operation_ids {
+            let (record, maybe_stale_error, prepared) = {
+                let mut guard = persistence
+                    .state
+                    .lock()
+                    .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+                let Some(record) = guard.outbox_records.get(&operation_id).cloned() else {
+                    continue;
+                };
+                if let Err(err) = validate_outbox_record(&record) {
+                    if let Some(row) = guard.outbox_records.get_mut(&operation_id) {
+                        row.acknowledgement_state =
+                            PersistenceAcknowledgementState::QuarantinedLocalState;
+                        row.cleared_from_active_outbox_at_ns = Some(1);
+                        row.last_reconciliation_decision =
+                            Some(ReconciliationDecision::QuarantineLocalState);
+                        row.last_conflict_severity =
+                            Some(PersistenceConflictSeverity::QuarantineRequired);
+                    }
+                    let recovery_mode = guard.recovery_mode;
+                    append_persistence_operation_journal_locked(
+                        &mut guard,
+                        MonotonicTimeNs(1),
+                        AdapterOperationJournalEventKind::Quarantined,
+                        &operation_id,
+                        &record.actor_user_id,
+                        &record.idempotency_key,
+                        record.session_id.clone(),
+                        record.turn_id,
+                        &record.device_id,
+                        record.device_turn_sequence,
+                        PersistenceAcknowledgementState::QuarantinedLocalState,
+                        recovery_mode,
+                        Some(ReconciliationDecision::QuarantineLocalState),
+                        Some(PersistenceConflictSeverity::QuarantineRequired),
+                        Some(err),
+                        &self.runtime_node_id,
+                    );
+                    append_persistence_audit_locked(
+                        &mut guard,
+                        MonotonicTimeNs(1),
+                        AdapterPersistenceAuditDecision::QuarantineAction,
+                        Some(operation_id.clone()),
+                        Some(record.actor_user_id.clone()),
+                        Some(record.idempotency_key.clone()),
+                        record.session_id.clone(),
+                        record.turn_id,
+                        Some(ReconciliationDecision::QuarantineLocalState),
+                        Some(PersistenceConflictSeverity::QuarantineRequired),
+                        &self.runtime_node_id,
+                        Some("invalid durable outbox record quarantined".to_string()),
+                    );
+                    set_persistence_recovery_mode_locked(
+                        &mut guard,
+                        MonotonicTimeNs(1),
+                        PersistenceRecoveryMode::QuarantinedLocalState,
+                        &self.runtime_node_id,
+                        Some("invalid durable outbox record".to_string()),
+                    );
+                    self.save_persistence_state_to_disk_locked(&guard)?;
+                    continue;
+                }
+                let stale_error = stale_replay_error_for_record(&guard, &record);
+                let prepared = PreparedPersistenceOperation {
+                    operation_id: operation_id.clone(),
+                    persistence_state: PersistenceExecutionState::v1(
+                        guard.recovery_mode,
+                        PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+                        if stale_error.is_some() {
+                            Some(ReconciliationDecision::RejectStaleOperation)
+                        } else {
+                            None
+                        },
+                        if stale_error.is_some() {
+                            Some(PersistenceConflictSeverity::StaleRejected)
+                        } else {
+                            None
+                        },
+                        false,
+                        None,
+                    )
+                    .map_err(|err| format!("invalid persistence execution state: {err:?}"))?,
+                };
+                (record, stale_error, prepared)
+            };
+            if let Some(error) = maybe_stale_error {
+                self.finalize_persistence_operation(
+                    &prepared,
+                    MonotonicTimeNs(record.submission_timestamp_ns.max(1)),
+                    &DeviceId::new(record.device_id.clone())
+                        .map_err(|err| format!("invalid persisted device_id: {err:?}"))?,
+                    &record.idempotency_key,
+                    &Err(error),
+                )?;
+                continue;
+            }
+            let _ = self.run_voice_turn_internal(
+                record.request,
+                None,
+                true,
+                true,
+                PersistenceInvocationMode::ExistingOutboxReplay,
+            );
+        }
+        let mut guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        guard.last_reconciled_at_ns = Some(1);
+        let next_recovery_mode = recompute_persistence_recovery_mode_locked(&guard);
+        set_persistence_recovery_mode_locked(
+            &mut guard,
+            MonotonicTimeNs(1),
+            next_recovery_mode,
+            &self.runtime_node_id,
+            Some("reconciliation pass completed".to_string()),
+        );
+        self.save_persistence_state_to_disk_locked(&guard)
     }
 
     pub fn default_from_env() -> Result<Self, String> {
@@ -4099,36 +5117,157 @@ impl AdapterRuntime {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(());
         };
-        let path = &persistence.journal_path;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                format!(
-                    "failed to create adapter store directory '{}': {}",
-                    parent.display(),
-                    err
-                )
-            })?;
-        }
-        if !path.exists() {
-            File::create(path).map_err(|err| {
-                format!(
-                    "failed to create adapter store journal '{}': {}",
-                    path.display(),
-                    err
-                )
-            })?;
+        for path in [&persistence.legacy_journal_path, &persistence.state_path] {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|err| {
+                    format!(
+                        "failed to create adapter store directory '{}': {}",
+                        parent.display(),
+                        err
+                    )
+                })?;
+            }
+            if !path.exists() {
+                File::create(path).map_err(|err| {
+                    format!(
+                        "failed to create adapter persistence file '{}': {}",
+                        path.display(),
+                        err
+                    )
+                })?;
+            }
         }
         Ok(())
     }
 
-    fn replay_journal_into_store(&self) -> Result<(), String> {
+    fn bootstrap_persistence_runtime(&self) -> Result<(), String> {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(());
         };
-        let file = File::open(&persistence.journal_path).map_err(|err| {
+        let mut state = self.load_persistence_state_from_disk()?;
+        self.replay_legacy_journal_into_store(&mut state)?;
+        {
+            let mut guard = persistence
+                .state
+                .lock()
+                .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+            *guard = state;
+            self.sync_authoritative_outcomes_into_retry_cache(&guard)?;
+            self.save_persistence_state_to_disk_locked(&guard)?;
+        }
+        self.reconcile_pending_outbox_records()?;
+        Ok(())
+    }
+
+    fn load_persistence_state_from_disk(&self) -> Result<AdapterPersistenceState, String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(AdapterPersistenceState::default());
+        };
+        let raw = fs::read_to_string(&persistence.state_path).map_err(|err| {
+            format!(
+                "failed reading adapter persistence state '{}': {}",
+                persistence.state_path.display(),
+                err
+            )
+        })?;
+        if raw.trim().is_empty() {
+            return Ok(AdapterPersistenceState::default());
+        }
+        match serde_json::from_str::<AdapterPersistenceState>(&raw) {
+            Ok(state) if state.schema_version == 2 => Ok(state),
+            Ok(state) => Err(format!(
+                "unsupported adapter persistence schema_version={}",
+                state.schema_version
+            )),
+            Err(err) => {
+                let mut quarantined = AdapterPersistenceState::default();
+                quarantined.recovery_mode = PersistenceRecoveryMode::QuarantinedLocalState;
+                append_persistence_audit_locked(
+                    &mut quarantined,
+                    MonotonicTimeNs(1),
+                    AdapterPersistenceAuditDecision::QuarantineAction,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(PersistenceConflictSeverity::QuarantineRequired),
+                    &self.runtime_node_id,
+                    Some(format!(
+                        "corrupted persistence state quarantined: {} ({err})",
+                        persistence.state_path.display()
+                    )),
+                );
+                let quarantine_path =
+                    quarantined_persistence_path(&persistence.state_path, "state_corrupt");
+                fs::rename(&persistence.state_path, &quarantine_path).map_err(|rename_err| {
+                    format!(
+                        "failed quarantining adapter persistence state '{}' -> '{}': {}",
+                        persistence.state_path.display(),
+                        quarantine_path.display(),
+                        rename_err
+                    )
+                })?;
+                File::create(&persistence.state_path).map_err(|create_err| {
+                    format!(
+                        "failed recreating adapter persistence state '{}': {}",
+                        persistence.state_path.display(),
+                        create_err
+                    )
+                })?;
+                Ok(quarantined)
+            }
+        }
+    }
+
+    fn save_persistence_state_to_disk_locked(
+        &self,
+        state: &AdapterPersistenceState,
+    ) -> Result<(), String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(());
+        };
+        let json = serde_json::to_vec_pretty(state)
+            .map_err(|err| format!("failed encoding adapter persistence state: {err}"))?;
+        let tmp_path = persistence.state_path.with_extension("json.tmp");
+        let mut file = File::create(&tmp_path).map_err(|err| {
+            format!(
+                "failed creating adapter persistence temp file '{}': {}",
+                tmp_path.display(),
+                err
+            )
+        })?;
+        file.write_all(&json)
+            .and_then(|_| file.sync_data())
+            .map_err(|err| {
+                format!(
+                    "failed writing adapter persistence temp file '{}': {}",
+                    tmp_path.display(),
+                    err
+                )
+            })?;
+        fs::rename(&tmp_path, &persistence.state_path).map_err(|err| {
+            format!(
+                "failed replacing adapter persistence state '{}': {}",
+                persistence.state_path.display(),
+                err
+            )
+        })?;
+        Ok(())
+    }
+
+    fn replay_legacy_journal_into_store(
+        &self,
+        state: &mut AdapterPersistenceState,
+    ) -> Result<(), String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(());
+        };
+        let file = File::open(&persistence.legacy_journal_path).map_err(|err| {
             format!(
                 "failed to open adapter store journal '{}': {}",
-                persistence.journal_path.display(),
+                persistence.legacy_journal_path.display(),
                 err
             )
         })?;
@@ -4136,7 +5275,7 @@ impl AdapterRuntime {
             let line = line_result.map_err(|err| {
                 format!(
                     "failed reading adapter store journal '{}' at line {}: {}",
-                    persistence.journal_path.display(),
+                    persistence.legacy_journal_path.display(),
                     line_no + 1,
                     err
                 )
@@ -4144,14 +5283,51 @@ impl AdapterRuntime {
             if line.trim().is_empty() {
                 continue;
             }
-            let entry: AdapterJournalEntry = serde_json::from_str(&line).map_err(|err| {
-                format!(
-                    "failed parsing adapter store journal '{}' at line {}: {}",
-                    persistence.journal_path.display(),
-                    line_no + 1,
-                    err
-                )
-            })?;
+            let entry: AdapterJournalEntry = match serde_json::from_str(&line) {
+                Ok(entry) => entry,
+                Err(err) => {
+                    state.recovery_mode = PersistenceRecoveryMode::QuarantinedLocalState;
+                    append_persistence_audit_locked(
+                        state,
+                        MonotonicTimeNs((line_no as u64).saturating_add(1)),
+                        AdapterPersistenceAuditDecision::QuarantineAction,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(PersistenceConflictSeverity::QuarantineRequired),
+                        &self.runtime_node_id,
+                        Some(format!(
+                            "legacy journal replay quarantined at line {}: {err}",
+                            line_no + 1
+                        )),
+                    );
+                    let quarantine_path = quarantined_persistence_path(
+                        &persistence.legacy_journal_path,
+                        "legacy_journal_corrupt",
+                    );
+                    fs::rename(&persistence.legacy_journal_path, &quarantine_path).map_err(
+                        |rename_err| {
+                            format!(
+                                "failed quarantining legacy journal '{}' -> '{}': {}",
+                                persistence.legacy_journal_path.display(),
+                                quarantine_path.display(),
+                                rename_err
+                            )
+                        },
+                    )?;
+                    File::create(&persistence.legacy_journal_path).map_err(|create_err| {
+                        format!(
+                            "failed recreating legacy journal '{}': {}",
+                            persistence.legacy_journal_path.display(),
+                            create_err
+                        )
+                    })?;
+                    return Ok(());
+                }
+            };
             if entry.schema_version != 1 {
                 return Err(format!(
                     "unsupported adapter store journal schema_version={} at line {}",
@@ -4159,19 +5335,39 @@ impl AdapterRuntime {
                     line_no + 1
                 ));
             }
-            self.run_voice_turn_internal(entry.request, None, false, true)
-                .map_err(|err| {
-                    format!(
-                        "journal replay failed at line {}: {}",
-                        line_no + 1,
-                        err.to_runtime_reason()
-                    )
-                })?;
+            self.run_voice_turn_internal(
+                entry.request,
+                None,
+                false,
+                true,
+                PersistenceInvocationMode::LegacyJournalReplay,
+            )
+            .map_err(|err| {
+                format!(
+                    "journal replay failed at line {}: {}",
+                    line_no + 1,
+                    err.to_runtime_reason()
+                )
+            })?;
+            append_persistence_audit_locked(
+                state,
+                MonotonicTimeNs((line_no as u64).saturating_add(1)),
+                AdapterPersistenceAuditDecision::LegacyJournalReplay,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &self.runtime_node_id,
+                Some(format!("replayed legacy journal line {}", line_no + 1)),
+            );
         }
         Ok(())
     }
 
-    fn append_journal_entry(&self, request: VoiceTurnAdapterRequest) -> Result<(), String> {
+    fn append_legacy_journal_entry(&self, request: VoiceTurnAdapterRequest) -> Result<(), String> {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(());
         };
@@ -4181,11 +5377,11 @@ impl AdapterRuntime {
         let mut file = OpenOptions::new()
             .append(true)
             .create(true)
-            .open(&persistence.journal_path)
+            .open(&persistence.legacy_journal_path)
             .map_err(|err| {
                 format!(
                     "failed opening adapter store journal '{}' for append: {}",
-                    persistence.journal_path.display(),
+                    persistence.legacy_journal_path.display(),
                     err
                 )
             })?;
@@ -4195,11 +5391,311 @@ impl AdapterRuntime {
             .map_err(|err| {
                 format!(
                     "failed writing adapter store journal '{}': {}",
-                    persistence.journal_path.display(),
+                    persistence.legacy_journal_path.display(),
                     err
                 )
             })?;
         Ok(())
+    }
+}
+
+fn adapter_persistence_state_path(journal_path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.state.json", journal_path.display()))
+}
+
+fn quarantined_persistence_path(path: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}.{}.quarantined", path.display(), suffix))
+}
+
+fn actor_idempotency_lookup_key(actor_user_id: &str, idempotency_key: &str) -> String {
+    format!("{actor_user_id}::{idempotency_key}")
+}
+
+fn derived_operation_id(actor_user_id: &str, idempotency_key: &str) -> String {
+    format!(
+        "op_{}",
+        stable_hash_hex_16(&format!("{actor_user_id}::{idempotency_key}"))
+    )
+}
+
+fn validate_persistence_ascii_token(field: &str, value: &str, max_len: usize) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field} must not be empty"));
+    }
+    if value.len() > max_len {
+        return Err(format!("{field} exceeds max length {max_len}"));
+    }
+    if !value.is_ascii() {
+        return Err(format!("{field} must be ASCII"));
+    }
+    Ok(())
+}
+
+fn validate_outbox_record(record: &AdapterOutboxRecord) -> Result<(), String> {
+    validate_persistence_ascii_token("outbox.operation_id", &record.operation_id, 128)?;
+    validate_persistence_ascii_token("outbox.request_id", &record.request_id, 256)?;
+    validate_persistence_ascii_token("outbox.trace_id", &record.trace_id, 256)?;
+    validate_persistence_ascii_token("outbox.actor_user_id", &record.actor_user_id, 128)?;
+    validate_persistence_ascii_token("outbox.idempotency_key", &record.idempotency_key, 256)?;
+    validate_persistence_ascii_token("outbox.device_id", &record.device_id, 128)?;
+    if let Some(session_id) = record.session_id.as_ref() {
+        validate_persistence_ascii_token("outbox.session_id", session_id, 128)?;
+    }
+    if matches!(record.turn_id, Some(0)) {
+        return Err("outbox.turn_id must be > 0 when provided".to_string());
+    }
+    if matches!(record.device_turn_sequence, Some(0)) {
+        return Err("outbox.device_turn_sequence must be > 0 when provided".to_string());
+    }
+    if record.request.actor_user_id != record.actor_user_id {
+        return Err("outbox.request.actor_user_id must match outbox.actor_user_id".to_string());
+    }
+    if record.request.turn_id != record.turn_id.unwrap_or(record.request.turn_id) {
+        return Err("outbox.request.turn_id must match outbox.turn_id".to_string());
+    }
+    if record.request.device_id.as_deref().unwrap_or(&record.device_id) != record.device_id {
+        return Err("outbox.request.device_id must match outbox.device_id".to_string());
+    }
+    if record
+        .request
+        .device_turn_sequence
+        .unwrap_or(record.device_turn_sequence.unwrap_or(record.request.turn_id))
+        != record
+            .device_turn_sequence
+            .unwrap_or(record.request.device_turn_sequence.unwrap_or(record.request.turn_id))
+    {
+        return Err(
+            "outbox.request.device_turn_sequence must match outbox.device_turn_sequence"
+                .to_string(),
+        );
+    }
+    if record.request.app_platform.trim().is_empty() {
+        return Err("outbox.request.app_platform must not be empty".to_string());
+    }
+    if record.request.trigger.trim().is_empty() {
+        return Err("outbox.request.trigger must not be empty".to_string());
+    }
+    Ok(())
+}
+
+fn outbox_record_request_matches(
+    record: &AdapterOutboxRecord,
+    request: &VoiceTurnAdapterRequest,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> bool {
+    record.actor_user_id == request.actor_user_id
+        && record.idempotency_key == runtime_execution_envelope.idempotency_key
+        && record.request_id == runtime_execution_envelope.request_id
+        && record.trace_id == runtime_execution_envelope.trace_id
+        && record.device_id == runtime_execution_envelope.device_identity.as_str()
+        && record.turn_id == Some(request.turn_id)
+        && record.device_turn_sequence == runtime_execution_envelope.device_turn_sequence
+        && record.request.device_id == request.device_id
+        && record.request.device_turn_sequence == request.device_turn_sequence
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_persistence_operation_journal_locked(
+    state: &mut AdapterPersistenceState,
+    now: MonotonicTimeNs,
+    event_kind: AdapterOperationJournalEventKind,
+    operation_id: &str,
+    actor_user_id: &str,
+    idempotency_key: &str,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    device_id: &str,
+    device_turn_sequence: Option<u64>,
+    acknowledgement_state: PersistenceAcknowledgementState,
+    recovery_mode: PersistenceRecoveryMode,
+    reconciliation_decision: Option<ReconciliationDecision>,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    detail: Option<String>,
+    runtime_node_id: &str,
+) {
+    let sequence = state.next_journal_sequence;
+    state.next_journal_sequence = state.next_journal_sequence.saturating_add(1);
+    state.operation_journal.push(AdapterOperationJournalEntry {
+        sequence,
+        operation_id: operation_id.to_string(),
+        request_id: state
+            .outbox_records
+            .get(operation_id)
+            .map(|row| row.request_id.clone())
+            .unwrap_or_else(|| "unknown_request".to_string()),
+        trace_id: state
+            .outbox_records
+            .get(operation_id)
+            .map(|row| row.trace_id.clone())
+            .unwrap_or_else(|| "unknown_trace".to_string()),
+        actor_user_id: actor_user_id.to_string(),
+        idempotency_key: idempotency_key.to_string(),
+        session_id,
+        turn_id,
+        device_id: device_id.to_string(),
+        device_turn_sequence,
+        at_ns: now.0,
+        acknowledgement_state,
+        recovery_mode,
+        reconciliation_decision,
+        conflict_severity,
+        event_kind,
+        detail,
+        runtime_node_id: runtime_node_id.to_string(),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_persistence_audit_locked(
+    state: &mut AdapterPersistenceState,
+    now: MonotonicTimeNs,
+    decision: AdapterPersistenceAuditDecision,
+    operation_id: Option<String>,
+    actor_user_id: Option<String>,
+    idempotency_key: Option<String>,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    _reconciliation_decision: Option<ReconciliationDecision>,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    runtime_node_id: &str,
+    note: Option<String>,
+) -> u64 {
+    let sequence = state.next_audit_sequence;
+    state.next_audit_sequence = state.next_audit_sequence.saturating_add(1);
+    state.audit_trail.push(AdapterPersistenceAuditEntry {
+        sequence,
+        at_ns: now.0,
+        operation_id,
+        actor_user_id,
+        idempotency_key,
+        session_id,
+        turn_id,
+        decision,
+        recovery_mode: state.recovery_mode,
+        conflict_severity,
+        runtime_node_id: runtime_node_id.to_string(),
+        note,
+    });
+    sequence
+}
+
+fn set_persistence_recovery_mode_locked(
+    state: &mut AdapterPersistenceState,
+    now: MonotonicTimeNs,
+    recovery_mode: PersistenceRecoveryMode,
+    runtime_node_id: &str,
+    note: Option<String>,
+) {
+    if state.recovery_mode == recovery_mode {
+        return;
+    }
+    state.recovery_mode = recovery_mode;
+    append_persistence_audit_locked(
+        state,
+        now,
+        AdapterPersistenceAuditDecision::RecoveryModeTransition,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        runtime_node_id,
+        note,
+    );
+}
+
+fn sorted_pending_outbox_operation_ids(state: &AdapterPersistenceState) -> Vec<String> {
+    let mut pending: Vec<_> = state
+        .outbox_records
+        .values()
+        .filter(|row| {
+            row.acknowledgement_state == PersistenceAcknowledgementState::PendingCloudAcknowledgement
+                && row.cleared_from_active_outbox_at_ns.is_none()
+        })
+        .collect();
+    pending.sort_by_key(|row| (row.submission_timestamp_ns, row.device_turn_sequence.unwrap_or(0)));
+    pending
+        .into_iter()
+        .map(|row| row.operation_id.clone())
+        .collect()
+}
+
+fn recompute_persistence_recovery_mode_locked(
+    state: &AdapterPersistenceState,
+) -> PersistenceRecoveryMode {
+    if state.outbox_records.values().any(|row| {
+        row.acknowledgement_state == PersistenceAcknowledgementState::QuarantinedLocalState
+    }) {
+        PersistenceRecoveryMode::QuarantinedLocalState
+    } else if state.outbox_records.values().any(|row| {
+        row.acknowledgement_state == PersistenceAcknowledgementState::PendingCloudAcknowledgement
+            && row.retry_counter > 0
+    }) {
+        PersistenceRecoveryMode::DegradedRecovery
+    } else if state.outbox_records.values().any(|row| {
+        row.acknowledgement_state == PersistenceAcknowledgementState::PendingCloudAcknowledgement
+            && row.cleared_from_active_outbox_at_ns.is_none()
+    }) {
+        PersistenceRecoveryMode::Recovering
+    } else {
+        PersistenceRecoveryMode::Normal
+    }
+}
+
+fn is_stale_conflict_reason(reason_code: &str) -> bool {
+    let normalized = reason_code.to_ascii_uppercase();
+    normalized.contains("STALE") || normalized.contains("DUPLICATE_DEVICE_TURN_SEQUENCE")
+}
+
+fn terminal_persistence_failure_state(
+    error: &VoiceTurnIngressError,
+) -> PersistenceAcknowledgementState {
+    if is_stale_conflict_reason(&error.reason_code) {
+        PersistenceAcknowledgementState::StaleRejected
+    } else {
+        PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+    }
+}
+
+fn terminal_persistence_failure_severity(
+    error: &VoiceTurnIngressError,
+) -> PersistenceConflictSeverity {
+    if is_stale_conflict_reason(&error.reason_code) {
+        PersistenceConflictSeverity::StaleRejected
+    } else {
+        PersistenceConflictSeverity::Info
+    }
+}
+
+fn stale_replay_error_for_record(
+    state: &AdapterPersistenceState,
+    record: &AdapterOutboxRecord,
+) -> Option<VoiceTurnIngressError> {
+    let record_session_id = record.session_id.as_ref()?;
+    let record_device_turn_sequence = record.device_turn_sequence?;
+    let record_turn_id = record.turn_id.unwrap_or(0);
+    let stale = state.authoritative_outcomes.values().any(|outcome| {
+        outcome.session_id.as_ref() == Some(record_session_id)
+            && outcome.device_id == record.device_id
+            && (outcome
+                .device_turn_sequence
+                .map(|sequence| sequence > record_device_turn_sequence)
+                .unwrap_or(false)
+                || outcome.turn_id.map(|turn_id| turn_id > record_turn_id).unwrap_or(false))
+    });
+    if stale {
+        Some(voice_turn_ingress_error(
+            FailureClass::SessionConflict,
+            "STALE_REPLAY_REJECTED".to_string(),
+            Some("session_conflict stale_replay_rejected".to_string()),
+            record.session_id.clone(),
+            record.turn_id,
+            None,
+        ))
+    } else {
+        None
     }
 }
 
@@ -8748,6 +10244,58 @@ mod tests {
         request
     }
 
+    fn temp_persistence_journal_path(label: &str) -> PathBuf {
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be >= unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("selene_adapter_{label}_{seed}.jsonl"));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(adapter_persistence_state_path(&path));
+        path
+    }
+
+    fn read_persistence_state_for_test(journal_path: &Path) -> AdapterPersistenceState {
+        let state_path = adapter_persistence_state_path(journal_path);
+        let raw = std::fs::read_to_string(&state_path).expect("persistence state must be readable");
+        if raw.trim().is_empty() {
+            AdapterPersistenceState::default()
+        } else {
+            serde_json::from_str(&raw).expect("persistence state must decode")
+        }
+    }
+
+    fn write_persistence_state_for_test(journal_path: &Path, state: &AdapterPersistenceState) {
+        let state_path = adapter_persistence_state_path(journal_path);
+        let json =
+            serde_json::to_vec_pretty(state).expect("persistence state must encode for test");
+        std::fs::write(&state_path, json).expect("persistence state must be writable");
+    }
+
+    fn cleanup_persistence_files_for_test(journal_path: &Path) {
+        let _ = std::fs::remove_file(journal_path);
+        let state_path = adapter_persistence_state_path(journal_path);
+        let _ = std::fs::remove_file(&state_path);
+        let _ = std::fs::remove_file(quarantined_persistence_path(
+            &state_path,
+            "state_corrupt",
+        ));
+        let _ = std::fs::remove_file(quarantined_persistence_path(
+            journal_path,
+            "legacy_journal_corrupt",
+        ));
+    }
+
+    fn with_scoped_runtime_node_id<T>(node_id: &str, f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let env_lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = env_lock.lock().expect("env lock poisoned");
+        let scope = ScopedEnvVar::set("SELENE_RUNTIME_NODE_ID", node_id);
+        let out = f();
+        drop(scope);
+        out
+    }
+
     fn base_report_query_request() -> UiHealthReportQueryRequest {
         UiHealthReportQueryRequest {
             correlation_id: Some(10_001),
@@ -12648,6 +14196,437 @@ mod tests {
         }
 
         let _ = std::fs::remove_file(journal_path);
+    }
+
+    #[test]
+    fn at_persistence_01_pending_operation_survives_restart() {
+        let journal_path = temp_persistence_journal_path("pending_survives_restart");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+        let request = base_request();
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id =
+            derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+
+        runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(request.now_ns.expect("request now must be present")),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        let state_before_restart = read_persistence_state_for_test(&journal_path);
+        let pending_record = state_before_restart
+            .outbox_records
+            .get(&operation_id)
+            .expect("pending outbox record must exist before restart");
+        assert_eq!(
+            pending_record.acknowledgement_state,
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement
+        );
+        assert!(pending_record.cleared_from_active_outbox_at_ns.is_none());
+
+        drop(runtime_one);
+
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("second runtime must reconcile pending outbox");
+
+        let state_after_restart = read_persistence_state_for_test(&journal_path);
+        let acknowledged_record = state_after_restart
+            .outbox_records
+            .get(&operation_id)
+            .expect("outbox record must survive restart");
+        assert_eq!(
+            acknowledged_record.acknowledgement_state,
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+        );
+        assert!(acknowledged_record.cleared_from_active_outbox_at_ns.is_some());
+        assert!(state_after_restart.last_reconciled_at_ns.is_some());
+        assert_eq!(
+            state_after_restart.recovery_mode,
+            PersistenceRecoveryMode::Normal
+        );
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_02_acknowledged_operation_clears_active_outbox() {
+        let journal_path = temp_persistence_journal_path("acknowledgement_clears");
+        let runtime = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+        let request = base_request();
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id =
+            derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+        let lookup_key = actor_idempotency_lookup_key(
+            &request.actor_user_id,
+            &envelope.idempotency_key,
+        );
+
+        let response = runtime
+            .run_voice_turn(request)
+            .expect("voice turn must succeed with persistence");
+
+        let state = read_persistence_state_for_test(&journal_path);
+        let record = state
+            .outbox_records
+            .get(&operation_id)
+            .expect("acknowledged outbox record must exist");
+        assert_eq!(
+            record.acknowledgement_state,
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+        );
+        assert!(record.cleared_from_active_outbox_at_ns.is_some());
+        assert_eq!(record.session_id, response.session_id);
+        assert_eq!(record.turn_id, response.turn_id);
+        assert!(sorted_pending_outbox_operation_ids(&state).is_empty());
+
+        let outcome = state
+            .authoritative_outcomes
+            .get(&lookup_key)
+            .expect("authoritative outcome must exist");
+        assert_eq!(outcome.session_id, response.session_id);
+        assert_eq!(outcome.turn_id, response.turn_id);
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_03_stale_replay_is_rejected() {
+        let journal_path = temp_persistence_journal_path("stale_replay_rejected");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+
+        let mut first = base_request();
+        first.correlation_id = 30_301;
+        first.turn_id = 40_301;
+        first.device_turn_sequence = Some(5);
+        first.now_ns = Some(10);
+        let first_response = runtime_one
+            .run_voice_turn(first.clone())
+            .expect("first request must succeed");
+        let session_id = first_response
+            .session_id
+            .clone()
+            .expect("first response session_id must be present");
+
+        let mut state = read_persistence_state_for_test(&journal_path);
+        let mut stale_request = base_request();
+        stale_request.correlation_id = 30_300;
+        stale_request.turn_id = 40_300;
+        stale_request.device_turn_sequence = Some(4);
+        stale_request.now_ns = Some(9);
+        let stale_envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&stale_request)
+            .expect("stale fallback runtime execution envelope must build");
+        let stale_operation_id =
+            derived_operation_id(&stale_request.actor_user_id, &stale_envelope.idempotency_key);
+        state.outbox_records.insert(
+            stale_operation_id.clone(),
+            AdapterOutboxRecord {
+                operation_id: stale_operation_id.clone(),
+                request_id: stale_envelope.request_id.clone(),
+                trace_id: stale_envelope.trace_id.clone(),
+                actor_user_id: stale_request.actor_user_id.clone(),
+                idempotency_key: stale_envelope.idempotency_key.clone(),
+                session_id: Some(session_id.clone()),
+                turn_id: Some(stale_request.turn_id),
+                device_id: stale_request
+                    .device_id
+                    .clone()
+                    .expect("stale request device_id must be present"),
+                device_turn_sequence: stale_request.device_turn_sequence,
+                submission_timestamp_ns: stale_request.now_ns.expect("stale request now must exist"),
+                retry_counter: 1,
+                acknowledgement_state: PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+                cleared_from_active_outbox_at_ns: None,
+                last_reconciliation_decision: None,
+                last_conflict_severity: None,
+                request: stale_request.clone(),
+            },
+        );
+        write_persistence_state_for_test(&journal_path, &state);
+        drop(runtime_one);
+
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must reconcile stale outbox record");
+
+        let after = read_persistence_state_for_test(&journal_path);
+        let stale_record = after
+            .outbox_records
+            .get(&stale_operation_id)
+            .expect("stale outbox record must remain for auditability");
+        assert_eq!(
+            stale_record.acknowledgement_state,
+            PersistenceAcknowledgementState::StaleRejected
+        );
+        assert_eq!(
+            stale_record.last_reconciliation_decision,
+            Some(ReconciliationDecision::RejectStaleOperation)
+        );
+        assert_eq!(
+            stale_record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::StaleRejected)
+        );
+        assert!(after.operation_journal.iter().any(|entry| {
+            entry.operation_id == stale_operation_id
+                && entry.conflict_severity
+                    == Some(PersistenceConflictSeverity::StaleRejected)
+        }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_04_lawful_retry_reuses_prior_authoritative_outcome_across_nodes() {
+        let journal_path = temp_persistence_journal_path("cross_node_retry_reuse");
+        let first_response = with_scoped_runtime_node_id("node_a", || {
+            let runtime = AdapterRuntime::new_with_persistence(
+                AppServerIngressRuntime::default(),
+                Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+                journal_path.clone(),
+                true,
+            )
+            .expect("node_a runtime must construct");
+            runtime
+                .run_voice_turn(base_request())
+                .expect("node_a request must succeed")
+        });
+
+        let retried_response = with_scoped_runtime_node_id("node_b", || {
+            let runtime = AdapterRuntime::new_with_persistence(
+                AppServerIngressRuntime::default(),
+                Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+                journal_path.clone(),
+                true,
+            )
+            .expect("node_b runtime must construct");
+            runtime
+                .run_voice_turn(base_request())
+                .expect("node_b retry request must reuse prior authoritative result")
+        });
+
+        assert_eq!(retried_response.session_id, first_response.session_id);
+        assert_eq!(retried_response.turn_id, first_response.turn_id);
+        assert_eq!(
+            retried_response.session_attach_outcome,
+            Some(SessionAttachOutcome::RetryReusedResult)
+        );
+
+        let state = read_persistence_state_for_test(&journal_path);
+        assert!(state.audit_trail.iter().any(|entry| {
+            entry.decision == AdapterPersistenceAuditDecision::DedupeOutcome
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note.contains("cross-node dedupe reused authoritative outcome from node node_a"))
+                    .unwrap_or(false)
+        }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_05_inconsistent_persistence_is_quarantined() {
+        let journal_path = temp_persistence_journal_path("quarantine_inconsistent");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+        let request = base_request();
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id =
+            derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+
+        runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(request.now_ns.expect("request now must be present")),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        let mut state = read_persistence_state_for_test(&journal_path);
+        let row = state
+            .outbox_records
+            .get_mut(&operation_id)
+            .expect("pending outbox record must exist");
+        row.device_id.clear();
+        write_persistence_state_for_test(&journal_path, &state);
+        drop(runtime_one);
+
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must quarantine inconsistent persistence");
+
+        let after = read_persistence_state_for_test(&journal_path);
+        let quarantined_record = after
+            .outbox_records
+            .get(&operation_id)
+            .expect("quarantined outbox record must remain visible");
+        assert_eq!(
+            quarantined_record.acknowledgement_state,
+            PersistenceAcknowledgementState::QuarantinedLocalState
+        );
+        assert_eq!(
+            quarantined_record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::QuarantineRequired)
+        );
+        assert_eq!(
+            after.recovery_mode,
+            PersistenceRecoveryMode::QuarantinedLocalState
+        );
+        assert!(after.audit_trail.iter().any(|entry| {
+            entry.decision == AdapterPersistenceAuditDecision::QuarantineAction
+                && entry.conflict_severity
+                    == Some(PersistenceConflictSeverity::QuarantineRequired)
+        }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_06_recovery_modes_transition_deterministically() {
+        let journal_path = temp_persistence_journal_path("recovery_mode_transitions");
+        let runtime = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+
+        let mut request = base_request();
+        request.correlation_id = 31_006;
+        request.turn_id = 41_006;
+        request.now_ns = Some(50);
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let prepared = runtime
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(50),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+        let initial_state = read_persistence_state_for_test(&journal_path);
+        assert_eq!(initial_state.recovery_mode, PersistenceRecoveryMode::Normal);
+
+        runtime
+            .finalize_persistence_operation(
+                &prepared,
+                MonotonicTimeNs(50),
+                &DeviceId::new(
+                    request
+                        .device_id
+                        .clone()
+                        .expect("device_id must exist for finalize test"),
+                )
+                .expect("device_id must parse"),
+                &envelope.idempotency_key,
+                &Err(voice_turn_ingress_error(
+                    FailureClass::RetryableRuntime,
+                    "RETRY_RESULT_MISSING".to_string(),
+                    Some("retry_result_missing".to_string()),
+                    None,
+                    Some(request.turn_id),
+                    None,
+                )),
+            )
+            .expect("retryable persistence finalization must succeed");
+
+        let degraded_state = read_persistence_state_for_test(&journal_path);
+        assert_eq!(
+            degraded_state.recovery_mode,
+            PersistenceRecoveryMode::DegradedRecovery
+        );
+        let operation_id =
+            derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+        let degraded_record = degraded_state
+            .outbox_records
+            .get(&operation_id)
+            .expect("degraded outbox record must exist");
+        assert_eq!(
+            degraded_record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::Retryable)
+        );
+
+        let mut quarantined_state = degraded_state.clone();
+        let row = quarantined_state
+            .outbox_records
+            .get_mut(&operation_id)
+            .expect("degraded outbox row must exist");
+        row.device_id.clear();
+        write_persistence_state_for_test(&journal_path, &quarantined_state);
+        drop(runtime);
+
+        let _runtime_after_restart = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must process quarantined persistence");
+
+        let final_state = read_persistence_state_for_test(&journal_path);
+        let transitions = final_state
+            .audit_trail
+            .iter()
+            .filter(|entry| {
+                entry.decision == AdapterPersistenceAuditDecision::RecoveryModeTransition
+            })
+            .map(|entry| entry.recovery_mode)
+            .collect::<Vec<_>>();
+        assert!(transitions.contains(&PersistenceRecoveryMode::DegradedRecovery));
+        assert!(transitions.contains(&PersistenceRecoveryMode::QuarantinedLocalState));
+        assert_eq!(
+            final_state.recovery_mode,
+            PersistenceRecoveryMode::QuarantinedLocalState
+        );
+
+        cleanup_persistence_files_for_test(&journal_path);
     }
 
     #[test]
