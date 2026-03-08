@@ -98,6 +98,26 @@ fail‑closed behavior when no valid simulation path exists
 
 prevention of unauthorized state mutation
 
+Simulation Registry Governance
+
+The Authority Layer must integrate with the canonical simulation registry so that simulations remain versioned, certified, and traceable.
+
+Responsibilities include:
+
+verifying simulation registration in the simulation catalog
+
+verifying simulation version identity
+
+verifying simulation certification state before execution
+
+verifying simulation metadata completeness
+
+recording simulation version and certification state in the execution envelope
+
+ensuring simulation execution always references a traceable simulation identifier
+
+This ensures every protected action is tied to a versioned and certifiable deterministic workflow.
+
 Simulation Certification
 
 The Authority Layer must ensure that simulations are not only present, but certifiably safe for runtime use.
@@ -115,6 +135,30 @@ verifying simulation certification state before execution
 blocking uncertified simulations from execution
 
 This prevents partially defined or unsafe simulations from entering live runtime execution.
+
+Formal Policy and Rule Engine Integration
+
+The Authority Layer must integrate with a deterministic policy and rule engine responsible for evaluating authorization and governance decisions.
+
+Responsibilities include:
+
+policy evaluation using request context
+
+policy evaluation using identity scope
+
+policy evaluation using device and platform context
+
+policy evaluation using simulation metadata
+
+policy evaluation using tenant or deployment governance rules
+
+support for deterministic allow / deny outcomes
+
+support for rule‑based escalation and step‑up verification
+
+recording rule identifiers and policy version in the execution envelope
+
+This ensures policy decisions are deterministic, auditable, and replayable.
 
 Policy Engine Integration
 
@@ -321,6 +365,28 @@ rejection of untrusted local permission or authority assumptions
 binding trust decisions to the current execution envelope only
 
 The Authority Layer is responsible for establishing the trusted runtime boundary.
+
+Authority Decision Log
+
+The Authority Layer must maintain a structured decision log for all protected authorization paths.
+
+Responsibilities include:
+
+recording which authority rule was evaluated
+
+recording which policy rule identifiers were applied
+
+recording allow, deny, degrade, or step-up outcomes
+
+recording relevant reason codes
+
+recording simulation identifiers and policy references
+
+recording the final authority decision in a replayable form
+
+recording the governing session_id and turn_id for each protected decision
+
+This makes authority behavior auditable, debuggable, and explainable.
 
 Authority Decision Log
 
