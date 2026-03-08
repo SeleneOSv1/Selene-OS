@@ -290,6 +290,24 @@ ensuring retries return cached authoritative outcomes
 
 Cross-device behavior must remain deterministic and convergent.
 
+Cluster Coordination Integration
+
+The Persistence + Sync Layer must integrate with the cluster-coordination posture defined by the Session Engine, Platform Runtime, and Runtime Governance Layer.
+
+Responsibilities include:
+
+reading canonical session ownership posture where required
+
+respecting lease-owner and failover coordination outcomes during reconciliation
+
+preventing persistence replay against sessions whose ownership state is uncertain
+
+supporting deterministic refusal when cluster ownership certainty is insufficient
+
+recording cluster-coordination effects on persistence decisions
+
+This ensures reconciliation and replay do not create split-brain correctness failures across runtime nodes.
+
 Cross-Node Dedupe Consensus
 
 The Persistence + Sync Layer must ensure deduplication remains correct across runtime nodes, not only within a single process.
@@ -418,6 +436,24 @@ recovery_mode_transitions
 
 These metrics allow operators to detect distributed synchronization anomalies.
 
+Replay and Incident Recovery Foundations
+
+The Persistence + Sync Layer must provide the persistence foundations required for later replay and incident analysis workflows.
+
+Responsibilities include:
+
+recording enough normalized operation history to reconstruct reconciliation decisions
+
+recording retry lineage and acknowledgement lineage
+
+recording canonical session and device ordering inputs used during replay decisions
+
+supporting incident reconstruction from journal, outbox, and recovery records
+
+supporting deterministic replay input extraction for later PH1.J and Runtime Governance verification workflows
+
+This ensures later incident and replay systems operate from governed persistence history rather than ad hoc logs.
+
 Persistence Audit Trail
 
 The Persistence + Sync Layer must maintain a replayable audit trail for critical persistence decisions.
@@ -435,6 +471,22 @@ recording recovery-mode transitions
 recording conflict classifications
 
 This makes persistence behavior explainable during incident analysis.
+
+Persistence Replay Safety
+
+The Persistence + Sync Layer must ensure replay behavior remains safe and deterministic.
+
+Responsibilities include:
+
+preventing replay from bypassing canonical authority decisions
+
+preventing replay from inventing missing acknowledgement state
+
+ensuring replay uses the same idempotency identities and canonical ordering inputs as the original execution path
+
+supporting deterministic replay refusal when persistence history is incomplete, quarantined, or corrupted
+
+This ensures replay strengthens correctness and incident analysis rather than becoming an alternate execution path.
 
 Failure Behavior
 
@@ -487,6 +539,12 @@ These systems may integrate later but must not weaken synchronization correctnes
 Completion Criteria
 
 Build Section 05 is complete when:
+
+cluster-coordination integration exists
+
+replay and incident recovery foundations exist
+
+persistence replay safety rules exist
 
 a durable outbox exists
 
