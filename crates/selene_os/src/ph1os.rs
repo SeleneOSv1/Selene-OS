@@ -18,19 +18,21 @@ use selene_kernel_contracts::ph1d::{
 use selene_kernel_contracts::ph1doc::{DocValidationStatus, DocumentSourceKind};
 use selene_kernel_contracts::ph1feedback::FeedbackEventRecord;
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
-use selene_kernel_contracts::ph1n::{Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::ph1n::{Ph1nRequest, Ph1nResponse};
 use selene_kernel_contracts::ph1os::{
     OsCapabilityId, OsDecisionComputeOk, OsDecisionComputeRequest, OsGateDecision, OsNextMove,
     OsOutcomeUtilizationEntry, OsPolicyEvaluateOk, OsPolicyEvaluateRequest, OsRefuse,
     OsRequestEnvelope, Ph1OsRequest, Ph1OsResponse, OS_CLARIFY_OWNER_ENGINE_ID,
 };
-use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
 use selene_kernel_contracts::ph1selfheal::{
     FailureContainmentAction, FailureProviderContext, ProblemCardState, PromotionDecisionAction,
     SelfHealCardChain,
 };
 use selene_kernel_contracts::ph1vision::VisualSourceKind;
+use selene_kernel_contracts::runtime_execution::{
+    AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, SchemaVersion, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 use serde_json::{json, Value};
@@ -525,6 +527,7 @@ impl OsTopLevelTurnPath {
 pub enum OsVoicePlatform {
     Ios,
     Android,
+    Tablet,
     Desktop,
 }
 
@@ -533,6 +536,7 @@ impl OsVoicePlatform {
         match self {
             OsVoicePlatform::Ios => "IOS",
             OsVoicePlatform::Android => "ANDROID",
+            OsVoicePlatform::Tablet => "TABLET",
             OsVoicePlatform::Desktop => "DESKTOP",
         }
     }
@@ -542,6 +546,7 @@ fn app_platform_from_os_voice_platform(platform: OsVoicePlatform) -> AppPlatform
     match platform {
         OsVoicePlatform::Ios => AppPlatform::Ios,
         OsVoicePlatform::Android => AppPlatform::Android,
+        OsVoicePlatform::Tablet => AppPlatform::Tablet,
         OsVoicePlatform::Desktop => AppPlatform::Desktop,
     }
 }
@@ -566,7 +571,7 @@ fn fallback_runtime_execution_envelope_for_os_voice_turn(
             top_level_turn_input.correlation_id.0
         ))?,
     };
-    RuntimeExecutionEnvelope::v1(
+    RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
         format!("corr-{}", top_level_turn_input.correlation_id.0),
         format!(
             "trace:os-voice:{}:{}",
@@ -579,9 +584,18 @@ fn fallback_runtime_execution_envelope_for_os_voice_turn(
         actor_user_id.clone(),
         fallback_device_id,
         app_platform_from_os_voice_platform(voice_context.platform),
+        PlatformRuntimeContext::default_for_platform_and_trigger(
+            app_platform_from_os_voice_platform(voice_context.platform),
+            match voice_context.trigger {
+                OsVoiceTrigger::Explicit => RuntimeEntryTrigger::Explicit,
+                OsVoiceTrigger::WakeWord => RuntimeEntryTrigger::WakeWord,
+            },
+        )?,
         voice_id_request.session_state_ref.session_id,
         top_level_turn_input.turn_id,
+        None,
         AdmissionState::ExecutionAdmitted,
+        None,
     )
 }
 
@@ -2600,6 +2614,7 @@ fn voice_identity_runtime_context(
     let platform = match voice_context.platform {
         OsVoicePlatform::Ios => VoiceIdentityPlatform::Ios,
         OsVoicePlatform::Android => VoiceIdentityPlatform::Android,
+        OsVoicePlatform::Tablet => VoiceIdentityPlatform::Android,
         OsVoicePlatform::Desktop => VoiceIdentityPlatform::Desktop,
     };
     let channel = match voice_context.trigger {

@@ -56,10 +56,14 @@ pub enum InviteeType {
     Associate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AppPlatform {
     Ios,
     Android,
+    Tablet,
     Desktop,
 }
 
@@ -68,6 +72,7 @@ impl AppPlatform {
         match self {
             AppPlatform::Ios => "IOS",
             AppPlatform::Android => "ANDROID",
+            AppPlatform::Tablet => "TABLET",
             AppPlatform::Desktop => "DESKTOP",
         }
     }
@@ -94,7 +99,10 @@ pub enum DraftStatus {
 impl Validate for AppPlatform {
     fn validate(&self) -> Result<(), ContractViolation> {
         match self {
-            AppPlatform::Ios | AppPlatform::Android | AppPlatform::Desktop => Ok(()),
+            AppPlatform::Ios
+            | AppPlatform::Android
+            | AppPlatform::Tablet
+            | AppPlatform::Desktop => Ok(()),
         }
     }
 }

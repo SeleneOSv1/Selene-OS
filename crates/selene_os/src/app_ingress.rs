@@ -59,13 +59,6 @@ use selene_kernel_contracts::ph1onb::{
     ONB_EMPLOYEE_SENDER_VERIFY_COMMIT, ONB_PRIMARY_DEVICE_CONFIRM_COMMIT, ONB_SESSION_START_DRAFT,
     ONB_TERMS_ACCEPT_COMMIT,
 };
-use selene_kernel_contracts::ph1w::{
-    Ph1wRequest, Ph1wResponse, WakeEnrollCompleteCommitRequest, WakeEnrollDeferCommitRequest,
-    WakeEnrollSampleCommitRequest, WakeEnrollStartDraftRequest,
-    WakeEnrollStatus as ContractWakeEnrollStatus, WakeEnrollmentSessionId, WakeRequest,
-    WakeSampleResult, WakeSimulationType, PH1W_CONTRACT_VERSION, WAKE_ENROLL_COMPLETE_COMMIT,
-    WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT, WAKE_ENROLL_START_DRAFT,
-};
 use selene_kernel_contracts::ph1persona::{
     PersonaDeliveryPolicyRef, PersonaPreferenceKey, PersonaPreferenceSignal,
     PersonaProfileValidateRequest, PersonaRequestEnvelope, PersonaValidationStatus,
@@ -78,10 +71,19 @@ use selene_kernel_contracts::ph1simfinder::{
     FinderTerminalPacket,
 };
 use selene_kernel_contracts::ph1tts::StyleProfileRef;
-use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
+use selene_kernel_contracts::ph1w::{
+    Ph1wRequest, Ph1wResponse, WakeEnrollCompleteCommitRequest, WakeEnrollDeferCommitRequest,
+    WakeEnrollSampleCommitRequest, WakeEnrollStartDraftRequest,
+    WakeEnrollStatus as ContractWakeEnrollStatus, WakeEnrollmentSessionId, WakeRequest,
+    WakeSampleResult, WakeSimulationType, PH1W_CONTRACT_VERSION, WAKE_ENROLL_COMPLETE_COMMIT,
+    WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT, WAKE_ENROLL_START_DRAFT,
+};
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
     StepUpCapabilities, ThreadState,
+};
+use selene_kernel_contracts::runtime_execution::{
+    AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -136,6 +138,7 @@ impl AppVoiceIngressRequest {
             correlation_id,
             turn_id,
             app_platform,
+            trigger,
             &voice_id_request,
             &actor_user_id,
             device_id.as_ref(),
@@ -225,6 +228,7 @@ fn fallback_runtime_execution_envelope_for_app_voice_request(
     correlation_id: CorrelationId,
     turn_id: TurnId,
     app_platform: AppPlatform,
+    trigger: OsVoiceTrigger,
     voice_id_request: &Ph1VoiceIdRequest,
     actor_user_id: &UserId,
     device_id: Option<&DeviceId>,
@@ -233,16 +237,25 @@ fn fallback_runtime_execution_envelope_for_app_voice_request(
         Some(device_id) => device_id.clone(),
         None => DeviceId::new(format!("app_ingress_device_{}", correlation_id.0))?,
     };
-    RuntimeExecutionEnvelope::v1(
+    RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
         format!("corr-{}", correlation_id.0),
         format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
         format!("turn:{}:{}", correlation_id.0, turn_id.0),
         actor_user_id.clone(),
         fallback_device_id,
         app_platform,
+        PlatformRuntimeContext::default_for_platform_and_trigger(
+            app_platform,
+            match trigger {
+                OsVoiceTrigger::Explicit => RuntimeEntryTrigger::Explicit,
+                OsVoiceTrigger::WakeWord => RuntimeEntryTrigger::WakeWord,
+            },
+        )?,
         voice_id_request.session_state_ref.session_id,
         turn_id,
+        None,
         AdmissionState::SessionResolved,
+        None,
     )
 }
 
@@ -1351,15 +1364,16 @@ impl AppServerIngressRuntime {
                     .map_err(StorageError::ContractViolation)?;
                 let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
                 let wake_status = match wake_out {
-                    Ph1wResponse::Ok(ok) => ok
-                        .enroll_start_result
-                        .ok_or_else(|| {
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1w_response.enroll_start_result",
-                                reason: "wake enroll start result must be present",
-                            })
-                        })?
-                        .wake_enroll_status,
+                    Ph1wResponse::Ok(ok) => {
+                        ok.enroll_start_result
+                            .ok_or_else(|| {
+                                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                    field: "ph1w_response.enroll_start_result",
+                                    reason: "wake enroll start result must be present",
+                                })
+                            })?
+                            .wake_enroll_status
+                    }
                     Ph1wResponse::Refuse(_) => {
                         return Err(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
@@ -1450,15 +1464,16 @@ impl AppServerIngressRuntime {
                     .map_err(StorageError::ContractViolation)?;
                 let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
                 let wake_status = match wake_out {
-                    Ph1wResponse::Ok(ok) => ok
-                        .enroll_sample_result
-                        .ok_or_else(|| {
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1w_response.enroll_sample_result",
-                                reason: "wake enroll sample result must be present",
-                            })
-                        })?
-                        .wake_enroll_status,
+                    Ph1wResponse::Ok(ok) => {
+                        ok.enroll_sample_result
+                            .ok_or_else(|| {
+                                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                    field: "ph1w_response.enroll_sample_result",
+                                    reason: "wake enroll sample result must be present",
+                                })
+                            })?
+                            .wake_enroll_status
+                    }
                     Ph1wResponse::Refuse(_) => {
                         return Err(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
@@ -1536,15 +1551,16 @@ impl AppServerIngressRuntime {
                     .map_err(StorageError::ContractViolation)?;
                 let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
                 let wake_status = match wake_out {
-                    Ph1wResponse::Ok(ok) => ok
-                        .enroll_complete_result
-                        .ok_or_else(|| {
-                            StorageError::ContractViolation(ContractViolation::InvalidValue {
-                                field: "ph1w_response.enroll_complete_result",
-                                reason: "wake enroll complete result must be present",
-                            })
-                        })?
-                        .wake_enroll_status,
+                    Ph1wResponse::Ok(ok) => {
+                        ok.enroll_complete_result
+                            .ok_or_else(|| {
+                                StorageError::ContractViolation(ContractViolation::InvalidValue {
+                                    field: "ph1w_response.enroll_complete_result",
+                                    reason: "wake enroll complete result must be present",
+                                })
+                            })?
+                            .wake_enroll_status
+                    }
                     Ph1wResponse::Refuse(_) => {
                         return Err(StorageError::ContractViolation(
                             ContractViolation::InvalidValue {
@@ -3532,7 +3548,10 @@ fn onboarding_sender_user_id_for_session(
 }
 
 fn wake_enrollment_required_for_platform(app_platform: AppPlatform) -> bool {
-    matches!(app_platform, AppPlatform::Android | AppPlatform::Desktop)
+    matches!(
+        app_platform,
+        AppPlatform::Android | AppPlatform::Tablet | AppPlatform::Desktop
+    )
 }
 
 fn wake_enrollment_completed_for_session(
@@ -3592,7 +3611,10 @@ fn ensure_wake_enrollment_completed_for_platform(
     Ok(())
 }
 
-fn onboarding_user_for_device(store: &Ph1fStore, device_id: &DeviceId) -> Result<UserId, StorageError> {
+fn onboarding_user_for_device(
+    store: &Ph1fStore,
+    device_id: &DeviceId,
+) -> Result<UserId, StorageError> {
     store
         .get_device(device_id)
         .map(|device| device.user_id.clone())
@@ -3845,6 +3867,7 @@ fn os_voice_platform_from_app_platform(app_platform: AppPlatform) -> OsVoicePlat
     match app_platform {
         AppPlatform::Ios => OsVoicePlatform::Ios,
         AppPlatform::Android => OsVoicePlatform::Android,
+        AppPlatform::Tablet => OsVoicePlatform::Tablet,
         AppPlatform::Desktop => OsVoicePlatform::Desktop,
     }
 }
@@ -4374,7 +4397,10 @@ fn finder_clarify_question(key: FieldKey) -> String {
 fn finder_allowed_answer_formats(key: FieldKey) -> Vec<String> {
     match key {
         FieldKey::RecipientContact => {
-            vec!["+14155550100".to_string(), "tom@example.invalid".to_string()]
+            vec![
+                "+14155550100".to_string(),
+                "tom@example.invalid".to_string(),
+            ]
         }
         FieldKey::When => vec![
             "Tomorrow at 7 PM".to_string(),
@@ -4522,7 +4548,9 @@ fn build_ph1x_request_from_agent_input_packet(
     )
     .map_err(StorageError::ContractViolation)?;
     let step_up_capabilities = match app_platform {
-        AppPlatform::Ios | AppPlatform::Android => StepUpCapabilities::v1(true, true),
+        AppPlatform::Ios | AppPlatform::Android | AppPlatform::Tablet => {
+            StepUpCapabilities::v1(true, true)
+        }
         AppPlatform::Desktop => StepUpCapabilities::v1(false, true),
     };
     req = req
@@ -8639,10 +8667,7 @@ mod tests {
                 MonotonicTimeNs(112),
             )
             .unwrap();
-        assert_eq!(
-            voice.next_step,
-            AppOnboardingContinueNextStep::WakeEnroll
-        );
+        assert_eq!(voice.next_step, AppOnboardingContinueNextStep::WakeEnroll);
         assert!(voice.voice_artifact_sync_receipt_ref.is_some());
 
         let complete_before_wake_err = runtime
@@ -8683,7 +8708,10 @@ mod tests {
                 MonotonicTimeNs(113),
             )
             .unwrap();
-        assert_eq!(wake_start.next_step, AppOnboardingContinueNextStep::WakeEnroll);
+        assert_eq!(
+            wake_start.next_step,
+            AppOnboardingContinueNextStep::WakeEnroll
+        );
 
         for idx in 0..3 {
             let wake_sample = runtime
@@ -8704,7 +8732,10 @@ mod tests {
                 )
                 .unwrap();
             if idx < 2 {
-                assert_eq!(wake_sample.next_step, AppOnboardingContinueNextStep::WakeEnroll);
+                assert_eq!(
+                    wake_sample.next_step,
+                    AppOnboardingContinueNextStep::WakeEnroll
+                );
             }
         }
 

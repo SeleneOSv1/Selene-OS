@@ -11014,6 +11014,14 @@ impl Ph1fStore {
                 "notification_token_bound",
                 "android_wakeword_configured",
             ],
+            AppPlatform::Tablet => &[
+                "install_launch_handshake",
+                "mic_permission_granted",
+                "background_audio_enabled",
+                "push_permission_granted",
+                "notification_token_bound",
+                "android_wakeword_configured",
+            ],
             AppPlatform::Desktop => &[
                 "install_launch_handshake",
                 "mic_permission_granted",
@@ -11036,7 +11044,7 @@ impl Ph1fStore {
             ));
         }
         let expected_signer = match app_platform {
-            AppPlatform::Ios | AppPlatform::Android => "selene_mobile_app",
+            AppPlatform::Ios | AppPlatform::Android | AppPlatform::Tablet => "selene_mobile_app",
             AppPlatform::Desktop => "selene_desktop_app",
         };
         if signer != expected_signer {

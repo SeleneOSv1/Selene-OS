@@ -586,6 +586,7 @@ impl SimulationExecutor {
         match app_platform {
             AppPlatform::Ios => OsVoicePlatform::Ios,
             AppPlatform::Android => OsVoicePlatform::Android,
+            AppPlatform::Tablet => OsVoicePlatform::Tablet,
             AppPlatform::Desktop => OsVoicePlatform::Desktop,
         }
     }

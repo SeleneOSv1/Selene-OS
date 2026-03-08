@@ -16,20 +16,16 @@ use axum::{
     Json, Router,
 };
 use selene_adapter::{
-    app_ui_assets, AdapterHealthResponse, AdapterRuntime, AdapterSyncHealth,
-    InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
-    OnboardingContinueAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
-    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
-    VoiceTurnAdapterResponse, VoiceTurnIngressError,
+    app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
+    AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
+    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse, UiChatTranscriptResponse,
+    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
+    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    VoiceTurnIngressError,
 };
 use selene_engines::ph1e::startup_outbound_self_check_logs;
-use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
-use selene_kernel_contracts::ph1link::AppPlatform;
-use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, FailureClass, RuntimeExecutionEnvelope,
-};
+use selene_kernel_contracts::runtime_execution::{FailureClass, RuntimeExecutionEnvelope};
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 struct UiHealthDetailQueryParams {
@@ -998,38 +994,12 @@ fn runtime_execution_envelope_from_voice_turn_request(
     idempotency_key: &str,
     device_id: &str,
 ) -> Result<RuntimeExecutionEnvelope, String> {
-    let platform = match request.app_platform.trim().to_ascii_uppercase().as_str() {
-        "IOS" => AppPlatform::Ios,
-        "ANDROID" => AppPlatform::Android,
-        "DESKTOP" => AppPlatform::Desktop,
-        _ => {
-            return Err(format!(
-                "invalid app_platform '{}'; expected IOS|ANDROID|DESKTOP",
-                request.app_platform
-            ))
-        }
-    };
-    let actor_identity = UserId::new(request.actor_user_id.clone())
-        .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
-    let device_identity = DeviceId::new(device_id.to_string())
-        .map_err(|err| format!("invalid device_id: {err:?}"))?;
-    let turn_id = TurnId(request.turn_id);
-    RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
-        request_id.to_string(),
-        format!("trace:voice-turn:{}:{}", request_id, request.turn_id),
-        idempotency_key.to_string(),
-        actor_identity,
-        device_identity,
-        platform,
-        None,
-        turn_id,
-        request
-            .device_turn_sequence
-            .or(Some(request.turn_id.max(1))),
-        AdmissionState::IngressValidated,
-        None,
+    build_runtime_execution_envelope_for_voice_turn_request(
+        request,
+        request_id,
+        idempotency_key,
+        device_id,
     )
-    .map_err(|err| format!("invalid runtime_execution_envelope: {err:?}"))
 }
 
 fn failure_class_for_security_reject(kind: SecurityRejectKind) -> FailureClass {
@@ -1274,6 +1244,14 @@ mod tests {
             turn_id: 20_001,
             device_turn_sequence: None,
             app_platform: "DESKTOP".to_string(),
+            platform_version: None,
+            device_class: None,
+            runtime_client_version: None,
+            hardware_capability_profile: None,
+            network_profile: None,
+            claimed_capabilities: None,
+            integrity_status: None,
+            attestation_ref: None,
             trigger: "EXPLICIT".to_string(),
             actor_user_id: "tenant_a:user_ingress_test".to_string(),
             tenant_id: Some("tenant_a".to_string()),
@@ -1334,6 +1312,14 @@ mod tests {
             turn_id: 98_001,
             device_turn_sequence: None,
             app_platform: "IOS".to_string(),
+            platform_version: None,
+            device_class: None,
+            runtime_client_version: None,
+            hardware_capability_profile: None,
+            network_profile: None,
+            claimed_capabilities: None,
+            integrity_status: None,
+            attestation_ref: None,
             trigger: "EXPLICIT".to_string(),
             actor_user_id,
             tenant_id: Some("tenant_1".to_string()),
@@ -1697,6 +1683,62 @@ mod tests {
             "expected runtime status after ingress pass, got {}",
             response.status()
         );
+    }
+
+    #[tokio::test]
+    async fn ingress_voice_turn_tablet_platform_reaches_runtime_path() {
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let mut request = base_voice_request();
+        request.app_platform = "TABLET".to_string();
+        request.platform_version = Some("15.2".to_string());
+        request.device_class = Some("TABLET".to_string());
+        request.runtime_client_version = Some("2.3.4".to_string());
+        request.hardware_capability_profile = Some("TABLET_PRO".to_string());
+        request.network_profile = Some("STANDARD".to_string());
+        request.claimed_capabilities = Some(vec![
+            "MICROPHONE".to_string(),
+            "CAMERA".to_string(),
+            "WAKE_WORD".to_string(),
+            "SENSOR_AVAILABILITY".to_string(),
+        ]);
+        request.integrity_status = Some("ATTESTED".to_string());
+        request.attestation_ref = Some("tablet_attest_http_01".to_string());
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(
+                &request.actor_user_id,
+                request.device_id.as_deref().unwrap_or_default(),
+            )),
+            "req-tablet-1",
+            "idem-tablet-1",
+            now_ms,
+            "nonce-tablet-1",
+        );
+        let response = run_voice_turn(State(state), headers, Json(request)).await;
+        assert_ne!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn ingress_voice_turn_invalid_platform_is_rejected_deterministically() {
+        let state = test_state_with_config(IngressSecurityConfig::from_env());
+        let mut request = base_voice_request();
+        request.app_platform = "BLACKBERRY".to_string();
+        let now_ms = system_time_now_ms();
+        let headers = security_headers(
+            Some(bearer_for(
+                &request.actor_user_id,
+                request.device_id.as_deref().unwrap_or_default(),
+            )),
+            "req-invalid-platform-1",
+            "idem-invalid-platform-1",
+            now_ms,
+            "nonce-invalid-platform-1",
+        );
+        let response = run_voice_turn(State(state), headers, Json(request)).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body: VoiceTurnAdapterResponse = decode_json_response(response).await;
+        assert_eq!(body.failure_class, Some(FailureClass::InvalidPayload));
+        assert_eq!(body.reason_code, "INVALID_RUNTIME_EXECUTION_ENVELOPE");
     }
 
     #[tokio::test]

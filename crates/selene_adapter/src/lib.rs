@@ -103,7 +103,11 @@ use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
 };
 use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, FailureClass, RuntimeExecutionEnvelope, SessionAttachOutcome,
+    default_device_class_for_platform, default_hardware_capability_profile,
+    supported_capabilities_for_platform, AdmissionState, ClientCompatibilityStatus,
+    ClientIntegrityStatus, DeviceCapability, DeviceClass, DeviceTrustClass, FailureClass,
+    NetworkProfile, PlatformRuntimeContext, PlatformTriggerPolicy, RuntimeEntryTrigger,
+    RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -247,6 +251,14 @@ pub struct VoiceTurnAdapterRequest {
     pub turn_id: u64,
     pub device_turn_sequence: Option<u64>,
     pub app_platform: String,
+    pub platform_version: Option<String>,
+    pub device_class: Option<String>,
+    pub runtime_client_version: Option<String>,
+    pub hardware_capability_profile: Option<String>,
+    pub network_profile: Option<String>,
+    pub claimed_capabilities: Option<Vec<String>>,
+    pub integrity_status: Option<String>,
+    pub attestation_ref: Option<String>,
     pub trigger: String,
     pub actor_user_id: String,
     pub tenant_id: Option<String>,
@@ -3575,6 +3587,8 @@ impl AdapterRuntime {
             .device_turn_sequence
             .unwrap_or(request.turn_id)
             .max(1);
+        let platform_context = normalize_platform_runtime_context(&request, app_platform, trigger)
+            .map_err(pre_session_error.clone())?;
         let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
         let runtime_device_id = match request_device_id {
             Some(id) => id,
@@ -3588,13 +3602,14 @@ impl AdapterRuntime {
         };
         let mut runtime_execution_envelope = match runtime_execution_envelope {
             Some(envelope) => {
-                RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
+                RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
                     envelope.request_id,
                     envelope.trace_id,
                     envelope.idempotency_key,
                     actor_user_id.clone(),
                     runtime_device_id.clone(),
                     app_platform,
+                    platform_context.clone(),
                     envelope.session_id,
                     turn_id,
                     envelope.device_turn_sequence.or(Some(device_turn_sequence)),
@@ -3613,6 +3628,7 @@ impl AdapterRuntime {
                 &runtime_device_id,
                 Some(device_turn_sequence),
                 None,
+                Some(platform_context.clone()),
             )
             .map_err(|err| {
                 pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
@@ -4251,9 +4267,10 @@ fn parse_app_platform(value: &str) -> Result<AppPlatform, String> {
     match normalized.as_str() {
         "IOS" => Ok(AppPlatform::Ios),
         "ANDROID" => Ok(AppPlatform::Android),
+        "TABLET" => Ok(AppPlatform::Tablet),
         "DESKTOP" => Ok(AppPlatform::Desktop),
         _ => Err(format!(
-            "invalid app_platform '{}'; expected IOS|ANDROID|DESKTOP",
+            "invalid app_platform '{}'; expected IOS|ANDROID|TABLET|DESKTOP",
             value
         )),
     }
@@ -4269,6 +4286,263 @@ fn parse_trigger(value: &str) -> Result<OsVoiceTrigger, String> {
             value
         )),
     }
+}
+
+fn normalize_ascii_platform_token(
+    field: &'static str,
+    value: Option<&str>,
+    fallback: &str,
+    max_len: usize,
+) -> Result<String, String> {
+    let candidate = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(fallback);
+    if candidate.len() > max_len {
+        return Err(format!("{field} exceeds max length {max_len}"));
+    }
+    if !candidate.is_ascii() {
+        return Err(format!("{field} must be ASCII"));
+    }
+    Ok(candidate.to_ascii_uppercase())
+}
+
+fn parse_device_class_literal(value: &str) -> Result<DeviceClass, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "PHONE" => Ok(DeviceClass::Phone),
+        "TABLET" => Ok(DeviceClass::Tablet),
+        "DESKTOP" => Ok(DeviceClass::Desktop),
+        _ => Err(format!(
+            "invalid device_class '{}'; expected PHONE|TABLET|DESKTOP",
+            value
+        )),
+    }
+}
+
+fn parse_network_profile_literal(value: &str) -> Result<NetworkProfile, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "UNKNOWN" => Ok(NetworkProfile::Unknown),
+        "OFFLINE" => Ok(NetworkProfile::Offline),
+        "DEGRADED" => Ok(NetworkProfile::Degraded),
+        "STANDARD" => Ok(NetworkProfile::Standard),
+        "HIGH_THROUGHPUT" => Ok(NetworkProfile::HighThroughput),
+        _ => Err(format!(
+            "invalid network_profile '{}'; expected UNKNOWN|OFFLINE|DEGRADED|STANDARD|HIGH_THROUGHPUT",
+            value
+        )),
+    }
+}
+
+fn parse_device_capability_literal(value: &str) -> Result<DeviceCapability, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "MICROPHONE" => Ok(DeviceCapability::Microphone),
+        "CAMERA" => Ok(DeviceCapability::Camera),
+        "SPEAKER_OUTPUT" => Ok(DeviceCapability::SpeakerOutput),
+        "FILE_SYSTEM_ACCESS" => Ok(DeviceCapability::FileSystemAccess),
+        "SENSOR_AVAILABILITY" => Ok(DeviceCapability::SensorAvailability),
+        "HARDWARE_ACCELERATION" => Ok(DeviceCapability::HardwareAcceleration),
+        "WAKE_WORD" => Ok(DeviceCapability::WakeWord),
+        _ => Err(format!(
+            "invalid claimed capability '{}'; expected canonical capability token",
+            value
+        )),
+    }
+}
+
+fn parse_integrity_status_literal(value: &str) -> Result<ClientIntegrityStatus, String> {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "UNKNOWN" => Ok(ClientIntegrityStatus::Unknown),
+        "INTEGRITY_UNAVAILABLE" => Ok(ClientIntegrityStatus::IntegrityUnavailable),
+        "INTEGRITY_VERIFIED" => Ok(ClientIntegrityStatus::IntegrityVerified),
+        "ATTESTED" => Ok(ClientIntegrityStatus::Attested),
+        "INTEGRITY_FAILED" => Ok(ClientIntegrityStatus::IntegrityFailed),
+        _ => Err(format!(
+            "invalid integrity_status '{}'; expected UNKNOWN|INTEGRITY_UNAVAILABLE|INTEGRITY_VERIFIED|ATTESTED|INTEGRITY_FAILED",
+            value
+        )),
+    }
+}
+
+fn runtime_entry_trigger_from_os_trigger(trigger: OsVoiceTrigger) -> RuntimeEntryTrigger {
+    match trigger {
+        OsVoiceTrigger::Explicit => RuntimeEntryTrigger::Explicit,
+        OsVoiceTrigger::WakeWord => RuntimeEntryTrigger::WakeWord,
+    }
+}
+
+fn minimum_supported_client_version_for_platform(app_platform: AppPlatform) -> String {
+    let env_key = match app_platform {
+        AppPlatform::Ios => "SELENE_MIN_CLIENT_VERSION_IOS",
+        AppPlatform::Android => "SELENE_MIN_CLIENT_VERSION_ANDROID",
+        AppPlatform::Tablet => "SELENE_MIN_CLIENT_VERSION_TABLET",
+        AppPlatform::Desktop => "SELENE_MIN_CLIENT_VERSION_DESKTOP",
+    };
+    env::var(env_key).unwrap_or_else(|_| "1.0.0".to_string())
+}
+
+fn parse_version_segments(version: &str) -> Result<Vec<u32>, String> {
+    let raw = version.trim();
+    if raw.is_empty() {
+        return Err("version must not be empty".to_string());
+    }
+    if raw == "UNKNOWN" {
+        return Ok(Vec::new());
+    }
+    let mut segments = Vec::new();
+    for part in raw.split('.') {
+        if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            return Err(format!("invalid version '{}'", version));
+        }
+        let value = part
+            .parse::<u32>()
+            .map_err(|_| format!("invalid version '{}'", version))?;
+        segments.push(value);
+    }
+    Ok(segments)
+}
+
+fn compare_version_segments(left: &[u32], right: &[u32]) -> std::cmp::Ordering {
+    let width = left.len().max(right.len());
+    for idx in 0..width {
+        let l = *left.get(idx).unwrap_or(&0);
+        let r = *right.get(idx).unwrap_or(&0);
+        match l.cmp(&r) {
+            std::cmp::Ordering::Equal => continue,
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn derive_device_trust_class(
+    integrity_status: ClientIntegrityStatus,
+    compatibility_status: ClientCompatibilityStatus,
+) -> DeviceTrustClass {
+    match (integrity_status, compatibility_status) {
+        (ClientIntegrityStatus::IntegrityFailed, _) => DeviceTrustClass::UntrustedDevice,
+        (_, ClientCompatibilityStatus::UnsupportedClient) => DeviceTrustClass::UntrustedDevice,
+        (_, ClientCompatibilityStatus::UpgradeRequired) => DeviceTrustClass::RestrictedDevice,
+        (ClientIntegrityStatus::Attested, ClientCompatibilityStatus::Compatible) => {
+            DeviceTrustClass::TrustedDevice
+        }
+        _ => DeviceTrustClass::StandardDevice,
+    }
+}
+
+fn normalize_claimed_capabilities(
+    request: &VoiceTurnAdapterRequest,
+    app_platform: AppPlatform,
+) -> Result<(Vec<DeviceCapability>, Vec<DeviceCapability>), String> {
+    let supported = supported_capabilities_for_platform(app_platform);
+    let supported_set: std::collections::BTreeSet<DeviceCapability> =
+        supported.iter().copied().collect();
+    let mut claimed = std::collections::BTreeSet::new();
+    if let Some(raw_capabilities) = request.claimed_capabilities.as_ref() {
+        for raw in raw_capabilities {
+            let capability = parse_device_capability_literal(raw)?;
+            if !supported_set.contains(&capability) {
+                return Err(format!(
+                    "unsupported capability '{}' for platform {}",
+                    raw,
+                    app_platform.as_str()
+                ));
+            }
+            claimed.insert(capability);
+        }
+    }
+    let claimed_capabilities: Vec<DeviceCapability> = claimed.iter().copied().collect();
+    let negotiated_capabilities = if claimed_capabilities.is_empty() {
+        supported
+    } else {
+        claimed_capabilities.clone()
+    };
+    Ok((claimed_capabilities, negotiated_capabilities))
+}
+
+fn normalize_platform_runtime_context(
+    request: &VoiceTurnAdapterRequest,
+    app_platform: AppPlatform,
+    trigger: OsVoiceTrigger,
+) -> Result<PlatformRuntimeContext, String> {
+    let requested_trigger = runtime_entry_trigger_from_os_trigger(trigger);
+    let device_class = match request.device_class.as_deref() {
+        Some(raw) => parse_device_class_literal(raw)?,
+        None => default_device_class_for_platform(app_platform),
+    };
+    let platform_version = normalize_ascii_platform_token(
+        "voice_turn_adapter_request.platform_version",
+        request.platform_version.as_deref(),
+        "UNKNOWN",
+        64,
+    )?;
+    let runtime_client_version = normalize_ascii_platform_token(
+        "voice_turn_adapter_request.runtime_client_version",
+        request.runtime_client_version.as_deref(),
+        "UNKNOWN",
+        64,
+    )?;
+    let hardware_capability_profile = normalize_ascii_platform_token(
+        "voice_turn_adapter_request.hardware_capability_profile",
+        request.hardware_capability_profile.as_deref(),
+        default_hardware_capability_profile(app_platform),
+        64,
+    )?;
+    let network_profile = match request.network_profile.as_deref() {
+        Some(raw) => parse_network_profile_literal(raw)?,
+        None => NetworkProfile::Unknown,
+    };
+    let (claimed_capabilities, negotiated_capabilities) =
+        normalize_claimed_capabilities(request, app_platform)?;
+    let integrity_status = match request.integrity_status.as_deref() {
+        Some(raw) => parse_integrity_status_literal(raw)?,
+        None => ClientIntegrityStatus::Unknown,
+    };
+    let minimum_supported_client_version =
+        minimum_supported_client_version_for_platform(app_platform);
+    let compatibility_status = if runtime_client_version == "UNKNOWN" {
+        ClientCompatibilityStatus::Unknown
+    } else {
+        let client_segments = parse_version_segments(&runtime_client_version)?;
+        let minimum_segments = parse_version_segments(&minimum_supported_client_version)?;
+        if compare_version_segments(&client_segments, &minimum_segments).is_lt() {
+            ClientCompatibilityStatus::UpgradeRequired
+        } else {
+            ClientCompatibilityStatus::Compatible
+        }
+    };
+    let device_trust_class = derive_device_trust_class(integrity_status, compatibility_status);
+    let trigger_policy = match app_platform {
+        AppPlatform::Ios => PlatformTriggerPolicy::ExplicitOnly,
+        AppPlatform::Android | AppPlatform::Tablet | AppPlatform::Desktop => {
+            PlatformTriggerPolicy::WakeOrExplicit
+        }
+    };
+    let wake_capability_present = negotiated_capabilities.contains(&DeviceCapability::WakeWord);
+    let trigger_allowed = match requested_trigger {
+        RuntimeEntryTrigger::Explicit => true,
+        RuntimeEntryTrigger::WakeWord => {
+            trigger_policy == PlatformTriggerPolicy::WakeOrExplicit && wake_capability_present
+        }
+    };
+    PlatformRuntimeContext::v1(
+        app_platform,
+        platform_version,
+        device_class,
+        runtime_client_version,
+        hardware_capability_profile,
+        network_profile,
+        claimed_capabilities,
+        negotiated_capabilities,
+        device_trust_class,
+        integrity_status,
+        compatibility_status,
+        Some(minimum_supported_client_version),
+        request.attestation_ref.clone(),
+        requested_trigger,
+        trigger_policy,
+        trigger_allowed,
+    )
+    .map_err(|err| format!("invalid platform_runtime_context: {err:?}"))
 }
 
 fn session_id_to_string(session_id: SessionId) -> String {
@@ -4383,17 +4657,15 @@ fn classify_voice_turn_runtime_error(
 fn fallback_runtime_execution_envelope_for_voice_turn_request(
     request: &VoiceTurnAdapterRequest,
 ) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
-    let app_platform = match request.app_platform.trim().to_ascii_uppercase().as_str() {
-        "IOS" => AppPlatform::Ios,
-        "ANDROID" => AppPlatform::Android,
-        "DESKTOP" => AppPlatform::Desktop,
-        _ => {
-            return Err(ContractViolation::InvalidValue {
-                field: "voice_turn_adapter_request.app_platform",
-                reason: "must be IOS|ANDROID|DESKTOP",
-            });
-        }
-    };
+    let app_platform =
+        parse_app_platform(&request.app_platform).map_err(|_| ContractViolation::InvalidValue {
+            field: "voice_turn_adapter_request.app_platform",
+            reason: "must be IOS|ANDROID|TABLET|DESKTOP",
+        })?;
+    let trigger = parse_trigger(&request.trigger).map_err(|_| ContractViolation::InvalidValue {
+        field: "voice_turn_adapter_request.trigger",
+        reason: "must be EXPLICIT|WAKE_WORD",
+    })?;
     let actor_user_id = UserId::new(request.actor_user_id.clone())?;
     let device_id = match request.device_id.as_ref() {
         Some(device_id) => DeviceId::new(device_id.clone())?,
@@ -4402,6 +4674,11 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request(
             stable_hash_hex_16(actor_user_id.as_str())
         ))?,
     };
+    let platform_context = normalize_platform_runtime_context(request, app_platform, trigger)
+        .map_err(|_| ContractViolation::InvalidValue {
+            field: "voice_turn_adapter_request.platform_context",
+            reason: "invalid normalized platform context",
+        })?;
     fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
         CorrelationId(request.correlation_id.into()),
         TurnId(request.turn_id),
@@ -4412,7 +4689,41 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request(
             .device_turn_sequence
             .or(Some(request.turn_id.max(1))),
         None,
+        Some(platform_context),
     )
+}
+
+pub fn build_runtime_execution_envelope_for_voice_turn_request(
+    request: &VoiceTurnAdapterRequest,
+    request_id: &str,
+    idempotency_key: &str,
+    device_id: &str,
+) -> Result<RuntimeExecutionEnvelope, String> {
+    let app_platform = parse_app_platform(&request.app_platform)?;
+    let trigger = parse_trigger(&request.trigger)?;
+    let actor_identity = UserId::new(request.actor_user_id.clone())
+        .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
+    let device_identity = DeviceId::new(device_id.to_string())
+        .map_err(|err| format!("invalid device_id: {err:?}"))?;
+    let turn_id = TurnId(request.turn_id);
+    let platform_context = normalize_platform_runtime_context(request, app_platform, trigger)?;
+    RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+        request_id.to_string(),
+        format!("trace:voice-turn:{}:{}", request_id, request.turn_id),
+        idempotency_key.to_string(),
+        actor_identity,
+        device_identity,
+        app_platform,
+        platform_context,
+        None,
+        turn_id,
+        request
+            .device_turn_sequence
+            .or(Some(request.turn_id.max(1))),
+        AdmissionState::IngressValidated,
+        None,
+    )
+    .map_err(|err| format!("invalid runtime_execution_envelope: {err:?}"))
 }
 
 fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
@@ -4423,14 +4734,16 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
     device_id: &DeviceId,
     device_turn_sequence: Option<u64>,
     session_attach_outcome: Option<SessionAttachOutcome>,
+    platform_context: Option<PlatformRuntimeContext>,
 ) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
-    RuntimeExecutionEnvelope::v1_with_device_turn_sequence_and_attach_outcome(
+    RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
         format!("corr-{}", correlation_id.0),
         format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
         format!("turn:{}:{}", correlation_id.0, turn_id.0),
         actor_user_id.clone(),
         device_id.clone(),
         app_platform,
+        platform_context.unwrap_or(PlatformRuntimeContext::default_for_platform(app_platform)?),
         None,
         turn_id,
         device_turn_sequence,
@@ -4782,6 +5095,7 @@ fn ensure_actor_identity_and_device(
 fn default_device_type(app_platform: AppPlatform) -> &'static str {
     match app_platform {
         AppPlatform::Ios | AppPlatform::Android => "phone",
+        AppPlatform::Tablet => "tablet",
         AppPlatform::Desktop => "desktop",
     }
 }
@@ -5474,7 +5788,7 @@ fn parse_u32_env(key: &str, min: u32, max: u32) -> Option<u32> {
 fn resolve_ph1w_live_loop_config(app_platform: AppPlatform) -> Ph1wLiveDecisionLoopConfig {
     let (default_window_ms, default_hop_ms) = match app_platform {
         AppPlatform::Desktop => (1_500_u32, 200_u32),
-        AppPlatform::Android => (800_u32, 20_u32),
+        AppPlatform::Android | AppPlatform::Tablet => (800_u32, 20_u32),
         AppPlatform::Ios => (800_u32, 20_u32),
     };
     let window_ms =
@@ -5580,7 +5894,7 @@ fn evaluate_wake_for_turn(
         return Err("ios_wake_disabled".to_string());
     }
     let wake_profile_id = match app_platform {
-        AppPlatform::Android | AppPlatform::Desktop => Some(
+        AppPlatform::Android | AppPlatform::Tablet | AppPlatform::Desktop => Some(
             store
                 .ph1w_get_active_wake_profile(actor_user_id, device_id)
                 .ok_or_else(|| "wake_not_enrolled".to_string())?
@@ -8349,6 +8663,14 @@ mod tests {
             turn_id: 20_001,
             device_turn_sequence: None,
             app_platform: "IOS".to_string(),
+            platform_version: None,
+            device_class: None,
+            runtime_client_version: None,
+            hardware_capability_profile: None,
+            network_profile: None,
+            claimed_capabilities: None,
+            integrity_status: None,
+            attestation_ref: None,
             trigger: "EXPLICIT".to_string(),
             actor_user_id: "tenant_a:user_adapter_test".to_string(),
             tenant_id: Some("tenant_a".to_string()),
@@ -8404,6 +8726,26 @@ mod tests {
             }),
             visual_input_ref: None,
         }
+    }
+
+    fn base_tablet_request() -> VoiceTurnAdapterRequest {
+        let mut request = base_request();
+        request.app_platform = "TABLET".to_string();
+        request.device_class = Some("TABLET".to_string());
+        request.platform_version = Some("15.2".to_string());
+        request.runtime_client_version = Some("2.3.4".to_string());
+        request.hardware_capability_profile = Some("TABLET_PRO".to_string());
+        request.network_profile = Some("STANDARD".to_string());
+        request.claimed_capabilities = Some(vec![
+            "MICROPHONE".to_string(),
+            "CAMERA".to_string(),
+            "SPEAKER_OUTPUT".to_string(),
+            "WAKE_WORD".to_string(),
+            "SENSOR_AVAILABILITY".to_string(),
+        ]);
+        request.integrity_status = Some("ATTESTED".to_string());
+        request.attestation_ref = Some("tablet_attest_ref_01".to_string());
+        request
     }
 
     fn base_report_query_request() -> UiHealthReportQueryRequest {
@@ -10973,6 +11315,166 @@ mod tests {
         assert_eq!(session.last_turn_id, Some(TurnId(41_019)));
         assert!(session.attached_devices.contains(&device_a));
         assert!(session.attached_devices.contains(&device_b));
+    }
+
+    #[test]
+    fn at_os_01_tablet_platform_is_accepted_end_to_end() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_tablet_request();
+        request.correlation_id = 32_001;
+        request.turn_id = 42_001;
+        request.device_id = Some("tablet_end_to_end_device".to_string());
+        request.user_text_final = Some("Show my session status".to_string());
+
+        let response = runtime
+            .run_voice_turn(request)
+            .expect("tablet request must succeed");
+        assert_eq!(response.status, "ok");
+        assert!(response.session_id.is_some());
+        assert_eq!(response.session_state.as_deref(), Some("ACTIVE"));
+    }
+
+    #[test]
+    fn at_os_02_invalid_platform_is_rejected_deterministically() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.correlation_id = 32_002;
+        request.turn_id = 42_002;
+        request.app_platform = "BLACKBERRY".to_string();
+
+        let error = runtime
+            .run_voice_turn_ingress(request)
+            .expect_err("invalid platform must fail closed");
+        assert_eq!(error.failure_class, FailureClass::InvalidPayload);
+        assert_eq!(error.reason_code, "INVALID_RUNTIME_EXECUTION_ENVELOPE");
+    }
+
+    #[test]
+    fn at_os_03_normalized_platform_identity_is_carried_into_runtime() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_tablet_request();
+        request.correlation_id = 32_003;
+        request.turn_id = 42_003;
+        request.device_id = Some("tablet_identity_device".to_string());
+        request.user_text_final = Some("What can this device do?".to_string());
+
+        runtime
+            .run_voice_turn(request)
+            .expect("tablet request must succeed");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let runtime_execution_envelope = packet
+            .runtime_execution_envelope
+            .expect("runtime execution envelope must exist");
+        let platform_context = runtime_execution_envelope.platform_context;
+
+        assert_eq!(runtime_execution_envelope.platform, AppPlatform::Tablet);
+        assert_eq!(platform_context.platform_type, AppPlatform::Tablet);
+        assert_eq!(platform_context.platform_version, "15.2");
+        assert_eq!(platform_context.device_class, DeviceClass::Tablet);
+        assert_eq!(platform_context.runtime_client_version, "2.3.4");
+        assert_eq!(platform_context.hardware_capability_profile, "TABLET_PRO");
+        assert_eq!(platform_context.network_profile, NetworkProfile::Standard);
+    }
+
+    #[test]
+    fn at_os_04_capability_negotiation_state_is_attached() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_tablet_request();
+        request.correlation_id = 32_004;
+        request.turn_id = 42_004;
+        request.device_id = Some("tablet_caps_device".to_string());
+        request.claimed_capabilities = Some(vec![
+            "MICROPHONE".to_string(),
+            "WAKE_WORD".to_string(),
+            "SENSOR_AVAILABILITY".to_string(),
+        ]);
+        request.user_text_final = Some("Use the platform registry".to_string());
+
+        runtime
+            .run_voice_turn(request)
+            .expect("tablet request must succeed");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let platform_context = packet
+            .runtime_execution_envelope
+            .expect("runtime execution envelope must exist")
+            .platform_context;
+
+        assert_eq!(
+            platform_context.claimed_capabilities,
+            vec![
+                DeviceCapability::Microphone,
+                DeviceCapability::SensorAvailability,
+                DeviceCapability::WakeWord,
+            ]
+        );
+        assert_eq!(
+            platform_context.negotiated_capabilities,
+            vec![
+                DeviceCapability::Microphone,
+                DeviceCapability::SensorAvailability,
+                DeviceCapability::WakeWord,
+            ]
+        );
+        assert_eq!(
+            platform_context.requested_trigger,
+            RuntimeEntryTrigger::Explicit
+        );
+        assert_eq!(
+            platform_context.trigger_policy,
+            PlatformTriggerPolicy::WakeOrExplicit
+        );
+        assert!(platform_context.trigger_allowed);
+    }
+
+    #[test]
+    fn at_os_05_trust_integrity_and_compatibility_survive_ingress() {
+        let _min_version = ScopedEnvVar::set("SELENE_MIN_CLIENT_VERSION_TABLET", "5.0.0");
+        let runtime = AdapterRuntime::default();
+        let mut request = base_tablet_request();
+        request.correlation_id = 32_005;
+        request.turn_id = 42_005;
+        request.device_id = Some("tablet_trust_device".to_string());
+        request.runtime_client_version = Some("4.2.0".to_string());
+        request.user_text_final = Some("Check client posture".to_string());
+
+        runtime
+            .run_voice_turn(request)
+            .expect("tablet request must succeed");
+        let packet = runtime
+            .ingress
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let platform_context = packet
+            .runtime_execution_envelope
+            .expect("runtime execution envelope must exist")
+            .platform_context;
+
+        assert_eq!(
+            platform_context.integrity_status,
+            ClientIntegrityStatus::Attested
+        );
+        assert_eq!(
+            platform_context.compatibility_status,
+            ClientCompatibilityStatus::UpgradeRequired
+        );
+        assert_eq!(
+            platform_context.device_trust_class,
+            DeviceTrustClass::RestrictedDevice
+        );
+        assert_eq!(
+            platform_context.minimum_supported_client_version.as_deref(),
+            Some("5.0.0")
+        );
+        assert_eq!(
+            platform_context.attestation_ref.as_deref(),
+            Some("tablet_attest_ref_01")
+        );
     }
 
     #[test]

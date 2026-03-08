@@ -62,6 +62,7 @@ impl VoiceIdentityPlatform {
         match app_platform {
             Some(AppPlatform::Ios) => Self::Ios,
             Some(AppPlatform::Android) => Self::Android,
+            Some(AppPlatform::Tablet) => Self::Android,
             Some(AppPlatform::Desktop) => Self::Desktop,
             None => Self::Unknown,
         }

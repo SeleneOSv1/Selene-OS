@@ -76,5 +76,7 @@ pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
 pub use runtime_execution::{
-    AdmissionState, FailureClass, RuntimeExecutionEnvelope, SessionAttachOutcome,
+    AdmissionState, ClientCompatibilityStatus, ClientIntegrityStatus, DeviceCapability,
+    DeviceClass, DeviceTrustClass, FailureClass, NetworkProfile, PlatformRuntimeContext,
+    PlatformTriggerPolicy, RuntimeEntryTrigger, RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
