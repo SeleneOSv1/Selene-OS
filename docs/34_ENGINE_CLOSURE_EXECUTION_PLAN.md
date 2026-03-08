@@ -1,6 +1,20 @@
 # Engine Closure Execution Plan (Hybrid, End-to-End)
 
-Architecture baseline updated to System_Core + Build Sections 01–09.
+Architecture baseline updated to System_Core + Build Sections 01–11.
+
+## 0A) Architecture Rebaseline (Authoritative)
+- Current closure baseline includes PH1.COMP and PH1.LAW as first-class architecture engines.
+- Current architecture wiring truth is tracked in:
+  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`
+  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md`
+  - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/33_ENGINE_REVIEW_TRACKER.md`
+- Current architecture-owned wiring status:
+  - `PH1.J` -> `PARTIALLY_WIRED`
+  - `PH1.M` -> `PARTIALLY_WIRED`
+  - `PH1.OS` -> `PARTIALLY_WIRED`
+  - `PH1.COMP` -> `PARTIALLY_WIRED`
+  - `PH1.LAW` -> `PARTIALLY_WIRED`
+- The legacy round-2 engine queue below remains historical execution evidence, not the sole authoritative wiring truth for the current 01–11 baseline.
 
 ## 0) Purpose
 - Define one canonical execution playbook to move Selene OS from current build state to production readiness.

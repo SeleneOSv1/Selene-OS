@@ -1,13 +1,19 @@
 # Selene Engine Registry (Authoritative)
 
 Purpose:
-- Maintain the authoritative engine inventory for current Option B scope.
+- Maintain the authoritative engine inventory for the current System_Core + Build Sections 01–11 architecture scope.
 - Point each engine to its canonical DB wiring and ECM contracts.
 
 Status source:
 - Engine completion state is tracked in `docs/COVERAGE_MATRIX.md`.
 - Design lock status is tracked in `docs/11_DESIGN_LOCK_SEQUENCE.md`.
 - Phase C lock pass for `PH1.K/W/C/NLP/D/X` is recorded in `docs/COVERAGE_MATRIX.md` (Phase C Verification Pass).
+
+Architecture baseline:
+- `System_Core`
+- `Build Sections 01–11`
+- `SELENE_BUILD_EXECUTION_ORDER`
+- `SELENE_AUTHORITATIVE_ENGINE_INVENTORY`
 
 ## Rules
 
@@ -59,13 +65,14 @@ Execution must never be probabilistic.
 ## Registry (Current Scope)
 
 Direction lock:
-- This registry is the frozen engine list for current MVP scope under Option B.
+- This registry is the authoritative engine list for the current 01–11 architecture baseline.
 - Planned engines listed below are in-scope but intentionally not marked DONE until their 4-pack is authored.
 
 | engine_id | phase | layer | authority | primary_role | db_wiring | ecm |
 |---|---|---|---|---|---|---|
 | PH1.F | A Foundations | Storage | Authoritative | Persistence schema/migrations/invariants | `docs/DB_WIRING/PH1_F.md` | `docs/ECM/PH1_F.md` |
-| PH1.J | A Foundations | Storage | Authoritative | Audit event contract + append-only proof trail | `docs/DB_WIRING/PH1_J.md` | `docs/ECM/PH1_J.md` |
+| PH1.J | A Foundations | Storage | Authoritative | Audit and cryptographic proof ledger for protected execution | `docs/DB_WIRING/PH1_J.md` | `docs/ECM/PH1_J.md` |
+| PH1.COMP | I Numeric/Consensus | Deterministic Compute | Authoritative (quantitative computation only) | Numeric and consensus computation engine for deterministic scoring, ranking, normalization, and budget math | `TBD` | `TBD` |
 | SELENE_OS_CORE_TABLES | A Foundations | Governance/Storage | Authoritative | WorkOrder/session/core orchestration persistence | `docs/DB_WIRING/SELENE_OS_CORE_TABLES.md` | `docs/ECM/SELENE_OS_CORE_TABLES.md` |
 | PBS_TABLES | A Foundations | Governance | Authoritative | Blueprint registry tables and mappings | `docs/DB_WIRING/PBS_TABLES.md` | `docs/ECM/PBS_TABLES.md` |
 | SIMULATION_CATALOG_TABLES | A Foundations | Governance | Authoritative | Simulation catalog persistence | `docs/DB_WIRING/SIMULATION_CATALOG_TABLES.md` | `docs/ECM/SIMULATION_CATALOG_TABLES.md` |
@@ -90,7 +97,7 @@ Direction lock:
 | PH1.ONB | E Onboarding/Tools | Governance/Control | Authoritative | Onboarding execution (deterministic one-question runner); executes pinned requirements schema only | `docs/DB_WIRING/PH1_ONB.md` | `docs/ECM/PH1_ONB.md` |
 | PH1.REM | E Onboarding/Tools | Control | Authoritative (reminder timing state machine) | Deterministic reminder scheduling/delivery timing mechanics (includes BCAST.MHP follow-up timing handoff; simulation-gated) | `docs/DB_WIRING/PH1_REM.md` | `docs/ECM/PH1_REM.md` |
 | PH1.POSITION | E Onboarding/Tools | Governance/Storage | Authoritative | Position lifecycle + position requirements schema ownership (versioned, auditable) | `docs/DB_WIRING/PH1_POSITION.md` | `docs/ECM/PH1_POSITION.md` |
-| PH1.M | F Memory/Learning | Storage/Learning | Non-Authoritative | Memory Engine vNext (atoms + retrieval + emotional threads + device persistence via Engine B; canonical narrative: `docs/12_MEMORY_ARCHITECTURE.md`) | `docs/DB_WIRING/PH1_M.md` | `docs/ECM/PH1_M.md` |
+| PH1.M | F Memory/Learning | Storage/Learning | Authoritative | Cloud-authoritative ledger-first memory engine for identity-scoped knowledge truth | `docs/DB_WIRING/PH1_M.md` | `docs/ECM/PH1_M.md` |
 | PH1.PERSONA | F Memory/Learning | Learning | Non-Authoritative | Identity-verified user style/tone/delivery profile hints | `docs/DB_WIRING/PH1_PERSONA.md` | `docs/ECM/PH1_PERSONA.md` |
 | PH1.CAPREQ | G Capability Requests | Governance/Control | Authoritative (simulation-gated lifecycle) | Capability request lifecycle family state machine (active implementation ids: `PH1.CAPREQ.001`) | `docs/DB_WIRING/PH1_CAPREQ.md` | `docs/ECM/PH1_CAPREQ.md` |
 | PH1.TENANT | H Enterprise Support | Governance/Control | Authoritative (tenant context decision) | Tenant/org context resolver for `tenant_id` + policy pointers (`TENANT_POLICY_EVALUATE -> TENANT_DECISION_COMPUTE`) | `docs/DB_WIRING/PH1_TENANT.md` | `docs/ECM/PH1_TENANT.md` |
@@ -99,6 +106,7 @@ Direction lock:
 | PH1.WORK | H Enterprise Support | Governance/Storage | Authoritative (work-order ledger decision) | Work-order append/no-op decision gate for append-only/idempotent replay-safe ledger writes (`WORK_POLICY_EVALUATE -> WORK_DECISION_COMPUTE`) | `docs/DB_WIRING/PH1_WORK.md` | `docs/ECM/PH1_WORK.md` |
 | PH1.LEASE | H Enterprise Support | Governance/Control | Authoritative (lease ownership decision) | Work-order lease ownership decision gate for deterministic `ACQUIRE | RENEW | RELEASE` posture (`LEASE_POLICY_EVALUATE -> LEASE_DECISION_COMPUTE`) | `docs/DB_WIRING/PH1_LEASE.md` | `docs/ECM/PH1_LEASE.md` |
 | PH1.OS | H Enterprise Support | Governance/Control | Authoritative (orchestration gate decision) | Selene OS orchestration gate for deterministic next-move + dispatch legality (`OS_POLICY_EVALUATE -> OS_DECISION_COMPUTE`) plus one canonical top-level turn slice (voice/text ALWAYS_ON sequence lock + TURN_OPTIONAL ordering from one control point + explicit per-turn optional budget contract enforcement + machine-only optional utility scoring gates `U4/U5` with deterministic `KEEP/DEGRADE/DISABLE_CANDIDATE` posture + fail-closed runtime-boundary guard for OFFLINE/control-plane engine ids) | `docs/DB_WIRING/PH1_OS.md` | `docs/ECM/PH1_OS.md` |
+| PH1.LAW | J Runtime Law | Governance/Control | Authoritative | Final runtime law engine for deterministic protected-execution completion judgment | `TBD` | `TBD` |
 | PH1.HEALTH | H Enterprise Support | Observability/Control | Non-Authoritative (display-only) | Health dashboard/report projection for issue list, timeline, unresolved/escalated state visibility (no remediation execution in v1) | `docs/DB_WIRING/PH1_HEALTH.md` | `docs/ECM/PH1_HEALTH.md` |
 | PH1.SCHED | H Enterprise Support | Governance/Control | Authoritative (deterministic scheduler decision) | Deterministic retry/wait/fail decision engine (`SCHED_POLICY_EVALUATE -> SCHED_DECISION_COMPUTE`) | `docs/DB_WIRING/PH1_SCHED.md` | `docs/ECM/PH1_SCHED.md` |
 | PH1.EXPORT | H Enterprise Support | Governance/Storage | Authoritative (compliance proof export) | Compliance export proof generation (`EXPORT_ACCESS_EVALUATE -> EXPORT_ARTIFACT_BUILD`) with deterministic redaction + tamper-evident hash output | `docs/DB_WIRING/PH1_EXPORT.md` | `docs/ECM/PH1_EXPORT.md` |

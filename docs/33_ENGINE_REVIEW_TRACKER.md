@@ -1,6 +1,6 @@
 # Engine Review Tracker (Canonical Runtime Inventory)
 
-Architecture baseline updated to System_Core + Build Sections 01–09.
+Architecture baseline updated to System_Core + Build Sections 01–11.
 
 Execution plan pointer:
 - `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/34_ENGINE_CLOSURE_EXECUTION_PLAN.md`
@@ -70,6 +70,20 @@ Tracker normalization notes:
   - `PH1.HEALTH` (row 79)
 - Registry foundation table ids are tracked in a separate mini-section in this file and are excluded from runtime engine review order.
 
+## Architecture Wiring Rebaseline (Authoritative)
+
+| engine_id | architecture_wiring_status | note |
+|---|---|---|
+| PH1.J | PARTIALLY_WIRED | Proof ledger is real, but architecture-owned protected-action adoption is not yet complete. |
+| PH1.M | PARTIALLY_WIRED | Memory is cloud-authoritative and ledger-first, but not yet fully closed against the 01–11 architecture baseline. |
+| PH1.OS | PARTIALLY_WIRED | Platform runtime is materially implemented, but final architecture closure remains incomplete. |
+| PH1.COMP | PARTIALLY_WIRED | Canonical deterministic computation exists, but shared adoption across all quantitative engines is incomplete. |
+| PH1.LAW | PARTIALLY_WIRED | Final runtime law exists, but live protected-path adoption is not yet universal. |
+
+Authoritative status rule:
+- `DONE` rows below are legacy round-2 closure history unless they also appear as `FULLY_WIRED` in an authoritative architecture rebaseline.
+- The table above is the authoritative Sections 01–11 wiring truth for current closure planning.
+
 ## Engine Inventory And Status
 
 | order | engine_id | short function | status |
@@ -130,9 +144,9 @@ Tracker normalization notes:
 | 56 | PH1.POSITION.001 | Merged into row 55 (`PH1.POSITION`) as the canonical tracker row | MERGED_INTO_55 |
 | 57 | PH1.ONB.ORCH.001 | Merged into row 49 (`PH1.ONB`) as the canonical tracker row | MERGED_INTO_49 |
 | 58 | PH1.LEASE | WorkOrder lease ownership engine | DONE |
-| 59 | PH1.OS | Selene OS orchestration runtime layer | DONE |
-| 60 | PH1.M | Memory engine (non-authoritative) | DONE |
-| 61 | PH1.J | Audit contract and append-only proof trail | DONE |
+| 59 | PH1.OS | Selene OS orchestration runtime layer | PARTIALLY_WIRED |
+| 60 | PH1.M | Memory engine (cloud-authoritative, ledger-first) | PARTIALLY_WIRED |
+| 61 | PH1.J | Audit and cryptographic proof ledger | PARTIALLY_WIRED |
 | 62 | PH1.F | Storage schema/migration/invariant owner | DONE |
 | 63 | PH1.ACCESS.001_PH2.ACCESS.002 | Canonical Access/Authority gate + per-user permission truth engine | EXEMPT |
 | 64 | PH1.ACCESS.001 | Merged into row 63 (`PH1.ACCESS.001_PH2.ACCESS.002`) as source-history access split row | MERGED_INTO_63 |
@@ -151,6 +165,8 @@ Tracker normalization notes:
 | 77 | PH1.POLICY | Global rule-base + snapshot policy decision gate (prompt discipline; ALWAYS_ON) | DONE |
 | 78 | PH1.DELIVERY | Provider delivery attempt truth owner for SMS/Email/WhatsApp/WeChat (simulation-gated) | DONE |
 | 79 | PH1.HEALTH | Display-only health reporting dashboard (issue history + unresolved/escalated visibility) | DONE |
+| 80 | PH1.COMP | Numeric and consensus computation engine | PARTIALLY_WIRED |
+| 81 | PH1.LAW | Final runtime law engine | PARTIALLY_WIRED |
 
 ## Foundation Tables Tracking (Non-Runtime)
 

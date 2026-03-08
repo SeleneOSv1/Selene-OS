@@ -1,6 +1,20 @@
-# Coverage Matrix (Option B)
+# Coverage Matrix
 
-Architecture baseline updated to System_Core + Build Sections 01–09.
+Architecture baseline updated to System_Core + Build Sections 01–11.
+
+## Authoritative Wiring Status (Sections 01–11)
+
+| engine_id | wiring_status | current_truth |
+|---|---|---|
+| PH1.J | PARTIALLY_WIRED | Proof ledger exists in runtime code, but protected-action adoption is not yet complete across all architecture-owned paths. |
+| PH1.M | PARTIALLY_WIRED | Cloud-authoritative ledger-first memory exists, but architecture closure is not yet final across retention and governance surfaces. |
+| PH1.OS | PARTIALLY_WIRED | Platform runtime exists and tablet support is wired in code, but final architecture closure remains incomplete. |
+| PH1.COMP | PARTIALLY_WIRED | Canonical deterministic computation subsystem exists, but major engines still retain parallel quantitative authority paths. |
+| PH1.LAW | PARTIALLY_WIRED | Final runtime law subsystem exists, but live production wiring is not yet generalized across all protected paths. |
+
+Historical note:
+- The detailed matrix below remains valuable as contract-closure history.
+- The table above is the authoritative Sections 01–11 wiring truth for current architecture review and closure work.
 
 | engine_id | db_wiring_doc (path) | ecm_doc (path) | simulations_owned (list of simulation_ids) | blueprints_referenced_by (process_ids) | db_wiring_status | ecm_status | sim_catalog_status | blueprint_status | blockers |
 |---|---|---|---|---|---|---|---|---|---|
