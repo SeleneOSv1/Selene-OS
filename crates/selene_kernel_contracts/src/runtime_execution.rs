@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
-use crate::ph1_voice_id::UserId;
+use crate::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
+use crate::ph1d::PolicyContextRef;
 use crate::ph1j::{DeviceId, TurnId};
 use crate::ph1l::SessionId;
 use crate::ph1link::AppPlatform;
+use crate::ph1m::MemoryConfidence;
 use crate::runtime_governance::GovernanceExecutionState;
 use crate::{ContractViolation, Validate};
 use std::collections::BTreeSet;
@@ -706,6 +708,224 @@ impl Validate for PersistenceExecutionState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdentityVerificationConsistencyLevel {
+    StrictVerified,
+    HighConfidenceVerified,
+    DegradedVerification,
+    RecoveryRestricted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdentityTrustTier {
+    Verified,
+    HighConfidence,
+    Conditional,
+    Restricted,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IdentityRecoveryState {
+    None,
+    ReauthRequired,
+    ReEnrollmentRequired,
+    RecoveryRestricted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityExecutionState {
+    pub consistency_level: IdentityVerificationConsistencyLevel,
+    pub trust_tier: IdentityTrustTier,
+    pub identity_tier_v2: IdentityTierV2,
+    pub spoof_liveness_status: SpoofLivenessStatus,
+    pub step_up_required: bool,
+    pub recovery_state: IdentityRecoveryState,
+    pub cluster_drift_detected: bool,
+    pub reason_code: Option<u64>,
+}
+
+impl IdentityExecutionState {
+    pub fn v1(
+        consistency_level: IdentityVerificationConsistencyLevel,
+        trust_tier: IdentityTrustTier,
+        identity_tier_v2: IdentityTierV2,
+        spoof_liveness_status: SpoofLivenessStatus,
+        step_up_required: bool,
+        recovery_state: IdentityRecoveryState,
+        cluster_drift_detected: bool,
+        reason_code: Option<u64>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            consistency_level,
+            trust_tier,
+            identity_tier_v2,
+            spoof_liveness_status,
+            step_up_required,
+            recovery_state,
+            cluster_drift_detected,
+            reason_code,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for IdentityExecutionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryConsistencyLevel {
+    StrictLedger,
+    EventualView,
+    RecoveryRebuild,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryTrustLevel {
+    Verified,
+    HighConfidence,
+    LowConfidence,
+    Unverified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryEligibilityDecision {
+    Eligible,
+    IdentityScopeBlocked,
+    PolicyBlocked,
+    GovernedBlocked,
+    NoEligibleCandidates,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryExecutionState {
+    pub cloud_authoritative: bool,
+    pub consistency_level: MemoryConsistencyLevel,
+    pub trust_level: MemoryTrustLevel,
+    pub eligibility_decision: MemoryEligibilityDecision,
+    pub confidence_floor: Option<MemoryConfidence>,
+    pub candidate_count: u16,
+    pub ledger_write_accepted: bool,
+    pub ledger_event_count: u16,
+    pub governance_blocked: bool,
+    pub reason_code: Option<u64>,
+}
+
+impl MemoryExecutionState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        cloud_authoritative: bool,
+        consistency_level: MemoryConsistencyLevel,
+        trust_level: MemoryTrustLevel,
+        eligibility_decision: MemoryEligibilityDecision,
+        confidence_floor: Option<MemoryConfidence>,
+        candidate_count: u16,
+        ledger_write_accepted: bool,
+        ledger_event_count: u16,
+        governance_blocked: bool,
+        reason_code: Option<u64>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            cloud_authoritative,
+            consistency_level,
+            trust_level,
+            eligibility_decision,
+            confidence_floor,
+            candidate_count,
+            ledger_write_accepted,
+            ledger_event_count,
+            governance_blocked,
+            reason_code,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for MemoryExecutionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SimulationCertificationState {
+    NotRequested,
+    CertifiedActive,
+    MissingSimulationPath,
+    InactiveSimulation,
+    StepUpRequired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OnboardingReadinessState {
+    NotApplicable,
+    Ready,
+    Incomplete,
+    Blocked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AuthorityPolicyDecision {
+    NotRequested,
+    Allowed,
+    Denied,
+    StepUpRequired,
+    PendingConfirmation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorityExecutionState {
+    pub policy_context_ref: Option<PolicyContextRef>,
+    pub simulation_certification_state: SimulationCertificationState,
+    pub onboarding_readiness_state: OnboardingReadinessState,
+    pub policy_decision: AuthorityPolicyDecision,
+    pub identity_scope_required: bool,
+    pub identity_scope_satisfied: bool,
+    pub memory_scope_allowed: bool,
+    pub reason_code: Option<u64>,
+}
+
+impl AuthorityExecutionState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        policy_context_ref: Option<PolicyContextRef>,
+        simulation_certification_state: SimulationCertificationState,
+        onboarding_readiness_state: OnboardingReadinessState,
+        policy_decision: AuthorityPolicyDecision,
+        identity_scope_required: bool,
+        identity_scope_satisfied: bool,
+        memory_scope_allowed: bool,
+        reason_code: Option<u64>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            policy_context_ref,
+            simulation_certification_state,
+            onboarding_readiness_state,
+            policy_decision,
+            identity_scope_required,
+            identity_scope_satisfied,
+            memory_scope_allowed,
+            reason_code,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for AuthorityExecutionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if let Some(policy_context_ref) = self.policy_context_ref.as_ref() {
+            policy_context_ref.validate()?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeExecutionEnvelope {
     pub request_id: String,
@@ -722,6 +942,9 @@ pub struct RuntimeExecutionEnvelope {
     pub session_attach_outcome: Option<SessionAttachOutcome>,
     pub persistence_state: Option<PersistenceExecutionState>,
     pub governance_state: Option<GovernanceExecutionState>,
+    pub identity_state: Option<IdentityExecutionState>,
+    pub memory_state: Option<MemoryExecutionState>,
+    pub authority_state: Option<AuthorityExecutionState>,
 }
 
 impl RuntimeExecutionEnvelope {
@@ -911,6 +1134,9 @@ impl RuntimeExecutionEnvelope {
             session_attach_outcome,
             persistence_state,
             governance_state,
+            identity_state: None,
+            memory_state: None,
+            authority_state: None,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -920,22 +1146,10 @@ impl RuntimeExecutionEnvelope {
         &self,
         admission_state: AdmissionState,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            self.session_id,
-            self.turn_id,
-            self.device_turn_sequence,
-            admission_state,
-            self.session_attach_outcome,
-            self.persistence_state.clone(),
-            self.governance_state.clone(),
-        )
+        let mut next = self.clone();
+        next.admission_state = admission_state;
+        next.validate()?;
+        Ok(next)
     }
 
     pub fn with_session_and_admission_state(
@@ -943,22 +1157,11 @@ impl RuntimeExecutionEnvelope {
         session_id: Option<SessionId>,
         admission_state: AdmissionState,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            session_id,
-            self.turn_id,
-            self.device_turn_sequence,
-            admission_state,
-            self.session_attach_outcome,
-            self.persistence_state.clone(),
-            self.governance_state.clone(),
-        )
+        let mut next = self.clone();
+        next.session_id = session_id;
+        next.admission_state = admission_state;
+        next.validate()?;
+        Ok(next)
     }
 
     pub fn with_session_device_turn_and_attach_outcome(
@@ -968,88 +1171,73 @@ impl RuntimeExecutionEnvelope {
         device_turn_sequence: Option<u64>,
         session_attach_outcome: Option<SessionAttachOutcome>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            session_id,
-            self.turn_id,
-            device_turn_sequence,
-            admission_state,
-            session_attach_outcome,
-            self.persistence_state.clone(),
-            self.governance_state.clone(),
-        )
+        let mut next = self.clone();
+        next.session_id = session_id;
+        next.admission_state = admission_state;
+        next.device_turn_sequence = device_turn_sequence;
+        next.session_attach_outcome = session_attach_outcome;
+        next.validate()?;
+        Ok(next)
     }
 
     pub fn with_attach_outcome(
         &self,
         session_attach_outcome: Option<SessionAttachOutcome>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            self.session_id,
-            self.turn_id,
-            self.device_turn_sequence,
-            self.admission_state,
-            session_attach_outcome,
-            self.persistence_state.clone(),
-            self.governance_state.clone(),
-        )
+        let mut next = self.clone();
+        next.session_attach_outcome = session_attach_outcome;
+        next.validate()?;
+        Ok(next)
     }
 
     pub fn with_persistence_state(
         &self,
         persistence_state: Option<PersistenceExecutionState>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            self.session_id,
-            self.turn_id,
-            self.device_turn_sequence,
-            self.admission_state,
-            self.session_attach_outcome,
-            persistence_state,
-            self.governance_state.clone(),
-        )
+        let mut next = self.clone();
+        next.persistence_state = persistence_state;
+        next.validate()?;
+        Ok(next)
     }
 
     pub fn with_governance_state(
         &self,
         governance_state: Option<GovernanceExecutionState>,
     ) -> Result<Self, ContractViolation> {
-        Self::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
-            self.request_id.clone(),
-            self.trace_id.clone(),
-            self.idempotency_key.clone(),
-            self.actor_identity.clone(),
-            self.device_identity.clone(),
-            self.platform,
-            self.platform_context.clone(),
-            self.session_id,
-            self.turn_id,
-            self.device_turn_sequence,
-            self.admission_state,
-            self.session_attach_outcome,
-            self.persistence_state.clone(),
-            governance_state,
-        )
+        let mut next = self.clone();
+        next.governance_state = governance_state;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn with_identity_state(
+        &self,
+        identity_state: Option<IdentityExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.identity_state = identity_state;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn with_memory_state(
+        &self,
+        memory_state: Option<MemoryExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.memory_state = memory_state;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn with_authority_state(
+        &self,
+        authority_state: Option<AuthorityExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.authority_state = authority_state;
+        next.validate()?;
+        Ok(next)
     }
 }
 
@@ -1104,6 +1292,15 @@ impl Validate for RuntimeExecutionEnvelope {
             state.validate()?;
         }
         if let Some(state) = self.governance_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.identity_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.memory_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.authority_state.as_ref() {
             state.validate()?;
         }
         Ok(())

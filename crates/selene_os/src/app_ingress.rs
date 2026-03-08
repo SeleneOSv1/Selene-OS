@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 
 use selene_engines::ph1_voice_id::{
-    simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
-    VoiceIdObservation as EngineVoiceIdObservation,
+    reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
+    EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
 use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
@@ -21,8 +21,9 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
-    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
+    IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpeakerId, UserId,
+    VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
+    VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -47,7 +48,7 @@ use selene_kernel_contracts::ph1link::{
     AppPlatform, InviteeType, LinkStatus, Ph1LinkRequest, Ph1LinkResponse, TokenId,
     LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
 };
-use selene_kernel_contracts::ph1m::MemoryCandidate;
+use selene_kernel_contracts::ph1m::{MemoryCandidate, MemoryConfidence};
 use selene_kernel_contracts::ph1n::{FieldKey, IntentDraft, IntentType, Ph1nResponse};
 use selene_kernel_contracts::ph1onb::{
     OnbAccessInstanceCreateCommitRequest, OnbCompleteCommitRequest,
@@ -83,10 +84,15 @@ use selene_kernel_contracts::ph1x::{
     StepUpCapabilities, ThreadState,
 };
 use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+    AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
+    IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
+    MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
+    OnboardingReadinessState, PlatformRuntimeContext, RuntimeEntryTrigger,
+    RuntimeExecutionEnvelope, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
-    GovernanceDecisionLogEntry, GovernanceProtectedActionClass,
+    GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
+    GovernanceProtectedActionClass,
 };
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
@@ -257,7 +263,7 @@ fn fallback_runtime_execution_envelope_for_app_voice_request(
         )?,
         voice_id_request.session_state_ref.session_id,
         turn_id,
-        None,
+        Some(turn_id.0),
         AdmissionState::SessionResolved,
         None,
     )
@@ -711,7 +717,14 @@ impl AppServerIngressRuntime {
         let outcome = self
             .executor
             .execute_os_voice_live_turn(store, live_turn_input)?;
-        Ok((outcome, governed_runtime_execution_envelope))
+        let enriched_envelope =
+            runtime_execution_envelope_with_identity_state_for_voice_outcome(
+                &governed_runtime_execution_envelope,
+                &outcome,
+            )?;
+        let enriched_outcome =
+            attach_runtime_execution_envelope_to_voice_outcome(outcome, &enriched_envelope)?;
+        Ok((enriched_outcome, enriched_envelope))
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -2687,7 +2700,17 @@ impl AppServerIngressRuntime {
             OsVoiceLiveTurnOutcome::NotInvokedDisabled | OsVoiceLiveTurnOutcome::Refused(_) => None,
         };
 
-        Ok((outcome, governed_runtime_execution_envelope, ph1x_request))
+        let runtime_execution_envelope = if ph1x_request.is_some() {
+            self.last_agent_input_packet
+                .borrow()
+                .as_ref()
+                .and_then(|packet| packet.runtime_execution_envelope.clone())
+                .unwrap_or(governed_runtime_execution_envelope)
+        } else {
+            governed_runtime_execution_envelope
+        };
+
+        Ok((outcome, runtime_execution_envelope, ph1x_request))
     }
 
     pub fn run_voice_turn_end_to_end(
@@ -2707,11 +2730,14 @@ impl AppServerIngressRuntime {
         let (voice_outcome, runtime_execution_envelope, ph1x_request) =
             self.run_voice_turn_and_build_ph1x_request_internal(store, request, x_build)?;
         let Some(ph1x_request) = ph1x_request else {
-            return Ok(app_voice_turn_execution_outcome_from_voice_only(
+            let mut out = app_voice_turn_execution_outcome_from_voice_only(
                 runtime_execution_envelope,
                 request_session_state,
                 voice_outcome,
-            ));
+            );
+            out.runtime_execution_envelope =
+                runtime_execution_envelope_with_authority_state_for_outcome(&out, None)?;
+            return Ok(out);
         };
 
         let last_agent_input_packet = self.last_agent_input_packet.borrow().clone();
@@ -2887,6 +2913,11 @@ impl AppServerIngressRuntime {
         out.response_text = out.response_text.take().map(|response_text| {
             apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
         });
+        out.runtime_execution_envelope =
+            runtime_execution_envelope_with_authority_state_for_outcome(
+                &out,
+                finder_terminal.as_ref(),
+            )?;
 
         Ok(out)
     }
@@ -3291,8 +3322,20 @@ impl AppServerIngressRuntime {
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AgentInputPacket, StorageError> {
         *self.agent_input_packet_build_count.borrow_mut() += 1;
+        let identity_state = identity_execution_state_from_voice_assertion(
+            &forwarded.voice_identity_assertion,
+            &forwarded.runtime_execution_envelope,
+        )?;
+        let runtime_execution_envelope = forwarded
+            .runtime_execution_envelope
+            .clone()
+            .with_identity_state(Some(identity_state.clone()))
+            .map_err(StorageError::ContractViolation)?;
         let topic_hint = memory_topic_hint_from_nlp_output(x_build.nlp_output.as_ref());
-        let runtime_memory_candidates = if forwarded.identity_confirmed() {
+        let runtime_memory_candidates = if memory_governance_blocked(&runtime_execution_envelope) {
+            Vec::new()
+        } else if identity_state_allows_memory_scope(&identity_state) && forwarded.identity_confirmed()
+        {
             self.executor
                 .collect_context_memory_candidates_for_voice_turn(
                     store,
@@ -3307,10 +3350,20 @@ impl AppServerIngressRuntime {
         } else {
             Vec::new()
         };
+        let memory_state = memory_execution_state_from_candidates(
+            &runtime_execution_envelope,
+            &identity_state,
+            &runtime_memory_candidates,
+            None,
+        )?;
+        let runtime_execution_envelope = runtime_execution_envelope
+            .with_memory_state(Some(memory_state))
+            .map_err(StorageError::ContractViolation)?;
+        let request_session_id = request_session_id.or(runtime_execution_envelope.session_id);
         let (sim_catalog_snapshot_hash, sim_catalog_snapshot_version) =
             simulation_catalog_snapshot_for_agent_input(store, tenant_id);
         let transcript_text = transcript_text_from_nlp_output(x_build.nlp_output.as_ref());
-        let trace_id = forwarded.runtime_execution_envelope.trace_id.clone();
+        let trace_id = runtime_execution_envelope.trace_id.clone();
         let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
             turn_id,
@@ -3330,7 +3383,7 @@ impl AppServerIngressRuntime {
         AgentInputPacket::v1_with_runtime_execution_envelope(
             correlation_id.0,
             turn_id.0,
-            Some(forwarded.runtime_execution_envelope.clone()),
+            Some(runtime_execution_envelope),
             x_build.now,
             trace_id,
             packet_hash,
@@ -3412,6 +3465,544 @@ fn runtime_governance_storage_error(
         field,
         reason: runtime_governance_reason_literal(decision),
     })
+}
+
+const GOVERNED_SUBSYSTEM_MEMORY_ENGINE: &str = "MEMORY_ENGINE";
+const GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE: &str = "IDENTITY_VOICE_ENGINE";
+const GOVERNED_SUBSYSTEM_AUTHORITY_LAYER: &str = "AUTHORITY_LAYER";
+
+fn attach_runtime_execution_envelope_to_voice_outcome(
+    outcome: OsVoiceLiveTurnOutcome,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
+    match outcome {
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => Ok(OsVoiceLiveTurnOutcome::NotInvokedDisabled),
+        OsVoiceLiveTurnOutcome::Refused(refuse) => Ok(OsVoiceLiveTurnOutcome::Refused(refuse)),
+        OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) => {
+            forwarded.runtime_execution_envelope = runtime_execution_envelope.clone();
+            Ok(OsVoiceLiveTurnOutcome::Forwarded(forwarded))
+        }
+    }
+}
+
+fn runtime_execution_envelope_with_identity_state_for_voice_outcome(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    outcome: &OsVoiceLiveTurnOutcome,
+) -> Result<RuntimeExecutionEnvelope, StorageError> {
+    let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
+        return Ok(runtime_execution_envelope.clone());
+    };
+    let identity_state = identity_execution_state_from_voice_assertion(
+        &forwarded.voice_identity_assertion,
+        runtime_execution_envelope,
+    )?;
+    runtime_execution_envelope
+        .clone()
+        .with_identity_state(Some(identity_state))
+        .map_err(StorageError::ContractViolation)
+}
+
+fn identity_execution_state_from_voice_assertion(
+    assertion: &Ph1VoiceIdResponse,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Result<IdentityExecutionState, StorageError> {
+    let governance_identity_quarantined = runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| {
+            state.safe_mode_active
+                || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE)
+        })
+        .unwrap_or(false);
+    let cluster_drift_detected = runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| state.cluster_consistency != GovernanceClusterConsistency::Consistent)
+        .unwrap_or(false);
+    let identity_state = match assertion {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => {
+            let mut consistency_level = match ok.identity_v2.identity_tier_v2 {
+                IdentityTierV2::Confirmed => {
+                    IdentityVerificationConsistencyLevel::StrictVerified
+                }
+                IdentityTierV2::Probable => {
+                    IdentityVerificationConsistencyLevel::HighConfidenceVerified
+                }
+                IdentityTierV2::Unknown => {
+                    IdentityVerificationConsistencyLevel::DegradedVerification
+                }
+            };
+            let mut trust_tier = match ok.identity_v2.identity_tier_v2 {
+                IdentityTierV2::Confirmed => IdentityTrustTier::Verified,
+                IdentityTierV2::Probable => IdentityTrustTier::HighConfidence,
+                IdentityTierV2::Unknown => IdentityTrustTier::Conditional,
+            };
+            let mut step_up_required = false;
+            let mut recovery_state = IdentityRecoveryState::None;
+            if cluster_drift_detected
+                && consistency_level == IdentityVerificationConsistencyLevel::StrictVerified
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::HighConfidenceVerified;
+            }
+            if ok.spoof_liveness_status == selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::SuspectedSpoof
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Rejected;
+                step_up_required = true;
+                recovery_state = IdentityRecoveryState::RecoveryRestricted;
+            } else if governance_identity_quarantined {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Restricted;
+                step_up_required = true;
+                recovery_state = IdentityRecoveryState::RecoveryRestricted;
+            }
+            IdentityExecutionState::v1(
+                consistency_level,
+                trust_tier,
+                ok.identity_v2.identity_tier_v2,
+                ok.spoof_liveness_status,
+                step_up_required,
+                recovery_state,
+                cluster_drift_detected,
+                ok.reason_code.map(|code| u64::from(code.0)),
+            )
+        }
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
+            let (mut consistency_level, mut trust_tier, step_up_required, recovery_state) =
+                match unknown.reason_code {
+                    code
+                        if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+                            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
+                    {
+                        (
+                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                            IdentityTrustTier::Restricted,
+                            true,
+                            IdentityRecoveryState::ReauthRequired,
+                        )
+                    }
+                    code
+                        if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+                            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+                    {
+                        (
+                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                            IdentityTrustTier::Restricted,
+                            false,
+                            IdentityRecoveryState::ReEnrollmentRequired,
+                        )
+                    }
+                    code if code == voice_id_reason_codes::VID_SPOOF_RISK => (
+                        IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                        IdentityTrustTier::Rejected,
+                        true,
+                        IdentityRecoveryState::RecoveryRestricted,
+                    ),
+                    _ if unknown.candidate_user_id.is_some() => (
+                        IdentityVerificationConsistencyLevel::DegradedVerification,
+                        IdentityTrustTier::Conditional,
+                        false,
+                        IdentityRecoveryState::None,
+                    ),
+                    _ => (
+                        IdentityVerificationConsistencyLevel::DegradedVerification,
+                        IdentityTrustTier::Restricted,
+                        false,
+                        IdentityRecoveryState::None,
+                    ),
+                };
+            if cluster_drift_detected
+                && consistency_level == IdentityVerificationConsistencyLevel::HighConfidenceVerified
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::DegradedVerification;
+            }
+            if unknown.spoof_liveness_status
+                == selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::SuspectedSpoof
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Rejected;
+            } else if governance_identity_quarantined {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Restricted;
+            }
+            IdentityExecutionState::v1(
+                consistency_level,
+                trust_tier,
+                unknown.identity_v2.identity_tier_v2,
+                unknown.spoof_liveness_status,
+                step_up_required,
+                recovery_state,
+                cluster_drift_detected,
+                Some(u64::from(unknown.reason_code.0)),
+            )
+        }
+    }
+    .map_err(StorageError::ContractViolation)?;
+    Ok(identity_state)
+}
+
+fn identity_state_allows_memory_scope(identity_state: &IdentityExecutionState) -> bool {
+    matches!(identity_state.trust_tier, IdentityTrustTier::Verified)
+        && !identity_state.step_up_required
+        && identity_state.recovery_state == IdentityRecoveryState::None
+}
+
+fn governance_quarantines_subsystem(
+    governance_state: &GovernanceExecutionState,
+    subsystem_id: &str,
+) -> bool {
+    governance_state
+        .quarantined_subsystems
+        .iter()
+        .any(|subsystem| subsystem == subsystem_id)
+}
+
+fn memory_governance_blocked(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> bool {
+    runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| {
+            state.safe_mode_active
+                || state.cluster_consistency == GovernanceClusterConsistency::Diverged
+                || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_MEMORY_ENGINE)
+                || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_AUTHORITY_LAYER)
+        })
+        .unwrap_or(false)
+}
+
+fn memory_consistency_level_from_envelope(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> MemoryConsistencyLevel {
+    match runtime_execution_envelope
+        .persistence_state
+        .as_ref()
+        .map(|state| state.recovery_mode)
+    {
+        Some(selene_kernel_contracts::runtime_execution::PersistenceRecoveryMode::Normal) | None => {
+            MemoryConsistencyLevel::StrictLedger
+        }
+        Some(
+            selene_kernel_contracts::runtime_execution::PersistenceRecoveryMode::Recovering
+            | selene_kernel_contracts::runtime_execution::PersistenceRecoveryMode::DegradedRecovery,
+        ) => MemoryConsistencyLevel::RecoveryRebuild,
+        Some(
+            selene_kernel_contracts::runtime_execution::PersistenceRecoveryMode::QuarantinedLocalState,
+        ) => MemoryConsistencyLevel::EventualView,
+    }
+}
+
+fn memory_confidence_floor(candidates: &[MemoryCandidate]) -> Option<MemoryConfidence> {
+    if candidates
+        .iter()
+        .any(|candidate| candidate.confidence == MemoryConfidence::Low)
+    {
+        return Some(MemoryConfidence::Low);
+    }
+    if candidates
+        .iter()
+        .any(|candidate| candidate.confidence == MemoryConfidence::Med)
+    {
+        return Some(MemoryConfidence::Med);
+    }
+    if candidates
+        .iter()
+        .any(|candidate| candidate.confidence == MemoryConfidence::High)
+    {
+        return Some(MemoryConfidence::High);
+    }
+    None
+}
+
+fn memory_trust_level_from_confidence_floor(
+    confidence_floor: Option<MemoryConfidence>,
+    ledger_write_accepted: bool,
+) -> MemoryTrustLevel {
+    match confidence_floor {
+        Some(MemoryConfidence::High) if ledger_write_accepted => MemoryTrustLevel::Verified,
+        Some(MemoryConfidence::High) => MemoryTrustLevel::HighConfidence,
+        Some(MemoryConfidence::Med | MemoryConfidence::Low) => MemoryTrustLevel::LowConfidence,
+        None => MemoryTrustLevel::Unverified,
+    }
+}
+
+fn memory_execution_state_from_candidates(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    identity_state: &IdentityExecutionState,
+    candidates: &[MemoryCandidate],
+    reason_code: Option<ReasonCodeId>,
+) -> Result<MemoryExecutionState, StorageError> {
+    let governance_blocked = memory_governance_blocked(runtime_execution_envelope);
+    let confidence_floor = memory_confidence_floor(candidates);
+    let eligibility_decision = if governance_blocked {
+        MemoryEligibilityDecision::GovernedBlocked
+    } else if !identity_state_allows_memory_scope(identity_state) {
+        MemoryEligibilityDecision::IdentityScopeBlocked
+    } else if candidates.is_empty() {
+        MemoryEligibilityDecision::NoEligibleCandidates
+    } else {
+        MemoryEligibilityDecision::Eligible
+    };
+    MemoryExecutionState::v1(
+        true,
+        memory_consistency_level_from_envelope(runtime_execution_envelope),
+        memory_trust_level_from_confidence_floor(confidence_floor, false),
+        eligibility_decision,
+        confidence_floor,
+        candidates.len() as u16,
+        false,
+        0,
+        governance_blocked,
+        reason_code.map(|code| u64::from(code.0)),
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn memory_execution_state_from_dispatch_outcome(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    existing_state: Option<&MemoryExecutionState>,
+    dispatch_outcome: Option<&SimulationDispatchOutcome>,
+) -> Result<Option<MemoryExecutionState>, StorageError> {
+    let governance_blocked = memory_governance_blocked(runtime_execution_envelope);
+    let Some(dispatch_outcome) = dispatch_outcome else {
+        return Ok(existing_state.cloned());
+    };
+    let state = match dispatch_outcome {
+        SimulationDispatchOutcome::MemoryPropose(resp) => {
+            let confidence_floor = if resp.ledger_events.is_empty() {
+                None
+            } else if resp
+                .ledger_events
+                .iter()
+                .any(|event| event.confidence == MemoryConfidence::Low)
+            {
+                Some(MemoryConfidence::Low)
+            } else if resp
+                .ledger_events
+                .iter()
+                .any(|event| event.confidence == MemoryConfidence::Med)
+            {
+                Some(MemoryConfidence::Med)
+            } else {
+                Some(MemoryConfidence::High)
+            };
+            let ledger_write_accepted = !resp.ledger_events.is_empty();
+            let reason_code = resp
+                .decisions
+                .first()
+                .map(|decision| decision.reason_code)
+                .or_else(|| resp.ledger_events.first().map(|event| event.reason_code));
+            MemoryExecutionState::v1(
+                true,
+                memory_consistency_level_from_envelope(runtime_execution_envelope),
+                memory_trust_level_from_confidence_floor(confidence_floor, ledger_write_accepted),
+                if governance_blocked {
+                    MemoryEligibilityDecision::GovernedBlocked
+                } else if ledger_write_accepted {
+                    MemoryEligibilityDecision::Eligible
+                } else {
+                    MemoryEligibilityDecision::PolicyBlocked
+                },
+                confidence_floor,
+                resp.decisions.len() as u16,
+                ledger_write_accepted,
+                resp.ledger_events.len() as u16,
+                governance_blocked,
+                reason_code.map(|code| u64::from(code.0)),
+            )
+            .map_err(StorageError::ContractViolation)?
+        }
+        SimulationDispatchOutcome::MemoryForget(resp) => {
+            let confidence_floor = resp.ledger_event.as_ref().map(|event| event.confidence);
+            let ledger_write_accepted = resp.forgotten && resp.ledger_event.is_some();
+            let reason_code = resp
+                .fail_reason_code
+                .or_else(|| resp.ledger_event.as_ref().map(|event| event.reason_code));
+            MemoryExecutionState::v1(
+                true,
+                memory_consistency_level_from_envelope(runtime_execution_envelope),
+                memory_trust_level_from_confidence_floor(confidence_floor, ledger_write_accepted),
+                if governance_blocked {
+                    MemoryEligibilityDecision::GovernedBlocked
+                } else if ledger_write_accepted {
+                    MemoryEligibilityDecision::Eligible
+                } else {
+                    MemoryEligibilityDecision::PolicyBlocked
+                },
+                confidence_floor,
+                if resp.forgotten { 1 } else { 0 },
+                ledger_write_accepted,
+                if resp.ledger_event.is_some() { 1 } else { 0 },
+                governance_blocked,
+                reason_code.map(|code| u64::from(code.0)),
+            )
+            .map_err(StorageError::ContractViolation)?
+        }
+        SimulationDispatchOutcome::MemoryRecall(resp) => memory_execution_state_from_candidates(
+            runtime_execution_envelope,
+            runtime_execution_envelope
+                .identity_state
+                .as_ref()
+                .ok_or(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "app_voice_turn_execution_outcome.runtime_execution_envelope.identity_state",
+                        reason: "memory recall requires identity execution state",
+                    },
+                ))?,
+            &resp.candidates,
+            resp.fail_reason_code,
+        )?,
+        _ => return Ok(existing_state.cloned()),
+    };
+    Ok(Some(state))
+}
+
+fn runtime_execution_envelope_with_authority_state_for_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+    finder_terminal: Option<&FinderTerminalPacket>,
+) -> Result<RuntimeExecutionEnvelope, StorageError> {
+    let mut runtime_execution_envelope = out.runtime_execution_envelope.clone();
+    if let Some(memory_state) = memory_execution_state_from_dispatch_outcome(
+        &runtime_execution_envelope,
+        runtime_execution_envelope.memory_state.as_ref(),
+        out.dispatch_outcome.as_ref(),
+    )? {
+        runtime_execution_envelope = runtime_execution_envelope
+            .with_memory_state(Some(memory_state))
+            .map_err(StorageError::ContractViolation)?;
+    }
+    let authority_state = authority_execution_state_for_outcome(
+        out,
+        finder_terminal,
+        &runtime_execution_envelope,
+    )?;
+    runtime_execution_envelope
+        .with_authority_state(Some(authority_state))
+        .map_err(StorageError::ContractViolation)
+}
+
+fn authority_execution_state_for_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+    finder_terminal: Option<&FinderTerminalPacket>,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Result<AuthorityExecutionState, StorageError> {
+    let policy_context_ref = out.ph1x_request.as_ref().map(|request| request.policy_context_ref);
+    let simulation_certification_state =
+        simulation_certification_state_for_outcome(out, finder_terminal);
+    let policy_decision = authority_policy_decision_for_outcome(out);
+    let identity_scope_required = out
+        .ph1x_request
+        .as_ref()
+        .and_then(intent_type_from_ph1x_request)
+        .map(intent_requires_identity_scope)
+        .unwrap_or(false);
+    let identity_scope_satisfied = if !identity_scope_required {
+        true
+    } else {
+        runtime_execution_envelope
+            .identity_state
+            .as_ref()
+            .map(|state| {
+                matches!(
+                    state.trust_tier,
+                    IdentityTrustTier::Verified | IdentityTrustTier::HighConfidence
+                ) && !state.step_up_required
+            })
+            .unwrap_or(false)
+    };
+    let memory_scope_allowed = runtime_execution_envelope
+        .memory_state
+        .as_ref()
+        .map(|state| state.eligibility_decision == MemoryEligibilityDecision::Eligible)
+        .unwrap_or(false);
+    AuthorityExecutionState::v1(
+        policy_context_ref,
+        simulation_certification_state,
+        OnboardingReadinessState::NotApplicable,
+        policy_decision,
+        identity_scope_required,
+        identity_scope_satisfied,
+        memory_scope_allowed,
+        out.reason_code.map(|code| u64::from(code.0)),
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn simulation_certification_state_for_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+    finder_terminal: Option<&FinderTerminalPacket>,
+) -> SimulationCertificationState {
+    if let Some(dispatch_outcome) = out.dispatch_outcome.as_ref() {
+        return match dispatch_outcome {
+            SimulationDispatchOutcome::AccessStepUp { .. } => {
+                SimulationCertificationState::StepUpRequired
+            }
+            _ => SimulationCertificationState::CertifiedActive,
+        };
+    }
+    if matches!(finder_terminal, Some(FinderTerminalPacket::MissingSimulation(_))) {
+        return SimulationCertificationState::MissingSimulationPath;
+    }
+    if out.reason_code
+        == Some(crate::simulation_executor::reason_codes::SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE)
+    {
+        return SimulationCertificationState::InactiveSimulation;
+    }
+    if matches!(
+        out.ph1x_response.as_ref().map(|response| &response.directive),
+        Some(Ph1xDirective::Dispatch(dispatch))
+            if matches!(dispatch.dispatch_request, DispatchRequest::AccessStepUp(_))
+    ) {
+        return SimulationCertificationState::StepUpRequired;
+    }
+    SimulationCertificationState::NotRequested
+}
+
+fn authority_policy_decision_for_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> AuthorityPolicyDecision {
+    match out.next_move {
+        AppVoiceTurnNextMove::Confirm | AppVoiceTurnNextMove::Clarify => {
+            AuthorityPolicyDecision::PendingConfirmation
+        }
+        AppVoiceTurnNextMove::Dispatch => match out.dispatch_outcome {
+            Some(SimulationDispatchOutcome::AccessStepUp { .. }) => {
+                AuthorityPolicyDecision::StepUpRequired
+            }
+            _ => AuthorityPolicyDecision::Allowed,
+        },
+        AppVoiceTurnNextMove::Respond => AuthorityPolicyDecision::Allowed,
+        AppVoiceTurnNextMove::Refused => match out.reason_code {
+            Some(code) if code == sim_finder_reason_codes::SIM_FINDER_REFUSE_ACCESS_AP_REQUIRED => {
+                AuthorityPolicyDecision::StepUpRequired
+            }
+            _ => AuthorityPolicyDecision::Denied,
+        },
+        AppVoiceTurnNextMove::Wait | AppVoiceTurnNextMove::NotInvokedDisabled => {
+            AuthorityPolicyDecision::NotRequested
+        }
+    }
+}
+
+fn intent_type_from_ph1x_request(request: &Ph1xRequest) -> Option<IntentType> {
+    match request.nlp_output.as_ref() {
+        Some(Ph1nResponse::IntentDraft(intent_draft)) => Some(intent_draft.intent_type),
+        _ => None,
+    }
+}
+
+fn intent_requires_identity_scope(intent_type: IntentType) -> bool {
+    matches!(
+        intent_type,
+        IntentType::MemoryRememberRequest
+            | IntentType::MemoryForgetRequest
+            | IntentType::MemoryQuery
+            | IntentType::SendMoney
+            | IntentType::CreateInviteLink
+            | IntentType::CapreqManage
+            | IntentType::AccessSchemaManage
+            | IntentType::AccessEscalationVote
+            | IntentType::AccessInstanceCompileRefresh
+    )
 }
 
 fn runtime_governance_reason_literal(decision: &RuntimeGovernanceDecision) -> &'static str {
@@ -4931,7 +5522,8 @@ mod tests {
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1e::{Ph1eProviderConfig, Ph1eProxyConfig, Ph1eProxyMode};
     use selene_kernel_contracts::ph1_voice_id::{
-        DeviceTrustLevel, DiarizationSegment, Ph1VoiceIdResponse, SpeakerAssertionOk, SpeakerLabel,
+        DeviceTrustLevel, DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse,
+        SpeakerAssertionOk, SpeakerAssertionUnknown, SpeakerLabel,
     };
     use selene_kernel_contracts::ph1bcast::{BCAST_CREATE_DRAFT, BCAST_DELIVER_COMMIT};
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -4961,6 +5553,10 @@ mod tests {
     };
     use selene_kernel_contracts::ph1x::{
         ConfirmAnswer, IdentityContext, PendingState, Ph1xDirective, ThreadPolicyFlags, ThreadState,
+    };
+    use selene_kernel_contracts::runtime_execution::{
+        AuthorityPolicyDecision, IdentityRecoveryState, IdentityTrustTier,
+        MemoryEligibilityDecision, OnboardingReadinessState, SimulationCertificationState,
     };
     use selene_kernel_contracts::{
         ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState,
@@ -5060,6 +5656,46 @@ mod tests {
                 )
                 .unwrap()],
                 SpeakerLabel::speaker_a(),
+            )
+            .unwrap(),
+        )
+    }
+
+    fn reauth_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_REAUTH_REQUIRED,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
+                Some(user_id),
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn spoof_risk_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_metrics_and_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_SPOOF_RISK,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
+                4500,
+                None,
+                selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::SuspectedSpoof,
+                vec![],
+                Some(user_id),
+                None,
             )
             .unwrap(),
         )
@@ -6258,6 +6894,334 @@ mod tests {
     }
 
     #[test]
+    fn at_harmonize_01_confirmed_identity_and_memory_attach_to_agent_envelope() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_mem_user").unwrap();
+        let device_id = DeviceId::new("harmonize_mem_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9521),
+            TurnId(9621),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        let confirmed_assertion = confirmed_voice_assertion(actor_user_id.clone());
+        forwarded.voice_identity_assertion = confirmed_assertion.clone();
+        runtime
+            .executor
+            .debug_seed_memory_candidate_for_tests(
+                &mut store,
+                MonotonicTimeNs(6),
+                CorrelationId(9521),
+                TurnId(9621),
+                confirmed_assertion,
+                None,
+                MemoryKey::new("invite_contact_jane_sms").unwrap(),
+                MemoryValue::v1("+14155550121".to_string(), None).unwrap(),
+                "Jane contact memory".to_string(),
+            )
+            .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9521),
+                TurnId(9621),
+                AppPlatform::Desktop,
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Verified);
+        assert!(!identity_state.cluster_drift_detected);
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert!(memory_state.cloud_authoritative);
+        assert_eq!(memory_state.eligibility_decision, MemoryEligibilityDecision::Eligible);
+        assert_eq!(memory_state.candidate_count, 1);
+    }
+
+    #[test]
+    fn at_harmonize_02_reauth_required_identity_attaches_recovery_and_restricted_trust() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_reauth_user").unwrap();
+        let device_id = DeviceId::new("harmonize_reauth_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9522),
+            TurnId(9622),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9522),
+                TurnId(9622),
+                AppPlatform::Desktop,
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::ReauthRequired);
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::IdentityScopeBlocked
+        );
+    }
+
+    #[test]
+    fn at_harmonize_02b_spoof_risk_identity_is_rejected_and_recovery_restricted() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_spoof_user").unwrap();
+        let device_id = DeviceId::new("harmonize_spoof_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9524),
+            TurnId(9624),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = spoof_risk_voice_assertion(actor_user_id);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9524),
+                TurnId(9624),
+                AppPlatform::Desktop,
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Rejected);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::RecoveryRestricted
+        );
+        assert!(identity_state.step_up_required);
+    }
+
+    #[test]
+    fn at_harmonize_03_governance_drift_blocks_memory_and_marks_identity_cluster_drift() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_drift_user").unwrap();
+        let device_id = DeviceId::new("harmonize_drift_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        let _ = runtime.observe_runtime_governance_node_policy_version(
+            "node_drift",
+            Some("2026.04.01.v1"),
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9523),
+            TurnId(9623),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        let confirmed_assertion = confirmed_voice_assertion(actor_user_id.clone());
+        forwarded.voice_identity_assertion = confirmed_assertion.clone();
+        runtime
+            .executor
+            .debug_seed_memory_candidate_for_tests(
+                &mut store,
+                MonotonicTimeNs(6),
+                CorrelationId(9523),
+                TurnId(9623),
+                confirmed_assertion,
+                None,
+                MemoryKey::new("invite_contact_drift_sms").unwrap(),
+                MemoryValue::v1("+14155550123".to_string(), None).unwrap(),
+                "Drift contact memory".to_string(),
+            )
+            .unwrap();
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Drift", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                CorrelationId(9523),
+                TurnId(9623),
+                AppPlatform::Desktop,
+                &forwarded,
+                None,
+                Some("tenant_1"),
+                x_build,
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert!(identity_state.cluster_drift_detected);
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::GovernedBlocked
+        );
+        assert_eq!(memory_state.candidate_count, 0);
+        assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 0);
+    }
+
+    #[test]
     fn at_agentpkt_01_packet_contains_all_required_fields() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:agentpkt_user").unwrap();
@@ -7115,6 +8079,167 @@ mod tests {
             }
             other => panic!("expected refuse packet, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn at_harmonize_04_authority_state_marks_certified_active_dispatch() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_authority_user").unwrap();
+        let device_id = DeviceId::new("harmonize_authority_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
+
+        let request_1 = AppVoiceIngressRequest::v1(
+            CorrelationId(9851),
+            TurnId(9951),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(20),
+            thread_key: Some("harmonize_authority_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .unwrap();
+        let thread_state_after_confirm = out_1
+            .ph1x_response
+            .expect("confirm turn should include ph1x response")
+            .thread_state;
+
+        let request_2 = AppVoiceIngressRequest::v1(
+            CorrelationId(9852),
+            TurnId(9952),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(21),
+            thread_key: Some("harmonize_authority_thread".to_string()),
+            thread_state: thread_state_after_confirm,
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_2 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
+            .unwrap();
+        let authority_state = out_2
+            .runtime_execution_envelope
+            .authority_state
+            .expect("authority state should be attached");
+        assert_eq!(
+            authority_state.simulation_certification_state,
+            SimulationCertificationState::CertifiedActive
+        );
+        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Allowed);
+        assert_eq!(
+            authority_state.onboarding_readiness_state,
+            OnboardingReadinessState::NotApplicable
+        );
+    }
+
+    #[test]
+    fn at_harmonize_05_missing_simulation_attaches_denied_authority_state() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_missing_user").unwrap();
+        let device_id = DeviceId::new("harmonize_missing_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9853),
+            TurnId(9953),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id),
+            UserId::new("tenant_1:harmonize_missing_user").unwrap(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(23),
+            thread_key: Some("harmonize_missing_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .unwrap();
+        let authority_state = out
+            .runtime_execution_envelope
+            .authority_state
+            .expect("authority state should be attached");
+        assert_eq!(
+            authority_state.simulation_certification_state,
+            SimulationCertificationState::MissingSimulationPath
+        );
+        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Denied);
     }
 
     #[test]
