@@ -12,14 +12,9 @@ use selene_kernel_contracts::ph1simfinder::{
 };
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 
-const WORD_INTENT_CONFIDENCE: u32 = 35;
-const WORD_REQUIRED_FIELD_COVERAGE: u32 = 20;
-const WORD_EVIDENCE_COVERAGE: u32 = 10;
-const WORD_CATALOG_STATUS: u32 = 10;
-const WORD_CONTEXT_ALIGNMENT: u32 = 10;
-const WORD_OCR_ALIGNMENT: u32 = 5;
-const WORD_LLM_ASSIST_ALIGNMENT: u32 = 5;
-const WORD_GOLD_BONUS: u32 = 5;
+use crate::ph1comp::{
+    compare_finder_rank, compute_finder_confidence_score_bp, compute_finder_worthiness_score_bp,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FinderRuntimeConfig {
@@ -781,7 +776,7 @@ impl Ph1SimFinderRuntime {
             },
         ];
 
-        let worthiness_score_bp = worthiness_score_bp(
+        let worthiness_score_bp = compute_finder_worthiness_score_bp(
             req.estimated_frequency_score_bp,
             req.estimated_value_score_bp,
             req.estimated_roi_score_bp,
@@ -955,18 +950,17 @@ fn score_candidate(
         .saturating_add(req.contradictory_field_penalty_bp)
         .saturating_add(req.policy_mismatch_penalty_bp);
 
-    let raw_score_bp = ((WORD_INTENT_CONFIDENCE * intent_confidence_bp as u32)
-        + (WORD_REQUIRED_FIELD_COVERAGE * required_field_coverage_bp as u32)
-        + (WORD_EVIDENCE_COVERAGE * evidence_coverage_bp as u32)
-        + (WORD_CATALOG_STATUS * catalog_status_bp as u32)
-        + (WORD_CONTEXT_ALIGNMENT * req.context_alignment_bp as u32)
-        + (WORD_OCR_ALIGNMENT * req.ocr_alignment_bp as u32)
-        + (WORD_LLM_ASSIST_ALIGNMENT * req.llm_assist_alignment_bp as u32)
-        + (WORD_GOLD_BONUS * gold_match_bonus_bp as u32))
-        / 100;
-    let confidence_score_bp = raw_score_bp
-        .saturating_sub(penalty_bp_total as u32)
-        .min(10_000) as u16;
+    let confidence_score_bp = compute_finder_confidence_score_bp(
+        intent_confidence_bp,
+        required_field_coverage_bp,
+        evidence_coverage_bp,
+        catalog_status_bp,
+        req.context_alignment_bp,
+        req.ocr_alignment_bp,
+        req.llm_assist_alignment_bp,
+        gold_match_bonus_bp,
+        penalty_bp_total,
+    );
 
     let mut evidence_spans = matched_terms
         .iter()
@@ -994,12 +988,16 @@ fn score_candidate(
 }
 
 fn compare_ranked_candidates(left: &RankedCandidate, right: &RankedCandidate) -> Ordering {
-    right
-        .confidence_score_bp
-        .cmp(&left.confidence_score_bp)
-        .then_with(|| right.gold_match_bonus_bp.cmp(&left.gold_match_bonus_bp))
-        .then_with(|| right.simulation_priority.cmp(&left.simulation_priority))
-        .then_with(|| left.simulation_id.cmp(&right.simulation_id))
+    compare_finder_rank(
+        left.confidence_score_bp,
+        left.gold_match_bonus_bp,
+        left.simulation_priority,
+        &left.simulation_id,
+        right.confidence_score_bp,
+        right.gold_match_bonus_bp,
+        right.simulation_priority,
+        &right.simulation_id,
+    )
 }
 
 fn choose_top_draft_candidate<'a>(
@@ -1165,24 +1163,6 @@ fn scope_score_from_class(scope_class: &str) -> u16 {
     } else {
         5_000
     }
-}
-
-fn worthiness_score_bp(
-    frequency_bp: u16,
-    value_bp: u16,
-    estimated_roi_score_bp: u16,
-    feasibility_bp: u16,
-    scope_bp: u16,
-    risk_bp: u16,
-) -> u16 {
-    let raw = ((25u32 * frequency_bp as u32)
-        + (25u32 * value_bp as u32)
-        + (15u32 * estimated_roi_score_bp as u32)
-        + (20u32 * feasibility_bp as u32)
-        + (15u32 * scope_bp as u32))
-        / 100;
-    let risk_penalty_bp = risk_bp as u32 / 2;
-    raw.saturating_sub(risk_penalty_bp).min(10_000) as u16
 }
 
 fn stable_fingerprint(input: &str) -> String {

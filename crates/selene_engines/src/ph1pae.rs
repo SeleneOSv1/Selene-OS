@@ -5,10 +5,14 @@ use std::cmp::min;
 use selene_kernel_contracts::ph1pae::{
     PaeAdaptationHint, PaeAdaptationHintEmitOk, PaeAdaptationHintEmitRequest, PaeCapabilityId,
     PaeMode, PaePolicyScoreBuildOk, PaePolicyScoreBuildRequest, PaeProviderSlot, PaeRefuse,
-    PaeRouteDomain, PaeScoreEntry, PaeSignalSource, PaeValidationStatus, Ph1PaeRequest,
-    Ph1PaeResponse,
+    PaeScoreEntry, PaeSignalSource, PaeValidationStatus, Ph1PaeRequest, Ph1PaeResponse,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
+
+use crate::ph1comp::{
+    compare_pae_rank, compute_pae_candidate_score, compute_pae_signal_bias, pae_priority_from_total,
+    pae_route_index,
+};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -117,12 +121,9 @@ impl Ph1PaeRuntime {
 
         let mut route_signal_bp = [0i32; 4];
         for signal in &req.signals {
-            let weighted = (signal.signal_value_bp as i32)
-                * source_weight_pct(signal.source)
-                * (signal.confidence_bp as i32)
-                / 10_000
-                / 100;
-            let idx = route_index(signal.route_domain);
+            let weighted =
+                compute_pae_signal_bias(signal.signal_value_bp, signal.confidence_bp, signal.source);
+            let idx = pae_route_index(signal.route_domain);
             route_signal_bp[idx] = (route_signal_bp[idx] + weighted).clamp(-4_000, 4_000);
         }
 
@@ -146,28 +147,27 @@ impl Ph1PaeRuntime {
                 );
             }
 
-            let signal_bias = route_signal_bp[route_index(candidate.route_domain)];
-            let quality =
-                (candidate.expected_quality_bp as i32 + signal_bias).clamp(-20_000, 20_000);
-            let latency_penalty = ((candidate.expected_latency_ms as i32) / 4).clamp(0, 4_000);
-            let cost_penalty = (candidate.expected_cost_bp as i32).max(0).clamp(0, 4_000);
-            let regression_penalty = ((candidate.regression_risk_bp as i32) / 2).clamp(0, 5_000);
-            let mut total = quality - latency_penalty - cost_penalty - regression_penalty;
-
-            if candidate.sample_size < effective_min_sample {
-                total -= 1_200;
-            }
+            let signal_bias = route_signal_bp[pae_route_index(candidate.route_domain)];
+            let quantitative = compute_pae_candidate_score(
+                candidate.expected_quality_bp,
+                signal_bias,
+                candidate.expected_latency_ms,
+                candidate.expected_cost_bp,
+                candidate.regression_risk_bp,
+                candidate.sample_size,
+                effective_min_sample,
+            );
 
             let score = match PaeScoreEntry::v1(
                 candidate.candidate_id.clone(),
                 candidate.route_domain,
                 candidate.provider_slot,
                 candidate.proposed_mode,
-                total,
-                quality.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-                latency_penalty as i16,
-                cost_penalty as i16,
-                regression_penalty as i16,
+                quantitative.total_score_bp,
+                quantitative.quality_score_bp,
+                quantitative.latency_penalty_bp,
+                quantitative.cost_penalty_bp,
+                quantitative.regression_penalty_bp,
                 candidate.sample_size,
             ) {
                 Ok(score) => score,
@@ -191,10 +191,14 @@ impl Ph1PaeRuntime {
         }
 
         scores.sort_by(|a, b| {
-            b.total_score_bp
-                .cmp(&a.total_score_bp)
-                .then(b.sample_size.cmp(&a.sample_size))
-                .then(a.candidate_id.cmp(&b.candidate_id))
+            compare_pae_rank(
+                a.total_score_bp,
+                a.sample_size,
+                &a.candidate_id,
+                b.total_score_bp,
+                b.sample_size,
+                &b.candidate_id,
+            )
         });
         scores.truncate(min(scores.len(), req.envelope.max_scores as usize));
 
@@ -301,7 +305,7 @@ impl Ph1PaeRuntime {
                 provider_slot_token(selected_score.provider_slot),
                 selected_score.total_score_bp
             );
-            let priority = (selected_score.total_score_bp + 10_000).clamp(0, 10_000) as u16;
+            let priority = pae_priority_from_total(selected_score.total_score_bp);
 
             let hint = match PaeAdaptationHint::v1(
                 format!("pae_hint_{:02}", idx + 1),
@@ -408,24 +412,6 @@ fn capability_from_request(req: &Ph1PaeRequest) -> PaeCapabilityId {
     }
 }
 
-fn source_weight_pct(source: PaeSignalSource) -> i32 {
-    match source {
-        PaeSignalSource::Listen => 25,
-        PaeSignalSource::Feedback => 35,
-        PaeSignalSource::Learn => 20,
-        PaeSignalSource::RllGoverned => 20,
-    }
-}
-
-fn route_index(route: PaeRouteDomain) -> usize {
-    match route {
-        PaeRouteDomain::Stt => 0,
-        PaeRouteDomain::Tts => 1,
-        PaeRouteDomain::Llm => 2,
-        PaeRouteDomain::Tooling => 3,
-    }
-}
-
 fn bounded_promotion_mode(current: PaeMode, requested: PaeMode) -> PaeMode {
     if mode_rank(requested) <= mode_rank(current) {
         return current;
@@ -464,10 +450,14 @@ fn is_sorted_scores(scores: &[PaeScoreEntry]) -> bool {
     scores.windows(2).all(|pair| {
         let a = &pair[0];
         let b = &pair[1];
-        a.total_score_bp > b.total_score_bp
-            || (a.total_score_bp == b.total_score_bp
-                && (a.sample_size > b.sample_size
-                    || (a.sample_size == b.sample_size && a.candidate_id <= b.candidate_id)))
+        compare_pae_rank(
+            a.total_score_bp,
+            a.sample_size,
+            &a.candidate_id,
+            b.total_score_bp,
+            b.sample_size,
+            &b.candidate_id,
+        ) != std::cmp::Ordering::Greater
     })
 }
 
@@ -501,8 +491,8 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::ph1pae::{
-        PaePolicyCandidate, PaePolicyScoreBuildRequest, PaeRequestEnvelope, PaeSignalVector,
-        PaeTargetEngine,
+        PaePolicyCandidate, PaePolicyScoreBuildRequest, PaeRequestEnvelope, PaeRouteDomain,
+        PaeSignalVector, PaeTargetEngine,
     };
 
     fn envelope() -> PaeRequestEnvelope {

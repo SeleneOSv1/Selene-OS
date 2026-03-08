@@ -8,6 +8,8 @@ use selene_kernel_contracts::ph1cost::{
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
+use crate::ph1comp::budget_posture;
+
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -221,10 +223,9 @@ fn build_guardrails(
 fn evaluate_guardrail(
     budget: &CostRouteBudget,
 ) -> Result<CostRouteGuardrail, selene_kernel_contracts::ContractViolation> {
-    let utilization_bp = utilization_bp(budget.daily_used_units, budget.daily_budget_units);
-    let remaining_units = budget
-        .daily_budget_units
-        .saturating_sub(budget.daily_used_units);
+    let posture = budget_posture(budget.daily_used_units, budget.daily_budget_units);
+    let utilization_bp = posture.utilization_bp;
+    let remaining_units = posture.remaining_units;
 
     let (routing_decision, route_tier_hint, response_length_hint, suggested_retry_limit) =
         if budget.daily_used_units >= budget.daily_budget_units {
@@ -266,14 +267,6 @@ fn evaluate_guardrail(
         remaining_units,
         utilization_bp,
     )
-}
-
-fn utilization_bp(used: u32, budget: u32) -> u16 {
-    if budget == 0 {
-        return 10_000;
-    }
-    let bp = (used as u128 * 10_000u128) / budget as u128;
-    bp.min(10_000) as u16
 }
 
 fn collect_guardrail_drift_diagnostics(

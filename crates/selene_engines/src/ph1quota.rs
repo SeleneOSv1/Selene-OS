@@ -7,6 +7,8 @@ use selene_kernel_contracts::ph1quota::{
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
+use crate::ph1comp::clamp_wait_ms;
+
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -100,8 +102,11 @@ impl Ph1QuotaRuntime {
             && throttle_cause != QuotaThrottleCause::PolicyBlocked
             && req.wait_permitted;
         let wait_ms = if wait_permitted {
-            let base_wait = req.suggested_wait_ms.unwrap_or(self.config.default_wait_ms);
-            Some(base_wait.min(self.config.max_wait_ms))
+            Some(clamp_wait_ms(
+                req.suggested_wait_ms,
+                self.config.default_wait_ms,
+                self.config.max_wait_ms,
+            ))
         } else {
             None
         };
@@ -174,7 +179,11 @@ impl Ph1QuotaRuntime {
             (
                 QuotaDecisionAction::Wait,
                 reason_for_cause(req.throttle_cause),
-                Some(req.wait_ms.unwrap_or(self.config.default_wait_ms)),
+                Some(clamp_wait_ms(
+                    req.wait_ms,
+                    self.config.default_wait_ms,
+                    self.config.max_wait_ms,
+                )),
             )
         } else {
             (

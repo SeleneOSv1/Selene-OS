@@ -1,14 +1,16 @@
 #![forbid(unsafe_code)]
 
-use std::cmp::{max, min};
+use std::cmp::min;
 use std::collections::BTreeSet;
 
 use selene_kernel_contracts::ph1rll::{
-    Ph1RllRequest, Ph1RllResponse, RllArtifactCandidate, RllArtifactRecommendOk,
-    RllArtifactRecommendRequest, RllCapabilityId, RllOptimizationTarget, RllPolicyRankOfflineOk,
-    RllPolicyRankOfflineRequest, RllRecommendationItem, RllRefuse, RllValidationStatus,
+    Ph1RllRequest, Ph1RllResponse, RllArtifactRecommendOk, RllArtifactRecommendRequest,
+    RllCapabilityId, RllPolicyRankOfflineOk, RllPolicyRankOfflineRequest,
+    RllRecommendationItem, RllRefuse, RllValidationStatus,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
+
+use crate::ph1comp::{compare_rll_rank, rll_candidate_score};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -124,12 +126,12 @@ impl Ph1RllRuntime {
                     candidate.confidence_pct,
                     candidate.approval_tier,
                     candidate.evidence_ref.clone(),
-                    score(candidate),
+                    rll_candidate_score(candidate),
                 )
             })
             .collect::<Vec<_>>();
 
-        scored.sort_by(|a, b| b.5.cmp(&a.5).then(a.0.cmp(&b.0)));
+        scored.sort_by(|a, b| compare_rll_rank(a.5, &a.0, b.5, &b.0));
 
         let mut seen = BTreeSet::new();
         let mut ordered_recommendations = Vec::new();
@@ -307,32 +309,13 @@ fn capability_from_request(req: &Ph1RllRequest) -> RllCapabilityId {
     }
 }
 
-fn score(candidate: &RllArtifactCandidate) -> u8 {
-    let mut score = candidate.confidence_pct as i16;
-    score += target_bonus(candidate.target);
-    score += effect_bonus(candidate.expected_effect_bp);
-    max(0, min(score, 100)) as u8
-}
-
-fn target_bonus(target: RllOptimizationTarget) -> i16 {
-    match target {
-        RllOptimizationTarget::PaeProviderSelectionWeights => 10,
-        RllOptimizationTarget::PruneClarificationOrdering => 9,
-        RllOptimizationTarget::CachePrefetchHeuristics => 8,
-        RllOptimizationTarget::ContextRetrievalScoring => 8,
-    }
-}
-
-fn effect_bonus(expected_effect_bp: i16) -> i16 {
-    // convert basis-point effect estimate into bounded score contribution.
-    (expected_effect_bp / 40).clamp(-20, 20)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
-    use selene_kernel_contracts::ph1rll::{RllRequestEnvelope, RllValidationStatus};
+    use selene_kernel_contracts::ph1rll::{
+        RllArtifactCandidate, RllOptimizationTarget, RllRequestEnvelope, RllValidationStatus,
+    };
 
     fn runtime() -> Ph1RllRuntime {
         Ph1RllRuntime::new(Ph1RllConfig::mvp_v1())
