@@ -30,7 +30,8 @@ use selene_kernel_contracts::ph1f::{
     ConversationSource, ConversationTurnId, ConversationTurnInput, ConversationTurnRecord,
 };
 use selene_kernel_contracts::ph1j::{
-    AuditEvent, AuditEventId, AuditEventInput, CorrelationId, DeviceId, TurnId,
+    AuditEvent, AuditEventId, AuditEventInput, CanonicalProofRecord, CanonicalProofRecordInput,
+    CorrelationId, DeviceId, ProofEventId, ProofVerificationResult, ProofWriteReceipt, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{
@@ -127,6 +128,35 @@ pub trait Ph1jAuditRepo {
     fn audit_rows(&self) -> &[AuditEvent];
     fn audit_rows_by_correlation(&self, correlation_id: CorrelationId) -> Vec<&AuditEvent>;
     fn audit_rows_by_tenant(&self, tenant_id: &str) -> Vec<&AuditEvent>;
+}
+
+pub trait Ph1jProofRepo {
+    fn append_proof_row(
+        &mut self,
+        input: CanonicalProofRecordInput,
+        idempotency_key: Option<String>,
+    ) -> Result<ProofWriteReceipt, StorageError>;
+    fn proof_rows(&self) -> &[CanonicalProofRecord];
+    fn proof_rows_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError>;
+    fn proof_rows_by_session_turn_bounded(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError>;
+    fn verify_proof_rows_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ProofVerificationResult>, StorageError>;
+    fn attempt_overwrite_proof_row(
+        &mut self,
+        proof_event_id: ProofEventId,
+    ) -> Result<(), StorageError>;
 }
 
 /// Typed repository interface for Selene OS core WorkOrder persistence wiring.
@@ -1931,6 +1961,52 @@ impl Ph1jAuditRepo for Ph1fStore {
 
     fn audit_rows_by_tenant(&self, tenant_id: &str) -> Vec<&AuditEvent> {
         self.audit_events_by_tenant(tenant_id)
+    }
+}
+
+impl Ph1jProofRepo for Ph1fStore {
+    fn append_proof_row(
+        &mut self,
+        input: CanonicalProofRecordInput,
+        idempotency_key: Option<String>,
+    ) -> Result<ProofWriteReceipt, StorageError> {
+        self.append_proof_record(input, idempotency_key)
+    }
+
+    fn proof_rows(&self) -> &[CanonicalProofRecord] {
+        self.proof_records()
+    }
+
+    fn proof_rows_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError> {
+        self.proof_records_by_request_id_bounded(request_id, limit)
+    }
+
+    fn proof_rows_by_session_turn_bounded(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError> {
+        self.proof_records_by_session_turn_bounded(session_id, turn_id, limit)
+    }
+
+    fn verify_proof_rows_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ProofVerificationResult>, StorageError> {
+        self.verify_proof_records_by_request_id_bounded(request_id, limit)
+    }
+
+    fn attempt_overwrite_proof_row(
+        &mut self,
+        proof_event_id: ProofEventId,
+    ) -> Result<(), StorageError> {
+        self.attempt_overwrite_proof_record(proof_event_id)
     }
 }
 

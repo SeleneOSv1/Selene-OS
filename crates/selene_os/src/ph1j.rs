@@ -1,529 +1,420 @@
 #![forbid(unsafe_code)]
 
+use std::cell::RefCell;
+
 use selene_kernel_contracts::ph1j::{
-    AuditEvent, AuditEventId, AuditEventInput, CorrelationId, TurnId,
+    CanonicalProofRecord, CanonicalProofRecordInput, ProofFailureClass, ProofProtectedActionClass,
+    ProofRetentionClass, ProofSignerIdentityMetadata, ProofVerificationPosture,
+    ProofVerificationResult, ProofWriteReceipt, TimestampTrustPosture,
 };
-use selene_kernel_contracts::{ContractViolation, ReasonCodeId, Validate};
+use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationVersion};
+use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
+use selene_storage::ph1f::{Ph1fStore, StorageError};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
 
-    // PH1.J OS wiring reason-code namespace. Values are placeholders until registry lock.
-    pub const PH1_J_VALIDATION_FAILED: ReasonCodeId = ReasonCodeId(0x4A00_0101);
-    pub const PH1_J_INTERNAL_PIPELINE_ERROR: ReasonCodeId = ReasonCodeId(0x4A00_01F1);
-    pub const PH1_J_BUDGET_EXCEEDED: ReasonCodeId = ReasonCodeId(0x4A00_01F2);
+    pub const PH1_J_PROOF_WRITE_FAILED: ReasonCodeId = ReasonCodeId(0x4A10_0001);
+    pub const PH1_J_PROOF_CHAIN_INTEGRITY_FAILED: ReasonCodeId = ReasonCodeId(0x4A10_0002);
+    pub const PH1_J_PROOF_SIGNATURE_FAILED: ReasonCodeId = ReasonCodeId(0x4A10_0003);
+    pub const PH1_J_PROOF_CANONICALIZATION_FAILED: ReasonCodeId = ReasonCodeId(0x4A10_0004);
+    pub const PH1_J_PROOF_STORAGE_UNAVAILABLE: ReasonCodeId = ReasonCodeId(0x4A10_0005);
+    pub const PH1_J_PROOF_VERIFICATION_UNAVAILABLE: ReasonCodeId = ReasonCodeId(0x4A10_0006);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ph1jWiringConfig {
-    pub audit_enabled: bool,
-    pub max_query_rows: u16,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProtectedProofWriteRequest {
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+    pub action_class: ProofProtectedActionClass,
+    pub authority_decision_reference: Option<String>,
+    pub policy_rule_identifiers: Vec<String>,
+    pub policy_version: Option<String>,
+    pub simulation_id: Option<SimulationId>,
+    pub simulation_version: Option<SimulationVersion>,
+    pub simulation_certification_state: Option<String>,
+    pub execution_outcome: String,
+    pub failure_class: Option<String>,
+    pub reason_codes: Vec<ReasonCodeId>,
+    pub received_at: MonotonicTimeNs,
+    pub executed_at: MonotonicTimeNs,
+    pub proof_retention_class: ProofRetentionClass,
+    pub verifier_metadata_ref: Option<String>,
 }
 
-impl Ph1jWiringConfig {
-    pub fn mvp_v1(audit_enabled: bool) -> Self {
-        Self {
-            audit_enabled,
-            max_query_rows: 500,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AuditOperation {
-    Append(AuditEventInput),
-    QueryByCorrelation { correlation_id: CorrelationId },
-    QueryByTenant { tenant_id: String },
-}
-
-impl Validate for AuditOperation {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        match self {
-            AuditOperation::Append(input) => input.validate(),
-            AuditOperation::QueryByCorrelation { correlation_id } => correlation_id.validate(),
-            AuditOperation::QueryByTenant { tenant_id } => validate_tenant_id(tenant_id),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AuditTurnInput {
-    pub correlation_id: CorrelationId,
-    pub turn_id: TurnId,
-    pub operation: AuditOperation,
-}
-
-impl AuditTurnInput {
+impl ProtectedProofWriteRequest {
+    #[allow(clippy::too_many_arguments)]
     pub fn v1(
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        operation: AuditOperation,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
+        action_class: ProofProtectedActionClass,
+        authority_decision_reference: Option<String>,
+        policy_rule_identifiers: Vec<String>,
+        policy_version: Option<String>,
+        simulation_id: Option<SimulationId>,
+        simulation_version: Option<SimulationVersion>,
+        simulation_certification_state: Option<String>,
+        execution_outcome: String,
+        failure_class: Option<String>,
+        reason_codes: Vec<ReasonCodeId>,
+        received_at: MonotonicTimeNs,
+        executed_at: MonotonicTimeNs,
+        proof_retention_class: ProofRetentionClass,
+        verifier_metadata_ref: Option<String>,
     ) -> Result<Self, ContractViolation> {
-        let input = Self {
-            correlation_id,
-            turn_id,
-            operation,
+        let request = Self {
+            runtime_execution_envelope,
+            action_class,
+            authority_decision_reference,
+            policy_rule_identifiers,
+            policy_version,
+            simulation_id,
+            simulation_version,
+            simulation_certification_state,
+            execution_outcome,
+            failure_class,
+            reason_codes,
+            received_at,
+            executed_at,
+            proof_retention_class,
+            verifier_metadata_ref,
         };
-        input.validate()?;
-        Ok(input)
+        request.validate()?;
+        Ok(request)
     }
 }
 
-impl Validate for AuditTurnInput {
+impl Validate for ProtectedProofWriteRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
-        self.correlation_id.validate()?;
-        self.turn_id.validate()?;
-        self.operation.validate()?;
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AuditTurnOutput {
-    Appended { event_id: AuditEventId },
-    QueryRows { rows: Vec<AuditEvent> },
-}
-
-impl Validate for AuditTurnOutput {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        match self {
-            AuditTurnOutput::Appended { event_id } => event_id.validate(),
-            AuditTurnOutput::QueryRows { rows } => {
-                for row in rows {
-                    row.validate()?;
-                }
-                Ok(())
+        self.runtime_execution_envelope.validate()?;
+        if self.execution_outcome.trim().is_empty()
+            || self.execution_outcome.len() > 64
+            || !self.execution_outcome.is_ascii()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "protected_proof_write_request.execution_outcome",
+                reason: "must be ASCII and <= 64 chars",
+            });
+        }
+        if let Some(failure_class) = self.failure_class.as_ref() {
+            if failure_class.trim().is_empty() || failure_class.len() > 64 || !failure_class.is_ascii()
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "protected_proof_write_request.failure_class",
+                    reason: "must be ASCII and <= 64 chars when provided",
+                });
             }
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AuditForwardBundle {
-    pub correlation_id: CorrelationId,
-    pub turn_id: TurnId,
-    pub output: AuditTurnOutput,
-}
-
-impl AuditForwardBundle {
-    pub fn v1(
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        output: AuditTurnOutput,
-    ) -> Result<Self, ContractViolation> {
-        let bundle = Self {
-            correlation_id,
-            turn_id,
-            output,
-        };
-        bundle.validate()?;
-        Ok(bundle)
-    }
-}
-
-impl Validate for AuditForwardBundle {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        self.correlation_id.validate()?;
-        self.turn_id.validate()?;
-        self.output.validate()
+        if self.received_at.0 == 0 || self.executed_at.0 == 0 || self.executed_at.0 < self.received_at.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "protected_proof_write_request.executed_at",
+                reason: "must be >= received_at",
+            });
+        }
+        Ok(())
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuditWiringRefuse {
-    pub reason_code: ReasonCodeId,
-    pub message: String,
+pub struct Ph1jRuntimeConfig {
+    pub proof_capture_enabled: bool,
+    pub node_id: String,
+    pub runtime_instance_identity: String,
+    pub environment_identity: String,
+    pub build_version: String,
+    pub git_commit: String,
+    pub signer_identity: String,
+    pub signer_key_id: String,
+    pub signature_algorithm: String,
 }
 
-impl AuditWiringRefuse {
-    pub fn v1(reason_code: ReasonCodeId, message: String) -> Result<Self, ContractViolation> {
-        let refuse = Self {
-            reason_code,
-            message,
-        };
-        refuse.validate()?;
-        Ok(refuse)
+impl Ph1jRuntimeConfig {
+    pub fn mvp_v1() -> Self {
+        Self {
+            proof_capture_enabled: true,
+            node_id: env_or_default("SELENE_RUNTIME_NODE_ID", "selene_os_node_v1"),
+            runtime_instance_identity: env_or_default(
+                "SELENE_RUNTIME_INSTANCE_ID",
+                "selene_runtime_instance_v1",
+            ),
+            environment_identity: env_or_default("SELENE_ENVIRONMENT_IDENTITY", "local-dev"),
+            build_version: env_or_default("SELENE_BUILD_VERSION", "dev-build"),
+            git_commit: env_or_default("SELENE_GIT_COMMIT", "unknown_commit"),
+            signer_identity: env_or_default("SELENE_PH1J_SIGNER_ID", "selene_ph1j_signer_v1"),
+            signer_key_id: env_or_default("SELENE_PH1J_SIGNER_KEY_ID", "ph1j_key_v1"),
+            signature_algorithm: "SHA256_KEYED_DIGEST".to_string(),
+        }
     }
-}
 
-impl Validate for AuditWiringRefuse {
-    fn validate(&self) -> Result<(), ContractViolation> {
-        if self.message.is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "audit_wiring_refuse.message",
-                reason: "must be non-empty",
-            });
-        }
-        if self.message.len() > 192 {
-            return Err(ContractViolation::InvalidValue {
-                field: "audit_wiring_refuse.message",
-                reason: "must be <= 192 chars",
-            });
-        }
-        if !self.message.is_ascii() {
-            return Err(ContractViolation::InvalidValue {
-                field: "audit_wiring_refuse.message",
-                reason: "must be ASCII",
-            });
-        }
-        Ok(())
+    pub fn with_proof_capture_enabled(mut self, proof_capture_enabled: bool) -> Self {
+        self.proof_capture_enabled = proof_capture_enabled;
+        self
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AuditWiringOutcome {
-    NotInvokedDisabled,
-    Refused(AuditWiringRefuse),
-    Forwarded(AuditForwardBundle),
-}
-
-pub trait Ph1AuditEngine {
-    fn append_audit_row(
-        &mut self,
-        input: AuditEventInput,
-    ) -> Result<AuditEventId, ContractViolation>;
-    fn audit_rows_by_correlation(
-        &self,
-        correlation_id: CorrelationId,
-    ) -> Result<Vec<AuditEvent>, ContractViolation>;
-    fn audit_rows_by_tenant(&self, tenant_id: &str) -> Result<Vec<AuditEvent>, ContractViolation>;
 }
 
 #[derive(Debug, Clone)]
-pub struct Ph1jWiring<E>
-where
-    E: Ph1AuditEngine,
-{
-    config: Ph1jWiringConfig,
-    engine: E,
+pub struct Ph1jRuntime {
+    config: Ph1jRuntimeConfig,
+    forced_failure_for_tests: RefCell<Option<ProofFailureClass>>,
 }
 
-impl<E> Ph1jWiring<E>
-where
-    E: Ph1AuditEngine,
-{
-    pub fn new(config: Ph1jWiringConfig, engine: E) -> Result<Self, ContractViolation> {
-        if config.max_query_rows == 0 {
-            return Err(ContractViolation::InvalidValue {
-                field: "ph1j_wiring_config.max_query_rows",
-                reason: "must be > 0",
+impl Default for Ph1jRuntime {
+    fn default() -> Self {
+        Self::new(Ph1jRuntimeConfig::mvp_v1())
+    }
+}
+
+impl Ph1jRuntime {
+    pub fn new(config: Ph1jRuntimeConfig) -> Self {
+        Self {
+            config,
+            forced_failure_for_tests: RefCell::new(None),
+        }
+    }
+
+    pub fn config(&self) -> &Ph1jRuntimeConfig {
+        &self.config
+    }
+
+    pub fn force_failure_for_tests(&self, failure_class: Option<ProofFailureClass>) {
+        *self.forced_failure_for_tests.borrow_mut() = failure_class;
+    }
+
+    pub fn emit_protected_proof(
+        &self,
+        store: &mut Ph1fStore,
+        request: ProtectedProofWriteRequest,
+    ) -> Result<ProofWriteReceipt, StorageError> {
+        request.validate().map_err(StorageError::ContractViolation)?;
+        if !self.config.proof_capture_enabled {
+            return Err(StorageError::ProofFailure {
+                class: ProofFailureClass::ProofWriteFailure,
+                detail: "proof capture is disabled for a protected action".to_string(),
             });
         }
-        Ok(Self { config, engine })
+        if let Some(class) = self.forced_failure_for_tests.borrow_mut().take() {
+            return Err(StorageError::ProofFailure {
+                class,
+                detail: "forced PH1.J proof failure for test path".to_string(),
+            });
+        }
+
+        let signer_identity_metadata = ProofSignerIdentityMetadata::v1(
+            self.config.signer_identity.clone(),
+            self.config.signer_key_id.clone(),
+            self.config.signature_algorithm.clone(),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let input = CanonicalProofRecordInput::v1(
+            request.runtime_execution_envelope.request_id.clone(),
+            request.runtime_execution_envelope.trace_id.clone(),
+            request.runtime_execution_envelope.session_id,
+            Some(request.runtime_execution_envelope.turn_id),
+            Some(request.runtime_execution_envelope.actor_identity.as_str().to_string()),
+            Some(request.runtime_execution_envelope.device_identity.clone()),
+            self.config.node_id.clone(),
+            self.config.runtime_instance_identity.clone(),
+            self.config.environment_identity.clone(),
+            self.config.build_version.clone(),
+            self.config.git_commit.clone(),
+            request.action_class,
+            request.authority_decision_reference.clone(),
+            request.policy_rule_identifiers.clone(),
+            request.policy_version.clone(),
+            request.simulation_id.clone(),
+            request.simulation_version,
+            request.simulation_certification_state.clone(),
+            request.execution_outcome.clone(),
+            request.failure_class.clone(),
+            request.reason_codes.clone(),
+            request.received_at,
+            request.executed_at,
+            signer_identity_metadata,
+            request.proof_retention_class,
+            ProofVerificationPosture::VerificationReady,
+            TimestampTrustPosture::RuntimeMonotonic,
+            request.verifier_metadata_ref.clone(),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        selene_storage::ph1j::Ph1jRuntime::emit_proof(
+            store,
+            input,
+            Some(request.runtime_execution_envelope.idempotency_key.clone()),
+        )
     }
 
-    pub fn run_turn(
-        &mut self,
-        input: &AuditTurnInput,
-    ) -> Result<AuditWiringOutcome, ContractViolation> {
-        input.validate()?;
+    pub fn reconstruct_by_request_id(
+        &self,
+        store: &Ph1fStore,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<CanonicalProofRecord>, StorageError> {
+        selene_storage::ph1j::Ph1jRuntime::replay_by_request_id(store, request_id, limit)
+    }
 
-        if !self.config.audit_enabled {
-            return Ok(AuditWiringOutcome::NotInvokedDisabled);
-        }
+    pub fn reconstruct_by_session_turn(
+        &self,
+        store: &Ph1fStore,
+        session_id: selene_kernel_contracts::ph1l::SessionId,
+        turn_id: selene_kernel_contracts::ph1j::TurnId,
+        limit: usize,
+    ) -> Result<Vec<CanonicalProofRecord>, StorageError> {
+        selene_storage::ph1j::Ph1jRuntime::replay_by_session_turn(store, session_id, turn_id, limit)
+    }
 
-        match &input.operation {
-            AuditOperation::Append(event_input) => {
-                let event_id = match self.engine.append_audit_row(event_input.clone()) {
-                    Ok(event_id) => event_id,
-                    Err(_) => {
-                        return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                            reason_codes::PH1_J_INTERNAL_PIPELINE_ERROR,
-                            "audit append pipeline failed".to_string(),
-                        )?));
-                    }
-                };
-                let bundle = AuditForwardBundle::v1(
-                    input.correlation_id,
-                    input.turn_id,
-                    AuditTurnOutput::Appended { event_id },
-                )?;
-                Ok(AuditWiringOutcome::Forwarded(bundle))
-            }
-            AuditOperation::QueryByCorrelation { correlation_id } => {
-                let rows = match self.engine.audit_rows_by_correlation(*correlation_id) {
-                    Ok(rows) => rows,
-                    Err(_) => {
-                        return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                            reason_codes::PH1_J_INTERNAL_PIPELINE_ERROR,
-                            "audit correlation query failed".to_string(),
-                        )?));
-                    }
-                };
-                if rows.len() > self.config.max_query_rows as usize {
-                    return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                        reason_codes::PH1_J_BUDGET_EXCEEDED,
-                        "audit query row budget exceeded".to_string(),
-                    )?));
-                }
-                for row in &rows {
-                    if row.validate().is_err() {
-                        return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                            reason_codes::PH1_J_VALIDATION_FAILED,
-                            "invalid audit row returned by engine".to_string(),
-                        )?));
-                    }
-                }
-                let bundle = AuditForwardBundle::v1(
-                    input.correlation_id,
-                    input.turn_id,
-                    AuditTurnOutput::QueryRows { rows },
-                )?;
-                Ok(AuditWiringOutcome::Forwarded(bundle))
-            }
-            AuditOperation::QueryByTenant { tenant_id } => {
-                let rows = match self.engine.audit_rows_by_tenant(tenant_id) {
-                    Ok(rows) => rows,
-                    Err(_) => {
-                        return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                            reason_codes::PH1_J_INTERNAL_PIPELINE_ERROR,
-                            "audit tenant query failed".to_string(),
-                        )?));
-                    }
-                };
-                if rows.len() > self.config.max_query_rows as usize {
-                    return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                        reason_codes::PH1_J_BUDGET_EXCEEDED,
-                        "audit query row budget exceeded".to_string(),
-                    )?));
-                }
-                for row in &rows {
-                    if row.validate().is_err() {
-                        return Ok(AuditWiringOutcome::Refused(AuditWiringRefuse::v1(
-                            reason_codes::PH1_J_VALIDATION_FAILED,
-                            "invalid audit row returned by engine".to_string(),
-                        )?));
-                    }
-                }
-                let bundle = AuditForwardBundle::v1(
-                    input.correlation_id,
-                    input.turn_id,
-                    AuditTurnOutput::QueryRows { rows },
-                )?;
-                Ok(AuditWiringOutcome::Forwarded(bundle))
-            }
-        }
+    pub fn verify_by_request_id(
+        &self,
+        store: &Ph1fStore,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ProofVerificationResult>, StorageError> {
+        selene_storage::ph1j::Ph1jRuntime::verify_by_request_id(store, request_id, limit)
     }
 }
 
-fn validate_tenant_id(tenant_id: &str) -> Result<(), ContractViolation> {
-    if tenant_id.trim().is_empty() {
-        return Err(ContractViolation::InvalidValue {
-            field: "audit_operation.query_by_tenant.tenant_id",
-            reason: "must be non-empty",
-        });
-    }
-    if tenant_id.len() > 64 {
-        return Err(ContractViolation::InvalidValue {
-            field: "audit_operation.query_by_tenant.tenant_id",
-            reason: "must be <= 64 chars",
-        });
-    }
-    Ok(())
+fn env_or_default(key: &str, default: &str) -> String {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
-    use selene_kernel_contracts::ph1j::{
-        AuditEngine, AuditEventType, AuditPayloadMin, AuditSeverity, PayloadKey, PayloadValue,
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1l::SessionId;
+    use selene_kernel_contracts::ph1link::AppPlatform;
+    use selene_kernel_contracts::runtime_execution::{
+        AdmissionState, PlatformRuntimeContext, RuntimeExecutionEnvelope,
     };
-    use selene_kernel_contracts::MonotonicTimeNs;
+    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, SessionRecord};
+    use selene_kernel_contracts::SessionState;
 
-    #[derive(Debug, Clone)]
-    struct MockAuditEngine {
-        append_result: Result<AuditEventId, ContractViolation>,
-        corr_result: Result<Vec<AuditEvent>, ContractViolation>,
-        tenant_result: Result<Vec<AuditEvent>, ContractViolation>,
+    fn store_with_identity_device_session() -> Ph1fStore {
+        let mut store = Ph1fStore::new_in_memory();
+        let user_id = UserId::new("proof_user").unwrap();
+        let device_id = DeviceId::new("proof_device").unwrap();
+        store
+            .insert_identity(
+                IdentityRecord::v1(
+                    user_id.clone(),
+                    None,
+                    None,
+                    MonotonicTimeNs(1),
+                    IdentityStatus::Active,
+                ),
+            )
+            .unwrap();
+        store
+            .insert_device(
+                DeviceRecord::v1(device_id.clone(), user_id.clone(), "desktop".to_string(), MonotonicTimeNs(1), None)
+                    .unwrap(),
+            )
+            .unwrap();
+        store
+            .insert_session(
+                SessionRecord::v1(
+                    SessionId(1),
+                    user_id,
+                    device_id,
+                    SessionState::Active,
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(1),
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        store
     }
 
-    impl Ph1AuditEngine for MockAuditEngine {
-        fn append_audit_row(
-            &mut self,
-            _input: AuditEventInput,
-        ) -> Result<AuditEventId, ContractViolation> {
-            self.append_result.clone()
-        }
-
-        fn audit_rows_by_correlation(
-            &self,
-            _correlation_id: CorrelationId,
-        ) -> Result<Vec<AuditEvent>, ContractViolation> {
-            self.corr_result.clone()
-        }
-
-        fn audit_rows_by_tenant(
-            &self,
-            _tenant_id: &str,
-        ) -> Result<Vec<AuditEvent>, ContractViolation> {
-            self.tenant_result.clone()
-        }
-    }
-
-    fn event_input(correlation_id: CorrelationId, turn_id: TurnId) -> AuditEventInput {
-        let mut payload = BTreeMap::new();
-        payload.insert(
-            PayloadKey::new("gate").unwrap(),
-            PayloadValue::new("policy").unwrap(),
-        );
-        AuditEventInput::v1(
-            MonotonicTimeNs(1_000),
-            Some("tenant_a".to_string()),
-            Some("wo_1".to_string()),
+    fn sample_envelope() -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_attach_outcome_persistence_and_governance_state(
+            "req_1".to_string(),
+            "trace_1".to_string(),
+            "idem_1".to_string(),
+            UserId::new("proof_user").unwrap(),
+            DeviceId::new("proof_device").unwrap(),
+            AppPlatform::Desktop,
+            PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop).unwrap(),
+            Some(SessionId(1)),
+            selene_kernel_contracts::ph1j::TurnId(1),
+            Some(1),
+            AdmissionState::ExecutionAdmitted,
             None,
-            None,
-            None,
-            AuditEngine::Ph1J,
-            AuditEventType::GatePass,
-            ReasonCodeId(1),
-            AuditSeverity::Info,
-            correlation_id,
-            turn_id,
-            AuditPayloadMin::v1(payload).unwrap(),
             None,
             None,
         )
         .unwrap()
     }
 
-    fn audit_event(id: u64, correlation_id: CorrelationId, turn_id: TurnId) -> AuditEvent {
-        AuditEvent::from_input_v1(AuditEventId(id), event_input(correlation_id, turn_id)).unwrap()
+    #[test]
+    fn at_j_runtime_01_protected_action_writes_canonical_proof_record() {
+        let runtime = Ph1jRuntime::default();
+        let mut store = store_with_identity_device_session();
+        let receipt = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    sample_envelope(),
+                    ProofProtectedActionClass::VoiceTurnExecution,
+                    Some("authority:allowed".to_string()),
+                    vec!["RG-PROOF-001".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "DISPATCH".to_string(),
+                    None,
+                    vec![ReasonCodeId(1)],
+                    MonotonicTimeNs(10),
+                    MonotonicTimeNs(11),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(receipt.proof_write_outcome.as_str(), "WRITTEN");
+        assert_eq!(store.proof_records().len(), 1);
     }
 
     #[test]
-    fn at_j_06_wiring_disabled() {
-        let mut wiring = Ph1jWiring::new(
-            Ph1jWiringConfig::mvp_v1(false),
-            MockAuditEngine {
-                append_result: Ok(AuditEventId(1)),
-                corr_result: Ok(vec![]),
-                tenant_result: Ok(vec![]),
-            },
-        )
-        .unwrap();
-        let input = AuditTurnInput::v1(
-            CorrelationId(9301),
-            TurnId(1),
-            AuditOperation::Append(event_input(CorrelationId(9301), TurnId(1))),
-        )
-        .unwrap();
-        let out = wiring.run_turn(&input).unwrap();
-        assert_eq!(out, AuditWiringOutcome::NotInvokedDisabled);
-    }
-
-    #[test]
-    fn at_j_07_append_forwarded() {
-        let mut wiring = Ph1jWiring::new(
-            Ph1jWiringConfig::mvp_v1(true),
-            MockAuditEngine {
-                append_result: Ok(AuditEventId(42)),
-                corr_result: Ok(vec![]),
-                tenant_result: Ok(vec![]),
-            },
-        )
-        .unwrap();
-        let input = AuditTurnInput::v1(
-            CorrelationId(9302),
-            TurnId(2),
-            AuditOperation::Append(event_input(CorrelationId(9302), TurnId(2))),
-        )
-        .unwrap();
-        let out = wiring.run_turn(&input).unwrap();
-        match out {
-            AuditWiringOutcome::Forwarded(bundle) => match bundle.output {
-                AuditTurnOutput::Appended { event_id } => assert_eq!(event_id, AuditEventId(42)),
-                _ => panic!("expected appended output"),
-            },
-            _ => panic!("expected forwarded outcome"),
-        }
-    }
-
-    #[test]
-    fn at_j_08_query_budget_exceeded_fails_closed() {
-        let mut many_rows = Vec::new();
-        for i in 1..=4 {
-            many_rows.push(audit_event(i, CorrelationId(9303), TurnId(i as u64)));
-        }
-        let mut wiring = Ph1jWiring::new(
-            Ph1jWiringConfig {
-                audit_enabled: true,
-                max_query_rows: 3,
-            },
-            MockAuditEngine {
-                append_result: Ok(AuditEventId(1)),
-                corr_result: Ok(many_rows),
-                tenant_result: Ok(vec![]),
-            },
-        )
-        .unwrap();
-
-        let input = AuditTurnInput::v1(
-            CorrelationId(9303),
-            TurnId(3),
-            AuditOperation::QueryByCorrelation {
-                correlation_id: CorrelationId(9303),
-            },
-        )
-        .unwrap();
-        let out = wiring.run_turn(&input).unwrap();
-        match out {
-            AuditWiringOutcome::Refused(refuse) => {
-                assert_eq!(refuse.reason_code, reason_codes::PH1_J_BUDGET_EXCEEDED);
+    fn at_j_runtime_02_forced_failure_is_structured() {
+        let runtime = Ph1jRuntime::default();
+        runtime.force_failure_for_tests(Some(ProofFailureClass::ProofStorageUnavailable));
+        let mut store = store_with_identity_device_session();
+        let err = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    sample_envelope(),
+                    ProofProtectedActionClass::PrimaryDeviceConfirmation,
+                    Some("authority:allowed".to_string()),
+                    vec!["RG-PROOF-001".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "ALLOW".to_string(),
+                    None,
+                    vec![ReasonCodeId(2)],
+                    MonotonicTimeNs(10),
+                    MonotonicTimeNs(11),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            StorageError::ProofFailure {
+                class: ProofFailureClass::ProofStorageUnavailable,
+                ..
             }
-            _ => panic!("expected refused outcome"),
-        }
-    }
-
-    #[test]
-    fn at_j_09_query_forwarded_with_valid_rows() {
-        let rows = vec![
-            audit_event(1, CorrelationId(9304), TurnId(1)),
-            audit_event(2, CorrelationId(9304), TurnId(2)),
-        ];
-        let mut wiring = Ph1jWiring::new(
-            Ph1jWiringConfig::mvp_v1(true),
-            MockAuditEngine {
-                append_result: Ok(AuditEventId(1)),
-                corr_result: Ok(rows.clone()),
-                tenant_result: Ok(rows.clone()),
-            },
-        )
-        .unwrap();
-
-        let corr_input = AuditTurnInput::v1(
-            CorrelationId(9304),
-            TurnId(4),
-            AuditOperation::QueryByCorrelation {
-                correlation_id: CorrelationId(9304),
-            },
-        )
-        .unwrap();
-        let corr_out = wiring.run_turn(&corr_input).unwrap();
-        match corr_out {
-            AuditWiringOutcome::Forwarded(bundle) => match bundle.output {
-                AuditTurnOutput::QueryRows { rows } => assert_eq!(rows.len(), 2),
-                _ => panic!("expected query rows output"),
-            },
-            _ => panic!("expected forwarded correlation query"),
-        }
-
-        let tenant_input = AuditTurnInput::v1(
-            CorrelationId(9305),
-            TurnId(5),
-            AuditOperation::QueryByTenant {
-                tenant_id: "tenant_a".to_string(),
-            },
-        )
-        .unwrap();
-        let tenant_out = wiring.run_turn(&tenant_input).unwrap();
-        match tenant_out {
-            AuditWiringOutcome::Forwarded(bundle) => match bundle.output {
-                AuditTurnOutput::QueryRows { rows } => assert_eq!(rows.len(), 2),
-                _ => panic!("expected query rows output"),
-            },
-            _ => panic!("expected forwarded tenant query"),
-        }
+        ));
     }
 }

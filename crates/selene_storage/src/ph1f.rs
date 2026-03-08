@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use sha2::{Digest, Sha256};
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId, VoiceEmbeddingCaptureRef};
 use selene_kernel_contracts::ph1access::{
     AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewAction,
@@ -46,7 +47,9 @@ use selene_kernel_contracts::ph1feedback::{
 };
 use selene_kernel_contracts::ph1j::{
     AuditEngine, AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin,
-    AuditSeverity, CorrelationId, DeviceId, PayloadKey, PayloadValue, TurnId,
+    AuditSeverity, CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId,
+    PayloadKey, PayloadValue, ProofChainStatus, ProofEventId, ProofFailureClass,
+    ProofVerificationResult, ProofWriteOutcome, ProofWriteReceipt, TurnId,
 };
 use selene_kernel_contracts::ph1k::{
     AdvancedAudioQualityMetrics, DeviceRoute, InterruptCandidateConfidenceBand,
@@ -120,6 +123,10 @@ pub enum StorageError {
     ForeignKeyViolation { table: &'static str, key: String },
     DuplicateKey { table: &'static str, key: String },
     AppendOnlyViolation { table: &'static str },
+    ProofFailure {
+        class: ProofFailureClass,
+        detail: String,
+    },
     ContractViolation(ContractViolation),
 }
 
@@ -149,6 +156,18 @@ fn hash_hex_64(s: &str) -> String {
     format!("{:016x}", h)
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
 fn is_lower_hex_sha256_64(value: &str) -> bool {
     value.len() == 64
         && value.is_ascii()
@@ -167,6 +186,16 @@ fn validate_lower_hex_sha256_field(field: &'static str, value: &str) -> Result<(
         ));
     }
     Ok(())
+}
+
+const DEFAULT_PH1J_SIGNING_SECRET: &str = "selene_ph1j_local_dev_secret_v1";
+
+fn ph1j_signing_secret() -> String {
+    std::env::var("SELENE_PH1J_SIGNING_SECRET")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_PH1J_SIGNING_SECRET.to_string())
 }
 
 const LINK_TOKEN_SIGNING_KEYS_ENV: &str = "SELENE_LINK_TOKEN_SIGNING_KEYS";
@@ -1845,6 +1874,11 @@ pub struct Ph1fStore {
     capreq_idempotency_index: BTreeMap<(TenantId, CapreqId, String), u64>,
 
     audit_events: Vec<AuditEvent>,
+    proof_ledger: Vec<CanonicalProofRecord>,
+    proof_record_lookup: BTreeMap<ProofEventId, usize>,
+    proof_request_index: BTreeMap<String, Vec<ProofEventId>>,
+    proof_session_turn_index: BTreeMap<(SessionId, TurnId), Vec<ProofEventId>>,
+    proof_idempotency_index: BTreeMap<String, ProofEventId>,
     next_memory_ledger_id: u64,
     next_emotional_thread_event_id: u64,
     next_memory_metric_event_id: u64,
@@ -1864,6 +1898,7 @@ pub struct Ph1fStore {
     next_builder_post_deploy_judge_result_row_id: u64,
     next_conversation_turn_id: u64,
     next_audit_event_id: u64,
+    next_proof_event_id: u64,
     next_position_lifecycle_event_id: u64,
     next_voice_enrollment_sample_seq: u16,
     next_process_blueprint_event_id: u64,
@@ -3505,6 +3540,11 @@ impl Ph1fStore {
             capreq_current: BTreeMap::new(),
             capreq_idempotency_index: BTreeMap::new(),
             audit_events: Vec::new(),
+            proof_ledger: Vec::new(),
+            proof_record_lookup: BTreeMap::new(),
+            proof_request_index: BTreeMap::new(),
+            proof_session_turn_index: BTreeMap::new(),
+            proof_idempotency_index: BTreeMap::new(),
             next_memory_ledger_id: 1,
             next_emotional_thread_event_id: 1,
             next_memory_metric_event_id: 1,
@@ -3524,6 +3564,7 @@ impl Ph1fStore {
             next_builder_post_deploy_judge_result_row_id: 1,
             next_conversation_turn_id: 1,
             next_audit_event_id: 1,
+            next_proof_event_id: 1,
             next_position_lifecycle_event_id: 1,
             next_voice_enrollment_sample_seq: 1,
             next_process_blueprint_event_id: 1,
@@ -5849,6 +5890,321 @@ impl Ph1fStore {
         self.audit_events
             .iter()
             .filter(|e| e.tenant_id.as_deref() == Some(tenant_id))
+            .collect()
+    }
+
+    fn proof_record_ref(proof_event_id: ProofEventId) -> String {
+        format!("proof_evt:{}", proof_event_id.0)
+    }
+
+    fn sign_proof_record(
+        &self,
+        proof_event_id: ProofEventId,
+        current_event_hash: &str,
+        input: &CanonicalProofRecordInput,
+    ) -> String {
+        sha256_hex(
+            format!(
+                "proof_event_id={}\ncurrent_event_hash={}\nsigner_identity={}\nkey_id={}\nsignature_algorithm={}\nsecret={}\n",
+                proof_event_id.0,
+                current_event_hash,
+                input.signer_identity_metadata.signer_identity,
+                input.signer_identity_metadata.key_id,
+                input.signer_identity_metadata.signature_algorithm,
+                ph1j_signing_secret(),
+            )
+            .as_bytes(),
+        )
+    }
+
+    pub(crate) fn append_proof_record(
+        &mut self,
+        input: CanonicalProofRecordInput,
+        idempotency_key: Option<String>,
+    ) -> Result<ProofWriteReceipt, StorageError> {
+        input.validate()?;
+        if let Some(idempotency_key) = idempotency_key.as_ref() {
+            if idempotency_key.trim().is_empty() || idempotency_key.len() > 256 || !idempotency_key.is_ascii() {
+                return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                    field: "proof_append.idempotency_key",
+                    reason: "must be ASCII and <= 256 chars when provided",
+                }));
+            }
+            if let Some(existing_id) = self.proof_idempotency_index.get(idempotency_key).copied() {
+                let existing = self
+                    .proof_record_lookup
+                    .get(&existing_id)
+                    .and_then(|idx| self.proof_ledger.get(*idx))
+                    .ok_or_else(|| StorageError::ProofFailure {
+                        class: ProofFailureClass::ProofChainIntegrityFailure,
+                        detail: "proof idempotency index points to a missing proof record".to_string(),
+                    })?;
+                return ProofWriteReceipt::v1(
+                    existing.proof_event_id,
+                    Self::proof_record_ref(existing.proof_event_id),
+                    ProofWriteOutcome::ReusedExisting,
+                    if existing.previous_event_hash.is_some() {
+                        ProofChainStatus::ChainLinked
+                    } else {
+                        ProofChainStatus::ChainOrigin
+                    },
+                    existing.proof_verification_posture,
+                    existing.timestamp_trust_posture,
+                    existing.verifier_metadata_ref.clone(),
+                )
+                .map_err(StorageError::ContractViolation);
+            }
+        }
+
+        let previous_record = self.proof_ledger.last();
+        if let Some(previous_record) = previous_record {
+            previous_record
+                .validate()
+                .map_err(StorageError::ContractViolation)?;
+            if previous_record.proof_event_id.0.saturating_add(1) != self.next_proof_event_id {
+                return Err(StorageError::ProofFailure {
+                    class: ProofFailureClass::ProofChainIntegrityFailure,
+                    detail: "proof ledger event id continuity is broken".to_string(),
+                });
+            }
+            validate_lower_hex_sha256_field(
+                "proof_ledger.current_event_hash",
+                &previous_record.current_event_hash,
+            )?;
+        }
+
+        let proof_event_id = ProofEventId(self.next_proof_event_id);
+        self.next_proof_event_id = self.next_proof_event_id.saturating_add(1);
+
+        let proof_payload_hash = sha256_hex(input.canonical_payload().as_bytes());
+        let previous_event_hash = previous_record.map(|record| record.current_event_hash.clone());
+        let current_event_hash = sha256_hex(
+            format!(
+                "proof_payload_hash={}\nprevious_event_hash={}\n",
+                proof_payload_hash,
+                previous_event_hash.as_deref().unwrap_or("-"),
+            )
+            .as_bytes(),
+        );
+        let signature = self.sign_proof_record(proof_event_id, &current_event_hash, &input);
+
+        let record = CanonicalProofRecord {
+            proof_schema_version: input.schema_version,
+            proof_event_id,
+            request_id: input.request_id.clone(),
+            trace_id: input.trace_id.clone(),
+            session_id: input.session_id,
+            turn_id: input.turn_id,
+            actor_identity_scope: input.actor_identity_scope.clone(),
+            device_id: input.device_id.clone(),
+            node_id: input.node_id.clone(),
+            runtime_instance_identity: input.runtime_instance_identity.clone(),
+            environment_identity: input.environment_identity.clone(),
+            build_version: input.build_version.clone(),
+            git_commit: input.git_commit.clone(),
+            action_class: input.action_class,
+            authority_decision_reference: input.authority_decision_reference.clone(),
+            policy_rule_identifiers: input.policy_rule_identifiers.clone(),
+            policy_version: input.policy_version.clone(),
+            simulation_id: input.simulation_id.clone(),
+            simulation_version: input.simulation_version,
+            simulation_certification_state: input.simulation_certification_state.clone(),
+            execution_outcome: input.execution_outcome.clone(),
+            failure_class: input.failure_class.clone(),
+            reason_codes: input.reason_codes.clone(),
+            received_at: input.received_at,
+            executed_at: input.executed_at,
+            proof_payload_hash,
+            previous_event_hash,
+            current_event_hash,
+            signer_identity_metadata: input.signer_identity_metadata.clone(),
+            signature,
+            proof_retention_class: input.proof_retention_class,
+            proof_verification_posture: input.proof_verification_posture,
+            timestamp_trust_posture: input.timestamp_trust_posture,
+            verifier_metadata_ref: input.verifier_metadata_ref.clone(),
+        };
+        record.validate().map_err(StorageError::ContractViolation)?;
+
+        let record_idx = self.proof_ledger.len();
+        self.proof_ledger.push(record.clone());
+        self.proof_record_lookup.insert(record.proof_event_id, record_idx);
+        self.proof_request_index
+            .entry(record.request_id.clone())
+            .or_default()
+            .push(record.proof_event_id);
+        if let (Some(session_id), Some(turn_id)) = (record.session_id, record.turn_id) {
+            self.proof_session_turn_index
+                .entry((session_id, turn_id))
+                .or_default()
+                .push(record.proof_event_id);
+        }
+        if let Some(idempotency_key) = idempotency_key {
+            self.proof_idempotency_index
+                .insert(idempotency_key, record.proof_event_id);
+        }
+
+        ProofWriteReceipt::v1(
+            record.proof_event_id,
+            Self::proof_record_ref(record.proof_event_id),
+            ProofWriteOutcome::Written,
+            if record.previous_event_hash.is_some() {
+                ProofChainStatus::ChainLinked
+            } else {
+                ProofChainStatus::ChainOrigin
+            },
+            record.proof_verification_posture,
+            record.timestamp_trust_posture,
+            record.verifier_metadata_ref.clone(),
+        )
+        .map_err(StorageError::ContractViolation)
+    }
+
+    pub fn proof_records(&self) -> &[CanonicalProofRecord] {
+        &self.proof_ledger
+    }
+
+    pub fn attempt_overwrite_proof_record(
+        &mut self,
+        _proof_event_id: ProofEventId,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "proof_ledger",
+        })
+    }
+
+    pub fn proof_records_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError> {
+        if request_id.trim().is_empty() || request_id.len() > 256 || !request_id.is_ascii() {
+            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "proof_records_by_request_id_bounded.request_id",
+                reason: "must be ASCII and <= 256 chars",
+            }));
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let ids = self
+            .proof_request_index
+            .get(request_id)
+            .into_iter()
+            .flat_map(|value| value.iter())
+            .take(limit)
+            .copied()
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .map(|proof_event_id| {
+                self.proof_record_lookup
+                    .get(&proof_event_id)
+                    .and_then(|idx| self.proof_ledger.get(*idx))
+                    .ok_or_else(|| StorageError::ProofFailure {
+                        class: ProofFailureClass::ProofChainIntegrityFailure,
+                        detail: "proof request index points to a missing proof record".to_string(),
+                    })
+            })
+            .collect()
+    }
+
+    pub fn proof_records_by_session_turn_bounded(
+        &self,
+        session_id: SessionId,
+        turn_id: TurnId,
+        limit: usize,
+    ) -> Result<Vec<&CanonicalProofRecord>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let ids = self
+            .proof_session_turn_index
+            .get(&(session_id, turn_id))
+            .into_iter()
+            .flat_map(|value| value.iter())
+            .take(limit)
+            .copied()
+            .collect::<Vec<_>>();
+        ids.into_iter()
+            .map(|proof_event_id| {
+                self.proof_record_lookup
+                    .get(&proof_event_id)
+                    .and_then(|idx| self.proof_ledger.get(*idx))
+                    .ok_or_else(|| StorageError::ProofFailure {
+                        class: ProofFailureClass::ProofChainIntegrityFailure,
+                        detail: "proof session index points to a missing proof record".to_string(),
+                    })
+            })
+            .collect()
+    }
+
+    pub fn verify_proof_records_by_request_id_bounded(
+        &self,
+        request_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ProofVerificationResult>, StorageError> {
+        let rows = self.proof_records_by_request_id_bounded(request_id, limit)?;
+        rows.into_iter()
+            .map(|row| {
+                let expected_payload_hash = sha256_hex(row.canonical_payload().as_bytes());
+                let expected_current_event_hash = sha256_hex(
+                    format!(
+                        "proof_payload_hash={}\nprevious_event_hash={}\n",
+                        expected_payload_hash,
+                        row.previous_event_hash.as_deref().unwrap_or("-"),
+                    )
+                    .as_bytes(),
+                );
+                let expected_signature = sha256_hex(
+                    format!(
+                        "proof_event_id={}\ncurrent_event_hash={}\nsigner_identity={}\nkey_id={}\nsignature_algorithm={}\nsecret={}\n",
+                        row.proof_event_id.0,
+                        expected_current_event_hash,
+                        row.signer_identity_metadata.signer_identity,
+                        row.signer_identity_metadata.key_id,
+                        row.signer_identity_metadata.signature_algorithm,
+                        ph1j_signing_secret(),
+                    )
+                    .as_bytes(),
+                );
+                let (verified, failure_class, proof_chain_status) =
+                    if expected_payload_hash != row.proof_payload_hash {
+                        (
+                            false,
+                            Some(ProofFailureClass::ProofCanonicalizationFailure),
+                            ProofChainStatus::ChainBreakDetected,
+                        )
+                    } else if expected_current_event_hash != row.current_event_hash {
+                        (
+                            false,
+                            Some(ProofFailureClass::ProofChainIntegrityFailure),
+                            ProofChainStatus::ChainBreakDetected,
+                        )
+                    } else if expected_signature != row.signature {
+                        (
+                            false,
+                            Some(ProofFailureClass::ProofSignatureFailure),
+                            ProofChainStatus::ChainBreakDetected,
+                        )
+                    } else {
+                        (
+                            true,
+                            None,
+                            if row.previous_event_hash.is_some() {
+                                ProofChainStatus::ChainLinked
+                            } else {
+                                ProofChainStatus::ChainOrigin
+                            },
+                        )
+                    };
+                Ok(ProofVerificationResult {
+                    proof_event_id: row.proof_event_id,
+                    verified,
+                    failure_class,
+                    proof_chain_status,
+                    proof_verification_posture: row.proof_verification_posture,
+                })
+            })
             .collect()
     }
 

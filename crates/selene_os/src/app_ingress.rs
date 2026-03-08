@@ -41,7 +41,8 @@ use selene_kernel_contracts::ph1emoguide::{
     EmoGuideRequestEnvelope, EmoGuideValidationStatus, Ph1EmoGuideRequest, Ph1EmoGuideResponse,
 };
 use selene_kernel_contracts::ph1j::{
-    AuditEngine, AuditEventId, CorrelationId, DeviceId, PayloadKey, TurnId,
+    AuditEngine, AuditEventId, CorrelationId, DeviceId, PayloadKey, ProofFailureClass,
+    ProofProtectedActionClass, ProofRetentionClass, TurnId,
 };
 use selene_kernel_contracts::ph1k::InterruptCandidate;
 use selene_kernel_contracts::ph1link::{
@@ -66,7 +67,7 @@ use selene_kernel_contracts::ph1persona::{
     Ph1PersonaRequest, Ph1PersonaResponse,
 };
 use selene_kernel_contracts::ph1position::TenantId;
-use selene_kernel_contracts::ph1simcat::SimulationStatus;
+use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationStatus, SimulationVersion};
 use selene_kernel_contracts::ph1simfinder::{
     reason_codes as sim_finder_reason_codes, FinderFallbackPolicy, FinderRiskTier,
     FinderTerminalPacket,
@@ -80,15 +81,15 @@ use selene_kernel_contracts::ph1w::{
     WAKE_ENROLL_DEFER_COMMIT, WAKE_ENROLL_SAMPLE_COMMIT, WAKE_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
-    StepUpCapabilities, ThreadState,
+    ConfirmAnswer, DispatchRequest, IdentityContext, PendingState, Ph1xDirective, Ph1xRequest,
+    Ph1xResponse, StepUpCapabilities, ThreadState,
 };
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
     IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
     MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
-    OnboardingReadinessState, PlatformRuntimeContext, RuntimeEntryTrigger,
-    RuntimeExecutionEnvelope, SimulationCertificationState,
+    OnboardingReadinessState, PlatformRuntimeContext, ProofExecutionState,
+    RuntimeEntryTrigger, RuntimeExecutionEnvelope, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
@@ -103,6 +104,7 @@ use selene_storage::ph1f::{
 };
 
 use crate::device_artifact_sync::DeviceArtifactSyncWorkerPassMetrics;
+use crate::ph1j::{Ph1jRuntime, ProtectedProofWriteRequest};
 use crate::ph1onb::{OnbVoiceEnrollFinalize, OnbVoiceEnrollLiveRequest, OnbVoiceEnrollSampleStep};
 use crate::ph1os::{
     OsTopLevelTurnInput, OsTopLevelTurnPath, OsTurnInput, OsVoiceLiveTurnInput,
@@ -586,6 +588,7 @@ pub struct AppServerIngressRuntime {
     ph1x_runtime: Ph1xRuntime,
     ph1e_runtime: Ph1eRuntime,
     ph1simfinder_runtime: Ph1SimFinderRuntime,
+    ph1j_runtime: Ph1jRuntime,
     runtime_governance: RuntimeGovernanceRuntime,
     agent_input_packet_build_count: RefCell<u64>,
     last_agent_input_packet: RefCell<Option<AgentInputPacket>>,
@@ -600,18 +603,35 @@ impl Default for AppServerIngressRuntime {
 
 impl AppServerIngressRuntime {
     pub fn new(executor: SimulationExecutor) -> Self {
-        Self::new_with_runtime_governance(executor, RuntimeGovernanceRuntime::default())
+        Self::new_with_runtime_governance_and_ph1j(
+            executor,
+            RuntimeGovernanceRuntime::default(),
+            Ph1jRuntime::default(),
+        )
     }
 
     pub fn new_with_runtime_governance(
         executor: SimulationExecutor,
         runtime_governance: RuntimeGovernanceRuntime,
     ) -> Self {
+        Self::new_with_runtime_governance_and_ph1j(
+            executor,
+            runtime_governance,
+            Ph1jRuntime::default(),
+        )
+    }
+
+    pub fn new_with_runtime_governance_and_ph1j(
+        executor: SimulationExecutor,
+        runtime_governance: RuntimeGovernanceRuntime,
+        ph1j_runtime: Ph1jRuntime,
+    ) -> Self {
         Self {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
             ph1e_runtime: Ph1eRuntime::new(Ph1eConfig::mvp_v1()),
             ph1simfinder_runtime: Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1()),
+            ph1j_runtime,
             runtime_governance,
             agent_input_packet_build_count: RefCell::new(0),
             last_agent_input_packet: RefCell::new(None),
@@ -621,6 +641,10 @@ impl AppServerIngressRuntime {
 
     pub fn runtime_governance(&self) -> &RuntimeGovernanceRuntime {
         &self.runtime_governance
+    }
+
+    pub fn ph1j_runtime(&self) -> &Ph1jRuntime {
+        &self.ph1j_runtime
     }
 
     pub fn runtime_governance_policy_version(&self) -> &str {
@@ -653,6 +677,84 @@ impl AppServerIngressRuntime {
     ) -> RuntimeGovernanceDecision {
         self.runtime_governance
             .observe_node_policy_version(node_id, observed_policy_version)
+    }
+
+    fn emit_voice_turn_proof_and_attach(
+        &self,
+        store: &mut Ph1fStore,
+        out: &AppVoiceTurnExecutionOutcome,
+        finder_terminal: Option<&FinderTerminalPacket>,
+        actor_tenant_id: Option<&str>,
+        received_at: MonotonicTimeNs,
+        executed_at: MonotonicTimeNs,
+    ) -> Result<RuntimeExecutionEnvelope, StorageError> {
+        let runtime_execution_envelope = &out.runtime_execution_envelope;
+        let (simulation_id, simulation_version, simulation_certification_state) =
+            proof_simulation_trace_for_voice_turn(
+                store,
+                out,
+                finder_terminal,
+                actor_tenant_id,
+            )?;
+        let proof_request = ProtectedProofWriteRequest::v1(
+            runtime_execution_envelope.clone(),
+            voice_turn_protected_action_class(out),
+            proof_authority_decision_reference(runtime_execution_envelope),
+            proof_policy_rule_identifiers(runtime_execution_envelope),
+            runtime_execution_envelope
+                .governance_state
+                .as_ref()
+                .map(|state| state.governance_policy_version.clone()),
+            simulation_id,
+            simulation_version,
+            simulation_certification_state,
+            voice_turn_execution_outcome_token(out),
+            voice_turn_failure_class_token(out),
+            out.reason_code.into_iter().collect(),
+            received_at,
+            executed_at,
+            ProofRetentionClass::ComplianceRetention,
+            Some(proof_verifier_metadata_ref(runtime_execution_envelope)),
+        )
+        .map_err(StorageError::ContractViolation)?;
+        match self.ph1j_runtime.emit_protected_proof(store, proof_request) {
+            Ok(receipt) => {
+                let proof_state = proof_execution_state_from_receipt(receipt)?;
+                self.runtime_governance
+                    .govern_protected_action_proof_state(
+                        GovernanceProtectedActionClass::VoiceTurnExecution,
+                        runtime_execution_envelope.session_id.map(|value| value.0),
+                        Some(runtime_execution_envelope.turn_id.0),
+                        &proof_state,
+                    )
+                    .map_err(|decision| {
+                        runtime_governance_storage_error(
+                            "app_voice_turn_execution_outcome.runtime_execution_envelope.proof_state",
+                            &decision,
+                        )
+                    })?;
+                runtime_execution_envelope_with_voice_turn_proof(
+                    runtime_execution_envelope,
+                    proof_state,
+                )
+            }
+            Err(error) => {
+                let proof_state = proof_execution_state_from_error(&error)?;
+                let decision = self
+                    .runtime_governance
+                    .govern_protected_action_proof_state(
+                        GovernanceProtectedActionClass::VoiceTurnExecution,
+                        runtime_execution_envelope.session_id.map(|value| value.0),
+                        Some(runtime_execution_envelope.turn_id.0),
+                        &proof_state,
+                    )
+                    .unwrap_err();
+                Err(runtime_governance_storage_error(
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.proof_state",
+                    &decision,
+                ))
+            }
+        }
     }
 
     pub fn run_voice_turn(
@@ -2721,6 +2823,7 @@ impl AppServerIngressRuntime {
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
         let correlation_id = request.correlation_id;
         let turn_id = request.turn_id;
+        let received_at = request.voice_id_request.now;
         let request_session_id = request.voice_id_request.session_state_ref.session_id;
         let request_session_state = request.voice_id_request.session_state_ref.session_state;
         let actor_user_id = request.actor_user_id.clone();
@@ -2737,6 +2840,16 @@ impl AppServerIngressRuntime {
             );
             out.runtime_execution_envelope =
                 runtime_execution_envelope_with_authority_state_for_outcome(&out, None)?;
+            if !matches!(out.next_move, AppVoiceTurnNextMove::NotInvokedDisabled) {
+                out.runtime_execution_envelope = self.emit_voice_turn_proof_and_attach(
+                    store,
+                    &out,
+                    None,
+                    actor_tenant_id.as_deref(),
+                    received_at,
+                    dispatch_now,
+                )?;
+            }
             return Ok(out);
         };
 
@@ -2890,6 +3003,26 @@ impl AppServerIngressRuntime {
             )?
         };
 
+        // Guardrail: persona hints are tone-only and must never affect
+        // simulation candidate selection, access checks, or ACTIVE sim gating.
+        let persona_style_hint =
+            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
+        out.response_text = out.response_text.take().map(|response_text| {
+            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
+        });
+        out.runtime_execution_envelope =
+            runtime_execution_envelope_with_authority_state_for_outcome(
+                &out,
+                finder_terminal.as_ref(),
+            )?;
+        out.runtime_execution_envelope = self.emit_voice_turn_proof_and_attach(
+            store,
+            &out,
+            finder_terminal.as_ref(),
+            actor_tenant_id.as_deref(),
+            received_at,
+            dispatch_now,
+        )?;
         if let Some(terminal) = finder_terminal.as_ref() {
             self.record_agent_execution_terminal_packet(
                 store,
@@ -2905,19 +3038,6 @@ impl AppServerIngressRuntime {
                 dev_intake_audit_event_id,
             )?;
         }
-
-        // Guardrail: persona hints are tone-only and must never affect
-        // simulation candidate selection, access checks, or ACTIVE sim gating.
-        let persona_style_hint =
-            latest_persona_style_hint_for_actor(store, &actor_user_id, actor_tenant_id.as_deref());
-        out.response_text = out.response_text.take().map(|response_text| {
-            apply_persona_style_hint_to_response_text(response_text, persona_style_hint.as_deref())
-        });
-        out.runtime_execution_envelope =
-            runtime_execution_envelope_with_authority_state_for_outcome(
-                &out,
-                finder_terminal.as_ref(),
-            )?;
 
         Ok(out)
     }
@@ -3022,9 +3142,15 @@ impl AppServerIngressRuntime {
             }
         };
         let dispatch_outcome_proof_ref = out
-            .dispatch_outcome
+            .runtime_execution_envelope
+            .proof_state
             .as_ref()
-            .map(dispatch_outcome_proof_ref_token);
+            .and_then(|state| state.proof_record_ref.clone())
+            .or_else(|| {
+                out.dispatch_outcome
+                    .as_ref()
+                    .map(dispatch_outcome_proof_ref_token)
+            });
         let idempotency_key = format!(
             "agent_exec:{}:{}:{}:{}",
             correlation_id.0, turn_id.0, finder_packet_kind, execution_stage
@@ -3465,6 +3591,214 @@ fn runtime_governance_storage_error(
         field,
         reason: runtime_governance_reason_literal(decision),
     })
+}
+
+fn proof_failure_class_for_storage_error(error: &StorageError) -> ProofFailureClass {
+    match error {
+        StorageError::ProofFailure { class, .. } => *class,
+        StorageError::ContractViolation(_) => ProofFailureClass::ProofCanonicalizationFailure,
+        StorageError::AppendOnlyViolation { .. } => ProofFailureClass::ProofChainIntegrityFailure,
+        StorageError::ForeignKeyViolation { .. } | StorageError::DuplicateKey { .. } => {
+            ProofFailureClass::ProofWriteFailure
+        }
+    }
+}
+
+fn proof_execution_state_from_error(error: &StorageError) -> Result<ProofExecutionState, StorageError> {
+    let failure_class = proof_failure_class_for_storage_error(error);
+    ProofExecutionState::v1(
+        None,
+        selene_kernel_contracts::ph1j::ProofWriteOutcome::Failed,
+        Some(failure_class),
+        match failure_class {
+            ProofFailureClass::ProofChainIntegrityFailure | ProofFailureClass::ProofSignatureFailure => {
+                selene_kernel_contracts::ph1j::ProofChainStatus::ChainBreakDetected
+            }
+            _ => selene_kernel_contracts::ph1j::ProofChainStatus::NotChecked,
+        },
+        match failure_class {
+            ProofFailureClass::ProofVerificationUnavailable => {
+                selene_kernel_contracts::ph1j::ProofVerificationPosture::VerificationUnavailable
+            }
+            _ => selene_kernel_contracts::ph1j::ProofVerificationPosture::NotRequested,
+        },
+        selene_kernel_contracts::ph1j::TimestampTrustPosture::RuntimeMonotonic,
+        None,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn voice_turn_protected_action_class(out: &AppVoiceTurnExecutionOutcome) -> ProofProtectedActionClass {
+    match out.dispatch_outcome {
+        Some(SimulationDispatchOutcome::MemoryPropose(_))
+        | Some(SimulationDispatchOutcome::MemoryRecall(_))
+        | Some(SimulationDispatchOutcome::MemoryForget(_)) => {
+            ProofProtectedActionClass::MemoryAuthoritativeMutation
+        }
+        Some(SimulationDispatchOutcome::Link(_))
+        | Some(SimulationDispatchOutcome::LinkDelivered { .. }) => {
+            ProofProtectedActionClass::ProtectedLinkGeneration
+        }
+        Some(SimulationDispatchOutcome::AccessGatePassed { .. })
+        | Some(SimulationDispatchOutcome::AccessStepUp { .. })
+        | Some(SimulationDispatchOutcome::CapreqLifecycle { .. }) => {
+            ProofProtectedActionClass::AccessControlledAction
+        }
+        Some(_) => ProofProtectedActionClass::SimulationAuthorizedMutation,
+        None if matches!(out.next_move, AppVoiceTurnNextMove::Refused) => {
+            ProofProtectedActionClass::IdentitySensitiveExecution
+        }
+        None => ProofProtectedActionClass::VoiceTurnExecution,
+    }
+}
+
+fn voice_turn_failure_class_token(out: &AppVoiceTurnExecutionOutcome) -> Option<String> {
+    if matches!(out.next_move, AppVoiceTurnNextMove::Refused) {
+        Some(selene_kernel_contracts::runtime_execution::FailureClass::PolicyViolation.as_str().to_string())
+    } else {
+        None
+    }
+}
+
+fn voice_turn_execution_outcome_token(out: &AppVoiceTurnExecutionOutcome) -> String {
+    match out.next_move {
+        AppVoiceTurnNextMove::Confirm => "CONFIRM".to_string(),
+        AppVoiceTurnNextMove::Clarify => "CLARIFY".to_string(),
+        AppVoiceTurnNextMove::Respond => "RESPOND".to_string(),
+        AppVoiceTurnNextMove::Dispatch => out
+            .dispatch_outcome
+            .as_ref()
+            .map(dispatch_outcome_proof_ref_token)
+            .unwrap_or_else(|| "DISPATCH".to_string()),
+        AppVoiceTurnNextMove::Refused => "REFUSED".to_string(),
+        AppVoiceTurnNextMove::Wait => "WAIT".to_string(),
+        AppVoiceTurnNextMove::NotInvokedDisabled => "NOT_INVOKED_DISABLED".to_string(),
+    }
+}
+
+fn proof_policy_rule_identifiers(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> Vec<String> {
+    runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .and_then(|state| state.last_rule_id.clone())
+        .into_iter()
+        .collect()
+}
+
+fn proof_authority_decision_reference(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Option<String> {
+    runtime_execution_envelope.authority_state.as_ref().map(|state| {
+        let policy_context_ref = state
+            .policy_context_ref
+            .map(|value| {
+                format!(
+                    "privacy_mode={};do_not_disturb={};safety_tier={}",
+                    value.privacy_mode,
+                    value.do_not_disturb,
+                    match value.safety_tier {
+                        SafetyTier::Standard => "STANDARD",
+                        SafetyTier::Strict => "STRICT",
+                    }
+                )
+            })
+            .unwrap_or_else(|| "-".to_string());
+        format!(
+            "policy_decision={};policy_context={};identity_scope_required={};identity_scope_satisfied={};memory_scope_allowed={};reason_code={}",
+            state.policy_decision.as_str(),
+            policy_context_ref,
+            state.identity_scope_required,
+            state.identity_scope_satisfied,
+            state.memory_scope_allowed,
+            state.reason_code.unwrap_or_default(),
+        )
+    })
+}
+
+fn proof_verifier_metadata_ref(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> String {
+    if let Some(session_id) = runtime_execution_envelope.session_id {
+        format!(
+            "session:{}:turn:{}:request:{}",
+            session_id.0, runtime_execution_envelope.turn_id.0, runtime_execution_envelope.request_id
+        )
+    } else {
+        format!("request:{}", runtime_execution_envelope.request_id)
+    }
+}
+
+fn proof_simulation_trace_for_voice_turn(
+    store: &Ph1fStore,
+    out: &AppVoiceTurnExecutionOutcome,
+    finder_terminal: Option<&FinderTerminalPacket>,
+    actor_tenant_id: Option<&str>,
+) -> Result<(Option<SimulationId>, Option<SimulationVersion>, Option<String>), StorageError> {
+    let runtime_execution_envelope = &out.runtime_execution_envelope;
+    let simulation_id = match finder_terminal {
+        Some(FinderTerminalPacket::SimulationMatch(packet)) => Some(
+            SimulationId::new(packet.simulation_id.clone())
+                .map_err(StorageError::ContractViolation)?,
+        ),
+        _ => proof_simulation_id_from_voice_outcome(out)?,
+    };
+    let simulation_version = if let (Some(tenant_id), Some(simulation_id)) = (actor_tenant_id, simulation_id.as_ref()) {
+        let tenant_id = TenantId::new(tenant_id.to_string()).map_err(StorageError::ContractViolation)?;
+        store.simulation_catalog_current_row(&tenant_id, simulation_id).map(|row| row.simulation_version)
+    } else {
+        None
+    };
+    let simulation_certification_state = runtime_execution_envelope
+        .authority_state
+        .as_ref()
+        .map(|state| state.simulation_certification_state.as_str().to_string());
+    Ok((simulation_id, simulation_version, simulation_certification_state))
+}
+
+fn proof_simulation_id_from_voice_outcome(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> Result<Option<SimulationId>, StorageError> {
+    let Some(ph1x_request) = out.ph1x_request.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(Ph1nResponse::IntentDraft(intent_draft)) = ph1x_request.nlp_output.as_ref() {
+        let simulation_id = simulation_id_for_intent_draft_v1(intent_draft)?;
+        return SimulationId::new(simulation_id.to_string())
+            .map(Some)
+            .map_err(StorageError::ContractViolation);
+    }
+    match ph1x_request.thread_state.pending.as_ref() {
+        Some(PendingState::Confirm { intent_draft, .. })
+        | Some(PendingState::StepUp { intent_draft, .. }) => {
+            let simulation_id = simulation_id_for_intent_draft_v1(intent_draft)?;
+            SimulationId::new(simulation_id.to_string())
+                .map(Some)
+                .map_err(StorageError::ContractViolation)
+        }
+        _ => Ok(None),
+    }
+}
+
+fn proof_execution_state_from_receipt(
+    receipt: selene_kernel_contracts::ph1j::ProofWriteReceipt,
+) -> Result<ProofExecutionState, StorageError> {
+    ProofExecutionState::v1(
+        Some(receipt.proof_record_ref),
+        receipt.proof_write_outcome,
+        None,
+        receipt.proof_chain_status,
+        receipt.proof_verification_posture,
+        receipt.timestamp_trust_posture,
+        receipt.verifier_metadata_ref,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+fn runtime_execution_envelope_with_voice_turn_proof(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    proof_state: ProofExecutionState,
+) -> Result<RuntimeExecutionEnvelope, StorageError> {
+    runtime_execution_envelope
+        .with_proof_state(Some(proof_state))
+        .map_err(StorageError::ContractViolation)
 }
 
 const GOVERNED_SUBSYSTEM_MEMORY_ENGINE: &str = "MEMORY_ENGINE";
@@ -7787,7 +8121,7 @@ mod tests {
         assert_eq!(agent_rows[0].confirm_decision, "REQUIRED_PENDING");
         assert!(agent_rows[0].active_simulation_proof_ref.is_some());
         assert!(agent_rows[0].simulation_idempotency_key.is_some());
-        assert!(agent_rows[0].dispatch_outcome_proof_ref.is_none());
+        assert!(agent_rows[0].dispatch_outcome_proof_ref.is_some());
         match runtime
             .debug_last_finder_terminal_packet()
             .expect("finder packet should be captured")
@@ -7837,6 +8171,32 @@ mod tests {
             out_2.dispatch_outcome,
             Some(SimulationDispatchOutcome::LinkDelivered { .. })
         ));
+        let proof_state = out_2
+            .runtime_execution_envelope
+            .proof_state
+            .as_ref()
+            .expect("dispatch outcome must attach proof state");
+        assert!(proof_state.proof_record_ref.is_some());
+        let proof_rows = store
+            .proof_records_by_request_id_bounded(
+                &out_2.runtime_execution_envelope.request_id,
+                4,
+            )
+            .unwrap();
+        assert_eq!(proof_rows.len(), 1);
+        assert_eq!(
+            proof_rows[0].simulation_id.as_ref().map(|value| value.as_str()),
+            Some(LINK_INVITE_GENERATE_DRAFT)
+        );
+        assert_eq!(proof_rows[0].simulation_version, Some(SimulationVersion(1)));
+        assert_eq!(
+            proof_rows[0].policy_version.as_deref(),
+            Some(runtime.runtime_governance_policy_version())
+        );
+        assert_eq!(
+            proof_rows[0].turn_id,
+            Some(out_2.runtime_execution_envelope.turn_id)
+        );
         // Confirm replay turn does not rebuild a new finder packet; execution proof row count
         // remains tied to the finder-bearing turn.
         let agent_rows = store.agent_execution_ledger_rows_for_correlation(CorrelationId(9801));
@@ -7909,6 +8269,74 @@ mod tests {
             }
             other => panic!("expected clarify packet, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn at_ph1j_01_proof_write_failure_blocks_protected_voice_turn() {
+        let runtime = AppServerIngressRuntime::default();
+        runtime
+            .ph1j_runtime()
+            .force_failure_for_tests(Some(ProofFailureClass::ProofStorageUnavailable));
+        let actor_user_id = UserId::new("tenant_1:proof_block_user").unwrap();
+        let device_id = DeviceId::new("proof_block_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+        seed_simulation_catalog_status(
+            &mut store,
+            "tenant_1",
+            LINK_INVITE_GENERATE_DRAFT,
+            SimulationType::Draft,
+            SimulationStatus::Active,
+        );
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(98_120),
+            TurnId(99_120),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(22),
+            thread_key: Some("proof_block_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+
+        let err = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .expect_err("proof failure must block protected voice completion");
+        match err {
+            StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
+                assert_eq!(
+                    field,
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.proof_state"
+                );
+                assert_eq!(reason, "governance_policy_block GOV_PROOF_REQUIRED");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(runtime
+            .runtime_governance_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_code == crate::runtime_governance::reason_codes::GOV_PROOF_REQUIRED
+                    && entry.turn_id == Some(99_120)
+            }));
     }
 
     #[test]

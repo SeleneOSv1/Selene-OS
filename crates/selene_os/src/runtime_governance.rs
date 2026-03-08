@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
+use selene_kernel_contracts::ph1j::ProofFailureClass;
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, FailureClass, PersistenceAcknowledgementState, PersistenceConflictSeverity,
-    PersistenceRecoveryMode, RuntimeExecutionEnvelope,
+    PersistenceRecoveryMode, ProofExecutionState, RuntimeExecutionEnvelope,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceCertificationStatus, GovernanceClusterConsistency, GovernanceDecisionLogEntry,
@@ -567,6 +568,60 @@ impl RuntimeGovernanceRuntime {
             )
             .expect("runtime governance decision must record");
         Ok(())
+    }
+
+    pub fn govern_protected_action_proof_state(
+        &self,
+        action_class: GovernanceProtectedActionClass,
+        session_id: Option<u128>,
+        turn_id: Option<u64>,
+        proof_state: &ProofExecutionState,
+    ) -> Result<(), RuntimeGovernanceDecision> {
+        let proof_available = matches!(
+            proof_state.proof_write_outcome,
+            selene_kernel_contracts::ph1j::ProofWriteOutcome::Written
+                | selene_kernel_contracts::ph1j::ProofWriteOutcome::ReusedExisting
+        ) && proof_state.proof_record_ref.is_some();
+        if proof_available {
+            return self.govern_protected_action_proof(action_class, session_id, turn_id, true);
+        }
+        let failure_note = match proof_state.proof_failure_class {
+            Some(class) => format!(
+                "proof-critical protected action {} refused due to {}",
+                action_class.as_str(),
+                class.as_str()
+            ),
+            None => format!(
+                "proof-critical protected action {} refused due to missing proof state",
+                action_class.as_str()
+            ),
+        };
+        Err(self.apply_violation(
+            RULE_PROOF_REQUIRED,
+            SUBSYSTEM_PROOF_CAPTURE,
+            GovernanceDecisionOutcome::Failed,
+            match proof_state.proof_failure_class {
+                Some(ProofFailureClass::ProofChainIntegrityFailure)
+                | Some(ProofFailureClass::ProofSignatureFailure) => {
+                    GovernanceSeverity::QuarantineRequired
+                }
+                _ => GovernanceSeverity::Blocking,
+            },
+            match proof_state.proof_failure_class {
+                Some(ProofFailureClass::ProofChainIntegrityFailure)
+                | Some(ProofFailureClass::ProofSignatureFailure) => {
+                    GovernanceResponseClass::Quarantine
+                }
+                _ => GovernanceResponseClass::Block,
+            },
+            reason_codes::GOV_PROOF_REQUIRED,
+            session_id,
+            turn_id,
+            Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+            Some(failure_note),
+            Some(GovernanceCertificationStatus::Warning),
+            Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+        ))
     }
 
     pub fn observe_node_policy_version(

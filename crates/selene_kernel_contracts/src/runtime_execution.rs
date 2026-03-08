@@ -2,7 +2,10 @@
 
 use crate::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
 use crate::ph1d::PolicyContextRef;
-use crate::ph1j::{DeviceId, TurnId};
+use crate::ph1j::{
+    DeviceId, ProofChainStatus, ProofFailureClass, ProofVerificationPosture, ProofWriteOutcome,
+    TimestampTrustPosture, TurnId,
+};
 use crate::ph1l::SessionId;
 use crate::ph1link::AppPlatform;
 use crate::ph1m::MemoryConfidence;
@@ -861,12 +864,35 @@ pub enum SimulationCertificationState {
     StepUpRequired,
 }
 
+impl SimulationCertificationState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            SimulationCertificationState::NotRequested => "NOT_REQUESTED",
+            SimulationCertificationState::CertifiedActive => "CERTIFIED_ACTIVE",
+            SimulationCertificationState::MissingSimulationPath => "MISSING_SIMULATION_PATH",
+            SimulationCertificationState::InactiveSimulation => "INACTIVE_SIMULATION",
+            SimulationCertificationState::StepUpRequired => "STEP_UP_REQUIRED",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OnboardingReadinessState {
     NotApplicable,
     Ready,
     Incomplete,
     Blocked,
+}
+
+impl OnboardingReadinessState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            OnboardingReadinessState::NotApplicable => "NOT_APPLICABLE",
+            OnboardingReadinessState::Ready => "READY",
+            OnboardingReadinessState::Incomplete => "INCOMPLETE",
+            OnboardingReadinessState::Blocked => "BLOCKED",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -876,6 +902,18 @@ pub enum AuthorityPolicyDecision {
     Denied,
     StepUpRequired,
     PendingConfirmation,
+}
+
+impl AuthorityPolicyDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AuthorityPolicyDecision::NotRequested => "NOT_REQUESTED",
+            AuthorityPolicyDecision::Allowed => "ALLOWED",
+            AuthorityPolicyDecision::Denied => "DENIED",
+            AuthorityPolicyDecision::StepUpRequired => "STEP_UP_REQUIRED",
+            AuthorityPolicyDecision::PendingConfirmation => "PENDING_CONFIRMATION",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -927,6 +965,57 @@ impl Validate for AuthorityExecutionState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofExecutionState {
+    pub proof_record_ref: Option<String>,
+    pub proof_write_outcome: ProofWriteOutcome,
+    pub proof_failure_class: Option<ProofFailureClass>,
+    pub proof_chain_status: ProofChainStatus,
+    pub proof_verification_posture: ProofVerificationPosture,
+    pub timestamp_trust_posture: TimestampTrustPosture,
+    pub verifier_metadata_ref: Option<String>,
+}
+
+impl ProofExecutionState {
+    pub fn v1(
+        proof_record_ref: Option<String>,
+        proof_write_outcome: ProofWriteOutcome,
+        proof_failure_class: Option<ProofFailureClass>,
+        proof_chain_status: ProofChainStatus,
+        proof_verification_posture: ProofVerificationPosture,
+        timestamp_trust_posture: TimestampTrustPosture,
+        verifier_metadata_ref: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let state = Self {
+            proof_record_ref,
+            proof_write_outcome,
+            proof_failure_class,
+            proof_chain_status,
+            proof_verification_posture,
+            timestamp_trust_posture,
+            verifier_metadata_ref,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+}
+
+impl Validate for ProofExecutionState {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_optional_ascii_token(
+            "proof_execution_state.proof_record_ref",
+            &self.proof_record_ref,
+            128,
+        )?;
+        validate_optional_ascii_token(
+            "proof_execution_state.verifier_metadata_ref",
+            &self.verifier_metadata_ref,
+            256,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeExecutionEnvelope {
     pub request_id: String,
     pub trace_id: String,
@@ -942,6 +1031,7 @@ pub struct RuntimeExecutionEnvelope {
     pub session_attach_outcome: Option<SessionAttachOutcome>,
     pub persistence_state: Option<PersistenceExecutionState>,
     pub governance_state: Option<GovernanceExecutionState>,
+    pub proof_state: Option<ProofExecutionState>,
     pub identity_state: Option<IdentityExecutionState>,
     pub memory_state: Option<MemoryExecutionState>,
     pub authority_state: Option<AuthorityExecutionState>,
@@ -1134,6 +1224,7 @@ impl RuntimeExecutionEnvelope {
             session_attach_outcome,
             persistence_state,
             governance_state,
+            proof_state: None,
             identity_state: None,
             memory_state: None,
             authority_state: None,
@@ -1220,6 +1311,16 @@ impl RuntimeExecutionEnvelope {
         Ok(next)
     }
 
+    pub fn with_proof_state(
+        &self,
+        proof_state: Option<ProofExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.proof_state = proof_state;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn with_memory_state(
         &self,
         memory_state: Option<MemoryExecutionState>,
@@ -1292,6 +1393,9 @@ impl Validate for RuntimeExecutionEnvelope {
             state.validate()?;
         }
         if let Some(state) = self.governance_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.proof_state.as_ref() {
             state.validate()?;
         }
         if let Some(state) = self.identity_state.as_ref() {

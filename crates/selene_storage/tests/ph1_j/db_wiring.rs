@@ -4,15 +4,18 @@ use std::collections::BTreeMap;
 
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{
-    AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity, CorrelationId,
-    DeviceId, PayloadKey, PayloadValue, TurnId,
+    AuditEngine, AuditEventInput, AuditEventType, AuditPayloadMin, AuditSeverity,
+    CanonicalProofRecordInput, CorrelationId, DeviceId, PayloadKey, PayloadValue,
+    ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata,
+    ProofWriteOutcome, TurnId,
 };
 use selene_kernel_contracts::ph1l::SessionId;
+use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationVersion};
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SessionState};
 use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, Ph1fStore, SessionRecord, StorageError,
 };
-use selene_storage::repo::Ph1jAuditRepo;
+use selene_storage::repo::{Ph1jAuditRepo, Ph1jProofRepo};
 
 fn user() -> UserId {
     UserId::new("dbw_j_user_1").unwrap()
@@ -64,6 +67,50 @@ fn payload_with_gate(gate: &str) -> AuditPayloadMin {
         PayloadKey::new("gate").unwrap(),
         PayloadValue::new(gate).unwrap(),
     )]))
+    .unwrap()
+}
+
+fn proof_input(
+    request_id: &str,
+    trace_id: &str,
+    turn_id: u64,
+    execution_outcome: &str,
+) -> CanonicalProofRecordInput {
+    CanonicalProofRecordInput::v1(
+        request_id.to_string(),
+        trace_id.to_string(),
+        Some(SessionId(1)),
+        Some(TurnId(turn_id)),
+        Some("user_scope:dbw_j_user_1".to_string()),
+        Some(device()),
+        "node_a".to_string(),
+        "runtime_a".to_string(),
+        "test".to_string(),
+        "build_v1".to_string(),
+        "deadbeef".to_string(),
+        ProofProtectedActionClass::VoiceTurnExecution,
+        Some("authority:allowed".to_string()),
+        vec!["RG-PROOF-001".to_string()],
+        Some("2026.03.08.v1".to_string()),
+        Some(SimulationId::new("SIM_TEST".to_string()).unwrap()),
+        Some(SimulationVersion(1)),
+        Some("CERTIFIED_ACTIVE".to_string()),
+        execution_outcome.to_string(),
+        None,
+        vec![ReasonCodeId(0x4A10_0001)],
+        MonotonicTimeNs(50 + turn_id),
+        MonotonicTimeNs(60 + turn_id),
+        ProofSignerIdentityMetadata::v1(
+            "ph1j_signer".to_string(),
+            "ph1j_key".to_string(),
+            "SHA256_KEYED_DIGEST".to_string(),
+        )
+        .unwrap(),
+        ProofRetentionClass::ComplianceRetention,
+        selene_kernel_contracts::ph1j::ProofVerificationPosture::VerificationReady,
+        selene_kernel_contracts::ph1j::TimestampTrustPosture::RuntimeMonotonic,
+        Some(format!("request:{request_id}")),
+    )
     .unwrap()
 }
 
@@ -256,4 +303,105 @@ fn at_j_db_04_ledger_only_no_current_rebuild_required() {
 
     // PH1.J has no current projection table in this slice; proof is append-only row presence.
     assert_eq!(s.audit_rows().len(), 1);
+}
+
+#[test]
+fn at_j_db_05_canonical_proof_record_is_append_only_and_hash_chained() {
+    let mut s = store_with_identity_device_session();
+    let receipt_1 = s
+        .append_proof_row(
+            proof_input("req_proof_1", "trace_proof_1", 1, "ALLOW"),
+            Some("proof_idem_1".to_string()),
+        )
+        .unwrap();
+    let receipt_2 = s
+        .append_proof_row(
+            proof_input("req_proof_2", "trace_proof_2", 2, "DISPATCH"),
+            Some("proof_idem_2".to_string()),
+        )
+        .unwrap();
+
+    assert_eq!(receipt_1.proof_write_outcome, ProofWriteOutcome::Written);
+    assert_eq!(receipt_2.proof_write_outcome, ProofWriteOutcome::Written);
+    assert_eq!(s.proof_rows().len(), 2);
+    assert_eq!(
+        s.proof_rows()[1].previous_event_hash.as_deref(),
+        Some(s.proof_rows()[0].current_event_hash.as_str())
+    );
+    assert!(matches!(
+        s.attempt_overwrite_proof_row(s.proof_rows()[0].proof_event_id),
+        Err(StorageError::AppendOnlyViolation {
+            table: "proof_ledger"
+        })
+    ));
+}
+
+#[test]
+fn at_j_db_06_bounded_proof_reconstruction_by_request_and_session_turn() {
+    let mut s = store_with_identity_device_session();
+    s.append_proof_row(
+        proof_input("req_reconstruct", "trace_reconstruct_a", 1, "ALLOW"),
+        Some("proof_reconstruct_1".to_string()),
+    )
+    .unwrap();
+    s.append_proof_row(
+        proof_input("req_reconstruct", "trace_reconstruct_b", 1, "DISPATCH"),
+        Some("proof_reconstruct_2".to_string()),
+    )
+    .unwrap();
+    s.append_proof_row(
+        proof_input("req_reconstruct_other", "trace_reconstruct_c", 2, "ALLOW"),
+        Some("proof_reconstruct_3".to_string()),
+    )
+    .unwrap();
+
+    let by_request = s.proof_rows_by_request_id_bounded("req_reconstruct", 1).unwrap();
+    assert_eq!(by_request.len(), 1);
+    assert_eq!(by_request[0].request_id, "req_reconstruct");
+
+    let by_session_turn = s
+        .proof_rows_by_session_turn_bounded(SessionId(1), TurnId(1), 2)
+        .unwrap();
+    assert_eq!(by_session_turn.len(), 2);
+    assert!(by_session_turn.iter().all(|row| row.session_id == Some(SessionId(1))));
+    assert!(by_session_turn.iter().all(|row| row.turn_id == Some(TurnId(1))));
+}
+
+#[test]
+fn at_j_db_07_proof_verification_recomputes_hash_and_signature() {
+    let mut s = store_with_identity_device_session();
+    let receipt = s
+        .append_proof_row(
+            proof_input("req_verify", "trace_verify", 7, "DISPATCH"),
+            Some("proof_verify_1".to_string()),
+        )
+        .unwrap();
+    assert_eq!(receipt.proof_write_outcome, ProofWriteOutcome::Written);
+
+    let results = s
+        .verify_proof_rows_by_request_id_bounded("req_verify", 4)
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert!(results[0].verified);
+    assert_eq!(results[0].failure_class, None);
+}
+
+#[test]
+fn at_j_db_08_proof_idempotency_reuses_existing_record() {
+    let mut s = store_with_identity_device_session();
+    let receipt_1 = s
+        .append_proof_row(
+            proof_input("req_reuse", "trace_reuse", 9, "ALLOW"),
+            Some("proof_reuse_1".to_string()),
+        )
+        .unwrap();
+    let receipt_2 = s
+        .append_proof_row(
+            proof_input("req_reuse_duplicate", "trace_reuse_dup", 10, "DISPATCH"),
+            Some("proof_reuse_1".to_string()),
+        )
+        .unwrap();
+    assert_eq!(receipt_1.proof_event_id, receipt_2.proof_event_id);
+    assert_eq!(receipt_2.proof_write_outcome, ProofWriteOutcome::ReusedExisting);
+    assert_eq!(s.proof_rows().len(), 1);
 }
