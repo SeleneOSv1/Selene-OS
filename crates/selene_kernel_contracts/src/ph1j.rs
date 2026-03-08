@@ -862,14 +862,15 @@ pub enum ProofProtectedActionClass {
     GovernanceDecision,
     PrimaryDeviceConfirmation,
     VoiceTurnExecution,
+    LearningPromotion,
+    BuilderDeployment,
+    SelfHealRemediation,
 }
 
 impl ProofProtectedActionClass {
     pub const fn as_str(self) -> &'static str {
         match self {
-            ProofProtectedActionClass::IdentitySensitiveExecution => {
-                "IDENTITY_SENSITIVE_EXECUTION"
-            }
+            ProofProtectedActionClass::IdentitySensitiveExecution => "IDENTITY_SENSITIVE_EXECUTION",
             ProofProtectedActionClass::AccessControlledAction => "ACCESS_CONTROLLED_ACTION",
             ProofProtectedActionClass::SimulationAuthorizedMutation => {
                 "SIMULATION_AUTHORIZED_MUTATION"
@@ -882,10 +883,11 @@ impl ProofProtectedActionClass {
                 "MEMORY_AUTHORITATIVE_MUTATION"
             }
             ProofProtectedActionClass::GovernanceDecision => "GOVERNANCE_DECISION",
-            ProofProtectedActionClass::PrimaryDeviceConfirmation => {
-                "PRIMARY_DEVICE_CONFIRMATION"
-            }
+            ProofProtectedActionClass::PrimaryDeviceConfirmation => "PRIMARY_DEVICE_CONFIRMATION",
             ProofProtectedActionClass::VoiceTurnExecution => "VOICE_TURN_EXECUTION",
+            ProofProtectedActionClass::LearningPromotion => "LEARNING_PROMOTION",
+            ProofProtectedActionClass::BuilderDeployment => "BUILDER_DEPLOYMENT",
+            ProofProtectedActionClass::SelfHealRemediation => "SELF_HEAL_REMEDIATION",
         }
     }
 }
@@ -907,13 +909,9 @@ impl ProofFailureClass {
             ProofFailureClass::ProofWriteFailure => "PROOF_WRITE_FAILURE",
             ProofFailureClass::ProofChainIntegrityFailure => "PROOF_CHAIN_INTEGRITY_FAILURE",
             ProofFailureClass::ProofSignatureFailure => "PROOF_SIGNATURE_FAILURE",
-            ProofFailureClass::ProofCanonicalizationFailure => {
-                "PROOF_CANONICALIZATION_FAILURE"
-            }
+            ProofFailureClass::ProofCanonicalizationFailure => "PROOF_CANONICALIZATION_FAILURE",
             ProofFailureClass::ProofStorageUnavailable => "PROOF_STORAGE_UNAVAILABLE",
-            ProofFailureClass::ProofVerificationUnavailable => {
-                "PROOF_VERIFICATION_UNAVAILABLE"
-            }
+            ProofFailureClass::ProofVerificationUnavailable => "PROOF_VERIFICATION_UNAVAILABLE",
         }
     }
 }
@@ -1160,7 +1158,11 @@ impl CanonicalProofRecordInput {
 
     pub fn canonical_payload(&self) -> String {
         let mut buf = String::new();
-        append_canonical_field(&mut buf, "schema_version", &self.schema_version.0.to_string());
+        append_canonical_field(
+            &mut buf,
+            "schema_version",
+            &self.schema_version.0.to_string(),
+        );
         append_canonical_field(&mut buf, "request_id", &self.request_id);
         append_canonical_field(&mut buf, "trace_id", &self.trace_id);
         append_canonical_field(
@@ -1238,7 +1240,9 @@ impl CanonicalProofRecordInput {
         append_canonical_field(
             &mut buf,
             "simulation_certification_state",
-            self.simulation_certification_state.as_deref().unwrap_or("-"),
+            self.simulation_certification_state
+                .as_deref()
+                .unwrap_or("-"),
         );
         append_canonical_field(&mut buf, "execution_outcome", &self.execution_outcome);
         append_canonical_field(
@@ -1263,7 +1267,11 @@ impl CanonicalProofRecordInput {
             "signer_identity",
             &self.signer_identity_metadata.signer_identity,
         );
-        append_canonical_field(&mut buf, "signer_key_id", &self.signer_identity_metadata.key_id);
+        append_canonical_field(
+            &mut buf,
+            "signer_key_id",
+            &self.signer_identity_metadata.key_id,
+        );
         append_canonical_field(
             &mut buf,
             "signature_algorithm",
@@ -1340,7 +1348,11 @@ impl Validate for CanonicalProofRecordInput {
             &self.build_version,
             128,
         )?;
-        validate_ascii_token("canonical_proof_record_input.git_commit", &self.git_commit, 64)?;
+        validate_ascii_token(
+            "canonical_proof_record_input.git_commit",
+            &self.git_commit,
+            64,
+        )?;
         validate_opt_ascii_token(
             "canonical_proof_record_input.authority_decision_reference",
             &self.authority_decision_reference,
@@ -1579,7 +1591,9 @@ impl Validate for CanonicalProofRecord {
             &self.failure_class,
             64,
         )?;
-        if self.received_at.0 == 0 || self.executed_at.0 == 0 || self.executed_at.0 < self.received_at.0
+        if self.received_at.0 == 0
+            || self.executed_at.0 == 0
+            || self.executed_at.0 < self.received_at.0
         {
             return Err(ContractViolation::InvalidValue {
                 field: "canonical_proof_record.executed_at",

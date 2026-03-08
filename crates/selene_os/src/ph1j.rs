@@ -2,13 +2,15 @@
 
 use std::cell::RefCell;
 
+use selene_kernel_contracts::ph1d::SafetyTier;
 use selene_kernel_contracts::ph1j::{
-    CanonicalProofRecord, CanonicalProofRecordInput, ProofFailureClass, ProofProtectedActionClass,
-    ProofRetentionClass, ProofSignerIdentityMetadata, ProofVerificationPosture,
-    ProofVerificationResult, ProofWriteReceipt, TimestampTrustPosture,
+    CanonicalProofRecord, CanonicalProofRecordInput, ProofChainStatus, ProofFailureClass,
+    ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata,
+    ProofVerificationPosture, ProofVerificationResult, ProofWriteOutcome, ProofWriteReceipt,
+    TimestampTrustPosture,
 };
 use selene_kernel_contracts::ph1simcat::{SimulationId, SimulationVersion};
-use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::runtime_execution::{ProofExecutionState, RuntimeExecutionEnvelope};
 use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 use selene_storage::ph1f::{Ph1fStore, StorageError};
 
@@ -96,7 +98,9 @@ impl Validate for ProtectedProofWriteRequest {
             });
         }
         if let Some(failure_class) = self.failure_class.as_ref() {
-            if failure_class.trim().is_empty() || failure_class.len() > 64 || !failure_class.is_ascii()
+            if failure_class.trim().is_empty()
+                || failure_class.len() > 64
+                || !failure_class.is_ascii()
             {
                 return Err(ContractViolation::InvalidValue {
                     field: "protected_proof_write_request.failure_class",
@@ -104,7 +108,10 @@ impl Validate for ProtectedProofWriteRequest {
                 });
             }
         }
-        if self.received_at.0 == 0 || self.executed_at.0 == 0 || self.executed_at.0 < self.received_at.0 {
+        if self.received_at.0 == 0
+            || self.executed_at.0 == 0
+            || self.executed_at.0 < self.received_at.0
+        {
             return Err(ContractViolation::InvalidValue {
                 field: "protected_proof_write_request.executed_at",
                 reason: "must be >= received_at",
@@ -184,7 +191,9 @@ impl Ph1jRuntime {
         store: &mut Ph1fStore,
         request: ProtectedProofWriteRequest,
     ) -> Result<ProofWriteReceipt, StorageError> {
-        request.validate().map_err(StorageError::ContractViolation)?;
+        request
+            .validate()
+            .map_err(StorageError::ContractViolation)?;
         if !self.config.proof_capture_enabled {
             return Err(StorageError::ProofFailure {
                 class: ProofFailureClass::ProofWriteFailure,
@@ -209,7 +218,13 @@ impl Ph1jRuntime {
             request.runtime_execution_envelope.trace_id.clone(),
             request.runtime_execution_envelope.session_id,
             Some(request.runtime_execution_envelope.turn_id),
-            Some(request.runtime_execution_envelope.actor_identity.as_str().to_string()),
+            Some(
+                request
+                    .runtime_execution_envelope
+                    .actor_identity
+                    .as_str()
+                    .to_string(),
+            ),
             Some(request.runtime_execution_envelope.device_identity.clone()),
             self.config.node_id.clone(),
             self.config.runtime_instance_identity.clone(),
@@ -271,6 +286,122 @@ impl Ph1jRuntime {
     }
 }
 
+pub fn proof_failure_class_for_storage_error(error: &StorageError) -> ProofFailureClass {
+    match error {
+        StorageError::ProofFailure { class, .. } => *class,
+        StorageError::ContractViolation(_) => ProofFailureClass::ProofCanonicalizationFailure,
+        StorageError::AppendOnlyViolation { .. } => ProofFailureClass::ProofChainIntegrityFailure,
+        StorageError::ForeignKeyViolation { .. } | StorageError::DuplicateKey { .. } => {
+            ProofFailureClass::ProofWriteFailure
+        }
+    }
+}
+
+pub fn proof_execution_state_from_error(
+    error: &StorageError,
+) -> Result<ProofExecutionState, StorageError> {
+    let failure_class = proof_failure_class_for_storage_error(error);
+    ProofExecutionState::v1(
+        None,
+        ProofWriteOutcome::Failed,
+        Some(failure_class),
+        match failure_class {
+            ProofFailureClass::ProofChainIntegrityFailure
+            | ProofFailureClass::ProofSignatureFailure => ProofChainStatus::ChainBreakDetected,
+            _ => ProofChainStatus::NotChecked,
+        },
+        match failure_class {
+            ProofFailureClass::ProofVerificationUnavailable => {
+                ProofVerificationPosture::VerificationUnavailable
+            }
+            _ => ProofVerificationPosture::NotRequested,
+        },
+        TimestampTrustPosture::RuntimeMonotonic,
+        None,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+pub fn proof_execution_state_from_receipt(
+    receipt: ProofWriteReceipt,
+) -> Result<ProofExecutionState, StorageError> {
+    ProofExecutionState::v1(
+        Some(receipt.proof_record_ref),
+        receipt.proof_write_outcome,
+        None,
+        receipt.proof_chain_status,
+        receipt.proof_verification_posture,
+        receipt.timestamp_trust_posture,
+        receipt.verifier_metadata_ref,
+    )
+    .map_err(StorageError::ContractViolation)
+}
+
+pub fn proof_policy_rule_identifiers(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Vec<String> {
+    runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .and_then(|state| state.last_rule_id.clone())
+        .into_iter()
+        .collect()
+}
+
+pub fn proof_policy_version(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Option<String> {
+    runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| state.governance_policy_version.clone())
+}
+
+pub fn proof_authority_decision_reference(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Option<String> {
+    runtime_execution_envelope.authority_state.as_ref().map(|state| {
+        let policy_context_ref = state
+            .policy_context_ref
+            .map(|value| {
+                format!(
+                    "privacy_mode={};do_not_disturb={};safety_tier={}",
+                    value.privacy_mode,
+                    value.do_not_disturb,
+                    match value.safety_tier {
+                        SafetyTier::Standard => "STANDARD",
+                        SafetyTier::Strict => "STRICT",
+                    }
+                )
+            })
+            .unwrap_or_else(|| "-".to_string());
+        format!(
+            "policy_decision={};policy_context={};identity_scope_required={};identity_scope_satisfied={};memory_scope_allowed={};reason_code={}",
+            state.policy_decision.as_str(),
+            policy_context_ref,
+            state.identity_scope_required,
+            state.identity_scope_satisfied,
+            state.memory_scope_allowed,
+            state.reason_code.unwrap_or_default(),
+        )
+    })
+}
+
+pub fn proof_verifier_metadata_ref(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> String {
+    if let Some(session_id) = runtime_execution_envelope.session_id {
+        format!(
+            "session:{}:turn:{}:request:{}",
+            session_id.0,
+            runtime_execution_envelope.turn_id.0,
+            runtime_execution_envelope.request_id
+        )
+    } else {
+        format!("request:{}", runtime_execution_envelope.request_id)
+    }
+}
+
 fn env_or_default(key: &str, default: &str) -> String {
     std::env::var(key)
         .ok()
@@ -289,28 +420,32 @@ mod tests {
     use selene_kernel_contracts::runtime_execution::{
         AdmissionState, PlatformRuntimeContext, RuntimeExecutionEnvelope,
     };
-    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, SessionRecord};
     use selene_kernel_contracts::SessionState;
+    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, SessionRecord};
 
     fn store_with_identity_device_session() -> Ph1fStore {
         let mut store = Ph1fStore::new_in_memory();
         let user_id = UserId::new("proof_user").unwrap();
         let device_id = DeviceId::new("proof_device").unwrap();
         store
-            .insert_identity(
-                IdentityRecord::v1(
-                    user_id.clone(),
-                    None,
-                    None,
-                    MonotonicTimeNs(1),
-                    IdentityStatus::Active,
-                ),
-            )
+            .insert_identity(IdentityRecord::v1(
+                user_id.clone(),
+                None,
+                None,
+                MonotonicTimeNs(1),
+                IdentityStatus::Active,
+            ))
             .unwrap();
         store
             .insert_device(
-                DeviceRecord::v1(device_id.clone(), user_id.clone(), "desktop".to_string(), MonotonicTimeNs(1), None)
-                    .unwrap(),
+                DeviceRecord::v1(
+                    device_id.clone(),
+                    user_id.clone(),
+                    "desktop".to_string(),
+                    MonotonicTimeNs(1),
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         store
