@@ -95,6 +95,10 @@ use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
     GovernanceProtectedActionClass,
 };
+use selene_kernel_contracts::runtime_law::{
+    RuntimeLawDecisionLogEntry, RuntimeLawEvaluationContext, RuntimeLawResponseClass,
+    RuntimeProtectedActionClass,
+};
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
@@ -113,6 +117,7 @@ use crate::ph1os::{
 use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
 use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
+use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
 };
@@ -590,6 +595,7 @@ pub struct AppServerIngressRuntime {
     ph1simfinder_runtime: Ph1SimFinderRuntime,
     ph1j_runtime: Ph1jRuntime,
     runtime_governance: RuntimeGovernanceRuntime,
+    runtime_law: RuntimeLawRuntime,
     agent_input_packet_build_count: RefCell<u64>,
     last_agent_input_packet: RefCell<Option<AgentInputPacket>>,
     last_finder_terminal_packet: RefCell<Option<FinderTerminalPacket>>,
@@ -626,6 +632,20 @@ impl AppServerIngressRuntime {
         runtime_governance: RuntimeGovernanceRuntime,
         ph1j_runtime: Ph1jRuntime,
     ) -> Self {
+        Self::new_with_runtime_governance_ph1j_and_law(
+            executor,
+            runtime_governance,
+            ph1j_runtime,
+            RuntimeLawRuntime::default(),
+        )
+    }
+
+    pub fn new_with_runtime_governance_ph1j_and_law(
+        executor: SimulationExecutor,
+        runtime_governance: RuntimeGovernanceRuntime,
+        ph1j_runtime: Ph1jRuntime,
+        runtime_law: RuntimeLawRuntime,
+    ) -> Self {
         Self {
             executor,
             ph1x_runtime: Ph1xRuntime::new(Ph1xConfig::mvp_v1()),
@@ -633,6 +653,7 @@ impl AppServerIngressRuntime {
             ph1simfinder_runtime: Ph1SimFinderRuntime::new(FinderRuntimeConfig::mvp_v1()),
             ph1j_runtime,
             runtime_governance,
+            runtime_law,
             agent_input_packet_build_count: RefCell::new(0),
             last_agent_input_packet: RefCell::new(None),
             last_finder_terminal_packet: RefCell::new(None),
@@ -641,6 +662,10 @@ impl AppServerIngressRuntime {
 
     pub fn runtime_governance(&self) -> &RuntimeGovernanceRuntime {
         &self.runtime_governance
+    }
+
+    pub fn runtime_law(&self) -> &RuntimeLawRuntime {
+        &self.runtime_law
     }
 
     pub fn ph1j_runtime(&self) -> &Ph1jRuntime {
@@ -653,6 +678,14 @@ impl AppServerIngressRuntime {
 
     pub fn runtime_governance_decision_log_snapshot(&self) -> Vec<GovernanceDecisionLogEntry> {
         self.runtime_governance.decision_log_snapshot()
+    }
+
+    pub fn runtime_law_policy_version(&self) -> &str {
+        self.runtime_law.policy_version()
+    }
+
+    pub fn runtime_law_decision_log_snapshot(&self) -> Vec<RuntimeLawDecisionLogEntry> {
+        self.runtime_law.decision_log_snapshot()
     }
 
     pub fn govern_persistence_signal(
@@ -689,6 +722,16 @@ impl AppServerIngressRuntime {
         executed_at: MonotonicTimeNs,
     ) -> Result<RuntimeExecutionEnvelope, StorageError> {
         let runtime_execution_envelope = &out.runtime_execution_envelope;
+        let law_action_class = voice_turn_runtime_law_action_class(out);
+        let law_context = RuntimeLawEvaluationContext::v1(
+            None,
+            None,
+            None,
+            None,
+            executed_at,
+            false,
+        )
+        .map_err(StorageError::ContractViolation)?;
         let (simulation_id, simulation_version, simulation_certification_state) =
             proof_simulation_trace_for_voice_turn(
                 store,
@@ -733,14 +776,22 @@ impl AppServerIngressRuntime {
                             &decision,
                         )
                     })?;
-                runtime_execution_envelope_with_voice_turn_proof(
+                let proof_envelope = runtime_execution_envelope_with_voice_turn_proof(
                     runtime_execution_envelope,
                     proof_state,
-                )
+                )?;
+                self.runtime_law
+                    .govern_completion(&proof_envelope, law_action_class, &law_context)
+                    .map_err(|decision| {
+                        runtime_law_storage_error(
+                            "app_voice_turn_execution_outcome.runtime_execution_envelope.law_state",
+                            &decision,
+                        )
+                    })
             }
             Err(error) => {
                 let proof_state = proof_execution_state_from_error(&error)?;
-                let decision = self
+                let governance_decision = self
                     .runtime_governance
                     .govern_protected_action_proof_state(
                         GovernanceProtectedActionClass::VoiceTurnExecution,
@@ -749,10 +800,22 @@ impl AppServerIngressRuntime {
                         &proof_state,
                     )
                     .unwrap_err();
-                Err(runtime_governance_storage_error(
-                    "app_voice_turn_execution_outcome.runtime_execution_envelope.proof_state",
-                    &decision,
-                ))
+                let governed_envelope = runtime_execution_envelope
+                    .with_proof_state(Some(proof_state))
+                    .and_then(|value| {
+                        value.with_governance_state(Some(
+                            governance_decision.governance_state.clone(),
+                        ))
+                    })
+                    .map_err(StorageError::ContractViolation)?;
+                self.runtime_law
+                    .govern_completion(&governed_envelope, law_action_class, &law_context)
+                    .map_err(|decision| {
+                        runtime_law_storage_error(
+                            "app_voice_turn_execution_outcome.runtime_execution_envelope.law_state",
+                            &decision,
+                        )
+                    })
             }
         }
     }
@@ -3593,6 +3656,16 @@ fn runtime_governance_storage_error(
     })
 }
 
+fn runtime_law_storage_error(
+    field: &'static str,
+    decision: &RuntimeLawDecision,
+) -> StorageError {
+    StorageError::ContractViolation(ContractViolation::InvalidValue {
+        field,
+        reason: runtime_law_reason_literal(decision),
+    })
+}
+
 fn proof_failure_class_for_storage_error(error: &StorageError) -> ProofFailureClass {
     match error {
         StorageError::ProofFailure { class, .. } => *class,
@@ -3626,6 +3699,21 @@ fn proof_execution_state_from_error(error: &StorageError) -> Result<ProofExecuti
         None,
     )
     .map_err(StorageError::ContractViolation)
+}
+
+fn voice_turn_runtime_law_action_class(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> RuntimeProtectedActionClass {
+    match out.next_move {
+        AppVoiceTurnNextMove::Dispatch | AppVoiceTurnNextMove::Respond => {
+            RuntimeProtectedActionClass::ProofRequired
+        }
+        AppVoiceTurnNextMove::Confirm
+        | AppVoiceTurnNextMove::Clarify
+        | AppVoiceTurnNextMove::Refused
+        | AppVoiceTurnNextMove::Wait
+        | AppVoiceTurnNextMove::NotInvokedDisabled => RuntimeProtectedActionClass::LowRisk,
+    }
 }
 
 fn voice_turn_protected_action_class(out: &AppVoiceTurnExecutionOutcome) -> ProofProtectedActionClass {
@@ -4389,6 +4477,20 @@ fn runtime_governance_reason_literal(decision: &RuntimeGovernanceDecision) -> &'
                 "runtime_governance runtime_governance_allowed"
             }
         },
+    }
+}
+
+fn runtime_law_reason_literal(decision: &RuntimeLawDecision) -> &'static str {
+    match decision.response_class {
+        RuntimeLawResponseClass::SafeMode => "runtime_law_safe_mode final_runtime_law_safe_mode",
+        RuntimeLawResponseClass::Quarantine => {
+            "runtime_law_quarantine final_runtime_law_quarantine"
+        }
+        RuntimeLawResponseClass::Block => "runtime_law_block final_runtime_law_block",
+        RuntimeLawResponseClass::Degrade => "runtime_law_degrade final_runtime_law_degrade",
+        RuntimeLawResponseClass::Allow | RuntimeLawResponseClass::AllowWithWarning => {
+            "runtime_law_allow final_runtime_law_allow"
+        }
     }
 }
 
@@ -6779,9 +6881,9 @@ mod tests {
             AppPlatform::Ios,
             OsVoiceTrigger::Explicit,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id,
+            actor_user_id.clone(),
             Some("tenant_1".to_string()),
-            Some(device_id),
+            Some(device_id.clone()),
             Vec::new(),
             no_observation(),
         )
@@ -6816,9 +6918,9 @@ mod tests {
             AppPlatform::Android,
             OsVoiceTrigger::WakeWord,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id,
+            actor_user_id.clone(),
             Some("tenant_1".to_string()),
-            Some(device_id),
+            Some(device_id.clone()),
             Vec::new(),
             no_observation(),
         )
@@ -6852,9 +6954,9 @@ mod tests {
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
-            actor_user_id,
+            actor_user_id.clone(),
             Some("tenant_1".to_string()),
-            Some(device_id),
+            Some(device_id.clone()),
             Vec::new(),
             no_observation(),
         )
@@ -8177,6 +8279,21 @@ mod tests {
             .as_ref()
             .expect("dispatch outcome must attach proof state");
         assert!(proof_state.proof_record_ref.is_some());
+        let law_state = out_2
+            .runtime_execution_envelope
+            .law_state
+            .as_ref()
+            .expect("dispatch outcome must attach final runtime law state");
+        assert_eq!(
+            law_state.protected_action_class,
+            RuntimeProtectedActionClass::ProofRequired
+        );
+        assert!(matches!(
+            law_state.final_law_response_class,
+            RuntimeLawResponseClass::Allow
+                | RuntimeLawResponseClass::AllowWithWarning
+                | RuntimeLawResponseClass::Degrade
+        ));
         let proof_rows = store
             .proof_records_by_request_id_bounded(
                 &out_2.runtime_execution_envelope.request_id,
@@ -8274,24 +8391,68 @@ mod tests {
     #[test]
     fn at_ph1j_01_proof_write_failure_blocks_protected_voice_turn() {
         let runtime = AppServerIngressRuntime::default();
-        runtime
-            .ph1j_runtime()
-            .force_failure_for_tests(Some(ProofFailureClass::ProofStorageUnavailable));
         let actor_user_id = UserId::new("tenant_1:proof_block_user").unwrap();
         let device_id = DeviceId::new("proof_block_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
-        seed_simulation_catalog_status(
-            &mut store,
-            "tenant_1",
-            LINK_INVITE_GENERATE_DRAFT,
-            SimulationType::Draft,
-            SimulationStatus::Active,
-        );
+        seed_link_send_access_instance(&mut store, &actor_user_id, "tenant_1");
+        for (simulation_id, simulation_type) in [
+            (LINK_INVITE_GENERATE_DRAFT, SimulationType::Draft),
+            (BCAST_CREATE_DRAFT, SimulationType::Draft),
+            (BCAST_DELIVER_COMMIT, SimulationType::Commit),
+            (DELIVERY_SEND_COMMIT, SimulationType::Commit),
+        ] {
+            seed_simulation_catalog_status(
+                &mut store,
+                "tenant_1",
+                simulation_id,
+                simulation_type,
+                SimulationStatus::Active,
+            );
+        }
 
-        let request = AppVoiceIngressRequest::v1(
+        let request_1 = AppVoiceIngressRequest::v1(
             CorrelationId(98_120),
             TurnId(99_120),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let x_build_1 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(22),
+            thread_key: Some("proof_block_thread".to_string()),
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_send_draft_broken_english(
+                "Tom",
+                "+14155550100",
+                "tenant_1",
+            )),
+            tool_response: None,
+            interruption: None,
+            locale: Some("en-US".to_string()),
+            last_failure_reason_code: None,
+        };
+        let out_1 = runtime
+            .run_desktop_voice_turn_end_to_end(&mut store, request_1, x_build_1)
+            .expect("confirm path should succeed before proof failure is injected");
+        assert_eq!(out_1.next_move, AppVoiceTurnNextMove::Confirm);
+        runtime
+            .ph1j_runtime()
+            .force_failure_for_tests(Some(ProofFailureClass::ProofStorageUnavailable));
+
+        let request_2 = AppVoiceIngressRequest::v1(
+            CorrelationId(98_121),
+            TurnId(99_121),
             AppPlatform::Desktop,
             OsVoiceTrigger::Explicit,
             sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
@@ -8302,15 +8463,18 @@ mod tests {
             no_observation(),
         )
         .unwrap();
-        let x_build = AppVoicePh1xBuildInput {
-            now: MonotonicTimeNs(22),
+        let x_build_2 = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(23),
             thread_key: Some("proof_block_thread".to_string()),
-            thread_state: ThreadState::empty_v1(),
+            thread_state: out_1
+                .ph1x_response
+                .expect("confirm run should include ph1x response")
+                .thread_state,
             session_state: SessionState::Active,
             policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
             memory_candidates: vec![],
-            confirm_answer: None,
-            nlp_output: Some(invite_link_draft_missing_contact("Tom", "tenant_1")),
+            confirm_answer: Some(ConfirmAnswer::Yes),
+            nlp_output: None,
             tool_response: None,
             interruption: None,
             locale: Some("en-US".to_string()),
@@ -8318,24 +8482,32 @@ mod tests {
         };
 
         let err = runtime
-            .run_desktop_voice_turn_end_to_end(&mut store, request, x_build)
+            .run_desktop_voice_turn_end_to_end(&mut store, request_2, x_build_2)
             .expect_err("proof failure must block protected voice completion");
         match err {
             StorageError::ContractViolation(ContractViolation::InvalidValue { field, reason }) => {
                 assert_eq!(
                     field,
-                    "app_voice_turn_execution_outcome.runtime_execution_envelope.proof_state"
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.law_state"
                 );
-                assert_eq!(reason, "governance_policy_block GOV_PROOF_REQUIRED");
+                assert_eq!(reason, "runtime_law_block final_runtime_law_block");
             }
             other => panic!("unexpected error: {other:?}"),
         }
+        assert!(runtime
+            .runtime_law_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_codes.contains(
+                    &crate::runtime_law::reason_codes::LAW_PROOF_REQUIRED.to_string(),
+                ) && entry.turn_id == Some(99_121)
+            }));
         assert!(runtime
             .runtime_governance_decision_log_snapshot()
             .iter()
             .any(|entry| {
                 entry.reason_code == crate::runtime_governance::reason_codes::GOV_PROOF_REQUIRED
-                    && entry.turn_id == Some(99_120)
+                    && entry.turn_id == Some(99_121)
             }));
     }
 

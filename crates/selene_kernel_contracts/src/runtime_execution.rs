@@ -10,6 +10,7 @@ use crate::ph1l::SessionId;
 use crate::ph1link::AppPlatform;
 use crate::ph1m::MemoryConfidence;
 use crate::runtime_governance::GovernanceExecutionState;
+use crate::runtime_law::RuntimeLawExecutionState;
 use crate::{ContractViolation, Validate};
 use std::collections::BTreeSet;
 
@@ -1035,6 +1036,7 @@ pub struct RuntimeExecutionEnvelope {
     pub identity_state: Option<IdentityExecutionState>,
     pub memory_state: Option<MemoryExecutionState>,
     pub authority_state: Option<AuthorityExecutionState>,
+    pub law_state: Option<RuntimeLawExecutionState>,
 }
 
 impl RuntimeExecutionEnvelope {
@@ -1228,6 +1230,7 @@ impl RuntimeExecutionEnvelope {
             identity_state: None,
             memory_state: None,
             authority_state: None,
+            law_state: None,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -1340,6 +1343,16 @@ impl RuntimeExecutionEnvelope {
         next.validate()?;
         Ok(next)
     }
+
+    pub fn with_law_state(
+        &self,
+        law_state: Option<RuntimeLawExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.law_state = law_state;
+        next.validate()?;
+        Ok(next)
+    }
 }
 
 impl Validate for RuntimeExecutionEnvelope {
@@ -1405,6 +1418,9 @@ impl Validate for RuntimeExecutionEnvelope {
             state.validate()?;
         }
         if let Some(state) = self.authority_state.as_ref() {
+            state.validate()?;
+        }
+        if let Some(state) = self.law_state.as_ref() {
             state.validate()?;
         }
         Ok(())

@@ -72,6 +72,7 @@ pub mod ph1x;
 pub mod provider_secrets;
 pub mod runtime_execution;
 pub mod runtime_governance;
+pub mod runtime_law;
 
 pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
@@ -87,4 +88,12 @@ pub use runtime_governance::{
     GovernancePolicyWindow, GovernanceProtectedActionClass, GovernanceResponseClass,
     GovernanceRuleCategory, GovernanceRuleDescriptor, GovernanceSeverity,
     GovernanceSubsystemCertification,
+};
+pub use runtime_law::{
+    RuntimeLawBlastRadiusScope, RuntimeLawBuilderInput, RuntimeLawDecisionLogEntry,
+    RuntimeLawDryRunEvaluationState, RuntimeLawEvaluationContext, RuntimeLawExecutionState,
+    RuntimeLawLearningInput, RuntimeLawOverrideState, RuntimeLawPolicyWindow,
+    RuntimeLawResponseClass, RuntimeLawRollbackReadinessState, RuntimeLawRuleCategory,
+    RuntimeLawRuleDescriptor, RuntimeLawSelfHealInput, RuntimeLawSeverity,
+    RuntimeProtectedActionClass,
 };
