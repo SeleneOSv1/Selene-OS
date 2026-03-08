@@ -790,6 +790,258 @@ preventing session loss during runtime replacement
 
 These hooks allow Selene to upgrade safely in production environments.
 
+Cryptographic Execution Proof Foundation
+
+Create the foundational proof primitives required so later runtime sections may produce tamper-evident, independently verifiable execution records.
+
+This section does not yet define protected-action policy or completion gating. It defines the runtime primitives that later sections, especially audit/proof capture and runtime governance, will rely on.
+
+Responsibilities include:
+
+runtime signing identity support
+
+node-scoped signing key reference support
+
+proof event identifier generation
+
+hash input canonicalization rules
+
+previous_event_hash linkage support
+
+current_event_hash derivation support
+
+proof payload canonical serialization rules
+
+proof-write interface foundations
+
+proof batching hooks where required
+
+proof clock and ordering alignment with runtime timestamps
+
+This ensures the runtime can later produce cryptographically linked execution records without inventing parallel proof infrastructure.
+
+Proof Identity and Node Attestation
+
+Create the runtime identity primitives required to support cryptographic proof attribution.
+
+Responsibilities include:
+
+binding proof events to node_id
+
+binding proof events to build_version and git_commit where required
+
+supporting signer identity metadata for proof verification
+
+ensuring proof records can later be traced to the runtime instance that produced them
+
+This allows later verification systems to prove not only what happened, but which governed runtime instance produced the record.
+
+Proof Chain Integrity Primitives
+
+Create the foundational primitives required for append-only proof-chain construction.
+
+Responsibilities include:
+
+supporting hash-chained event linkage
+
+preventing silent overwrites of prior proof events
+
+supporting integrity verification of ordered proof sequences
+
+supporting proof-gap detection hooks
+
+supporting chain-break detection hooks
+
+This allows later sections to implement sealed black-box execution trails rather than mutable operational logs.
+
+Proof Redaction and Sensitive-Field Governance
+
+Cryptographic proof foundations must preserve verifiability without exposing raw secrets or sensitive material.
+
+Responsibilities include:
+
+defining which runtime fields are eligible for proof inclusion
+
+ensuring secret material is never written raw into proof payloads
+
+supporting redacted-yet-verifiable field handling
+
+preserving proof integrity even when sensitive values are excluded or transformed
+
+This ensures later proof records remain both secure and verifiable.
+
+Independent Verification Readiness
+
+Create the runtime foundations required for later independent proof verification.
+
+Responsibilities include:
+
+stable proof payload structure
+
+stable hash derivation rules
+
+stable signer metadata carriage
+
+support for later verifier-mode replay and validation
+
+ensuring proof primitives are portable across runtime nodes and audit tooling
+
+This ensures that later sections may verify proof chains independently of the runtime that produced them.
+
+Proof Failure Foundation
+
+Create the failure-handling primitives required for proof-aware runtime operation.
+
+Responsibilities include:
+
+classifying proof-write failures
+
+classifying proof-chain integrity failures
+
+supporting fail-closed hooks for later governance integration
+
+supporting degraded proof posture signaling
+
+This ensures proof enforcement can later become mandatory without redesigning the runtime foundation.
+
+Runtime Service Level Objectives and Latency Governance
+
+Create the runtime measurement and enforcement foundations required for world-class responsiveness.
+
+Responsibilities include:
+
+defining service-level objectives for critical runtime paths
+
+defining p50, p95, and p99 latency targets where required
+
+defining wake-to-response latency targets for voice paths
+
+defining turn-completion latency targets for interactive request classes
+
+defining stage-specific timeout budgets aligned with request execution budgets
+
+supporting latency breach detection hooks
+
+supporting degraded-mode signaling when latency objectives are repeatedly violated
+
+This ensures runtime quality is governed by explicit performance law rather than informal expectations.
+
+Multi-Region Failover Foundation
+
+Create the runtime foundations required for safe multi-region operation and recovery.
+
+Responsibilities include:
+
+supporting primary-region and standby-region runtime identity
+
+supporting runtime failover posture signaling
+
+supporting safe session continuity recovery across region boundaries where policy allows
+
+supporting proof and audit continuity across failover scenarios
+
+supporting degraded runtime posture when region consensus or region health is uncertain
+
+This ensures Selene can later survive regional failure without inventing parallel recovery infrastructure.
+
+Data Residency and Retention Governance Foundation
+
+Create the runtime foundations required for region-aware storage and governed retention behavior.
+
+Responsibilities include:
+
+supporting region-bound runtime storage policy inputs
+
+supporting tenant or deployment-specific data residency classification
+
+supporting retention-policy metadata carriage
+
+supporting deletion-deadline hooks
+
+supporting legal-hold and protected-retention markers where required
+
+This ensures later persistence, memory, and proof systems can remain compliant without retrofitting residency or retention controls.
+
+Rate Limiting and Abuse Defense Foundation
+
+Create the runtime protection primitives required to resist abusive or destabilizing traffic.
+
+Responsibilities include:
+
+supporting actor-level rate limiting hooks
+
+supporting device-level rate limiting hooks
+
+supporting tenant-level rate limiting hooks
+
+supporting burst and flood detection hooks
+
+supporting abuse-classification signals for runtime admission control and governance
+
+This ensures Selene can later defend itself against spam, flood, or hostile request patterns without weakening normal operation.
+
+Dependency Trust Grading Foundation
+
+Create the runtime dependency classification model required for safe external and internal dependency usage.
+
+Responsibilities include:
+
+defining trusted dependency classes
+
+defining degraded dependency classes
+
+defining forbidden dependency classes
+
+supporting runtime posture changes based on dependency trust grade
+
+supporting deterministic refusal behavior when forbidden or unsafe dependency conditions are present
+
+This ensures the runtime does not treat all dependencies as equally trustworthy.
+
+Simulation Registry Hardening Foundation
+
+Create the runtime foundations required so the simulation registry remains versioned, certified, traceable, and governance-ready.
+
+Responsibilities include:
+
+supporting canonical simulation identifier carriage
+
+supporting simulation version identity carriage
+
+supporting simulation certification-state metadata carriage
+
+supporting registry-integrity validation hooks
+
+supporting simulation provenance references for later PH1.J proof recording
+
+supporting deterministic registry lookup primitives for later authority enforcement
+
+supporting registry drift-detection hooks where simulation metadata becomes inconsistent across nodes or runtime instances
+
+This ensures later simulation authorization and proof systems can rely on one governed simulation catalog rather than parallel or ambiguous workflow definitions.
+
+Gold-Path Certification Foundation
+
+Create the runtime certification hooks required to protect the most important end-to-end operational paths.
+
+Responsibilities include:
+
+defining canonical gold paths for runtime validation
+
+defining a standard interactive voice-turn gold path
+
+defining a lawful retry gold path
+
+defining a cross-device session continuity gold path for later sections
+
+defining a degraded dependency gold path
+
+defining a proof-required protected-action gold path for later sections
+
+supporting certification hooks so these paths can later be tested, monitored, and governed explicitly
+
+This ensures Selene protects its most important behaviors with explicit certification rather than implicit confidence.
+
 Restrictions
 
 During Build Section 01 the following must NOT be implemented:
@@ -895,6 +1147,22 @@ The secure secrets provider retrieves and injects secrets safely.
 Circuit breakers protect the runtime from cascading dependency failures.
 
 Runtime sandbox mode is available for controlled non-authoritative execution.
+
+Cryptographic execution proof primitives exist for later PH1.J and Runtime Governance enforcement.
+
+Runtime service-level objectives and latency governance foundations exist.
+
+Multi-region failover foundations exist.
+
+Data residency and retention governance foundations exist.
+
+Rate limiting and abuse-defense foundations exist.
+
+Dependency trust grading foundations exist.
+
+Simulation registry hardening foundations exist.
+
+Gold-path certification foundations exist.
 
 No business logic or runtime execution behavior exists yet.
 
