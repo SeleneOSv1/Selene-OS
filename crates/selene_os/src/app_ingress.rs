@@ -78,6 +78,7 @@ use selene_kernel_contracts::ph1simfinder::{
     FinderTerminalPacket,
 };
 use selene_kernel_contracts::ph1tts::StyleProfileRef;
+use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
 use selene_kernel_contracts::ph1x::{
     ConfirmAnswer, DispatchRequest, IdentityContext, Ph1xDirective, Ph1xRequest, Ph1xResponse,
     StepUpCapabilities, ThreadState,
@@ -106,6 +107,7 @@ use crate::simulation_executor::{
 pub struct AppVoiceIngressRequest {
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
     pub app_platform: AppPlatform,
     pub trigger: OsVoiceTrigger,
     pub voice_id_request: Ph1VoiceIdRequest,
@@ -130,14 +132,83 @@ impl AppVoiceIngressRequest {
         enrolled_speakers: Vec<EngineEnrolledSpeaker>,
         observation: EngineVoiceIdObservation,
     ) -> Result<Self, ContractViolation> {
+        let runtime_execution_envelope = fallback_runtime_execution_envelope_for_app_voice_request(
+            correlation_id,
+            turn_id,
+            app_platform,
+            &voice_id_request,
+            &actor_user_id,
+            device_id.as_ref(),
+        )?;
+        Self::v1_with_runtime_execution_envelope(
+            correlation_id,
+            turn_id,
+            runtime_execution_envelope,
+            app_platform,
+            trigger,
+            voice_id_request,
+            actor_user_id,
+            tenant_id,
+            device_id,
+            enrolled_speakers,
+            observation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_runtime_execution_envelope(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
+        app_platform: AppPlatform,
+        trigger: OsVoiceTrigger,
+        voice_id_request: Ph1VoiceIdRequest,
+        actor_user_id: UserId,
+        tenant_id: Option<String>,
+        device_id: Option<DeviceId>,
+        enrolled_speakers: Vec<EngineEnrolledSpeaker>,
+        observation: EngineVoiceIdObservation,
+    ) -> Result<Self, ContractViolation> {
         app_platform.validate()?;
         voice_id_request.validate()?;
+        runtime_execution_envelope.validate()?;
         if let Some(device_id) = device_id.as_ref() {
             device_id.validate()?;
+            if runtime_execution_envelope.device_identity != *device_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "app_voice_ingress_request.runtime_execution_envelope.device_identity",
+                    reason: "must match app_voice_ingress_request.device_id",
+                });
+            }
+        }
+        if runtime_execution_envelope.actor_identity != actor_user_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.runtime_execution_envelope.actor_identity",
+                reason: "must match app_voice_ingress_request.actor_user_id",
+            });
+        }
+        if runtime_execution_envelope.platform != app_platform {
+            return Err(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.runtime_execution_envelope.platform",
+                reason: "must match app_voice_ingress_request.app_platform",
+            });
+        }
+        if runtime_execution_envelope.turn_id != turn_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.runtime_execution_envelope.turn_id",
+                reason: "must match app_voice_ingress_request.turn_id",
+            });
+        }
+        if runtime_execution_envelope.session_id != voice_id_request.session_state_ref.session_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "app_voice_ingress_request.runtime_execution_envelope.session_id",
+                reason: "must match app_voice_ingress_request.voice_id_request.session_state_ref.session_id",
+            });
         }
         Ok(Self {
             correlation_id,
             turn_id,
+            runtime_execution_envelope,
             app_platform,
             trigger,
             voice_id_request,
@@ -148,6 +219,31 @@ impl AppVoiceIngressRequest {
             observation,
         })
     }
+}
+
+fn fallback_runtime_execution_envelope_for_app_voice_request(
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    app_platform: AppPlatform,
+    voice_id_request: &Ph1VoiceIdRequest,
+    actor_user_id: &UserId,
+    device_id: Option<&DeviceId>,
+) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    let fallback_device_id = match device_id {
+        Some(device_id) => device_id.clone(),
+        None => DeviceId::new(format!("app_ingress_device_{}", correlation_id.0))?,
+    };
+    RuntimeExecutionEnvelope::v1(
+        format!("corr-{}", correlation_id.0),
+        format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
+        format!("turn:{}:{}", correlation_id.0, turn_id.0),
+        actor_user_id.clone(),
+        fallback_device_id,
+        app_platform,
+        voice_id_request.session_state_ref.session_id,
+        turn_id,
+        AdmissionState::SessionResolved,
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -449,7 +545,9 @@ pub enum AppVoiceTurnNextMove {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppVoiceTurnExecutionOutcome {
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
     pub voice_outcome: OsVoiceLiveTurnOutcome,
+    pub session_state: SessionState,
     pub next_move: AppVoiceTurnNextMove,
     pub ph1x_request: Option<Ph1xRequest>,
     pub ph1x_response: Option<Ph1xResponse>,
@@ -512,8 +610,12 @@ impl AppServerIngressRuntime {
         )
         .map_err(StorageError::ContractViolation)?;
 
-        let live_turn_input = OsVoiceLiveTurnInput::v1(
+        let live_turn_input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
             top_level_turn_input,
+            request
+                .runtime_execution_envelope
+                .with_admission_state(AdmissionState::ExecutionAdmitted)
+                .map_err(StorageError::ContractViolation)?,
             request.voice_id_request,
             request.actor_user_id,
             request.tenant_id,
@@ -2479,6 +2581,12 @@ impl AppServerIngressRuntime {
         let correlation_id = request.correlation_id;
         let turn_id = request.turn_id;
         let request_session_id = request.voice_id_request.session_state_ref.session_id;
+        let request_session_state = request.voice_id_request.session_state_ref.session_state;
+        let runtime_execution_envelope = request
+            .runtime_execution_envelope
+            .clone()
+            .with_admission_state(AdmissionState::ExecutionAdmitted)
+            .map_err(StorageError::ContractViolation)?;
         let actor_user_id = request.actor_user_id.clone();
         let actor_device_id = request.device_id.clone();
         let actor_tenant_id = request.tenant_id.clone();
@@ -2487,6 +2595,8 @@ impl AppServerIngressRuntime {
             self.run_voice_turn_and_build_ph1x_request(store, request, x_build)?;
         let Some(ph1x_request) = ph1x_request else {
             return Ok(app_voice_turn_execution_outcome_from_voice_only(
+                runtime_execution_envelope,
+                request_session_state,
                 voice_outcome,
             ));
         };
@@ -2534,7 +2644,9 @@ impl AppServerIngressRuntime {
                     }
                     self.run_ph1x_and_dispatch_with_access_fail_closed(
                         store,
+                        runtime_execution_envelope.clone(),
                         voice_outcome,
+                        request_session_state,
                         ph1x_request,
                         &actor_user_id,
                         actor_device_id.as_ref(),
@@ -2544,7 +2656,9 @@ impl AppServerIngressRuntime {
                     )?
                 }
                 FinderTerminalPacket::Clarify(packet) => AppVoiceTurnExecutionOutcome {
+                    runtime_execution_envelope: runtime_execution_envelope.clone(),
                     voice_outcome,
+                    session_state: request_session_state,
                     next_move: AppVoiceTurnNextMove::Clarify,
                     ph1x_request: Some(ph1x_request),
                     ph1x_response: None,
@@ -2554,7 +2668,9 @@ impl AppServerIngressRuntime {
                     reason_code: Some(packet.reason_code),
                 },
                 FinderTerminalPacket::Refuse(packet) => AppVoiceTurnExecutionOutcome {
+                    runtime_execution_envelope: runtime_execution_envelope.clone(),
                     voice_outcome,
+                    session_state: request_session_state,
                     next_move: AppVoiceTurnNextMove::Refused,
                     ph1x_request: Some(ph1x_request),
                     ph1x_response: None,
@@ -2605,7 +2721,9 @@ impl AppServerIngressRuntime {
                         )?;
                     }
                     AppVoiceTurnExecutionOutcome {
+                        runtime_execution_envelope: runtime_execution_envelope.clone(),
                         voice_outcome,
+                        session_state: request_session_state,
                         next_move: AppVoiceTurnNextMove::Refused,
                         ph1x_request: Some(ph1x_request),
                         ph1x_response: None,
@@ -2621,7 +2739,9 @@ impl AppServerIngressRuntime {
         } else {
             self.run_ph1x_and_dispatch_with_access_fail_closed(
                 store,
+                runtime_execution_envelope.clone(),
                 voice_outcome,
+                request_session_state,
                 ph1x_request,
                 &actor_user_id,
                 actor_device_id.as_ref(),
@@ -2791,7 +2911,9 @@ impl AppServerIngressRuntime {
     fn run_ph1x_and_dispatch(
         &self,
         store: &mut Ph1fStore,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
         voice_outcome: OsVoiceLiveTurnOutcome,
+        session_state: SessionState,
         ph1x_request: Ph1xRequest,
         actor_user_id: &UserId,
         dispatch_now: MonotonicTimeNs,
@@ -2802,7 +2924,9 @@ impl AppServerIngressRuntime {
             .map_err(StorageError::ContractViolation)?;
 
         let mut out = AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
             voice_outcome,
+            session_state,
             next_move: AppVoiceTurnNextMove::Wait,
             ph1x_request: Some(ph1x_request),
             ph1x_response: Some(ph1x_response.clone()),
@@ -2908,7 +3032,9 @@ impl AppServerIngressRuntime {
     fn run_ph1x_and_dispatch_with_access_fail_closed(
         &self,
         store: &mut Ph1fStore,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
         voice_outcome: OsVoiceLiveTurnOutcome,
+        session_state: SessionState,
         ph1x_request: Ph1xRequest,
         actor_user_id: &UserId,
         actor_device_id: Option<&DeviceId>,
@@ -2920,7 +3046,9 @@ impl AppServerIngressRuntime {
         let turn_id = TurnId(ph1x_request.turn_id);
         match self.run_ph1x_and_dispatch(
             store,
+            runtime_execution_envelope.clone(),
             voice_outcome.clone(),
+            session_state,
             ph1x_request.clone(),
             actor_user_id,
             dispatch_now,
@@ -2955,7 +3083,9 @@ impl AppServerIngressRuntime {
                     )?;
                 }
                 Ok(AppVoiceTurnExecutionOutcome {
+                    runtime_execution_envelope,
                     voice_outcome,
+                    session_state,
                     next_move: AppVoiceTurnNextMove::Refused,
                     ph1x_request: Some(ph1x_request),
                     ph1x_response: None,
@@ -3067,7 +3197,7 @@ impl AppServerIngressRuntime {
         let (sim_catalog_snapshot_hash, sim_catalog_snapshot_version) =
             simulation_catalog_snapshot_for_agent_input(store, tenant_id);
         let transcript_text = transcript_text_from_nlp_output(x_build.nlp_output.as_ref());
-        let trace_id = format!("agentpkt:{}:{}", correlation_id.0, turn_id.0);
+        let trace_id = forwarded.runtime_execution_envelope.trace_id.clone();
         let packet_hash = agent_input_packet_hash_hex(
             correlation_id,
             turn_id,
@@ -3084,9 +3214,10 @@ impl AppServerIngressRuntime {
             &sim_catalog_snapshot_hash,
             forwarded.identity_prompt_scope_key.as_deref(),
         );
-        AgentInputPacket::v1(
+        AgentInputPacket::v1_with_runtime_execution_envelope(
             correlation_id.0,
             turn_id.0,
+            Some(forwarded.runtime_execution_envelope.clone()),
             x_build.now,
             trace_id,
             packet_hash,
@@ -3116,11 +3247,15 @@ impl AppServerIngressRuntime {
 }
 
 fn app_voice_turn_execution_outcome_from_voice_only(
+    runtime_execution_envelope: RuntimeExecutionEnvelope,
+    session_state: SessionState,
     voice_outcome: OsVoiceLiveTurnOutcome,
 ) -> AppVoiceTurnExecutionOutcome {
     match voice_outcome {
         OsVoiceLiveTurnOutcome::NotInvokedDisabled => AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
             voice_outcome: OsVoiceLiveTurnOutcome::NotInvokedDisabled,
+            session_state,
             next_move: AppVoiceTurnNextMove::NotInvokedDisabled,
             ph1x_request: None,
             ph1x_response: None,
@@ -3130,7 +3265,9 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             reason_code: None,
         },
         OsVoiceLiveTurnOutcome::Refused(refuse) => AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
             voice_outcome: OsVoiceLiveTurnOutcome::Refused(refuse.clone()),
+            session_state,
             next_move: AppVoiceTurnNextMove::Refused,
             ph1x_request: None,
             ph1x_response: None,
@@ -3140,7 +3277,9 @@ fn app_voice_turn_execution_outcome_from_voice_only(
             reason_code: Some(refuse.reason_code),
         },
         OsVoiceLiveTurnOutcome::Forwarded(forwarded) => AppVoiceTurnExecutionOutcome {
+            runtime_execution_envelope,
             voice_outcome: OsVoiceLiveTurnOutcome::Forwarded(forwarded),
+            session_state,
             next_move: AppVoiceTurnNextMove::Wait,
             ph1x_request: None,
             ph1x_response: None,

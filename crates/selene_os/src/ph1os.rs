@@ -17,13 +17,15 @@ use selene_kernel_contracts::ph1d::{
 };
 use selene_kernel_contracts::ph1doc::{DocValidationStatus, DocumentSourceKind};
 use selene_kernel_contracts::ph1feedback::FeedbackEventRecord;
-use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1n::{Ph1nRequest, Ph1nResponse};
+use selene_kernel_contracts::ph1link::AppPlatform;
 use selene_kernel_contracts::ph1os::{
     OsCapabilityId, OsDecisionComputeOk, OsDecisionComputeRequest, OsGateDecision, OsNextMove,
     OsOutcomeUtilizationEntry, OsPolicyEvaluateOk, OsPolicyEvaluateRequest, OsRefuse,
     OsRequestEnvelope, Ph1OsRequest, Ph1OsResponse, OS_CLARIFY_OWNER_ENGINE_ID,
 };
+use selene_kernel_contracts::runtime_execution::{AdmissionState, RuntimeExecutionEnvelope};
 use selene_kernel_contracts::ph1selfheal::{
     FailureContainmentAction, FailureProviderContext, ProblemCardState, PromotionDecisionAction,
     SelfHealCardChain,
@@ -536,6 +538,53 @@ impl OsVoicePlatform {
     }
 }
 
+fn app_platform_from_os_voice_platform(platform: OsVoicePlatform) -> AppPlatform {
+    match platform {
+        OsVoicePlatform::Ios => AppPlatform::Ios,
+        OsVoicePlatform::Android => AppPlatform::Android,
+        OsVoicePlatform::Desktop => AppPlatform::Desktop,
+    }
+}
+
+fn fallback_runtime_execution_envelope_for_os_voice_turn(
+    top_level_turn_input: &OsTopLevelTurnInput,
+    voice_id_request: &Ph1VoiceIdRequest,
+    actor_user_id: &UserId,
+    device_id: Option<&DeviceId>,
+) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    let voice_context =
+        top_level_turn_input
+            .voice_context
+            .ok_or(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.top_level_turn_input.voice_context",
+                reason: "VOICE path requires voice_context",
+            })?;
+    let fallback_device_id = match device_id {
+        Some(device_id) => device_id.clone(),
+        None => DeviceId::new(format!(
+            "os_voice_live_device_{}",
+            top_level_turn_input.correlation_id.0
+        ))?,
+    };
+    RuntimeExecutionEnvelope::v1(
+        format!("corr-{}", top_level_turn_input.correlation_id.0),
+        format!(
+            "trace:os-voice:{}:{}",
+            top_level_turn_input.correlation_id.0, top_level_turn_input.turn_id.0
+        ),
+        format!(
+            "turn:{}:{}",
+            top_level_turn_input.correlation_id.0, top_level_turn_input.turn_id.0
+        ),
+        actor_user_id.clone(),
+        fallback_device_id,
+        app_platform_from_os_voice_platform(voice_context.platform),
+        voice_id_request.session_state_ref.session_id,
+        top_level_turn_input.turn_id,
+        AdmissionState::ExecutionAdmitted,
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OsVoiceTrigger {
     WakeWord,
@@ -690,6 +739,7 @@ impl Ph1OsTopLevelConfig {
 pub struct OsTopLevelForwardBundle {
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
+    pub runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
     pub path: OsTopLevelTurnPath,
     pub always_on_sequence: Vec<String>,
     pub optional_sequence_invoked: Vec<String>,
@@ -702,6 +752,7 @@ impl OsTopLevelForwardBundle {
     pub fn v1(
         correlation_id: CorrelationId,
         turn_id: TurnId,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
         path: OsTopLevelTurnPath,
         always_on_sequence: Vec<String>,
         optional_sequence_invoked: Vec<String>,
@@ -711,6 +762,7 @@ impl OsTopLevelForwardBundle {
         let bundle = Self {
             correlation_id,
             turn_id,
+            runtime_execution_envelope,
             path,
             always_on_sequence,
             optional_sequence_invoked,
@@ -726,6 +778,15 @@ impl Validate for OsTopLevelForwardBundle {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.correlation_id.validate()?;
         self.turn_id.validate()?;
+        if let Some(runtime_execution_envelope) = self.runtime_execution_envelope.as_ref() {
+            runtime_execution_envelope.validate()?;
+            if runtime_execution_envelope.turn_id != self.turn_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_top_level_forward_bundle.runtime_execution_envelope.turn_id",
+                    reason: "must match os_top_level_forward_bundle.turn_id",
+                });
+            }
+        }
         self.os_bundle.validate()?;
 
         if self.os_bundle.correlation_id != self.correlation_id {
@@ -804,6 +865,14 @@ where
     }
 
     pub fn run_turn(&self, input: &OsTurnInput) -> Result<OsWiringOutcome, ContractViolation> {
+        self.run_turn_with_runtime_execution_envelope(input, None)
+    }
+
+    pub fn run_turn_with_runtime_execution_envelope(
+        &self,
+        input: &OsTurnInput,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
+    ) -> Result<OsWiringOutcome, ContractViolation> {
         input.validate()?;
 
         if !self.config.os_enabled {
@@ -826,9 +895,10 @@ where
             )?));
         }
 
-        let envelope = OsRequestEnvelope::v1_with_outcome_budget(
+        let envelope = OsRequestEnvelope::v1_with_runtime_execution_envelope(
             input.correlation_id,
             input.turn_id,
+            runtime_execution_envelope,
             min(self.config.max_guard_failures, 16),
             min(self.config.max_diagnostics, 16),
             min(self.config.max_outcome_entries, 1024u16),
@@ -967,6 +1037,14 @@ where
         &self,
         input: &OsTopLevelTurnInput,
     ) -> Result<OsTopLevelWiringOutcome, ContractViolation> {
+        self.run_turn_with_runtime_execution_envelope(input, None)
+    }
+
+    pub fn run_turn_with_runtime_execution_envelope(
+        &self,
+        input: &OsTopLevelTurnInput,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
+    ) -> Result<OsTopLevelWiringOutcome, ContractViolation> {
         input.validate()?;
 
         if !self.config.orchestrator_enabled {
@@ -1096,7 +1174,10 @@ where
         os_turn_input.optional_latency_budget_ms = optional_latency_budget_ms;
         os_turn_input.optional_latency_estimated_ms = optional_latency_estimated_ms;
 
-        let os_outcome = self.os_wiring.run_turn(&os_turn_input)?;
+        let os_outcome = self.os_wiring.run_turn_with_runtime_execution_envelope(
+            &os_turn_input,
+            runtime_execution_envelope.clone(),
+        )?;
         let outcome = match os_outcome {
             OsWiringOutcome::NotInvokedDisabled => OsTopLevelWiringOutcome::NotInvokedDisabled,
             OsWiringOutcome::Refused(refuse) => OsTopLevelWiringOutcome::Refused(refuse),
@@ -1104,6 +1185,7 @@ where
                 OsTopLevelWiringOutcome::Forwarded(OsTopLevelForwardBundle::v1(
                     input.correlation_id,
                     input.turn_id,
+                    runtime_execution_envelope,
                     input.path,
                     input.always_on_completed_sequence.clone(),
                     optional_sequence_invoked,
@@ -1120,6 +1202,7 @@ where
 #[derive(Debug, Clone)]
 pub struct OsVoiceLiveTurnInput {
     pub top_level_turn_input: OsTopLevelTurnInput,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
     pub voice_id_request: Ph1VoiceIdRequest,
     pub actor_user_id: UserId,
     pub tenant_id: Option<String>,
@@ -1139,7 +1222,37 @@ impl OsVoiceLiveTurnInput {
         enrolled_speakers: Vec<EngineEnrolledSpeaker>,
         observation: EngineVoiceIdObservation,
     ) -> Result<Self, ContractViolation> {
+        let runtime_execution_envelope = fallback_runtime_execution_envelope_for_os_voice_turn(
+            &top_level_turn_input,
+            &voice_id_request,
+            &actor_user_id,
+            device_id.as_ref(),
+        )?;
+        Self::v1_with_runtime_execution_envelope(
+            top_level_turn_input,
+            runtime_execution_envelope,
+            voice_id_request,
+            actor_user_id,
+            tenant_id,
+            device_id,
+            enrolled_speakers,
+            observation,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_runtime_execution_envelope(
+        top_level_turn_input: OsTopLevelTurnInput,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
+        voice_id_request: Ph1VoiceIdRequest,
+        actor_user_id: UserId,
+        tenant_id: Option<String>,
+        device_id: Option<selene_kernel_contracts::ph1j::DeviceId>,
+        enrolled_speakers: Vec<EngineEnrolledSpeaker>,
+        observation: EngineVoiceIdObservation,
+    ) -> Result<Self, ContractViolation> {
         top_level_turn_input.validate()?;
+        runtime_execution_envelope.validate()?;
         voice_id_request.validate()?;
         if top_level_turn_input.path != OsTopLevelTurnPath::Voice {
             return Err(ContractViolation::InvalidValue {
@@ -1153,8 +1266,29 @@ impl OsVoiceLiveTurnInput {
                 reason: "VOICE path requires voice_context",
             });
         }
+        if runtime_execution_envelope.turn_id != top_level_turn_input.turn_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.turn_id",
+                reason: "must match os_voice_live_turn_input.top_level_turn_input.turn_id",
+            });
+        }
+        if runtime_execution_envelope.actor_identity != actor_user_id {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.actor_identity",
+                reason: "must match os_voice_live_turn_input.actor_user_id",
+            });
+        }
+        if let Some(device_id) = device_id.as_ref() {
+            if runtime_execution_envelope.device_identity != *device_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_voice_live_turn_input.runtime_execution_envelope.device_identity",
+                    reason: "must match os_voice_live_turn_input.device_id",
+                });
+            }
+        }
         Ok(Self {
             top_level_turn_input,
+            runtime_execution_envelope,
             voice_id_request,
             actor_user_id,
             tenant_id,
@@ -1168,6 +1302,7 @@ impl OsVoiceLiveTurnInput {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OsVoiceLiveForwardBundle {
     pub top_level_bundle: OsTopLevelForwardBundle,
+    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
     pub voice_identity_assertion: Ph1VoiceIdResponse,
     pub identity_prompt_scope_key: Option<String>,
 }
@@ -1229,7 +1364,10 @@ where
         let turn_id = input.top_level_turn_input.turn_id;
         let top_level_outcome = self
             .top_level_wiring
-            .run_turn(&input.top_level_turn_input)
+            .run_turn_with_runtime_execution_envelope(
+                &input.top_level_turn_input,
+                Some(input.runtime_execution_envelope.clone()),
+            )
             .map_err(StorageError::ContractViolation)?;
         let top_level_bundle = match top_level_outcome {
             OsTopLevelWiringOutcome::NotInvokedDisabled => {
@@ -1279,6 +1417,7 @@ where
         Ok(OsVoiceLiveTurnOutcome::Forwarded(
             OsVoiceLiveForwardBundle {
                 top_level_bundle,
+                runtime_execution_envelope: input.runtime_execution_envelope,
                 voice_identity_assertion,
                 identity_prompt_scope_key,
             },

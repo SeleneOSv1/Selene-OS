@@ -7,6 +7,7 @@ use crate::ph1k::InterruptCandidate;
 use crate::ph1l::SessionId;
 use crate::ph1m::MemoryCandidate;
 use crate::ph1n::Ph1nResponse;
+use crate::runtime_execution::RuntimeExecutionEnvelope;
 use crate::ph1x::{ConfirmAnswer, ThreadState};
 use crate::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
@@ -19,6 +20,7 @@ pub struct AgentInputPacket {
     pub schema_version: SchemaVersion,
     pub correlation_id: u128,
     pub turn_id: u64,
+    pub runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
     pub now: MonotonicTimeNs,
     pub trace_id: String,
     pub packet_hash: String,
@@ -73,10 +75,70 @@ impl AgentInputPacket {
         sim_catalog_snapshot_hash: String,
         sim_catalog_snapshot_version: u64,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_runtime_execution_envelope(
+            correlation_id,
+            turn_id,
+            None,
+            now,
+            trace_id,
+            packet_hash,
+            transcript_text,
+            language_hint,
+            srl_repaired_transcript,
+            voice_identity_assertion,
+            identity_prompt_scope_key,
+            session_id,
+            session_state,
+            thread_key,
+            thread_state,
+            policy_context_ref,
+            memory_candidates,
+            confirm_answer,
+            nlp_output,
+            tool_response,
+            interruption,
+            last_failure_reason_code,
+            tenant_vocab_pack_ref,
+            gold_mapping_pack_ref,
+            sim_catalog_snapshot_hash,
+            sim_catalog_snapshot_version,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_runtime_execution_envelope(
+        correlation_id: u128,
+        turn_id: u64,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
+        now: MonotonicTimeNs,
+        trace_id: String,
+        packet_hash: String,
+        transcript_text: Option<String>,
+        language_hint: Option<String>,
+        srl_repaired_transcript: Option<String>,
+        voice_identity_assertion: Ph1VoiceIdResponse,
+        identity_prompt_scope_key: Option<String>,
+        session_id: Option<SessionId>,
+        session_state: SessionState,
+        thread_key: Option<String>,
+        thread_state: ThreadState,
+        policy_context_ref: PolicyContextRef,
+        memory_candidates: Vec<MemoryCandidate>,
+        confirm_answer: Option<ConfirmAnswer>,
+        nlp_output: Option<Ph1nResponse>,
+        tool_response: Option<ToolResponse>,
+        interruption: Option<InterruptCandidate>,
+        last_failure_reason_code: Option<ReasonCodeId>,
+        tenant_vocab_pack_ref: Option<String>,
+        gold_mapping_pack_ref: Option<String>,
+        sim_catalog_snapshot_hash: String,
+        sim_catalog_snapshot_version: u64,
+    ) -> Result<Self, ContractViolation> {
         let packet = Self {
             schema_version: PH1AGENT_CONTRACT_VERSION,
             correlation_id,
             turn_id,
+            runtime_execution_envelope,
             now,
             trace_id,
             packet_hash,
@@ -167,6 +229,27 @@ impl Validate for AgentInputPacket {
                 field: "agent_input_packet.turn_id",
                 reason: "must be > 0",
             });
+        }
+        if let Some(runtime_execution_envelope) = self.runtime_execution_envelope.as_ref() {
+            runtime_execution_envelope.validate()?;
+            if runtime_execution_envelope.turn_id.0 != self.turn_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "agent_input_packet.runtime_execution_envelope.turn_id",
+                    reason: "must match agent_input_packet.turn_id",
+                });
+            }
+            if runtime_execution_envelope.trace_id != self.trace_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "agent_input_packet.runtime_execution_envelope.trace_id",
+                    reason: "must match agent_input_packet.trace_id",
+                });
+            }
+            if runtime_execution_envelope.session_id != self.session_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "agent_input_packet.runtime_execution_envelope.session_id",
+                    reason: "must match agent_input_packet.session_id",
+                });
+            }
         }
         if self.now.0 == 0 {
             return Err(ContractViolation::InvalidValue {

@@ -91,6 +91,9 @@ use selene_kernel_contracts::ph1os::{OsNextMove, OsOutcomeActionClass, OsOutcome
 use selene_kernel_contracts::ph1pattern::{Ph1PatternRequest, Ph1PatternResponse};
 use selene_kernel_contracts::ph1position::TenantId;
 use selene_kernel_contracts::ph1rll::{Ph1RllRequest, Ph1RllResponse};
+use selene_kernel_contracts::runtime_execution::{
+    AdmissionState, FailureClass, RuntimeExecutionEnvelope,
+};
 use selene_kernel_contracts::ph1vision::{
     BoundingBoxPx, Ph1VisionRequest, Ph1VisionResponse, VisualSourceId, VisualSourceKind,
     VisualSourceRef, VisualToken,
@@ -264,6 +267,10 @@ pub struct VoiceTurnAdapterRequest {
 pub struct VoiceTurnAdapterResponse {
     pub status: String,
     pub outcome: String,
+    pub session_id: Option<String>,
+    pub turn_id: Option<u64>,
+    pub session_state: Option<String>,
+    pub failure_class: Option<FailureClass>,
     pub reason: Option<String>,
     pub next_move: String,
     pub response_text: String,
@@ -282,6 +289,24 @@ pub struct VoiceTurnProvenance {
     pub sources: Vec<VoiceTurnProvenanceSource>,
     pub retrieved_at: u64,
     pub cache_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceTurnIngressError {
+    pub failure_class: FailureClass,
+    pub reason_code: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub turn_id: Option<u64>,
+    pub session_state: Option<String>,
+}
+
+impl VoiceTurnIngressError {
+    pub fn to_runtime_reason(&self) -> String {
+        self.reason
+            .clone()
+            .unwrap_or_else(|| self.reason_code.clone())
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1048,14 +1073,34 @@ impl AdapterRuntime {
         &self,
         request: VoiceTurnAdapterRequest,
     ) -> Result<VoiceTurnAdapterResponse, String> {
-        self.run_voice_turn_internal(request, true, true)
+        self.run_voice_turn_internal(request, None, true, true)
+            .map_err(|err| err.to_runtime_reason())
     }
 
     pub fn run_voice_turn_ingress(
         &self,
         request: VoiceTurnAdapterRequest,
-    ) -> Result<VoiceTurnAdapterResponse, String> {
-        self.run_voice_turn_internal(request, true, false)
+    ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
+        let runtime_execution_envelope =
+            fallback_runtime_execution_envelope_for_voice_turn_request(&request).map_err(|err| {
+                voice_turn_ingress_error(
+                    FailureClass::InvalidPayload,
+                    "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
+                    Some(format!("invalid runtime_execution_envelope: {err:?}")),
+                    None,
+                    Some(request.turn_id),
+                    None,
+                )
+            })?;
+        self.run_voice_turn_internal(request, Some(runtime_execution_envelope), true, false)
+    }
+
+    pub fn run_voice_turn_ingress_with_execution_envelope(
+        &self,
+        request: VoiceTurnAdapterRequest,
+        runtime_execution_envelope: RuntimeExecutionEnvelope,
+    ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
+        self.run_voice_turn_internal(request, Some(runtime_execution_envelope), true, false)
     }
 
     pub fn run_invite_link_open_and_start_onboarding(
@@ -3473,10 +3518,12 @@ impl AdapterRuntime {
     fn run_voice_turn_internal(
         &self,
         request: VoiceTurnAdapterRequest,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
         persist_on_success: bool,
         allow_identity_auto_provision: bool,
-    ) -> Result<VoiceTurnAdapterResponse, String> {
+    ) -> Result<VoiceTurnAdapterResponse, VoiceTurnIngressError> {
         let request_for_journal = request.clone();
+        let response_turn_id = Some(request.turn_id);
         let mut user_text_partial =
             sanitize_transcript_text_option(request.user_text_partial.clone());
         let mut user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
@@ -3484,15 +3531,21 @@ impl AdapterRuntime {
         let selene_text_partial =
             sanitize_transcript_text_option(request.selene_text_partial.clone());
         let selene_text_final = sanitize_transcript_text_option(request.selene_text_final.clone());
-        let app_platform = parse_app_platform(&request.app_platform)?;
-        let trigger = parse_trigger(&request.trigger)?;
+        let pre_session_error = |reason: String| {
+            classify_voice_turn_runtime_error(&reason, response_turn_id, None, None)
+        };
+        let app_platform =
+            parse_app_platform(&request.app_platform).map_err(pre_session_error.clone())?;
+        let trigger = parse_trigger(&request.trigger).map_err(pre_session_error.clone())?;
         let actor_user_id = UserId::new(request.actor_user_id.clone())
-            .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
+            .map_err(|err| pre_session_error(format!("invalid actor_user_id: {err:?}")))?;
         let request_device_id = request
             .device_id
             .as_ref()
             .map(|id| {
-                DeviceId::new(id.clone()).map_err(|err| format!("invalid device_id: {err:?}"))
+                DeviceId::new(id.clone()).map_err(|err| {
+                    pre_session_error(format!("invalid device_id: {err:?}"))
+                })
             })
             .transpose()?;
         let correlation_id = CorrelationId(request.correlation_id.into());
@@ -3504,13 +3557,41 @@ impl AdapterRuntime {
                 "adapter_auto_{}",
                 stable_hash_hex_16(actor_user_id.as_str())
             ))
-            .map_err(|err| format!("invalid generated runtime device_id: {err:?}"))?,
+            .map_err(|err| {
+                pre_session_error(format!("invalid generated runtime device_id: {err:?}"))
+            })?,
+        };
+        let mut runtime_execution_envelope = match runtime_execution_envelope {
+            Some(envelope) => RuntimeExecutionEnvelope::v1(
+                envelope.request_id,
+                envelope.trace_id,
+                envelope.idempotency_key,
+                actor_user_id.clone(),
+                runtime_device_id.clone(),
+                app_platform,
+                envelope.session_id,
+                turn_id,
+                AdmissionState::IngressValidated,
+            )
+            .map_err(|err| {
+                pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
+            })?,
+            None => fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
+                correlation_id,
+                turn_id,
+                app_platform,
+                &actor_user_id,
+                &runtime_device_id,
+            )
+            .map_err(|err| {
+                pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
+            })?,
         };
 
         let mut store = self
             .store
             .lock()
-            .map_err(|_| "adapter store lock poisoned".to_string())?;
+            .map_err(|_| pre_session_error("adapter store lock poisoned".to_string()))?;
         ensure_actor_identity_and_device(
             &mut store,
             &actor_user_id,
@@ -3518,7 +3599,8 @@ impl AdapterRuntime {
             app_platform,
             now,
             allow_identity_auto_provision,
-        )?;
+        )
+        .map_err(pre_session_error.clone())?;
         let tenant_id_for_ph1c = resolve_tenant_scope(
             request.tenant_id.clone(),
             &actor_user_id,
@@ -3530,7 +3612,8 @@ impl AdapterRuntime {
             now,
             tenant_id_for_ph1c.as_deref(),
             Some(&runtime_device_id),
-        )?;
+        )
+        .map_err(pre_session_error.clone())?;
         let wake_evaluation = evaluate_wake_for_turn(
             &store,
             now,
@@ -3539,7 +3622,8 @@ impl AdapterRuntime {
             app_platform,
             trigger,
             &ph1k_bundle,
-        )?;
+        )
+        .map_err(pre_session_error.clone())?;
         if let Some(wake_eval) = wake_evaluation.as_ref() {
             if !wake_eval.decision.accepted {
                 let session_id_for_reject = latest_session_for_actor_device(
@@ -3558,7 +3642,8 @@ impl AdapterRuntime {
                     session_id_for_reject,
                     &ph1k_bundle,
                     wake_eval,
-                )?;
+                )
+                .map_err(pre_session_error.clone())?;
                 commit_wake_learn_signal(
                     &mut store,
                     now,
@@ -3569,10 +3654,18 @@ impl AdapterRuntime {
                     trigger,
                     &ph1k_bundle,
                     wake_eval,
-                )?;
-                return Err(format!(
-                    "wake_rejected reason_code={}",
-                    wake_eval.decision.reason_code.0
+                )
+                .map_err(pre_session_error.clone())?;
+                return Err(voice_turn_ingress_error(
+                    FailureClass::PolicyViolation,
+                    format!("WAKE_REJECTED_{}", wake_eval.decision.reason_code.0),
+                    Some(format!(
+                        "wake_rejected reason_code={}",
+                        wake_eval.decision.reason_code.0
+                    )),
+                    session_id_for_reject.map(session_id_to_string),
+                    response_turn_id,
+                    None,
                 ));
             }
         }
@@ -3586,7 +3679,27 @@ impl AdapterRuntime {
             trigger,
             &ph1k_bundle,
             wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
-        )?;
+        )
+        .map_err(pre_session_error.clone())?;
+        let response_session_id =
+            session_turn_state.session_snapshot.session_id.map(session_id_to_string);
+        let response_session_state = session_turn_state.session_snapshot.session_state;
+        let post_session_error = |reason: String| {
+            classify_voice_turn_runtime_error(
+                &reason,
+                response_turn_id,
+                response_session_id.clone(),
+                Some(response_session_state),
+            )
+        };
+        runtime_execution_envelope = runtime_execution_envelope
+            .with_session_and_admission_state(
+                session_turn_state.session_snapshot.session_id,
+                AdmissionState::SessionResolved,
+            )
+            .map_err(|err| post_session_error(format!(
+                "invalid runtime_execution_envelope after session resolve: {err:?}"
+            )))?;
         if let Some(wake_eval) = wake_evaluation.as_ref() {
             commit_wake_runtime_event(
                 &mut store,
@@ -3598,7 +3711,8 @@ impl AdapterRuntime {
                 session_turn_state.session_id_for_commits,
                 &ph1k_bundle,
                 wake_eval,
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
             commit_wake_learn_signal(
                 &mut store,
                 now,
@@ -3609,7 +3723,8 @@ impl AdapterRuntime {
                 trigger,
                 &ph1k_bundle,
                 wake_eval,
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
         }
         let voice_id_request = build_voice_id_request_from_ph1k_bundle(
             now,
@@ -3618,7 +3733,7 @@ impl AdapterRuntime {
             session_turn_state.session_snapshot,
             session_turn_state.wake_event.clone(),
         )
-        .map_err(|err| format!("voice request build failed: {err:?}"))?;
+        .map_err(|err| post_session_error(format!("voice request build failed: {err:?}")))?;
         let ph1c_live_outcome = if upstream_transcript_supplied {
             None
         } else {
@@ -3648,7 +3763,8 @@ impl AdapterRuntime {
                 Some(&runtime_device_id),
                 session_turn_state.session_id_for_commits,
                 ph1c,
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
         }
         self.run_ph1vision_os_orchestration_step(
             &request,
@@ -3656,7 +3772,8 @@ impl AdapterRuntime {
             turn_id,
             tenant_id_for_ph1c.as_deref(),
             user_text_final.as_deref(),
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
 
         self.commit_ph1k_live_runtime_events(
             &mut store,
@@ -3667,7 +3784,8 @@ impl AdapterRuntime {
             &runtime_device_id,
             session_turn_state.session_id_for_commits,
             &ph1k_bundle,
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
         self.emit_ph1k_feedback_capture(
             &mut store,
             now,
@@ -3678,7 +3796,8 @@ impl AdapterRuntime {
             &runtime_device_id,
             session_turn_state.session_id_for_commits,
             &ph1k_bundle,
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
         if let Err(err) = append_ph1k_live_eval_snapshot_csv(
             &store,
             now,
@@ -3690,9 +3809,10 @@ impl AdapterRuntime {
             eprintln!("selene_adapter ph1k live eval csv append failed: {err}");
         }
 
-        let ingress_request = AppVoiceIngressRequest::v1(
+        let ingress_request = AppVoiceIngressRequest::v1_with_runtime_execution_envelope(
             correlation_id,
             turn_id,
+            runtime_execution_envelope.clone(),
             app_platform,
             trigger,
             voice_id_request,
@@ -3702,12 +3822,13 @@ impl AdapterRuntime {
             Vec::new(),
             empty_observation(),
         )
-        .map_err(|err| format!("invalid ingress request: {err:?}"))?;
+        .map_err(|err| post_session_error(format!("invalid ingress request: {err:?}")))?;
         let nlp_output = build_nlp_output_for_voice_turn(
             &request,
             user_text_final.as_deref(),
             tenant_id_for_ph1c.as_deref(),
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
         let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
         let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
         if request.project_id.is_some() || request.pinned_context_refs.is_some() {
@@ -3716,7 +3837,9 @@ impl AdapterRuntime {
                 resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
             base_thread_state = base_thread_state
                 .with_project_context(project_id, pinned_context_refs)
-                .map_err(|err| format!("invalid thread project context: {err:?}"))?;
+                .map_err(|err| {
+                    post_session_error(format!("invalid thread project context: {err:?}"))
+                })?;
         }
         if let Some(flags) = request.thread_policy_flags.as_ref() {
             let kernel_flags = ThreadPolicyFlags::v1(
@@ -3724,10 +3847,14 @@ impl AdapterRuntime {
                 flags.do_not_disturb,
                 flags.strict_safety,
             )
-            .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
+            .map_err(|err| {
+                post_session_error(format!("invalid thread policy flags: {err:?}"))
+            })?;
             base_thread_state = base_thread_state
                 .with_thread_policy_flags(Some(kernel_flags))
-                .map_err(|err| format!("invalid thread policy flags: {err:?}"))?;
+                .map_err(|err| {
+                    post_session_error(format!("invalid thread policy flags: {err:?}"))
+                })?;
         }
         let confirm_answer =
             infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
@@ -3754,7 +3881,7 @@ impl AdapterRuntime {
         let execution_outcome = self
             .ingress
             .run_voice_turn_end_to_end(&mut store, ingress_request, x_build)
-            .map_err(storage_error_to_string)?;
+            .map_err(|err| post_session_error(storage_error_to_string(err)))?;
         if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
             persist_ph1x_thread_state(
                 &mut store,
@@ -3765,7 +3892,8 @@ impl AdapterRuntime {
                 ph1x_response.reason_code,
                 correlation_id,
                 turn_id,
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
         }
         self.commit_ph1d_runtime_outcome(
             &mut store,
@@ -3779,7 +3907,8 @@ impl AdapterRuntime {
             session_turn_state.session_snapshot.session_state,
             user_text_final.as_deref(),
             &execution_outcome.voice_outcome,
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
         if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
             &mut store,
             now,
@@ -3805,7 +3934,8 @@ impl AdapterRuntime {
             user_text_final,
             selene_text_partial,
             selene_text_final,
-        )?;
+        )
+        .map_err(post_session_error.clone())?;
         if let Some(ph1c) = ph1c_live_outcome.as_ref() {
             self.emit_ph1c_gold_capture_and_learning(
                 &mut store,
@@ -3817,7 +3947,8 @@ impl AdapterRuntime {
                 Some(&runtime_device_id),
                 session_turn_state.session_id_for_commits,
                 ph1c,
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
             self.emit_ph1d_gold_capture_and_learning(
                 &mut store,
                 now,
@@ -3830,7 +3961,8 @@ impl AdapterRuntime {
                 &ph1c.provider_call_trace,
                 ph1c.final_text.clone(),
                 ph1c_language_locale(&ph1c.response),
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
             self.emit_ph1c_live_telemetry(
                 &mut store,
                 now,
@@ -3838,11 +3970,13 @@ impl AdapterRuntime {
                 turn_id,
                 ph1c,
                 tenant_id_for_ph1c.as_deref(),
-            )?;
+            )
+            .map_err(post_session_error.clone())?;
         }
         let response = execution_outcome_to_adapter_response(execution_outcome);
         if persist_on_success {
-            self.append_journal_entry(request_for_journal)?;
+            self.append_journal_entry(request_for_journal)
+                .map_err(post_session_error)?;
         }
         Ok(response)
     }
@@ -3938,8 +4072,13 @@ impl AdapterRuntime {
                     line_no + 1
                 ));
             }
-            self.run_voice_turn_internal(entry.request, false, true)
-                .map_err(|err| format!("journal replay failed at line {}: {}", line_no + 1, err))?;
+            self.run_voice_turn_internal(entry.request, None, false, true).map_err(|err| {
+                format!(
+                    "journal replay failed at line {}: {}",
+                    line_no + 1,
+                    err.to_runtime_reason()
+                )
+            })?;
         }
         Ok(())
     }
@@ -4058,6 +4197,164 @@ fn parse_trigger(value: &str) -> Result<OsVoiceTrigger, String> {
             value
         )),
     }
+}
+
+fn session_id_to_string(session_id: SessionId) -> String {
+    session_id.0.to_string()
+}
+
+fn session_state_to_api_value(session_state: SessionState) -> String {
+    match session_state {
+        SessionState::Closed => "CLOSED",
+        SessionState::Open => "OPEN",
+        SessionState::Active => "ACTIVE",
+        SessionState::SoftClosed => "SOFT_CLOSED",
+        SessionState::Suspended => "SUSPENDED",
+    }
+    .to_string()
+}
+
+fn canonical_reason_code_token(reason: &str, failure_class: FailureClass) -> String {
+    if reason.starts_with("auth_identity_unknown") {
+        return "AUTH_IDENTITY_UNKNOWN".to_string();
+    }
+    if reason.starts_with("auth_device_unknown") {
+        return "AUTH_DEVICE_UNKNOWN".to_string();
+    }
+    if reason.starts_with("wake_rejected") {
+        return "WAKE_REJECTED".to_string();
+    }
+    let mut token = String::with_capacity(reason.len());
+    let mut prev_underscore = false;
+    for ch in reason.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            prev_underscore = false;
+            ch.to_ascii_uppercase()
+        } else {
+            if prev_underscore {
+                continue;
+            }
+            prev_underscore = true;
+            '_'
+        };
+        token.push(normalized);
+        if token.len() >= 64 {
+            break;
+        }
+    }
+    let token = token.trim_matches('_').to_string();
+    if token.is_empty() {
+        failure_class.as_str().to_string()
+    } else {
+        token
+    }
+}
+
+fn voice_turn_ingress_error(
+    failure_class: FailureClass,
+    reason_code: String,
+    reason: Option<String>,
+    session_id: Option<String>,
+    turn_id: Option<u64>,
+    session_state: Option<SessionState>,
+) -> VoiceTurnIngressError {
+    VoiceTurnIngressError {
+        failure_class,
+        reason_code,
+        reason,
+        session_id,
+        turn_id,
+        session_state: session_state.map(session_state_to_api_value),
+    }
+}
+
+fn classify_voice_turn_runtime_error(
+    reason: &str,
+    turn_id: Option<u64>,
+    session_id: Option<String>,
+    session_state: Option<SessionState>,
+) -> VoiceTurnIngressError {
+    let failure_class = if reason.starts_with("auth_identity_unknown") {
+        FailureClass::AuthenticationFailure
+    } else if reason.starts_with("auth_device_unknown") {
+        FailureClass::AuthorizationFailure
+    } else if reason.starts_with("wake_rejected") || reason == "ios_wake_disabled" {
+        FailureClass::PolicyViolation
+    } else if reason.contains("replayed_request") {
+        FailureClass::ReplayRejected
+    } else if reason.contains("session_conflict") {
+        FailureClass::SessionConflict
+    } else if reason.contains("lock poisoned") {
+        FailureClass::RetryableRuntime
+    } else if reason.starts_with("invalid ")
+        || reason.starts_with("missing_")
+        || reason.starts_with("stale_request")
+        || reason.starts_with("timestamp_in_future")
+        || reason.contains("expected ")
+    {
+        FailureClass::InvalidPayload
+    } else {
+        FailureClass::ExecutionFailure
+    };
+    voice_turn_ingress_error(
+        failure_class,
+        canonical_reason_code_token(reason, failure_class),
+        Some(reason.to_string()),
+        session_id,
+        turn_id,
+        session_state,
+    )
+}
+
+fn fallback_runtime_execution_envelope_for_voice_turn_request(
+    request: &VoiceTurnAdapterRequest,
+) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    let app_platform = match request.app_platform.trim().to_ascii_uppercase().as_str() {
+        "IOS" => AppPlatform::Ios,
+        "ANDROID" => AppPlatform::Android,
+        "DESKTOP" => AppPlatform::Desktop,
+        _ => {
+            return Err(ContractViolation::InvalidValue {
+                field: "voice_turn_adapter_request.app_platform",
+                reason: "must be IOS|ANDROID|DESKTOP",
+            });
+        }
+    };
+    let actor_user_id = UserId::new(request.actor_user_id.clone())?;
+    let device_id = match request.device_id.as_ref() {
+        Some(device_id) => DeviceId::new(device_id.clone())?,
+        None => DeviceId::new(format!(
+            "adapter_auto_{}",
+            stable_hash_hex_16(actor_user_id.as_str())
+        ))?,
+    };
+    fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
+        CorrelationId(request.correlation_id.into()),
+        TurnId(request.turn_id),
+        app_platform,
+        &actor_user_id,
+        &device_id,
+    )
+}
+
+fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    app_platform: AppPlatform,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    RuntimeExecutionEnvelope::v1(
+        format!("corr-{}", correlation_id.0),
+        format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
+        format!("turn:{}:{}", correlation_id.0, turn_id.0),
+        actor_user_id.clone(),
+        device_id.clone(),
+        app_platform,
+        None,
+        turn_id,
+        AdmissionState::IngressValidated,
+    )
 }
 
 fn onboarding_next_step_to_api_value(next_step: OnboardingNextStep) -> String {
@@ -4579,6 +4876,13 @@ fn execution_outcome_to_adapter_response(
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
         outcome: outcome_label(&execution).to_string(),
+        session_id: execution
+            .runtime_execution_envelope
+            .session_id
+            .map(session_id_to_string),
+        turn_id: Some(execution.runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(execution.session_state)),
+        failure_class: None,
         reason: voice_outcome_reason(&execution.voice_outcome),
         next_move: next_move_label(&execution).to_string(),
         response_text: execution.response_text.unwrap_or_default(),

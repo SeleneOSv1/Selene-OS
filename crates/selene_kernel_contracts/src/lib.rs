@@ -70,7 +70,9 @@ pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
 pub mod provider_secrets;
+pub mod runtime_execution;
 
 pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
+pub use runtime_execution::{AdmissionState, FailureClass, RuntimeExecutionEnvelope};

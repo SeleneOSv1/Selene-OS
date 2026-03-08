@@ -22,7 +22,13 @@ use selene_adapter::{
     OnboardingContinueAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
     UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
     UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging, VoiceTurnAdapterRequest,
-    VoiceTurnAdapterResponse,
+    VoiceTurnAdapterResponse, VoiceTurnIngressError,
+};
+use selene_kernel_contracts::ph1_voice_id::UserId;
+use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
+use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::runtime_execution::{
+    AdmissionState, FailureClass, RuntimeExecutionEnvelope,
 };
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
@@ -503,19 +509,26 @@ async fn run_voice_turn(
     Json(request): Json<VoiceTurnAdapterRequest>,
 ) -> Response {
     let Some(device_id) = request.device_id.clone() else {
-        return voice_turn_error_response(
+        return voice_turn_ingress_error_response(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "missing_device_id".to_string(),
+            VoiceTurnIngressError {
+                failure_class: FailureClass::InvalidPayload,
+                reason_code: "MISSING_DEVICE_ID".to_string(),
+                reason: Some("missing_device_id".to_string()),
+                session_id: None,
+                turn_id: Some(request.turn_id),
+                session_state: None,
+            },
         );
     };
     let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
         Ok(v) => v,
-        Err(reject) => return voice_turn_security_reject_response(reject),
+        Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
     };
     let idempotency_key =
         match required_header_token(&headers, "idempotency-key", "missing_idempotency_key") {
             Ok(v) => v,
-            Err(reject) => return voice_turn_security_reject_response(reject),
+            Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
         };
     let timestamp_ms = match required_header_u64(
         &headers,
@@ -524,20 +537,46 @@ async fn run_voice_turn(
         "invalid_timestamp_ms",
     ) {
         Ok(v) => v,
-        Err(reject) => return voice_turn_security_reject_response(reject),
+        Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
     };
     let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
         Ok(v) => v,
-        Err(reject) => return voice_turn_security_reject_response(reject),
+        Err(reject) => return voice_turn_security_reject_response(reject, Some(request.turn_id)),
     };
+    let runtime_execution_envelope =
+        match runtime_execution_envelope_from_voice_turn_request(
+            &request,
+            &request_id,
+            &idempotency_key,
+            &device_id,
+        ) {
+            Ok(envelope) => envelope,
+            Err(err) => {
+                return voice_turn_ingress_error_response(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    VoiceTurnIngressError {
+                        failure_class: FailureClass::InvalidPayload,
+                        reason_code: "INVALID_RUNTIME_EXECUTION_ENVELOPE".to_string(),
+                        reason: Some(err),
+                        session_id: None,
+                        turn_id: Some(request.turn_id),
+                        session_state: None,
+                    },
+                )
+            }
+        };
+    let request_id_for_security = runtime_execution_envelope.request_id.clone();
+    let idempotency_key_for_security = runtime_execution_envelope.idempotency_key.clone();
+    let nonce_for_security = nonce.clone();
+    let timestamp_ms_for_security = timestamp_ms;
     let security_input = EndpointSecurityInput {
         endpoint: "/v1/voice/turn",
         expected_subject: request.actor_user_id.clone(),
         expected_device: device_id,
-        request_id,
-        idempotency_key,
-        timestamp_ms,
-        nonce,
+        request_id: request_id_for_security,
+        idempotency_key: idempotency_key_for_security,
+        timestamp_ms: timestamp_ms_for_security,
+        nonce: nonce_for_security,
     };
     if let Err(reject) = enforce_ingress_security(
         &headers,
@@ -545,27 +584,31 @@ async fn run_voice_turn(
         state.ingress_security_config,
         security_input,
     ) {
-        return voice_turn_security_reject_response(reject);
+        return voice_turn_security_reject_response(reject, Some(request.turn_id));
     }
 
     let runtime = match state.runtime.lock() {
         Ok(runtime) => runtime,
         Err(_) => {
-            return voice_turn_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "adapter runtime lock poisoned".to_string(),
+            return voice_turn_ingress_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                VoiceTurnIngressError {
+                    failure_class: FailureClass::RetryableRuntime,
+                    reason_code: "ADAPTER_RUNTIME_LOCK_POISONED".to_string(),
+                    reason: Some("adapter runtime lock poisoned".to_string()),
+                    session_id: None,
+                    turn_id: Some(request.turn_id),
+                    session_state: None,
+                },
             )
         }
     };
-    match runtime.run_voice_turn_ingress(request) {
+    match runtime.run_voice_turn_ingress_with_execution_envelope(request, runtime_execution_envelope)
+    {
         Ok(response) => (StatusCode::OK, Json(response)).into_response(),
-        Err(reason) => {
-            let status = if reason == "auth_identity_unknown" || reason == "auth_device_unknown" {
-                StatusCode::FORBIDDEN
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            voice_turn_error_response(status, reason)
+        Err(error) => {
+            let status = status_for_failure_class(error.failure_class);
+            voice_turn_ingress_error_response(status, error)
         }
     }
 }
@@ -950,15 +993,102 @@ fn status_for_security_reject(kind: SecurityRejectKind) -> StatusCode {
     }
 }
 
-fn voice_turn_security_reject_response(reject: SecurityReject) -> Response {
+fn status_for_failure_class(failure_class: FailureClass) -> StatusCode {
+    match failure_class {
+        FailureClass::AuthenticationFailure => StatusCode::UNAUTHORIZED,
+        FailureClass::AuthorizationFailure => StatusCode::FORBIDDEN,
+        FailureClass::InvalidPayload => StatusCode::UNPROCESSABLE_ENTITY,
+        FailureClass::ReplayRejected | FailureClass::SessionConflict => StatusCode::CONFLICT,
+        FailureClass::PolicyViolation => StatusCode::FORBIDDEN,
+        FailureClass::ExecutionFailure => StatusCode::INTERNAL_SERVER_ERROR,
+        FailureClass::RetryableRuntime => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
+fn runtime_execution_envelope_from_voice_turn_request(
+    request: &VoiceTurnAdapterRequest,
+    request_id: &str,
+    idempotency_key: &str,
+    device_id: &str,
+) -> Result<RuntimeExecutionEnvelope, String> {
+    let platform = match request.app_platform.trim().to_ascii_uppercase().as_str() {
+        "IOS" => AppPlatform::Ios,
+        "ANDROID" => AppPlatform::Android,
+        "DESKTOP" => AppPlatform::Desktop,
+        _ => {
+            return Err(format!(
+                "invalid app_platform '{}'; expected IOS|ANDROID|DESKTOP",
+                request.app_platform
+            ))
+        }
+    };
+    let actor_identity = UserId::new(request.actor_user_id.clone())
+        .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
+    let device_identity =
+        DeviceId::new(device_id.to_string()).map_err(|err| format!("invalid device_id: {err:?}"))?;
+    let turn_id = TurnId(request.turn_id);
+    RuntimeExecutionEnvelope::v1(
+        request_id.to_string(),
+        format!("trace:voice-turn:{}:{}", request_id, request.turn_id),
+        idempotency_key.to_string(),
+        actor_identity,
+        device_identity,
+        platform,
+        None,
+        turn_id,
+        AdmissionState::IngressValidated,
+    )
+    .map_err(|err| format!("invalid runtime_execution_envelope: {err:?}"))
+}
+
+fn failure_class_for_security_reject(kind: SecurityRejectKind) -> FailureClass {
+    match kind {
+        SecurityRejectKind::Unauthorized => FailureClass::AuthenticationFailure,
+        SecurityRejectKind::Forbidden => FailureClass::AuthorizationFailure,
+        SecurityRejectKind::Conflict => FailureClass::ReplayRejected,
+        SecurityRejectKind::Unprocessable => FailureClass::InvalidPayload,
+        SecurityRejectKind::TooManyRequests => FailureClass::RetryableRuntime,
+    }
+}
+
+fn canonical_reason_code_for_security_reject(reason: &str) -> String {
+    let mut out = String::with_capacity(reason.len());
+    let mut prev_underscore = false;
+    for ch in reason.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            prev_underscore = false;
+            ch.to_ascii_uppercase()
+        } else {
+            if prev_underscore {
+                continue;
+            }
+            prev_underscore = true;
+            '_'
+        };
+        out.push(next);
+    }
+    let out = out.trim_matches('_').to_string();
+    if out.is_empty() {
+        "SECURITY_REJECTED".to_string()
+    } else {
+        out
+    }
+}
+
+fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u64>) -> Response {
     let status = status_for_security_reject(reject.kind);
+    let reason = reject.reason;
     let response = VoiceTurnAdapterResponse {
         status: "error".to_string(),
         outcome: "REJECTED".to_string(),
-        reason: Some(reject.reason),
+        session_id: None,
+        turn_id,
+        session_state: None,
+        failure_class: Some(failure_class_for_security_reject(reject.kind)),
+        reason: Some(reason.clone()),
         next_move: "respond".to_string(),
         response_text: String::new(),
-        reason_code: "0".to_string(),
+        reason_code: canonical_reason_code_for_security_reject(&reason),
         provenance: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
@@ -997,16 +1127,23 @@ fn onboarding_continue_security_reject_response(reject: SecurityReject) -> Respo
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
-fn voice_turn_error_response(status: StatusCode, reason: String) -> Response {
+fn voice_turn_ingress_error_response(
+    status: StatusCode,
+    error: VoiceTurnIngressError,
+) -> Response {
     (
         status,
         Json(VoiceTurnAdapterResponse {
             status: "error".to_string(),
             outcome: "REJECTED".to_string(),
-            reason: Some(reason),
+            session_id: error.session_id,
+            turn_id: error.turn_id,
+            session_state: error.session_state,
+            failure_class: Some(error.failure_class),
+            reason: error.reason,
             next_move: "respond".to_string(),
             response_text: String::new(),
-            reason_code: "0".to_string(),
+            reason_code: error.reason_code,
             provenance: None,
         }),
     )
@@ -1556,7 +1693,10 @@ mod tests {
         assert!(
             matches!(
                 response.status(),
-                StatusCode::OK | StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+                StatusCode::OK
+                    | StatusCode::UNAUTHORIZED
+                    | StatusCode::BAD_REQUEST
+                    | StatusCode::FORBIDDEN
             ),
             "expected runtime status after ingress pass, got {}",
             response.status()

@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use crate::ph1j::{CorrelationId, TurnId};
+use crate::runtime_execution::RuntimeExecutionEnvelope;
 use crate::{ContractViolation, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1OS_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
@@ -180,6 +181,7 @@ pub struct OsRequestEnvelope {
     pub schema_version: SchemaVersion,
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
+    pub runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
     pub max_guard_failures: u8,
     pub max_diagnostics: u8,
     pub max_outcome_entries: u16,
@@ -210,10 +212,29 @@ impl OsRequestEnvelope {
         max_diagnostics: u8,
         max_outcome_entries: u16,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_runtime_execution_envelope(
+            correlation_id,
+            turn_id,
+            None,
+            max_guard_failures,
+            max_diagnostics,
+            max_outcome_entries,
+        )
+    }
+
+    pub fn v1_with_runtime_execution_envelope(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        runtime_execution_envelope: Option<RuntimeExecutionEnvelope>,
+        max_guard_failures: u8,
+        max_diagnostics: u8,
+        max_outcome_entries: u16,
+    ) -> Result<Self, ContractViolation> {
         let envelope = Self {
             schema_version: PH1OS_CONTRACT_VERSION,
             correlation_id,
             turn_id,
+            runtime_execution_envelope,
             max_guard_failures,
             max_diagnostics,
             max_outcome_entries,
@@ -233,6 +254,15 @@ impl Validate for OsRequestEnvelope {
         }
         self.correlation_id.validate()?;
         self.turn_id.validate()?;
+        if let Some(runtime_execution_envelope) = self.runtime_execution_envelope.as_ref() {
+            runtime_execution_envelope.validate()?;
+            if runtime_execution_envelope.turn_id != self.turn_id {
+                return Err(ContractViolation::InvalidValue {
+                    field: "os_request_envelope.runtime_execution_envelope.turn_id",
+                    reason: "must match os_request_envelope.turn_id",
+                });
+            }
+        }
         if self.max_guard_failures == 0 || self.max_guard_failures > 16 {
             return Err(ContractViolation::InvalidValue {
                 field: "os_request_envelope.max_guard_failures",
