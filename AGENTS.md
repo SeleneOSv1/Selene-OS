@@ -218,6 +218,25 @@ No:
 - hidden continuation
 - best-effort mutation
 
+## Non-Destructive Implementation Rule
+
+When JD provides architecture, design, or build instructions:
+
+Codex must not:
+- delete previously defined functionality
+- replace existing behavior with reduced scope
+- silently simplify a design
+- reinterpret instructions in a way that removes capabilities
+
+Codex must:
+- preserve all existing functionality
+- extend functionality by adding new components
+- keep previously implemented behavior intact unless JD explicitly authorizes removal
+
+If a change would remove or replace existing functionality:
+
+STOP and request explicit JD authorization.
+
 ## No Parallel Bypass Paths
 Execution must stay inside canonical boundaries:
 - PH1.X classification
