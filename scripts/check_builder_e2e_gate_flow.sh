@@ -9,6 +9,8 @@ BRIEF_FILE="${BRIEF_FILE:-.dev/builder_change_brief.md}"
 STAGE_GATE_MODE="${STAGE_GATE_MODE:-fixture}"
 STAGE2_FIXTURE_CSV="${STAGE2_FIXTURE_CSV:-docs/fixtures/stage2_canary_metrics_snapshot.csv}"
 STAGE3_OUTPUT_CSV="${STAGE3_OUTPUT_CSV:-.dev/stage2_canary_metrics_snapshot.csv}"
+OCR_EVAL_FIXTURE_CSV="${OCR_EVAL_FIXTURE_CSV:-docs/fixtures/ph1_os_ocr_eval_snapshot.csv}"
+OCR_EVAL_OUTPUT_CSV="${OCR_EVAL_OUTPUT_CSV:-.dev/ph1_os_ocr_eval_snapshot.csv}"
 MAX_TELEMETRY_AGE_MINUTES="${MAX_TELEMETRY_AGE_MINUTES:-180}"
 AUTO_SYNC_DECISION_FILES="${AUTO_SYNC_DECISION_FILES:-0}"
 CODE_DECISION_FILE="${CODE_DECISION_FILE:-.dev/builder_code_decision.env}"
@@ -46,9 +48,11 @@ ENV_FILE="${PERMISSION_ENV_FILE}" BRIEF_FILE="${BRIEF_FILE}" bash scripts/check_
 
 if [[ "${STAGE_GATE_MODE}" == "fixture" ]]; then
   bash scripts/check_builder_stage2_promotion_gate.sh "${STAGE2_FIXTURE_CSV}"
+  bash scripts/check_ph1_os_ocr_eval_gate.sh "${OCR_EVAL_FIXTURE_CSV}"
 else
   MAX_TELEMETRY_AGE_MINUTES="${MAX_TELEMETRY_AGE_MINUTES}" \
     bash scripts/check_builder_stage3_release_gate.sh "${STAGE3_OUTPUT_CSV}"
+  bash scripts/check_ph1_os_ocr_eval_gate.sh "${OCR_EVAL_OUTPUT_CSV}"
 fi
 
 echo "CHECK_OK builder_e2e_gate_flow=pass stage_gate_mode=${STAGE_GATE_MODE}"

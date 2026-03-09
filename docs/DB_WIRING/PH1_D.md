@@ -168,6 +168,105 @@ PH1.D writes emit PH1.J audit events with:
 - `AT-PH1-D-DB-04` no PH1.D current-table rebuild is required
   - `at_d_db_04_no_current_table_rebuild_required`
 
+## 8) Provider Boundary Notes (OCR + LLM Routing)
+- `PH1.D` is the only provider/model boundary for:
+  - LLM interpretation assistance.
+  - OCR extraction assistance for visual/document inputs.
+- Upstream engines (`PH1.VISION`, `PH1.DOC`, `PH1.NLP`) must not persist direct provider-call rows.
+- Provider output remains non-authoritative until:
+  - PH1.D schema/policy validation succeeds, and
+  - Selene OS accepts output under normal gate order.
+- Optional provider snapshot payload keys (when enabled) must stay bounded:
+  - `provider_id`
+  - `provider_task` (`LLM_INTERPRET | OCR_TEXT_EXTRACT`)
+  - `provider_confidence_bp`
+  - `provider_latency_ms`
+  - `provider_cost_microunits`
+
+## 9) PH1.D Provider Adapter Contract Fields (Step-1 Lock)
+Purpose:
+- Define one exact runtime request/response shape for provider calls before code wiring.
+- Keep all provider I/O deterministic, auditable, and fail-closed.
+
+### 9.1 Provider Adapter Request (exact fields)
+- `schema_version` (must match PH1.D provider-adapter contract version)
+- `correlation_id`
+- `turn_id`
+- `tenant_id`
+- `request_id` (derived from stable envelope hash)
+- `idempotency_key` (dedupe key under correlation thread)
+- `provider_task` (`LLM_INTERPRET | OCR_TEXT_EXTRACT`)
+- `provider_route_class` (`PRIMARY | SECONDARY | TERTIARY`)
+- `provider_id` (resolved provider token, e.g. `openai`)
+- `model_id` (resolved model token)
+- `timeout_ms` (bounded)
+- `retry_budget` (bounded integer)
+- `temperature_bp` (for LLM tasks only)
+- `max_tokens` (for LLM tasks only)
+- `prompt_template_version`
+- `output_schema_hash`
+- `tool_catalog_hash`
+- `policy_context_hash`
+- `transcript_hash` (required for `LLM_INTERPRET`, omitted for pure OCR tasks)
+- `input_payload_ref` (opaque bounded ref to transcript/document/image payload)
+- `input_payload_kind` (`TRANSCRIPT | DOCUMENT | IMAGE`)
+- `input_payload_hash` (stable content hash)
+- `input_payload_inline` (bounded inline payload text when provider call requires direct content input)
+- `input_mime_type` (for document/image payloads)
+- `safety_tier`
+- `privacy_mode`
+- `do_not_disturb`
+
+### 9.2 Provider Adapter Response (exact fields)
+- `schema_version`
+- `correlation_id`
+- `turn_id`
+- `request_id`
+- `idempotency_key`
+- `provider_call_id` (provider-side request reference or bounded local fallback id)
+- `provider_id`
+- `provider_task`
+- `provider_model`
+- `provider_status` (`OK | TIMEOUT | BUDGET_EXCEEDED | SAFETY_BLOCK | RATE_LIMIT | PROVIDER_ERROR`)
+- `provider_latency_ms`
+- `provider_cost_microunits`
+- `provider_confidence_bp` (optional)
+- `raw_output_hash` (hash of provider raw output payload)
+- `normalized_output_json` (bounded, schema-targeted output candidate)
+- `validation_status` (`SCHEMA_OK | SCHEMA_FAIL | POLICY_FAIL`)
+- `reason_code`
+
+### 9.3 Hard Validation Rules
+- `provider_status=OK` is necessary but not sufficient; `validation_status` must be `SCHEMA_OK`.
+- Any `SCHEMA_FAIL | POLICY_FAIL` must produce PH1.D fail-closed output.
+- Provider output cannot introduce disallowed keys beyond PH1.D mode contract.
+- Provider output cannot bypass clarify-first, access, simulation, or audit requirements.
+- Missing `provider_call_id` is allowed only when `provider_status != OK` and reason-coded.
+
+## 10) PH1.D Provider Adapter Runtime Checklist (Strict)
+Execution order:
+1. Add PH1.D provider-adapter kernel contract types (request/response enums + validators).
+2. Add PH1.D provider runtime trait in engines crate:
+   - `trait Ph1dProviderAdapter { fn execute(req) -> ProviderAdapterResponse; }`
+3. Add OpenAI adapter implementation behind environment-configured provider selection.
+4. Add deterministic route policy in PH1.D:
+   - task routing (`LLM_INTERPRET` vs `OCR_TEXT_EXTRACT`)
+   - provider/model selection
+   - timeout/retry budget enforcement.
+5. Normalize provider output into PH1.D mode contract (`chat|intent|clarify|analysis|fail_closed`).
+6. Enforce strict output validation and forbidden-key checks before PH1.D returns.
+7. Persist provider snapshot metadata to `audit_events` bounded payload keys.
+8. Add OS wiring guardrails:
+   - disabled provider path -> deterministic fail-closed/not-invoked behavior.
+   - invalid provider envelope -> refusal.
+9. Add tests:
+   - contract validation tests (request/response field discipline)
+   - adapter mapping tests (`OpenAI -> ProviderAdapterResponse`)
+   - fail-closed tests (timeout, schema drift, safety block, rate limit)
+   - idempotency/dedupe tests
+   - OCR task and LLM task path tests.
+10. Add build proof entry in `docs/03_BUILD_LEDGER.md` only after tests are green.
+
 Implementation references:
 - storage wiring: `crates/selene_storage/src/ph1f.rs`
 - typed repo: `crates/selene_storage/src/repo.rs`

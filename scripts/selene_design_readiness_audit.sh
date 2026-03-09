@@ -482,6 +482,22 @@ fi
 
 echo
 echo "=================================================="
+echo "1AQ) BUILDER PIPELINE PHASE13-U OCR EVAL-GATE GUARDRAIL CHECK"
+echo "=================================================="
+./scripts/check_builder_pipeline_phase13u.sh
+
+echo
+echo "=================================================="
+echo "1AR) PH1.OS OCR BENCHMARK/EVAL RELEASE GATE (OPTIONAL ENFORCED)"
+echo "=================================================="
+if [[ "${ENFORCE_PH1_OS_OCR_EVAL_GATE:-0}" == "1" ]]; then
+  ./scripts/check_ph1_os_ocr_eval_gate.sh "${PH1_OS_OCR_EVAL_OUTPUT_CSV:-.dev/ph1_os_ocr_eval_snapshot.csv}"
+else
+  echo "SKIP: set ENFORCE_PH1_OS_OCR_EVAL_GATE=1 to require PH1.OS OCR quality/latency/cost benchmark gate before release progression."
+fi
+
+echo
+echo "=================================================="
 echo "2) COVERAGE MATRIX — MUST IDENTIFY TODO/BLOCKER/WIP"
 echo "=================================================="
 coverage_matrix_hits="$(rg -n "TODO|BLOCKER|WIP" docs/COVERAGE_MATRIX.md || true)"

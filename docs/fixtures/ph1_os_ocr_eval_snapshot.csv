@@ -1,0 +1,2 @@
+window_min,quality_regression_bp,latency_p95_delta_bp,latency_p99_delta_bp,cost_delta_bp,provider_route_success_bp,local_route_success_bp,provider_fallback_rate_bp,route_compare_coverage_bp,scorecard_complete,audit_completeness_bp
+30,20,120,190,150,9920,9450,1200,10000,1,10000
