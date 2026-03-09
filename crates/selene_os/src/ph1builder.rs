@@ -1419,6 +1419,49 @@ fn attach_builder_proof_state(
     }
 }
 
+fn govern_builder_completion_after_proof(
+    runtime_law: &RuntimeLawRuntime,
+    law_action_class: RuntimeProtectedActionClass,
+    law_context: &RuntimeLawEvaluationContext,
+    proof_result: Result<RuntimeExecutionEnvelope, BuilderGovernedProofRefusal>,
+) -> Result<RuntimeExecutionEnvelope, BuilderGovernedRefusal> {
+    match proof_result {
+        Ok(proof_envelope) => runtime_law
+            .govern_completion(&proof_envelope, law_action_class, law_context)
+            .map_err(|decision| {
+                let runtime_execution_envelope = proof_envelope
+                    .with_law_state(Some(decision.law_state.clone()))
+                    .expect("runtime law refusal envelope must remain contract-valid");
+                BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
+                    decision,
+                    runtime_execution_envelope,
+                })
+            }),
+        Err(proof_refusal) => match runtime_law.govern_completion(
+            &proof_refusal.runtime_execution_envelope,
+            law_action_class,
+            law_context,
+        ) {
+            Ok(runtime_execution_envelope) => {
+                Err(BuilderGovernedRefusal::Proof(BuilderGovernedProofRefusal {
+                    error: proof_refusal.error,
+                    runtime_execution_envelope,
+                }))
+            }
+            Err(decision) => {
+                let runtime_execution_envelope = proof_refusal
+                    .runtime_execution_envelope
+                    .with_law_state(Some(decision.law_state.clone()))
+                    .map_err(BuilderGovernedRefusal::Contract)?;
+                Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
+                    decision,
+                    runtime_execution_envelope,
+                }))
+            }
+        },
+    }
+}
+
 pub fn promote_with_judge_gates(
     controller: &BuilderReleaseController,
     current: &BuilderReleaseState,
@@ -1482,43 +1525,21 @@ pub fn promote_with_judge_gates_governed(
         false,
     )
     .map_err(BuilderGovernedRefusal::Contract)?;
-    let runtime_execution_envelope = match runtime_law.govern_completion(
-        envelope,
+    let runtime_execution_envelope = govern_builder_completion_after_proof(
+        runtime_law,
         RuntimeProtectedActionClass::BuilderDeployment,
         &law_context,
-    ) {
-        Ok(runtime_execution_envelope) => attach_builder_proof_state(
+        attach_builder_proof_state(
             ph1j_runtime,
             store,
-            &runtime_execution_envelope,
+            envelope,
             ProofProtectedActionClass::BuilderDeployment,
             format!("PROMOTED_{:?}", release_state.stage),
             None,
             vec![release_state.reason_code],
             now,
-        )
-        .map_err(BuilderGovernedRefusal::Proof)?,
-        Err(decision) => {
-            let runtime_execution_envelope = envelope
-                .with_law_state(Some(decision.law_state.clone()))
-                .map_err(BuilderGovernedRefusal::Contract)?;
-            let runtime_execution_envelope = attach_builder_proof_state(
-                ph1j_runtime,
-                store,
-                &runtime_execution_envelope,
-                ProofProtectedActionClass::BuilderDeployment,
-                decision.response_class.as_str().to_string(),
-                Some(decision.response_class.as_str().to_string()),
-                vec![release_state.reason_code],
-                now,
-            )
-            .map_err(BuilderGovernedRefusal::Proof)?;
-            return Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
-                decision,
-                runtime_execution_envelope,
-            }));
-        }
-    };
+        ),
+    )?;
     Ok(BuilderGovernedPromotionOutcome {
         release_state,
         runtime_execution_envelope,
@@ -1640,15 +1661,14 @@ pub fn publish_runtime_activation_handoff_governed(
         false,
     )
     .map_err(BuilderGovernedRefusal::Contract)?;
-    let runtime_execution_envelope = match runtime_law.govern_completion(
-        envelope,
+    let runtime_execution_envelope = govern_builder_completion_after_proof(
+        runtime_law,
         RuntimeProtectedActionClass::BuilderDeployment,
         &law_context,
-    ) {
-        Ok(runtime_execution_envelope) => attach_builder_proof_state(
+        attach_builder_proof_state(
             ph1j_runtime,
             store,
-            &runtime_execution_envelope,
+            envelope,
             ProofProtectedActionClass::BuilderDeployment,
             if handoff.activation_published {
                 "ACTIVATION_PUBLISHED".to_string()
@@ -1658,29 +1678,8 @@ pub fn publish_runtime_activation_handoff_governed(
             None,
             vec![handoff.reason_code],
             now,
-        )
-        .map_err(BuilderGovernedRefusal::Proof)?,
-        Err(decision) => {
-            let runtime_execution_envelope = envelope
-                .with_law_state(Some(decision.law_state.clone()))
-                .map_err(BuilderGovernedRefusal::Contract)?;
-            let runtime_execution_envelope = attach_builder_proof_state(
-                ph1j_runtime,
-                store,
-                &runtime_execution_envelope,
-                ProofProtectedActionClass::BuilderDeployment,
-                decision.response_class.as_str().to_string(),
-                Some(decision.response_class.as_str().to_string()),
-                vec![handoff.reason_code],
-                now,
-            )
-            .map_err(BuilderGovernedRefusal::Proof)?;
-            return Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
-                decision,
-                runtime_execution_envelope,
-            }));
-        }
-    };
+        ),
+    )?;
     Ok(BuilderGovernedActivationHandoffOutcome {
         handoff,
         runtime_execution_envelope,
@@ -5300,22 +5299,26 @@ mod tests {
         .unwrap_err();
 
         match refusal {
-            BuilderGovernedRefusal::Proof(ref proof_refusal) => {
-                assert!(matches!(
-                    proof_refusal.error,
-                    StorageError::ProofFailure {
-                        class: selene_kernel_contracts::ph1j::ProofFailureClass::ProofStorageUnavailable,
-                        ..
-                    }
-                ));
-                let proof_state = proof_refusal
+            BuilderGovernedRefusal::Law(refusal) => {
+                assert_eq!(
+                    refusal.decision.response_class,
+                    RuntimeLawResponseClass::Block
+                );
+                assert!(refusal
+                    .decision
+                    .reason_codes
+                    .contains(&"LAW_PROOF_REQUIRED".to_string()));
+                let proof_state = refusal
                     .runtime_execution_envelope
                     .proof_state
-                    .as_ref()
                     .expect("proof failure must still attach proof state");
                 assert_eq!(proof_state.proof_write_outcome.as_str(), "FAILED");
+                assert_eq!(
+                    proof_state.proof_failure_class,
+                    Some(selene_kernel_contracts::ph1j::ProofFailureClass::ProofStorageUnavailable)
+                );
             }
-            other => panic!("expected PH1.J proof refusal, got {other:?}"),
+            other => panic!("expected runtime law refusal after PH1.J failure, got {other:?}"),
         }
     }
 }

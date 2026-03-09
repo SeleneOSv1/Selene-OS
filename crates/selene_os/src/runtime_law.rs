@@ -11,15 +11,15 @@ use selene_kernel_contracts::ph1selfheal::{PromotionDecisionAction, SelfHealVali
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityPolicyDecision, ClientCompatibilityStatus, ClientIntegrityStatus,
     DeviceTrustClass, IdentityRecoveryState, IdentityTrustTier, MemoryEligibilityDecision,
-    SimulationCertificationState, RuntimeExecutionEnvelope,
+    RuntimeExecutionEnvelope, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::GovernanceClusterConsistency;
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawBlastRadiusScope, RuntimeLawBuilderInput, RuntimeLawDecisionLogEntry,
     RuntimeLawDryRunEvaluationState, RuntimeLawEvaluationContext, RuntimeLawExecutionState,
-    RuntimeLawOverrideState, RuntimeLawPolicyWindow, RuntimeLawResponseClass,
-    RuntimeLawRollbackReadinessState, RuntimeLawRuleCategory, RuntimeLawRuleDescriptor,
-    RuntimeLawSelfHealInput, RuntimeLawSeverity, RuntimeLawLearningInput,
+    RuntimeLawLearningInput, RuntimeLawOverrideState, RuntimeLawPolicyWindow,
+    RuntimeLawResponseClass, RuntimeLawRollbackReadinessState, RuntimeLawRuleCategory,
+    RuntimeLawRuleDescriptor, RuntimeLawSelfHealInput, RuntimeLawSeverity,
     RuntimeProtectedActionClass,
 };
 
@@ -286,14 +286,16 @@ impl RuntimeLawRuntime {
         if action_requires_proof(action_class) {
             match envelope.proof_state.as_ref() {
                 Some(proof_state) if proof_state_is_available(proof_state) => {}
-                Some(proof_state) if proof_chain_critical(proof_state) => triggered_rules.push(trigger(
-                    RULE_PROOF_CHAIN_BROKEN,
-                    SUBSYSTEM_PROOF_ENGINE,
-                    reason_codes::LAW_PROOF_CHAIN_BROKEN,
-                    RuntimeLawResponseClass::Quarantine,
-                    RuntimeLawSeverity::QuarantineRequired,
-                    RuntimeLawBlastRadiusScope::ClusterScope,
-                )),
+                Some(proof_state) if proof_chain_critical(proof_state) => {
+                    triggered_rules.push(trigger(
+                        RULE_PROOF_CHAIN_BROKEN,
+                        SUBSYSTEM_PROOF_ENGINE,
+                        reason_codes::LAW_PROOF_CHAIN_BROKEN,
+                        RuntimeLawResponseClass::Quarantine,
+                        RuntimeLawSeverity::QuarantineRequired,
+                        RuntimeLawBlastRadiusScope::ClusterScope,
+                    ))
+                }
                 _ => triggered_rules.push(trigger(
                     RULE_PROOF_REQUIRED,
                     SUBSYSTEM_PROOF_ENGINE,
@@ -305,7 +307,8 @@ impl RuntimeLawRuntime {
             }
         }
 
-        if action_requires_identity(action_class) && !identity_posture_satisfied(envelope, action_class)
+        if action_requires_identity(action_class)
+            && !identity_posture_satisfied(envelope, action_class)
         {
             triggered_rules.push(trigger(
                 RULE_IDENTITY_REQUIRED,
@@ -535,12 +538,8 @@ impl RuntimeLawRuntime {
 
         let dry_run_state = if context.dry_run_requested {
             Some(
-                RuntimeLawDryRunEvaluationState::v1(
-                    response_class,
-                    severity,
-                    reason_codes.clone(),
-                )
-                .expect("dry run state must validate"),
+                RuntimeLawDryRunEvaluationState::v1(response_class, severity, reason_codes.clone())
+                    .expect("dry run state must validate"),
             )
         } else {
             None
@@ -706,6 +705,9 @@ fn action_requires_proof(action_class: RuntimeProtectedActionClass) -> bool {
             | RuntimeProtectedActionClass::Financial
             | RuntimeProtectedActionClass::InfrastructureCritical
             | RuntimeProtectedActionClass::ArtifactAuthority
+            | RuntimeProtectedActionClass::LearningPromotion
+            | RuntimeProtectedActionClass::BuilderDeployment
+            | RuntimeProtectedActionClass::SelfHealRemediation
     )
 }
 
@@ -769,23 +771,26 @@ fn platform_hard_block_required(envelope: &RuntimeExecutionEnvelope) -> bool {
     ) || matches!(
         context.integrity_status,
         ClientIntegrityStatus::IntegrityFailed
-    ) || matches!(context.device_trust_class, DeviceTrustClass::UntrustedDevice)
+    ) || matches!(
+        context.device_trust_class,
+        DeviceTrustClass::UntrustedDevice
+    )
 }
 
 fn platform_trust_warning(envelope: &RuntimeExecutionEnvelope) -> bool {
     let context = &envelope.platform_context;
-    matches!(context.device_trust_class, DeviceTrustClass::RestrictedDevice)
-        || matches!(
-            context.compatibility_status,
-            ClientCompatibilityStatus::UpgradeRequired
-        )
-        || matches!(
-            context.integrity_status,
-            ClientIntegrityStatus::Unknown
-        )
+    matches!(
+        context.device_trust_class,
+        DeviceTrustClass::RestrictedDevice
+    ) || matches!(
+        context.compatibility_status,
+        ClientCompatibilityStatus::UpgradeRequired
+    ) || matches!(context.integrity_status, ClientIntegrityStatus::Unknown)
 }
 
-fn proof_state_is_available(proof_state: &selene_kernel_contracts::runtime_execution::ProofExecutionState) -> bool {
+fn proof_state_is_available(
+    proof_state: &selene_kernel_contracts::runtime_execution::ProofExecutionState,
+) -> bool {
     matches!(
         proof_state.proof_write_outcome,
         selene_kernel_contracts::ph1j::ProofWriteOutcome::Written
@@ -793,7 +798,9 @@ fn proof_state_is_available(proof_state: &selene_kernel_contracts::runtime_execu
     ) && proof_state.proof_record_ref.is_some()
 }
 
-fn proof_chain_critical(proof_state: &selene_kernel_contracts::runtime_execution::ProofExecutionState) -> bool {
+fn proof_chain_critical(
+    proof_state: &selene_kernel_contracts::runtime_execution::ProofExecutionState,
+) -> bool {
     matches!(
         proof_state.proof_failure_class,
         Some(selene_kernel_contracts::ph1j::ProofFailureClass::ProofChainIntegrityFailure)
@@ -901,7 +908,10 @@ fn self_heal_posture_satisfied(input: Option<&RuntimeLawSelfHealInput>) -> bool 
         && !fix_card.no_execution_authority
         && promotion_decision.promotion_eligible
         && promotion_decision.rollback_ready
-        && matches!(promotion_decision.decision_action, PromotionDecisionAction::Promote)
+        && matches!(
+            promotion_decision.decision_action,
+            PromotionDecisionAction::Promote
+        )
         && !promotion_decision.advisory_only
         && !promotion_decision.no_execution_authority
         && (!promotion_decision.governance_required || promotion_decision.approved_by.is_some())
@@ -913,10 +923,13 @@ fn override_validity(
     action_class: RuntimeProtectedActionClass,
     evaluated_at: selene_kernel_contracts::MonotonicTimeNs,
 ) -> OverrideValidity {
-    if !override_state.authenticated_human_authority || override_state.expires_at.0 <= evaluated_at.0 {
+    if !override_state.authenticated_human_authority
+        || override_state.expires_at.0 <= evaluated_at.0
+    {
         return OverrideValidity::Invalid;
     }
-    let dual_required = override_state.dual_approval_required || action_requires_dual_override(action_class);
+    let dual_required =
+        override_state.dual_approval_required || action_requires_dual_override(action_class);
     if dual_required && !override_state.dual_approval_satisfied {
         return OverrideValidity::Invalid;
     }
@@ -960,7 +973,12 @@ fn blast_radius_from_rules(rules: &[TriggeredRule]) -> RuntimeLawBlastRadiusScop
 fn primary_rule_id(rules: &[TriggeredRule]) -> &'static str {
     rules
         .iter()
-        .max_by_key(|rule| (response_rank(rule.response_class), severity_rank(rule.severity)))
+        .max_by_key(|rule| {
+            (
+                response_rank(rule.response_class),
+                severity_rank(rule.severity),
+            )
+        })
         .map(|rule| rule.rule_id)
         .unwrap_or(RULE_ALLOW_BASELINE)
 }
@@ -1000,10 +1018,18 @@ fn unique_subsystem_inputs(rules: &[TriggeredRule]) -> Vec<String> {
 
 fn builder_proposal_id(input: Option<&RuntimeLawBuilderInput>) -> Option<String> {
     input
-        .and_then(|value| value.release_state.as_ref().map(|state| state.proposal_id.clone()))
+        .and_then(|value| {
+            value
+                .release_state
+                .as_ref()
+                .map(|state| state.proposal_id.clone())
+        })
         .or_else(|| {
             input.and_then(|value| {
-                value.approval_state.as_ref().map(|state| state.proposal_id.clone())
+                value
+                    .approval_state
+                    .as_ref()
+                    .map(|state| state.proposal_id.clone())
             })
         })
 }
@@ -1203,30 +1229,29 @@ mod tests {
     use super::*;
     use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
     use selene_kernel_contracts::ph1builder::{
-        BuilderApprovalState, BuilderChangeClass, BuilderMetricsSnapshot,
-        BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult, BuilderReleaseStage,
-        BuilderReleaseState, BuilderApprovalStateStatus,
-        BuilderReleaseStateStatus,
+        BuilderApprovalState, BuilderApprovalStateStatus, BuilderChangeClass,
+        BuilderMetricsSnapshot, BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult,
+        BuilderReleaseStage, BuilderReleaseState, BuilderReleaseStateStatus,
     };
+    use selene_kernel_contracts::ph1d::SafetyTier;
     use selene_kernel_contracts::ph1j::{
-        DeviceId, ProofChainStatus, ProofFailureClass, ProofVerificationPosture,
-        ProofWriteOutcome, TimestampTrustPosture, TurnId,
+        DeviceId, ProofChainStatus, ProofFailureClass, ProofVerificationPosture, ProofWriteOutcome,
+        TimestampTrustPosture, TurnId,
     };
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1learn::{LearnArtifactPackageBuildOk, LearnTargetEngine};
     use selene_kernel_contracts::ph1link::AppPlatform;
+    use selene_kernel_contracts::ph1pae::{PaeMode, PaeProviderSlot, PaeRouteDomain};
     use selene_kernel_contracts::ph1selfheal::{
         FixCard, FixKind, FixSource, PromotionDecision, PromotionDecisionAction,
         SelfHealValidationStatus,
     };
-    use selene_kernel_contracts::ph1d::SafetyTier;
-    use selene_kernel_contracts::ph1pae::{PaeMode, PaeProviderSlot, PaeRouteDomain};
     use selene_kernel_contracts::runtime_execution::{
         AuthorityExecutionState, ClientCompatibilityStatus, ClientIntegrityStatus,
-        DeviceTrustClass, IdentityExecutionState, IdentityRecoveryState,
-        IdentityTrustTier, IdentityVerificationConsistencyLevel, MemoryConsistencyLevel,
-        MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
-        OnboardingReadinessState, PlatformRuntimeContext, SimulationCertificationState,
+        DeviceTrustClass, IdentityExecutionState, IdentityRecoveryState, IdentityTrustTier,
+        IdentityVerificationConsistencyLevel, MemoryConsistencyLevel, MemoryEligibilityDecision,
+        MemoryExecutionState, MemoryTrustLevel, OnboardingReadinessState, PlatformRuntimeContext,
+        SimulationCertificationState,
     };
     use selene_kernel_contracts::runtime_governance::{
         GovernanceClusterConsistency, GovernanceExecutionState, GovernancePolicyWindow,
@@ -1304,7 +1329,11 @@ mod tests {
         .unwrap()
         .with_authority_state(Some(
             AuthorityExecutionState::v1(
-                Some(selene_kernel_contracts::ph1d::PolicyContextRef::v1(false, false, SafetyTier::Standard)),
+                Some(selene_kernel_contracts::ph1d::PolicyContextRef::v1(
+                    false,
+                    false,
+                    SafetyTier::Standard,
+                )),
                 SimulationCertificationState::CertifiedActive,
                 OnboardingReadinessState::Ready,
                 selene_kernel_contracts::runtime_execution::AuthorityPolicyDecision::Allowed,
@@ -1332,8 +1361,8 @@ mod tests {
     }
 
     fn blocked_platform_envelope() -> RuntimeExecutionEnvelope {
-        let mut platform_context = PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)
-            .unwrap();
+        let mut platform_context =
+            PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop).unwrap();
         platform_context.compatibility_status = ClientCompatibilityStatus::UnsupportedClient;
         platform_context.integrity_status = ClientIntegrityStatus::IntegrityFailed;
         platform_context.device_trust_class = DeviceTrustClass::UntrustedDevice;
@@ -1650,15 +1679,8 @@ mod tests {
                     .with_governance_state(base_envelope().governance_state.clone())
                     .unwrap(),
                 RuntimeProtectedActionClass::ProofRequired,
-                &RuntimeLawEvaluationContext::v1(
-                    None,
-                    None,
-                    None,
-                    None,
-                    MonotonicTimeNs(33),
-                    true,
-                )
-                .unwrap(),
+                &RuntimeLawEvaluationContext::v1(None, None, None, None, MonotonicTimeNs(33), true)
+                    .unwrap(),
             )
             .expect("dry run must not block execution path");
         let law_state = out.law_state.expect("dry run must attach law state");

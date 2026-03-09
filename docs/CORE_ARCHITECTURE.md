@@ -4128,18 +4128,6 @@ Temporary mitigation strategies must never be interpreted as architectural compl
 
 Priority-classed architectural gaps
 
-P0 — Platform-trigger policy enforcement in PH1.OS
-
-Platform trigger policy must be enforced centrally by PH1.OS instead of relying solely on adapter-level validation.
-
-This ensures that platform rules such as iPhone explicit-only entry and non-iPhone wake behavior become true orchestration policies.
-
-P0 — Capture-bundle attestation
-
-Client-provided capture metadata must not be trusted without verification.
-
-Capture-bundle attestation must be implemented before PH1.K and PH1.W rely on device-provided capture information.
-
 P0 — Artifact authenticity and trust-root verification
 
 Artifact verification must extend beyond hash validation.
@@ -4308,8 +4296,6 @@ Wake artifact lifecycle workers (retention, purge, delete) are not fully impleme
 
 Wake rejection reasoning and runtime diagnostics require expansion.
 
-Wake decision logic must integrate with capture‑bundle attestation once implemented.
-
 PH1.K — Voice Runtime I/O
 
 Responsibilities:
@@ -4325,8 +4311,6 @@ voice pipeline integration with PH1.VOICE.ID
 Current gaps:
 
 Android microphone runtime parity is incomplete relative to Desktop.
-
-Capture‑bundle attestation must be implemented so client‑provided capture metadata cannot be trusted without verification.
 
 Audio pipeline resilience and runtime diagnostics require additional hardening.
 
@@ -4415,8 +4399,6 @@ platform trigger policy enforcement
 client platform compatibility validation
 
 Current gaps:
-
-Platform trigger policy must be enforced centrally in PH1.OS instead of adapter‑level guards.
 
 Cross‑device session attachment behavior must remain consistent across runtime paths.
 
