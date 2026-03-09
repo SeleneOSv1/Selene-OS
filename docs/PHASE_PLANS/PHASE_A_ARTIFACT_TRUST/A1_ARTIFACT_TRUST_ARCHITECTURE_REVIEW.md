@@ -1,360 +1,428 @@
-SELENE MASTER BUILD PLAN
-PHASE A — ARTIFACT TRUST & EXECUTION AUTHENTICITY
+Selene Phase A
+Artifact Trust-Root and Verification Architecture
 
-This phase establishes artifact authenticity, trust-root validation, and runtime verification enforcement across the Selene runtime.
+Purpose of Phase A
 
-Phase A must be completed before any further runtime expansion work.
+Phase A establishes the Artifact Trust-Root System for Selene.
 
-The purpose of Phase A is to ensure that:
+This system guarantees that:
 
-no artifact can be trusted without verification
+• all executable artifacts are cryptographically verifiable
+• no untrusted artifact can enter runtime execution
+• artifact identity is deterministic and auditable
+• verification outcomes are provable and replayable
+• trust failures propagate through Authority, Governance, and Law layers
 
-no artifact can bypass trust-root validation
+Artifacts include at minimum:
 
-artifact authenticity is provable through PH1.J proof records
+• simulation definitions
+• simulation workflows
+• runtime policy bundles
+• builder outputs
+• deployment packages
+• wake artifacts
+• model artifacts
+• learning promotion artifacts
 
-artifact trust failures are governed through PH1.GOV and PH1.LAW
+Phase A therefore establishes the cryptographic trust foundation for the entire Selene runtime.
 
-trust verification is deterministic, replayable, and auditable
+A1 — Artifact Trust-Root Design Review
 
-This phase must be implemented without weakening the deterministic runtime architecture.
+Objective
 
-The canonical protected execution path must remain:
+Define the canonical Artifact Trust-Root model that all runtime artifacts must satisfy.
 
-session
-→ authority
-→ persistence
-→ artifact trust verification
-→ PH1.J proof capture
-→ PH1.GOV governance evaluation
-→ PH1.LAW final runtime decision
-→ execution
+Without a trust root, artifacts could be injected or mutated silently.
 
-Artifact trust verification must never become a separate authority path.
+The trust root guarantees:
 
-PHASE A STRUCTURE
+• artifact authenticity
+• artifact integrity
+• artifact lineage
+• artifact certification status
+• artifact revocation safety
 
-Phase A consists of six structured design and implementation stages:
+Artifact Trust Model
 
-A1  Artifact Trust Architecture Review
-A2  Artifact Trust Model & Contract Design
-A3  Runtime Trust Verification Integration
-A4  Proof Integration for Artifact Trust (PH1.J)
-A5  Governance + Law Enforcement Integration
-A6  Validation, Tests, and Documentation Closure
+Every artifact must have a deterministic identity.
 
-Codex must complete each stage sequentially.
-
-No coding may begin until A1 design review is approved.
-
-A1 — ARTIFACT TRUST ARCHITECTURE REVIEW
-
-Codex must first perform a full architecture analysis of artifact trust across the runtime.
-
-This stage is design-only.
-
-No code modifications are allowed.
-
-Codex must review the current system including:
-
-PH1.OS
-PH1.J
-PH1.GOV
-PH1.LAW
-PH1.COMP
-PH1.M
-PH1.L
-PH1.VOICE.ID
-
-Codex must also analyze all current artifact creation and consumption paths including:
-
-device artifacts
-wake artifacts
-identity artifacts
-simulation artifacts
-runtime state artifacts
-sync artifacts
-provider artifacts
-builder artifacts
-learning artifacts
-self-heal artifacts
-
-Codex must produce a report answering the following:
-
-1. Artifact classes
-
-Codex must identify all artifact classes currently used in Selene.
-
-Expected minimum classes:
-
-IDENTITY_ARTIFACT
-DEVICE_ARTIFACT
-WAKE_ARTIFACT
-SIMULATION_ARTIFACT
-RUNTIME_STATE_ARTIFACT
-SYNC_ARTIFACT
-PROVIDER_ARTIFACT
-BUILDER_ARTIFACT
-LEARNING_ARTIFACT
-SELF_HEAL_ARTIFACT
-2. Artifact lifecycle states
-
-Each artifact must have lifecycle states such as:
-
-CREATED
-SIGNED
-VERIFIED
-ACTIVE
-ROTATED
-EXPIRED
-REVOKED
-QUARANTINED
-UNKNOWN
-3. Trust-root model
-
-Codex must analyze the trust-root model and determine:
-
-how trust roots are created
-how trust roots are rotated
-how trust roots are revoked
-how trust roots are verified
-how trust-root lineage is preserved
-4. Artifact verification model
-
-Codex must identify how artifacts are currently verified and where verification occurs.
-
-Expected checks include:
-
-artifact identity parsing
-hash verification
-signature verification
-trust-root validation
-artifact scope validation
-runtime environment validation
-5. Verification reuse rules
-
-Codex must identify when trust verification may be reused and when it must be recomputed.
-
-Example reuse policies:
-
-cached trust reuse
-offline trust reuse
-fresh verification required
-degraded verification allowed
-6. Failure classes
-
-Codex must define deterministic artifact trust failure classes.
-
-Example:
-
-ARTIFACT_HASH_MISMATCH
-ARTIFACT_SIGNATURE_INVALID
-TRUST_ROOT_REVOKED
-TRUST_ROOT_UNKNOWN
-ARTIFACT_SCOPE_VIOLATION
-ARTIFACT_EXPIRED
-ARTIFACT_REPLAY_DETECTED
-TRUST_VERIFICATION_UNAVAILABLE
-A1 Deliverable
-
-Codex must produce a complete Artifact Trust Architecture Map including:
-
-artifact classes
-trust-root lifecycle
-verification order
-failure classes
-runtime enforcement points
-missing enforcement gaps
-required runtime changes
-
-Only after JD approval may Phase A continue.
-
-A2 — ARTIFACT TRUST MODEL & CONTRACT DESIGN
-
-Codex must define the canonical artifact trust model.
-
-This includes:
-
-Artifact metadata contract
-
-Each artifact must include metadata fields such as:
+Canonical artifact identity fields:
 
 artifact_id
-artifact_class
+artifact_type
 artifact_version
-artifact_scope
-artifact_creator
-artifact_creation_time
-artifact_expiry_time
 artifact_hash
 artifact_signature
-trust_root_id
-trust_root_version
-artifact_state
-verification_required
-verification_mode
-Trust-root metadata contract
+artifact_signer_identity
+artifact_certification_state
+artifact_created_at
+artifact_lineage_parent
+artifact_lineage_root
+artifact_schema_version
 
-Trust roots must contain:
+Artifact identity must be deterministic across runtime nodes.
 
-trust_root_id
-trust_root_version
-trust_root_creator
-trust_root_rotation_time
-trust_root_state
-trust_root_signature
-trust_root_lineage
-Verification modes
+Artifact Classes
 
-Codex must define verification modes such as:
+Artifacts must be classified by trust scope.
 
-REQUIRED
-OPTIONAL
-DEGRADED_ALLOWED
-OFFLINE_ALLOWED
-CACHE_ALLOWED
-FRESH_REQUIRED
-Verification outcomes
+Example artifact classes:
 
-Verification outcomes must be deterministic:
+SIMULATION_DEFINITION
+SIMULATION_WORKFLOW
+WAKE_MODEL
+VOICE_IDENTITY_MODEL
+MEMORY_SCHEMA
+POLICY_BUNDLE
+BUILDER_OUTPUT
+DEPLOYMENT_PACKAGE
+LEARNING_PROMOTION_ARTIFACT
+
+Each artifact class may define additional verification rules.
+
+Artifact Certification States
+
+Artifacts must expose certification state.
+
+Example states:
+
+DRAFT
+TEST_CERTIFIED
+RUNTIME_CERTIFIED
+REVOKED
+EXPIRED
+
+Only RUNTIME_CERTIFIED artifacts may enter protected runtime execution.
+
+Artifact Trust Chain
+
+Artifacts must maintain lineage.
+
+Each artifact must record:
+
+artifact_lineage_parent
+artifact_lineage_root
+
+This allows:
+
+• rollback verification
+• deployment ancestry tracking
+• artifact replacement safety
+
+Artifact Trust Anchors
+
+Selene must define root signing identities.
+
+Example trust anchors:
+
+SELENE_ROOT_CA
+SELENE_RUNTIME_SIGNER
+SELENE_BUILDER_SIGNER
+SELENE_LEARNING_SIGNER
+
+These anchors must exist in a Trust Anchor Registry.
+
+Artifact Storage Boundary
+
+Artifacts must be stored in cloud-authoritative artifact storage.
+
+Rules:
+
+• clients may download artifacts but cannot sign or certify them
+• artifacts cannot become authoritative outside cloud runtime
+• artifact signatures must be verified before runtime use
+
+A2 — Artifact Identity + Trust Contract Layer
+
+Objective
+
+Define the canonical Artifact Identity Contract and Trust Verification Contract used by the runtime.
+
+This contract ensures artifacts are validated before runtime execution.
+
+Artifact Identity Object
+
+Canonical artifact identity structure:
+
+ArtifactIdentity
+
+Fields:
+
+artifact_id
+artifact_type
+artifact_version
+artifact_hash
+artifact_signature
+artifact_signer_identity
+artifact_schema_version
+artifact_certification_state
+artifact_created_at
+artifact_lineage_parent
+artifact_lineage_root
+
+Artifact Verification Result
+
+Verification outcomes must be deterministic.
+
+Example verification result structure:
+
+ArtifactVerificationResult
+
+Fields:
+
+artifact_id
+verification_result
+verification_reason_code
+signature_valid
+hash_valid
+trust_anchor_valid
+certification_state_valid
+lineage_valid
+verification_timestamp
+verification_node_id
+
+Verification Result Classes
+
+Artifact verification must produce deterministic outcomes.
+
+Example results:
 
 VERIFIED
-VERIFIED_CACHED
-DEGRADED_VERIFIED
-VERIFICATION_FAILED
-TRUST_ROOT_INVALID
-RuntimeExecutionEnvelope integration
+CERTIFICATION_INVALID
+SIGNATURE_INVALID
+HASH_MISMATCH
+TRUST_ANCHOR_UNKNOWN
+ARTIFACT_REVOKED
+ARTIFACT_EXPIRED
+SCHEMA_INCOMPATIBLE
 
-Artifact trust state must be attached to the runtime envelope:
+Artifact Revocation Model
 
-artifact_trust_state
-artifact_verification_mode
-artifact_verification_outcome
-trust_root_state
-verification_timestamp
-verification_cache_used
-A3 — RUNTIME TRUST VERIFICATION INTEGRATION
+Revocation must be explicit.
 
-Codex must design the runtime integration of artifact verification.
+Revocation mechanisms:
 
-Verification must occur in a canonical order.
+artifact_revocation_event
+artifact_revocation_reason
+artifact_revocation_timestamp
+artifact_revoked_by
 
-Canonical verification sequence
-artifact load
-→ artifact class validation
-→ artifact identity parse
-→ artifact hash verification
-→ artifact signature verification
-→ trust-root validation
-→ artifact scope validation
-→ runtime environment validation
-→ verification result attach to envelope
-Runtime enforcement points
+Revoked artifacts must be blocked by runtime.
 
-Codex must integrate verification into:
+A3 — Runtime Verification Wiring
+
+Objective
+
+Wire artifact verification into runtime entry paths.
+
+Primary runtime locations:
 
 PH1.OS
-PH1.L
-PH1.VOICE.ID
-PH1.M
-PH1.COMP
-PH1.BUILDER
-PH1.LEARN
-PH1.SELFHEAL
+Ingress Pipeline
+Simulation Executor
 
-Verification must occur before any protected execution path.
+Artifact Verification Points
 
-A4 — PROOF INTEGRATION (PH1.J)
+Artifact verification must occur at:
 
-Artifact verification decisions must be captured in PH1.J proof records.
+simulation load
+artifact activation
+builder deployment
+learning promotion
+runtime model load
+
+Verification Flow
+
+Artifact Verification Flow
+
+artifact_load_request
+→ artifact_identity_parse
+→ artifact_hash_validation
+→ artifact_signature_validation
+→ trust_anchor_validation
+→ certification_state_validation
+→ artifact_lineage_validation
+→ verification_outcome
+
+Runtime Execution Envelope Integration
+
+Verification outcomes must be attached to the Runtime Execution Envelope.
+
+Example envelope fields:
+
+artifact_id
+artifact_verification_result
+artifact_certification_state
+artifact_signer_identity
+artifact_verification_timestamp
+
+Runtime Blocking Rules
+
+If artifact verification fails:
+
+execution must stop
+runtime must emit deterministic failure class
+authority layer must record rejection
+
+A4 — PH1.J Proof Capture for Artifact Verification
+
+Objective
+
+Ensure artifact verification outcomes are cryptographically recorded.
+
+PH1.J must capture verification results when artifacts are used in protected execution.
+
+Proof Record Extensions
 
 Proof records must include:
 
 artifact_id
 artifact_hash
 artifact_signature
-trust_root_id
-trust_root_state
-verification_mode
-verification_outcome
-verification_timestamp
-runtime_execution_context
+artifact_signer_identity
+artifact_certification_state
+artifact_verification_result
+artifact_verification_timestamp
+artifact_verification_node_id
 
-Proof records must be:
+Proof Event Types
 
-immutable
-append-only
-cryptographically chained
-replayable
-verifiable offline
-A5 — GOVERNANCE + LAW ENFORCEMENT
+Example events:
 
-Artifact verification failures must be routed into:
+ArtifactVerificationSucceeded
+ArtifactVerificationFailed
+ArtifactRevoked
+ArtifactCertificationChanged
+ArtifactActivationBlocked
 
-PH1.GOV
-PH1.LAW
+Proof Chain Integration
 
-Governance must evaluate:
+Verification events must enter the append-only proof ledger.
 
-artifact verification failures
-trust-root invalid state
-verification degradation
-replay anomalies
-cache misuse
+Proof payload must include:
 
-PH1.LAW must enforce final decisions:
+proof_payload_hash
+previous_event_hash
+current_event_hash
 
-ALLOW
-ALLOW_WITH_WARNING
-DEGRADE
+A5 — Governance and Law Enforcement
+
+Objective
+
+Ensure trust failures propagate through runtime governance and law layers.
+
+Authority Layer Integration
+
+Authority must block protected actions when artifact verification fails.
+
+Example rule:
+
+if artifact_verification_result != VERIFIED
+→ block execution
+
+Runtime Governance Integration
+
+Governance must monitor trust failures.
+
+Example governance signals:
+
+artifact_verification_failures_total
+artifact_revocation_events
+artifact_signature_failures
+
+Runtime Law Enforcement
+
+PH1.LAW must treat artifact failures as law inputs.
+
+Example law inputs:
+
+artifact_signature_invalid
+artifact_certification_invalid
+artifact_revoked
+
+Possible law responses:
+
 BLOCK
 QUARANTINE
 SAFE_MODE
-A6 — VALIDATION & CLOSURE
 
-Codex must implement deterministic tests including:
+A6 — Tests, Documentation, Verification
 
-artifact signature mismatch
-artifact hash mismatch
-revoked trust root
-expired artifact
-artifact replay
-verification cache misuse
-verification service unavailable
-artifact scope mismatch
+Objective
 
-Additional required tests:
+Ensure artifact trust architecture is verifiable.
 
-trust-root rotation test
-trust-root revocation test
-artifact lifecycle test
-artifact trust replay test
-proof record validation test
+Test Coverage
 
-Documentation must also be updated:
+Required test classes:
 
-CORE_ARCHITECTURE.md
-SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md
-COVERAGE_MATRIX.md
-ENGINE_REVIEW_TRACKER.md
-FINAL RULE FOR PHASE A
+artifact_identity_parsing_tests
+artifact_hash_validation_tests
+artifact_signature_validation_tests
+artifact_certification_state_tests
+artifact_revocation_tests
+artifact_lineage_tests
+artifact_runtime_block_tests
 
-Artifact trust must never become an alternative execution authority.
+Integration Tests
 
-All protected execution must remain governed by:
+Runtime tests must verify:
 
-PH1.J → PH1.GOV → PH1.LAW
+simulation artifact verification
+builder artifact verification
+learning artifact verification
+artifact failure propagation
 
-Artifact trust verification must only supply inputs into that chain.
+Proof Verification Tests
 
-CODEX EXECUTION RULE
+Verify PH1.J records verification events.
 
-Codex must:
+Tests include:
 
-Read the entire Phase A specification.
+proof_chain_integrity
+verification_event_logging
+artifact_revocation_proof_record
 
-Produce the A1 Artifact Trust Architecture Review only.
+Governance and Law Tests
 
-Wait for JD approval before continuing.
+Test that:
 
-Codex must not begin A2–A6 until A1 is approved.
+artifact failures propagate to PH1.GOV
+artifact failures propagate to PH1.LAW
+runtime blocks unsafe artifact execution
+
+Documentation Updates
+
+Required docs:
+
+artifact trust root design doc
+artifact verification contract doc
+artifact revocation policy doc
+artifact certification workflow doc
+
+Phase A Completion Criteria
+
+Phase A is complete when:
+
+artifact trust root exists
+artifact identity contract exists
+runtime verification wiring exists
+PH1.J captures verification proof
+governance reacts to artifact failures
+law engine blocks unsafe artifacts
+tests verify trust behavior
+
+Phase A Result
+
+After Phase A:
+
+Selene runtime gains a cryptographic artifact trust foundation.
+
+This ensures:
+
+• only trusted artifacts execute
+• artifact lineage is traceable
+• runtime execution is provable
+• artifact failures trigger runtime law enforcement
+
+If you want, next I can also produce the Codex prompt for Step 2 (repo truth sweep for Phase A) so Codex checks exactly the correct files before writing the implementation plan.
