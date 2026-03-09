@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -1538,10 +1538,8 @@ impl AdapterRuntime {
 
         let mut final_by_key: BTreeMap<AdapterTranscriptKey, AdapterTranscriptEvent> =
             BTreeMap::new();
-        let mut finalized_turn_role_keys = BTreeSet::new();
         for event in final_events {
             let key = event.key();
-            finalized_turn_role_keys.insert((event.correlation_id.0, event.turn_id.0, event.role));
             if let Some(existing) = final_by_key.get(&key) {
                 if existing.timestamp_ns >= event.timestamp_ns {
                     continue;
@@ -1554,13 +1552,6 @@ impl AdapterRuntime {
             BTreeMap::new();
         for event in partial_events {
             if event.finalized {
-                continue;
-            }
-            if finalized_turn_role_keys.contains(&(
-                event.correlation_id.0,
-                event.turn_id.0,
-                event.role,
-            )) {
                 continue;
             }
             let key = event.key();
