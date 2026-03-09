@@ -207,6 +207,9 @@ impl GovernanceDriftSignal {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GovernanceProtectedActionClass {
     VoiceTurnExecution,
+    BuilderDeployment,
+    LearningPromotion,
+    SelfHealRemediation,
     PersistenceReplay,
     PersistenceRecovery,
     PrimaryDeviceConfirmation,
@@ -218,6 +221,9 @@ impl GovernanceProtectedActionClass {
     pub const fn as_str(self) -> &'static str {
         match self {
             GovernanceProtectedActionClass::VoiceTurnExecution => "VOICE_TURN_EXECUTION",
+            GovernanceProtectedActionClass::BuilderDeployment => "BUILDER_DEPLOYMENT",
+            GovernanceProtectedActionClass::LearningPromotion => "LEARNING_PROMOTION",
+            GovernanceProtectedActionClass::SelfHealRemediation => "SELF_HEAL_REMEDIATION",
             GovernanceProtectedActionClass::PersistenceReplay => "PERSISTENCE_REPLAY",
             GovernanceProtectedActionClass::PersistenceRecovery => "PERSISTENCE_RECOVERY",
             GovernanceProtectedActionClass::PrimaryDeviceConfirmation => {

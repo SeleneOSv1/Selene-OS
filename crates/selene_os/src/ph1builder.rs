@@ -25,6 +25,7 @@ use selene_kernel_contracts::ph1rll::{
     RllArtifactCandidate, RllOptimizationTarget, RllRecommendationItem,
 };
 use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::runtime_governance::GovernanceProtectedActionClass;
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawBuilderInput, RuntimeLawEvaluationContext, RuntimeLawOverrideState,
     RuntimeProtectedActionClass,
@@ -45,6 +46,7 @@ use crate::ph1pattern::{
 use crate::ph1rll::{
     Ph1RllEngine, Ph1RllWiring, Ph1RllWiringConfig, RllOfflineInput, RllWiringOutcome,
 };
+use crate::runtime_governance::RuntimeGovernanceRuntime;
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
@@ -1420,45 +1422,55 @@ fn attach_builder_proof_state(
 }
 
 fn govern_builder_completion_after_proof(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
+    governance_action_class: GovernanceProtectedActionClass,
     law_action_class: RuntimeProtectedActionClass,
     law_context: &RuntimeLawEvaluationContext,
     proof_result: Result<RuntimeExecutionEnvelope, BuilderGovernedProofRefusal>,
 ) -> Result<RuntimeExecutionEnvelope, BuilderGovernedRefusal> {
-    match proof_result {
-        Ok(proof_envelope) => runtime_law
-            .govern_completion(&proof_envelope, law_action_class, law_context)
-            .map_err(|decision| {
-                let runtime_execution_envelope = proof_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .expect("runtime law refusal envelope must remain contract-valid");
-                BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
-                    decision,
-                    runtime_execution_envelope,
-                })
-            }),
-        Err(proof_refusal) => match runtime_law.govern_completion(
-            &proof_refusal.runtime_execution_envelope,
-            law_action_class,
-            law_context,
-        ) {
-            Ok(runtime_execution_envelope) => {
+    let (proof_error, proof_envelope) = match proof_result {
+        Ok(proof_envelope) => (None, proof_envelope),
+        Err(proof_refusal) => (
+            Some(proof_refusal.error),
+            proof_refusal.runtime_execution_envelope,
+        ),
+    };
+    let proof_state = proof_envelope
+        .proof_state
+        .as_ref()
+        .expect("builder proof state must exist before governance");
+    let envelope_for_law = match runtime_governance.govern_protected_action_proof_state(
+        governance_action_class,
+        proof_envelope.session_id.map(|value| value.0),
+        Some(proof_envelope.turn_id.0),
+        proof_state,
+    ) {
+        Ok(()) => proof_envelope,
+        Err(decision) => proof_envelope
+            .with_governance_state(Some(decision.governance_state.clone()))
+            .map_err(BuilderGovernedRefusal::Contract)?,
+    };
+    match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
+        Ok(runtime_execution_envelope) => {
+            if let Some(error) = proof_error {
                 Err(BuilderGovernedRefusal::Proof(BuilderGovernedProofRefusal {
-                    error: proof_refusal.error,
+                    error,
                     runtime_execution_envelope,
                 }))
+            } else {
+                Ok(runtime_execution_envelope)
             }
-            Err(decision) => {
-                let runtime_execution_envelope = proof_refusal
-                    .runtime_execution_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .map_err(BuilderGovernedRefusal::Contract)?;
-                Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
-                    decision,
-                    runtime_execution_envelope,
-                }))
-            }
-        },
+        }
+        Err(decision) => {
+            let runtime_execution_envelope = envelope_for_law
+                .with_law_state(Some(decision.law_state.clone()))
+                .map_err(BuilderGovernedRefusal::Contract)?;
+            Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
+                decision,
+                runtime_execution_envelope,
+            }))
+        }
     }
 }
 
@@ -1490,6 +1502,7 @@ pub fn promote_with_judge_gates(
 
 #[allow(clippy::too_many_arguments)]
 pub fn promote_with_judge_gates_governed(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
@@ -1526,7 +1539,9 @@ pub fn promote_with_judge_gates_governed(
     )
     .map_err(BuilderGovernedRefusal::Contract)?;
     let runtime_execution_envelope = govern_builder_completion_after_proof(
+        runtime_governance,
         runtime_law,
+        GovernanceProtectedActionClass::BuilderDeployment,
         RuntimeProtectedActionClass::BuilderDeployment,
         &law_context,
         attach_builder_proof_state(
@@ -1634,6 +1649,7 @@ pub fn publish_runtime_activation_handoff(
 
 #[allow(clippy::too_many_arguments)]
 pub fn publish_runtime_activation_handoff_governed(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
@@ -1662,7 +1678,9 @@ pub fn publish_runtime_activation_handoff_governed(
     )
     .map_err(BuilderGovernedRefusal::Contract)?;
     let runtime_execution_envelope = govern_builder_completion_after_proof(
+        runtime_governance,
         runtime_law,
+        GovernanceProtectedActionClass::BuilderDeployment,
         RuntimeProtectedActionClass::BuilderDeployment,
         &law_context,
         attach_builder_proof_state(
@@ -5171,6 +5189,7 @@ mod tests {
     #[test]
     fn at_builder_os_24_runtime_law_governs_builder_deployment_with_real_inputs() {
         let controller = BuilderReleaseController;
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         let envelope = builder_law_envelope("builder_law_24", 2_402);
@@ -5178,6 +5197,7 @@ mod tests {
         let approval = approved_state_for("p24", 2_400);
         let release = active_release_for("p24", BuilderReleaseStage::Canary, 2_401);
         let out = promote_with_judge_gates_governed(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -5209,12 +5229,17 @@ mod tests {
             .proof_state
             .expect("builder deployment must attach PH1.J proof state");
         assert_eq!(proof_state.proof_write_outcome.as_str(), "WRITTEN");
+        assert!(
+            out.runtime_execution_envelope.governance_state.is_none(),
+            "governance allow path should not synthesize a failure governance state"
+        );
         assert_eq!(store.proof_records().len(), 1);
         assert_eq!(out.release_state.stage, BuilderReleaseStage::Ramp25);
     }
 
     #[test]
     fn at_builder_os_25_runtime_law_override_state_is_live_for_builder_deployment() {
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         let envelope = builder_law_envelope("builder_law_25", 2_502);
@@ -5223,6 +5248,7 @@ mod tests {
         let mut release = production_release_for("proposal_p25", 2_501);
         release.rollback_ready = false;
         let out = publish_runtime_activation_handoff_governed(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -5262,6 +5288,10 @@ mod tests {
             law_state.protected_action_class,
             RuntimeProtectedActionClass::BuilderDeployment
         );
+        assert!(
+            out.runtime_execution_envelope.governance_state.is_none(),
+            "governance allow path should not synthesize a failure governance state"
+        );
         let proof_state = out
             .runtime_execution_envelope
             .proof_state
@@ -5272,6 +5302,7 @@ mod tests {
     #[test]
     fn at_builder_os_26_proof_failure_does_not_silently_downgrade_builder_deployment() {
         let controller = BuilderReleaseController;
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         ph1j_runtime.force_failure_for_tests(Some(
@@ -5283,6 +5314,7 @@ mod tests {
         let release = active_release_for("p26", BuilderReleaseStage::Canary, 2_601);
 
         let refusal = promote_with_judge_gates_governed(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -5313,6 +5345,16 @@ mod tests {
                     .proof_state
                     .expect("proof failure must still attach proof state");
                 assert_eq!(proof_state.proof_write_outcome.as_str(), "FAILED");
+                let governance_state = refusal
+                    .runtime_execution_envelope
+                    .governance_state
+                    .expect("proof failure must attach governance state before runtime law");
+                assert_eq!(
+                    governance_state.last_response_class,
+                    Some(
+                        selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Block
+                    )
+                );
                 assert_eq!(
                     proof_state.proof_failure_class,
                     Some(selene_kernel_contracts::ph1j::ProofFailureClass::ProofStorageUnavailable)

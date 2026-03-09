@@ -36,6 +36,7 @@ use selene_kernel_contracts::runtime_execution::{
     AdmissionState, ClientIntegrityStatus, DeviceCapability, PlatformRuntimeContext,
     RuntimeEntryTrigger, RuntimeExecutionEnvelope,
 };
+use selene_kernel_contracts::runtime_governance::GovernanceProtectedActionClass;
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawEvaluationContext, RuntimeLawLearningInput, RuntimeLawOverrideState,
     RuntimeLawSelfHealInput, RuntimeProtectedActionClass,
@@ -67,6 +68,7 @@ use crate::ph1learn::{
 use crate::ph1n::{Ph1nEngine, Ph1nWiring, Ph1nWiringOutcome};
 use crate::ph1pae::{map_pae_bundle_to_promotion_decision, PaeForwardBundle, PaeTurnInput};
 use crate::ph1vision::VisionForwardBundle;
+use crate::runtime_governance::RuntimeGovernanceRuntime;
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
@@ -1722,47 +1724,59 @@ fn attach_self_heal_proof_state(
 }
 
 fn govern_self_heal_completion_after_proof(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
+    governance_action_class: GovernanceProtectedActionClass,
     law_action_class: RuntimeProtectedActionClass,
     law_context: &RuntimeLawEvaluationContext,
     proof_result: Result<RuntimeExecutionEnvelope, GovernedSelfHealProofRefusal>,
 ) -> Result<RuntimeExecutionEnvelope, GovernedSelfHealChainRefusal> {
-    match proof_result {
-        Ok(proof_envelope) => runtime_law
-            .govern_completion(&proof_envelope, law_action_class, law_context)
-            .map_err(|decision| {
-                let runtime_execution_envelope = proof_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .expect("runtime law refusal envelope must remain contract-valid");
-                GovernedSelfHealChainRefusal::Law(GovernedSelfHealLawRefusal {
-                    decision,
-                    runtime_execution_envelope,
-                })
-            }),
-        Err(proof_refusal) => match runtime_law.govern_completion(
-            &proof_refusal.runtime_execution_envelope,
-            law_action_class,
-            law_context,
-        ) {
-            Ok(runtime_execution_envelope) => Err(GovernedSelfHealChainRefusal::Proof(
-                GovernedSelfHealProofRefusal {
-                    error: proof_refusal.error,
-                    runtime_execution_envelope,
-                },
-            )),
-            Err(decision) => {
-                let runtime_execution_envelope = proof_refusal
-                    .runtime_execution_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .map_err(GovernedSelfHealChainRefusal::Contract)?;
-                Err(GovernedSelfHealChainRefusal::Law(
-                    GovernedSelfHealLawRefusal {
-                        decision,
+    let (proof_error, proof_envelope) = match proof_result {
+        Ok(proof_envelope) => (None, proof_envelope),
+        Err(proof_refusal) => (
+            Some(proof_refusal.error),
+            proof_refusal.runtime_execution_envelope,
+        ),
+    };
+    let proof_state = proof_envelope
+        .proof_state
+        .as_ref()
+        .expect("self-heal proof state must exist before governance");
+    let envelope_for_law = match runtime_governance.govern_protected_action_proof_state(
+        governance_action_class,
+        proof_envelope.session_id.map(|value| value.0),
+        Some(proof_envelope.turn_id.0),
+        proof_state,
+    ) {
+        Ok(()) => proof_envelope,
+        Err(decision) => proof_envelope
+            .with_governance_state(Some(decision.governance_state.clone()))
+            .map_err(GovernedSelfHealChainRefusal::Contract)?,
+    };
+    match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
+        Ok(runtime_execution_envelope) => {
+            if let Some(error) = proof_error {
+                Err(GovernedSelfHealChainRefusal::Proof(
+                    GovernedSelfHealProofRefusal {
+                        error,
                         runtime_execution_envelope,
                     },
                 ))
+            } else {
+                Ok(runtime_execution_envelope)
             }
-        },
+        }
+        Err(decision) => {
+            let runtime_execution_envelope = envelope_for_law
+                .with_law_state(Some(decision.law_state.clone()))
+                .map_err(GovernedSelfHealChainRefusal::Contract)?;
+            Err(GovernedSelfHealChainRefusal::Law(
+                GovernedSelfHealLawRefusal {
+                    decision,
+                    runtime_execution_envelope,
+                },
+            ))
+        }
     }
 }
 
@@ -1822,6 +1836,7 @@ pub fn build_self_heal_chain_from_engine_outputs(
 }
 
 pub fn build_governed_self_heal_chain_from_engine_outputs(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
@@ -1849,7 +1864,9 @@ pub fn build_governed_self_heal_chain_from_engine_outputs(
     )
     .map_err(GovernedSelfHealChainRefusal::Contract)?;
     let runtime_execution_envelope = govern_self_heal_completion_after_proof(
+        runtime_governance,
         runtime_law,
+        GovernanceProtectedActionClass::SelfHealRemediation,
         RuntimeProtectedActionClass::SelfHealRemediation,
         &law_context,
         attach_self_heal_proof_state(
@@ -6007,11 +6024,13 @@ mod tests {
     #[test]
     fn at_os_39_runtime_law_governs_self_heal_chain_with_real_inputs() {
         let input = sample_self_heal_chain_input(false, None);
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         let envelope = self_heal_law_envelope("selfheal_law_39", 539);
         let mut store = proof_store_for_self_heal_envelope(&envelope);
         let refusal = build_governed_self_heal_chain_from_engine_outputs(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -6048,6 +6067,7 @@ mod tests {
     #[test]
     fn at_os_40_proof_failure_does_not_silently_downgrade_self_heal_remediation() {
         let input = sample_self_heal_chain_input(false, None);
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         ph1j_runtime.force_failure_for_tests(Some(
@@ -6056,6 +6076,7 @@ mod tests {
         let envelope = self_heal_law_envelope("selfheal_law_40", 540);
         let mut store = proof_store_for_self_heal_envelope(&envelope);
         let refusal = build_governed_self_heal_chain_from_engine_outputs(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -6079,6 +6100,16 @@ mod tests {
                     .proof_state
                     .expect("proof failure must still attach proof state");
                 assert_eq!(proof_state.proof_write_outcome.as_str(), "FAILED");
+                let governance_state = refusal
+                    .runtime_execution_envelope
+                    .governance_state
+                    .expect("proof failure must attach governance state before runtime law");
+                assert_eq!(
+                    governance_state.last_response_class,
+                    Some(
+                        selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Block
+                    )
+                );
                 assert_eq!(
                     proof_state.proof_failure_class,
                     Some(selene_kernel_contracts::ph1j::ProofFailureClass::ProofStorageUnavailable)

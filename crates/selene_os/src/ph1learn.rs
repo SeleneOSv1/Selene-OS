@@ -17,6 +17,7 @@ use selene_kernel_contracts::ph1selfheal::{
     SelfHealValidationStatus,
 };
 use selene_kernel_contracts::runtime_execution::RuntimeExecutionEnvelope;
+use selene_kernel_contracts::runtime_governance::GovernanceProtectedActionClass;
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawEvaluationContext, RuntimeLawLearningInput, RuntimeLawOverrideState,
     RuntimeProtectedActionClass,
@@ -29,6 +30,7 @@ use crate::ph1j::{
     proof_execution_state_from_receipt, proof_policy_rule_identifiers, proof_policy_version,
     proof_verifier_metadata_ref, Ph1jRuntime, ProtectedProofWriteRequest,
 };
+use crate::runtime_governance::RuntimeGovernanceRuntime;
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 
 pub mod reason_codes {
@@ -515,49 +517,60 @@ fn attach_learning_proof_state(
 }
 
 fn govern_learning_completion_after_proof(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
+    governance_action_class: GovernanceProtectedActionClass,
     law_action_class: RuntimeProtectedActionClass,
     law_context: &RuntimeLawEvaluationContext,
     proof_result: Result<RuntimeExecutionEnvelope, LearnGovernedProofRefusal>,
 ) -> Result<RuntimeExecutionEnvelope, LearnGovernedRefusal> {
-    match proof_result {
-        Ok(proof_envelope) => runtime_law
-            .govern_completion(&proof_envelope, law_action_class, law_context)
-            .map_err(|decision| {
-                let runtime_execution_envelope = proof_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .expect("runtime law refusal envelope must remain contract-valid");
-                LearnGovernedRefusal::Law(LearnGovernedLawRefusal {
-                    decision,
-                    runtime_execution_envelope,
-                })
-            }),
-        Err(proof_refusal) => match runtime_law.govern_completion(
-            &proof_refusal.runtime_execution_envelope,
-            law_action_class,
-            law_context,
-        ) {
-            Ok(runtime_execution_envelope) => {
+    let (proof_error, proof_envelope) = match proof_result {
+        Ok(proof_envelope) => (None, proof_envelope),
+        Err(proof_refusal) => (
+            Some(proof_refusal.error),
+            proof_refusal.runtime_execution_envelope,
+        ),
+    };
+    let proof_state = proof_envelope
+        .proof_state
+        .as_ref()
+        .expect("learning proof state must exist before governance");
+    let envelope_for_law = match runtime_governance.govern_protected_action_proof_state(
+        governance_action_class,
+        proof_envelope.session_id.map(|value| value.0),
+        Some(proof_envelope.turn_id.0),
+        proof_state,
+    ) {
+        Ok(()) => proof_envelope,
+        Err(decision) => proof_envelope
+            .with_governance_state(Some(decision.governance_state.clone()))
+            .map_err(LearnGovernedRefusal::Contract)?,
+    };
+    match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
+        Ok(runtime_execution_envelope) => {
+            if let Some(error) = proof_error {
                 Err(LearnGovernedRefusal::Proof(LearnGovernedProofRefusal {
-                    error: proof_refusal.error,
+                    error,
                     runtime_execution_envelope,
                 }))
+            } else {
+                Ok(runtime_execution_envelope)
             }
-            Err(decision) => {
-                let runtime_execution_envelope = proof_refusal
-                    .runtime_execution_envelope
-                    .with_law_state(Some(decision.law_state.clone()))
-                    .map_err(LearnGovernedRefusal::Contract)?;
-                Err(LearnGovernedRefusal::Law(LearnGovernedLawRefusal {
-                    decision,
-                    runtime_execution_envelope,
-                }))
-            }
-        },
+        }
+        Err(decision) => {
+            let runtime_execution_envelope = envelope_for_law
+                .with_law_state(Some(decision.law_state.clone()))
+                .map_err(LearnGovernedRefusal::Contract)?;
+            Err(LearnGovernedRefusal::Law(LearnGovernedLawRefusal {
+                decision,
+                runtime_execution_envelope,
+            }))
+        }
     }
 }
 
 pub fn govern_learn_bundle_promotion(
+    runtime_governance: &RuntimeGovernanceRuntime,
     runtime_law: &RuntimeLawRuntime,
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
@@ -580,7 +593,9 @@ pub fn govern_learn_bundle_promotion(
     )
     .map_err(LearnGovernedRefusal::Contract)?;
     let runtime_execution_envelope = govern_learning_completion_after_proof(
+        runtime_governance,
         runtime_law,
+        GovernanceProtectedActionClass::LearningPromotion,
         RuntimeProtectedActionClass::LearningPromotion,
         &law_context,
         attach_learning_proof_state(
@@ -2001,11 +2016,13 @@ mod tests {
         let LearnWiringOutcome::Forwarded(bundle) = out else {
             panic!("expected forwarded learn bundle");
         };
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         let envelope = learn_law_envelope("learn_law_11", 511);
         let mut store = proof_store_for_learn_envelope(&envelope);
         let refusal = govern_learn_bundle_promotion(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -2060,6 +2077,7 @@ mod tests {
         let LearnWiringOutcome::Forwarded(bundle) = out else {
             panic!("expected forwarded learn bundle");
         };
+        let runtime_governance = RuntimeGovernanceRuntime::default();
         let runtime_law = RuntimeLawRuntime::default();
         let ph1j_runtime = Ph1jRuntime::default();
         ph1j_runtime.force_failure_for_tests(Some(
@@ -2068,6 +2086,7 @@ mod tests {
         let envelope = learn_law_envelope("learn_law_12", 512);
         let mut store = proof_store_for_learn_envelope(&envelope);
         let refusal = govern_learn_bundle_promotion(
+            &runtime_governance,
             &runtime_law,
             &ph1j_runtime,
             &mut store,
@@ -2093,6 +2112,16 @@ mod tests {
                     .proof_state
                     .expect("proof failure must still attach proof state");
                 assert_eq!(proof_state.proof_write_outcome.as_str(), "FAILED");
+                let governance_state = refusal
+                    .runtime_execution_envelope
+                    .governance_state
+                    .expect("proof failure must attach governance state before runtime law");
+                assert_eq!(
+                    governance_state.last_response_class,
+                    Some(
+                        selene_kernel_contracts::runtime_governance::GovernanceResponseClass::Block
+                    )
+                );
                 assert_eq!(
                     proof_state.proof_failure_class,
                     Some(selene_kernel_contracts::ph1j::ProofFailureClass::ProofStorageUnavailable)
