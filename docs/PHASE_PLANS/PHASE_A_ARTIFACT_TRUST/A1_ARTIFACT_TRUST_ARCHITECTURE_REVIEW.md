@@ -104,6 +104,37 @@ A1 therefore establishes the canonical law and system boundaries.
 
 A2 and later phases implement those boundaries in typed and executable form.
 
+Canonical Verifier Ownership Law
+
+Section 04 Authority Layer is the one and only canonical owner of first-time authoritative artifact trust verification.
+
+Canonical ownership sequence:
+
+Section 03 ingress
+→ PH1.OS posture normalization
+→ Section 04 Authority verification
+→ PH1.J proof capture
+→ PH1.GOV governance evaluation
+→ PH1.LAW final runtime posture
+→ protected executor or consumer path
+
+Ownership rules:
+
+• Section 03 ingress may only normalize and carry artifact references, claims, receipts, and scope inputs into the Runtime Execution Envelope
+• PH1.OS may only contribute device, platform, receipt, attestation, compatibility, and environment posture
+• Section 04 Authority Layer must perform first-time authoritative artifact trust verification
+• PH1.J must prove the verification basis and decision context after authoritative verification occurs
+• PH1.GOV must consume verified artifact trust state for governed activation, promotion, deployment, rollback, and release decisions
+• PH1.LAW must consume governed runtime inputs and produce the final runtime posture
+• executors, simulation paths, builder, learning, self-heal, and device sync paths may only consume verified trust decisions
+
+Hard rules:
+
+• no other subsystem may perform first-time authoritative artifact trust verification
+• no adapter, client, device worker, executor, or consumer path may upgrade an unverified artifact into trusted state locally
+• no subsystem may act as a co-owner of authoritative artifact verification beside Section 04
+• no parallel verifier may be introduced for wake, builder, simulation, voice, device sync, or any other artifact class
+
 Artifact Classes
 
 Artifacts must be classified by trust scope.
@@ -192,6 +223,50 @@ Artifacts must not be accepted merely because a signer is locally known.
 
 Artifact verification must chain upward through the approved hierarchy before the artifact may be considered trusted.
 
+Trust Policy Snapshot and Trust-Set Version Law
+
+Every authoritative verification decision must bind to one governed trust snapshot.
+
+Required architecture-level snapshot references:
+
+• trust_policy_version
+• trust_set_version
+
+Architecture law:
+
+• trust_policy_version defines the governed verification policy basis in effect at decision time
+• trust_set_version defines the monotonic trust-root and signer-set snapshot used at decision time
+• authoritative verification must not mix inputs from multiple trust snapshots in one decision
+• every authoritative verification decision must record the exact trust_policy_version and trust_set_version used
+• the same trust_policy_version and trust_set_version must flow into:
+  • Runtime Execution Envelope
+  • PH1.J proof basis
+  • verification cache basis
+  • offline replay and independent verification
+
+Cluster uncertainty around the active trust_set_version must not be treated as a warning-only condition.
+
+If trust-set convergence is uncertain:
+
+• protected execution must fail closed by default
+• degraded posture is allowed only where explicit governance and law permit it
+
+Cryptographic Suite Version Law
+
+Artifact trust verification must bind to a governed cryptographic suite basis.
+
+Required architecture-level concept:
+
+• crypto_suite_version
+
+Architecture law:
+
+• authoritative verification must record the cryptographic suite basis used for the decision
+• proof and replay must preserve the crypto_suite_version used at decision time
+• future cryptographic upgrades must not silently reinterpret historical verification records
+• future cryptographic upgrades must preserve historical verification capability through governed compatibility and archived verification context
+• inability to verify historical proof solely because the cryptographic basis was not preserved is an architecture failure
+
 Key Rotation, Overlap, and Revocation Law
 
 Signer rotation must be explicitly governed.
@@ -229,6 +304,31 @@ If signer-set consensus is uncertain across the cluster:
 • protected execution must not silently continue
 • runtime must enter deterministic degraded or block posture according to governance and law
 
+Historical Proof Verification Law
+
+Historical trust verification and forward trust authorization are distinct.
+
+Architecture law:
+
+• retired signers may remain valid for historical proof verification only through archived trust snapshots that match the decision context
+• retired signers must not automatically remain valid for future execution
+• historical proof verification must preserve the trust snapshot, signer state, and cryptographic suite basis observed at decision time
+• forward execution authority must be evaluated against the current governed trust snapshot, not the historical one
+
+Clock and Time Authority Law
+
+Expiry, freshness, rotation, overlap, and revocation timing must rely on governed time authority.
+
+Architecture law:
+
+• authoritative verification must use a governed time source for expiry, freshness, and rotation checks
+• allowed clock skew posture must be explicitly bounded by system law
+• device-local time must not become authoritative for protected trust decisions
+• if trusted time is unavailable and freshness or expiry cannot be established, protected execution must block by default
+• degraded behavior when trusted time is unavailable is lawful only where explicit governance and law permit it for non-protected use
+• proof and replay must preserve the time authority basis used at decision time
+• proof and replay must preserve any governed degraded posture caused by time uncertainty
+
 Artifact Lifecycle Stages
 
 Artifact trust controls apply across distinct lifecycle stages.
@@ -239,6 +339,12 @@ Canonical stages:
 • identity parse
 • verification
 • certification
+• publication
+• distribution
+• delivery
+• installation
+• apply request
+• apply receipt
 • activation
 • runtime use
 • replacement
@@ -252,9 +358,16 @@ Architecture law:
 • identity parse does not imply verification success
 • verification does not imply certification
 • certification does not imply activation
+• publication does not imply distribution
+• distribution and delivery do not imply installation
+• installation does not imply authoritative verification success
+• apply request does not imply apply approval
+• apply receipt does not imply activation
 • activation does not replace runtime-use checks where runtime validation is still required
 • replacement and rollback must remain lineage-aware
 • revocation and retirement are not the same state
+
+Distribution, installation, apply request, and apply receipt must not be conflated with authoritative verification or activation.
 
 Activation and runtime use must never be conflated with ingest or storage.
 
@@ -270,7 +383,9 @@ Compatibility policy classes:
 
 Architecture law:
 
+• protected execution defaults to STRICT_NO_LEGACY
 • legacy artifacts must never be silently trusted
+• legacy compatibility requires explicit governed policy
 • any compatibility window must be policy-driven
 • any compatibility window must be time-bounded
 • any compatibility decision must be replayable
@@ -326,6 +441,8 @@ Architecture requirements:
 • trust-root rotation must invalidate affected cached verification outcomes when policy requires fresh verification against the new set
 • cluster invalidation must converge across nodes
 • proof-required actions must record whether verification was fresh or cache-derived
+• cache basis must bind the applicable trust_policy_version, trust_set_version, crypto_suite_version, and validated scope basis
+• cluster uncertainty around trust_set_version must fail closed or degrade only where explicit governance and law allow it
 • cached verification must never become an authority shortcut
 
 Cached verification is evidence reuse only.
@@ -344,6 +461,7 @@ Rules:
 • devices may cache artifacts but device-local cache state is never trust authority
 • PH1.OS may carry trust inputs but PH1.OS is not an artifact trust authority
 • proof records do not replace artifact verification
+• publication, distribution, installation, apply request, and apply receipt are operational stages only and do not establish authoritative trust or activation
 
 No Parallel Trust-Path Law
 
@@ -368,6 +486,14 @@ Objective
 Define the canonical Artifact Identity Contract and Trust Verification Contract used by the runtime.
 
 This contract ensures artifacts are validated before runtime execution.
+
+A2 Preview / Non-Approved Typed Surface
+
+The preview labels below are informational scaffolding for A2 only.
+
+They are not approved A1 typed contracts.
+
+They must not be treated as final struct names, enum names, packet names, database schema, or storage/runtime interfaces.
 
 Artifact Identity Object
 
@@ -442,6 +568,8 @@ A1 to A2 Boundary Reminder
 
 The items above define required architecture-level concepts for later contract work.
 
+The labels `ArtifactIdentity` and `ArtifactVerificationResult` above are preview markers only.
+
 They do not define final structs, enums, DB tables, packet schemas, or typed storage/runtime interfaces.
 
 Those typed definitions belong to A2.
@@ -452,11 +580,21 @@ Objective
 
 Wire artifact verification into runtime entry paths.
 
-Primary runtime locations:
+Canonical runtime ownership path:
 
-PH1.OS
-Ingress Pipeline
-Simulation Executor
+Section 03 ingress carries artifact references, claims, receipts, and scope inputs.
+
+PH1.OS normalizes device, platform, receipt, attestation, compatibility, and environment posture.
+
+Section 04 Authority Layer performs authoritative artifact trust verification.
+
+PH1.J captures proof of the verification basis and outcome.
+
+PH1.GOV evaluates governed activation, promotion, deployment, replacement, rollback, and release posture using verified trust state.
+
+PH1.LAW produces the final runtime posture.
+
+Protected executors and consumers may proceed only by consuming already verified trust decisions.
 
 Artifact Verification Points
 
@@ -466,6 +604,7 @@ simulation load
 artifact activation
 builder deployment
 learning promotion
+artifact apply request
 runtime model load
 
 Verification Flow
@@ -477,9 +616,12 @@ artifact_load_request
 → artifact_hash_validation
 → artifact_signature_validation
 → trust_anchor_validation
+→ trust_policy_snapshot_bind
+→ crypto_suite_basis_bind
 → certification_state_validation
 → artifact_lineage_validation
 → artifact_scope_validation
+→ time_authority_validation
 → verification_outcome
 
 Runtime Execution Envelope Integration
@@ -493,6 +635,10 @@ artifact_verification_result
 artifact_certification_state
 artifact_signer_identity
 artifact_verification_timestamp
+artifact_trust_policy_version
+artifact_trust_set_version
+artifact_crypto_suite_version
+artifact_time_authority_basis
 
 Verification Cache Posture
 
@@ -502,6 +648,7 @@ If cached verification is used:
 • freshness window compliance must be proven
 • revocation and trust-root state must be re-checked according to policy
 • proof-required actions must disclose cache-derived verification posture
+• cache-derived reuse must remain bound to trust_policy_version, trust_set_version, crypto_suite_version, and validated scope basis
 
 Cached verification must not create a silent bypass around fresh trust evaluation requirements.
 
@@ -541,11 +688,15 @@ Architecture law requires proof to capture at minimum:
 • artifact verification basis
 • signer identity used
 • trust-root id and version used
+• trust_policy_version and trust_set_version used
+• crypto_suite_version used
 • certification state observed
 • revocation state observed at decision time
 • fresh versus cache-derived verification outcome
 • lineage validation posture
 • scope validation posture
+• time authority basis observed
+• archived trust snapshot reference where historical proof verification depends on retired signer state
 
 This is architecture law only.
 
