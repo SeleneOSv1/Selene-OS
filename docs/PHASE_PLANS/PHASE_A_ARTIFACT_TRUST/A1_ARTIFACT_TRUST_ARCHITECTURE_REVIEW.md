@@ -135,6 +135,13 @@ Hard rules:
 • no subsystem may act as a co-owner of authoritative artifact verification beside Section 04
 • no parallel verifier may be introduced for wake, builder, simulation, voice, device sync, or any other artifact class
 
+Cross-phase transport separation law:
+
+• later phases must preserve one canonical runtime trust-state carrier, one canonical decision transport, and one canonical proof-linkage path
+• runtime trust state and proof linkage are linked, but they are not interchangeable
+• proof linkage must never be treated as a substitute for authoritative verification state
+• later phases must not collapse authoritative decision transport into proof transport or create co-equal competing linkage models
+
 Artifact Classes
 
 Artifacts must be classified by trust scope.

@@ -165,6 +165,12 @@ PHASE A4 — PH1.J PROOF CAPTURE FOR TRUST VERIFICATION OUTCOMES BUILD PLAN
 - A4 should add proof linkage back to the trust decision transport, so each `ArtifactTrustDecisionRecord` can reference its proof-entry/proof-record outcome.
 - The envelope remains the single runtime transport for trust state plus proof linkage.
 
+12A. Cross-phase proof-linkage model:
+- turn-level proof linkage lives in the envelope proof surface through `proof_state` and `proof_record_ref`
+- per-artifact proof linkage lives in `ArtifactTrustDecisionRecord.proof_entry_ref`
+- PH1.J seam-exit populates per-artifact proof linkage without creating a second decision transport
+- later phases must not invent additional co-equal proof-link fields or treat turn-level proof linkage as a substitute for per-artifact proof-entry identity
+
 13. Proof visibility tiers:
 - Future PH1.GOV may read canonical trust-proof linkage and proof-entry identity only.
 - Future PH1.LAW may read canonical trust-proof linkage and proof-entry identity only.
