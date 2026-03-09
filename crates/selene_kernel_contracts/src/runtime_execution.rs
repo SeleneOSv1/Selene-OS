@@ -233,6 +233,9 @@ pub struct PlatformRuntimeContext {
     pub compatibility_status: ClientCompatibilityStatus,
     pub minimum_supported_client_version: Option<String>,
     pub attestation_ref: Option<String>,
+    pub capture_artifact_trust_verified: bool,
+    pub capture_artifact_observed_at_ns: Option<u64>,
+    pub capture_artifact_retention_deadline_ns: Option<u64>,
     pub requested_trigger: RuntimeEntryTrigger,
     pub trigger_policy: PlatformTriggerPolicy,
     pub trigger_allowed: bool,
@@ -272,6 +275,9 @@ impl PlatformRuntimeContext {
             compatibility_status,
             minimum_supported_client_version,
             attestation_ref,
+            capture_artifact_trust_verified: false,
+            capture_artifact_observed_at_ns: None,
+            capture_artifact_retention_deadline_ns: None,
             requested_trigger,
             trigger_policy,
             trigger_allowed,
@@ -339,6 +345,69 @@ impl Validate for PlatformRuntimeContext {
             &self.attestation_ref,
             128,
         )?;
+        if self.integrity_status == ClientIntegrityStatus::Attested
+            && self.attestation_ref.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "platform_runtime_context.attestation_ref",
+                reason: "must be present when integrity_status=ATTESTED",
+            });
+        }
+        if self.attestation_ref.is_some()
+            && self.integrity_status != ClientIntegrityStatus::Attested
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "platform_runtime_context.integrity_status",
+                reason: "must be ATTESTED when attestation_ref is present",
+            });
+        }
+        if self.capture_artifact_observed_at_ns.is_some()
+            != self.capture_artifact_retention_deadline_ns.is_some()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "platform_runtime_context.capture_artifact_retention_deadline_ns",
+                reason: "must be present whenever capture_artifact_observed_at_ns is present",
+            });
+        }
+        if let (Some(observed_at_ns), Some(retention_deadline_ns)) = (
+            self.capture_artifact_observed_at_ns,
+            self.capture_artifact_retention_deadline_ns,
+        ) {
+            if self.attestation_ref.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "platform_runtime_context.attestation_ref",
+                    reason: "must be present when capture artifact lifecycle metadata is recorded",
+                });
+            }
+            if observed_at_ns > retention_deadline_ns {
+                return Err(ContractViolation::InvalidValue {
+                    field: "platform_runtime_context.capture_artifact_retention_deadline_ns",
+                    reason: "must be >= capture_artifact_observed_at_ns",
+                });
+            }
+        }
+        if self.capture_artifact_trust_verified {
+            if self.integrity_status != ClientIntegrityStatus::Attested {
+                return Err(ContractViolation::InvalidValue {
+                    field: "platform_runtime_context.integrity_status",
+                    reason: "must be ATTESTED when capture_artifact_trust_verified=true",
+                });
+            }
+            if self.attestation_ref.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "platform_runtime_context.attestation_ref",
+                    reason: "must be present when capture_artifact_trust_verified=true",
+                });
+            }
+            if self.capture_artifact_observed_at_ns.is_none()
+                || self.capture_artifact_retention_deadline_ns.is_none()
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "platform_runtime_context.capture_artifact_retention_deadline_ns",
+                    reason: "must be present when capture_artifact_trust_verified=true",
+                });
+            }
+        }
 
         let expected_device_class = default_device_class_for_platform(self.platform_type);
         if self.device_class != expected_device_class {
@@ -1440,5 +1509,109 @@ impl Validate for RuntimeExecutionEnvelope {
             state.validate()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_platform_context() -> PlatformRuntimeContext {
+        PlatformRuntimeContext::default_for_platform(AppPlatform::Android)
+            .expect("default android platform context must be valid")
+    }
+
+    #[test]
+    fn at_runtime_execution_01_attested_integrity_requires_attestation_ref() {
+        let mut context = sample_platform_context();
+        context.integrity_status = ClientIntegrityStatus::Attested;
+
+        let err = context
+            .validate()
+            .expect_err("ATTESTED integrity posture must require attestation_ref");
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "platform_runtime_context.attestation_ref");
+                assert_eq!(reason, "must be present when integrity_status=ATTESTED");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_02_attestation_ref_requires_attested_integrity() {
+        let mut context = sample_platform_context();
+        context.integrity_status = ClientIntegrityStatus::IntegrityVerified;
+        context.attestation_ref = Some("attestation:android:1".to_string());
+
+        let err = context
+            .validate()
+            .expect_err("attestation_ref must require ATTESTED integrity posture");
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "platform_runtime_context.integrity_status");
+                assert_eq!(reason, "must be ATTESTED when attestation_ref is present");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_03_attested_integrity_with_attestation_ref_is_valid() {
+        let mut context = sample_platform_context();
+        context.integrity_status = ClientIntegrityStatus::Attested;
+        context.attestation_ref = Some("attestation:android:2".to_string());
+
+        context
+            .validate()
+            .expect("ATTESTED integrity posture with attestation_ref must validate");
+    }
+
+    #[test]
+    fn at_runtime_execution_04_capture_artifact_trust_requires_lifecycle_metadata() {
+        let mut context = sample_platform_context();
+        context.integrity_status = ClientIntegrityStatus::Attested;
+        context.attestation_ref = Some("attestation:android:3".to_string());
+        context.capture_artifact_trust_verified = true;
+
+        let err = context
+            .validate()
+            .expect_err("trusted capture artifact posture must require lifecycle metadata");
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "platform_runtime_context.capture_artifact_retention_deadline_ns"
+                );
+                assert_eq!(
+                    reason,
+                    "must be present when capture_artifact_trust_verified=true"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_05_capture_artifact_retention_deadline_must_follow_observed_at() {
+        let mut context = sample_platform_context();
+        context.integrity_status = ClientIntegrityStatus::Attested;
+        context.attestation_ref = Some("attestation:android:4".to_string());
+        context.capture_artifact_observed_at_ns = Some(10);
+        context.capture_artifact_retention_deadline_ns = Some(9);
+
+        let err = context
+            .validate()
+            .expect_err("capture artifact lifecycle deadline must not precede observed_at");
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "platform_runtime_context.capture_artifact_retention_deadline_ns"
+                );
+                assert_eq!(reason, "must be >= capture_artifact_observed_at_ns");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
     }
 }

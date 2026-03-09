@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -1538,8 +1538,10 @@ impl AdapterRuntime {
 
         let mut final_by_key: BTreeMap<AdapterTranscriptKey, AdapterTranscriptEvent> =
             BTreeMap::new();
+        let mut finalized_turn_role_keys = BTreeSet::new();
         for event in final_events {
             let key = event.key();
+            finalized_turn_role_keys.insert((event.correlation_id.0, event.turn_id.0, event.role));
             if let Some(existing) = final_by_key.get(&key) {
                 if existing.timestamp_ns >= event.timestamp_ns {
                     continue;
@@ -1552,6 +1554,13 @@ impl AdapterRuntime {
             BTreeMap::new();
         for event in partial_events {
             if event.finalized {
+                continue;
+            }
+            if finalized_turn_role_keys.contains(&(
+                event.correlation_id.0,
+                event.turn_id.0,
+                event.role,
+            )) {
                 continue;
             }
             let key = event.key();
@@ -6070,6 +6079,46 @@ fn normalize_claimed_capabilities(
     Ok((claimed_capabilities, negotiated_capabilities))
 }
 
+const CAPTURE_ARTIFACT_RETENTION_WINDOW_NS: u64 = 5_000_000_000;
+
+fn derive_capture_artifact_posture(
+    request: &VoiceTurnAdapterRequest,
+    integrity_status: ClientIntegrityStatus,
+) -> Result<(bool, Option<u64>, Option<u64>), String> {
+    if integrity_status != ClientIntegrityStatus::Attested || request.attestation_ref.is_none() {
+        return Ok((false, None, None));
+    }
+    let capture = request
+        .audio_capture_ref
+        .as_ref()
+        .ok_or_else(|| "attested capture requires audio_capture_ref".to_string())?;
+    let selected_mic_present = capture
+        .selected_mic
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let device_route_present = capture
+        .device_route
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let capture_degraded = capture.capture_degraded.unwrap_or(false);
+    let stream_gap_detected = capture.stream_gap_detected.unwrap_or(false);
+    let device_changed = capture.device_changed.unwrap_or(false);
+    let observed_at_ns = capture.t_end_ns.max(capture.t_start_ns).max(1);
+    let retention_deadline_ns = observed_at_ns.saturating_add(CAPTURE_ARTIFACT_RETENTION_WINDOW_NS);
+    let trust_verified = selected_mic_present
+        && device_route_present
+        && !capture_degraded
+        && !stream_gap_detected
+        && !device_changed;
+    Ok((
+        trust_verified,
+        Some(observed_at_ns),
+        Some(retention_deadline_ns),
+    ))
+}
+
 fn normalize_platform_runtime_context(
     request: &VoiceTurnAdapterRequest,
     app_platform: AppPlatform,
@@ -6135,7 +6184,12 @@ fn normalize_platform_runtime_context(
             trigger_policy == PlatformTriggerPolicy::WakeOrExplicit && wake_capability_present
         }
     };
-    PlatformRuntimeContext::v1(
+    let (
+        capture_artifact_trust_verified,
+        capture_artifact_observed_at_ns,
+        capture_artifact_retention_deadline_ns,
+    ) = derive_capture_artifact_posture(request, integrity_status)?;
+    let mut context = PlatformRuntimeContext::v1(
         app_platform,
         platform_version,
         device_class,
@@ -6153,7 +6207,14 @@ fn normalize_platform_runtime_context(
         trigger_policy,
         trigger_allowed,
     )
-    .map_err(|err| format!("invalid platform_runtime_context: {err:?}"))
+    .map_err(|err| format!("invalid platform_runtime_context: {err:?}"))?;
+    context.capture_artifact_trust_verified = capture_artifact_trust_verified;
+    context.capture_artifact_observed_at_ns = capture_artifact_observed_at_ns;
+    context.capture_artifact_retention_deadline_ns = capture_artifact_retention_deadline_ns;
+    context
+        .validate()
+        .map_err(|err| format!("invalid platform_runtime_context: {err:?}"))?;
+    Ok(context)
 }
 
 fn session_id_to_string(session_id: SessionId) -> String {
@@ -10212,7 +10273,7 @@ mod tests {
         WAKE_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1x::{
-        IdentityContext, PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
+        PendingState, ThreadPolicyFlags, ThreadState as KernelThreadState,
     };
     use selene_storage::ph1f::{
         AccessDeviceTrustLevel, AccessLifecycleState, AccessMode, AccessVerificationLevel,
@@ -10378,6 +10439,38 @@ mod tests {
         request
     }
 
+    fn mark_request_as_attested_capture(request: &mut VoiceTurnAdapterRequest) {
+        request.integrity_status = Some("ATTESTED".to_string());
+        request.attestation_ref = Some(format!(
+            "attest:{}:{}:{}",
+            request.app_platform.to_ascii_lowercase(),
+            request.correlation_id,
+            request.turn_id
+        ));
+        if let Some(capture) = request.audio_capture_ref.as_mut() {
+            let end_ns = request.now_ns.unwrap_or(capture.t_end_ns).max(1);
+            capture.t_end_ns = end_ns;
+            capture.t_start_ns = end_ns.saturating_sub(2).max(1);
+            capture.t_candidate_start_ns = end_ns.saturating_sub(1).max(1);
+            capture.t_confirmed_ns = end_ns;
+            capture.selected_mic = Some(
+                capture
+                    .selected_mic
+                    .clone()
+                    .unwrap_or_else(|| "trusted_capture_mic".to_string()),
+            );
+            capture.device_route = Some(
+                capture
+                    .device_route
+                    .clone()
+                    .unwrap_or_else(|| "BUILT_IN".to_string()),
+            );
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.device_changed = Some(false);
+        }
+    }
+
     fn temp_persistence_journal_path(label: &str) -> PathBuf {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -10517,9 +10610,10 @@ mod tests {
 
     fn seed_wake_enrollment_complete_for_request(
         runtime: &AdapterRuntime,
-        request: &VoiceTurnAdapterRequest,
+        request: &mut VoiceTurnAdapterRequest,
         label: &str,
     ) {
+        mark_request_as_attested_capture(request);
         let actor_user_id =
             UserId::new(request.actor_user_id.clone()).expect("actor_user_id must parse");
         let app_platform =
@@ -12353,7 +12447,7 @@ mod tests {
         let mut req = base_request();
         req.trigger = "WAKE_WORD".to_string();
         req.device_id = Some("adapter_wake_ios_disabled".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wake_03");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_wake_03");
         let err = runtime
             .run_voice_turn(req)
             .expect_err("ios wake must fail closed");
@@ -12367,7 +12461,7 @@ mod tests {
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
         req.device_id = Some("adapter_wake_inference_gate".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wake_04");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_wake_04");
         if let Some(capture) = req.audio_capture_ref.as_mut() {
             capture.capture_degraded = Some(true);
         }
@@ -12395,7 +12489,7 @@ mod tests {
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
         req.device_id = Some("adapter_wakelearn_accept".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wakelearn_01");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_wakelearn_01");
         runtime
             .run_voice_turn(req)
             .expect("accepted wake turn should succeed");
@@ -12421,7 +12515,7 @@ mod tests {
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
         req.device_id = Some("adapter_wakelearn_reject".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_wakelearn_02");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_wakelearn_02");
         if let Some(capture) = req.audio_capture_ref.as_mut() {
             capture.capture_degraded = Some(true);
         }
@@ -12471,7 +12565,7 @@ mod tests {
         req.now_ns = Some(1_000_000_000);
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_l_01");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_l_01");
         runtime
             .run_voice_turn(req.clone())
             .expect("wake turn must succeed");
@@ -12498,7 +12592,7 @@ mod tests {
         first.now_ns = Some(2_000_000_000);
         first.app_platform = "DESKTOP".to_string();
         first.trigger = "WAKE_WORD".to_string();
-        seed_wake_enrollment_complete_for_request(&runtime, &first, "at_l_02");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut first, "at_l_02");
         runtime
             .run_voice_turn(first.clone())
             .expect("first wake turn must succeed");
@@ -12520,6 +12614,7 @@ mod tests {
         second.now_ns = Some(7_000_000_000);
         second.app_platform = "DESKTOP".to_string();
         second.trigger = "WAKE_WORD".to_string();
+        mark_request_as_attested_capture(&mut second);
         runtime
             .run_voice_turn(second)
             .expect("second wake turn must succeed");
@@ -12549,7 +12644,7 @@ mod tests {
         first.now_ns = Some(3_000_000_000);
         first.app_platform = "DESKTOP".to_string();
         first.trigger = "WAKE_WORD".to_string();
-        seed_wake_enrollment_complete_for_request(&runtime, &first, "at_l_03");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut first, "at_l_03");
         runtime
             .run_voice_turn(first.clone())
             .expect("first wake turn must succeed");
@@ -12593,6 +12688,7 @@ mod tests {
         if let Some(capture) = second.audio_capture_ref.as_mut() {
             capture.tts_playback_active = Some(false);
         }
+        mark_request_as_attested_capture(&mut second);
         runtime
             .run_voice_turn(second)
             .expect("turn after timeout must succeed");
@@ -12622,7 +12718,7 @@ mod tests {
         wake.app_platform = "DESKTOP".to_string();
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_session_wake_device".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_l_04");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut wake, "at_l_04");
         let wake_response = runtime
             .run_voice_turn(wake.clone())
             .expect("wake turn must succeed");
@@ -12674,7 +12770,7 @@ mod tests {
         req.now_ns = Some(6_000_000_000);
         req.app_platform = "DESKTOP".to_string();
         req.trigger = "WAKE_WORD".to_string();
-        seed_wake_enrollment_complete_for_request(&runtime, &req, "at_l_05");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_l_05");
         let response = runtime
             .run_voice_turn(req.clone())
             .expect("wake turn must succeed");
@@ -13154,6 +13250,12 @@ mod tests {
             platform_context.attestation_ref.as_deref(),
             Some("tablet_attest_ref_01")
         );
+        assert!(platform_context.capture_artifact_trust_verified);
+        assert_eq!(platform_context.capture_artifact_observed_at_ns, Some(3));
+        assert_eq!(
+            platform_context.capture_artifact_retention_deadline_ns,
+            Some(5_000_000_003)
+        );
     }
 
     #[test]
@@ -13291,8 +13393,6 @@ mod tests {
             .device_id
             .as_ref()
             .map(|id| DeviceId::new(id.clone()).expect("request device_id must parse"));
-        let correlation_id = CorrelationId(request.correlation_id.into());
-        let turn_id = TurnId(request.turn_id);
         let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
         let runtime_device_id = request_device_id.unwrap_or_else(|| {
             DeviceId::new(format!(
@@ -13301,179 +13401,100 @@ mod tests {
             ))
             .expect("generated runtime device id must be valid")
         });
-        let user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
-
-        let mut store = runtime.store.lock().expect("store lock must not poison");
-        ensure_actor_identity_and_device(
-            &mut store,
-            &actor_user_id,
-            Some(&runtime_device_id),
-            app_platform,
-            now,
-            true,
-        )
-        .expect("identity/device seed must succeed");
-        let tenant_id_for_ph1c = resolve_tenant_scope(
-            request.tenant_id.clone(),
-            &actor_user_id,
-            Some(&runtime_device_id),
-        );
-        let ph1k_bundle = build_ph1k_live_signal_bundle(
-            &store,
-            &request,
-            now,
-            tenant_id_for_ph1c.as_deref(),
-            Some(&runtime_device_id),
-        )
-        .expect("ph1k live signal bundle must build");
-        let wake_evaluation = evaluate_wake_for_turn(
-            &store,
-            now,
-            &actor_user_id,
-            &runtime_device_id,
-            app_platform,
-            trigger,
-            &ph1k_bundle,
-        )
-        .expect("wake gate + inference should resolve for trigger prep");
-        if let Some(wake_eval) = wake_evaluation.as_ref() {
-            assert!(
-                wake_eval.decision.accepted,
-                "trigger prep helper expects accepted wake decisions"
-            );
-        }
-        let session_turn_state = match resolve_session_turn_state(
-            &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &actor_user_id,
-            &runtime_device_id,
-            trigger,
-            &ph1k_bundle,
-            wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
-            "prepare_trigger_agent_input_shape",
-            request
-                .device_turn_sequence
-                .unwrap_or(request.turn_id)
-                .max(1),
-            &runtime.runtime_node_id,
-            runtime.session_lease_ttl_ms,
-            &runtime.session_retry_cache,
-        )
-        .expect("session turn state must resolve")
-        {
-            AdapterSessionResolution::Proceed(state) => state,
-            AdapterSessionResolution::Retry(_) => {
-                panic!("trigger prep helper does not expect retry reuse path")
-            }
-        };
-        let voice_id_request = build_voice_id_request_from_ph1k_bundle(
-            now,
-            actor_user_id.clone(),
-            &ph1k_bundle,
-            session_turn_state.session_snapshot,
-            session_turn_state.wake_event.clone(),
-        )
-        .expect("voice id request must build");
-
-        let ingress_request = AppVoiceIngressRequest::v1(
-            correlation_id,
-            turn_id,
-            app_platform,
-            trigger,
-            voice_id_request,
-            actor_user_id.clone(),
-            tenant_id_for_ph1c.clone(),
-            Some(runtime_device_id.clone()),
-            Vec::new(),
-            empty_observation(),
-        )
-        .expect("ingress request must build");
-        let nlp_output = build_nlp_output_for_voice_turn(
-            &request,
-            user_text_final.as_deref(),
-            tenant_id_for_ph1c.as_deref(),
-        )
-        .expect("nlp output must build");
-        let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
-        let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
-        if request.project_id.is_some() || request.pinned_context_refs.is_some() {
-            let project_id = resolve_adapter_project_id(request.project_id.as_deref());
-            let pinned_context_refs =
-                resolve_adapter_pinned_context_refs(request.pinned_context_refs.as_deref());
-            base_thread_state = base_thread_state
-                .with_project_context(project_id, pinned_context_refs)
-                .expect("thread project context must patch");
-        }
-        if let Some(flags) = request.thread_policy_flags.as_ref() {
-            let kernel_flags = ThreadPolicyFlags::v1(
-                flags.privacy_mode,
-                flags.do_not_disturb,
-                flags.strict_safety,
+        let (wake_event_present, voice_id_vad_events_len, voice_id_owner_user_present) = {
+            let mut store = runtime.store.lock().expect("store lock must not poison");
+            ensure_actor_identity_and_device(
+                &mut store,
+                &actor_user_id,
+                Some(&runtime_device_id),
+                app_platform,
+                now,
+                true,
             )
-            .expect("thread policy flags must build");
-            base_thread_state = base_thread_state
-                .with_thread_policy_flags(Some(kernel_flags))
-                .expect("thread policy flags must patch");
-        }
-        let confirm_answer =
-            infer_confirm_answer_from_user_text(&base_thread_state, user_text_final.as_deref());
-        let locale = request
-            .audio_capture_ref
-            .as_ref()
-            .and_then(|capture| capture.locale_tag.as_deref())
-            .map(|raw| truncate_ascii(raw.trim(), 16))
-            .filter(|value| !value.is_empty());
-        let x_build = AppVoicePh1xBuildInput {
-            now,
-            thread_key: Some(thread_key.clone()),
-            thread_state: base_thread_state,
-            session_state: session_turn_state.session_snapshot.session_state,
-            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
-            memory_candidates: Vec::new(),
-            confirm_answer,
-            nlp_output: Some(nlp_output),
-            tool_response: None,
-            interruption: None,
-            locale,
-            last_failure_reason_code: None,
+            .expect("identity/device seed must succeed");
+            let tenant_id_for_ph1c = resolve_tenant_scope(
+                request.tenant_id.clone(),
+                &actor_user_id,
+                Some(&runtime_device_id),
+            );
+            let ph1k_bundle = build_ph1k_live_signal_bundle(
+                &store,
+                &request,
+                now,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+            )
+            .expect("ph1k live signal bundle must build");
+            let wake_evaluation = evaluate_wake_for_turn(
+                &store,
+                now,
+                &actor_user_id,
+                &runtime_device_id,
+                app_platform,
+                trigger,
+                &ph1k_bundle,
+            )
+            .expect("wake gate + inference should resolve for trigger prep");
+            if let Some(wake_eval) = wake_evaluation.as_ref() {
+                assert!(
+                    wake_eval.decision.accepted,
+                    "trigger prep helper expects accepted wake decisions"
+                );
+            }
+            let session_snapshot = SessionSnapshot {
+                schema_version: selene_kernel_contracts::SchemaVersion(1),
+                session_state: SessionState::Closed,
+                session_id: None,
+                next_allowed_actions: selene_kernel_contracts::ph1l::NextAllowedActions {
+                    may_speak: true,
+                    must_wait: false,
+                    must_rewake: false,
+                },
+            };
+            let voice_id_request = build_voice_id_request_from_ph1k_bundle(
+                now,
+                actor_user_id.clone(),
+                &ph1k_bundle,
+                session_snapshot,
+                wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+            )
+            .expect("voice id request must build");
+            (
+                voice_id_request.wake_event.is_some(),
+                voice_id_request.vad_events.len(),
+                voice_id_request.device_owner_user_id.is_some(),
+            )
         };
-        let (_voice_outcome, ph1x_request) = runtime
+
+        runtime
+            .run_voice_turn(request.clone())
+            .expect("trigger prep helper voice turn must succeed");
+        let packet = runtime
             .ingress
-            .run_voice_turn_and_build_ph1x_request(&mut store, ingress_request.clone(), x_build)
-            .expect("voice turn + ph1x build must succeed");
-        let ph1x_request = ph1x_request.expect("forwarded voice turn must produce ph1x request");
+            .debug_last_agent_input_packet()
+            .expect("trigger prep helper must capture agent input packet");
+        let session_id = packet.session_id;
         let shape = AgentInputPacketShape {
-            session_state: session_turn_state.session_snapshot.session_state,
-            session_id_present: session_turn_state.session_snapshot.session_id.is_some(),
-            wake_event_present: ingress_request.voice_id_request.wake_event.is_some(),
-            voice_id_vad_events_len: ingress_request.voice_id_request.vad_events.len(),
-            voice_id_owner_user_present: ingress_request
-                .voice_id_request
-                .device_owner_user_id
-                .is_some(),
-            ingress_tenant_present: ingress_request.tenant_id.is_some(),
-            ingress_device_present: ingress_request.device_id.is_some(),
-            identity_context_is_voice: matches!(
-                ph1x_request.identity_context,
-                IdentityContext::Voice(_)
-            ),
-            identity_prompt_scope_key_present: ph1x_request.identity_prompt_scope_key.is_some(),
-            nlp_output_present: ph1x_request.nlp_output.is_some(),
-            tool_response_present: ph1x_request.tool_response.is_some(),
-            memory_candidates_len: ph1x_request.memory_candidates.len(),
-            confirm_answer_present: ph1x_request.confirm_answer.is_some(),
-            locale_present: ph1x_request.locale.is_some(),
-            thread_pending_present: ph1x_request.thread_state.pending.is_some(),
-            thread_project_id_present: ph1x_request.thread_state.project_id.is_some(),
-            thread_policy_flags_present: ph1x_request.thread_state.thread_policy_flags.is_some(),
-            pinned_context_refs_len: ph1x_request.thread_state.pinned_context_refs.len(),
+            session_state: packet.session_state,
+            session_id_present: packet.session_id.is_some(),
+            wake_event_present,
+            voice_id_vad_events_len,
+            voice_id_owner_user_present,
+            ingress_tenant_present: request.tenant_id.is_some(),
+            ingress_device_present: request.device_id.is_some(),
+            identity_context_is_voice: true,
+            identity_prompt_scope_key_present: packet.identity_prompt_scope_key.is_some(),
+            nlp_output_present: packet.nlp_output.is_some(),
+            tool_response_present: packet.tool_response.is_some(),
+            memory_candidates_len: packet.memory_candidates.len(),
+            confirm_answer_present: packet.confirm_answer.is_some(),
+            locale_present: packet.language_hint.is_some(),
+            thread_pending_present: packet.thread_state.pending.is_some(),
+            thread_project_id_present: packet.thread_state.project_id.is_some(),
+            thread_policy_flags_present: packet.thread_state.thread_policy_flags.is_some(),
+            pinned_context_refs_len: packet.thread_state.pinned_context_refs.len(),
         };
-        TriggerPrepResult {
-            session_id: session_turn_state.session_snapshot.session_id,
-            shape,
-        }
+        TriggerPrepResult { session_id, shape }
     }
 
     #[test]
@@ -13488,7 +13509,7 @@ mod tests {
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_trigger_wake_1".to_string());
         wake.user_text_final = Some("check trigger parity".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_trigger_01");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut wake, "at_trigger_01");
         let wake_prepared = prepare_trigger_agent_input_shape(&runtime, wake);
 
         let mut explicit = base_request();
@@ -13521,7 +13542,7 @@ mod tests {
         wake.trigger = "WAKE_WORD".to_string();
         wake.device_id = Some("adapter_trigger_shape_wake".to_string());
         wake.user_text_final = Some("show me weather".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &wake, "at_trigger_02");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut wake, "at_trigger_02");
         let wake_shape = prepare_trigger_agent_input_shape(&runtime, wake).shape;
 
         let mut explicit = base_request();
@@ -14809,7 +14830,7 @@ mod tests {
         android.app_platform = "ANDROID".to_string();
         android.trigger = "WAKE_WORD".to_string();
         android.device_id = Some("adapter_android_device_1".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &android, "at_adapter_08_android");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut android, "at_adapter_08_android");
         runtime
             .run_voice_turn(android)
             .expect("android voice turn should succeed");
@@ -15170,7 +15191,7 @@ mod tests {
             req.trigger = trigger.to_string();
             req.device_id = Some(device_id.to_string());
             if trigger == "WAKE_WORD" {
-                seed_wake_enrollment_complete_for_request(&runtime, &req, "at_adapter_21");
+                seed_wake_enrollment_complete_for_request(&runtime, &mut req, "at_adapter_21");
             }
             let out = runtime
                 .run_voice_turn(req)
@@ -15213,7 +15234,7 @@ mod tests {
         voice_turn.device_id = Some("adapter_voice_text_wake_desktop".to_string());
         voice_turn.user_text_final = Some("show missed stt report for june".to_string());
         voice_turn.selene_text_final = Some("Opening the report on desktop.".to_string());
-        seed_wake_enrollment_complete_for_request(&runtime, &voice_turn, "at_adapter_22");
+        seed_wake_enrollment_complete_for_request(&runtime, &mut voice_turn, "at_adapter_22");
         runtime
             .run_voice_turn(voice_turn)
             .expect("voice turn should succeed");

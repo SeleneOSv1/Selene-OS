@@ -33,7 +33,8 @@ use selene_kernel_contracts::ph1selfheal::{
 };
 use selene_kernel_contracts::ph1vision::VisualSourceKind;
 use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+    AdmissionState, ClientIntegrityStatus, DeviceCapability, PlatformRuntimeContext,
+    RuntimeEntryTrigger, RuntimeExecutionEnvelope,
 };
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawEvaluationContext, RuntimeLawLearningInput, RuntimeLawOverrideState,
@@ -561,6 +562,129 @@ fn app_platform_from_os_voice_platform(platform: OsVoicePlatform) -> AppPlatform
         OsVoicePlatform::Tablet => AppPlatform::Tablet,
         OsVoicePlatform::Desktop => AppPlatform::Desktop,
     }
+}
+
+fn runtime_entry_trigger_from_os_voice_trigger(trigger: OsVoiceTrigger) -> RuntimeEntryTrigger {
+    match trigger {
+        OsVoiceTrigger::WakeWord => RuntimeEntryTrigger::WakeWord,
+        OsVoiceTrigger::Explicit => RuntimeEntryTrigger::Explicit,
+    }
+}
+
+fn validate_voice_turn_platform_governance(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    voice_context: OsVoiceTurnContext,
+    verification_now: MonotonicTimeNs,
+) -> Result<(), ContractViolation> {
+    let expected_platform = app_platform_from_os_voice_platform(voice_context.platform);
+    if runtime_execution_envelope.platform != expected_platform {
+        return Err(ContractViolation::InvalidValue {
+            field: "os_voice_live_turn_input.runtime_execution_envelope.platform",
+            reason:
+                "must match os_voice_live_turn_input.top_level_turn_input.voice_context.platform",
+        });
+    }
+    if runtime_execution_envelope.platform_context.platform_type != expected_platform {
+        return Err(ContractViolation::InvalidValue {
+            field:
+                "os_voice_live_turn_input.runtime_execution_envelope.platform_context.platform_type",
+            reason: "must match canonical platform for voice_context",
+        });
+    }
+
+    let expected_trigger = runtime_entry_trigger_from_os_voice_trigger(voice_context.trigger);
+    if runtime_execution_envelope
+        .platform_context
+        .requested_trigger
+        != expected_trigger
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.requested_trigger",
+            reason: "must match os_voice_live_turn_input.top_level_turn_input.voice_context.trigger",
+        });
+    }
+    if !runtime_execution_envelope
+        .platform_context
+        .negotiated_capabilities
+        .contains(&DeviceCapability::Microphone)
+    {
+        return Err(ContractViolation::InvalidValue {
+            field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.negotiated_capabilities",
+            reason: "voice turns require negotiated MICROPHONE capability",
+        });
+    }
+    if !runtime_execution_envelope.platform_context.trigger_allowed {
+        return Err(ContractViolation::InvalidValue {
+            field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.trigger_allowed",
+            reason: "requested trigger is denied by canonical PH1.OS platform policy",
+        });
+    }
+    if voice_context.trigger.wake_stage_required() {
+        if !runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.negotiated_capabilities",
+                reason: "wake trigger requires negotiated WAKE_WORD capability",
+            });
+        }
+        if runtime_execution_envelope.platform_context.integrity_status
+            != ClientIntegrityStatus::Attested
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.integrity_status",
+                reason: "wake trigger requires ATTESTED capture integrity posture",
+            });
+        }
+        if runtime_execution_envelope
+            .platform_context
+            .attestation_ref
+            .is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.attestation_ref",
+                reason: "wake trigger requires capture-bundle attestation",
+            });
+        }
+        if !runtime_execution_envelope
+            .platform_context
+            .capture_artifact_trust_verified
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_trust_verified",
+                reason: "wake trigger requires trusted capture artifact verification",
+            });
+        }
+        let observed_at_ns = runtime_execution_envelope
+            .platform_context
+            .capture_artifact_observed_at_ns
+            .ok_or(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_observed_at_ns",
+                reason: "wake trigger requires capture artifact observation timestamp",
+            })?;
+        let retention_deadline_ns = runtime_execution_envelope
+            .platform_context
+            .capture_artifact_retention_deadline_ns
+            .ok_or(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_retention_deadline_ns",
+                reason: "wake trigger requires capture artifact retention deadline",
+            })?;
+        if observed_at_ns > verification_now.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_observed_at_ns",
+                reason: "must not be in the future of verification time",
+            });
+        }
+        if retention_deadline_ns < verification_now.0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_retention_deadline_ns",
+                reason: "wake trigger capture artifact exceeded retention deadline",
+            });
+        }
+    }
+    Ok(())
 }
 
 fn fallback_runtime_execution_envelope_for_os_voice_turn(
@@ -1248,6 +1372,19 @@ impl OsVoiceLiveTurnInput {
         enrolled_speakers: Vec<EngineEnrolledSpeaker>,
         observation: EngineVoiceIdObservation,
     ) -> Result<Self, ContractViolation> {
+        top_level_turn_input.validate()?;
+        if top_level_turn_input.path != OsTopLevelTurnPath::Voice {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.top_level_turn_input.path",
+                reason: "must be VOICE",
+            });
+        }
+        if top_level_turn_input.voice_context.is_none() {
+            return Err(ContractViolation::InvalidValue {
+                field: "os_voice_live_turn_input.top_level_turn_input.voice_context",
+                reason: "VOICE path requires voice_context",
+            });
+        }
         let runtime_execution_envelope = fallback_runtime_execution_envelope_for_os_voice_turn(
             &top_level_turn_input,
             &voice_id_request,
@@ -1312,6 +1449,14 @@ impl OsVoiceLiveTurnInput {
                 });
             }
         }
+        let voice_context = top_level_turn_input
+            .voice_context
+            .expect("validated presence above");
+        validate_voice_turn_platform_governance(
+            &runtime_execution_envelope,
+            voice_context,
+            voice_id_request.now,
+        )?;
         Ok(Self {
             top_level_turn_input,
             runtime_execution_envelope,
@@ -3493,6 +3638,61 @@ mod tests {
         ))
     }
 
+    fn voice_context_ios_wake() -> Option<OsVoiceTurnContext> {
+        Some(OsVoiceTurnContext::v1(
+            OsVoicePlatform::Ios,
+            OsVoiceTrigger::WakeWord,
+        ))
+    }
+
+    fn runtime_envelope_for_voice_context(
+        actor_user_id: &UserId,
+        device_id: &DeviceId,
+        voice_context: OsVoiceTurnContext,
+    ) -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            "req:os_voice_live".to_string(),
+            "trace:os_voice_live".to_string(),
+            "idem:os_voice_live".to_string(),
+            actor_user_id.clone(),
+            device_id.clone(),
+            app_platform_from_os_voice_platform(voice_context.platform),
+            PlatformRuntimeContext::default_for_platform_and_trigger(
+                app_platform_from_os_voice_platform(voice_context.platform),
+                runtime_entry_trigger_from_os_voice_trigger(voice_context.trigger),
+            )
+            .expect("platform context must build"),
+            Some(SessionId(1)),
+            TurnId(8801),
+            Some(1),
+            AdmissionState::ExecutionAdmitted,
+            None,
+        )
+        .expect("runtime execution envelope must build")
+    }
+
+    fn android_attested_wake_runtime_envelope(
+        actor_user_id: &UserId,
+        device_id: &DeviceId,
+    ) -> RuntimeExecutionEnvelope {
+        let mut envelope = runtime_envelope_for_voice_context(
+            actor_user_id,
+            device_id,
+            voice_context_android_wake().expect("android wake voice context must exist"),
+        );
+        envelope.platform_context.integrity_status = ClientIntegrityStatus::Attested;
+        envelope.platform_context.attestation_ref = Some("attestation:android:wake:1".to_string());
+        envelope.platform_context.capture_artifact_trust_verified = true;
+        envelope.platform_context.capture_artifact_observed_at_ns = Some(2);
+        envelope
+            .platform_context
+            .capture_artifact_retention_deadline_ns = Some(20);
+        envelope
+            .validate()
+            .expect("attested android wake envelope must validate");
+        envelope
+    }
+
     fn always_on_voice_sequence_wake() -> Vec<String> {
         vec![
             "PH1.K".to_string(),
@@ -4403,6 +4603,334 @@ mod tests {
         assert_ne!(key_a, key_c);
         assert_ne!(key_a, key_d);
         assert!(key_a.len() <= 192);
+    }
+
+    #[test]
+    fn at_os_22c_voice_live_entrypoint_rejects_disallowed_ios_wake_trigger() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_4").unwrap();
+        let voice_context = voice_context_ios_wake().expect("ios wake voice context must exist");
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_envelope_for_voice_context(&actor_user_id, &device_id, voice_context),
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("iOS wake trigger must be rejected by PH1.OS trigger governance");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_turn_input.runtime_execution_envelope.platform_context.trigger_allowed"
+                );
+                assert_eq!(
+                    reason,
+                    "requested trigger is denied by canonical PH1.OS platform policy"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_22d_voice_live_entrypoint_rejects_android_wake_without_attestation() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_5").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_envelope_for_voice_context(&actor_user_id, &device_id, voice_context),
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("android wake must require attested capture integrity");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_turn_input.runtime_execution_envelope.platform_context.integrity_status"
+                );
+                assert_eq!(
+                    reason,
+                    "wake trigger requires ATTESTED capture integrity posture"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_22e_voice_live_entrypoint_rejects_android_voice_without_microphone() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_6").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+        let mut runtime_execution_envelope =
+            android_attested_wake_runtime_envelope(&actor_user_id, &device_id);
+        runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .retain(|capability| *capability != DeviceCapability::Microphone);
+        runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .retain(|capability| *capability != DeviceCapability::Microphone);
+        runtime_execution_envelope
+            .validate()
+            .expect("android wake envelope without microphone must remain contract-valid");
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_execution_envelope,
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("voice live path must require microphone capability");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_turn_input.runtime_execution_envelope.platform_context.negotiated_capabilities"
+                );
+                assert_eq!(
+                    reason,
+                    "voice turns require negotiated MICROPHONE capability"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_22f_voice_live_entrypoint_accepts_attested_android_wake() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_7").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            android_attested_wake_runtime_envelope(&actor_user_id, &device_id),
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id.clone()),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect("attested android wake path must be accepted");
+
+        assert_eq!(input.actor_user_id, actor_user_id);
+        assert_eq!(input.device_id, Some(device_id));
+        assert_eq!(
+            input.runtime_execution_envelope.platform,
+            AppPlatform::Android
+        );
+        assert_eq!(
+            input
+                .runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
+            RuntimeEntryTrigger::WakeWord
+        );
+        assert_eq!(
+            input
+                .runtime_execution_envelope
+                .platform_context
+                .integrity_status,
+            ClientIntegrityStatus::Attested
+        );
+    }
+
+    #[test]
+    fn at_os_22g_voice_live_entrypoint_rejects_android_wake_without_trusted_capture_artifact() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_8").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+        let mut runtime_execution_envelope =
+            android_attested_wake_runtime_envelope(&actor_user_id, &device_id);
+        runtime_execution_envelope
+            .platform_context
+            .capture_artifact_trust_verified = false;
+        runtime_execution_envelope
+            .validate()
+            .expect("untrusted capture artifact wake envelope must remain contract-valid");
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_execution_envelope,
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("android wake must require trusted capture artifact verification");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_trust_verified"
+                );
+                assert_eq!(
+                    reason,
+                    "wake trigger requires trusted capture artifact verification"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_os_22h_voice_live_entrypoint_rejects_android_wake_with_expired_capture_artifact() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_9").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+        let mut runtime_execution_envelope =
+            android_attested_wake_runtime_envelope(&actor_user_id, &device_id);
+        runtime_execution_envelope
+            .platform_context
+            .capture_artifact_retention_deadline_ns = Some(2);
+        runtime_execution_envelope
+            .validate()
+            .expect("expired retention wake envelope must remain contract-valid");
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_execution_envelope,
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("android wake must reject expired capture artifacts");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "os_voice_live_turn_input.runtime_execution_envelope.platform_context.capture_artifact_retention_deadline_ns"
+                );
+                assert_eq!(
+                    reason,
+                    "wake trigger capture artifact exceeded retention deadline"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
