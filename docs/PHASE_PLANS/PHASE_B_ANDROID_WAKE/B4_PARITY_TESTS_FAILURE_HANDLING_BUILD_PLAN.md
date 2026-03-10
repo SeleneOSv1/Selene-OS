@@ -52,7 +52,57 @@ B) CURRENT TEST / FAILURE-HANDLING STATE
 - performance/battery acceptance verification. CURRENT: no acceptance suite exists. TARGET: bounded churn, route stability, retry suppression, and wake-lock boundedness verification. GAP: missing.
 - parity acceptance verification. CURRENT: parity states are defined in B1/B2 only. TARGET: tests proving lawful parity, explicit-only fallback, and blocked posture are surfaced correctly. GAP: missing.
 
+**WORLD-CLASS UPGRADE — Canonical B4 Authority-Boundary Reminder**
+- B4 verifies B2 and B3 behavior only.
+- Android remains non-authoritative.
+- Section 04 remains the only first-time authoritative verifier.
+- PH1.J, PH1.GOV, and PH1.LAW remain the canonical downstream paths.
+- B4 tests must never normalize Android-local events, receipts, legality outputs, or operational posture into trust truth, proof truth, or enforcement truth.
+
 C) CANONICAL B4 TEST DESIGN
+**WORLD-CLASS UPGRADE — Test Environment Tier Matrix**
+| Test tier | What it is allowed to prove | What it cannot prove |
+| --- | --- | --- |
+| `HOST_UNIT_TIER` | local enum/state validity, failure mapping, retry/cooldown classification, freshness and invalidation logic | real Android runtime legality, actual FGS behavior, real route churn |
+| `CONTRACT_SERIALIZATION_TIER` | contract field validity, context fingerprint linkage, receipt/event shape stability, fixture integrity | runtime lawfulness, battery behavior, real process death |
+| `INTEGRATION_TIER` | adapter/ingress/PH1.OS/Section 04 seam correctness, non-authoritative carriage, forbidden-local-persistence gates | physical device route behavior, OEM variance |
+| `ANDROID_RUNTIME_SIMULATION_TIER` | Android-local runtime coordination, restart/restoration orchestration, route/contention/silence state transitions under controlled simulation | physical hardware timing, OEM behavior, real FGS restrictions |
+| `EMULATOR_TIER` | targetSdk/API posture, visible-state transitions, notification/FGS behavior within emulator limits | OEM divergence, real Bluetooth/audio-route instability, real battery policy behavior |
+| `PHYSICAL_DEVICE_TIER` | battery/Doze/restricted-app posture, real route churn, audio contention, silent-audio responsiveness, real restart behavior | broad OEM generalization from one device family |
+| `OEM_VARIANCE_TIER` | conservative fallback behavior under vendor differences and uncertain platform behavior | authority/proof truth, canonical policy exceptions |
+
+**WORLD-CLASS UPGRADE — Requirements-to-Tests Traceability**
+- Every critical B2 contract and every critical B3 wiring rule must map to one or more B4 tests.
+- Untraced B2/B3 behavior is not considered verified.
+- Minimum traceability identifiers:
+- `contract_id`
+- `wiring_rule_id`
+- `test_case_id`
+- `fixture_id`
+- `acceptance_gate_id`
+
+**WORLD-CLASS UPGRADE — Android Platform-Law Scenario Matrix**
+| Platform row | targetSdk-sensitive posture | trigger source | visibility state | FGS start context | expected legality posture | expected fallback | expected receipt/event behavior |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `ANDROID_12_VISIBLE_ACTION` | target SDK current for Android 12 behavior | `VISIBLE_UI_ACTION` | visible foreground UI | visible UI start | `WAKE_ELIGIBLE` or lawful explicit capture | `EXPLICIT_ONLY` if capture legality fails | readiness receipt plus start or fallback receipt |
+| `ANDROID_13_NOTIFICATION_ACTION` | target SDK current for Android 13 behavior | `NOTIFICATION_ACTION` | visible notification-driven path | visible notification action start | lawful only if user-visible path exists | `EXPLICIT_ONLY` otherwise | notification-action legality receipt plus fallback/posture receipt |
+| `ANDROID_14_WAKE_PHRASE_BG` | target SDK current for Android 14 behavior | `WAKE_PHRASE` | background | background dormant start | `BLOCKED` unless a narrower lawful path is proven by B2 | `EXPLICIT_ONLY` only if later visible reentry is lawful | blocked legality receipt |
+| `ANDROID_14_FGS_MIC_PATH` | target SDK current for Android 14 behavior | any capture-intent path | visible foreground | microphone FGS start | lawful only with microphone FGS type and visible user state | `EXPLICIT_ONLY` on visibility loss or illegal start | FGS legality receipt plus capture or fallback receipt |
+| `ANDROID_15_BOOT_RESTORE` | target SDK current for Android 15 behavior | `BOOT_RESTORE` | boot-restore only | boot context | `BLOCKED` for direct mic start | later `EXPLICIT_ONLY` path only | restoration receipt and blocked legality receipt |
+| `TARGET_SDK_HIGHER_THAN_PLATFORM_ROW` | target SDK imposes stricter posture than older runtime assumptions | any source | any visibility | any start context | stricter rule wins | conservative fallback | legality receipt tied to target SDK and context fingerprint |
+
+**WORLD-CLASS UPGRADE — Deterministic Receipt/Event Fixture Corpus**
+- B4 requires stable fixtures for:
+- readiness receipts
+- invalidated readiness receipts
+- boot-restoration receipts
+- route-instability receipts
+- silent-audio receipts
+- contention receipts
+- explicit-only entry receipts
+- foreground-loss downgrade receipts
+- B4 must verify from stable fixtures and controlled fixture corpora, not from ad hoc runtime reconstruction alone.
+
 1. B2 contract tests
 - verify enum/state validity for legality, readiness, recoverability, user-action sets, retry suppression, cooldown classes, context fingerprint linkage, receipt freshness, and parity classes
 - verify invalid contract combinations are rejected or classified deterministically
@@ -95,6 +145,71 @@ C) CANONICAL B4 TEST DESIGN
 - no B5 implementation
 - no Android trust/proof/enforcement authority behavior because that must never exist
 
+**WORLD-CLASS UPGRADE — Route/Contention/Silence Scenario Corpus**
+- B4 must include a deterministic scenario corpus for:
+- Bluetooth route churn
+- wired headset transitions
+- route loss
+- silent-audio delivery
+- phone-call contention
+- competing recorder contention
+- privacy-sensitive competing source
+- The corpus must verify deterministic outcome, receipt/event emission, suppression outcome, and fallback posture.
+
+**WORLD-CLASS UPGRADE — Restart/Restoration and Stale-Receipt Scenario Corpus**
+- B4 must include explicit scenario coverage for:
+- process death
+- restart before fresh readiness
+- stale receipt reuse attempt
+- restart with changed legality context
+- boot restoration without lawful capture start
+- Each scenario must verify restoration receipt behavior, legality recomputation, explicit-only default where required, and no hidden resume path.
+
+**WORLD-CLASS UPGRADE — Managed-Device, Work-Profile, and Admin Restriction Scenarios**
+- B4 must explicitly verify:
+- managed-device restriction present
+- work-profile restriction present
+- admin-enforced microphone disablement
+- `POLICY_BLOCKED` outcomes
+- These scenarios must remain operational/platform posture verification only and may not become trust/proof/enforcement truth.
+
+**WORLD-CLASS UPGRADE — Phase A Non-Regression Invariant Gate**
+- B4 must formally prove:
+- no Android output becomes `artifact_trust_state` truth
+- no Android output becomes `ArtifactTrustDecisionRecord`
+- no Android output becomes `ArtifactTrustProofEntry`
+- no Android output becomes `proof_entry_ref` or `proof_record_ref` truth
+- adapter remains carry-only
+- PH1.OS remains normalize-only
+- This is a gate, not an optional regression check.
+
+**WORLD-CLASS UPGRADE — Forbidden-Local-Persistence Regression Gate**
+- B4 must prove forbidden local persistence rules remain intact.
+- Canonical Phase A trust, proof, and enforcement objects must never leak into device-side persistence.
+- This gate is separate from general non-regression because local persistence drift is a distinct failure mode.
+
+**WORLD-CLASS UPGRADE — Observability and Evidence Expectations**
+- B4 must verify minimum operational evidence quality for Android receipts and events:
+- correlation IDs or refs
+- `context_fingerprint` linkage
+- trigger source
+- fallback outcome
+- suppression outcome
+- route/contention visibility
+- This remains operational evidence only and may not be promoted to proof truth.
+
+**WORLD-CLASS UPGRADE — Emulator vs Device Variance Handling**
+- Emulator results are sufficient for contract shape, many legality branches, visible-state transitions, and basic restart semantics.
+- Physical devices are required later for real route churn, Bluetooth behavior, silent-audio responsiveness, battery policy behavior, and OEM variance.
+- OEM or device-specific behavior must not be inferred from emulator success.
+
+**WORLD-CLASS UPGRADE — Explicit-Only UX Surfacing Verification**
+- B4 must verify:
+- `EXPLICIT_ONLY` always surfaces a visible user-legible path
+- no hidden background explicit-only pseudo-mode exists
+- explicit-only entry emits an operational receipt
+- This is test scope, not product copy scope.
+
 D) FAILURE-HANDLING MATRIX
 | Failure / condition | Resulting posture | Recoverability class | User action requirement | Receipt / event expectation | Retry policy | Explicit-only allowed | Block required |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -112,6 +227,27 @@ D) FAILURE-HANDLING MATRIX
 | OEM uncertainty | `EXPLICIT_ONLY` or `BLOCKED` | `HARD_BLOCKED_UNDER_CURRENT_PLATFORM_LAW` | `ACKNOWLEDGE_EXPLICIT_ONLY_MODE` where applicable | OEM uncertainty receipt | retry forbidden unless context changes | YES or NO depending contract | sometimes |
 | stale readiness receipt | `EXPLICIT_ONLY` until refreshed | `RECOVERABLE_BY_POLICY_CHANGE` | `NO_USER_ACTION_REQUIRED` unless another blocker exists | stale-receipt invalidation receipt | recompute required, not continuous retry | YES | NO |
 | restart before fresh readiness | `EXPLICIT_ONLY` | `RECOVERABLE_BY_POLICY_CHANGE` | `NO_USER_ACTION_REQUIRED` unless another blocker exists | restoration receipt plus freshness-missing receipt | no hidden resume retry | YES | NO |
+
+**WORLD-CLASS UPGRADE — Failure-Oracle Matrix**
+- Each B4 failure-path test must assert the full oracle:
+- resulting posture
+- recoverability class
+- user action requirement
+- receipt or event emitted
+- retry policy
+- whether explicit-only is allowed
+- whether block is mandatory
+- The matrix above is the canonical verification oracle and not advisory prose.
+
+**WORLD-CLASS UPGRADE — Retry Suppression Verification Matrix**
+| Context class | Retry allowed | Retry suppressed | Retry cooldown | Retry forbidden |
+| --- | --- | --- | --- | --- |
+| lawful recoverable operational path | YES where B2/B3 allow it | NO | YES if cooldown class applies | NO |
+| stable blocked legality context | NO | YES | NO | YES |
+| background illegal path | NO | YES | NO | YES |
+| boot illegal path | NO | YES | NO | YES |
+| restricted-app or battery-policy temporary path | YES only if B2/B3 permit later retry | YES during suppression window | YES | NO |
+| route/contention instability | YES only under bounded retry policy | YES during debounce/suppression window | YES | NO |
 
 E) TEST CLASS MAP
 - unit
@@ -142,6 +278,11 @@ E) TEST CLASS MAP
 - assert no illegal boot retry
 - assert no duplicate upstream spam under churn
 
+**WORLD-CLASS UPGRADE — No-Flaky / No-Rerun Rule for B4**
+- B4 cannot rely on rerun-to-pass behavior.
+- Flaky tests are closure failures for B4-quality readiness.
+- Unstable illegal-context tests are not acceptable evidence.
+
 F) PERFORMANCE / BATTERY ACCEPTANCE MODEL
 - receipt churn
 - verify recomputation stays within bounded churn classes and does not reevaluate continuously under stable blocked contexts
@@ -159,6 +300,19 @@ F) PERFORMANCE / BATTERY ACCEPTANCE MODEL
 - B4 should require acceptance classes such as `LOW_CHURN`, `MEDIUM_CHURN`, and `UNACCEPTABLE_CHURN`
 - B4 should verify lawful fallback is cheaper than repeated illegal startup attempts
 - B4 should verify route instability does not create repeated upstream spam or hidden battery drain
+
+**WORLD-CLASS UPGRADE — Quantitative Battery and Churn Acceptance Layer**
+- B4 must classify battery/churn posture with acceptance labels:
+- `PASS`
+- `DEGRADED_ACCEPTABLE`
+- `UNACCEPTABLE`
+- These labels apply to:
+- receipt churn classes
+- recomputation frequency ceilings
+- route-instability suppression effectiveness
+- retry suppression in blocked contexts
+- wake-lock boundedness verification posture
+- `UNACCEPTABLE` means B4 is not ready to freeze for B5 planning.
 
 G) REQUIRED FILE CHANGE MAP
 - docs
@@ -192,6 +346,10 @@ H) RISKS / DRIFT WARNINGS
 - B4 could under-test illegal contexts and thereby allow hidden background retry, illegal boot retry, or repeated illegal FGS attempts.
 - B4 could miss battery/noise regressions if it validates correctness only and ignores churn, route instability, and suppression behavior.
 
+**WORLD-CLASS UPGRADE — Source-of-Truth Note for WAKE_BUILD_PLAN**
+- `WAKE_BUILD_PLAN.md` is secondary/reference-only for B4 verification where B1, B2, and B3 are more specific.
+- B4 tests must follow B1/B2/B3 canonical semantics first.
+
 I) FINAL APPROVAL PACKAGE
 - recommended B4 scope
 - define the Android parity test strategy, failure-handling matrix, battery/platform-law verification, route/contention/silence verification, explicit-only/block fallback verification, and Phase A non-regression verification for B2/B3
@@ -207,3 +365,14 @@ I) FINAL APPROVAL PACKAGE
 - no code changes in this phase-plan run
 - no Android authority logic
 - whether B4 is ready for implementation planning after approval: YES
+
+**WORLD-CLASS UPGRADE — B4 Freeze and Exit Gate**
+- B4 must freeze before B5 planning begins.
+- B4 is complete only when contract tests, wiring tests, negative-path tests, route/contention tests, battery/churn tests, and non-regression gates are all satisfied.
+
+**WORLD-CLASS UPGRADE — Sign-Off Readiness Note**
+- B4 is ready for B5 planning only when all of the following are true:
+- approved matrix
+- approved test classes
+- approved acceptance model
+- no blocker-grade ambiguity remaining
