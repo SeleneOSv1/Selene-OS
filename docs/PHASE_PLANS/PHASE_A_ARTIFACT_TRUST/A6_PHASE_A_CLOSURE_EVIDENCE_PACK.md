@@ -4,7 +4,7 @@
 
 - `evidence_pack_id`: `PHASEA-EVID-2026-03-10`
 - `generated_at`: `2026-03-10`
-- `review_status`: `VERIFICATION_COMPLETE_PENDING_SIGNOFF`
+- `review_status`: `APPROVED_FOR_CLOSEOUT`
 
 ## Invariant Results
 
@@ -85,4 +85,4 @@ cargo test -p selene_os --lib at_runtime_law_
 ## Result
 
 - verification status: `PASS`
-- closure status: `VERIFICATION_COMPLETE_PENDING_SIGNOFF`
+- closure status: `CLOSED_APPROVED`

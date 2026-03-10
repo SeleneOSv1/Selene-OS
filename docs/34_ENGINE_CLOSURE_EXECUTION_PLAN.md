@@ -25,7 +25,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
   - GOV/LAW canonical consumption
   - closure evidence discipline
 - The historical per-engine queue below remains historical execution evidence and must not override the canonical artifact-trust stack.
-- Phase A artifact-trust verification status is `VERIFICATION_COMPLETE_PENDING_SIGNOFF`.
+- Phase A artifact-trust verification status is `CLOSED_APPROVED`.
 
 ## 0) Purpose
 - Define one canonical execution playbook to move Selene OS from current build state to production readiness.

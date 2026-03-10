@@ -27,7 +27,7 @@ This section is a scoped closure overlay for the A1–A6 artifact-trust stack on
 | A3 | PASS | canonical `artifact_trust_state` carrier on `RuntimeExecutionEnvelope` |
 | A4 | PASS | canonical `ArtifactTrustProofEntry` capture and proof linkage in PH1.J |
 | A5 | PASS | canonical GOV/LAW consumption of trust decision + proof linkage |
-| A6 | VERIFICATION_COMPLETE_PENDING_SIGNOFF | targeted closure suite + docs alignment + evidence manifest/pack/residual-risk register |
+| A6 | PASS | targeted closure suite + docs alignment + approved evidence manifest/pack/residual-risk register |
 
 Phase A targeted verification commands:
 - `cargo test -p selene_kernel_contracts artifact_trust_root_registry --lib`

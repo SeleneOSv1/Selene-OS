@@ -1577,6 +1577,7 @@ Completion:
   - A4 is the only canonical trust-proof transport.
   - A5 GOV/LAW enforcement consumes canonical decision and proof linkage only.
   - raw `artifact_hash_sha256`, `signature_ref`, adapter hints, PH1.OS hints, and raw proof fragments are not closure-grade trust truth.
+- Phase A artifact-trust closure status is `CLOSED_APPROVED`.
 
 Source extraction (`docs/32`):
 - Purpose: deterministic governance engine for artifact activation/deprecation/rollback decisions.
