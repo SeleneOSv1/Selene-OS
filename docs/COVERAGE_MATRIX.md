@@ -16,6 +16,29 @@ Historical note:
 - The detailed matrix below remains valuable as contract-closure history.
 - The table above is the authoritative Sections 01–11 wiring truth for current architecture review and closure work.
 
+## Phase A Artifact Trust Closure Pass (2026-03-10)
+
+This section is a scoped closure overlay for the A1–A6 artifact-trust stack only. It does not claim that all architecture engines are globally production-closed.
+
+| phase | closure_status | evidence |
+| --- | --- | --- |
+| A1 | PASS | trust-root registry contracts + storage foundation (`artifact_trust_root_registry`) |
+| A2 | PASS | canonical artifact-trust contract layer in `crates/selene_kernel_contracts/src/ph1art.rs` |
+| A3 | PASS | canonical `artifact_trust_state` carrier on `RuntimeExecutionEnvelope` |
+| A4 | PASS | canonical `ArtifactTrustProofEntry` capture and proof linkage in PH1.J |
+| A5 | PASS | canonical GOV/LAW consumption of trust decision + proof linkage |
+| A6 | VERIFICATION_COMPLETE_PENDING_SIGNOFF | targeted closure suite + docs alignment + evidence manifest/pack/residual-risk register |
+
+Phase A targeted verification commands:
+- `cargo test -p selene_kernel_contracts artifact_trust_root_registry --lib`
+- `cargo test -p selene_storage --test db_wiring_artifacts_ledger_tables`
+- `cargo test -p selene_kernel_contracts --lib ph1art::tests::`
+- `cargo test -p selene_kernel_contracts --lib at_runtime_execution_`
+- `cargo test -p selene_kernel_contracts --lib ph1j::`
+- `cargo test -p selene_os --lib at_j_runtime_`
+- `cargo test -p selene_os --lib at_runtime_gov_`
+- `cargo test -p selene_os --lib at_runtime_law_`
+
 | engine_id | db_wiring_doc (path) | ecm_doc (path) | simulations_owned (list of simulation_ids) | blueprints_referenced_by (process_ids) | db_wiring_status | ecm_status | sim_catalog_status | blueprint_status | blockers |
 |---|---|---|---|---|---|---|---|---|---|
 | PH1.F | docs/DB_WIRING/PH1_F.md | docs/ECM/PH1_F.md | [] | [] | DONE | DONE | NA | NA | none (PH1.K-level code depth locked in `crates/selene_kernel_contracts/src/ph1f.rs`, `crates/selene_engines/src/ph1f.rs`, `crates/selene_os/src/ph1f.rs`) |

@@ -1,5 +1,11 @@
 # PH1_OS DB Wiring (Design vNext)
 
+## Phase A Artifact Trust Normalization Boundary (2026-03-10)
+- For the Phase A artifact-trust stack, PH1.OS remains an upstream orchestration and posture-normalization layer only.
+- PH1.OS may normalize device, platform, receipt, attestation, and compatibility posture for Section 04 consumption.
+- PH1.OS must not verify artifact digests, signatures, trust roots, certification state, lineage, or scope for artifact trust.
+- Any capture-artifact posture field remains non-authoritative upstream posture only and must not be treated as artifact-trust truth.
+
 ## A) Engine Header
 - engine_id: PH1.OS
 - layer: Enterprise Support
@@ -24,6 +30,7 @@
 - Engines never call engines directly: PH1.OS only emits dispatch legality; it never performs engine-to-engine calls itself.
 - PH1.OS must fail closed on gate failures, schema drift, and ambiguous move requests.
 - PH1.OS must never execute side effects directly; execution remains simulation-gated in Selene OS.
+- PH1.OS must never become a parallel artifact-trust verifier.
 - Outbound delivery ownership is strict and fail-closed:
   - `PH1.LINK` owns token/draft lifecycle only.
   - `PH1.BCAST.001` owns send/resend/escalation recipient lifecycle state.

@@ -1769,7 +1769,27 @@ mod tests {
     }
 
     #[test]
-    fn at_runtime_gov_10_verified_artifact_activation_records_canonical_linkage() {
+    fn at_runtime_gov_10_turn_level_proof_without_per_artifact_entry_still_blocks() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.decision_records[0].proof_entry_ref = None;
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap();
+        let decision = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect_err(
+                "turn-level proof linkage must not substitute for per-artifact proof linkage",
+            );
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_11_verified_artifact_activation_records_canonical_linkage() {
         let runtime = RuntimeGovernanceRuntime::default();
         let envelope = base_envelope()
             .with_artifact_trust_state(Some(verified_artifact_trust_state()))

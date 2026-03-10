@@ -16,6 +16,17 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
   - `PH1.LAW` -> `PARTIALLY_WIRED`
 - The legacy round-2 engine queue below remains historical execution evidence, not the sole authoritative wiring truth for the current 01–11 baseline.
 
+## 0B) Phase A Artifact Trust Closure Overlay (Authoritative for This Stack)
+- The A1–A6 artifact-trust phase-plan stack is implemented and verified as a scoped closure lane.
+- For artifact trust, use the A1–A6 stack as canonical truth for:
+  - contracts
+  - runtime transport
+  - PH1.J proof linkage
+  - GOV/LAW canonical consumption
+  - closure evidence discipline
+- The historical per-engine queue below remains historical execution evidence and must not override the canonical artifact-trust stack.
+- Phase A artifact-trust verification status is `VERIFICATION_COMPLETE_PENDING_SIGNOFF`.
+
 ## 0) Purpose
 - Define one canonical execution playbook to move Selene OS from current build state to production readiness.
 - Prevent drift/loss of direction by combining:

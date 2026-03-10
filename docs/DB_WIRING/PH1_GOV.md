@@ -1,5 +1,20 @@
 # PH1_GOV DB Wiring (Design vNext)
 
+## Phase A Artifact Trust Closure Alignment (2026-03-10)
+- For the Phase A artifact-trust stack, PH1.GOV consumes canonical A3/A4 trust surfaces only:
+  - `RuntimeExecutionEnvelope.artifact_trust_state`
+  - ordered `ArtifactTrustDecisionRecord`
+  - per-artifact `proof_entry_ref`
+  - turn-level `proof_record_ref`
+  - `trust_policy_snapshot_ref`
+  - `trust_set_snapshot_ref`
+  - `verification_basis_fingerprint`
+  - `negative_verification_result_ref` where present
+- `artifact_hash_sha256`, `signature_ref`, raw proof fragments, adapter hints, and PH1.OS hints are legacy compatibility metadata only and are not lawful trust-enforcement truth for the Phase A stack.
+- Runtime closure proof for this surface lives in:
+  - `crates/selene_os/src/runtime_governance.rs`
+  - tests `at_runtime_gov_07` through `at_runtime_gov_11`
+
 ## A) Engine Header
 - engine_id: PH1.GOV
 - layer: Enterprise Support
@@ -10,13 +25,13 @@
 ## B) Ownership
 - Tables owned: NONE in current runtime slice (decision-only runtime)
 - Reads:
-  - bounded governance request context (`tenant_id`, `artifact_kind`, `artifact_id`, `version`, `hash`, `requested_action`)
-  - requester authorization/signer proof refs
+  - canonical runtime envelope governance context
+  - canonical artifact trust decision ids, proof refs, trust snapshot refs, and basis fingerprints
   - ACTIVE reference ids (required blueprint/simulation/capability bindings)
   - optional rollback target version
 - Writes:
   - no direct table writes in this runtime slice
-  - emits deterministic `ALLOWED | BLOCKED` governance decisions only
+  - emits deterministic governance decisions plus canonical artifact-trust linkage state only
 
 ## C) Hard Boundaries
 - Must never execute workflows, tools, or simulations.
@@ -29,12 +44,16 @@
 - Invoked_by: Selene OS governance path before any artifact activation/deprecation/rollback commit.
 - Inputs_from:
   - governance request metadata (`artifact_kind`, `artifact_id`, `artifact_version`, `requested_action`)
-  - artifact proof metadata (`artifact_hash_sha256`, `signature_ref`)
+  - canonical artifact trust state (`artifact_trust_state.decision_records`)
+  - canonical proof linkage (`proof_entry_ref`, `proof_record_ref`)
+  - trust snapshot linkage (`trust_policy_snapshot_ref`, `trust_set_snapshot_ref`)
+  - verification basis linkage (`verification_basis_fingerprint`, `negative_verification_result_ref`)
   - reference activity snapshot (`required_reference_ids`, `active_reference_ids`)
   - current/rollback state (`existing_active_versions`, `current_active_version`, `rollback_target_version`)
 - Outputs_to:
   - `gov_policy_bundle` (`requester_authorized`, `signature_valid`, `references_active`, `single_active_blueprint_ok`)
   - `gov_decision_bundle` (`decision`, `active_version`, `reason_code`, deterministic/audit flags)
+  - canonical governance execution state (`artifact_trust_decision_ids`, `artifact_trust_proof_entry_refs`, `artifact_trust_proof_record_ref`, `artifact_trust_policy_snapshot_refs`, `artifact_trust_set_snapshot_refs`)
 - Invocation_condition: ENTERPRISE_SUPPORT (governance enabled)
 - Deterministic sequence:
   - `GOV_POLICY_EVALUATE`:
@@ -61,3 +80,8 @@
 - AT-GOV-02: single ACTIVE blueprint rule is enforced.
 - AT-GOV-03: activation is blocked when enterprise signature is invalid/missing.
 - AT-GOV-04: rollback decision is deterministic and auditable.
+- AT-GOV-A5-01: missing canonical artifact trust state blocks artifact activation.
+- AT-GOV-A5-02: cluster trust divergence quarantines artifact activation.
+- AT-GOV-A5-03: proof-required activation blocks when canonical proof linkage is incomplete.
+- AT-GOV-A5-04: turn-level proof linkage does not substitute for per-artifact `proof_entry_ref`.
+- AT-GOV-A5-05: verified artifact activation records canonical trust/proof linkage deterministically.

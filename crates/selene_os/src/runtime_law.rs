@@ -2183,7 +2183,28 @@ mod tests {
     }
 
     #[test]
-    fn at_runtime_law_13_artifact_authority_records_canonical_trust_linkage() {
+    fn at_runtime_law_13_turn_level_proof_without_per_artifact_entry_still_blocks() {
+        let runtime = RuntimeLawRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.decision_records[0].proof_entry_ref = None;
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Block);
+        assert!(decision
+            .reason_codes
+            .contains(&reason_codes::LAW_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE.to_string()));
+    }
+
+    #[test]
+    fn at_runtime_law_14_artifact_authority_records_canonical_trust_linkage() {
         let runtime = RuntimeLawRuntime::default();
         let envelope = base_envelope()
             .with_artifact_trust_state(Some(verified_artifact_trust_state()))

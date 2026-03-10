@@ -1,5 +1,20 @@
 # PH1.J DB Wiring Spec
 
+## Phase A Artifact Trust Proof Closure Alignment (2026-03-10)
+- For the Phase A artifact-trust stack, PH1.J consumes canonical A3 trust transport only:
+  - ordered `ArtifactTrustDecisionRecord`
+  - envelope-carried `artifact_trust_state`
+- PH1.J emits canonical per-artifact proof linkage only:
+  - `ArtifactTrustProofEntry`
+  - per-artifact `proof_entry_ref`
+  - turn-level `proof_record_ref`
+- `proof_entry_ref` and `proof_record_ref` are not interchangeable.
+- Negative verification outcomes are mandatory proof subjects and remain part of the canonical proof payload.
+- Runtime closure proof for this surface lives in:
+  - `crates/selene_kernel_contracts/src/ph1j.rs`
+  - `crates/selene_os/src/ph1j.rs`
+  - tests `at_j_runtime_01` through `at_j_runtime_04`
+
 ## 1) Engine Header
 
 - `engine_id`: `PH1.J`
@@ -51,6 +66,11 @@
 - failure reason codes:
   - contract violation
   - append-only violation on mutation attempts
+
+### artifact trust proof linkage
+- protected trust-governed actions append one canonical proof record containing ordered per-artifact proof entries derived from A3 decision-record order
+- PH1.J does not create a second trust transport and does not re-verify trust
+- raw proof fragments are non-canonical for Phase A artifact-trust closure once `proof_entry_ref` / `proof_record_ref` exist
 
 ## 5) Relations & Keys
 
@@ -106,6 +126,11 @@ Implemented test coverage:
 - `AT-J-DB-02` `at_j_db_02_append_only_enforced`
 - `AT-J-DB-03` `at_j_db_03_idempotency_dedupe_works`
 - `AT-J-DB-04` `at_j_db_04_ledger_only_no_current_rebuild_required`
+- artifact-trust runtime proof coverage:
+  - `at_j_runtime_01_protected_action_writes_canonical_proof_record`
+  - `at_j_runtime_02_forced_failure_is_structured`
+  - `at_j_runtime_03_artifact_trust_entries_follow_decision_order`
+  - `at_j_runtime_04_receipt_updates_artifact_trust_state_with_proof_linkage`
 
 Code references:
 - contract: `crates/selene_kernel_contracts/src/ph1j.rs`

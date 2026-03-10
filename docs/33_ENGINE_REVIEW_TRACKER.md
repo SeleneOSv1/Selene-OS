@@ -1567,6 +1567,17 @@ Completion:
 
 ## Engine 32 Review Log (`PH1.GOV`)
 
+## Phase A Artifact Trust Closure Overlay (`PH1.GOV` / `PH1.J` / `PH1.OS` / `PH1.LAW`)
+
+- The approved A1–A6 phase-plan stack is the canonical truth for the artifact-trust implementation and closure path.
+- Historical per-engine review logs below remain review history and must not override the canonical artifact-trust stack.
+- For the Phase A artifact-trust stack:
+  - Section 04 remains the only first-time authoritative verifier.
+  - A3 is the only canonical trust transport.
+  - A4 is the only canonical trust-proof transport.
+  - A5 GOV/LAW enforcement consumes canonical decision and proof linkage only.
+  - raw `artifact_hash_sha256`, `signature_ref`, adapter hints, PH1.OS hints, and raw proof fragments are not closure-grade trust truth.
+
 Source extraction (`docs/32`):
 - Purpose: deterministic governance engine for artifact activation/deprecation/rollback decisions.
 - Required inputs: `tenant_id`, `artifact_kind`, `artifact_id`, `version`, `hash`, `signature_ref`, `requested_action`, requester identity/authorization, required ACTIVE references.

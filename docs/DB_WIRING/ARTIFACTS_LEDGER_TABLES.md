@@ -1,5 +1,10 @@
 # Artifacts Ledger + Tool Cache DB Wiring Spec
 
+## Phase A Artifact Trust Registry Alignment (2026-03-10)
+- The current Phase A closure slice includes append-only artifact trust-root registry foundation rows in addition to `artifacts_ledger` and `tool_cache`.
+- The trust-root registry is A1 foundation truth for canonical trust-root identity, version, kind, lineage, and state scaffolding.
+- Canonical A2 trust contracts, A3 transport, A4 proof linkage, and A5 enforcement semantics are not represented through raw legacy hash/signature fields in this DB wiring slice.
+
 ## 1) Engine Header
 
 - `engine_id`: `ARTIFACTS_LEDGER_TABLES`
@@ -15,6 +20,11 @@ Target tables in this slice:
   - unique key: `(scope_type, scope_id, artifact_type, artifact_version)`
   - idempotency unique key: `(scope_type, scope_id, artifact_type, artifact_version, idempotency_key)` when key is non-null
   - append-only invariant: no update/delete path allowed
+- `os_process.artifact_trust_root_registry` (`LEDGER`)
+  - primary key: `trust_root_registry_row_id`
+  - unique key: `(trust_root_id, trust_root_version)`
+  - idempotency unique key: `(trust_root_id, trust_root_version, idempotency_key)` when key is non-null
+  - append-only invariant: no update/delete path allowed
 - `os_core.tool_cache` (`CACHE`, optional)
   - primary key: `cache_id`
   - unique key: `(tool_name, query_hash, locale)` (deterministic upsert key)
@@ -25,6 +35,8 @@ Target tables in this slice:
 Read paths:
 - `artifacts_ledger` ordered by `artifact_id` (replay/audit chronology)
 - `artifacts_ledger` lookup by `(scope_type, scope_id, artifact_type, artifact_version)`
+- `artifact_trust_root_registry` ordered by `trust_root_registry_row_id`
+- `artifact_trust_root_registry` lookup by `(trust_root_id, trust_root_version)`
 - `tool_cache` lookup by `(tool_name, query_hash, locale)` with `expires_at > now`
 
 Scope rules:
@@ -36,6 +48,8 @@ Required indices:
 - `ux_artifacts_ledger_scope_type_scope_id_type_version`
 - `ux_artifacts_ledger_idempotency`
 - `ix_artifacts_ledger_scope_type_scope_id_type_artifact_id`
+- `ux_artifact_trust_root_registry_id_version`
+- `ux_artifact_trust_root_registry_idempotency`
 - `ux_tool_cache_tool_query_locale`
 - `ix_tool_cache_expires_at`
 
@@ -43,8 +57,11 @@ Required indices:
 
 Write paths:
 - append `artifacts_ledger` via `ArtifactLedgerRowInput`
+- append `artifact_trust_root_registry` via `ArtifactTrustRootRegistryRowInput`
 - dedupe retried writes by idempotency scope:
   - `(scope_type, scope_id, artifact_type, artifact_version, idempotency_key)`
+- dedupe trust-root retried writes by id/version scope:
+  - `(trust_root_id, trust_root_version, idempotency_key)`
 - upsert `tool_cache` by deterministic cache key:
   - `(tool_name, query_hash, locale)`; same key updates payload + expiry in place
 
@@ -58,10 +75,13 @@ Failure reason classes:
 Key constraints:
 - `artifacts_ledger.artifact_id` is monotonic append id
 - `artifacts_ledger` enforces one row per `(scope_type, scope_id, artifact_type, artifact_version)`
+- `artifact_trust_root_registry.trust_root_registry_row_id` is monotonic append id
+- `artifact_trust_root_registry` enforces one row per `(trust_root_id, trust_root_version)`
 - `tool_cache` enforces one current cached row per `(tool_name, query_hash, locale)`
 
 State constraints:
 - `artifacts_ledger` is append-only
+- `artifact_trust_root_registry` is append-only
 - rollback/deprecation is expressed by new ledger rows (`status`), never in-place mutation
 - `tool_cache` is TTL-bound and non-authoritative
 
@@ -82,6 +102,12 @@ This row locks DB wiring for artifact/cache persistence. Runtime apply/rollback 
   - `at_art_db_03_idempotency_dedupe_works`
 - `AT-ART-DB-04` ledger-only proof (no current projection table)
   - `at_art_db_04_ledger_only_no_current_rebuild_required`
+- `AT-ART-DB-06` trust-root registry append and lookup
+  - `at_art_db_06_trust_root_registry_append_and_lookup`
+- `AT-ART-DB-07` trust-root registry append-only enforcement
+  - `at_art_db_07_trust_root_registry_append_only_enforced`
+- `AT-ART-DB-08` trust-root registry idempotency dedupe
+  - `at_art_db_08_trust_root_registry_idempotency_dedupe_works`
 - optional cache proof
   - `at_art_db_05_tool_cache_upsert_and_ttl_read`
 
