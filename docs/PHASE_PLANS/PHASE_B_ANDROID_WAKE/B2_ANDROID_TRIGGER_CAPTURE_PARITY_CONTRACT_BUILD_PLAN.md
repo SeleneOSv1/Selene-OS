@@ -51,7 +51,30 @@ B) CURRENT CONTRACT SURFACE
 - Android parity/fallback semantics. CURRENT: B1 defines parity classes conceptually. TARGET: formal B2 contract layer. GAP: missing.
 - Android-to-Phase-A transport alignment. CURRENT: Phase A surfaces exist and B1 forbids parallel authority, but no B2 mapping contract exists. TARGET: Android produces only non-authoritative inputs that feed canonical Phase A transport. GAP: missing.
 
+**WORLD-CLASS UPGRADE — Canonical Authority-Boundary Reminder**
+- All B2 Android contracts are non-authoritative operational and platform contracts only.
+- Section 04 remains the only first-time authoritative verifier.
+- PH1.J remains the only canonical proof path.
+- PH1.GOV and PH1.LAW remain the only enforcement consumers later.
+- Android contracts must never become trust truth, proof truth, or law truth.
+
 C) CANONICAL B2 CONTRACT DESIGN
+**WORLD-CLASS UPGRADE — AndroidPlatformLawContext**
+- B2 defines one canonical `AndroidPlatformLawContext` from which wake and capture legality are derived.
+- Minimum fields:
+- `platform_api_level: i32`
+- `target_sdk_level: i32`
+- `trigger_source: AndroidWakeTriggerClass`
+- `app_visibility_state: AndroidClientVisibilityState`
+- `foreground_service_start_context: AndroidFgsStartContext`
+- `microphone_permission_state: AndroidMicrophonePermissionState`
+- `privacy_toggle_state: AndroidMicrophonePrivacyToggleState`
+- `battery_optimization_state: AndroidBatteryOptimizationState`
+- `doze_state: AndroidDozeState`
+- `restricted_app_state: AndroidRestrictedAppState`
+- `managed_device_state: AndroidManagedDevicePolicyState`
+- `work_profile_state: AndroidWorkProfilePolicyState`
+- `capability_tier: AndroidCapabilityTier`
 1. `AndroidWakeTriggerClass`
 - Enum: `WAKE_PHRASE`, `VISIBLE_UI_ACTION`, `NOTIFICATION_ACTION`, `QUICK_SETTINGS_TILE`, `WIDGET`, `EXTERNAL_TRIGGER`, `BOOT_RESTORE`, `UNKNOWN`
 2. `AndroidWakeEligibilityInput`
@@ -75,6 +98,32 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `recoverability_class: AndroidRecoverabilityClass`
 - `requires_explicit_user_action: bool`
 - `requires_fresh_readiness_receipt: bool`
+**WORLD-CLASS UPGRADE — Separate Wake and Capture Eligibility**
+- B2 defines `AndroidWakeEligibilityOutcome` and `AndroidCaptureEligibilityOutcome` as distinct contracts.
+- Wake can be lawful while live microphone capture is not.
+- Capture can be blocked while the app is still allowed to transition to an explicit-only path.
+- `AndroidCaptureEligibilityOutcome` minimum fields:
+- `allowed_posture: AndroidCaptureAllowedPosture`
+- `restriction_reasons: Vec<AndroidCaptureRestrictionReason>`
+- `law_block_class: Option<AndroidLawBlockClass>`
+- `operational_block_class: Option<AndroidOperationalBlockClass>`
+- `recoverability_class: AndroidRecoverabilityClass`
+- `required_user_action: AndroidUserActionRequirement`
+**WORLD-CLASS UPGRADE — AndroidUserActionRequirement**
+- B2 defines `AndroidUserActionRequirement` with values:
+- `OPEN_APP_IN_FOREGROUND`
+- `GRANT_RECORD_AUDIO`
+- `TURN_MIC_TOGGLE_ON`
+- `APPROVE_FGS_PATH`
+- `DISABLE_RESTRICTED_APP_POSTURE`
+- `ACKNOWLEDGE_EXPLICIT_ONLY_MODE`
+- `NO_USER_ACTION_REQUIRED`
+**WORLD-CLASS UPGRADE — Legality-Class Taxonomy**
+- B2 defines:
+- `AndroidLawBlockClass`
+- `AndroidOperationalBlockClass`
+- `AndroidRecoverabilityClass`
+- This distinguishes platform-law blocked, operationally blocked, policy blocked, recoverable-by-user-action, recoverable-by-foreground-transition, recoverable-by-policy-change, and non-recoverable-in-current-context states.
 4. `AndroidWakeBlockReason`
 - Enum:
 - `MICROPHONE_PERMISSION_DENIED`
@@ -98,6 +147,18 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `silent_audio_state: AndroidSilentAudioState`
 - `readiness_receipt_ref: Option<String>`
 - `readiness_freshness_state: AndroidReceiptFreshnessState`
+**WORLD-CLASS UPGRADE — Readiness Receipt and Freshness Strengthening**
+- `AndroidMicrophoneReadinessState` and related receipt contracts must also carry:
+- `readiness_receipt_id: String`
+- `receipt_freshness_window_ms: i64`
+- `receipt_invalidated_by: Vec<AndroidReadinessInvalidationTrigger>`
+- `receipt_scope: AndroidReadinessReceiptScope`
+- `receipt_generated_from_context_fingerprint: String`
+**WORLD-CLASS UPGRADE — Android Receipt Freshness and Invalidation Model**
+- B2 must make readiness-receipt freshness explicit.
+- Freshness must be bounded by `receipt_freshness_window_ms`.
+- Receipt invalidation must be driven by explicit invalidation triggers and not by ad hoc local guesses.
+- Receipt recomputation is required after invalidation or expiry before wake or capture may rely on the receipt again.
 6. `AndroidMicrophonePermissionState`
 - Enum: `GRANTED_WHILE_IN_USE`, `DENIED`, `PERMANENTLY_DENIED`, `UNKNOWN`
 7. `AndroidMicrophonePrivacyToggleState`
@@ -123,6 +184,11 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `fgs_permission_granted: bool`
 - `start_context: AndroidFgsStartContext`
 - `user_visible_notification_present: bool`
+**WORLD-CLASS UPGRADE — Notification and Visible-State Contract**
+- B2 defines:
+- `AndroidNotificationVisibilityState`
+- `AndroidUserVisibleCaptureState`
+- These contracts determine when microphone capture requires visible user state, when explicit-only fallback is mandatory, and when a microphone foreground-service path requires user-visible conditions.
 12. `AndroidBatteryOptimizationState`
 - Enum: `DEFAULT_OPTIMIZED`, `WHITELISTED`, `RESTRICTED_BY_SYSTEM`, `UNKNOWN`
 13. `AndroidDozeState`
@@ -149,6 +215,13 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `contention_state: AndroidAudioContentionState`
 - `fallback_policy: AndroidParityFallbackPolicy`
 - `operational_receipt_ref: Option<String>`
+**WORLD-CLASS UPGRADE — Process-Death and Restart Restoration Contract**
+- B2 defines `AndroidProcessRestorationState`.
+- It must encode:
+- what state may be restored after process death
+- what must be recomputed
+- what must never auto-resume
+- when explicit-only fallback is required after restart
 18. `AndroidCaptureOperationalReceipt`
 - Fields:
 - `receipt_ref: String`
@@ -167,12 +240,30 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `BLUETOOTH_ROUTE_CHANGE`
 - `HEADSET_TRANSITION`
 - `SILENT_AUDIO_DELIVERED`
+**WORLD-CLASS UPGRADE — Audio Route and Hardware Path Posture**
+- B2 defines:
+- `AndroidAudioRouteState`
+- `AndroidInputHardwareTier`
+- Minimum route/hardware classes:
+- `BUILT_IN_MIC`
+- `BLUETOOTH_HEADSET`
+- `WIRED_HEADSET`
+- `ROUTE_TRANSITION`
+- `UNAVAILABLE_INPUT_ROUTE`
+- This posture is distinct from contention and must not be merged with it.
 20. `AndroidParityMode`
 - Enum:
 - `DESKTOP_FULL_PARITY`
 - `ANDROID_LAWFUL_PARITY`
 - `ANDROID_EXPLICIT_ONLY_FALLBACK`
 - `ANDROID_BLOCKED_PLATFORM_POSTURE`
+**WORLD-CLASS UPGRADE — Capability-Tier Contract Refinement**
+- B2 defines `AndroidCapabilityTier` with:
+- `HARDWARE_HOTWORD_CAPABLE`
+- `SOFTWARE_HOTWORD_CAPABLE`
+- `EXPLICIT_ONLY_CAPABLE`
+- `UNSUPPORTED`
+- Capability tier affects parity and fallback but does not create trust authority.
 21. `AndroidParityGapClass`
 - Enum:
 - `FGS_LEGALITY_GAP`
@@ -189,6 +280,16 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `requires_visible_user_reentry: bool`
 - `allows_retry_later_operationally: bool`
 - `hard_block_reason: Option<AndroidWakeBlockReason>`
+**WORLD-CLASS UPGRADE — Deterministic Fallback and Retry Contract**
+- B2 fallback semantics must explicitly support:
+- `EXPLICIT_ONLY`
+- `RETRY_LATER_OPERATIONALLY`
+- `HARD_BLOCK`
+- `DEGRADE_WITHOUT_CAPTURE`
+- B2 must also define:
+- `retry_eligibility`
+- `retry_suppression_conditions`
+- `no_hidden_background_retry_when_platform_law_forbids_it`
 23. Additional contracts required by B1 findings
 - `AndroidWakeAllowedPosture`: `WAKE_ELIGIBLE`, `EXPLICIT_ONLY`, `BLOCKED`
 - `AndroidRecoverabilityClass`: `RECOVERABLE_BY_USER_ACTION`, `RECOVERABLE_BY_FOREGROUND_TRANSITION`, `RECOVERABLE_BY_POLICY_CHANGE`, `HARD_BLOCKED_UNDER_CURRENT_PLATFORM_LAW`
@@ -200,8 +301,68 @@ C) CANONICAL B2 CONTRACT DESIGN
 - `AndroidOperationalReceiptKind`: `READINESS_EVALUATED`, `CAPTURE_STARTED`, `CAPTURE_BLOCKED`, `CAPTURE_SILENT`, `CAPTURE_CONTENDED`, `CAPTURE_STOPPED`, `BOOT_RESTORE_EVALUATED`
 - `AndroidFgsStartContext`: `VISIBLE_UI`, `VISIBLE_NOTIFICATION_ACTION`, `QUICK_SETTINGS`, `WIDGET`, `BOOT`, `BACKGROUND_OTHER`
 - `AndroidFallbackOutcome`: `ALLOW`, `DEGRADE`, `EXPLICIT_ONLY`, `RETRY_LATER_OPERATIONALLY`, `HARD_BLOCK`
+- `AndroidCaptureAllowedPosture`: `CAPTURE_ELIGIBLE`, `EXPLICIT_ONLY_CAPTURE`, `DEGRADE_WITHOUT_CAPTURE`, `CAPTURE_BLOCKED`
+- `AndroidLawBlockClass`: `PLATFORM_LAW_BLOCKED`, `TARGET_SDK_BLOCKED`, `VISIBILITY_CONTEXT_BLOCKED`, `BOOT_CONTEXT_BLOCKED`
+- `AndroidOperationalBlockClass`: `BATTERY_BLOCKED`, `DOZE_BLOCKED`, `RESTRICTED_APP_BLOCKED`, `AUDIO_ROUTE_BLOCKED`, `AUDIO_CONTENTION_BLOCKED`, `OEM_UNCERTAINTY_BLOCKED`
+- `AndroidManagedDevicePolicyState`: `UNMANAGED`, `MANAGED_NO_RESTRICTION`, `MANAGED_CAPTURE_RESTRICTED`, `UNKNOWN`
+- `AndroidWorkProfilePolicyState`: `NO_WORK_PROFILE`, `WORK_PROFILE_PRESENT_NO_RESTRICTION`, `WORK_PROFILE_CAPTURE_RESTRICTED`, `UNKNOWN`
+- `AndroidEnterpriseMicrophoneRestrictionState`: `NOT_RESTRICTED`, `ADMIN_DISABLED`, `PROFILE_DISABLED`, `UNKNOWN`
+- `AndroidReadinessInvalidationTrigger`: `PERMISSION_REVOKED`, `PRIVACY_TOGGLE_CHANGED`, `TARGET_SDK_OR_PLATFORM_UPDATED`, `RESTRICTED_APP_CHANGED`, `BOOT_OR_RESTART`, `FGS_CAPABILITY_CHANGED`
+- `AndroidReadinessReceiptScope`: `DEVICE_SCOPE`, `PROFILE_SCOPE`, `APP_INSTALL_SCOPE`, `SESSION_SCOPE`
+- `AndroidOemDivergenceState`: `NOT_OBSERVED`, `OBSERVED_CONSERVATIVE_FALLBACK`, `OBSERVED_HARD_BLOCK`, `UNKNOWN`
+- `AndroidOemConfidencePosture`: `HIGH_CONFIDENCE_STANDARD_BEHAVIOR`, `LOW_CONFIDENCE_OEM_VARIANT`, `UNSAFE_UNCERTAIN`
+
+**WORLD-CLASS UPGRADE — Enterprise Managed-Device and Work-Profile Contract**
+- B2 explicitly defines:
+- `managed_device_policy_state`
+- `work_profile_policy_state`
+- `enterprise_microphone_restriction_state`
+- `admin_enforced_capture_block`
+- These remain non-authoritative platform posture outputs only.
+
+**WORLD-CLASS UPGRADE — State-Machine and Transition Law**
+- B2 must define valid and invalid transitions for:
+- microphone readiness
+- wake eligibility
+- capture session lifecycle
+- process restore path
+- explicit-only fallback path
+- Invalid transitions must fail conservatively and must not imply hidden recovery.
+
+**WORLD-CLASS UPGRADE — On-Device Data Minimization and Retention Contract**
+- B2 must define:
+- bounded temporary audio buffer posture
+- no silent persistence of sensitive capture content
+- retention boundaries for readiness receipts
+- retention boundaries for capture operational receipts
+- wipe-on-block
+- wipe-on-failure
+- This is contract-level only and does not create a proof or trust path.
 
 D) PLATFORM-LAW CONTRACT REQUIREMENTS
+**WORLD-CLASS UPGRADE — Target-SDK and API Cross-Matrix Rule**
+- B2 legality must be derived from the cross-matrix of:
+- `target_sdk_level`
+- `platform_api_level`
+- `trigger_source`
+- `app_visibility_state`
+- `foreground_service_start_context`
+- This matrix must drive legality outcomes explicitly enough to prevent later ambiguity.
+**WORLD-CLASS UPGRADE — Trigger-Source Legality Matrix**
+- `WAKE_PHRASE`
+  - lawful only when the platform-law context and capability tier allow wake listening in the current foreground-service and visibility posture
+- `VISIBLE_UI_ACTION`
+  - may enable lawful transition into capture when visibility and permission posture are satisfied
+- `NOTIFICATION_ACTION`
+  - may only be lawful when the platform-law context permits the action to transition into a visible, user-legible capture path
+- `QUICK_SETTINGS_TILE`
+  - may only be lawful as a user-visible explicit transition path and not as a hidden authority shortcut
+- `WIDGET`
+  - may only be lawful when it leads into a visible, platform-compliant user path
+- `EXTERNAL_TRIGGER`
+  - must default conservative unless the platform-law context proves lawful explicit handling
+- `BOOT_RESTORE`
+  - may restore config, recompute readiness, and emit restoration receipts, but may not directly grant microphone capture legality
 - Android 12+ background-start restrictions
 - B2 must encode that background context alone is not enough to start microphone capture or microphone FGS.
 - `AndroidClientVisibilityState=BACKGROUND` with `trigger_class=WAKE_PHRASE` must not silently imply lawful wake capture.
@@ -219,6 +380,17 @@ D) PLATFORM-LAW CONTRACT REQUIREMENTS
 - B2 must encode wake lock as an operational boundedness contract only. Wake lock may never imply trust, permission, or legal capture authority.
 
 E) ANDROID-TO-PHASE-A MAPPING
+**WORLD-CLASS UPGRADE — Cross-Phase Mapping Table**
+- `Android readiness receipts` -> Phase A non-authoritative refs only
+- `Android attestation refs` -> Phase A non-authoritative refs only
+- `Android operational posture` -> Phase A pre-verification inputs only
+- `Android capture-session refs` -> ingress and runtime transport only
+- The following may never map into Phase A canonical truth objects:
+- `artifact_trust_state`
+- `ArtifactTrustDecisionRecord`
+- `ArtifactTrustProofEntry`
+- `proof_entry_ref`
+- `proof_record_ref`
 - Android outputs that may feed frozen Phase A:
 - artifact refs
   - wake/artifact package refs already resolved by cloud-governed artifact surfaces
@@ -245,6 +417,15 @@ E) ANDROID-TO-PHASE-A MAPPING
 - Android legality outcomes
 - Android may feed Phase A canonical transport only through non-authoritative refs and posture inputs. Section 04 still decides, A4 still proves, A5 still enforces.
 
+**WORLD-CLASS UPGRADE — Forbidden Local Persistence Table**
+- Android must never persist or reuse as authoritative state:
+- trust decisions
+- proof linkage
+- governance outputs
+- runtime-law outputs
+- any canonical Phase A trust object
+- any canonical Phase A proof object
+
 F) PARITY / FALLBACK CONTRACT
 - `desktop-full-parity`
   - means always-listening or wake behavior is lawful and operationally supported to the same class as desktop/reference path
@@ -263,6 +444,14 @@ F) PARITY / FALLBACK CONTRACT
 - `ANDROID_EXPLICIT_ONLY_FALLBACK`
 - `ANDROID_BLOCKED_PLATFORM_POSTURE`
 - `DESKTOP_FULL_PARITY` is not a required Android target if platform law forbids it.
+
+**WORLD-CLASS UPGRADE — Parity Acceptance Target Contract**
+- B2 defines release-acceptance parity classes:
+- `DESKTOP_EQUIVALENT_WHERE_LAWFUL`
+- `ANDROID_LAWFUL_EQUIVALENT`
+- `EXPLICIT_ONLY_ACCEPTABLE`
+- `BLOCKED_ACCEPTABLE_WITH_EXPLICIT_SURFACING`
+- These are acceptance contracts for later B3/B4 work and not implementation shortcuts.
 
 G) IMPLEMENTATION-BOUNDARY MAP
 - `WakeForegroundService`
@@ -288,6 +477,11 @@ G) IMPLEMENTATION-BOUNDARY MAP
 - Android device-side proofs
 - Android enforcement semantics
 
+**WORLD-CLASS UPGRADE — Contract Freeze Discipline for B2**
+- B2 contracts must freeze before B3 wiring starts.
+- Field or name drift after approval requires explicit review.
+- Android legality vocabulary must not fork locally in B3, B4, or B5.
+
 H) REQUIRED FILE CHANGE MAP
 - docs
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md)
@@ -311,6 +505,14 @@ I) RISKS / DRIFT WARNINGS
 - If parity and legality are blurred, developers will try to “match desktop” even where Android forbids it.
 - If B2 leaves API-level and target-SDK legality ambiguous, implementation will drift into illegal microphone/FGS behavior.
 - If B2 does not separate readiness receipt, attestation ref, and operational posture from authority/proof/enforcement truth, the frozen Phase A baseline will be violated.
+
+**WORLD-CLASS UPGRADE — OEM Divergence Containment Contract**
+- B2 must define:
+- `AndroidOemDivergenceState`
+- `AndroidOemConfidencePosture`
+- Uncertain OEM behavior must fail conservatively.
+- OEM differences may not create authority shortcuts.
+- Lawful fallback must remain visible and deterministic.
 
 J) FINAL APPROVAL PACKAGE
 - recommended B2 scope:
