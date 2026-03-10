@@ -95,6 +95,7 @@ C) CANONICAL B3 WIRING DESIGN
 7. emit restoration receipt when boot or process restoration re-evaluates the Android runtime posture
 - Ordering is deterministic by local event sequence and context fingerprint.
 - All emitted Android receipts and events remain operational evidence only.
+- Repeated identical receipts within the same `context_fingerprint` and suppression window must collapse into a single upstream emission.
 
 **WORLD-CLASS UPGRADE — Stable Receipt/Event Identity Law**
 - Every Android-local operational receipt or event must bind:
@@ -359,6 +360,12 @@ E) LEGALITY / PERFORMANCE / BATTERY MODEL
 - the Android-local runtime must transition deterministically to `EXPLICIT_ONLY` or `BLOCKED` per B2 contract, emit a receipt, and stop hidden continuation
 - What happens on foreground loss:
 - B3 must transition to `EXPLICIT_ONLY` or `BLOCKED`, emit a foreground-loss receipt or posture event, and require fresh readiness where B2 says so
+- Consequence table:
+| Event | Resulting posture | Required operational receipt |
+| --- | --- | --- |
+| notification dismissed | `EXPLICIT_ONLY` or `BLOCKED` depending current legality context | foreground-notification-loss receipt |
+| app loses visible foreground | `EXPLICIT_ONLY` or `BLOCKED` depending current legality context | foreground-loss downgrade receipt |
+| FGS no longer lawful | `BLOCKED` | fgs-illegal transition receipt |
 - wake legality under Android 12/13/14/15+
 - B3 must wire B2’s legality matrix exactly. It must not weaken Android background-start, boot, target-SDK, visibility, or FGS restrictions.
 - foreground-service legality and visible-state coupling
@@ -379,6 +386,10 @@ E) LEGALITY / PERFORMANCE / BATTERY MODEL
 - Route changes and contention stay Android-local operational behavior with receipts/posture emitted upstream only.
 - recomputation budget / receipt freshness discipline
 - B3 must preserve B2 recomputation budget posture and avoid battery-noisy receipt churn. Freshness is required, but churn is forbidden.
+**Implementation acceptance bullets**
+- Receipt recomputation must remain within bounded churn classes and may not continuously reevaluate under stable blocked contexts.
+- Route-instability handling must debounce Bluetooth/headset churn and suppress repeated capture start/stop loops.
+- Explicit-only fallback must always surface a visible, user-legible path and emit an operational receipt on entry.
 **WORLD-CLASS UPGRADE — Bounded-Resource and Battery-Safe Wiring Law**
 - B3 must preserve:
 - wake-lock boundedness
@@ -446,6 +457,11 @@ G) NON-REGRESSION / FORBIDDEN PATH MAP
 - `visibility_state`
 - `fallback_outcome`
 - This remains operational telemetry only and does not create proof or enforcement truth.
+- Exemplar appendix:
+- `readiness_recompute_event`: emitted when readiness is recomputed from a fresh `context_fingerprint` after invalidation.
+- `route_instability_suppressed_event`: emitted when repeated Bluetooth/headset churn is collapsed under debounce or throttle posture.
+- `explicit_only_entered_event`: emitted when Android falls back to `EXPLICIT_ONLY` and surfaces the user-visible recovery path.
+- `foreground_loss_downgrade_event`: emitted when visible foreground conditions are lost and the runtime downgrades to `EXPLICIT_ONLY` or `BLOCKED`.
 
 **WORLD-CLASS UPGRADE — Explicit No-Repair Law**
 - Adapter may not repair missing receipts.
@@ -476,6 +492,7 @@ H) STAGING PLAN
 - Gate 4: PH1.OS normalization lands.
 - Gate 5: Section 04 boundary consumption lands.
 - Gate 6: compile-through and read-only downstream compatibility lands.
+- Gate 7: receipt-churn, retry-suppression, and route-instability acceptance verified before B3 completion.
 - stop before B4.
 1. Add the Android-local module surfaces that produce B2 operational/platform outputs only.
 2. Wire adapter carriage for Android refs and posture only.
@@ -494,6 +511,7 @@ I) RISKS / DRIFT WARNINGS
 - B3 could violate Android platform law if retry, boot, visibility, or FGS legality are softened in implementation.
 - B3 could create battery/noise regressions if receipt recomputation and retry suppression are not respected.
 - B3 could regress into stale legality reuse if restart/recompute invalidation is not preserved exactly from B2.
+- `WAKE_BUILD_PLAN.md` is secondary/reference-only for Android runtime wiring; B1/B2/B3 are canonical where wording differs.
 
 J) FINAL APPROVAL PACKAGE
 - recommended B3 scope
