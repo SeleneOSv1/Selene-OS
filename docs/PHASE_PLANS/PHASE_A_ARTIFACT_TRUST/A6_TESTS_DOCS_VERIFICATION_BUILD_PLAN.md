@@ -96,6 +96,15 @@ C) CANONICAL A6 TEST DESIGN
 - Closure proof must be cross-referenceable by traceability ID across requirements, tests, sweeps, docs updates, and evidence artifacts.
 - Missing traceability IDs weaken closure validity and prevent final closeout from being considered complete.
 
+**Canonical ID / Ref Namespace Rule**
+- Requirements, tests, sweeps, evidence artifacts, decision refs, proof refs, exception refs, release refs, and residual-risk refs must live in a stable reference namespace.
+- Ref reuse with different meaning is forbidden.
+- Closure traceability must remain deterministic by ref or ID and must not depend on ambiguous local naming.
+
+**Cross-Phase Vocabulary Lock**
+- The following terms must carry one meaning across A1–A6: `artifact_trust_state`, `ArtifactTrustDecisionRecord`, `ArtifactTrustProofEntry`, `proof_entry_ref`, `proof_record_ref`, `trust_policy_snapshot_ref`, `trust_set_snapshot_ref`, `verification_basis_fingerprint`, `enforcement_policy_ref`, `blast_radius_scope`, and `release_readiness_state`.
+- Later phases may not redefine these terms locally.
+
 **Canonical Invariant Catalog**
 - The following Phase A invariants must always be true and must be explicitly testable:
 - Section 04 is the only first-time authoritative verifier.
@@ -151,6 +160,12 @@ C) CANONICAL A6 TEST DESIGN
 **Deterministic Replay Corpus / Golden Fixture Model**
 - A6 requires canonical replay fixtures, golden decision-record fixtures, golden proof-entry fixtures, stale/rollback/freeze/divergence fixtures, release/relock fixtures, and tenant-scope fixtures.
 - Replay must be testable from stable fixtures and preserved evidence rather than ad hoc runtime reconstruction.
+
+**Canonical Fixture-Versioning Rule**
+- Replay fixtures are governed artifacts for verification purposes.
+- A6 defines `fixture_version` and fixture compatibility expectations for replay fixtures, golden decision-record fixtures, golden proof-entry fixtures, and enforcement fixtures.
+- Fixture invalidation is required when contracts, refs, proof shapes, or enforcement semantics change in a way that breaks compatibility.
+- Stale fixtures may not be silently reused.
 
 **Performance and Bounded-Resource Verification**
 - A6 must verify proof capture overhead, trust-decision transport size and boundedness, multi-artifact ordering stability under load, replay boundedness, and absence of unbounded memory growth in trust and proof paths.
@@ -215,6 +230,13 @@ E) DOCS UPDATE MAP
 - The authoritative closure set is the Phase A plan stack, the relevant build sections, the DB wiring docs, coverage docs, tracker docs, closure docs, and the build ledger.
 - Phase A cannot close if any of these documents materially contradict one another.
 - Stale-doc truth is a closure failure posture and not a documentation nice-to-have.
+
+**Source-of-Truth Precedence Rule**
+- At closure time, approved Phase A phase-plan docs are the highest planning truth for the A1–A6 stack.
+- The relevant build sections are the next authority for architectural execution alignment.
+- DB wiring docs must align to approved phase plans and build sections and may not silently override them.
+- Coverage docs, trackers, closure docs, and the build ledger record closure status and evidence but may not override higher-priority approved docs.
+- Any contradiction across these layers must fail closure until reconciled.
 - phase plan docs
   - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md)
   - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md)
@@ -270,6 +292,15 @@ F) VERIFICATION SWEEP DESIGN
 - the residual risk register
 - Phase A is not closed until the evidence pack exists and is reviewable
 
+**Closure Evidence Manifest Artifact**
+- Phase A closure evidence must be navigable from one top-level manifest and not scattered across unrelated files.
+- The minimum closure manifest fields are `closure_manifest_id`, `linked_requirement_ids`, `linked_test_ids`, `linked_sweep_ids`, `linked_evidence_ids`, `linked_residual_risk_ids`, `sign_off_refs`, and `closure_status`.
+
+**Evidence-Retention Window and Retention Discipline**
+- A6 defines a closure artifact retention window and minimum retention expectations for evidence artifacts.
+- Retention review points must exist so closure evidence, build-ledger references, and residual-risk references remain reviewable for the required period.
+- Closure evidence retention is part of closure discipline and not optional storage hygiene.
+
 **Evidence Artifact Schema**
 - Each closure evidence artifact must be structured and not ad hoc.
 - The minimum evidence record fields are `evidence_id`, `evidence_type`, `source_phase`, `linked_requirement_ids`, `linked_test_ids`, `linked_sweep_ids`, `generated_at`, and `reviewed_by`.
@@ -300,6 +331,10 @@ F) VERIFICATION SWEEP DESIGN
 - `sign-off gate`: required role-based sign-offs are recorded.
 - `closeout-approved gate`: only after all prior gates pass may Phase A be declared closed.
 - Phase A does not close because code compiles or docs exist; all gates must pass in order.
+
+**Implementation-Readiness Gate**
+- After A6, implementation may start only if A1–A6 are approved, closure blockers are resolved, required docs are aligned, and the residual-risk register contains only acceptable non-blocking items.
+- This gate is the bridge from planning into execution and does not replace the closeout-approved gate for final closure.
 
 G) PHASE A ACCEPTANCE CRITERIA
 - Section 04 is proven to be the only first-time authoritative verifier.
@@ -377,6 +412,11 @@ I) RISKS / DRIFT WARNINGS
 - Each residual risk entry must include scope, impact, mitigation, owner, and review date.
 - Residual risk cannot silently replace unresolved blockers or high-risk gaps.
 
+**Residual-Risk Roll-Forward Rule**
+- Non-blocking residual risks must be carried into implementation planning explicitly and not by implication.
+- They must remain tracked, reviewed, and bounded during execution.
+- Residual risk may not silently reopen settled Phase A law without explicit governed review.
+
 J) FINAL APPROVAL PACKAGE
 - recommended A6 scope: final test matrix, docs canonicalization, verification sweeps, closure evidence, and acceptance closeout for the approved A1–A5 trust stack
 - what must be approved before coding: exact test classes, exact scenario matrix, exact docs update list, exact verification sweeps, exact acceptance criteria, and exact closure evidence discipline
@@ -384,6 +424,14 @@ J) FINAL APPROVAL PACKAGE
 - whether A6 is ready for implementation planning after approval: YES
 
 **Sign-Off / Ownership Discipline**
+- Closure sign-off roles are:
+- `architecture sign-off`
+- `contract sign-off`
+- `transport sign-off`
+- `proof sign-off`
+- `enforcement sign-off`
+- `docs-truth sign-off`
+- `closure-evidence sign-off`
 - Architecture alignment sign-off must confirm A1 laws remain intact.
 - Contract correctness sign-off must confirm A2 surfaces are implemented without duplicate semantic truth.
 - Transport correctness sign-off must confirm A3 seam and transport behavior.
@@ -396,3 +444,8 @@ J) FINAL APPROVAL PACKAGE
 - No sign-off is valid if any `PHASE_BLOCKER`, `HIGH_RISK_GAP`, `DOC_TRUTH_GAP`, or `LEGACY_DRIFT` item remains open.
 - Sign-off cannot override the blocker taxonomy.
 - Residual risk may only contain `OPTIONAL_POLISH` items at closure time.
+
+**Future-Phase Non-Regression Law**
+- Future phases may not bypass or weaken A1–A6 invariants.
+- New phases must consume the existing canonical trust, transport, proof, and enforcement models.
+- Any future exception requires explicit governed architectural amendment.
