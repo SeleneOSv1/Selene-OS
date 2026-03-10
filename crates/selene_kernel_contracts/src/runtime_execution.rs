@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+use crate::ph1art::{
+    ArtifactIdentityRef, ArtifactTrustExecutionState, TrustPolicySnapshotRef,
+    TrustSetSnapshotRef,
+};
 use crate::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
 use crate::ph1comp::ComputationExecutionState;
 use crate::ph1d::PolicyContextRef;
@@ -48,6 +52,31 @@ fn validate_optional_ascii_token(
 ) -> Result<(), ContractViolation> {
     if let Some(value) = value.as_ref() {
         validate_ascii_token(field, value, max_len)?;
+    }
+    Ok(())
+}
+
+fn validate_unique_ascii_tokens(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max items",
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for value in values {
+        validate_ascii_token(field, value, max_len)?;
+        if !seen.insert(value.clone()) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "contains duplicate value",
+            });
+        }
     }
     Ok(())
 }
@@ -233,8 +262,12 @@ pub struct PlatformRuntimeContext {
     pub compatibility_status: ClientCompatibilityStatus,
     pub minimum_supported_client_version: Option<String>,
     pub attestation_ref: Option<String>,
+    /// Non-authoritative upstream capture posture only.
+    /// This must never be treated as a Section 04 artifact trust decision.
     pub capture_artifact_trust_verified: bool,
+    /// Capture posture observation metadata paired with the non-authoritative capture posture.
     pub capture_artifact_observed_at_ns: Option<u64>,
+    /// Capture posture retention metadata paired with the non-authoritative capture posture.
     pub capture_artifact_retention_deadline_ns: Option<u64>,
     pub requested_trigger: RuntimeEntryTrigger,
     pub trigger_policy: PlatformTriggerPolicy,
@@ -501,6 +534,67 @@ impl Validate for PlatformRuntimeContext {
             });
         }
 
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactTrustPreVerificationInput {
+    pub artifact_identity_refs: Vec<ArtifactIdentityRef>,
+    pub trust_policy_snapshot_ref: Option<TrustPolicySnapshotRef>,
+    pub trust_set_snapshot_ref: Option<TrustSetSnapshotRef>,
+    pub upstream_attestation_ref: Option<String>,
+    pub upstream_receipt_refs: Vec<String>,
+    pub upstream_posture_refs: Vec<String>,
+}
+
+impl Validate for ArtifactTrustPreVerificationInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.artifact_identity_refs.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_pre_verification_input.artifact_identity_refs",
+                reason: "must not be empty",
+            });
+        }
+        if self.artifact_identity_refs.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_pre_verification_input.artifact_identity_refs",
+                reason: "exceeds max items",
+            });
+        }
+        let mut identity_refs = BTreeSet::new();
+        for artifact_identity_ref in &self.artifact_identity_refs {
+            artifact_identity_ref.validate()?;
+            if !identity_refs.insert(artifact_identity_ref.clone()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "artifact_trust_pre_verification_input.artifact_identity_refs",
+                    reason: "contains duplicate artifact_identity_ref",
+                });
+            }
+        }
+        if let Some(trust_policy_snapshot_ref) = &self.trust_policy_snapshot_ref {
+            trust_policy_snapshot_ref.validate()?;
+        }
+        if let Some(trust_set_snapshot_ref) = &self.trust_set_snapshot_ref {
+            trust_set_snapshot_ref.validate()?;
+        }
+        validate_optional_ascii_token(
+            "artifact_trust_pre_verification_input.upstream_attestation_ref",
+            &self.upstream_attestation_ref,
+            128,
+        )?;
+        validate_unique_ascii_tokens(
+            "artifact_trust_pre_verification_input.upstream_receipt_refs",
+            &self.upstream_receipt_refs,
+            32,
+            128,
+        )?;
+        validate_unique_ascii_tokens(
+            "artifact_trust_pre_verification_input.upstream_posture_refs",
+            &self.upstream_posture_refs,
+            32,
+            128,
+        )?;
         Ok(())
     }
 }
@@ -1095,6 +1189,8 @@ pub struct RuntimeExecutionEnvelope {
     pub device_identity: DeviceId,
     pub platform: AppPlatform,
     pub platform_context: PlatformRuntimeContext,
+    /// Non-authoritative ingress-carried inputs for the Section 04 verification seam.
+    pub artifact_trust_inputs: Option<ArtifactTrustPreVerificationInput>,
     pub session_id: Option<SessionId>,
     pub turn_id: TurnId,
     pub device_turn_sequence: Option<u64>,
@@ -1107,6 +1203,8 @@ pub struct RuntimeExecutionEnvelope {
     pub identity_state: Option<IdentityExecutionState>,
     pub memory_state: Option<MemoryExecutionState>,
     pub authority_state: Option<AuthorityExecutionState>,
+    /// Authoritative Section 04 trust output carried read-only for downstream consumers.
+    pub artifact_trust_state: Option<ArtifactTrustExecutionState>,
     pub law_state: Option<RuntimeLawExecutionState>,
 }
 
@@ -1290,6 +1388,7 @@ impl RuntimeExecutionEnvelope {
             device_identity,
             platform,
             platform_context,
+            artifact_trust_inputs: None,
             session_id,
             turn_id,
             device_turn_sequence,
@@ -1302,6 +1401,7 @@ impl RuntimeExecutionEnvelope {
             identity_state: None,
             memory_state: None,
             authority_state: None,
+            artifact_trust_state: None,
             law_state: None,
         };
         envelope.validate()?;
@@ -1426,6 +1526,26 @@ impl RuntimeExecutionEnvelope {
         Ok(next)
     }
 
+    pub fn with_artifact_trust_inputs(
+        &self,
+        artifact_trust_inputs: Option<ArtifactTrustPreVerificationInput>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.artifact_trust_inputs = artifact_trust_inputs;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn with_artifact_trust_state(
+        &self,
+        artifact_trust_state: Option<ArtifactTrustExecutionState>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.artifact_trust_state = artifact_trust_state;
+        next.validate()?;
+        Ok(next)
+    }
+
     pub fn with_law_state(
         &self,
         law_state: Option<RuntimeLawExecutionState>,
@@ -1465,6 +1585,9 @@ impl Validate for RuntimeExecutionEnvelope {
         self.device_identity.validate()?;
         self.platform.validate()?;
         self.platform_context.validate()?;
+        if let Some(artifact_trust_inputs) = self.artifact_trust_inputs.as_ref() {
+            artifact_trust_inputs.validate()?;
+        }
         if self.platform_context.platform_type != self.platform {
             return Err(ContractViolation::InvalidValue {
                 field: "runtime_execution_envelope.platform_context.platform_type",
@@ -1505,6 +1628,9 @@ impl Validate for RuntimeExecutionEnvelope {
         if let Some(state) = self.authority_state.as_ref() {
             state.validate()?;
         }
+        if let Some(state) = self.artifact_trust_state.as_ref() {
+            state.validate()?;
+        }
         if let Some(state) = self.law_state.as_ref() {
             state.validate()?;
         }
@@ -1515,10 +1641,83 @@ impl Validate for RuntimeExecutionEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ph1art::{
+        ArtifactTrustControlHints, ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance,
+        ArtifactTrustDecisionRecord, ArtifactTrustExecutionState, ArtifactTrustBindingRef,
+        ArtifactVerificationOutcome, ArtifactVerificationResult, ArtifactIdentityRef,
+        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
+    };
+    use crate::MonotonicTimeNs;
 
     fn sample_platform_context() -> PlatformRuntimeContext {
         PlatformRuntimeContext::default_for_platform(AppPlatform::Android)
             .expect("default android platform context must be valid")
+    }
+
+    fn sample_artifact_trust_state() -> ArtifactTrustExecutionState {
+        ArtifactTrustExecutionState {
+            decision_records: vec![ArtifactTrustDecisionRecord {
+                authority_decision_id: ArtifactTrustDecisionId(
+                    "authority.decision.runtime.1".to_string(),
+                ),
+                artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
+                artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                    "artifact.trust.binding.1".to_string(),
+                ),
+                trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
+                trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
+                artifact_verification_result: ArtifactVerificationResult {
+                    artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
+                    artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                        "artifact.trust.binding.1".to_string(),
+                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.1".to_string(),
+                    ),
+                    verification_basis_fingerprint: VerificationBasisFingerprint(
+                        "fingerprint.runtime.1".to_string(),
+                    ),
+                    artifact_verification_outcome: ArtifactVerificationOutcome::VerifiedFresh,
+                    artifact_verification_failure_class: None,
+                    negative_verification_result_ref: None,
+                    verification_timestamp: MonotonicTimeNs(20),
+                    verification_cache_used: false,
+                    historical_snapshot_ref: None,
+                },
+                verification_basis_fingerprint: VerificationBasisFingerprint(
+                    "fingerprint.runtime.1".to_string(),
+                ),
+                negative_verification_result_ref: None,
+                provenance: ArtifactTrustDecisionProvenance {
+                    verifier_owner: "SECTION_04_AUTHORITY".to_string(),
+                    verifier_version: "v1".to_string(),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.1".to_string(),
+                    ),
+                    evidence_refs: vec!["artifact.ref.1".to_string()],
+                    historical_snapshot_ref: None,
+                    replay_reconstructable: true,
+                },
+                control_hints: ArtifactTrustControlHints {
+                    blast_radius_scope: "artifact-local".to_string(),
+                    proof_required_for_completion: true,
+                    rollback_readiness: false,
+                    safe_mode_eligibility: false,
+                    quarantine_eligibility: true,
+                },
+                proof_entry_ref: None,
+            }],
+            primary_artifact_identity_ref: Some(ArtifactIdentityRef(
+                "artifact.identity.1".to_string(),
+            )),
+            proof_record_ref: None,
+        }
     }
 
     #[test]
@@ -1613,5 +1812,63 @@ mod tests {
             }
             _ => panic!("expected invalid-value contract violation"),
         }
+    }
+
+    #[test]
+    fn at_runtime_execution_06_artifact_trust_inputs_require_artifact_refs() {
+        let err = ArtifactTrustPreVerificationInput {
+            artifact_identity_refs: Vec::new(),
+            trust_policy_snapshot_ref: None,
+            trust_set_snapshot_ref: None,
+            upstream_attestation_ref: None,
+            upstream_receipt_refs: Vec::new(),
+            upstream_posture_refs: Vec::new(),
+        }
+        .validate()
+        .expect_err("artifact trust inputs must carry at least one artifact ref");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "artifact_trust_pre_verification_input.artifact_identity_refs"
+                );
+                assert_eq!(reason, "must not be empty");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_07_envelope_accepts_artifact_trust_state_transport() {
+        let envelope = RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            "request:1".to_string(),
+            "trace:1".to_string(),
+            "idem:1".to_string(),
+            UserId::new("user_runtime_1").expect("valid actor user id"),
+            DeviceId::new("device_runtime_1").expect("valid device id"),
+            AppPlatform::Android,
+            sample_platform_context(),
+            Some(SessionId(1)),
+            TurnId(1),
+            Some(1),
+            AdmissionState::SessionResolved,
+            None,
+        )
+        .expect("baseline envelope must validate")
+        .with_artifact_trust_inputs(Some(ArtifactTrustPreVerificationInput {
+            artifact_identity_refs: vec![ArtifactIdentityRef("artifact.identity.1".to_string())],
+            trust_policy_snapshot_ref: Some(TrustPolicySnapshotRef("policy.snap.1".to_string())),
+            trust_set_snapshot_ref: Some(TrustSetSnapshotRef("trust.set.snap.1".to_string())),
+            upstream_attestation_ref: Some("attestation:android:runtime".to_string()),
+            upstream_receipt_refs: vec!["receipt.runtime.1".to_string()],
+            upstream_posture_refs: vec!["capture-posture.attested".to_string()],
+        }))
+        .expect("artifact trust inputs must validate")
+        .with_artifact_trust_state(Some(sample_artifact_trust_state()))
+        .expect("artifact trust state must validate");
+
+        assert!(envelope.artifact_trust_inputs.is_some());
+        assert!(envelope.artifact_trust_state.is_some());
     }
 }
