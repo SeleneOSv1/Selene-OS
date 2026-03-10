@@ -2,8 +2,17 @@
 
 use std::cell::RefCell;
 
+use selene_kernel_contracts::ph1art::{
+    ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
+    ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
+    ArtifactTrustExecutionState, ArtifactVerificationOutcome, ArtifactVerificationResult,
+    NegativeVerificationResultRef, TrustPolicySnapshotRef, TrustSetSnapshotRef,
+    VerificationBasisFingerprint,
+};
 use selene_kernel_contracts::ph1d::SafetyTier;
 use selene_kernel_contracts::ph1j::{
+    artifact_trust_proof_entry_ref_for_event_id_and_ordinal,
+    artifact_trust_proof_record_ref_for_event_id, ArtifactTrustProofEntryInput,
     CanonicalProofRecord, CanonicalProofRecordInput, ProofChainStatus, ProofFailureClass,
     ProofProtectedActionClass, ProofRetentionClass, ProofSignerIdentityMetadata,
     ProofVerificationPosture, ProofVerificationResult, ProofWriteOutcome, ProofWriteReceipt,
@@ -213,7 +222,11 @@ impl Ph1jRuntime {
             self.config.signature_algorithm.clone(),
         )
         .map_err(StorageError::ContractViolation)?;
-        let input = CanonicalProofRecordInput::v1(
+        let artifact_trust_entries = artifact_trust_proof_entry_inputs(
+            &request.runtime_execution_envelope,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let input = CanonicalProofRecordInput::v1_with_artifact_trust_entries(
             request.runtime_execution_envelope.request_id.clone(),
             request.runtime_execution_envelope.trace_id.clone(),
             request.runtime_execution_envelope.session_id,
@@ -248,6 +261,7 @@ impl Ph1jRuntime {
             ProofVerificationPosture::VerificationReady,
             TimestampTrustPosture::RuntimeMonotonic,
             request.verifier_metadata_ref.clone(),
+            artifact_trust_entries,
         )
         .map_err(StorageError::ContractViolation)?;
         selene_storage::ph1j::Ph1jRuntime::emit_proof(
@@ -337,6 +351,76 @@ pub fn proof_execution_state_from_receipt(
     .map_err(StorageError::ContractViolation)
 }
 
+fn artifact_trust_proof_entry_inputs(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Result<Vec<ArtifactTrustProofEntryInput>, ContractViolation> {
+    runtime_execution_envelope
+        .artifact_trust_state
+        .as_ref()
+        .map(|state| {
+            state
+                .decision_records
+                .iter()
+                .map(artifact_trust_proof_entry_input_from_decision_record)
+                .collect()
+        })
+        .unwrap_or_else(|| Ok(Vec::new()))
+}
+
+fn artifact_trust_proof_entry_input_from_decision_record(
+    decision_record: &ArtifactTrustDecisionRecord,
+) -> Result<ArtifactTrustProofEntryInput, ContractViolation> {
+    let entry = ArtifactTrustProofEntryInput {
+        authority_decision_id: decision_record.authority_decision_id.clone(),
+        artifact_identity_ref: decision_record.artifact_identity_ref.clone(),
+        artifact_trust_binding_ref: decision_record.artifact_trust_binding_ref.clone(),
+        trust_policy_snapshot_ref: decision_record.trust_policy_snapshot_ref.clone(),
+        trust_set_snapshot_ref: decision_record.trust_set_snapshot_ref.clone(),
+        verification_basis_fingerprint: decision_record.verification_basis_fingerprint.clone(),
+        artifact_verification_outcome: decision_record
+            .artifact_verification_result
+            .artifact_verification_outcome,
+        artifact_verification_failure_class: decision_record
+            .artifact_verification_result
+            .artifact_verification_failure_class,
+        negative_verification_result_ref: decision_record.negative_verification_result_ref.clone(),
+        historical_snapshot_ref: decision_record.provenance.historical_snapshot_ref.clone(),
+        provenance_verifier_owner: decision_record.provenance.verifier_owner.clone(),
+        provenance_verifier_version: decision_record.provenance.verifier_version.clone(),
+        provenance_evidence_refs: decision_record.provenance.evidence_refs.clone(),
+    };
+    entry.validate()?;
+    Ok(entry)
+}
+
+pub fn artifact_trust_state_from_receipt(
+    artifact_trust_state: Option<&ArtifactTrustExecutionState>,
+    receipt: &ProofWriteReceipt,
+) -> Result<Option<ArtifactTrustExecutionState>, StorageError> {
+    let Some(state) = artifact_trust_state else {
+        return Ok(None);
+    };
+    let proof_record_ref = artifact_trust_proof_record_ref_for_event_id(receipt.proof_event_id)
+        .map_err(StorageError::ContractViolation)?;
+    if receipt.proof_record_ref != proof_record_ref.0 {
+        return Err(StorageError::ProofFailure {
+            class: ProofFailureClass::ProofCanonicalizationFailure,
+            detail: "proof receipt record ref does not match canonical trust proof record ref"
+                .to_string(),
+        });
+    }
+    let mut next = state.clone();
+    next.proof_record_ref = Some(proof_record_ref);
+    for (index, decision_record) in next.decision_records.iter_mut().enumerate() {
+        decision_record.proof_entry_ref = Some(
+            artifact_trust_proof_entry_ref_for_event_id_and_ordinal(receipt.proof_event_id, index)
+                .map_err(StorageError::ContractViolation)?,
+        );
+    }
+    next.validate().map_err(StorageError::ContractViolation)?;
+    Ok(Some(next))
+}
+
 pub fn proof_policy_rule_identifiers(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
 ) -> Vec<String> {
@@ -413,6 +497,7 @@ fn env_or_default(key: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1art::ArtifactVerificationFailureClass;
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::SessionId;
@@ -485,6 +570,145 @@ mod tests {
         .unwrap()
     }
 
+    fn sample_artifact_trust_state() -> ArtifactTrustExecutionState {
+        ArtifactTrustExecutionState {
+            decision_records: vec![
+                ArtifactTrustDecisionRecord {
+                    authority_decision_id: ArtifactTrustDecisionId(
+                        "authority.decision.1".to_string(),
+                    ),
+                    artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
+                    artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                        "artifact.trust.binding.1".to_string(),
+                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
+                    artifact_verification_result: ArtifactVerificationResult {
+                        artifact_identity_ref: ArtifactIdentityRef(
+                            "artifact.identity.1".to_string(),
+                        ),
+                        artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                            "artifact.trust.binding.1".to_string(),
+                        ),
+                        trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                            "policy.snap.1".to_string(),
+                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef(
+                            "trust.set.snap.1".to_string(),
+                        ),
+                        verification_basis_fingerprint: VerificationBasisFingerprint(
+                            "basis.fp.1".to_string(),
+                        ),
+                        artifact_verification_outcome: ArtifactVerificationOutcome::VerifiedFresh,
+                        artifact_verification_failure_class: None,
+                        negative_verification_result_ref: None,
+                        verification_timestamp: MonotonicTimeNs(20),
+                        verification_cache_used: false,
+                        historical_snapshot_ref: None,
+                    },
+                    verification_basis_fingerprint: VerificationBasisFingerprint(
+                        "basis.fp.1".to_string(),
+                    ),
+                    negative_verification_result_ref: None,
+                    provenance: ArtifactTrustDecisionProvenance {
+                        verifier_owner: "section04.authority".to_string(),
+                        verifier_version: "v1".to_string(),
+                        trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                            "policy.snap.1".to_string(),
+                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef(
+                            "trust.set.snap.1".to_string(),
+                        ),
+                        evidence_refs: vec!["evidence.1".to_string()],
+                        historical_snapshot_ref: None,
+                        replay_reconstructable: true,
+                    },
+                    control_hints: ArtifactTrustControlHints {
+                        blast_radius_scope: "ARTIFACT_LOCAL".to_string(),
+                        proof_required_for_completion: true,
+                        rollback_readiness: true,
+                        safe_mode_eligibility: false,
+                        quarantine_eligibility: true,
+                    },
+                    proof_entry_ref: None,
+                },
+                ArtifactTrustDecisionRecord {
+                    authority_decision_id: ArtifactTrustDecisionId(
+                        "authority.decision.2".to_string(),
+                    ),
+                    artifact_identity_ref: ArtifactIdentityRef("artifact.identity.2".to_string()),
+                    artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                        "artifact.trust.binding.2".to_string(),
+                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
+                    artifact_verification_result: ArtifactVerificationResult {
+                        artifact_identity_ref: ArtifactIdentityRef(
+                            "artifact.identity.2".to_string(),
+                        ),
+                        artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                            "artifact.trust.binding.2".to_string(),
+                        ),
+                        trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                            "policy.snap.1".to_string(),
+                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef(
+                            "trust.set.snap.1".to_string(),
+                        ),
+                        verification_basis_fingerprint: VerificationBasisFingerprint(
+                            "basis.fp.2".to_string(),
+                        ),
+                        artifact_verification_outcome: ArtifactVerificationOutcome::Failed,
+                        artifact_verification_failure_class: Some(
+                            ArtifactVerificationFailureClass::SignatureInvalid,
+                        ),
+                        negative_verification_result_ref: Some(NegativeVerificationResultRef(
+                            "neg.verify.2".to_string(),
+                        )),
+                        verification_timestamp: MonotonicTimeNs(21),
+                        verification_cache_used: false,
+                        historical_snapshot_ref: None,
+                    },
+                    verification_basis_fingerprint: VerificationBasisFingerprint(
+                        "basis.fp.2".to_string(),
+                    ),
+                    negative_verification_result_ref: Some(NegativeVerificationResultRef(
+                        "neg.verify.2".to_string(),
+                    )),
+                    provenance: ArtifactTrustDecisionProvenance {
+                        verifier_owner: "section04.authority".to_string(),
+                        verifier_version: "v1".to_string(),
+                        trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                            "policy.snap.1".to_string(),
+                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef(
+                            "trust.set.snap.1".to_string(),
+                        ),
+                        evidence_refs: vec!["evidence.2".to_string()],
+                        historical_snapshot_ref: None,
+                        replay_reconstructable: true,
+                    },
+                    control_hints: ArtifactTrustControlHints {
+                        blast_radius_scope: "TENANT".to_string(),
+                        proof_required_for_completion: true,
+                        rollback_readiness: false,
+                        safe_mode_eligibility: true,
+                        quarantine_eligibility: true,
+                    },
+                    proof_entry_ref: None,
+                },
+            ],
+            primary_artifact_identity_ref: Some(ArtifactIdentityRef(
+                "artifact.identity.1".to_string(),
+            )),
+            proof_record_ref: None,
+        }
+    }
+
     #[test]
     fn at_j_runtime_01_protected_action_writes_canonical_proof_record() {
         let runtime = Ph1jRuntime::default();
@@ -551,5 +775,123 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn at_j_runtime_03_artifact_trust_entries_follow_decision_order() {
+        let runtime = Ph1jRuntime::default();
+        let mut store = store_with_identity_device_session();
+        let envelope = sample_envelope()
+            .with_artifact_trust_state(Some(sample_artifact_trust_state()))
+            .expect("artifact trust state transport must be valid");
+        let receipt = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    envelope,
+                    ProofProtectedActionClass::VoiceTurnExecution,
+                    Some("authority:allowed".to_string()),
+                    vec!["RG-PROOF-001".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "DISPATCH".to_string(),
+                    None,
+                    vec![ReasonCodeId(3)],
+                    MonotonicTimeNs(10),
+                    MonotonicTimeNs(11),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let record = store.proof_records().first().expect("proof record must exist");
+        assert_eq!(record.artifact_trust_entries.len(), 2);
+        assert_eq!(
+            record.artifact_trust_entries[0].linkage.proof_record_ref.0,
+            receipt.proof_record_ref
+        );
+        assert_eq!(
+            record.artifact_trust_entries[1].linkage.proof_record_ref.0,
+            receipt.proof_record_ref
+        );
+        assert_eq!(
+            record.artifact_trust_entries[0]
+                .linkage
+                .authority_decision_id
+                .0,
+            "authority.decision.1"
+        );
+        assert_eq!(
+            record.artifact_trust_entries[1]
+                .linkage
+                .authority_decision_id
+                .0,
+            "authority.decision.2"
+        );
+        assert_eq!(
+            record.artifact_trust_entries[1].artifact_verification_outcome,
+            ArtifactVerificationOutcome::Failed
+        );
+        assert_eq!(
+            record.artifact_trust_entries[1]
+                .linkage
+                .negative_verification_result_ref
+                .as_ref()
+                .map(|value| value.0.as_str()),
+            Some("neg.verify.2")
+        );
+    }
+
+    #[test]
+    fn at_j_runtime_04_receipt_updates_artifact_trust_state_with_proof_linkage() {
+        let runtime = Ph1jRuntime::default();
+        let mut store = store_with_identity_device_session();
+        let state = sample_artifact_trust_state();
+        let envelope = sample_envelope()
+            .with_artifact_trust_state(Some(state.clone()))
+            .expect("artifact trust state transport must be valid");
+        let receipt = runtime
+            .emit_protected_proof(
+                &mut store,
+                ProtectedProofWriteRequest::v1(
+                    envelope,
+                    ProofProtectedActionClass::VoiceTurnExecution,
+                    Some("authority:allowed".to_string()),
+                    vec!["RG-PROOF-001".to_string()],
+                    Some("2026.03.08.v1".to_string()),
+                    None,
+                    None,
+                    Some("CERTIFIED_ACTIVE".to_string()),
+                    "DISPATCH".to_string(),
+                    None,
+                    vec![ReasonCodeId(4)],
+                    MonotonicTimeNs(10),
+                    MonotonicTimeNs(11),
+                    ProofRetentionClass::ComplianceRetention,
+                    Some("request:req_1".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let linked_state = artifact_trust_state_from_receipt(Some(&state), &receipt)
+            .expect("proof linkage update must succeed")
+            .expect("linked state must exist");
+        assert!(linked_state.proof_record_ref.is_some());
+        assert_eq!(linked_state.decision_records.len(), 2);
+        assert!(
+            linked_state.decision_records[0].proof_entry_ref.is_some(),
+            "first decision must receive proof entry linkage"
+        );
+        assert!(
+            linked_state.decision_records[1].proof_entry_ref.is_some(),
+            "second decision must receive proof entry linkage"
+        );
+        assert_ne!(
+            linked_state.decision_records[0].proof_entry_ref,
+            linked_state.decision_records[1].proof_entry_ref
+        );
     }
 }

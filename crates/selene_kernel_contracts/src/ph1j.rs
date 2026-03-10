@@ -1,14 +1,21 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::ph1art::{
+    ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustDecisionId,
+    ArtifactTrustProofEntry, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
+    ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+    HistoricalTrustSnapshotRef, NegativeVerificationResultRef, TrustPolicySnapshotRef,
+    TrustSetSnapshotRef, VerificationBasisFingerprint,
+};
 use crate::ph1_voice_id::UserId;
 use crate::ph1l::SessionId;
 use crate::ph1simcat::{SimulationId, SimulationVersion};
 use crate::{ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, Validate};
 
 pub const PH1J_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
-pub const PH1J_PROOF_SCHEMA_VERSION: SchemaVersion = SchemaVersion(2);
+pub const PH1J_PROOF_SCHEMA_VERSION: SchemaVersion = SchemaVersion(3);
 
 fn validate_opt_id(
     field: &'static str,
@@ -65,6 +72,31 @@ fn validate_opt_ascii_token(
 ) -> Result<(), ContractViolation> {
     if let Some(value) = value.as_ref() {
         validate_ascii_token(field, value, max_len)?;
+    }
+    Ok(())
+}
+
+fn validate_unique_ascii_tokens(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max items",
+        });
+    }
+    let mut seen = BTreeSet::new();
+    for value in values {
+        validate_ascii_token(field, value, max_len)?;
+        if !seen.insert(value.clone()) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "contains duplicates",
+            });
+        }
     }
     Ok(())
 }
@@ -136,6 +168,61 @@ impl Validate for AuditEventId {
         }
         Ok(())
     }
+}
+
+fn artifact_verification_outcome_as_str(value: ArtifactVerificationOutcome) -> &'static str {
+    match value {
+        ArtifactVerificationOutcome::VerifiedFresh => "VERIFIED_FRESH",
+        ArtifactVerificationOutcome::VerifiedCached => "VERIFIED_CACHED",
+        ArtifactVerificationOutcome::DegradedVerified => "DEGRADED_VERIFIED",
+        ArtifactVerificationOutcome::Failed => "FAILED",
+    }
+}
+
+fn artifact_verification_failure_class_as_str(
+    value: ArtifactVerificationFailureClass,
+) -> &'static str {
+    match value {
+        ArtifactVerificationFailureClass::HashMismatch => "HASH_MISMATCH",
+        ArtifactVerificationFailureClass::SignatureInvalid => "SIGNATURE_INVALID",
+        ArtifactVerificationFailureClass::TrustRootUnknown => "TRUST_ROOT_UNKNOWN",
+        ArtifactVerificationFailureClass::TrustRootRevoked => "TRUST_ROOT_REVOKED",
+        ArtifactVerificationFailureClass::ArtifactRevoked => "ARTIFACT_REVOKED",
+        ArtifactVerificationFailureClass::ArtifactExpired => "ARTIFACT_EXPIRED",
+        ArtifactVerificationFailureClass::CertificationInvalid => "CERTIFICATION_INVALID",
+        ArtifactVerificationFailureClass::LineageInvalid => "LINEAGE_INVALID",
+        ArtifactVerificationFailureClass::ScopeInvalid => "SCOPE_INVALID",
+        ArtifactVerificationFailureClass::CryptoSuiteUnsupported => "CRYPTO_SUITE_UNSUPPORTED",
+        ArtifactVerificationFailureClass::TimeAuthorityUnavailable => "TIME_AUTHORITY_UNAVAILABLE",
+        ArtifactVerificationFailureClass::VerificationUnavailable => "VERIFICATION_UNAVAILABLE",
+        ArtifactVerificationFailureClass::CacheBasisInvalid => "CACHE_BASIS_INVALID",
+        ArtifactVerificationFailureClass::LegacyBlocked => "LEGACY_BLOCKED",
+        ArtifactVerificationFailureClass::ClusterTrustDivergence => "CLUSTER_TRUST_DIVERGENCE",
+        ArtifactVerificationFailureClass::HistoricalSnapshotMissing => {
+            "HISTORICAL_SNAPSHOT_MISSING"
+        }
+    }
+}
+
+pub fn artifact_trust_proof_record_ref_for_event_id(
+    proof_event_id: ProofEventId,
+) -> Result<ArtifactTrustProofRecordRef, ContractViolation> {
+    let value = ArtifactTrustProofRecordRef(format!("proof_evt:{}", proof_event_id.0));
+    value.validate()?;
+    Ok(value)
+}
+
+pub fn artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
+    proof_event_id: ProofEventId,
+    ordinal_index: usize,
+) -> Result<ArtifactTrustProofEntryRef, ContractViolation> {
+    let value = ArtifactTrustProofEntryRef(format!(
+        "proof_evt:{}:trust_entry:{}",
+        proof_event_id.0,
+        ordinal_index.saturating_add(1)
+    ));
+    value.validate()?;
+    Ok(value)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1087,6 +1174,7 @@ pub struct CanonicalProofRecordInput {
     pub proof_verification_posture: ProofVerificationPosture,
     pub timestamp_trust_posture: TimestampTrustPosture,
     pub verifier_metadata_ref: Option<String>,
+    pub artifact_trust_entries: Vec<ArtifactTrustProofEntryInput>,
 }
 
 impl CanonicalProofRecordInput {
@@ -1121,6 +1209,71 @@ impl CanonicalProofRecordInput {
         timestamp_trust_posture: TimestampTrustPosture,
         verifier_metadata_ref: Option<String>,
     ) -> Result<Self, ContractViolation> {
+        Self::v1_with_artifact_trust_entries(
+            request_id,
+            trace_id,
+            session_id,
+            turn_id,
+            actor_identity_scope,
+            device_id,
+            node_id,
+            runtime_instance_identity,
+            environment_identity,
+            build_version,
+            git_commit,
+            action_class,
+            authority_decision_reference,
+            policy_rule_identifiers,
+            policy_version,
+            simulation_id,
+            simulation_version,
+            simulation_certification_state,
+            execution_outcome,
+            failure_class,
+            reason_codes,
+            received_at,
+            executed_at,
+            signer_identity_metadata,
+            proof_retention_class,
+            proof_verification_posture,
+            timestamp_trust_posture,
+            verifier_metadata_ref,
+            Vec::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1_with_artifact_trust_entries(
+        request_id: String,
+        trace_id: String,
+        session_id: Option<SessionId>,
+        turn_id: Option<TurnId>,
+        actor_identity_scope: Option<String>,
+        device_id: Option<DeviceId>,
+        node_id: String,
+        runtime_instance_identity: String,
+        environment_identity: String,
+        build_version: String,
+        git_commit: String,
+        action_class: ProofProtectedActionClass,
+        authority_decision_reference: Option<String>,
+        policy_rule_identifiers: Vec<String>,
+        policy_version: Option<String>,
+        simulation_id: Option<SimulationId>,
+        simulation_version: Option<SimulationVersion>,
+        simulation_certification_state: Option<String>,
+        execution_outcome: String,
+        failure_class: Option<String>,
+        reason_codes: Vec<ReasonCodeId>,
+        received_at: MonotonicTimeNs,
+        executed_at: MonotonicTimeNs,
+        signer_identity_metadata: ProofSignerIdentityMetadata,
+        proof_retention_class: ProofRetentionClass,
+        proof_verification_posture: ProofVerificationPosture,
+        timestamp_trust_posture: TimestampTrustPosture,
+        verifier_metadata_ref: Option<String>,
+        artifact_trust_entries: Vec<ArtifactTrustProofEntryInput>,
+    ) -> Result<Self, ContractViolation> {
         let record = Self {
             schema_version: PH1J_PROOF_SCHEMA_VERSION,
             request_id,
@@ -1151,6 +1304,7 @@ impl CanonicalProofRecordInput {
             proof_verification_posture,
             timestamp_trust_posture,
             verifier_metadata_ref,
+            artifact_trust_entries,
         };
         record.validate()?;
         Ok(record)
@@ -1297,6 +1451,14 @@ impl CanonicalProofRecordInput {
             "verifier_metadata_ref",
             self.verifier_metadata_ref.as_deref().unwrap_or("-"),
         );
+        append_canonical_field(
+            &mut buf,
+            "artifact_trust_entry_count",
+            &self.artifact_trust_entries.len().to_string(),
+        );
+        for (index, artifact_trust_entry) in self.artifact_trust_entries.iter().enumerate() {
+            artifact_trust_entry.append_canonical_fields(&mut buf, index);
+        }
         buf
     }
 }
@@ -1429,7 +1591,226 @@ impl Validate for CanonicalProofRecordInput {
             &self.verifier_metadata_ref,
             256,
         )?;
+        if self.artifact_trust_entries.len() > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "canonical_proof_record_input.artifact_trust_entries",
+                reason: "must be <= 32",
+            });
+        }
+        let mut authority_decision_ids = BTreeSet::new();
+        for artifact_trust_entry in &self.artifact_trust_entries {
+            artifact_trust_entry.validate()?;
+            if !authority_decision_ids.insert(artifact_trust_entry.authority_decision_id.clone()) {
+                return Err(ContractViolation::InvalidValue {
+                    field: "canonical_proof_record_input.artifact_trust_entries",
+                    reason: "contains duplicate authority_decision_id",
+                });
+            }
+        }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactTrustProofEntryInput {
+    pub authority_decision_id: ArtifactTrustDecisionId,
+    pub artifact_identity_ref: ArtifactIdentityRef,
+    pub artifact_trust_binding_ref: ArtifactTrustBindingRef,
+    pub trust_policy_snapshot_ref: TrustPolicySnapshotRef,
+    pub trust_set_snapshot_ref: TrustSetSnapshotRef,
+    pub verification_basis_fingerprint: VerificationBasisFingerprint,
+    pub artifact_verification_outcome: ArtifactVerificationOutcome,
+    pub artifact_verification_failure_class: Option<ArtifactVerificationFailureClass>,
+    pub negative_verification_result_ref: Option<NegativeVerificationResultRef>,
+    pub historical_snapshot_ref: Option<HistoricalTrustSnapshotRef>,
+    pub provenance_verifier_owner: String,
+    pub provenance_verifier_version: String,
+    pub provenance_evidence_refs: Vec<String>,
+}
+
+impl ArtifactTrustProofEntryInput {
+    fn append_canonical_fields(&self, buf: &mut String, index: usize) {
+        let prefix = format!("artifact_trust_entry_{index:04}_");
+        append_canonical_field(
+            buf,
+            &format!("{prefix}authority_decision_id"),
+            &self.authority_decision_id.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}artifact_identity_ref"),
+            &self.artifact_identity_ref.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}artifact_trust_binding_ref"),
+            &self.artifact_trust_binding_ref.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}trust_policy_snapshot_ref"),
+            &self.trust_policy_snapshot_ref.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}trust_set_snapshot_ref"),
+            &self.trust_set_snapshot_ref.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}verification_basis_fingerprint"),
+            &self.verification_basis_fingerprint.0,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}artifact_verification_outcome"),
+            artifact_verification_outcome_as_str(self.artifact_verification_outcome),
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}artifact_verification_failure_class"),
+            self.artifact_verification_failure_class
+                .map(artifact_verification_failure_class_as_str)
+                .unwrap_or("-"),
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}negative_verification_result_ref"),
+            self.negative_verification_result_ref
+                .as_ref()
+                .map(|value| value.0.as_str())
+                .unwrap_or("-"),
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}historical_snapshot_ref"),
+            self.historical_snapshot_ref
+                .as_ref()
+                .map(|value| value.0.as_str())
+                .unwrap_or("-"),
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}provenance_verifier_owner"),
+            &self.provenance_verifier_owner,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}provenance_verifier_version"),
+            &self.provenance_verifier_version,
+        );
+        append_canonical_field(
+            buf,
+            &format!("{prefix}provenance_evidence_refs"),
+            &self.provenance_evidence_refs.join(","),
+        );
+    }
+}
+
+impl Validate for ArtifactTrustProofEntryInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.authority_decision_id.validate()?;
+        self.artifact_identity_ref.validate()?;
+        self.artifact_trust_binding_ref.validate()?;
+        self.trust_policy_snapshot_ref.validate()?;
+        self.trust_set_snapshot_ref.validate()?;
+        self.verification_basis_fingerprint.validate()?;
+        if let Some(negative_verification_result_ref) = &self.negative_verification_result_ref {
+            negative_verification_result_ref.validate()?;
+        }
+        if let Some(historical_snapshot_ref) = &self.historical_snapshot_ref {
+            historical_snapshot_ref.validate()?;
+        }
+        validate_ascii_token(
+            "artifact_trust_proof_entry_input.provenance_verifier_owner",
+            &self.provenance_verifier_owner,
+            128,
+        )?;
+        validate_ascii_token(
+            "artifact_trust_proof_entry_input.provenance_verifier_version",
+            &self.provenance_verifier_version,
+            64,
+        )?;
+        validate_unique_ascii_tokens(
+            "artifact_trust_proof_entry_input.provenance_evidence_refs",
+            &self.provenance_evidence_refs,
+            32,
+            128,
+        )?;
+        match self.artifact_verification_outcome {
+            ArtifactVerificationOutcome::Failed
+                if self.artifact_verification_failure_class.is_none() =>
+            {
+                Err(ContractViolation::InvalidValue {
+                    field: "artifact_trust_proof_entry_input.artifact_verification_failure_class",
+                    reason: "required for failed verification outcome",
+                })
+            }
+            ArtifactVerificationOutcome::VerifiedFresh
+            | ArtifactVerificationOutcome::VerifiedCached
+            | ArtifactVerificationOutcome::DegradedVerified
+                if self.artifact_verification_failure_class.is_some() =>
+            {
+                Err(ContractViolation::InvalidValue {
+                    field: "artifact_trust_proof_entry_input.artifact_verification_failure_class",
+                    reason: "must be absent for non-failed verification outcome",
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactTrustProofRecordEntry {
+    pub linkage: ArtifactTrustProofEntry,
+    pub artifact_verification_outcome: ArtifactVerificationOutcome,
+    pub artifact_verification_failure_class: Option<ArtifactVerificationFailureClass>,
+    pub provenance_verifier_owner: String,
+    pub provenance_verifier_version: String,
+    pub provenance_evidence_refs: Vec<String>,
+}
+
+impl Validate for ArtifactTrustProofRecordEntry {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        self.linkage.validate()?;
+        validate_ascii_token(
+            "artifact_trust_proof_record_entry.provenance_verifier_owner",
+            &self.provenance_verifier_owner,
+            128,
+        )?;
+        validate_ascii_token(
+            "artifact_trust_proof_record_entry.provenance_verifier_version",
+            &self.provenance_verifier_version,
+            64,
+        )?;
+        validate_unique_ascii_tokens(
+            "artifact_trust_proof_record_entry.provenance_evidence_refs",
+            &self.provenance_evidence_refs,
+            32,
+            128,
+        )?;
+        match self.artifact_verification_outcome {
+            ArtifactVerificationOutcome::Failed
+                if self.artifact_verification_failure_class.is_none() =>
+            {
+                Err(ContractViolation::InvalidValue {
+                    field: "artifact_trust_proof_record_entry.artifact_verification_failure_class",
+                    reason: "required for failed verification outcome",
+                })
+            }
+            ArtifactVerificationOutcome::VerifiedFresh
+            | ArtifactVerificationOutcome::VerifiedCached
+            | ArtifactVerificationOutcome::DegradedVerified
+                if self.artifact_verification_failure_class.is_some() =>
+            {
+                Err(ContractViolation::InvalidValue {
+                    field: "artifact_trust_proof_record_entry.artifact_verification_failure_class",
+                    reason: "must be absent for non-failed verification outcome",
+                })
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -1469,6 +1850,7 @@ pub struct CanonicalProofRecord {
     pub proof_verification_posture: ProofVerificationPosture,
     pub timestamp_trust_posture: TimestampTrustPosture,
     pub verifier_metadata_ref: Option<String>,
+    pub artifact_trust_entries: Vec<ArtifactTrustProofRecordEntry>,
 }
 
 impl CanonicalProofRecord {
@@ -1503,6 +1885,32 @@ impl CanonicalProofRecord {
             proof_verification_posture: self.proof_verification_posture,
             timestamp_trust_posture: self.timestamp_trust_posture,
             verifier_metadata_ref: self.verifier_metadata_ref.clone(),
+            artifact_trust_entries: self
+                .artifact_trust_entries
+                .iter()
+                .map(|entry| ArtifactTrustProofEntryInput {
+                    authority_decision_id: entry.linkage.authority_decision_id.clone(),
+                    artifact_identity_ref: entry.linkage.artifact_identity_ref.clone(),
+                    artifact_trust_binding_ref: entry.linkage.artifact_trust_binding_ref.clone(),
+                    trust_policy_snapshot_ref: entry.linkage.trust_policy_snapshot_ref.clone(),
+                    trust_set_snapshot_ref: entry.linkage.trust_set_snapshot_ref.clone(),
+                    verification_basis_fingerprint: entry
+                        .linkage
+                        .verification_basis_fingerprint
+                        .clone(),
+                    artifact_verification_outcome: entry.artifact_verification_outcome,
+                    artifact_verification_failure_class: entry
+                        .artifact_verification_failure_class,
+                    negative_verification_result_ref: entry
+                        .linkage
+                        .negative_verification_result_ref
+                        .clone(),
+                    historical_snapshot_ref: entry.linkage.historical_snapshot_ref.clone(),
+                    provenance_verifier_owner: entry.provenance_verifier_owner.clone(),
+                    provenance_verifier_version: entry.provenance_verifier_version.clone(),
+                    provenance_evidence_refs: entry.provenance_evidence_refs.clone(),
+                })
+                .collect(),
         }
         .canonical_payload()
     }
@@ -1621,6 +2029,33 @@ impl Validate for CanonicalProofRecord {
             &self.verifier_metadata_ref,
             256,
         )?;
+        let expected_proof_record_ref =
+            artifact_trust_proof_record_ref_for_event_id(self.proof_event_id)?;
+        let mut authority_decision_ids = BTreeSet::new();
+        for (index, artifact_trust_entry) in self.artifact_trust_entries.iter().enumerate() {
+            artifact_trust_entry.validate()?;
+            if !authority_decision_ids.insert(artifact_trust_entry.linkage.authority_decision_id.clone())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "canonical_proof_record.artifact_trust_entries",
+                    reason: "contains duplicate authority_decision_id",
+                });
+            }
+            if artifact_trust_entry.linkage.proof_record_ref != expected_proof_record_ref {
+                return Err(ContractViolation::InvalidValue {
+                    field: "canonical_proof_record.artifact_trust_entries",
+                    reason: "proof_record_ref must match proof_event_id-derived record ref",
+                });
+            }
+            let expected_proof_entry_ref =
+                artifact_trust_proof_entry_ref_for_event_id_and_ordinal(self.proof_event_id, index)?;
+            if artifact_trust_entry.linkage.proof_entry_ref != expected_proof_entry_ref {
+                return Err(ContractViolation::InvalidValue {
+                    field: "canonical_proof_record.artifact_trust_entries",
+                    reason: "proof_entry_ref must match canonical proof entry ordering",
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -1820,5 +2255,196 @@ mod tests {
         )
         .expect("allowlisted payload must validate");
         assert_eq!(ev.event_type, AuditEventType::PerceptionSignalEmitted);
+    }
+
+    #[test]
+    fn artifact_trust_proof_entry_input_requires_failure_class_for_failed_outcome() {
+        let err = ArtifactTrustProofEntryInput {
+            authority_decision_id: ArtifactTrustDecisionId("authority.decision.1".to_string()),
+            artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
+            artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                "artifact.trust.binding.1".to_string(),
+            ),
+            trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
+            trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
+            verification_basis_fingerprint: VerificationBasisFingerprint(
+                "basis.fp.1".to_string(),
+            ),
+            artifact_verification_outcome: ArtifactVerificationOutcome::Failed,
+            artifact_verification_failure_class: None,
+            negative_verification_result_ref: Some(NegativeVerificationResultRef(
+                "neg.verify.1".to_string(),
+            )),
+            historical_snapshot_ref: None,
+            provenance_verifier_owner: "section04.authority".to_string(),
+            provenance_verifier_version: "v1".to_string(),
+            provenance_evidence_refs: vec!["evidence.1".to_string()],
+        }
+        .validate()
+        .unwrap_err();
+        match err {
+            ContractViolation::InvalidValue { field, .. } => assert_eq!(
+                field,
+                "artifact_trust_proof_entry_input.artifact_verification_failure_class"
+            ),
+            _ => panic!("expected InvalidValue"),
+        }
+    }
+
+    #[test]
+    fn canonical_proof_record_round_trips_artifact_trust_entries() {
+        let input = CanonicalProofRecordInput::v1_with_artifact_trust_entries(
+            "req_1".to_string(),
+            "trace_1".to_string(),
+            Some(SessionId(1)),
+            Some(TurnId(1)),
+            Some("user_1".to_string()),
+            Some(DeviceId::new("device_1").unwrap()),
+            "node_1".to_string(),
+            "runtime_1".to_string(),
+            "env_1".to_string(),
+            "build_1".to_string(),
+            "git_1".to_string(),
+            ProofProtectedActionClass::VoiceTurnExecution,
+            Some("authority:allowed".to_string()),
+            vec!["RG-PROOF-001".to_string()],
+            Some("2026.03.10.v1".to_string()),
+            None,
+            None,
+            None,
+            "DISPATCH".to_string(),
+            None,
+            vec![ReasonCodeId(1)],
+            MonotonicTimeNs(10),
+            MonotonicTimeNs(11),
+            ProofSignerIdentityMetadata::v1(
+                "signer_1".to_string(),
+                "key_1".to_string(),
+                "SHA256_KEYED_DIGEST".to_string(),
+            )
+            .unwrap(),
+            ProofRetentionClass::ComplianceRetention,
+            ProofVerificationPosture::VerificationReady,
+            TimestampTrustPosture::RuntimeMonotonic,
+            Some("request:req_1".to_string()),
+            vec![ArtifactTrustProofEntryInput {
+                authority_decision_id: ArtifactTrustDecisionId(
+                    "authority.decision.1".to_string(),
+                ),
+                artifact_identity_ref: ArtifactIdentityRef("artifact.identity.1".to_string()),
+                artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                    "artifact.trust.binding.1".to_string(),
+                ),
+                trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                    "policy.snap.1".to_string(),
+                ),
+                trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
+                verification_basis_fingerprint: VerificationBasisFingerprint(
+                    "basis.fp.1".to_string(),
+                ),
+                artifact_verification_outcome: ArtifactVerificationOutcome::Failed,
+                artifact_verification_failure_class: Some(
+                    ArtifactVerificationFailureClass::SignatureInvalid,
+                ),
+                negative_verification_result_ref: Some(NegativeVerificationResultRef(
+                    "neg.verify.1".to_string(),
+                )),
+                historical_snapshot_ref: None,
+                provenance_verifier_owner: "section04.authority".to_string(),
+                provenance_verifier_version: "v1".to_string(),
+                provenance_evidence_refs: vec!["evidence.1".to_string()],
+            }],
+        )
+        .expect("artifact trust proof input must validate");
+        let proof_event_id = ProofEventId(1);
+        let record = CanonicalProofRecord {
+            proof_schema_version: PH1J_PROOF_SCHEMA_VERSION,
+            proof_event_id,
+            request_id: input.request_id.clone(),
+            trace_id: input.trace_id.clone(),
+            session_id: input.session_id,
+            turn_id: input.turn_id,
+            actor_identity_scope: input.actor_identity_scope.clone(),
+            device_id: input.device_id.clone(),
+            node_id: input.node_id.clone(),
+            runtime_instance_identity: input.runtime_instance_identity.clone(),
+            environment_identity: input.environment_identity.clone(),
+            build_version: input.build_version.clone(),
+            git_commit: input.git_commit.clone(),
+            action_class: input.action_class,
+            authority_decision_reference: input.authority_decision_reference.clone(),
+            policy_rule_identifiers: input.policy_rule_identifiers.clone(),
+            policy_version: input.policy_version.clone(),
+            simulation_id: input.simulation_id.clone(),
+            simulation_version: input.simulation_version,
+            simulation_certification_state: input.simulation_certification_state.clone(),
+            execution_outcome: input.execution_outcome.clone(),
+            failure_class: input.failure_class.clone(),
+            reason_codes: input.reason_codes.clone(),
+            received_at: input.received_at,
+            executed_at: input.executed_at,
+            proof_payload_hash: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                .to_string(),
+            previous_event_hash: None,
+            current_event_hash: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+                .to_string(),
+            signer_identity_metadata: input.signer_identity_metadata.clone(),
+            signature: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
+                .to_string(),
+            proof_retention_class: input.proof_retention_class,
+            proof_verification_posture: input.proof_verification_posture,
+            timestamp_trust_posture: input.timestamp_trust_posture,
+            verifier_metadata_ref: input.verifier_metadata_ref.clone(),
+            artifact_trust_entries: vec![ArtifactTrustProofRecordEntry {
+                linkage: ArtifactTrustProofEntry {
+                    proof_entry_ref: artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
+                        proof_event_id,
+                        0,
+                    )
+                    .unwrap(),
+                    proof_record_ref: artifact_trust_proof_record_ref_for_event_id(proof_event_id)
+                        .unwrap(),
+                    authority_decision_id: input.artifact_trust_entries[0]
+                        .authority_decision_id
+                        .clone(),
+                    artifact_identity_ref: input.artifact_trust_entries[0]
+                        .artifact_identity_ref
+                        .clone(),
+                    artifact_trust_binding_ref: input.artifact_trust_entries[0]
+                        .artifact_trust_binding_ref
+                        .clone(),
+                    trust_policy_snapshot_ref: input.artifact_trust_entries[0]
+                        .trust_policy_snapshot_ref
+                        .clone(),
+                    trust_set_snapshot_ref: input.artifact_trust_entries[0]
+                        .trust_set_snapshot_ref
+                        .clone(),
+                    verification_basis_fingerprint: input.artifact_trust_entries[0]
+                        .verification_basis_fingerprint
+                        .clone(),
+                    negative_verification_result_ref: input.artifact_trust_entries[0]
+                        .negative_verification_result_ref
+                        .clone(),
+                    historical_snapshot_ref: None,
+                },
+                artifact_verification_outcome: input.artifact_trust_entries[0]
+                    .artifact_verification_outcome,
+                artifact_verification_failure_class: input.artifact_trust_entries[0]
+                    .artifact_verification_failure_class,
+                provenance_verifier_owner: input.artifact_trust_entries[0]
+                    .provenance_verifier_owner
+                    .clone(),
+                provenance_verifier_version: input.artifact_trust_entries[0]
+                    .provenance_verifier_version
+                    .clone(),
+                provenance_evidence_refs: input.artifact_trust_entries[0]
+                    .provenance_evidence_refs
+                    .clone(),
+            }],
+        };
+        record
+            .validate()
+            .expect("record with artifact trust entries must validate");
+        assert_eq!(record.canonical_payload(), input.canonical_payload());
     }
 }

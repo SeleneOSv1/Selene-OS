@@ -46,6 +46,8 @@ use selene_kernel_contracts::ph1feedback::{
     classify_feedback_path, FeedbackEventType, FeedbackPathType,
 };
 use selene_kernel_contracts::ph1j::{
+    artifact_trust_proof_entry_ref_for_event_id_and_ordinal,
+    artifact_trust_proof_record_ref_for_event_id, ArtifactTrustProofRecordEntry,
     AuditEngine, AuditEvent, AuditEventId, AuditEventInput, AuditEventType, AuditPayloadMin,
     AuditSeverity, CanonicalProofRecord, CanonicalProofRecordInput, CorrelationId, DeviceId,
     PayloadKey, PayloadValue, ProofChainStatus, ProofEventId, ProofFailureClass,
@@ -5914,7 +5916,9 @@ impl Ph1fStore {
     }
 
     fn proof_record_ref(proof_event_id: ProofEventId) -> String {
-        format!("proof_evt:{}", proof_event_id.0)
+        artifact_trust_proof_record_ref_for_event_id(proof_event_id)
+            .expect("artifact trust proof record ref must be valid")
+            .0
     }
 
     fn sign_proof_record(
@@ -6013,6 +6017,45 @@ impl Ph1fStore {
             .as_bytes(),
         );
         let signature = self.sign_proof_record(proof_event_id, &current_event_hash, &input);
+        let artifact_trust_proof_record_ref =
+            artifact_trust_proof_record_ref_for_event_id(proof_event_id)
+                .map_err(StorageError::ContractViolation)?;
+        let artifact_trust_entries = input
+            .artifact_trust_entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                Ok(ArtifactTrustProofRecordEntry {
+                    linkage: selene_kernel_contracts::ph1art::ArtifactTrustProofEntry {
+                        proof_entry_ref:
+                            artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
+                                proof_event_id,
+                                index,
+                            )
+                            .map_err(StorageError::ContractViolation)?,
+                        proof_record_ref: artifact_trust_proof_record_ref.clone(),
+                        authority_decision_id: entry.authority_decision_id.clone(),
+                        artifact_identity_ref: entry.artifact_identity_ref.clone(),
+                        artifact_trust_binding_ref: entry.artifact_trust_binding_ref.clone(),
+                        trust_policy_snapshot_ref: entry.trust_policy_snapshot_ref.clone(),
+                        trust_set_snapshot_ref: entry.trust_set_snapshot_ref.clone(),
+                        verification_basis_fingerprint: entry
+                            .verification_basis_fingerprint
+                            .clone(),
+                        negative_verification_result_ref: entry
+                            .negative_verification_result_ref
+                            .clone(),
+                        historical_snapshot_ref: entry.historical_snapshot_ref.clone(),
+                    },
+                    artifact_verification_outcome: entry.artifact_verification_outcome,
+                    artifact_verification_failure_class: entry
+                        .artifact_verification_failure_class,
+                    provenance_verifier_owner: entry.provenance_verifier_owner.clone(),
+                    provenance_verifier_version: entry.provenance_verifier_version.clone(),
+                    provenance_evidence_refs: entry.provenance_evidence_refs.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
 
         let record = CanonicalProofRecord {
             proof_schema_version: input.schema_version,
@@ -6049,6 +6092,7 @@ impl Ph1fStore {
             proof_verification_posture: input.proof_verification_posture,
             timestamp_trust_posture: input.timestamp_trust_posture,
             verifier_metadata_ref: input.verifier_metadata_ref.clone(),
+            artifact_trust_entries,
         };
         record.validate().map_err(StorageError::ContractViolation)?;
 
