@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 
 use selene_kernel_contracts::ph1art::{
-    ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType, ArtifactVersion,
-    ToolCacheRowInput,
+    ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactTrustRootKind,
+    ArtifactTrustRootRegistryRowInput, ArtifactTrustRootState, ArtifactTrustRootVersion,
+    ArtifactType, ArtifactVersion, ToolCacheRowInput,
 };
 use selene_kernel_contracts::MonotonicTimeNs;
 use selene_storage::ph1f::{Ph1fStore, StorageError};
@@ -27,6 +28,32 @@ fn artifact_ev(
         "PH1.LEARN".to_string(),
         "corr:123".to_string(),
         status,
+        idempotency_key.map(ToString::to_string),
+    )
+    .unwrap()
+}
+
+fn trust_root_ev(
+    t: u64,
+    trust_root_id: &str,
+    trust_root_version: u32,
+    kind: ArtifactTrustRootKind,
+    state: ArtifactTrustRootState,
+    parent_trust_root_id: Option<&str>,
+    lineage_root_trust_root_id: &str,
+    idempotency_key: Option<&str>,
+) -> ArtifactTrustRootRegistryRowInput {
+    ArtifactTrustRootRegistryRowInput::v1(
+        MonotonicTimeNs(t),
+        trust_root_id.to_string(),
+        ArtifactTrustRootVersion(trust_root_version),
+        kind,
+        "SELENE_ROOT_CA".to_string(),
+        state,
+        parent_trust_root_id.map(ToString::to_string),
+        lineage_root_trust_root_id.to_string(),
+        "ed25519-sha256-v1".to_string(),
+        None,
         idempotency_key.map(ToString::to_string),
     )
     .unwrap()
@@ -182,4 +209,84 @@ fn at_art_db_05_tool_cache_upsert_and_ttl_read() {
     assert!(hit.is_some());
     let miss = s.tool_cache_hit("weather", "qhash_1", "en-US", MonotonicTimeNs(350));
     assert!(miss.is_none());
+}
+
+#[test]
+fn at_art_db_06_trust_root_registry_append_and_lookup() {
+    let mut s = Ph1fStore::new_in_memory();
+
+    let row_id = s
+        .append_artifact_trust_root_registry_row(trust_root_ev(
+            50,
+            "root.selene",
+            1,
+            ArtifactTrustRootKind::RootAuthority,
+            ArtifactTrustRootState::Active,
+            None,
+            "root.selene",
+            Some("idem_root"),
+        ))
+        .unwrap();
+
+    let row = s
+        .artifact_trust_root_registry_row("root.selene", ArtifactTrustRootVersion(1))
+        .unwrap();
+    assert_eq!(row.trust_root_registry_row_id, row_id);
+    assert_eq!(row.trust_root_id, "root.selene");
+    assert_eq!(row.lineage_root_trust_root_id, "root.selene");
+    assert_eq!(row.parent_trust_root_id, None);
+}
+
+#[test]
+fn at_art_db_07_trust_root_registry_append_only_enforced() {
+    let mut s = Ph1fStore::new_in_memory();
+    let row_id = s
+        .append_artifact_trust_root_registry_row(trust_root_ev(
+            60,
+            "domain.runtime",
+            1,
+            ArtifactTrustRootKind::DomainAuthority,
+            ArtifactTrustRootState::Draft,
+            Some("root.selene"),
+            "root.selene",
+            Some("idem_domain"),
+        ))
+        .unwrap();
+
+    assert!(matches!(
+        s.attempt_overwrite_artifact_trust_root_registry_row(row_id),
+        Err(StorageError::AppendOnlyViolation { .. })
+    ));
+}
+
+#[test]
+fn at_art_db_08_trust_root_registry_idempotency_dedupe_works() {
+    let mut s = Ph1fStore::new_in_memory();
+    let row1 = s
+        .append_artifact_trust_root_registry_row(trust_root_ev(
+            70,
+            "root.selene",
+            1,
+            ArtifactTrustRootKind::RootAuthority,
+            ArtifactTrustRootState::Active,
+            None,
+            "root.selene",
+            Some("idem_same"),
+        ))
+        .unwrap();
+    let row2 = s
+        .append_artifact_trust_root_registry_row(trust_root_ev(
+            71,
+            "root.selene",
+            1,
+            ArtifactTrustRootKind::RootAuthority,
+            ArtifactTrustRootState::Active,
+            None,
+            "root.selene",
+            Some("idem_same"),
+        ))
+        .unwrap();
+
+    assert_eq!(row1, row2);
+    assert_eq!(s.artifact_trust_root_registry_rows().len(), 1);
 }

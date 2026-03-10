@@ -2,15 +2,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest, Sha256};
 use selene_kernel_contracts::ph1_voice_id::{SpeakerId, UserId, VoiceEmbeddingCaptureRef};
 use selene_kernel_contracts::ph1access::{
     AccessApAuthoringConfirmationState, AccessApReviewChannel, AccessApRuleReviewAction,
     AccessApRuleReviewActionPayload, AccessCompiledLineageRef,
 };
 use selene_kernel_contracts::ph1art::{
-    ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus, ArtifactType,
-    ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
+    ArtifactLedgerRow, ArtifactLedgerRowInput, ArtifactScopeType, ArtifactStatus,
+    ArtifactTrustRootRegistryRow, ArtifactTrustRootRegistryRowInput, ArtifactTrustRootVersion,
+    ArtifactType, ArtifactVersion, ToolCacheRow, ToolCacheRowInput,
 };
 use selene_kernel_contracts::ph1bcast::{
     BcastAckStatus, BcastCapabilityId, BcastOutcome, BcastRecipientState, BcastRequest,
@@ -117,12 +117,21 @@ use selene_kernel_contracts::ph1x::ThreadState;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StorageError {
-    ForeignKeyViolation { table: &'static str, key: String },
-    DuplicateKey { table: &'static str, key: String },
-    AppendOnlyViolation { table: &'static str },
+    ForeignKeyViolation {
+        table: &'static str,
+        key: String,
+    },
+    DuplicateKey {
+        table: &'static str,
+        key: String,
+    },
+    AppendOnlyViolation {
+        table: &'static str,
+    },
     ProofFailure {
         class: ProofFailureClass,
         detail: String,
@@ -1778,6 +1787,12 @@ pub struct Ph1fStore {
         ),
         u64,
     >,
+    artifact_trust_root_registry_rows: Vec<ArtifactTrustRootRegistryRow>,
+    // Unique trust-root binding: (trust_root_id, trust_root_version) -> trust_root_registry_row_id.
+    artifact_trust_root_version_index: BTreeMap<(String, ArtifactTrustRootVersion), u64>,
+    // Idempotency dedupe: (trust_root_id, trust_root_version, idempotency_key) -> trust_root_registry_row_id.
+    artifact_trust_root_idempotency_index:
+        BTreeMap<(String, ArtifactTrustRootVersion, String), u64>,
     tool_cache_rows: BTreeMap<u64, ToolCacheRow>,
     // Upsert index: (tool_name, query_hash, locale) -> cache_id.
     tool_cache_lookup_index: BTreeMap<(String, String, String), u64>,
@@ -1905,6 +1920,7 @@ pub struct Ph1fStore {
     next_simulation_catalog_event_id: u64,
     next_engine_capability_map_event_id: u64,
     next_artifact_id: u64,
+    next_artifact_trust_root_registry_row_id: u64,
     next_tool_cache_id: u64,
     next_work_order_event_id: u64,
     next_capreq_event_id: u64,
@@ -3496,6 +3512,9 @@ impl Ph1fStore {
             artifacts_ledger_rows: Vec::new(),
             artifacts_scope_version_index: BTreeMap::new(),
             artifacts_idempotency_index: BTreeMap::new(),
+            artifact_trust_root_registry_rows: Vec::new(),
+            artifact_trust_root_version_index: BTreeMap::new(),
+            artifact_trust_root_idempotency_index: BTreeMap::new(),
             tool_cache_rows: BTreeMap::new(),
             tool_cache_lookup_index: BTreeMap::new(),
             work_order_ledger: Vec::new(),
@@ -3571,6 +3590,7 @@ impl Ph1fStore {
             next_simulation_catalog_event_id: 1,
             next_engine_capability_map_event_id: 1,
             next_artifact_id: 1,
+            next_artifact_trust_root_registry_row_id: 1,
             next_tool_cache_id: 1,
             next_work_order_event_id: 1,
             next_capreq_event_id: 1,
@@ -5924,11 +5944,16 @@ impl Ph1fStore {
     ) -> Result<ProofWriteReceipt, StorageError> {
         input.validate()?;
         if let Some(idempotency_key) = idempotency_key.as_ref() {
-            if idempotency_key.trim().is_empty() || idempotency_key.len() > 256 || !idempotency_key.is_ascii() {
-                return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                    field: "proof_append.idempotency_key",
-                    reason: "must be ASCII and <= 256 chars when provided",
-                }));
+            if idempotency_key.trim().is_empty()
+                || idempotency_key.len() > 256
+                || !idempotency_key.is_ascii()
+            {
+                return Err(StorageError::ContractViolation(
+                    ContractViolation::InvalidValue {
+                        field: "proof_append.idempotency_key",
+                        reason: "must be ASCII and <= 256 chars when provided",
+                    },
+                ));
             }
             if let Some(existing_id) = self.proof_idempotency_index.get(idempotency_key).copied() {
                 let existing = self
@@ -5937,7 +5962,8 @@ impl Ph1fStore {
                     .and_then(|idx| self.proof_ledger.get(*idx))
                     .ok_or_else(|| StorageError::ProofFailure {
                         class: ProofFailureClass::ProofChainIntegrityFailure,
-                        detail: "proof idempotency index points to a missing proof record".to_string(),
+                        detail: "proof idempotency index points to a missing proof record"
+                            .to_string(),
                     })?;
                 return ProofWriteReceipt::v1(
                     existing.proof_event_id,
@@ -6028,7 +6054,8 @@ impl Ph1fStore {
 
         let record_idx = self.proof_ledger.len();
         self.proof_ledger.push(record.clone());
-        self.proof_record_lookup.insert(record.proof_event_id, record_idx);
+        self.proof_record_lookup
+            .insert(record.proof_event_id, record_idx);
         self.proof_request_index
             .entry(record.request_id.clone())
             .or_default()
@@ -6079,10 +6106,12 @@ impl Ph1fStore {
         limit: usize,
     ) -> Result<Vec<&CanonicalProofRecord>, StorageError> {
         if request_id.trim().is_empty() || request_id.len() > 256 || !request_id.is_ascii() {
-            return Err(StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "proof_records_by_request_id_bounded.request_id",
-                reason: "must be ASCII and <= 256 chars",
-            }));
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "proof_records_by_request_id_bounded.request_id",
+                    reason: "must be ASCII and <= 256 chars",
+                },
+            ));
         }
         if limit == 0 {
             return Ok(Vec::new());
@@ -6716,6 +6745,77 @@ impl Ph1fStore {
     ) -> Result<(), StorageError> {
         Err(StorageError::AppendOnlyViolation {
             table: "artifacts_ledger",
+        })
+    }
+
+    pub fn append_artifact_trust_root_registry_row(
+        &mut self,
+        input: ArtifactTrustRootRegistryRowInput,
+    ) -> Result<u64, StorageError> {
+        input.validate()?;
+
+        if let Some(k) = &input.idempotency_key {
+            let idx = (
+                input.trust_root_id.clone(),
+                input.trust_root_version,
+                k.clone(),
+            );
+            if let Some(existing_id) = self.artifact_trust_root_idempotency_index.get(&idx) {
+                return Ok(*existing_id);
+            }
+        }
+
+        let unique_key = (input.trust_root_id.clone(), input.trust_root_version);
+        if let Some(existing_id) = self.artifact_trust_root_version_index.get(&unique_key) {
+            return Err(StorageError::DuplicateKey {
+                table: "artifact_trust_root_registry.trust_root_id_trust_root_version",
+                key: existing_id.to_string(),
+            });
+        }
+
+        let trust_root_registry_row_id = self.next_artifact_trust_root_registry_row_id;
+        self.next_artifact_trust_root_registry_row_id = self
+            .next_artifact_trust_root_registry_row_id
+            .saturating_add(1);
+
+        let row = ArtifactTrustRootRegistryRow::from_input_v1(trust_root_registry_row_id, input)?;
+        self.artifact_trust_root_version_index.insert(
+            (row.trust_root_id.clone(), row.trust_root_version),
+            row.trust_root_registry_row_id,
+        );
+        if let Some(k) = &row.idempotency_key {
+            self.artifact_trust_root_idempotency_index.insert(
+                (row.trust_root_id.clone(), row.trust_root_version, k.clone()),
+                row.trust_root_registry_row_id,
+            );
+        }
+        self.artifact_trust_root_registry_rows.push(row);
+        Ok(trust_root_registry_row_id)
+    }
+
+    pub fn artifact_trust_root_registry_rows(&self) -> &[ArtifactTrustRootRegistryRow] {
+        &self.artifact_trust_root_registry_rows
+    }
+
+    pub fn artifact_trust_root_registry_row(
+        &self,
+        trust_root_id: &str,
+        trust_root_version: ArtifactTrustRootVersion,
+    ) -> Option<&ArtifactTrustRootRegistryRow> {
+        let row_id = self
+            .artifact_trust_root_version_index
+            .get(&(trust_root_id.to_string(), trust_root_version))?;
+        self.artifact_trust_root_registry_rows
+            .iter()
+            .find(|row| row.trust_root_registry_row_id == *row_id)
+    }
+
+    pub fn attempt_overwrite_artifact_trust_root_registry_row(
+        &mut self,
+        _trust_root_registry_row_id: u64,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "artifact_trust_root_registry",
         })
     }
 

@@ -249,6 +249,217 @@ impl Validate for ArtifactLedgerRow {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ArtifactTrustRootVersion(pub u32);
+
+impl Validate for ArtifactTrustRootVersion {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_root_version",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ArtifactTrustRootKind {
+    RootAuthority,
+    DomainAuthority,
+    ArtifactClassAuthority,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ArtifactTrustRootState {
+    Draft,
+    Active,
+    Rotating,
+    Revoked,
+    Expired,
+    Retired,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactTrustRootRegistryRowInput {
+    pub schema_version: SchemaVersion,
+    pub created_at: MonotonicTimeNs,
+    pub trust_root_id: String,
+    pub trust_root_version: ArtifactTrustRootVersion,
+    pub trust_root_kind: ArtifactTrustRootKind,
+    pub signer_identity_id: String,
+    pub state: ArtifactTrustRootState,
+    pub parent_trust_root_id: Option<String>,
+    pub lineage_root_trust_root_id: String,
+    pub crypto_suite_version: String,
+    pub revocation_ref: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
+impl ArtifactTrustRootRegistryRowInput {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        created_at: MonotonicTimeNs,
+        trust_root_id: String,
+        trust_root_version: ArtifactTrustRootVersion,
+        trust_root_kind: ArtifactTrustRootKind,
+        signer_identity_id: String,
+        state: ArtifactTrustRootState,
+        parent_trust_root_id: Option<String>,
+        lineage_root_trust_root_id: String,
+        crypto_suite_version: String,
+        revocation_ref: Option<String>,
+        idempotency_key: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let r = Self {
+            schema_version: PH1ART_CONTRACT_VERSION,
+            created_at,
+            trust_root_id,
+            trust_root_version,
+            trust_root_kind,
+            signer_identity_id,
+            state,
+            parent_trust_root_id,
+            lineage_root_trust_root_id,
+            crypto_suite_version,
+            revocation_ref,
+            idempotency_key,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for ArtifactTrustRootRegistryRowInput {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1ART_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_root_registry_row_input.schema_version",
+                reason: "must match PH1ART_CONTRACT_VERSION",
+            });
+        }
+        if self.created_at.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_root_registry_row_input.created_at",
+                reason: "must be > 0",
+            });
+        }
+        validate_id(
+            "artifact_trust_root_registry_row_input.trust_root_id",
+            &self.trust_root_id,
+            128,
+        )?;
+        self.trust_root_version.validate()?;
+        validate_id(
+            "artifact_trust_root_registry_row_input.signer_identity_id",
+            &self.signer_identity_id,
+            128,
+        )?;
+        validate_opt_id(
+            "artifact_trust_root_registry_row_input.parent_trust_root_id",
+            &self.parent_trust_root_id,
+            128,
+        )?;
+        validate_id(
+            "artifact_trust_root_registry_row_input.lineage_root_trust_root_id",
+            &self.lineage_root_trust_root_id,
+            128,
+        )?;
+        validate_id(
+            "artifact_trust_root_registry_row_input.crypto_suite_version",
+            &self.crypto_suite_version,
+            64,
+        )?;
+        validate_opt_id(
+            "artifact_trust_root_registry_row_input.revocation_ref",
+            &self.revocation_ref,
+            128,
+        )?;
+        validate_opt_id(
+            "artifact_trust_root_registry_row_input.idempotency_key",
+            &self.idempotency_key,
+            128,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactTrustRootRegistryRow {
+    pub schema_version: SchemaVersion,
+    pub trust_root_registry_row_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub trust_root_id: String,
+    pub trust_root_version: ArtifactTrustRootVersion,
+    pub trust_root_kind: ArtifactTrustRootKind,
+    pub signer_identity_id: String,
+    pub state: ArtifactTrustRootState,
+    pub parent_trust_root_id: Option<String>,
+    pub lineage_root_trust_root_id: String,
+    pub crypto_suite_version: String,
+    pub revocation_ref: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
+impl ArtifactTrustRootRegistryRow {
+    pub fn from_input_v1(
+        trust_root_registry_row_id: u64,
+        input: ArtifactTrustRootRegistryRowInput,
+    ) -> Result<Self, ContractViolation> {
+        input.validate()?;
+        let r = Self {
+            schema_version: PH1ART_CONTRACT_VERSION,
+            trust_root_registry_row_id,
+            created_at: input.created_at,
+            trust_root_id: input.trust_root_id,
+            trust_root_version: input.trust_root_version,
+            trust_root_kind: input.trust_root_kind,
+            signer_identity_id: input.signer_identity_id,
+            state: input.state,
+            parent_trust_root_id: input.parent_trust_root_id,
+            lineage_root_trust_root_id: input.lineage_root_trust_root_id,
+            crypto_suite_version: input.crypto_suite_version,
+            revocation_ref: input.revocation_ref,
+            idempotency_key: input.idempotency_key,
+        };
+        r.validate()?;
+        Ok(r)
+    }
+}
+
+impl Validate for ArtifactTrustRootRegistryRow {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1ART_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_root_registry_row.schema_version",
+                reason: "must match PH1ART_CONTRACT_VERSION",
+            });
+        }
+        if self.trust_root_registry_row_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "artifact_trust_root_registry_row.trust_root_registry_row_id",
+                reason: "must be > 0",
+            });
+        }
+        ArtifactTrustRootRegistryRowInput {
+            schema_version: self.schema_version,
+            created_at: self.created_at,
+            trust_root_id: self.trust_root_id.clone(),
+            trust_root_version: self.trust_root_version,
+            trust_root_kind: self.trust_root_kind,
+            signer_identity_id: self.signer_identity_id.clone(),
+            state: self.state,
+            parent_trust_root_id: self.parent_trust_root_id.clone(),
+            lineage_root_trust_root_id: self.lineage_root_trust_root_id.clone(),
+            crypto_suite_version: self.crypto_suite_version.clone(),
+            revocation_ref: self.revocation_ref.clone(),
+            idempotency_key: self.idempotency_key.clone(),
+        }
+        .validate()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCacheRowInput {
     pub schema_version: SchemaVersion,
@@ -360,5 +571,55 @@ impl Validate for ToolCacheRow {
             expires_at: self.expires_at,
         }
         .validate()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_trust_root_registry_input_rejects_zero_version() {
+        let out = ArtifactTrustRootRegistryRowInput::v1(
+            MonotonicTimeNs(1),
+            "root.selene".to_string(),
+            ArtifactTrustRootVersion(0),
+            ArtifactTrustRootKind::RootAuthority,
+            "SELENE_ROOT_CA".to_string(),
+            ArtifactTrustRootState::Active,
+            None,
+            "root.selene".to_string(),
+            "ed25519-sha256-v1".to_string(),
+            None,
+            Some("idem_root".to_string()),
+        );
+        assert!(out.is_err());
+    }
+
+    #[test]
+    fn artifact_trust_root_registry_row_round_trips_from_input() {
+        let row = ArtifactTrustRootRegistryRow::from_input_v1(
+            7,
+            ArtifactTrustRootRegistryRowInput::v1(
+                MonotonicTimeNs(10),
+                "root.selene".to_string(),
+                ArtifactTrustRootVersion(1),
+                ArtifactTrustRootKind::RootAuthority,
+                "SELENE_ROOT_CA".to_string(),
+                ArtifactTrustRootState::Active,
+                None,
+                "root.selene".to_string(),
+                "ed25519-sha256-v1".to_string(),
+                None,
+                Some("idem_root".to_string()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(row.trust_root_registry_row_id, 7);
+        assert_eq!(row.trust_root_id, "root.selene");
+        assert_eq!(row.lineage_root_trust_root_id, "root.selene");
+        assert_eq!(row.state, ArtifactTrustRootState::Active);
     }
 }
