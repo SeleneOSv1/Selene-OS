@@ -587,6 +587,13 @@ pub struct RuntimeLawExecutionState {
     pub triggered_rule_ids: Vec<String>,
     pub subsystem_inputs: Vec<String>,
     pub decision_log_ref: String,
+    pub artifact_trust_decision_ids: Vec<String>,
+    pub artifact_trust_proof_entry_refs: Vec<String>,
+    pub artifact_trust_proof_record_ref: Option<String>,
+    pub artifact_trust_policy_snapshot_refs: Vec<String>,
+    pub artifact_trust_set_snapshot_refs: Vec<String>,
+    pub artifact_trust_basis_fingerprints: Vec<String>,
+    pub artifact_trust_negative_result_refs: Vec<String>,
 }
 
 impl RuntimeLawExecutionState {
@@ -618,9 +625,38 @@ impl RuntimeLawExecutionState {
             triggered_rule_ids,
             subsystem_inputs,
             decision_log_ref,
+            artifact_trust_decision_ids: Vec::new(),
+            artifact_trust_proof_entry_refs: Vec::new(),
+            artifact_trust_proof_record_ref: None,
+            artifact_trust_policy_snapshot_refs: Vec::new(),
+            artifact_trust_set_snapshot_refs: Vec::new(),
+            artifact_trust_basis_fingerprints: Vec::new(),
+            artifact_trust_negative_result_refs: Vec::new(),
         };
         state.validate()?;
         Ok(state)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_artifact_trust_linkage(
+        mut self,
+        artifact_trust_decision_ids: Vec<String>,
+        artifact_trust_proof_entry_refs: Vec<String>,
+        artifact_trust_proof_record_ref: Option<String>,
+        artifact_trust_policy_snapshot_refs: Vec<String>,
+        artifact_trust_set_snapshot_refs: Vec<String>,
+        artifact_trust_basis_fingerprints: Vec<String>,
+        artifact_trust_negative_result_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.artifact_trust_decision_ids = artifact_trust_decision_ids;
+        self.artifact_trust_proof_entry_refs = artifact_trust_proof_entry_refs;
+        self.artifact_trust_proof_record_ref = artifact_trust_proof_record_ref;
+        self.artifact_trust_policy_snapshot_refs = artifact_trust_policy_snapshot_refs;
+        self.artifact_trust_set_snapshot_refs = artifact_trust_set_snapshot_refs;
+        self.artifact_trust_basis_fingerprints = artifact_trust_basis_fingerprints;
+        self.artifact_trust_negative_result_refs = artifact_trust_negative_result_refs;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -660,6 +696,47 @@ impl Validate for RuntimeLawExecutionState {
             &self.decision_log_ref,
             64,
         )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_decision_ids",
+            &self.artifact_trust_decision_ids,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_proof_entry_refs",
+            &self.artifact_trust_proof_entry_refs,
+            128,
+            32,
+        )?;
+        validate_optional_ascii_token(
+            "runtime_law_execution_state.artifact_trust_proof_record_ref",
+            &self.artifact_trust_proof_record_ref,
+            128,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_policy_snapshot_refs",
+            &self.artifact_trust_policy_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_set_snapshot_refs",
+            &self.artifact_trust_set_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_basis_fingerprints",
+            &self.artifact_trust_basis_fingerprints,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_execution_state.artifact_trust_negative_result_refs",
+            &self.artifact_trust_negative_result_refs,
+            128,
+            32,
+        )?;
         Ok(())
     }
 }
@@ -685,6 +762,12 @@ pub struct RuntimeLawDecisionLogEntry {
     pub blast_radius_scope: RuntimeLawBlastRadiusScope,
     pub dry_run_requested: bool,
     pub decision_log_ref: String,
+    pub artifact_trust_decision_ids: Vec<String>,
+    pub artifact_trust_proof_entry_refs: Vec<String>,
+    pub artifact_trust_policy_snapshot_refs: Vec<String>,
+    pub artifact_trust_set_snapshot_refs: Vec<String>,
+    pub artifact_trust_basis_fingerprints: Vec<String>,
+    pub artifact_trust_negative_result_refs: Vec<String>,
 }
 
 impl RuntimeLawDecisionLogEntry {
@@ -730,9 +813,35 @@ impl RuntimeLawDecisionLogEntry {
             blast_radius_scope,
             dry_run_requested,
             decision_log_ref,
+            artifact_trust_decision_ids: Vec::new(),
+            artifact_trust_proof_entry_refs: Vec::new(),
+            artifact_trust_policy_snapshot_refs: Vec::new(),
+            artifact_trust_set_snapshot_refs: Vec::new(),
+            artifact_trust_basis_fingerprints: Vec::new(),
+            artifact_trust_negative_result_refs: Vec::new(),
         };
         entry.validate()?;
         Ok(entry)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_artifact_trust_linkage(
+        mut self,
+        artifact_trust_decision_ids: Vec<String>,
+        artifact_trust_proof_entry_refs: Vec<String>,
+        artifact_trust_policy_snapshot_refs: Vec<String>,
+        artifact_trust_set_snapshot_refs: Vec<String>,
+        artifact_trust_basis_fingerprints: Vec<String>,
+        artifact_trust_negative_result_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.artifact_trust_decision_ids = artifact_trust_decision_ids;
+        self.artifact_trust_proof_entry_refs = artifact_trust_proof_entry_refs;
+        self.artifact_trust_policy_snapshot_refs = artifact_trust_policy_snapshot_refs;
+        self.artifact_trust_set_snapshot_refs = artifact_trust_set_snapshot_refs;
+        self.artifact_trust_basis_fingerprints = artifact_trust_basis_fingerprints;
+        self.artifact_trust_negative_result_refs = artifact_trust_negative_result_refs;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -794,6 +903,42 @@ impl Validate for RuntimeLawDecisionLogEntry {
             "runtime_law_decision_log_entry.decision_log_ref",
             &self.decision_log_ref,
             64,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_decision_ids",
+            &self.artifact_trust_decision_ids,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_proof_entry_refs",
+            &self.artifact_trust_proof_entry_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_policy_snapshot_refs",
+            &self.artifact_trust_policy_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_set_snapshot_refs",
+            &self.artifact_trust_set_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_basis_fingerprints",
+            &self.artifact_trust_basis_fingerprints,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "runtime_law_decision_log_entry.artifact_trust_negative_result_refs",
+            &self.artifact_trust_negative_result_refs,
+            128,
+            32,
         )?;
         Ok(())
     }

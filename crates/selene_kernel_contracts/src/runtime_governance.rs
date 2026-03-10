@@ -39,6 +39,24 @@ fn validate_optional_ascii_token(
     Ok(())
 }
 
+fn validate_ascii_token_vec(
+    field: &'static str,
+    values: &[String],
+    max_len: usize,
+    max_items: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "too many entries",
+        });
+    }
+    for value in values {
+        validate_ascii_token(field, value, max_len)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum GovernanceRuleCategory {
@@ -46,6 +64,7 @@ pub enum GovernanceRuleCategory {
     SessionFirst,
     PersistenceSync,
     ProofCapture,
+    ArtifactTrust,
     SubsystemCertification,
     CrossNodeConsensus,
     GovernanceIntegrity,
@@ -58,6 +77,7 @@ impl GovernanceRuleCategory {
             GovernanceRuleCategory::SessionFirst => "SESSION_FIRST",
             GovernanceRuleCategory::PersistenceSync => "PERSISTENCE_SYNC",
             GovernanceRuleCategory::ProofCapture => "PROOF_CAPTURE",
+            GovernanceRuleCategory::ArtifactTrust => "ARTIFACT_TRUST",
             GovernanceRuleCategory::SubsystemCertification => "SUBSYSTEM_CERTIFICATION",
             GovernanceRuleCategory::CrossNodeConsensus => "CROSS_NODE_CONSENSUS",
             GovernanceRuleCategory::GovernanceIntegrity => "GOVERNANCE_INTEGRITY",
@@ -381,6 +401,13 @@ pub struct GovernanceExecutionState {
     pub last_severity: Option<GovernanceSeverity>,
     pub last_response_class: Option<GovernanceResponseClass>,
     pub decision_log_ref: Option<String>,
+    pub artifact_trust_decision_ids: Vec<String>,
+    pub artifact_trust_proof_entry_refs: Vec<String>,
+    pub artifact_trust_proof_record_ref: Option<String>,
+    pub artifact_trust_policy_snapshot_refs: Vec<String>,
+    pub artifact_trust_set_snapshot_refs: Vec<String>,
+    pub artifact_trust_basis_fingerprints: Vec<String>,
+    pub artifact_trust_negative_result_refs: Vec<String>,
 }
 
 impl GovernanceExecutionState {
@@ -408,9 +435,38 @@ impl GovernanceExecutionState {
             last_severity,
             last_response_class,
             decision_log_ref,
+            artifact_trust_decision_ids: Vec::new(),
+            artifact_trust_proof_entry_refs: Vec::new(),
+            artifact_trust_proof_record_ref: None,
+            artifact_trust_policy_snapshot_refs: Vec::new(),
+            artifact_trust_set_snapshot_refs: Vec::new(),
+            artifact_trust_basis_fingerprints: Vec::new(),
+            artifact_trust_negative_result_refs: Vec::new(),
         };
         state.validate()?;
         Ok(state)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_artifact_trust_linkage(
+        mut self,
+        artifact_trust_decision_ids: Vec<String>,
+        artifact_trust_proof_entry_refs: Vec<String>,
+        artifact_trust_proof_record_ref: Option<String>,
+        artifact_trust_policy_snapshot_refs: Vec<String>,
+        artifact_trust_set_snapshot_refs: Vec<String>,
+        artifact_trust_basis_fingerprints: Vec<String>,
+        artifact_trust_negative_result_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.artifact_trust_decision_ids = artifact_trust_decision_ids;
+        self.artifact_trust_proof_entry_refs = artifact_trust_proof_entry_refs;
+        self.artifact_trust_proof_record_ref = artifact_trust_proof_record_ref;
+        self.artifact_trust_policy_snapshot_refs = artifact_trust_policy_snapshot_refs;
+        self.artifact_trust_set_snapshot_refs = artifact_trust_set_snapshot_refs;
+        self.artifact_trust_basis_fingerprints = artifact_trust_basis_fingerprints;
+        self.artifact_trust_negative_result_refs = artifact_trust_negative_result_refs;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -459,6 +515,47 @@ impl Validate for GovernanceExecutionState {
             &self.decision_log_ref,
             64,
         )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_decision_ids",
+            &self.artifact_trust_decision_ids,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_proof_entry_refs",
+            &self.artifact_trust_proof_entry_refs,
+            128,
+            32,
+        )?;
+        validate_optional_ascii_token(
+            "governance_execution_state.artifact_trust_proof_record_ref",
+            &self.artifact_trust_proof_record_ref,
+            128,
+        )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_policy_snapshot_refs",
+            &self.artifact_trust_policy_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_set_snapshot_refs",
+            &self.artifact_trust_set_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_basis_fingerprints",
+            &self.artifact_trust_basis_fingerprints,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_execution_state.artifact_trust_negative_result_refs",
+            &self.artifact_trust_negative_result_refs,
+            128,
+            32,
+        )?;
         Ok(())
     }
 }
@@ -477,6 +574,13 @@ pub struct GovernanceDecisionLogEntry {
     pub turn_id: Option<u64>,
     pub runtime_node_id: String,
     pub note: Option<String>,
+    pub artifact_trust_decision_ids: Vec<String>,
+    pub artifact_trust_proof_entry_refs: Vec<String>,
+    pub artifact_trust_proof_record_ref: Option<String>,
+    pub artifact_trust_policy_snapshot_refs: Vec<String>,
+    pub artifact_trust_set_snapshot_refs: Vec<String>,
+    pub artifact_trust_basis_fingerprints: Vec<String>,
+    pub artifact_trust_negative_result_refs: Vec<String>,
 }
 
 impl GovernanceDecisionLogEntry {
@@ -508,9 +612,38 @@ impl GovernanceDecisionLogEntry {
             turn_id,
             runtime_node_id,
             note,
+            artifact_trust_decision_ids: Vec::new(),
+            artifact_trust_proof_entry_refs: Vec::new(),
+            artifact_trust_proof_record_ref: None,
+            artifact_trust_policy_snapshot_refs: Vec::new(),
+            artifact_trust_set_snapshot_refs: Vec::new(),
+            artifact_trust_basis_fingerprints: Vec::new(),
+            artifact_trust_negative_result_refs: Vec::new(),
         };
         entry.validate()?;
         Ok(entry)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_artifact_trust_linkage(
+        mut self,
+        artifact_trust_decision_ids: Vec<String>,
+        artifact_trust_proof_entry_refs: Vec<String>,
+        artifact_trust_proof_record_ref: Option<String>,
+        artifact_trust_policy_snapshot_refs: Vec<String>,
+        artifact_trust_set_snapshot_refs: Vec<String>,
+        artifact_trust_basis_fingerprints: Vec<String>,
+        artifact_trust_negative_result_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        self.artifact_trust_decision_ids = artifact_trust_decision_ids;
+        self.artifact_trust_proof_entry_refs = artifact_trust_proof_entry_refs;
+        self.artifact_trust_proof_record_ref = artifact_trust_proof_record_ref;
+        self.artifact_trust_policy_snapshot_refs = artifact_trust_policy_snapshot_refs;
+        self.artifact_trust_set_snapshot_refs = artifact_trust_set_snapshot_refs;
+        self.artifact_trust_basis_fingerprints = artifact_trust_basis_fingerprints;
+        self.artifact_trust_negative_result_refs = artifact_trust_negative_result_refs;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -556,6 +689,47 @@ impl Validate for GovernanceDecisionLogEntry {
             });
         }
         validate_optional_ascii_token("governance_decision_log_entry.note", &self.note, 256)?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_decision_ids",
+            &self.artifact_trust_decision_ids,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_proof_entry_refs",
+            &self.artifact_trust_proof_entry_refs,
+            128,
+            32,
+        )?;
+        validate_optional_ascii_token(
+            "governance_decision_log_entry.artifact_trust_proof_record_ref",
+            &self.artifact_trust_proof_record_ref,
+            128,
+        )?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_policy_snapshot_refs",
+            &self.artifact_trust_policy_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_set_snapshot_refs",
+            &self.artifact_trust_set_snapshot_refs,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_basis_fingerprints",
+            &self.artifact_trust_basis_fingerprints,
+            128,
+            32,
+        )?;
+        validate_ascii_token_vec(
+            "governance_decision_log_entry.artifact_trust_negative_result_refs",
+            &self.artifact_trust_negative_result_refs,
+            128,
+            32,
+        )?;
         Ok(())
     }
 }

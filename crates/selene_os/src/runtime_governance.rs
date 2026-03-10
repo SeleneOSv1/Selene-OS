@@ -3,6 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
+use selene_kernel_contracts::ph1art::{
+    ArtifactTrustExecutionState, ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+};
 use selene_kernel_contracts::ph1j::ProofFailureClass;
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, FailureClass, PersistenceAcknowledgementState, PersistenceConflictSeverity,
@@ -28,6 +31,11 @@ pub mod reason_codes {
     pub const GOV_POLICY_VERSION_DRIFT: &str = "GOV_POLICY_VERSION_DRIFT";
     pub const GOV_SUBSYSTEM_CERTIFICATION_REGRESSED: &str = "GOV_SUBSYSTEM_CERTIFICATION_REGRESSED";
     pub const GOV_SAFE_MODE_ACTIVE: &str = "GOV_SAFE_MODE_ACTIVE";
+    pub const GOV_ARTIFACT_TRUST_REQUIRED: &str = "GOV_ARTIFACT_TRUST_REQUIRED";
+    pub const GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE: &str =
+        "GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE";
+    pub const GOV_ARTIFACT_TRUST_FAILED: &str = "GOV_ARTIFACT_TRUST_FAILED";
+    pub const GOV_ARTIFACT_TRUST_DEGRADED: &str = "GOV_ARTIFACT_TRUST_DEGRADED";
 }
 
 const SUBSYSTEM_RUNTIME_GOVERNANCE: &str = "RUNTIME_GOVERNANCE";
@@ -36,6 +44,7 @@ const SUBSYSTEM_SESSION_ENGINE: &str = "SESSION_ENGINE";
 const SUBSYSTEM_PERSISTENCE_SYNC: &str = "PERSISTENCE_SYNC";
 const SUBSYSTEM_PROOF_CAPTURE: &str = "PROOF_CAPTURE";
 const SUBSYSTEM_CLUSTER_GOVERNANCE: &str = "CLUSTER_GOVERNANCE";
+const SUBSYSTEM_ARTIFACT_AUTHORITY: &str = "ARTIFACT_AUTHORITY";
 
 const RULE_ENV_SESSION_REQUIRED: &str = "RG-SESSION-001";
 const RULE_ENV_DEVICE_SEQUENCE_REQUIRED: &str = "RG-ENV-001";
@@ -46,6 +55,10 @@ const RULE_PROOF_REQUIRED: &str = "RG-PROOF-001";
 const RULE_POLICY_VERSION_DRIFT: &str = "RG-CLUSTER-001";
 const RULE_SUBSYSTEM_CERT_REGRESSED: &str = "RG-CERT-001";
 const RULE_GOVERNANCE_INTEGRITY: &str = "RG-GOV-001";
+const RULE_ARTIFACT_TRUST_REQUIRED: &str = "RG-ART-001";
+const RULE_ARTIFACT_TRUST_EVIDENCE: &str = "RG-ART-002";
+const RULE_ARTIFACT_TRUST_FAILED: &str = "RG-ART-003";
+const RULE_ARTIFACT_TRUST_DEGRADED: &str = "RG-ART-004";
 
 #[derive(Debug, Clone)]
 pub struct RuntimeGovernanceConfig {
@@ -111,6 +124,17 @@ pub struct RuntimeGovernanceSnapshot {
     pub drift_signals: Vec<GovernanceDriftSignal>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct ArtifactTrustGovernanceLinkage {
+    decision_ids: Vec<String>,
+    proof_entry_refs: Vec<String>,
+    proof_record_ref: Option<String>,
+    policy_snapshot_refs: Vec<String>,
+    trust_set_snapshot_refs: Vec<String>,
+    basis_fingerprints: Vec<String>,
+    negative_result_refs: Vec<String>,
+}
+
 #[derive(Debug)]
 struct RuntimeGovernanceStateStore {
     decision_log: Vec<GovernanceDecisionLogEntry>,
@@ -149,6 +173,10 @@ impl RuntimeGovernanceStateStore {
             ),
             (
                 SUBSYSTEM_CLUSTER_GOVERNANCE.to_string(),
+                GovernanceCertificationStatus::Certified,
+            ),
+            (
+                SUBSYSTEM_ARTIFACT_AUTHORITY.to_string(),
                 GovernanceCertificationStatus::Certified,
             ),
         ]
@@ -624,6 +652,138 @@ impl RuntimeGovernanceRuntime {
         ))
     }
 
+    pub fn govern_artifact_activation_execution(
+        &self,
+        envelope: &RuntimeExecutionEnvelope,
+    ) -> Result<RuntimeExecutionEnvelope, RuntimeGovernanceDecision> {
+        let session_id = envelope.session_id.map(|value| value.0);
+        let turn_id = Some(envelope.turn_id.0);
+        let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
+            return Err(self.apply_violation_with_artifact_trust(
+                RULE_ARTIFACT_TRUST_REQUIRED,
+                SUBSYSTEM_ARTIFACT_AUTHORITY,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "artifact activation requires canonical artifact_trust_state transport"
+                        .to_string(),
+                ),
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                None,
+            ));
+        };
+
+        let linkage = artifact_trust_governance_linkage(artifact_trust_state);
+        if !artifact_trust_evidence_complete(artifact_trust_state) {
+            return Err(self.apply_violation_with_artifact_trust(
+                RULE_ARTIFACT_TRUST_EVIDENCE,
+                SUBSYSTEM_ARTIFACT_AUTHORITY,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "artifact activation requires complete trust decision and proof linkage"
+                        .to_string(),
+                ),
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                Some(&linkage),
+            ));
+        }
+
+        if let Some(failure_class) = strongest_artifact_trust_failure(artifact_trust_state) {
+            let (severity, response_class, outcome, certification_status, drift_signal) =
+                artifact_trust_governance_failure_posture(failure_class);
+            return Err(self.apply_violation_with_artifact_trust(
+                RULE_ARTIFACT_TRUST_FAILED,
+                SUBSYSTEM_ARTIFACT_AUTHORITY,
+                outcome,
+                severity,
+                response_class,
+                reason_codes::GOV_ARTIFACT_TRUST_FAILED,
+                session_id,
+                turn_id,
+                drift_signal,
+                Some(format!(
+                    "artifact activation blocked by canonical trust failure {failure_class:?}"
+                )),
+                Some(certification_status),
+                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                Some(&linkage),
+            ));
+        }
+
+        let (outcome, severity, response_class, reason_code, certification_status) =
+            if artifact_trust_is_degraded(artifact_trust_state) {
+                (
+                    GovernanceDecisionOutcome::Degraded,
+                    GovernanceSeverity::Warning,
+                    GovernanceResponseClass::Degrade,
+                    reason_codes::GOV_ARTIFACT_TRUST_DEGRADED,
+                    GovernanceCertificationStatus::Warning,
+                )
+            } else {
+                (
+                    GovernanceDecisionOutcome::Passed,
+                    GovernanceSeverity::Info,
+                    GovernanceResponseClass::Allow,
+                    reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                    GovernanceCertificationStatus::Certified,
+                )
+            };
+        let note = if response_class == GovernanceResponseClass::Degrade {
+            Some("artifact activation allowed with warning from canonical degraded trust state".to_string())
+        } else {
+            Some("artifact activation cleared canonical trust governance".to_string())
+        };
+        let mut guard = self
+            .state
+            .lock()
+            .expect("runtime governance state lock poisoned");
+        self.update_certification_locked(
+            &mut guard,
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            certification_status,
+        );
+        let decision = self.build_decision_from_locked(
+            &guard,
+            if response_class == GovernanceResponseClass::Degrade {
+                RULE_ARTIFACT_TRUST_DEGRADED
+            } else {
+                RULE_ARTIFACT_TRUST_REQUIRED
+            },
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            outcome,
+            severity,
+            response_class,
+            reason_code,
+            session_id,
+            turn_id,
+        );
+        let decision = self
+            .record_existing_decision_with_artifact_trust_locked(
+                &mut guard,
+                decision,
+                note,
+                Some(&linkage),
+            )
+            .expect("artifact trust governance decision must record");
+        let envelope = envelope
+            .with_governance_state(Some(decision.governance_state.clone()))
+            .expect("governance state must validate");
+        Ok(envelope)
+    }
+
     pub fn observe_node_policy_version(
         &self,
         node_id: &str,
@@ -745,6 +905,40 @@ impl RuntimeGovernanceRuntime {
         certification_status: Option<GovernanceCertificationStatus>,
         certification_subsystem: Option<String>,
     ) -> RuntimeGovernanceDecision {
+        self.apply_violation_with_artifact_trust(
+            rule_id,
+            subsystem_id,
+            outcome,
+            severity,
+            response_class,
+            reason_code,
+            session_id,
+            turn_id,
+            drift_signal,
+            note,
+            certification_status,
+            certification_subsystem,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_violation_with_artifact_trust(
+        &self,
+        rule_id: &str,
+        subsystem_id: &str,
+        outcome: GovernanceDecisionOutcome,
+        severity: GovernanceSeverity,
+        response_class: GovernanceResponseClass,
+        reason_code: &str,
+        session_id: Option<u128>,
+        turn_id: Option<u64>,
+        drift_signal: Option<GovernanceDriftSignal>,
+        note: Option<String>,
+        certification_status: Option<GovernanceCertificationStatus>,
+        certification_subsystem: Option<String>,
+        artifact_linkage: Option<&ArtifactTrustGovernanceLinkage>,
+    ) -> RuntimeGovernanceDecision {
         let mut guard = self
             .state
             .lock()
@@ -799,8 +993,13 @@ impl RuntimeGovernanceRuntime {
             session_id,
             turn_id,
         );
-        self.record_existing_decision_locked(&mut guard, decision, note)
-            .expect("runtime governance decision must record")
+        self.record_existing_decision_with_artifact_trust_locked(
+            &mut guard,
+            decision,
+            note,
+            artifact_linkage,
+        )
+        .expect("runtime governance decision must record")
     }
 
     fn record_governance_decision(
@@ -810,6 +1009,25 @@ impl RuntimeGovernanceRuntime {
         drift_signal: Option<GovernanceDriftSignal>,
         certification_subsystem: Option<&str>,
         certification_status: Option<GovernanceCertificationStatus>,
+    ) -> RuntimeGovernanceDecision {
+        self.record_governance_decision_with_artifact_trust(
+            decision,
+            note,
+            drift_signal,
+            certification_subsystem,
+            certification_status,
+            None,
+        )
+    }
+
+    fn record_governance_decision_with_artifact_trust(
+        &self,
+        decision: RuntimeGovernanceDecision,
+        note: Option<String>,
+        drift_signal: Option<GovernanceDriftSignal>,
+        certification_subsystem: Option<&str>,
+        certification_status: Option<GovernanceCertificationStatus>,
+        artifact_linkage: Option<&ArtifactTrustGovernanceLinkage>,
     ) -> RuntimeGovernanceDecision {
         let mut guard = self
             .state
@@ -821,8 +1039,13 @@ impl RuntimeGovernanceRuntime {
         if let (Some(subsystem), Some(status)) = (certification_subsystem, certification_status) {
             self.update_certification_locked(&mut guard, subsystem, status);
         }
-        self.record_existing_decision_locked(&mut guard, decision, note)
-            .expect("runtime governance decision must record")
+        self.record_existing_decision_with_artifact_trust_locked(
+            &mut guard,
+            decision,
+            note,
+            artifact_linkage,
+        )
+        .expect("runtime governance decision must record")
     }
 
     fn update_certification_locked(
@@ -875,6 +1098,7 @@ impl RuntimeGovernanceRuntime {
                 Some(severity),
                 Some(response_class),
                 Some(format!("gov_decision_{}", guard.next_sequence)),
+                None,
             ),
         }
     }
@@ -882,8 +1106,18 @@ impl RuntimeGovernanceRuntime {
     fn record_existing_decision_locked(
         &self,
         guard: &mut RuntimeGovernanceStateStore,
+        decision: RuntimeGovernanceDecision,
+        note: Option<String>,
+    ) -> Result<RuntimeGovernanceDecision, ContractViolation> {
+        self.record_existing_decision_with_artifact_trust_locked(guard, decision, note, None)
+    }
+
+    fn record_existing_decision_with_artifact_trust_locked(
+        &self,
+        guard: &mut RuntimeGovernanceStateStore,
         mut decision: RuntimeGovernanceDecision,
         note: Option<String>,
+        artifact_linkage: Option<&ArtifactTrustGovernanceLinkage>,
     ) -> Result<RuntimeGovernanceDecision, ContractViolation> {
         let sequence = guard.next_sequence;
         guard.next_sequence = guard.next_sequence.saturating_add(1);
@@ -901,6 +1135,19 @@ impl RuntimeGovernanceRuntime {
             self.config.runtime_node_id.clone(),
             note,
         )?;
+        let entry = if let Some(linkage) = artifact_linkage {
+            entry.with_artifact_trust_linkage(
+                linkage.decision_ids.clone(),
+                linkage.proof_entry_refs.clone(),
+                linkage.proof_record_ref.clone(),
+                linkage.policy_snapshot_refs.clone(),
+                linkage.trust_set_snapshot_refs.clone(),
+                linkage.basis_fingerprints.clone(),
+                linkage.negative_result_refs.clone(),
+            )?
+        } else {
+            entry
+        };
         guard.decision_log.push(entry);
         decision.governance_state = governance_execution_state_from_locked(
             &self.config.policy_window,
@@ -909,6 +1156,7 @@ impl RuntimeGovernanceRuntime {
             Some(decision.severity),
             Some(decision.response_class),
             Some(format!("gov_decision_{sequence}")),
+            artifact_linkage,
         );
         Ok(decision)
     }
@@ -921,8 +1169,9 @@ fn governance_execution_state_from_locked(
     last_severity: Option<GovernanceSeverity>,
     last_response_class: Option<GovernanceResponseClass>,
     decision_log_ref: Option<String>,
+    artifact_linkage: Option<&ArtifactTrustGovernanceLinkage>,
 ) -> GovernanceExecutionState {
-    GovernanceExecutionState::v1(
+    let state = GovernanceExecutionState::v1(
         policy_window.governance_policy_version.clone(),
         guard.cluster_consistency,
         guard.safe_mode_active,
@@ -934,7 +1183,22 @@ fn governance_execution_state_from_locked(
         last_response_class,
         decision_log_ref,
     )
-    .expect("governance execution state must validate")
+    .expect("governance execution state must validate");
+    if let Some(linkage) = artifact_linkage {
+        state
+            .with_artifact_trust_linkage(
+                linkage.decision_ids.clone(),
+                linkage.proof_entry_refs.clone(),
+                linkage.proof_record_ref.clone(),
+                linkage.policy_snapshot_refs.clone(),
+                linkage.trust_set_snapshot_refs.clone(),
+                linkage.basis_fingerprints.clone(),
+                linkage.negative_result_refs.clone(),
+            )
+            .expect("governance execution artifact trust linkage must validate")
+    } else {
+        state
+    }
 }
 
 fn subsystem_certification_snapshot(
@@ -948,6 +1212,120 @@ fn subsystem_certification_snapshot(
                 .expect("governance subsystem certification must validate")
         })
         .collect()
+}
+
+fn artifact_trust_governance_linkage(
+    state: &ArtifactTrustExecutionState,
+) -> ArtifactTrustGovernanceLinkage {
+    let mut linkage = ArtifactTrustGovernanceLinkage::default();
+    let mut policy_snapshot_refs_seen = BTreeSet::new();
+    let mut trust_set_snapshot_refs_seen = BTreeSet::new();
+    let mut negative_result_refs_seen = BTreeSet::new();
+    for decision in &state.decision_records {
+        linkage
+            .decision_ids
+            .push(decision.authority_decision_id.0.clone());
+        linkage
+            .basis_fingerprints
+            .push(decision.verification_basis_fingerprint.0.clone());
+        if let Some(proof_entry_ref) = decision.proof_entry_ref.as_ref() {
+            linkage.proof_entry_refs.push(proof_entry_ref.0.clone());
+        }
+        if policy_snapshot_refs_seen.insert(decision.trust_policy_snapshot_ref.0.clone()) {
+            linkage
+                .policy_snapshot_refs
+                .push(decision.trust_policy_snapshot_ref.0.clone());
+        }
+        if trust_set_snapshot_refs_seen.insert(decision.trust_set_snapshot_ref.0.clone()) {
+            linkage
+                .trust_set_snapshot_refs
+                .push(decision.trust_set_snapshot_ref.0.clone());
+        }
+        if let Some(negative_verification_result_ref) =
+            decision.negative_verification_result_ref.as_ref()
+        {
+            if negative_result_refs_seen.insert(negative_verification_result_ref.0.clone()) {
+                linkage
+                    .negative_result_refs
+                    .push(negative_verification_result_ref.0.clone());
+            }
+        }
+    }
+    linkage.proof_record_ref = state.proof_record_ref.as_ref().map(|value| value.0.clone());
+    linkage
+}
+
+fn artifact_trust_evidence_complete(state: &ArtifactTrustExecutionState) -> bool {
+    let proof_required = state
+        .decision_records
+        .iter()
+        .any(|decision| decision.control_hints.proof_required_for_completion);
+    if !proof_required {
+        return true;
+    }
+    if state.proof_record_ref.is_none() {
+        return false;
+    }
+    state.decision_records.iter().all(|decision| {
+        !decision.control_hints.proof_required_for_completion || decision.proof_entry_ref.is_some()
+    })
+}
+
+fn strongest_artifact_trust_failure(
+    state: &ArtifactTrustExecutionState,
+) -> Option<ArtifactVerificationFailureClass> {
+    state.decision_records.iter().find_map(|decision| {
+        if decision.artifact_verification_result.artifact_verification_outcome
+            == ArtifactVerificationOutcome::Failed
+        {
+            decision
+                .artifact_verification_result
+                .artifact_verification_failure_class
+        } else {
+            None
+        }
+    })
+}
+
+fn artifact_trust_is_degraded(state: &ArtifactTrustExecutionState) -> bool {
+    state.decision_records.iter().any(|decision| {
+        decision.artifact_verification_result.artifact_verification_outcome
+            == ArtifactVerificationOutcome::DegradedVerified
+    })
+}
+
+fn artifact_trust_governance_failure_posture(
+    failure_class: ArtifactVerificationFailureClass,
+) -> (
+    GovernanceSeverity,
+    GovernanceResponseClass,
+    GovernanceDecisionOutcome,
+    GovernanceCertificationStatus,
+    Option<GovernanceDriftSignal>,
+) {
+    match failure_class {
+        ArtifactVerificationFailureClass::ClusterTrustDivergence => (
+            GovernanceSeverity::QuarantineRequired,
+            GovernanceResponseClass::Quarantine,
+            GovernanceDecisionOutcome::Quarantined,
+            GovernanceCertificationStatus::Quarantined,
+            Some(GovernanceDriftSignal::PolicyVersionDrift),
+        ),
+        ArtifactVerificationFailureClass::TrustRootRevoked => (
+            GovernanceSeverity::QuarantineRequired,
+            GovernanceResponseClass::Quarantine,
+            GovernanceDecisionOutcome::Quarantined,
+            GovernanceCertificationStatus::Quarantined,
+            Some(GovernanceDriftSignal::SubsystemCertificationRegression),
+        ),
+        _ => (
+            GovernanceSeverity::Blocking,
+            GovernanceResponseClass::Block,
+            GovernanceDecisionOutcome::Failed,
+            GovernanceCertificationStatus::Degraded,
+            Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+        ),
+    }
 }
 
 fn certification_rank(status: GovernanceCertificationStatus) -> u8 {
@@ -1042,6 +1420,38 @@ fn default_rule_registry() -> Vec<GovernanceRuleDescriptor> {
             true,
         )
         .expect("governance rule must validate"),
+        GovernanceRuleDescriptor::v1(
+            RULE_ARTIFACT_TRUST_REQUIRED.to_string(),
+            GovernanceRuleCategory::ArtifactTrust,
+            SUBSYSTEM_ARTIFACT_AUTHORITY.to_string(),
+            "1".to_string(),
+            true,
+        )
+        .expect("governance rule must validate"),
+        GovernanceRuleDescriptor::v1(
+            RULE_ARTIFACT_TRUST_EVIDENCE.to_string(),
+            GovernanceRuleCategory::ArtifactTrust,
+            SUBSYSTEM_ARTIFACT_AUTHORITY.to_string(),
+            "1".to_string(),
+            true,
+        )
+        .expect("governance rule must validate"),
+        GovernanceRuleDescriptor::v1(
+            RULE_ARTIFACT_TRUST_FAILED.to_string(),
+            GovernanceRuleCategory::ArtifactTrust,
+            SUBSYSTEM_ARTIFACT_AUTHORITY.to_string(),
+            "1".to_string(),
+            false,
+        )
+        .expect("governance rule must validate"),
+        GovernanceRuleDescriptor::v1(
+            RULE_ARTIFACT_TRUST_DEGRADED.to_string(),
+            GovernanceRuleCategory::ArtifactTrust,
+            SUBSYSTEM_ARTIFACT_AUTHORITY.to_string(),
+            "1".to_string(),
+            true,
+        )
+        .expect("governance rule must validate"),
     ]
 }
 
@@ -1089,6 +1499,14 @@ pub fn governance_runtime_reason(decision: &RuntimeGovernanceDecision) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1art::{
+        ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
+        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
+        ArtifactTrustExecutionState, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
+        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+        ArtifactVerificationResult, TrustPolicySnapshotRef, TrustSetSnapshotRef,
+        VerificationBasisFingerprint,
+    };
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
@@ -1096,6 +1514,7 @@ mod tests {
     use selene_kernel_contracts::runtime_execution::{
         PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
     };
+    use selene_kernel_contracts::MonotonicTimeNs;
 
     fn base_envelope() -> RuntimeExecutionEnvelope {
         RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
@@ -1117,6 +1536,78 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn verified_artifact_trust_state() -> ArtifactTrustExecutionState {
+        ArtifactTrustExecutionState {
+            decision_records: vec![ArtifactTrustDecisionRecord {
+                authority_decision_id: ArtifactTrustDecisionId(
+                    "authority.decision.gov.1".to_string(),
+                ),
+                artifact_identity_ref: ArtifactIdentityRef("artifact.identity.gov.1".to_string()),
+                artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                    "artifact.trust.binding.gov.1".to_string(),
+                ),
+                trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.gov.1".to_string()),
+                trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.gov.1".to_string()),
+                artifact_verification_result: ArtifactVerificationResult {
+                    artifact_identity_ref: ArtifactIdentityRef(
+                        "artifact.identity.gov.1".to_string(),
+                    ),
+                    artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                        "artifact.trust.binding.gov.1".to_string(),
+                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.gov.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.gov.1".to_string(),
+                    ),
+                    verification_basis_fingerprint: VerificationBasisFingerprint(
+                        "basis.fp.gov.1".to_string(),
+                    ),
+                    artifact_verification_outcome: ArtifactVerificationOutcome::VerifiedFresh,
+                    artifact_verification_failure_class: None,
+                    negative_verification_result_ref: None,
+                    verification_timestamp: MonotonicTimeNs(100),
+                    verification_cache_used: false,
+                    historical_snapshot_ref: None,
+                },
+                verification_basis_fingerprint: VerificationBasisFingerprint(
+                    "basis.fp.gov.1".to_string(),
+                ),
+                negative_verification_result_ref: None,
+                provenance: ArtifactTrustDecisionProvenance {
+                    verifier_owner: "SECTION_04_AUTHORITY".to_string(),
+                    verifier_version: "v1".to_string(),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.gov.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.gov.1".to_string(),
+                    ),
+                    evidence_refs: vec!["evidence.gov.1".to_string()],
+                    historical_snapshot_ref: None,
+                    replay_reconstructable: true,
+                },
+                control_hints: ArtifactTrustControlHints {
+                    blast_radius_scope: "ARTIFACT_LOCAL".to_string(),
+                    proof_required_for_completion: true,
+                    rollback_readiness: true,
+                    safe_mode_eligibility: false,
+                    quarantine_eligibility: true,
+                },
+                proof_entry_ref: Some(ArtifactTrustProofEntryRef(
+                    "artifact.trust.proof.entry.gov.1".to_string(),
+                )),
+            }],
+            primary_artifact_identity_ref: Some(ArtifactIdentityRef(
+                "artifact.identity.gov.1".to_string(),
+            )),
+            proof_record_ref: Some(ArtifactTrustProofRecordRef(
+                "artifact.trust.proof.record.gov.1".to_string(),
+            )),
+        }
     }
 
     #[test]
@@ -1223,5 +1714,89 @@ mod tests {
             .snapshot()
             .drift_signals
             .contains(&GovernanceDriftSignal::PolicyVersionDrift));
+    }
+
+    #[test]
+    fn at_runtime_gov_07_artifact_activation_missing_trust_state_blocks() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let decision = runtime
+            .govern_artifact_activation_execution(&base_envelope())
+            .expect_err("artifact activation must refuse missing canonical trust state");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ARTIFACT_TRUST_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_08_cluster_divergence_quarantines_artifact_activation() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.decision_records[0]
+            .artifact_verification_result
+            .artifact_verification_outcome = ArtifactVerificationOutcome::Failed;
+        state.decision_records[0]
+            .artifact_verification_result
+            .artifact_verification_failure_class =
+            Some(ArtifactVerificationFailureClass::ClusterTrustDivergence);
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap();
+        let decision = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect_err("cluster divergence must quarantine artifact activation");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Quarantine);
+    }
+
+    #[test]
+    fn at_runtime_gov_09_artifact_activation_requires_proof_linkage_when_hint_demands_it() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.proof_record_ref = None;
+        state.decision_records[0].proof_entry_ref = None;
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap();
+        let decision = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect_err("proof-required artifact activation must block without proof linkage");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_10_verified_artifact_activation_records_canonical_linkage() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .unwrap();
+        let out = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect("verified artifact activation must pass governance");
+        let state = out
+            .governance_state
+            .expect("governance state must be attached to envelope");
+        assert_eq!(
+            state.artifact_trust_decision_ids,
+            vec!["authority.decision.gov.1".to_string()]
+        );
+        assert_eq!(
+            state.artifact_trust_proof_entry_refs,
+            vec!["artifact.trust.proof.entry.gov.1".to_string()]
+        );
+        assert_eq!(
+            state.artifact_trust_proof_record_ref.as_deref(),
+            Some("artifact.trust.proof.record.gov.1")
+        );
+        let log = runtime.decision_log_snapshot();
+        let last = log.last().expect("decision log entry must exist");
+        assert_eq!(
+            last.artifact_trust_policy_snapshot_refs,
+            vec!["policy.snap.gov.1".to_string()]
+        );
     }
 }

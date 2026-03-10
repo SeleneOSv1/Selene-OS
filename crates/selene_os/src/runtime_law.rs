@@ -3,6 +3,9 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
+use selene_kernel_contracts::ph1art::{
+    ArtifactTrustExecutionState, ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+};
 use selene_kernel_contracts::ph1builder::{
     BuilderApprovalStateStatus, BuilderPostDeployDecisionAction, BuilderReleaseStateStatus,
 };
@@ -44,6 +47,11 @@ pub mod reason_codes {
     pub const LAW_SELF_HEAL_UNSAFE: &str = "LAW_SELF_HEAL_UNSAFE";
     pub const LAW_OVERRIDE_CONTROL_REQUIRED: &str = "LAW_OVERRIDE_CONTROL_REQUIRED";
     pub const LAW_OVERRIDE_APPLIED: &str = "LAW_OVERRIDE_APPLIED";
+    pub const LAW_ARTIFACT_TRUST_REQUIRED: &str = "LAW_ARTIFACT_TRUST_REQUIRED";
+    pub const LAW_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE: &str =
+        "LAW_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE";
+    pub const LAW_ARTIFACT_TRUST_FAILED: &str = "LAW_ARTIFACT_TRUST_FAILED";
+    pub const LAW_ARTIFACT_TRUST_DEGRADED: &str = "LAW_ARTIFACT_TRUST_DEGRADED";
 }
 
 const SUBSYSTEM_RUNTIME_LAW: &str = "RUNTIME_LAW";
@@ -59,6 +67,7 @@ const SUBSYSTEM_BUILDER: &str = "PH1.BUILDER";
 const SUBSYSTEM_LEARNING: &str = "PH1.LEARN";
 const SUBSYSTEM_SELF_HEAL: &str = "PH1.SELFHEAL";
 const SUBSYSTEM_OVERRIDE: &str = "HUMAN_OVERRIDE";
+const SUBSYSTEM_ARTIFACT_AUTHORITY: &str = "ARTIFACT_AUTHORITY";
 
 const RULE_ALLOW_BASELINE: &str = "RL-BASE-001";
 const RULE_ENV_SESSION_REQUIRED: &str = "RL-ENV-001";
@@ -80,6 +89,10 @@ const RULE_LEARNING_PROMOTION: &str = "RL-LEARN-001";
 const RULE_SELF_HEAL_UNSAFE: &str = "RL-SH-001";
 const RULE_OVERRIDE_CONTROL: &str = "RL-OVR-001";
 const RULE_OVERRIDE_APPLIED: &str = "RL-OVR-002";
+const RULE_ARTIFACT_TRUST_REQUIRED: &str = "RL-ART-001";
+const RULE_ARTIFACT_TRUST_EVIDENCE: &str = "RL-ART-002";
+const RULE_ARTIFACT_TRUST_FAILED: &str = "RL-ART-003";
+const RULE_ARTIFACT_TRUST_DEGRADED: &str = "RL-ART-004";
 
 #[derive(Debug, Clone)]
 pub struct RuntimeLawConfig {
@@ -117,6 +130,17 @@ pub struct RuntimeLawSnapshot {
     pub decision_log: Vec<RuntimeLawDecisionLogEntry>,
     pub safe_mode_active: bool,
     pub quarantined_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ArtifactTrustLawLinkage {
+    decision_ids: Vec<String>,
+    proof_entry_refs: Vec<String>,
+    proof_record_ref: Option<String>,
+    policy_snapshot_refs: Vec<String>,
+    trust_set_snapshot_refs: Vec<String>,
+    basis_fingerprints: Vec<String>,
+    negative_result_refs: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -342,6 +366,53 @@ impl RuntimeLawRuntime {
                 RuntimeLawSeverity::Blocking,
                 RuntimeLawBlastRadiusScope::TenantScope,
             ));
+        }
+
+        if action_class == RuntimeProtectedActionClass::ArtifactAuthority {
+            match envelope.artifact_trust_state.as_ref() {
+                None => triggered_rules.push(trigger(
+                    RULE_ARTIFACT_TRUST_REQUIRED,
+                    SUBSYSTEM_ARTIFACT_AUTHORITY,
+                    reason_codes::LAW_ARTIFACT_TRUST_REQUIRED,
+                    RuntimeLawResponseClass::Block,
+                    RuntimeLawSeverity::Blocking,
+                    RuntimeLawBlastRadiusScope::SubsystemScope,
+                )),
+                Some(artifact_trust_state) if !artifact_trust_evidence_complete(artifact_trust_state) => {
+                    triggered_rules.push(trigger(
+                        RULE_ARTIFACT_TRUST_EVIDENCE,
+                        SUBSYSTEM_ARTIFACT_AUTHORITY,
+                        reason_codes::LAW_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
+                        RuntimeLawResponseClass::Block,
+                        RuntimeLawSeverity::Blocking,
+                        RuntimeLawBlastRadiusScope::SubsystemScope,
+                    ))
+                }
+                Some(artifact_trust_state) => {
+                    if let Some(failure_class) = strongest_artifact_trust_failure(artifact_trust_state)
+                    {
+                        let (response_class, severity, blast_radius_scope) =
+                            artifact_trust_failure_posture(failure_class);
+                        triggered_rules.push(trigger(
+                            RULE_ARTIFACT_TRUST_FAILED,
+                            SUBSYSTEM_ARTIFACT_AUTHORITY,
+                            reason_codes::LAW_ARTIFACT_TRUST_FAILED,
+                            response_class,
+                            severity,
+                            blast_radius_scope,
+                        ));
+                    } else if artifact_trust_is_degraded(artifact_trust_state) {
+                        triggered_rules.push(trigger(
+                            RULE_ARTIFACT_TRUST_DEGRADED,
+                            SUBSYSTEM_ARTIFACT_AUTHORITY,
+                            reason_codes::LAW_ARTIFACT_TRUST_DEGRADED,
+                            RuntimeLawResponseClass::Degrade,
+                            RuntimeLawSeverity::Warning,
+                            blast_radius_scope_from_artifact_trust_state(artifact_trust_state),
+                        ));
+                    }
+                }
+            }
         }
 
         if action_requires_platform_posture(action_class) {
@@ -576,6 +647,22 @@ impl RuntimeLawRuntime {
             decision_log_ref.clone(),
         )
         .expect("runtime law state must validate");
+        let law_state = if let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() {
+            let linkage = artifact_trust_law_linkage(artifact_trust_state);
+            law_state
+                .with_artifact_trust_linkage(
+                    linkage.decision_ids.clone(),
+                    linkage.proof_entry_refs.clone(),
+                    linkage.proof_record_ref.clone(),
+                    linkage.policy_snapshot_refs.clone(),
+                    linkage.trust_set_snapshot_refs.clone(),
+                    linkage.basis_fingerprints.clone(),
+                    linkage.negative_result_refs.clone(),
+                )
+                .expect("runtime law artifact trust linkage must validate")
+        } else {
+            law_state
+        };
 
         let entry = RuntimeLawDecisionLogEntry::v1(
             sequence,
@@ -589,9 +676,15 @@ impl RuntimeLawRuntime {
             envelope.session_id.map(|value| value.0),
             Some(envelope.turn_id.0),
             envelope
-                .proof_state
+                .artifact_trust_state
                 .as_ref()
-                .and_then(|value| value.proof_record_ref.clone()),
+                .and_then(|value| value.proof_record_ref.as_ref().map(|proof_record_ref| proof_record_ref.0.clone()))
+                .or_else(|| {
+                    envelope
+                        .proof_state
+                        .as_ref()
+                        .and_then(|value| value.proof_record_ref.clone())
+                }),
             builder_proposal_id(context.builder_input.as_ref()),
             learning_capability_id(context.learning_input.as_ref()),
             self_heal_fix_id(context.self_heal_input.as_ref()),
@@ -602,6 +695,20 @@ impl RuntimeLawRuntime {
             decision_log_ref,
         )
         .expect("runtime law decision log entry must validate");
+        let entry = if let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() {
+            let linkage = artifact_trust_law_linkage(artifact_trust_state);
+            entry.with_artifact_trust_linkage(
+                linkage.decision_ids,
+                linkage.proof_entry_refs,
+                linkage.policy_snapshot_refs,
+                linkage.trust_set_snapshot_refs,
+                linkage.basis_fingerprints,
+                linkage.negative_result_refs,
+            )
+            .expect("runtime law decision log artifact trust linkage must validate")
+        } else {
+            entry
+        };
         guard.decision_log.push(entry);
 
         RuntimeLawDecision {
@@ -704,11 +811,148 @@ fn action_requires_proof(action_class: RuntimeProtectedActionClass) -> bool {
         RuntimeProtectedActionClass::ProofRequired
             | RuntimeProtectedActionClass::Financial
             | RuntimeProtectedActionClass::InfrastructureCritical
-            | RuntimeProtectedActionClass::ArtifactAuthority
             | RuntimeProtectedActionClass::LearningPromotion
             | RuntimeProtectedActionClass::BuilderDeployment
             | RuntimeProtectedActionClass::SelfHealRemediation
     )
+}
+
+fn artifact_trust_law_linkage(state: &ArtifactTrustExecutionState) -> ArtifactTrustLawLinkage {
+    let mut linkage = ArtifactTrustLawLinkage::default();
+    let mut policy_snapshot_refs_seen = BTreeSet::new();
+    let mut trust_set_snapshot_refs_seen = BTreeSet::new();
+    let mut negative_result_refs_seen = BTreeSet::new();
+    for decision in &state.decision_records {
+        linkage
+            .decision_ids
+            .push(decision.authority_decision_id.0.clone());
+        linkage
+            .basis_fingerprints
+            .push(decision.verification_basis_fingerprint.0.clone());
+        if let Some(proof_entry_ref) = decision.proof_entry_ref.as_ref() {
+            linkage.proof_entry_refs.push(proof_entry_ref.0.clone());
+        }
+        if policy_snapshot_refs_seen.insert(decision.trust_policy_snapshot_ref.0.clone()) {
+            linkage
+                .policy_snapshot_refs
+                .push(decision.trust_policy_snapshot_ref.0.clone());
+        }
+        if trust_set_snapshot_refs_seen.insert(decision.trust_set_snapshot_ref.0.clone()) {
+            linkage
+                .trust_set_snapshot_refs
+                .push(decision.trust_set_snapshot_ref.0.clone());
+        }
+        if let Some(negative_verification_result_ref) =
+            decision.negative_verification_result_ref.as_ref()
+        {
+            if negative_result_refs_seen.insert(negative_verification_result_ref.0.clone()) {
+                linkage
+                    .negative_result_refs
+                    .push(negative_verification_result_ref.0.clone());
+            }
+        }
+    }
+    linkage.proof_record_ref = state.proof_record_ref.as_ref().map(|value| value.0.clone());
+    linkage
+}
+
+fn artifact_trust_evidence_complete(state: &ArtifactTrustExecutionState) -> bool {
+    let proof_required = state
+        .decision_records
+        .iter()
+        .any(|decision| decision.control_hints.proof_required_for_completion);
+    if !proof_required {
+        return true;
+    }
+    if state.proof_record_ref.is_none() {
+        return false;
+    }
+    state.decision_records.iter().all(|decision| {
+        !decision.control_hints.proof_required_for_completion || decision.proof_entry_ref.is_some()
+    })
+}
+
+fn strongest_artifact_trust_failure(
+    state: &ArtifactTrustExecutionState,
+) -> Option<ArtifactVerificationFailureClass> {
+    state.decision_records.iter().find_map(|decision| {
+        if decision.artifact_verification_result.artifact_verification_outcome
+            == ArtifactVerificationOutcome::Failed
+        {
+            decision
+                .artifact_verification_result
+                .artifact_verification_failure_class
+        } else {
+            None
+        }
+    })
+}
+
+fn artifact_trust_is_degraded(state: &ArtifactTrustExecutionState) -> bool {
+    state.decision_records.iter().any(|decision| {
+        decision.artifact_verification_result.artifact_verification_outcome
+            == ArtifactVerificationOutcome::DegradedVerified
+    })
+}
+
+fn artifact_trust_failure_posture(
+    failure_class: ArtifactVerificationFailureClass,
+) -> (
+    RuntimeLawResponseClass,
+    RuntimeLawSeverity,
+    RuntimeLawBlastRadiusScope,
+) {
+    match failure_class {
+        ArtifactVerificationFailureClass::ClusterTrustDivergence => (
+            RuntimeLawResponseClass::SafeMode,
+            RuntimeLawSeverity::Critical,
+            RuntimeLawBlastRadiusScope::ClusterScope,
+        ),
+        ArtifactVerificationFailureClass::TrustRootRevoked => (
+            RuntimeLawResponseClass::Quarantine,
+            RuntimeLawSeverity::QuarantineRequired,
+            RuntimeLawBlastRadiusScope::TenantScope,
+        ),
+        _ => (
+            RuntimeLawResponseClass::Block,
+            RuntimeLawSeverity::Blocking,
+            RuntimeLawBlastRadiusScope::SubsystemScope,
+        ),
+    }
+}
+
+fn blast_radius_scope_from_artifact_trust_state(
+    state: &ArtifactTrustExecutionState,
+) -> RuntimeLawBlastRadiusScope {
+    state.decision_records.iter().fold(
+        RuntimeLawBlastRadiusScope::SubsystemScope,
+        |current, decision| {
+            let candidate = match normalize_blast_radius_scope(
+                &decision.control_hints.blast_radius_scope,
+            ) {
+                Some(scope) => scope,
+                None => RuntimeLawBlastRadiusScope::SubsystemScope,
+            };
+            if blast_radius_rank(candidate) > blast_radius_rank(current) {
+                candidate
+            } else {
+                current
+            }
+        },
+    )
+}
+
+fn normalize_blast_radius_scope(value: &str) -> Option<RuntimeLawBlastRadiusScope> {
+    let normalized = value.trim().to_ascii_uppercase().replace('-', "_");
+    match normalized.as_str() {
+        "ARTIFACT_LOCAL" | "SUBSYSTEM" | "SUBSYSTEM_SCOPE" => {
+            Some(RuntimeLawBlastRadiusScope::SubsystemScope)
+        }
+        "TENANT" | "TENANT_SCOPE" => Some(RuntimeLawBlastRadiusScope::TenantScope),
+        "CLUSTER" | "CLUSTER_SCOPE" => Some(RuntimeLawBlastRadiusScope::ClusterScope),
+        "GLOBAL" | "GLOBAL_SCOPE" => Some(RuntimeLawBlastRadiusScope::GlobalScope),
+        _ => None,
+    }
 }
 
 fn identity_posture_satisfied(
@@ -1113,6 +1357,30 @@ fn default_rule_registry() -> Vec<RuntimeLawRuleDescriptor> {
             "authority-denied actions cannot complete",
         ),
         (
+            RULE_ARTIFACT_TRUST_REQUIRED,
+            RuntimeLawRuleCategory::Authority,
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            "artifact authority actions require canonical artifact trust state",
+        ),
+        (
+            RULE_ARTIFACT_TRUST_EVIDENCE,
+            RuntimeLawRuleCategory::Authority,
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            "artifact authority actions require complete canonical trust proof linkage",
+        ),
+        (
+            RULE_ARTIFACT_TRUST_FAILED,
+            RuntimeLawRuleCategory::Authority,
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            "artifact authority trust failures must drive final runtime-law posture",
+        ),
+        (
+            RULE_ARTIFACT_TRUST_DEGRADED,
+            RuntimeLawRuleCategory::Authority,
+            SUBSYSTEM_ARTIFACT_AUTHORITY,
+            "artifact authority degraded verification may only produce canonical degraded posture",
+        ),
+        (
             RULE_IDENTITY_REQUIRED,
             RuntimeLawRuleCategory::Identity,
             SUBSYSTEM_IDENTITY_ENGINE,
@@ -1227,6 +1495,14 @@ fn default_rule_registry() -> Vec<RuntimeLawRuleDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1art::{
+        ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
+        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
+        ArtifactTrustExecutionState, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
+        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+        ArtifactVerificationResult, TrustPolicySnapshotRef, TrustSetSnapshotRef,
+        VerificationBasisFingerprint,
+    };
     use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
     use selene_kernel_contracts::ph1builder::{
         BuilderApprovalState, BuilderApprovalStateStatus, BuilderChangeClass,
@@ -1381,6 +1657,78 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn verified_artifact_trust_state() -> ArtifactTrustExecutionState {
+        ArtifactTrustExecutionState {
+            decision_records: vec![ArtifactTrustDecisionRecord {
+                authority_decision_id: ArtifactTrustDecisionId(
+                    "authority.decision.law.1".to_string(),
+                ),
+                artifact_identity_ref: ArtifactIdentityRef("artifact.identity.law.1".to_string()),
+                artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                    "artifact.trust.binding.law.1".to_string(),
+                ),
+                trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.law.1".to_string()),
+                trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.law.1".to_string()),
+                artifact_verification_result: ArtifactVerificationResult {
+                    artifact_identity_ref: ArtifactIdentityRef(
+                        "artifact.identity.law.1".to_string(),
+                    ),
+                    artifact_trust_binding_ref: ArtifactTrustBindingRef(
+                        "artifact.trust.binding.law.1".to_string(),
+                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.law.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.law.1".to_string(),
+                    ),
+                    verification_basis_fingerprint: VerificationBasisFingerprint(
+                        "basis.fp.law.1".to_string(),
+                    ),
+                    artifact_verification_outcome: ArtifactVerificationOutcome::VerifiedFresh,
+                    artifact_verification_failure_class: None,
+                    negative_verification_result_ref: None,
+                    verification_timestamp: MonotonicTimeNs(200),
+                    verification_cache_used: false,
+                    historical_snapshot_ref: None,
+                },
+                verification_basis_fingerprint: VerificationBasisFingerprint(
+                    "basis.fp.law.1".to_string(),
+                ),
+                negative_verification_result_ref: None,
+                provenance: ArtifactTrustDecisionProvenance {
+                    verifier_owner: "SECTION_04_AUTHORITY".to_string(),
+                    verifier_version: "v1".to_string(),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
+                        "policy.snap.law.1".to_string(),
+                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef(
+                        "trust.set.snap.law.1".to_string(),
+                    ),
+                    evidence_refs: vec!["evidence.law.1".to_string()],
+                    historical_snapshot_ref: None,
+                    replay_reconstructable: true,
+                },
+                control_hints: ArtifactTrustControlHints {
+                    blast_radius_scope: "artifact-local".to_string(),
+                    proof_required_for_completion: true,
+                    rollback_readiness: true,
+                    safe_mode_eligibility: false,
+                    quarantine_eligibility: true,
+                },
+                proof_entry_ref: Some(ArtifactTrustProofEntryRef(
+                    "artifact.trust.proof.entry.law.1".to_string(),
+                )),
+            }],
+            primary_artifact_identity_ref: Some(ArtifactIdentityRef(
+                "artifact.identity.law.1".to_string(),
+            )),
+            proof_record_ref: Some(ArtifactTrustProofRecordRef(
+                "artifact.trust.proof.record.law.1".to_string(),
+            )),
+        }
     }
 
     fn builder_input(rollback_ready: bool) -> RuntimeLawBuilderInput {
@@ -1768,5 +2116,106 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert_eq!(log[0].reason_codes, log[1].reason_codes);
         assert_eq!(log[0].final_response_class, log[1].final_response_class);
+    }
+
+    #[test]
+    fn at_runtime_law_10_artifact_authority_missing_trust_state_blocks() {
+        let runtime = RuntimeLawRuntime::default();
+        let envelope = base_envelope().with_proof_state(None).unwrap();
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Block);
+        assert!(decision
+            .reason_codes
+            .contains(&reason_codes::LAW_ARTIFACT_TRUST_REQUIRED.to_string()));
+    }
+
+    #[test]
+    fn at_runtime_law_11_cluster_divergence_safe_modes_artifact_authority() {
+        let runtime = RuntimeLawRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.decision_records[0]
+            .artifact_verification_result
+            .artifact_verification_outcome = ArtifactVerificationOutcome::Failed;
+        state.decision_records[0]
+            .artifact_verification_result
+            .artifact_verification_failure_class =
+            Some(ArtifactVerificationFailureClass::ClusterTrustDivergence);
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::SafeMode);
+        assert!(decision
+            .reason_codes
+            .contains(&reason_codes::LAW_ARTIFACT_TRUST_FAILED.to_string()));
+    }
+
+    #[test]
+    fn at_runtime_law_12_artifact_authority_requires_canonical_proof_linkage() {
+        let runtime = RuntimeLawRuntime::default();
+        let mut state = verified_artifact_trust_state();
+        state.proof_record_ref = None;
+        state.decision_records[0].proof_entry_ref = None;
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(state))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Block);
+        assert!(decision
+            .reason_codes
+            .contains(&reason_codes::LAW_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE.to_string()));
+    }
+
+    #[test]
+    fn at_runtime_law_13_artifact_authority_records_canonical_trust_linkage() {
+        let runtime = RuntimeLawRuntime::default();
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Degrade);
+        assert_eq!(
+            decision.law_state.artifact_trust_decision_ids,
+            vec!["authority.decision.law.1".to_string()]
+        );
+        assert_eq!(
+            decision
+                .law_state
+                .artifact_trust_proof_record_ref
+                .as_deref(),
+            Some("artifact.trust.proof.record.law.1")
+        );
+        let log = runtime.decision_log_snapshot();
+        let last = log.last().expect("runtime law decision log entry must exist");
+        assert_eq!(
+            last.artifact_trust_proof_entry_refs,
+            vec!["artifact.trust.proof.entry.law.1".to_string()]
+        );
+        assert_eq!(
+            last.proof_record_ref.as_deref(),
+            Some("artifact.trust.proof.record.law.1")
+        );
     }
 }
