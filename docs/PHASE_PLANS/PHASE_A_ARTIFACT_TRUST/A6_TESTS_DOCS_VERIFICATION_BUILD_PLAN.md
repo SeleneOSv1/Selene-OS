@@ -91,6 +91,11 @@ C) CANONICAL A6 TEST DESIGN
 - The same requirement set must also map to its required docs updates, verification sweep coverage, and final acceptance criteria.
 - Untraced requirements are not considered closed, even if code exists or docs have been updated.
 
+**Traceability ID Rule**
+- Every A1–A5 requirement, every closure-grade test, every verification sweep, and every closure evidence artifact must carry a stable traceability ID.
+- Closure proof must be cross-referenceable by traceability ID across requirements, tests, sweeps, docs updates, and evidence artifacts.
+- Missing traceability IDs weaken closure validity and prevent final closeout from being considered complete.
+
 **Canonical Invariant Catalog**
 - The following Phase A invariants must always be true and must be explicitly testable:
 - Section 04 is the only first-time authoritative verifier.
@@ -243,6 +248,16 @@ F) VERIFICATION SWEEP DESIGN
 - Phase A closure may not rely on runtime behavior without docs reconciliation.
 - Phase A closure may not treat raw field presence as proof of canonical adoption.
 
+**No-Flaky-Closure Rule**
+- Phase A cannot close if critical tests or verification sweeps are flaky, nondeterministic, or require manual reruns to pass.
+- Rerun-to-pass is not valid closure evidence.
+- Closure-grade verification must be stable, reproducible, and reviewable without opportunistic retries.
+
+**Pinned Verification Environment Rule**
+- Closure verification must record toolchain identity, runtime identity, and verification environment identity.
+- Verification environment identity is part of reproducibility evidence and replay evidence.
+- Phase A closure cannot rely on unknown, drifting, or implicitly assumed verification environments.
+
 **Phase A Closure Evidence Pack**
 - the evidence pack must include the traceability matrix
 - the invariant results
@@ -254,6 +269,11 @@ F) VERIFICATION SWEEP DESIGN
 - docs alignment evidence
 - the residual risk register
 - Phase A is not closed until the evidence pack exists and is reviewable
+
+**Evidence Artifact Schema**
+- Each closure evidence artifact must be structured and not ad hoc.
+- The minimum evidence record fields are `evidence_id`, `evidence_type`, `source_phase`, `linked_requirement_ids`, `linked_test_ids`, `linked_sweep_ids`, `generated_at`, and `reviewed_by`.
+- Evidence artifacts may include additional fields, but they may not omit the minimum schema when used for closure proof.
 
 - repo-truth sweep
   - confirm clean tree, expected files only, no shadow trust/proof/enforcement paths, no stale branch-only artifacts
@@ -371,3 +391,8 @@ J) FINAL APPROVAL PACKAGE
 - GOV/LAW enforcement correctness sign-off must confirm A5 canonical enforcement consumption and response mapping.
 - Docs truth sign-off must confirm the canonical docs set is aligned.
 - Closure evidence completeness sign-off must confirm the evidence pack is complete and reviewable.
+
+**Sign-Off Refusal Rule**
+- No sign-off is valid if any `PHASE_BLOCKER`, `HIGH_RISK_GAP`, `DOC_TRUTH_GAP`, or `LEGACY_DRIFT` item remains open.
+- Sign-off cannot override the blocker taxonomy.
+- Residual risk may only contain `OPTIONAL_POLISH` items at closure time.
