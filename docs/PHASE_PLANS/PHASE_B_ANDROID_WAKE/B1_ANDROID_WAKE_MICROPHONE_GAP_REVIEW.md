@@ -284,3 +284,254 @@ Next file to open.
 - Doze / restricted-app posture changes
 - fallback to explicit-only mode
 - Add freeze / rollback detection hooks for device-side readiness contracts so B2/B3 can prove that stale readiness or stale configuration is not silently reused.
+
+**WORLD-CLASS UPGRADE — Baseline Snapshot Clarification**
+- The baseline line at [B1 gap review line 74](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md#L74) stating that a dedicated Phase B doc tree did not yet exist is a historical baseline snapshot taken at review time, not a current repo-fact assertion.
+- The existence of `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/` does not invalidate the original baseline review; it means the gap review has now been promoted into the formal Phase B planning tree.
+
+**WORLD-CLASS UPGRADE — Android API-Level Legality Matrix**
+- B2 and later implementation must treat Android wake legality as a product of both platform version and current execution posture, not as one timeless rule.
+
+| Android API band | App visibility | Trigger source | Microphone capture intent | FGS start context | Allowed posture |
+| --- | --- | --- | --- | --- | --- |
+| Android 12 | Visible foreground UI | Visible UI action / notification action / quick settings tile | immediate microphone capture | foreground-visible start | `WAKE_ELIGIBLE` |
+| Android 12 | Background / not user-visible | wake phrase / widget / external trigger / boot | always-listening or immediate microphone capture | background FGS start required | `EXPLICIT_ONLY` unless platform-lawful exemption is proven |
+| Android 13 | Visible foreground UI | Visible UI action / notification action / quick settings tile | immediate microphone capture | foreground-visible start | `WAKE_ELIGIBLE` |
+| Android 13 | Background / not user-visible | wake phrase / widget / external trigger / boot | always-listening or immediate microphone capture | background FGS start required | `EXPLICIT_ONLY` unless platform-lawful exemption is proven |
+| Android 14 | Visible foreground UI | Visible UI action / notification action / quick settings tile | immediate microphone capture | microphone FGS start from allowed visible context | `WAKE_ELIGIBLE` |
+| Android 14 | Background / not user-visible | wake phrase / widget / external trigger | always-listening or immediate microphone capture | microphone FGS start from background | `BLOCKED` unless a documented Android exemption clearly applies |
+| Android 14 | Boot/restart path | boot/restart | microphone capture start | microphone FGS auto-start from boot | `BLOCKED` |
+| Android 15+ | Visible foreground UI | Visible UI action / notification action / quick settings tile | immediate microphone capture | microphone FGS start from allowed visible context | `WAKE_ELIGIBLE` |
+| Android 15+ | Background / not user-visible | wake phrase / widget / external trigger | always-listening or immediate microphone capture | background microphone FGS start | `BLOCKED` unless a documented Android exemption clearly applies |
+| Android 15+ | Boot/restart path | boot/restart | microphone capture start | microphone FGS auto-start from boot | `BLOCKED` |
+
+- This matrix is minimum legality guidance, not permission to invent loopholes. Where Android platform law is ambiguous, B2/B3 must choose the more conservative posture.
+
+**WORLD-CLASS UPGRADE — Recoverable vs Non-Recoverable Posture Classes**
+- Android wake and microphone posture must be classified into exactly one recoverability family:
+- `recoverable-by-user-action`
+- `recoverable-by-foreground-transition`
+- `recoverable-by-policy-change`
+- `hard-blocked-under-current-platform-law`
+- Minimum classification guidance:
+- `MIC_PERMISSION_DENIED`, `MIC_PERMISSION_REVOKED`, `MIC_PRIVACY_TOGGLE_OFF` -> `recoverable-by-user-action`
+- `MIC_FGS_START_NOT_ALLOWED`, `CONFIGURED_BLOCKED_BACKGROUND_START` -> `recoverable-by-foreground-transition`
+- `CONFIGURED_BLOCKED_RESTRICTED_APP`, battery-optimization denial, enterprise/admin microphone disablement -> `recoverable-by-policy-change`
+- `CONFIGURED_BLOCKED_BOOT_RESTRICTION`, targetSdk/API-level illegal microphone FGS boot start, platform-forbidden background microphone capture -> `hard-blocked-under-current-platform-law`
+- This recoverability class is operational and advisory only. It may influence Android fallback posture, but it may never become Section 04 authority, A4 proof truth, or A5 enforcement truth.
+
+**WORLD-CLASS UPGRADE — Android-to-Phase-A Mapping Appendix**
+- Android outputs must map into frozen Phase A surfaces exactly as follows:
+
+| Android-origin output | Canonical Phase A destination | Notes |
+| --- | --- | --- |
+| wake/capture artifact references | A3 artifact refs / `artifact_trust_inputs` carrier | non-authoritative carriage only |
+| capture attestation refs | A3 upstream attestation refs | used only as normalized trust input |
+| readiness receipts | A3 operational / readiness receipt refs | no device-side authority semantics |
+| operational posture refs | A3 pre-verification posture refs | adapter and PH1.OS normalize only |
+| capture-session refs | A3 capture-session refs | used to correlate runtime state, not to create authority |
+
+- Device-side persistence or reuse of the following is forbidden:
+- `artifact_trust_state`
+- `ArtifactTrustDecisionRecord`
+- `ArtifactTrustProofEntry`
+- `proof_entry_ref`
+- `proof_record_ref`
+- Android may never persist or replay canonical cloud trust/proof outputs as if they were device authority.
+
+**WORLD-CLASS UPGRADE — Android Audio-Contention Matrix**
+
+| Contention case | Emitted posture | Receipt / event expectation | Fallback state |
+| --- | --- | --- | --- |
+| phone call active | `MIC_CONTENTION_PREEMPTED` | contention receipt + route/call-state event | `EXPLICIT_ONLY` |
+| other recorder active | `MIC_CONTENTION_PREEMPTED` or `MIC_SILENT_AUDIO_DETECTED` | contention receipt | `retry-later-operationally` or `EXPLICIT_ONLY` |
+| privacy-sensitive competing source | `MIC_SILENT_AUDIO_DETECTED` | silent-audio receipt + competing-source event if visible | `EXPLICIT_ONLY` |
+| Bluetooth route change | `MIC_UNKNOWN_UNSAFE` until route stabilizes | route-change event + readiness recompute receipt | `retry-later-operationally` |
+| headset transition | `MIC_UNKNOWN_UNSAFE` until route stabilizes | device-route transition receipt | `retry-later-operationally` |
+| silent-audio delivery | `MIC_SILENT_AUDIO_DETECTED` | silent-audio detection receipt | `EXPLICIT_ONLY` |
+
+- Android contention handling must remain operational-only and must feed Phase A as non-authoritative capture/posture input.
+
+**WORLD-CLASS UPGRADE — Recovery Rules for Doze, Restricted-App, and Battery Transitions**
+- Entering Doze:
+- if current path was lawful only because the app was visibly foregrounded and remains so, posture may remain `WAKE_ELIGIBLE`
+- if always-listening legality becomes uncertain, posture must become `EXPLICIT_ONLY`
+- if the app can no longer lawfully or reliably sustain wake readiness, posture becomes `BLOCKED` until a fresh readiness receipt exists
+- Leaving Doze:
+- posture must not silently return to `WAKE_ELIGIBLE`; readiness must be recomputed and a fresh readiness receipt must exist first
+- Restricted-app transition:
+- posture becomes `BLOCKED` or `EXPLICIT_ONLY` depending on whether explicit visible action remains lawful; it must not silently resume wake eligibility
+- Battery optimization whitelist change:
+- moving off whitelist may force `EXPLICIT_ONLY` or `BLOCKED`
+- moving onto whitelist does not by itself restore `WAKE_ELIGIBLE`; a fresh readiness receipt is still required
+- App standby downgrade:
+- posture must degrade conservatively to `EXPLICIT_ONLY` or `BLOCKED` until a fresh readiness receipt exists and lawful start conditions are re-established
+
+**WORLD-CLASS UPGRADE — Boot-Restoration Action Table**
+
+| Boot / restart action | May do | Must never do |
+| --- | --- | --- |
+| restore persisted config | restore user preference, feature flag, and prior non-sensitive wake configuration | restore active microphone capture session as if uninterrupted |
+| recompute readiness | recompute permission, privacy-toggle, restricted-app, battery, and legality posture | assume prior readiness remains valid without recomputation |
+| emit boot-restoration receipt | emit one explicit boot-restoration receipt for upstream normalization | treat boot receipt as trust, proof, or enforcement authority |
+| schedule user-visible recovery prompt | schedule or present visible recovery prompt where lawful and needed | silently background-start microphone capture |
+| microphone FGS auto-start | never | always forbidden on this plan baseline |
+
+**WORLD-CLASS UPGRADE — Parity Acceptance Criteria**
+- `desktop-full-parity`: desktop delivers full lawful wake behavior and canonical Phase A transport/proof/enforcement integration.
+- `android-lawful-parity`: Android matches desktop on canonical ingress/trust/proof/enforcement surfaces while remaining inside Android platform law.
+- `android-explicit-only-fallback`: acceptable release target when Android cannot lawfully sustain always-listening wake but still supports explicit user-initiated capture through the canonical Phase A path.
+- `android-blocked-platform-posture`: acceptable temporary release target only when Android platform or managed-device posture forbids lawful microphone wake entirely.
+- Acceptable release targets for later B3/B4 are `android-lawful-parity` and `android-explicit-only-fallback`. `android-blocked-platform-posture` is acceptable only when the block is truthful, explicit, and user-visible.
+
+**WORLD-CLASS UPGRADE — Layer-Boundary Implementation Map**
+- `WakeForegroundService`
+- owns only lawful foreground microphone service lifecycle, notification visibility, and wake/session coupling
+- `WakeEligibilityCoordinator`
+- owns only Android legality evaluation for wake and start contexts
+- `MicrophoneReadinessCoordinator`
+- owns only permission/privacy/FGS/readiness posture
+- `CaptureSessionCoordinator`
+- owns only capture-session lifecycle, route transitions, silence detection, and contention handling
+- receipt / posture emitters / bridges
+- own only normalized receipts, posture refs, traceability IDs, and upstream bridge packaging
+- The following must never leak into adapter, PH1.OS, or Section 04 except as normalized non-authoritative inputs:
+- platform-law decisions as authority
+- trust/proof/enforcement decisions
+- cached canonical trust/proof refs
+- Adapter remains non-authoritative normalization only.
+- PH1.OS remains upstream posture handling only.
+- Section 04 remains sole first-time authoritative verifier and consumes only normalized upstream inputs.
+
+**WORLD-CLASS UPGRADE — Minimum Event Schema**
+- Minimum Android operational event schema:
+- `event_id`
+- `traceability_id`
+- `event_type`
+- `observed_at`
+- `session_ref` where applicable
+- `capture_session_ref` where applicable
+- `device_posture_class`
+- `wake_posture_class`
+- `microphone_readiness_class`
+- `trigger_source`
+- `api_level`
+- `target_sdk`
+- `user_visible_state`
+- `fgs_start_context`
+- `resulting_allowed_posture`
+- Required event families:
+- wake eligibility evaluation
+- FGS start accepted / denied
+- privacy-toggle transitions
+- silent-audio detection
+- contention events
+- Doze / restricted-app transitions
+- fallback transitions
+- boot-restoration receipts
+
+**WORLD-CLASS UPGRADE — Readiness Invalidation Triggers**
+- Cached readiness must be invalidated on:
+- permission revocation
+- privacy-toggle change
+- target-SDK or platform update
+- restricted-app transition
+- boot or restart
+- FGS capability change
+- audio-route or microphone-source capability change where legality/readiness may differ
+- After invalidation, Android may not silently reuse prior readiness. A fresh readiness receipt is required before any return to `WAKE_ELIGIBLE`.
+
+**WORLD-CLASS UPGRADE — Target-SDK and Platform-Law Matrix**
+
+| targetSdk / platform posture | Legal sensitivity | Required interpretation |
+| --- | --- | --- |
+| targetSdk 31–33 on Android 12–13 | background FGS starts restricted | default to conservative `EXPLICIT_ONLY` when visibility/legal exemption is unclear |
+| targetSdk 34 on Android 14 | microphone FGS type enforcement and background-start restrictions tightened | treat background microphone FGS as `BLOCKED` unless explicitly documented lawful |
+| targetSdk 35+ on Android 15+ | microphone FGS and boot/start limits remain strict or stricter | do not assume legacy behavior; re-evaluate legality against current platform law |
+
+- B2/B3 must key legality to both OS level and `targetSdkVersion`. Platform version alone is not enough.
+
+**WORLD-CLASS UPGRADE — Trigger-Source Legality Matrix**
+
+| Trigger source | Default legality treatment |
+| --- | --- |
+| wake phrase | `EXPLICIT_ONLY` unless Android capability tier and current visible/allowed posture make continuous listening lawful |
+| visible UI action | `WAKE_ELIGIBLE` when permission/privacy/FGS requirements are satisfied |
+| notification action | `WAKE_ELIGIBLE` only when it yields a lawful visible/foreground transition |
+| quick settings tile | `WAKE_ELIGIBLE` only when it creates a lawful visible/foreground transition |
+| widget | `EXPLICIT_ONLY` unless it clearly transitions into a lawful visible start context |
+| external trigger | `EXPLICIT_ONLY` by default; may not auto-create hidden microphone capture |
+| boot/restart path | `BLOCKED` for microphone auto-start; may only restore config and readiness receipts |
+
+**WORLD-CLASS UPGRADE — Capability-Tier Model**
+- Android implementation must classify device capability into exactly one tier:
+- `hardware_hotword_path`
+- `software_hotword_path`
+- `explicit-only_path`
+- `unsupported_path`
+- Capability tier affects parity and fallback only at the operational level.
+- Capability tier must never become authority, proof, or enforcement truth.
+- `hardware_hotword_path` may support stronger lawful parity if platform and device policy allow it.
+- `software_hotword_path` must remain conservative under battery, Doze, and background-start restrictions.
+- `explicit-only_path` is the default lawful fallback when always-listening legality is not provable.
+- `unsupported_path` means wake remains blocked and only non-wake explicit capture may remain lawful.
+
+**WORLD-CLASS UPGRADE — Enterprise Managed-Device and Work-Profile Posture**
+- Android B2/B3 must explicitly model:
+- managed-device restrictions
+- work-profile restrictions
+- enterprise/admin microphone disablement posture
+- These states feed only normalized non-authoritative posture.
+- Managed-device or admin restrictions may push Android into `EXPLICIT_ONLY` or `BLOCKED`, but may never create device-side authority shortcuts or alternate enforcement paths.
+
+**WORLD-CLASS UPGRADE — Process-Death and Restart Restoration Model**
+- After process death or restart:
+- state that may be restored: persisted user configuration, non-sensitive readiness metadata, last known non-authoritative operational posture class
+- state that must be recomputed: permission state, privacy-toggle state, restricted-app state, battery/Doze state, legality posture, capture-session legality, readiness receipt freshness
+- state that must never auto-resume: active microphone capture, wake-eligible always-listening state, any cloud trust/proof/enforcement artifact
+- If lawful wake readiness cannot be freshly re-proved after restart, Android must fall back to `EXPLICIT_ONLY` or `BLOCKED`.
+
+**WORLD-CLASS UPGRADE — Client-Side Data Minimization and Retention Hygiene**
+- Android implementation must keep temporary audio buffers bounded and short-lived.
+- Sensitive capture data must not be silently persisted outside the lawful capture path.
+- Readiness receipts and attestation artifacts must have explicit retention boundaries and must be wiped on block, failure, or invalidation where continued retention is not required.
+- Wipe-on-block and wipe-on-failure expectations are mandatory for device-local transient capture artifacts.
+
+**WORLD-CLASS UPGRADE — OEM Divergence Containment Rule**
+- Uncertain OEM or device-specific behavior must fail conservatively.
+- OEM-specific behavior may not create authority shortcuts, hidden microphone starts, or proof/enforcement shortcuts.
+- If OEM behavior is not stable enough to prove lawful wake eligibility, fallback must remain explicit and visible.
+
+**WORLD-CLASS UPGRADE — User-Visible State and Notification Contract**
+- Microphone capture requiring a foreground service must also require user-visible state consistent with Android platform law.
+- If lawful user-visible state cannot be maintained, wake must degrade to `EXPLICIT_ONLY` or `BLOCKED`.
+- A visible notification or equivalent lawful foreground condition is required whenever Android microphone FGS capture is active.
+
+**WORLD-CLASS UPGRADE — Deterministic Fallback Matrix**
+
+| Android failure / gap class | Allowed runtime outcome |
+| --- | --- |
+| permission denied / revoked | `explicit-only` |
+| privacy-toggle off / enterprise mic disablement | `explicit-only` or `hard block` depending user/admin reversibility |
+| background-start illegal | `explicit-only` |
+| boot/restart microphone auto-start illegal | `hard block` for auto-start, with operational recovery prompt allowed |
+| Doze / restricted-app uncertainty | `retry-later-operationally` or `explicit-only` |
+| audio contention / silent-audio detection | `retry-later-operationally` or `explicit-only` |
+| unsupported capability tier | `hard block` |
+| uncertain OEM/platform behavior | `hard block` or `explicit-only`, never hidden allow |
+
+- The fallback matrix is operational-only and must not replace canonical Phase A governance or law semantics.
+
+**WORLD-CLASS UPGRADE — Android Receipt Freshness and Invalidation Model**
+- Android readiness receipts require a bounded freshness window.
+- Freshness must be invalidated by:
+- Doze posture changes
+- restart or reboot
+- restriction changes
+- privacy-toggle changes
+- permission changes
+- battery-policy changes
+- managed-device policy changes
+- FGS legality changes
+- On invalidation, readiness must be recomputed before `WAKE_ELIGIBLE` can be reasserted.
+- Stale readiness receipts may not be silently reused.
