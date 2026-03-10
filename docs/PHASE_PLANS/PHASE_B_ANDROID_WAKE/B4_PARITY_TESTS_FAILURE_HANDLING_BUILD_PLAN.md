@@ -68,8 +68,44 @@ C) CANONICAL B4 TEST DESIGN
 | `INTEGRATION_TIER` | adapter/ingress/PH1.OS/Section 04 seam correctness, non-authoritative carriage, forbidden-local-persistence gates | physical device route behavior, OEM variance |
 | `ANDROID_RUNTIME_SIMULATION_TIER` | Android-local runtime coordination, restart/restoration orchestration, route/contention/silence state transitions under controlled simulation | physical hardware timing, OEM behavior, real FGS restrictions |
 | `EMULATOR_TIER` | targetSdk/API posture, visible-state transitions, notification/FGS behavior within emulator limits | OEM divergence, real Bluetooth/audio-route instability, real battery policy behavior |
+| `BUILD_MANAGED_VIRTUAL_DEVICE_TIER` | repeatable Gradle-managed virtual-device execution, deterministic contract and legality branching, many visibility and restart-path checks | authoritative microphone-path realism, real Bluetooth/headset behavior, OEM variance |
+| `FIREBASE_TEST_LAB_TIER` | scaled API/device-family coverage across virtual and physical lab targets, broader legality and lifecycle evidence | single-device reproducibility guarantees, universal OEM inference from lab success |
+| `ANDROID_DEVICE_STREAMING_TIER` | remote physical-device evidence for mic-path realism, route changes, notification/visibility transitions, and restart behavior | broad OEM generalization or local hardware certainty across all fleets |
 | `PHYSICAL_DEVICE_TIER` | battery/Doze/restricted-app posture, real route churn, audio contention, silent-audio responsiveness, real restart behavior | broad OEM generalization from one device family |
 | `OEM_VARIANCE_TIER` | conservative fallback behavior under vendor differences and uncertain platform behavior | authority/proof truth, canonical policy exceptions |
+
+**WORLD-CLASS UPGRADE — Explicit Emulator Limitation Note**
+- Emulator-tier evidence is insufficient for authoritative microphone-path validation.
+- Emulator results are useful for contract shape, legality branching, and many UI, notification, and foreground-transition checks.
+- Physical-device evidence is mandatory for real microphone capture, silent-audio behavior, audio route churn, and Bluetooth/headset behavior.
+
+**WORLD-CLASS UPGRADE — Physical-Device Mandatory Verification Gate**
+- B4 is not complete until physical-device verification covers at minimum:
+- microphone capture start
+- silent-audio detection
+- Bluetooth/headset route churn
+- route-loss behavior
+- contention behavior where physically testable
+- visibility and notification downgrade behavior on real devices
+
+**WORLD-CLASS UPGRADE — Emulator-vs-Device Sufficiency Table**
+| Scenario class | Emulator sufficient | Managed virtual sufficient | Physical device required |
+| --- | --- | --- | --- |
+| legality matrix | YES | YES | NO |
+| explicit-only fallback | YES | YES | NO |
+| restart/restoration | YES for logical flow | YES for deterministic orchestration | YES for real-world restart timing confirmation |
+| notification/foreground loss | YES for core transition logic | YES for repeated transition coverage | YES for real user-visible timing confirmation |
+| route instability | NO | NO | YES |
+| silent-audio delivery | NO | NO | YES |
+| microphone capture | NO | NO | YES |
+| battery/Doze/restricted-app behavior | partial only | partial only | YES |
+| OEM variance | NO | NO | YES |
+
+**WORLD-CLASS UPGRADE — Managed-Device and Device-Farm Execution Note**
+- B4 later execution should support build-managed devices for consistency and deterministic repetition.
+- B4 later execution should support Firebase Test Lab for scale across device and API combinations.
+- B4 later execution should support physical-device verification for microphone-path realism.
+- This remains test-plan guidance only and does not alter canonical trust, proof, or enforcement paths.
 
 **WORLD-CLASS UPGRADE — Requirements-to-Tests Traceability**
 - Every critical B2 contract and every critical B3 wiring rule must map to one or more B4 tests.
@@ -198,10 +234,22 @@ C) CANONICAL B4 TEST DESIGN
 - route/contention visibility
 - This remains operational evidence only and may not be promoted to proof truth.
 
+**WORLD-CLASS UPGRADE — Post-Implementation Telemetry Handoff Note**
+- B4 should prepare later B5 or post-implementation quality evidence for:
+- Android vitals quality signals
+- pre-launch or device-lab style evidence where used
+- This is a downstream quality and evidence handoff note only and must not become a trust, proof, or enforcement surface.
+
 **WORLD-CLASS UPGRADE — Emulator vs Device Variance Handling**
 - Emulator results are sufficient for contract shape, many legality branches, visible-state transitions, and basic restart semantics.
 - Physical devices are required later for real route churn, Bluetooth behavior, silent-audio responsiveness, battery policy behavior, and OEM variance.
 - OEM or device-specific behavior must not be inferred from emulator success.
+
+**WORLD-CLASS UPGRADE — Test Isolation and Determinism Note**
+- Stateful Android tests must run with strong isolation discipline.
+- Cross-test leakage is not acceptable evidence.
+- Microphone, route, contention, restart, and restoration scenarios must not rely on prior test residue.
+- Test harness reset, receipt cleanup, and route-state cleanup are verification architecture requirements and not optional hygiene.
 
 **WORLD-CLASS UPGRADE — Explicit-Only UX Surfacing Verification**
 - B4 must verify:
@@ -313,6 +361,14 @@ F) PERFORMANCE / BATTERY ACCEPTANCE MODEL
 - retry suppression in blocked contexts
 - wake-lock boundedness verification posture
 - `UNACCEPTABLE` means B4 is not ready to freeze for B5 planning.
+
+**WORLD-CLASS UPGRADE — Startup and Performance Verification Note**
+- B4 should explicitly verify startup-sensitive paths relevant to:
+- explicit-only foreground reentry
+- lawful microphone start
+- visible-state transition
+- restart and restoration path
+- Where later supported, this may feed future baseline-profile or startup-performance evidence, but it remains a runtime quality verification concern only and not a trust-path concern.
 
 G) REQUIRED FILE CHANGE MAP
 - docs
