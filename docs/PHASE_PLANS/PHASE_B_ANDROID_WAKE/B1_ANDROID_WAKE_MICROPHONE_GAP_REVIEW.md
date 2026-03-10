@@ -106,3 +106,181 @@ Next step.
 Write B2 as the formal Android wake eligibility, microphone readiness, operational posture, capture session, and parity/fallback contract phase against the frozen Phase A baseline.
 Next file to open.
 `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/WAKE_BUILD_PLAN.md`
+
+**WORLD-CLASS UPGRADE — Implementation-Ready Android Module Baseline**
+- The current B1 review remains the repo-truth baseline. The following upgrade is additive execution guidance for B2 and later implementation, not a claim that these Android surfaces already exist in the repo.
+- Recommended future Android module skeleton:
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/AndroidManifest.xml`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../WakeForegroundService.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../WakeEligibilityCoordinator.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../MicrophoneReadinessCoordinator.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../CaptureSessionCoordinator.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../AndroidWakeReceiptEmitter.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/src/main/java/.../AndroidOperationalPostureEmitter.kt`
+- `/Users/xiamo/Documents/A-Selene/Selene-OS/android/selene_android_wake/app/build.gradle.kts`
+- Recommended module responsibility split:
+- Android module owns device-local wake eligibility, microphone readiness, operational posture, and capture-session orchestration only.
+- The Android module must never become a trust authority, proof authority, governance authority, or runtime-law authority.
+- Adapter and PH1.OS remain upstream-only normalization layers consistent with [A3](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A3_RUNTIME_VERIFICATION_WIRING_BUILD_PLAN.md), [A4](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A4_PH1J_PROOF_CAPTURE_TRUST_VERIFICATION_OUTCOMES_BUILD_PLAN.md), and [A5](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A5_GOV_LAW_ENFORCEMENT_TRUST_FAILURES_BUILD_PLAN.md).
+
+**WORLD-CLASS UPGRADE — Android Manifest, Permission, and Foreground-Service Contract**
+- Future Android implementation must declare only the minimum lawful manifest surface required for microphone capture and wake orchestration.
+- Minimum expected manifest/permission surface:
+- `android.permission.RECORD_AUDIO`
+- `android.permission.FOREGROUND_SERVICE`
+- `android.permission.FOREGROUND_SERVICE_MICROPHONE`
+- `android.permission.POST_NOTIFICATIONS` where required for visible ongoing FGS disclosure on newer Android versions
+- `android.permission.RECEIVE_BOOT_COMPLETED` only if boot-time receipt restoration or readiness re-evaluation is needed; it must not be used as authority to start microphone capture
+- Microphone capture must run only inside a foreground service declared with `android:foregroundServiceType="microphone"` and started with the corresponding microphone FGS runtime type where the platform requires it.
+- Android 14+ microphone foreground-service requirements and Android 12+ background-start restrictions are binding platform law for B2/B3 implementation, not optional guidance: [Foreground service types are required](https://developer.android.com/about/versions/14/changes/fgs-types-required), [Restrictions on starting a foreground service from the background](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
+- The Android implementation must default to `explicit-only` posture whenever lawful microphone FGS start conditions are not satisfied.
+
+**WORLD-CLASS UPGRADE — Android Wake Eligibility and Background-Start Legality State Machine**
+- B2 must formalize one explicit Android wake legality state machine. Minimum recommended states:
+- `NOT_CONFIGURED`
+- `CONFIGURED_BLOCKED_PERMISSION`
+- `CONFIGURED_BLOCKED_PRIVACY_TOGGLE`
+- `CONFIGURED_BLOCKED_FGS_ILLEGAL`
+- `CONFIGURED_BLOCKED_RESTRICTED_APP`
+- `CONFIGURED_BLOCKED_BACKGROUND_START`
+- `CONFIGURED_BLOCKED_BOOT_RESTRICTION`
+- `CONFIGURED_EXPLICIT_ONLY`
+- `CONFIGURED_WAKE_ELIGIBLE`
+- Legal microphone wake start paths must be narrowly defined and limited to platform-lawful cases such as visible app state or other explicitly allowed Android exemptions. Background dormant auto-start must not be assumed lawful.
+- `BOOT_COMPLETED` must be treated as receipt restoration / readiness recomputation only. For target SDK 34+, it must not be used to launch a microphone foreground service; [Android foreground service type changes](https://developer.android.com/about/versions/15/changes/foreground-service-types).
+- Background-start legality must be evaluated before any microphone service creation, not after failure.
+- If wake eligibility cannot be proven under current Android restrictions, the device must fall back to `CONFIGURED_EXPLICIT_ONLY` instead of attempting hidden capture.
+
+**WORLD-CLASS UPGRADE — Microphone Readiness, Privacy Toggle, and Silent-Audio Contract**
+- B2 must formalize one Android microphone readiness contract with at least these posture classes:
+- `MIC_READY`
+- `MIC_PERMISSION_DENIED`
+- `MIC_PERMISSION_REVOKED`
+- `MIC_PRIVACY_TOGGLE_OFF`
+- `MIC_SILENT_AUDIO_DETECTED`
+- `MIC_FGS_START_NOT_ALLOWED`
+- `MIC_CONTENTION_PREEMPTED`
+- `MIC_DEVICE_RESTRICTED`
+- `MIC_UNKNOWN_UNSAFE`
+- Privacy-toggle off and device-level microphone disablement must not be modeled as generic capture failure. They are distinct platform posture states and must feed the canonical upstream posture path only as non-authoritative hints.
+- Silence from Android audio APIs must be treated as an explicit operational posture subject, not as implicit success. Silent-audio detection must be available to B2/B3 as a first-class downgrade trigger.
+- The Android implementation must degrade gracefully when permission is denied or revoked, consistent with Android privacy guidance: [Explain access to sensitive information](https://developer.android.com/training/permissions/explaining-access), [Privacy checklist](https://developer.android.com/privacy-and-security/about).
+
+**WORLD-CLASS UPGRADE — Wake-Lock Exposure and Foreground Visibility Rules**
+- Wake locks must not be used as a substitute for lawful foreground microphone service execution.
+- Any wake-lock use must be:
+- short-lived
+- justified by a specific transition or capture lifecycle step
+- coupled to visible/ongoing foreground service state where microphone capture is active
+- explicitly released on every stop, failure, downgrade, explicit-only transition, or restricted-app transition
+- B2 should treat wake-lock exposure as an operational receipt subject and not as a trust, proof, or enforcement signal.
+- Android wake-lock behavior must follow bounded-use expectations, not indefinite hidden retention: [Wake lock best practices](https://developer.android.com/develop/background-work/background-tasks/awake/wakelock/best-practices).
+
+**WORLD-CLASS UPGRADE — Battery, Doze, Restricted-App, and Operational Posture Contract**
+- B2 must define one Android operational posture contract covering:
+- battery-optimization state
+- Doze/App Standby state
+- restricted-app state
+- foreground visibility state
+- notification visibility state
+- background-start legality state
+- boot-restoration legality state
+- These posture facts remain upstream only and may feed adapter / PH1.OS normalization, but may never become Section 04 authority or A5 enforcement truth.
+- The Android operational posture contract must explicitly model fallback to `explicit-only` mode when battery policy, restricted-app state, or Doze prevents lawful always-listening behavior.
+- Platform constraints here are real and cannot be hand-waved away: [Background optimization](https://developer.android.com/topic/performance/background-optimization), [Doze and App Standby](https://developer.android.com/training/monitoring-device-state/doze-standby).
+
+**WORLD-CLASS UPGRADE — Capture Session Lifecycle and Contention Contract**
+- B2 must formalize a capture-session lifecycle with at least:
+- `SESSION_NOT_READY`
+- `SESSION_READY`
+- `SESSION_START_REQUESTED`
+- `SESSION_START_CONFIRMED`
+- `SESSION_ACTIVE`
+- `SESSION_SILENT`
+- `SESSION_CONTENTION_DETECTED`
+- `SESSION_STOP_REQUESTED`
+- `SESSION_STOPPED`
+- `SESSION_FALLBACK_EXPLICIT_ONLY`
+- `SESSION_BLOCKED_PLATFORM`
+- Each session transition must produce canonical Android operational receipts and posture hints for upstream carriage only.
+- Audio-input sharing/contention must be modeled explicitly because Android may mute or deprioritize recorders under privacy-sensitive contention conditions; [Sharing audio input](https://developer.android.com/media/platform/sharing-audio-input).
+- Android capture session output must feed the same canonical cloud ingress path already required by [SECTION_03](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md) and Phase A A3 transport, not a mobile-specific parallel path.
+
+**WORLD-CLASS UPGRADE — Phase A Integration and Non-Authority Rules**
+- All Android outputs must terminate in Phase A canonical surfaces only:
+- trust/transport: [A3](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A3_RUNTIME_VERIFICATION_WIRING_BUILD_PLAN.md)
+- proof: [A4](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A4_PH1J_PROOF_CAPTURE_TRUST_VERIFICATION_OUTCOMES_BUILD_PLAN.md)
+- GOV/LAW enforcement: [A5](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A5_GOV_LAW_ENFORCEMENT_TRUST_FAILURES_BUILD_PLAN.md)
+- Android module may emit:
+- artifact references
+- attestation refs
+- readiness receipts
+- operational posture refs
+- capture-session refs
+- non-authoritative hints
+- Android module may not emit:
+- `artifact_trust_state`
+- `ArtifactTrustDecisionRecord`
+- `ArtifactTrustProofEntry`
+- final GOV or LAW enforcement posture
+- Adapter normalization remains non-authoritative.
+- PH1.OS posture handling remains upstream-only, consistent with [SECTION_08](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md) and [PH1_OS.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/DB_WIRING/PH1_OS.md).
+- Section 04 remains the sole first-time authoritative verifier and must never move to Android.
+
+**WORLD-CLASS UPGRADE — Desktop/Android Parity and Fallback Contract**
+- B2 must define parity as “same canonical ingress, trust, proof, and enforcement surfaces,” not “same platform mechanics.”
+- Android parity is lawful parity, not forced behavioral parity.
+- If Android platform restrictions prohibit always-listening microphone behavior under current posture, the lawful fallback is `explicit-only` mode, not hidden best-effort background capture.
+- Desktop parity must not pressure Android implementation into violating Android background-start, FGS, or privacy rules.
+- B2 must explicitly distinguish:
+- `desktop-full-parity`
+- `android-lawful-parity`
+- `android-explicit-only-fallback`
+- `android-blocked-platform-posture`
+
+**WORLD-CLASS UPGRADE — Android Onboarding, Receipt, and Attestation Alignment**
+- B2 must define Android onboarding/platform receipts that prove readiness without acting as authority:
+- permission-granted receipt
+- privacy-toggle-on receipt
+- FGS-capable receipt
+- battery-policy acknowledgment receipt
+- restricted-app-state receipt
+- boot-restoration receipt
+- capture-session start/stop receipt
+- These receipts may feed adapter and PH1.OS normalization only.
+- They must not bypass Phase A trust or proof transport.
+- Android attestation/receipt design must remain compatible with the frozen Phase A baseline and the current repo’s canonical `artifact_trust_inputs` / `artifact_trust_state` split in [/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs).
+
+**WORLD-CLASS UPGRADE — Developer Implementation Checklist**
+- Future Android implementation must include:
+- one Android manifest with explicit microphone FGS declarations
+- one lawful background-start eligibility evaluator
+- one microphone readiness evaluator
+- one operational posture emitter
+- one capture-session coordinator
+- one adapter-facing normalization input mapper
+- zero authority logic on device
+- zero proof emission on device
+- zero GOV/LAW enforcement logic on device
+- zero direct use of raw Android posture as final trust truth
+
+**WORLD-CLASS UPGRADE — Risk-to-Phase Mapping**
+- `FGS_COMPLIANCE_GAP` -> Phase A dependency: A3 ingress carriage and A5 no-raw-field enforcement. Severity: high. Mitigation: explicit-only fallback and lawful FGS contract.
+- `PRIVACY_TOGGLE_GAP` -> Phase A dependency: A3 non-authoritative posture transport. Severity: high. Mitigation: explicit microphone readiness state and silent-audio detection.
+- `BOOT_COMPLETED` restriction gap -> Phase A dependency: A3 operational posture, A5 release/enforcement truth. Severity: high. Mitigation: boot restores readiness only, never microphone FGS start.
+- `AUDIO_CONTENTION_GAP` -> Phase A dependency: A3 capture-session posture carriage and A5 downgrade/block handling. Severity: medium-high. Mitigation: explicit contention posture and session fallback.
+- `ATTESTATION_GAP` -> Phase A dependency: A3 canonical trust inputs and A4 proof readiness later. Severity: high. Mitigation: Android receipt/attestation contract without authority drift.
+- `BATTERY_POLICY_GAP` -> Phase A dependency: A3 operational posture only. Severity: high. Mitigation: explicit restricted-app/Doze/battery state machine and fallback.
+- `A1_A6_ALIGNMENT_GAP` -> Phase A dependency: all frozen phases. Severity: high. Mitigation: B2 must explicitly restate that Android is a consumer of Phase A, not a redefinition of it.
+
+**WORLD-CLASS UPGRADE — Optional Enterprise-Grade Polish**
+- Assign stable traceability IDs to Android wake eligibility, microphone readiness, FGS activation, privacy-toggle transitions, Doze transitions, restricted-app transitions, capture-session start/stop, and fallback transitions.
+- Emit explicit operational logging for:
+- FGS start accepted / denied
+- privacy-toggle off / on
+- silent-audio detection
+- audio contention / preemption
+- Doze / restricted-app posture changes
+- fallback to explicit-only mode
+- Add freeze / rollback detection hooks for device-side readiness contracts so B2/B3 can prove that stale readiness or stale configuration is not silently reused.
