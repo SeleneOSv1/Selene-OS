@@ -51,6 +51,10 @@
   - `SIGNOFF-DOCSTRUTH-APPROVED-2026-03-10`
   - `SIGNOFF-EVIDENCE-APPROVED-2026-03-10`
 - `closure_status`: `CLOSED_APPROVED`
+- `baseline_status`: `FROZEN_CANONICAL_BASELINE`
+- `reopen_rule`: `DEFECT_DRIVEN_ONLY`
+- `next_execution_lane`: `PHASE_B`
+- `amendment_rule`: `EXPLICIT_GOVERNED_APPROVAL_REQUIRED`
 
 ## Linked Artifacts
 

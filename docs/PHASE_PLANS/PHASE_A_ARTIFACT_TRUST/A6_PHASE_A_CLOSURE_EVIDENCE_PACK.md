@@ -86,3 +86,11 @@ cargo test -p selene_os --lib at_runtime_law_
 
 - verification status: `PASS`
 - closure status: `CLOSED_APPROVED`
+
+## Freeze Status
+
+- `baseline_status`: `FROZEN_CANONICAL_BASELINE`
+- `reopen_rule`: `DEFECT_DRIVEN_ONLY`
+- `next_execution_lane`: `PHASE_B`
+- `amendment_rule`: `EXPLICIT_GOVERNED_APPROVAL_REQUIRED`
+- Phase B may consume the closed Phase A artifact-trust stack, but may not silently redefine A1–A6 semantics.
