@@ -57,7 +57,78 @@ B) CURRENT DOCS / VERIFICATION STATE
 - Android platform-law verification readiness. CURRENT: B1–B4 define legality and test matrices. TARGET: B5 must require executed evidence for Android 12/13/14/15+, targetSdk-sensitive posture, visible-state, FGS, boot, and blocked paths. GAP: missing.
 - physical-device vs emulator/device-farm evidence readiness. CURRENT: B4 distinguishes them clearly. TARGET: B5 must require the right mix and reject emulator-only false confidence. GAP: missing.
 
+**WORLD-CLASS UPGRADE — Canonical B5 Authority-Boundary Reminder**
+- B5 verifies and closes Phase B only.
+- Android remains non-authoritative.
+- Section 04 remains the only first-time authoritative verifier.
+- PH1.J, PH1.GOV, and PH1.LAW remain the canonical downstream Phase A paths.
+- B5 evidence must never normalize Android-local receipts, events, legality outputs, or operational posture into trust truth, proof truth, or enforcement truth.
+
 C) CANONICAL B5 VERIFICATION DESIGN
+**WORLD-CLASS UPGRADE — Requirements-to-Tests-to-Evidence Traceability Law**
+- Every critical B1 gap, every critical B2 contract, every critical B3 wiring rule, and every critical B4 failure-handling rule must map to:
+- one or more tests
+- one or more verification sweeps
+- one or more closure evidence artifacts
+- one or more acceptance criteria
+- Untraced requirements are not considered closed.
+
+**WORLD-CLASS UPGRADE — Stable Traceability ID Rule**
+- Phase B closure must use stable IDs for:
+- `gap_id`
+- `contract_id`
+- `wiring_rule_id`
+- `test_case_id`
+- `sweep_id`
+- `evidence_id`
+- `residual_risk_id`
+- `closure_manifest_id`
+- Closure proof must be cross-referenceable by ID.
+- Ref reuse with different meaning is forbidden.
+
+**WORLD-CLASS UPGRADE — Canonical B5 Non-Regression Gate**
+- Phase A non-regression is a formal closure gate.
+- B5 must require explicit proof that:
+- no Android output becomes `artifact_trust_state` truth
+- no Android output becomes `ArtifactTrustDecisionRecord`
+- no Android output becomes `ArtifactTrustProofEntry`
+- no Android output becomes `proof_entry_ref` or `proof_record_ref` truth
+- adapter remains carry-only
+- PH1.OS remains normalize-only
+- If this gate is not satisfied, Phase B cannot close.
+
+**WORLD-CLASS UPGRADE — Pinned Verification Environment Rule**
+- B5 must record the verification environment for every closure-grade evidence lane.
+- Minimum pinned environment fields:
+- `platform_api_level`
+- `target_sdk_posture`
+- `execution_tier`
+- `hardware_route_posture` where relevant
+- `toolchain_identity`
+- `runtime_environment_identity`
+
+**WORLD-CLASS UPGRADE — Physical-Device Mandatory Verification Gate**
+- Phase B cannot close without physical-device evidence for at minimum:
+- microphone capture realism
+- silent-audio behavior
+- Bluetooth/headset route churn
+- route loss
+- visibility/notification downgrade behavior
+- any scenario emulator or device-farm evidence cannot honestly prove
+
+**WORLD-CLASS UPGRADE — Emulator / Device-Farm / Physical-Device Sufficiency Table**
+| Scenario class | Emulator sufficient | Build-managed virtual sufficient | Firebase/device-farm sufficient | Physical device required |
+| --- | --- | --- | --- | --- |
+| legality matrix | YES | YES | YES | NO |
+| explicit-only fallback | YES | YES | YES | NO |
+| restart/restoration | YES | YES | YES | SOMETIMES |
+| notification/foreground loss | YES | YES | YES | SOMETIMES |
+| route instability | NO | NO | PARTIAL | YES |
+| microphone capture | NO | NO | PARTIAL | YES |
+| silent audio | NO | NO | PARTIAL | YES |
+| battery/Doze/restricted-app | PARTIAL | PARTIAL | PARTIAL | YES |
+| OEM variance | NO | NO | PARTIAL | YES |
+
 1. docs alignment sweep
 - verify B1, B2, B3, and B4 say one coherent thing
 - verify any Android-specific closure text in `WAKE_BUILD_PLAN.md` does not override the approved B1–B4 stack
@@ -106,6 +177,46 @@ C) CANONICAL B5 VERIFICATION DESIGN
 - no invented Phase A bypass path
 
 D) CLOSURE EVIDENCE PACK
+**WORLD-CLASS UPGRADE — Evidence Artifact Schema**
+- Every closure evidence artifact must be structured, not ad hoc.
+- Minimum fields:
+- `evidence_id`
+- `evidence_type`
+- `source_phase`
+- `linked_gap_ids`
+- `linked_contract_ids`
+- `linked_wiring_rule_ids`
+- `linked_test_case_ids`
+- `linked_sweep_ids`
+- `generated_at`
+- `environment_ref`
+- `reviewed_by`
+
+**WORLD-CLASS UPGRADE — Closure Evidence Manifest Schema**
+- The closure manifest must be navigable as one top-level Phase B closeout artifact.
+- Minimum fields:
+- `closure_manifest_id`
+- `linked_gap_ids`
+- `linked_contract_ids`
+- `linked_wiring_rule_ids`
+- `linked_test_case_ids`
+- `linked_sweep_ids`
+- `linked_evidence_ids`
+- `linked_residual_risk_ids`
+- `sign_off_refs`
+- `closure_status`
+
+**WORLD-CLASS UPGRADE — Residual Risk Register Discipline**
+- Non-blocking issues must be logged in a residual risk register.
+- Each residual risk entry must include:
+- `scope`
+- `impact`
+- `mitigation`
+- `owner`
+- `review_date`
+- Residual risk may not silently hide blocker-grade gaps.
+- Residual risk may only contain acceptable non-blocking items at closure.
+
 - Phase B closeout must require these evidence artifacts:
 - traceability matrix
   - B1/B2/B3/B4 requirement-to-test-to-evidence mapping
@@ -128,7 +239,43 @@ D) CLOSURE EVIDENCE PACK
 - closure manifest
   - single top-level manifest linking all Phase B closure artifacts and sign-off refs
 
+**WORLD-CLASS UPGRADE — Quantitative Battery/Churn Evidence Requirement**
+- Phase B closeout must include explicit evidence for:
+- receipt churn classes
+- retry suppression correctness
+- route-instability suppression effectiveness
+- wake-lock boundedness posture
+- explicit-only cheaper-than-illegal-retry behavior
+
+**WORLD-CLASS UPGRADE — Explicit-Only UX Evidence Requirement**
+- Phase B closeout must include evidence that:
+- `EXPLICIT_ONLY` surfaces a visible user-legible path
+- an operational receipt is emitted on explicit-only entry
+- no hidden background explicit-only pseudo-mode exists
+
+**WORLD-CLASS UPGRADE — Route/Contention Evidence Requirement**
+- Phase B closeout must include evidence for:
+- Bluetooth/headset churn
+- route loss
+- contention
+- silent-audio behavior
+- duplicate suppression under instability
+
 E) DOCS UPDATE MAP
+**WORLD-CLASS UPGRADE — Source-of-Truth Precedence Rule**
+- B1–B5 Phase B plan docs are canonical for Phase B.
+- `WAKE_BUILD_PLAN.md` is secondary/reference-only where B1–B5 are more specific.
+- DB wiring docs must align to the approved Phase B stack and may not silently override it.
+- Coverage/tracker/closure docs, the build ledger, and the index record status and evidence but may not override canonical Phase B semantics.
+- Contradiction across these layers must fail closure.
+
+**WORLD-CLASS UPGRADE — Docs Canonicalization Gate**
+- Phase B cannot close if:
+- B1–B5 contradict each other
+- `WAKE_BUILD_PLAN.md` contradicts approved Phase B semantics
+- DB wiring docs contradict final implemented Phase B truth
+- coverage/tracker/closure docs lag in a way that changes status meaning
+
 - Phase B plan docs
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B2_ANDROID_TRIGGER_CAPTURE_PARITY_CONTRACT_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B2_ANDROID_TRIGGER_CAPTURE_PARITY_CONTRACT_BUILD_PLAN.md)
@@ -150,6 +297,20 @@ E) DOCS UPDATE MAP
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/00_INDEX.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/00_INDEX.md)
 
 F) VERIFICATION SWEEP DESIGN
+**WORLD-CLASS UPGRADE — No-Fake-Verification Gate**
+- Phase B may not rely on:
+- grep-only validation
+- compile-only validation
+- docs-only closure
+- emulator-only closure
+- physical-device results without traceability
+- pass/fail claims without evidence artifacts
+
+**WORLD-CLASS UPGRADE — No-Flaky-Closure Rule**
+- Closure-grade Phase B verification cannot depend on rerun-to-pass behavior.
+- Flaky or nondeterministic Android tests are closure failures.
+- Unstable legality or route/contention tests are not acceptable evidence.
+
 - repo-truth sweep
 - verify clean tree, expected files only, no Android shadow-doc or shadow-transport path
 - Phase A non-regression sweep
@@ -185,6 +346,15 @@ G) PHASE B ACCEPTANCE CRITERIA
 - Docs, DB wiring docs, coverage docs, trackers, and ledger/index reflect the same final Phase B truth.
 - Closure evidence pack, residual risk register, and closure manifest exist and are reviewable.
 - No blocker-grade ambiguity remains.
+
+**WORLD-CLASS UPGRADE — Closure Blocker Severity Taxonomy**
+- `PHASE_BLOCKER`
+- `HIGH_RISK_GAP`
+- `DOC_TRUTH_GAP`
+- `LEGALITY_GAP`
+- `DEVICE_EVIDENCE_GAP`
+- `OPTIONAL_POLISH`
+- Only `OPTIONAL_POLISH` may remain if Phase B is to close.
 
 H) REQUIRED FILE CHANGE MAP
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_B_ANDROID_WAKE/B1_ANDROID_WAKE_MICROPHONE_GAP_REVIEW.md)
@@ -240,6 +410,34 @@ J) FINAL APPROVAL PACKAGE
 - no new trust/proof/enforcement path
 - no reopening of frozen Phase A
 - whether B5 is ready for implementation planning after approval: YES
+
+**WORLD-CLASS UPGRADE — Sign-Off / Ownership Discipline**
+- Phase B closeout requires role-based sign-offs for:
+- Android contract correctness
+- Android wiring correctness
+- Android failure-handling correctness
+- Phase A non-regression correctness
+- docs truth correctness
+- evidence-pack completeness
+
+**WORLD-CLASS UPGRADE — Sign-Off Refusal Rule**
+- No sign-off is valid if any `PHASE_BLOCKER`, `HIGH_RISK_GAP`, `DOC_TRUTH_GAP`, `LEGALITY_GAP`, or `DEVICE_EVIDENCE_GAP` remains open.
+- Sign-off cannot override blocker taxonomy.
+- Residual risk may only contain `OPTIONAL_POLISH` items.
+
+**WORLD-CLASS UPGRADE — B5 Freeze and Exit Gate**
+- B5 must freeze before Phase B closeout is attempted.
+- Phase B closeout may proceed only after:
+- `docs-aligned gate`
+- `verification-complete gate`
+- `device-evidence gate`
+- `evidence-pack-complete gate`
+- `sign-off gate`
+
+**WORLD-CLASS UPGRADE — Implementation-Readiness / Closeout-Readiness Distinction**
+- B5 may conclude the planning and verification model before Phase B is formally closed.
+- Implementation readiness and closeout readiness are distinct.
+- No false `closed` claim may occur before evidence and sign-offs exist.
 
 Completed in this chat.
 Test command.
