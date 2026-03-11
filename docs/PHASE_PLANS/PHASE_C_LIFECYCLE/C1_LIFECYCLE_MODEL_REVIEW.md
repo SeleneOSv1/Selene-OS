@@ -3,7 +3,7 @@ PHASE C1 — LIFECYCLE MODEL REVIEW
 A) REPO TRUTH CHECK
 - `git status --short`: empty
 - current branch: `main`
-- HEAD commit: `fbffd41caa1a32f48a29bf22c7847ec64e63a7ce`
+- HEAD commit: `9b5a0845ece11ffad5f233b2bf716c126f1a8348`
 - exact files reviewed:
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md)
@@ -125,7 +125,7 @@ B) CURRENT LIFECYCLE STATE
   - TARGET: storage must reflect one lifecycle vocabulary even if implemented across multiple tables.
   - GAP: storage is a real dual-source-of-truth risk today.
 
-**WORLD-CLASS UPGRADE — Current Surface-to-Canonical Lifecycle Mapping**
+Current Repo Surface to Canonical C1 Mapping
 | Current repo surface | Real current role | Canonical lifecycle plane | Canonical state(s) or function | Authority posture | Normalization needed |
 | --- | --- | --- | --- | --- | --- |
 | `os_process.artifacts_ledger` | append-only artifact row by scope/type/version | `ARTIFACT_IDENTITY_LIFECYCLE` | artifact-global or scope-authoritative `CREATED` / `PUBLISHED` / `ACTIVE` / `REPLACED` / `ROLLED_BACK` / `REVOKED` / `EXPIRED` / `ARCHIVED` / `PURGED` / `RESTORED` truth | authoritative storage truth | must never be overwritten by target deployment receipts or runtime-use observations |
@@ -221,11 +221,11 @@ C) CANONICAL C1 LIFECYCLE DESIGN
 - This is lifecycle evidence, not a second proof system.
 - If a transition is already governed by Phase A proof requirements, lifecycle evidence must align to that proof path rather than fork it.
 
-**WORLD-CLASS UPGRADE — Plane / Subject-Class / Valid-State Applicability Table**
-- Canonical lifecycle-subject identity tuple is:
+Canonical Lifecycle Subject Identity Tuple
 - `(lifecycle_plane, subject_class, subject_id, subject_scope, lineage_root_or_parent_ref)`
 - `subject_id` must identify the lifecycle subject owned by that plane, not a neighboring plane's receipt, cache row, or projection.
 - A lifecycle event must reference exactly one lifecycle-subject identity tuple.
+Plane × Subject-Class × Valid-State Applicability
 | lifecycle_plane | subject_class | subject_id | subject_scope | lineage_root_or_parent_ref | valid canonical states directly owned at this plane |
 | --- | --- | --- | --- | --- | --- |
 | `ARTIFACT_IDENTITY_LIFECYCLE` | `ARTIFACT_IDENTITY_SUBJECT` | canonical artifact identity ref (`artifact_id`, `artifact_identity_ref`, or equivalent artifact-global subject id) | `ARTIFACT_GLOBAL_SCOPE` and any explicit governed `TENANT_SCOPE` / `ENVIRONMENT_SCOPE` / `CLUSTER_SCOPE` | lineage root plus replacement / rollback parent refs where applicable | `CREATED` / `PUBLISHED` / `ACTIVE` / `REPLACED` / `ROLLED_BACK` / `REVOKED` / `EXPIRED` / `ARCHIVED` / `PURGED` / `RESTORED`; `DISTRIBUTED` / `INSTALLED` / `APPLY_REQUESTED` / `APPLY_CONFIRMED` / `IN_RUNTIME_USE` are not owned here |
@@ -364,14 +364,14 @@ C) CANONICAL C1 LIFECYCLE DESIGN
 - These are lifecycle-visible compensation states and must not be hidden as local-only cleanup.
 - Compensation may not invent new lifecycle truth; it must consume the canonical states and guards.
 
-**WORLD-CLASS UPGRADE — Collision-Resolution Matrix**
-| Collision | Winning outcome | Losing outcome | Receipt behavior | Proof / governance / law visibility expectation | Compensation requirement |
-| --- | --- | --- | --- | --- | --- |
-| replacement vs rollback | the first authoritative transition admitted under stable ordering and still pointing at a lawful target remains canonical | the later conflicting transition loses if its target is no longer lawful and becomes blocked or historical-only | both receipts may persist as evidence, but only the winner materializes authoritative state | proof-visible; governance-visible when governed; law-visible when runtime posture changes | required when the losing side already emitted operational receipts; no silent overwrite |
-| revoke vs restore | `REVOKED` wins for the same subject and scope; restore may proceed only through governed replacement or re-approval as a fresh lawful subject | direct restoration of the revoked same subject loses | restore receipt remains operational evidence only and may not reopen the revoked subject | proof-visible and governance/law visible where admissibility is affected | required to convert the losing restore attempt into historical-only posture or a new-subject admission path |
-| expiry vs activate | `EXPIRED` wins once authoritative at the same subject and scope unless a fresh governed lifecycle subject is admitted | late activation of the expired same subject loses | local activation receipt may remain, but it does not erase expiry | proof-visible where safety/compliance relevant; governance/law visible when active use is denied | required as activation denial or fresh-subject replacement path; no silent resume |
-| hold vs purge | `LEGAL_HOLD` or `PRESERVATION_HOLD` wins over purge/delete | purge/delete loses while hold remains active | purge request receipt may persist, but terminal transition must not occur | proof/governance visibility when governed; law visibility when runtime loss posture matters | required as deferred, blocked, or refused purge outcome with explicit reason |
-| local apply success vs cloud activation denial | cloud authoritative denial wins; subject remains non-active or rolls back to a lawful target | local success receipt loses as an authority claim | local apply receipt remains operational evidence only | proof-visible when denial is lifecycle-significant; governance/law visible when activation was governed or safety-relevant | required as rollback or non-admission compensation; must not be hidden as local cleanup |
+Collision-Resolution Matrix
+| Collision | Winning outcome | Losing outcome | What becomes authoritative | Receipt behavior | Proof / governance / law visibility expectation | Compensation requirement |
+| --- | --- | --- | --- | --- | --- | --- |
+| replacement vs rollback | the first authoritative transition admitted under stable ordering and still pointing at a lawful target remains canonical | the later conflicting transition loses if its target is no longer lawful and becomes blocked or historical-only | the winning replacement or rollback state written by the owning plane | both receipts may persist as evidence, but only the winner materializes authoritative state | proof-visible; governance-visible when governed; law-visible when runtime posture changes | required when the losing side already emitted operational receipts; no silent overwrite |
+| revoke vs restore | `REVOKED` wins for the same subject and scope; restore may proceed only through governed replacement or re-approval as a fresh lawful subject | direct restoration of the revoked same subject loses | the revoked same-subject posture remains authoritative until a lawful fresh subject exists | restore receipt remains operational evidence only and may not reopen the revoked subject | proof-visible and governance/law visible where admissibility is affected | required to convert the losing restore attempt into historical-only posture or a new-subject admission path |
+| expiry vs activate | `EXPIRED` wins once authoritative at the same subject and scope unless a fresh governed lifecycle subject is admitted | late activation of the expired same subject loses | the expired same-subject posture remains authoritative | local activation receipt may remain, but it does not erase expiry | proof-visible where safety/compliance relevant; governance/law visible when active use is denied | required as activation denial or fresh-subject replacement path; no silent resume |
+| hold vs purge | `LEGAL_HOLD` or `PRESERVATION_HOLD` wins over purge/delete | purge/delete loses while hold remains active | the held non-terminal posture remains authoritative; `PURGED` must not materialize | purge request receipt may persist, but terminal transition must not occur | proof/governance visibility when governed; law visibility when runtime loss posture matters | required as deferred, blocked, or refused purge outcome with explicit reason |
+| local apply success vs cloud activation denial | cloud authoritative denial wins; subject remains non-active or rolls back to a lawful target | local success receipt loses as an authority claim | cloud-admitted non-active or rollback posture becomes authoritative | local apply receipt remains operational evidence only | proof-visible when denial is lifecycle-significant; governance/law visible when activation was governed or safety-relevant | required as rollback or non-admission compensation; must not be hidden as local cleanup |
 
 **WORLD-CLASS UPGRADE — Storage Tier / Restoration Relationship**
 - Storage tiers are:
@@ -431,7 +431,7 @@ D) LIFECYCLE OWNERSHIP MODEL
   - owns retention, decay, forget/delete, and restoration posture for memory-domain objects
   - must align with canonical lifecycle semantics for expiry/archive/purge/restore, but must not erase the distinction between memory and artifact domains
 
-**WORLD-CLASS UPGRADE — Transition Authority Matrix**
+Transition Authority Matrix
 | Transition class | authoritative writer | operational receipt emitter | proof-visible consumer | governance-visible consumer | law-visible consumer | forbidden writers |
 | --- | --- | --- | --- | --- | --- | --- |
 | artifact identity admission / publication | canonical artifact identity storage rows such as `artifacts_ledger` or equivalent artifact-global persistence | builder/release publication receipts where present | `PH1.J` when publication is lifecycle-significant | `PH1.GOV` when governed admission or later activation path requires visibility | none by default; `PH1.LAW` only when later runtime admissibility depends on the published state | client devices, local caches, `PH1.J` as state writer, `PH1.GOV` as storage writer, `PH1.LAW` as storage writer |
