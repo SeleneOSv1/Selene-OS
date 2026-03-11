@@ -3,14 +3,16 @@ PHASE C2 — WAKE ARTIFACT LIFECYCLE WORKERS BUILD PLAN
 A) REPO TRUTH CHECK
 - `git status --short`: empty
 - current branch: `main`
-- repo-truth snapshot HEAD at review start: `b62cd6f98de9f34c971b081c917d15864a7fd7b5`
+- repo-truth snapshot HEAD at review start: `31501f47918c299947396a36ce5cac40e7d5af31`
 - snapshot semantics: this value records the repo state reviewed at the start of this pass; it is not required to equal the later commit hash that records this document update.
-- target file at review start: missing; this pass creates it
+- target file at review start: present; tracked C2 hardening target
 - exact files reviewed:
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C1_LIFECYCLE_MODEL_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C1_LIFECYCLE_MODEL_REVIEW.md)
+- [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C2_WAKE_ARTIFACT_LIFECYCLE_WORKERS_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C2_WAKE_ARTIFACT_LIFECYCLE_WORKERS_BUILD_PLAN.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/WAKE_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/WAKE_BUILD_PLAN.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md)
+- [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_01.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_01.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md)
@@ -219,6 +221,47 @@ J) AUTHORITATIVE WRITES VS RECEIPT EMISSIONS
 - runtime-use evidence never substitutes for artifact activation truth
 - governance or law decision bundles never substitute for storage commits
 
+Authoritative Commit vs Receipt / Projection Split Law
+- Each C2 worker must land the authoritative commit for its owned plane before it emits PH1.J evidence, operational receipts, or downstream recovery work for that same transition.
+- `WakeArtifactIdentityTransitionWorker` commits append-only `artifacts_ledger` truth first; `wake_promotion_*`, PH1.J, sync envelopes, and runtime-use evidence may reflect that result later but may not pre-authorize it.
+- `WakePromotionProjectionWorker` commits `wake_promotion_ledger` and `wake_promotion_current` first for rollout projection truth, but that projection remains rollout-scoped only and never upgrades itself into artifact-global identity authority.
+- `WakeTargetDeploymentWorker` commits `wake_artifact_apply_ledger` and `wake_artifact_apply_current` first for target deployment truth; local apply success, client acknowledgement, cache writes, and runtime-use events are downstream evidence only.
+- `WakeSyncReceiptDeliveryWorker` owns queue-control commits only. Queue `ACK`, retry, replay-due, and dead-letter outcomes are authoritative for queue handling, not for lifecycle planes.
+- PH1.J, PH1.GOV, PH1.LAW, and PH1.OS remain visibility or decision consumers at C2 scope. They may gate or record transitions, but they do not become lifecycle writers.
+
+Authoritative Commit vs Receipt / Projection Matrix
+| repo surface | lifecycle plane | authority class | authoritative write or receipt/projection/evidence only | writer allowed | consumers allowed | must never be treated as | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `os_process.artifacts_ledger` | `ARTIFACT_IDENTITY_LIFECYCLE` | artifact-global lifecycle authority | authoritative write | `WakeArtifactIdentityTransitionWorker` only | promotion worker, target deployment worker, PH1.J, PH1.GOV, PH1.LAW, PH1.OS, operators | rollout projection, device-local apply success, runtime-use evidence, queue ACK | append-only truth keyed by `(scope_type, scope_id, artifact_type, artifact_version)` with idempotency dedupe |
+| `wake_promotion_ledger` | rollout-scoped bridge | rollout history authority only | authoritative projection | `WakePromotionProjectionWorker` only | identity worker, deployment worker, PH1.J, operators | artifact-global `ACTIVE` / `REPLACED` / `ROLLED_BACK` truth | authoritative only for rollout history in the wake bridge slice |
+| `wake_promotion_current` | rollout-scoped bridge | rollout current-pointer authority only | projection only | `WakePromotionProjectionWorker` only | identity worker, deployment worker, operators | artifact identity source of truth | current pointer may trigger identity work but may not replace `artifacts_ledger` |
+| `wake_artifact_apply_ledger` | `TARGET_DEPLOYMENT_LIFECYCLE` | target deployment history authority | authoritative write | `WakeTargetDeploymentWorker` only | sync worker, PH1.J, operators | artifact-global publication / revocation / replacement truth | append-only per-device history keyed by `(device_id, artifact_version, state, idempotency_key)` |
+| `wake_artifact_apply_current` | `TARGET_DEPLOYMENT_LIFECYCLE` | target deployment current authority | authoritative write | `WakeTargetDeploymentWorker` only | sync worker, operators, runtime-use readers | artifact identity authority or runtime-use authority | `last_known_good_artifact_version` is the compensation anchor for rollback |
+| `WakeRuntimeEventRecord` / `wake_runtime_events` | `RUNTIME_USE_LIFECYCLE` | runtime-use evidence authority | evidence only | existing PH1.W runtime event writer, not C2 workers | C2 workers read-only, PH1.J, PH1.GOV, PH1.LAW, operators | target deployment activation truth or artifact-global lifecycle truth | accepted/rejected wake events may inform visibility or later rollback requests, never reverse-authority mutation |
+| `device_artifact_sync_*` queue surfaces | operational receipt/control support surface | queue-control authority only | receipt/projection/evidence only | `WakeSyncReceiptDeliveryWorker` only | operators, sync worker metrics, deployment worker read-only | artifact identity truth, target deployment truth, runtime-use truth | `Acked`, retry, replay-due, and dead-letter are queue state only |
+| `audit.audit_events` | evidence overlay across planes | proof/audit authority only | evidence only | PH1.J append writer | operators, PH1.GOV, PH1.LAW, incident review | lifecycle state store | `STATE_TRANSITION` proves recorded evidence, not storage commit |
+| `gov_decision_bundle` | governed decision input | decision-only authority | evidence/decision only | PH1.GOV | identity worker, promotion worker, PH1.LAW | committed lifecycle row | governs allow/block posture before protected commit |
+| `RuntimeExecutionEnvelope.law_state` | final runtime law input | decision-only authority | evidence/decision only | PH1.LAW | identity worker, deployment worker, operators | committed lifecycle row | protected completion may depend on this posture without making it a lifecycle writer |
+| `os_decision_bundle` | orchestration input | decision-only authority | evidence/decision only | PH1.OS | worker dispatch/orchestration only | artifact trust proof, lifecycle state, or storage current row | orchestration legality does not substitute for transition commit |
+
+Reverse-Authority Refusal Rules
+- Runtime-use evidence must never be read backward into target deployment truth or artifact identity truth.
+- Rollout projections must never be read backward into artifact-global lifecycle truth.
+- Queue receipts, sender ACKs, retry rows, dead-letter rows, PH1.J audit rows, and local cache observations must never be treated as lifecycle commits.
+- Device-local success may prove local observation only. It may not rewrite cloud-authoritative artifact identity truth.
+- On any cross-surface conflict, the worker must re-read the authoritative plane-owned row, preserve the lower-authority surface as evidence only, and refuse any reverse mutation.
+
+Reverse-Authority Refusal Matrix
+| source surface | tempting but forbidden inference | why forbidden | correct authoritative source | worker behavior on conflict |
+| --- | --- | --- | --- | --- |
+| `WakeRuntimeEventRecord` / `wake_runtime_events` | “runtime accepted this artifact, so target deployment must be active” | runtime-use is downstream consumption evidence and can exist only after or beside deployment truth; it is not the deployment writer | `wake_artifact_apply_ledger` and `wake_artifact_apply_current` | keep runtime evidence as visibility only; re-read deployment rows and refuse reverse mutation |
+| `wake_promotion_current` | “rollout pointer says Active, so artifact-global identity is already ACTIVE” | rollout projection is bridge scope only; artifact identity still requires append-only artifact-global commit | `os_process.artifacts_ledger` | schedule or re-run identity append if missing; do not treat projection as final artifact-global truth |
+| `wake_promotion_ledger` | “promotion history proves artifact-global replacement already happened” | promotion history records rollout events, not artifact-global lifecycle authority | `os_process.artifacts_ledger` | preserve ledger as rollout evidence only and refuse artifact-global inference without artifact append |
+| `wake_artifact_apply_ledger` / `wake_artifact_apply_current` | “one device activated successfully, so artifact-global truth is ACTIVE for everyone” | target deployment is device-local or target-local only | `os_process.artifacts_ledger` | keep device-local truth local; if artifact identity conflicts, refuse upward rewrite and follow governed rollback/refusal path |
+| `device_artifact_sync_*` queue rows | “ACKed sync means the lifecycle transition is complete” | queue state reflects send/control flow only | plane-owned lifecycle row for the affected subject | ACK, retry, or dead-letter must not mutate lifecycle truth; worker may only update queue state |
+| `audit.audit_events` / PH1.J proof rows | “a `STATE_TRANSITION` audit row exists, so the lifecycle write must exist” | PH1.J is append-only evidence, not a parallel lifecycle state store | plane-owned authoritative row in `artifacts_ledger`, `wake_promotion_*`, or `wake_artifact_apply_*` | reconcile audit from authoritative state, never authoritative state from audit |
+| local pull/apply observation in `device_artifact_sync` | “downloaded payload and local cache write prove artifact-global publication or activation” | local sync observations are assist signals subordinate to cloud authority | `os_process.artifacts_ledger` for identity; `wake_artifact_apply_*` for target deployment | preserve observation as operational evidence only; if cloud state disagrees, fail closed and do not uplift local truth |
+
 K) WORKER TRIGGERS, SCHEDULING, AND OWNERSHIP
 - `WakeArtifactIdentityTransitionWorker`
   - trigger:
@@ -259,6 +302,20 @@ K) WORKER TRIGGERS, SCHEDULING, AND OWNERSHIP
   - lease-based queue worker under the same sync worker pass
   - ownership:
   - one queue subject per `sync_job_id`
+
+Worker Trigger vs Backstop Sweeper Law
+- Every C2 worker family must have one explicit primary trigger and one explicit backstop sweeper. The sweeper may recover missed work only from already-authoritative rows or already-existing queue subjects; it may not invent new lifecycle intent.
+- Cross-node duplicate mutation is forbidden. For each worker family, one cloud lease-owner may act on one subject at a time. Device clients, runtime-use writers, and PH1.J / PH1.GOV / PH1.LAW surfaces are never lease owners for lifecycle mutation.
+- Where current repo truth already provides a lease surface, C2 must use it directly. Where the current slice exposes only subject rows plus idempotent commit guards, the safest planning interpretation is one logical cloud owner per subject with replay-safe re-entry rather than parallel best-effort workers.
+- If the primary trigger is missed, the backstop sweeper must recover from the same subject scope and must use the same idempotency family as the original worker path.
+
+Worker Trigger / Sweeper / Lease Matrix
+| worker family | primary trigger | backstop sweeper | ownership / lease scope | duplicate-start protection | missed-trigger recovery rule | forbidden execution context |
+| --- | --- | --- | --- | --- | --- | --- |
+| `WakeArtifactIdentityTransitionWorker` | promotion projection reaches a governed artifact-identity commit point such as rollout `Active` or `RolledBack` | bounded reconciliation scan over existing `wake_promotion_current` subjects whose rollout state implies artifact identity work but whose append-only artifact row is missing | one cloud owner per `(scope_type, scope_id, artifact_type, artifact_version)` subject; never device-local | `artifacts_ledger` unique scope/version key plus idempotency dedupe | re-read `wake_promotion_current` and `artifacts_ledger`; append only the missing artifact row with the same idempotency family | device client, runtime-use writer, PH1.J, PH1.GOV, PH1.LAW, PH1.OS as lifecycle writer |
+| `WakePromotionProjectionWorker` | explicit rollout request, explicit blocked-version revalidation, or explicit rollback request | bounded reconciliation over existing `wake_promotion_current` / `wake_promotion_ledger` rows only; never invent a new rollout request | one cloud owner per `artifact_version` rollout subject | `(artifact_version, to_state, idempotency_key)` plus current-state validation | if a command trigger is missed, recover only when an existing projection subject already shows incomplete or lagging rollout state | device client, runtime-use writer, `WakeTargetDeploymentWorker`, PH1.J/GOV/LAW/OS as lifecycle writer |
+| `WakeTargetDeploymentWorker` | scheduled `run_device_artifact_pull_apply_pass_internal` over known devices plus concrete pull response updates for `WakePack` | the same deterministic pull/apply pass rerun on restart or retry window, re-reading `wake_artifact_apply_current` and device inventory | one cloud owner per `(device_id, artifact_version)` deployment subject; device performs apply mechanics but is never lifecycle authority | per-state idempotency tuples in `wake_artifact_apply_idempotency_index` plus current-row prerequisite checks | rerun against the same device/version subject; stage/activate/rollback no-op or resume from the last committed row | artifact identity writer, promotion writer, runtime-use writer, PH1.J/GOV/LAW/OS as lifecycle writer |
+| `WakeSyncReceiptDeliveryWorker` | `device_artifact_sync_dequeue_batch` selecting `Queued` or replay-due `InFlight` rows | `device_artifact_sync_replay_due_rows(now)` after lease expiry | queue-row lease on `sync_job_id` using `worker_id` and `lease_expires_at`; current repo truth already provides this boundary | dequeue marks `InFlight`, increments attempts, and later ACK/fail/dead-letter commits require matching `worker_id` | expired leased rows become replay-due and may be dequeued again by the next lawful worker | device client, identity/promotion/deployment workers as queue-state writers outside the leased pass |
 - C2 does not authorize:
 - autonomous background revocation workers
 - autonomous expiry workers
@@ -297,6 +354,17 @@ L) IDEMPOTENCY, ORDERING, REPLAY, AND COLLISION LAW
 - `Any -> Blocked`
 - anything else is a fail-closed contract violation
 
+Idempotency / Dedup Domain Matrix
+| worker family | transition or operation | idempotency key tuple | ordering basis | dedup domain | retry-safe behavior | stale or duplicate behavior |
+| --- | --- | --- | --- | --- | --- | --- |
+| `WakeArtifactIdentityTransitionWorker` | artifact-global wake identity append (`ACTIVE`, `REPLACED`, `ROLLED_BACK` as applicable) | `(scope_type, scope_id, artifact_type=\"WakePack\", artifact_version, idempotency_key)` | append order by monotonic `artifact_id` after governed rollout outcome is fixed | `os_process.artifacts_ledger` unique scope/version plus idempotency unique key | replay returns the original append result and must not create a second artifact-global mutation | same scope/version without matching idempotency is a hard conflict and must be refused |
+| `WakePromotionProjectionWorker` | rollout transition commit | `(artifact_version, to_state, idempotency_key)` | current `wake_promotion_current.state`, then monotonic `promotion_event_id` | `wake_promotion_idempotency_index` and `wake_promotion_transition_allowed` | replay returns the current projection row with no second transition append | invalid `from -> to` or blocked-without-revalidation stays fail-closed |
+| `WakePromotionProjectionWorker` | blocked-version revalidation | `(artifact_version, idempotency_key)` with the same `decision_ref` | blocked-flag presence plus `decision_ref` equality | `wake_promotion_revalidation_idempotency_index` | replay with the same `decision_ref` is a no-op success | mismatched `decision_ref` or revalidation against a non-blocked version is refused |
+| `WakeTargetDeploymentWorker` | stage commit | `(device_id, artifact_version, WakeArtifactApplyState::Staged, stable_sync_key(\"wake_stage\", device_id:artifact_version:package_hash:base_idem[:failure_family]))` | latest `apply_event_id` for the device/version plus current staged pointer | `wake_artifact_apply_idempotency_index` for `Staged` rows | replay returns the existing staged row and preserves the same staged pointer | same device/version with a different stage key is a different deterministic attempt family and must not silently overwrite active truth |
+| `WakeTargetDeploymentWorker` | activate commit | `(device_id, artifact_version, WakeArtifactApplyState::Active, stable_sync_key(\"wake_activate\", device_id:artifact_version:payload_hash:base_idem))` | `wake_artifact_apply_current.staged_artifact_version` must match, then append order by `apply_event_id` | `wake_artifact_apply_idempotency_index` for `Active` rows | replay returns current deployment truth; if already active, it is deterministic no-op replay | missing or mismatched staged pointer is refused fail-closed |
+| `WakeTargetDeploymentWorker` | rollback commit | `(device_id, artifact_version, WakeArtifactApplyState::RolledBack, stable_sync_key(\"wake_rollback\", device_id:artifact_version:package_hash:base_idem[:failure_family]))` | latest staged/active source row and `last_known_good_artifact_version` | `wake_artifact_apply_idempotency_index` for `RolledBack` rows | replay returns the same rollback result and must not create a second rollback mutation | if no staged/active source row exists, rollback is refused |
+| `WakeSyncReceiptDeliveryWorker` | sync send / ACK / retry / dead-letter handling | `(sync_job_id, receipt_ref, envelope.idempotency_key)` with queue-state commits keyed by `sync_job_id` | dequeue lease ownership, `attempt_count`, and `lease_expires_at` | single `device_artifact_sync_queue` row per `sync_job_id` | replay after restart or lease expiry resumes the same queue row without rewriting lifecycle truth | mismatched `worker_id`, ACK after a foreign lease, or fail/dead-letter outside `InFlight` is refused |
+
 Collision / Recovery Matrix
 | collision or recovery case | winning canonical outcome | losing or rejected outcome | what remains authoritative | compensation or retry behavior | visibility expectation |
 | --- | --- | --- | --- | --- | --- |
@@ -333,6 +401,42 @@ M) FAILURE, COMPENSATION, AND SAFE REFUSAL MODEL
 - compensate after write only when the current repo path already committed an intermediate operational step and must recover safely
 - never compensate by inventing a new lifecycle state family
 - never convert a receipt, queue outcome, or runtime event into artifact identity truth
+
+Worker Re-entry and Checkpoint Law
+- Worker re-entry must always begin by re-reading the last authoritative checkpoint from the owning surface, not by trusting in-memory progress, prior local cache writes, or runtime-use evidence.
+- C2 checkpoints are limited to plane-owned commits already present in repo truth:
+- `artifacts_ledger` append rows for artifact identity
+- `wake_promotion_ledger` plus `wake_promotion_current` for rollout projection
+- `wake_artifact_apply_ledger` plus `wake_artifact_apply_current` for target deployment
+- `device_artifact_sync_queue` row state, `attempt_count`, `worker_id`, and `lease_expires_at` for receipt delivery
+- If the authoritative checkpoint exists and a later receipt, audit event, or projection update is missing, re-entry may emit the missing non-authoritative side effect idempotently but may not replay a second authoritative mutation.
+- If only an intermediate checkpoint exists, re-entry may attempt only the next lawful transition from that checkpoint and must reuse the same subject scope and idempotency family.
+
+Partial-Success / Re-entry Matrix
+| case | authoritative state after failure | receipt / projection posture | worker re-entry rule | retry rule | compensation rule | proof / governance / law visibility expectation |
+| --- | --- | --- | --- | --- | --- | --- |
+| authoritative write succeeds, receipt emission fails | owning lifecycle row is already committed in `artifacts_ledger`, `wake_promotion_*`, or `wake_artifact_apply_*` | receipt or audit may be missing or lagging | re-read the authoritative row and emit only the missing receipt/audit side effect; never write the lifecycle row again | reuse the same idempotency family and correlation path | none unless a later authoritative conflict is detected | PH1.J may need idempotent backfill; PH1.GOV / PH1.LAW posture does not replay as a write |
+| stage commit succeeds, activate commit fails | `wake_artifact_apply_ledger` contains `Staged`; `wake_artifact_apply_current.staged_artifact_version` remains set; active version is unchanged | local cache may exist; no active commit yet | re-enter at activation precondition check only; if staged pointer still matches, attempt activate, otherwise stop | retry the same activate key only after re-reading current staged subject | rollback if the failure family is download/hash/hook failure or if the staged subject is no longer lawful | PH1.J visible when lifecycle-significant; governance/law visibility only if protected activation is involved |
+| apply commit succeeds, client acknowledgement is lost | `wake_artifact_apply_current.active_artifact_version` already points at the new version and `Active` append exists | client ACK or external sync receipt is missing | do not re-activate; emit missing receipt or queue work only | same activate key returns current state; queue replay uses the same `sync_job_id` family | none at C2 scope | PH1.J should reflect the committed apply once; governance/law visibility follows the committed activation path, not the missing ACK |
+| projection update lags authoritative state | authoritative artifact or deployment row is already committed | `wake_promotion_current`, PH1.J, or operational projection is stale | sweeper reads the authoritative row and advances only the lagging non-authoritative surface | retry only the lagging projection/evidence update | none; reverse-authority compensation is forbidden | PH1.J backfill is allowed idempotently; governance/law consumers remain read-only |
+| sync delivery retries after process restart | lifecycle authority is unchanged; queue row remains the control checkpoint | queue row is `InFlight` with expired lease or retry-due | dequeue only after lawful lease expiry and resume from the same `sync_job_id` | resend the same envelope identity with bounded attempts | none; delivery retry must not mutate lifecycle truth | PH1.J / GOV / LAW visibility remains tied to prior authoritative state, not the restarted send attempt |
+| dead-letter record exists but authoritative state remains unchanged | lifecycle authority is unchanged; queue row is `DeadLetter` only | delivery evidence terminated locally; no new authoritative state | no automatic lifecycle mutation is permitted on re-entry | no automatic retry after dead-letter in C2 | none; manual requeue or broader escalation is outside the worker’s automatic path | PH1.J may record the delivery failure if lifecycle-significant; broader law/governance escalation remains deferred unless a protected path requires C4 treatment |
+
+Dead-Letter, Quarantine, and Manual Review Boundaries
+- C2 may define worker-local retry, dead-letter, and safe-refusal posture for queue/control failures and structurally invalid lifecycle attempts.
+- C2 may not silently absorb full proof/governance/law redesign. When a failure requires cross-subsystem legal, proof, or governance reinterpretation, the worker must stop at a bounded refusal boundary and defer broader normalization to C4.
+- Dead-letter is for worker-local control flow that exhausted safe retries or received fatal failure.
+- Quarantine or manual review is required when the current slice exposes a protected-path inconsistency, conflicting authoritative inputs, corrupted queue control state, or repeated blocked subjects that cannot be resolved by replaying the same lawful idempotent operation.
+
+Dead-Letter / Quarantine Boundary Matrix
+| failure class | worker family | immediate action | authoritative state impact | retry allowed or not | dead-letter threshold / boundary | quarantine or manual review trigger | downstream defer-to-C4 note if applicable |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| retryable sender or transport failure below max attempts | `WakeSyncReceiptDeliveryWorker` | `device_artifact_sync_fail_commit` with bounded `retry_after_ms` | none; lifecycle rows stay unchanged | YES | dead-letter only when attempts hit the configured max or a later fatal error occurs | none by default | NO; this remains worker-local C2 control flow |
+| fatal sender NACK or attempt exhaustion | `WakeSyncReceiptDeliveryWorker` | `device_artifact_sync_dead_letter_commit` | none; lifecycle rows stay unchanged | NO automatic retry | immediate on fatal NACK or at max-attempt boundary | manual review if delivery evidence matters operationally | NO, unless a protected downstream closure demands broader law/proof escalation outside C2 |
+| blocked promotion without explicit revalidation | `WakePromotionProjectionWorker` | safe refusal; keep projection blocked | `wake_promotion_*` remains `Blocked` or unchanged | NO until explicit revalidation | no dead-letter; this is a structural refusal, not a send failure | manual review when repeated blocked subjects indicate unresolved rollout eligibility | NO; the bounded remedy is explicit revalidation inside current C2 scope |
+| protected activation lacks required governance or law allow posture | `WakeArtifactIdentityTransitionWorker` or `WakeTargetDeploymentWorker` | refuse commit before write | authoritative lifecycle row remains unchanged | NO until a new lawful decision bundle exists | no worker-local dead-letter for the lifecycle subject itself | manual review when protected path inputs remain conflicting or incomplete | YES; broader proof/governance/law normalization remains a C4 concern |
+| queue row corruption or worker-id mismatch on ACK/fail/dead-letter | `WakeSyncReceiptDeliveryWorker` | refuse the state change and preserve current row for inspection | none; lifecycle rows stay unchanged | NO until row integrity is corrected | no further automatic queue mutation from the conflicting worker context | quarantine/manual review because cross-worker ownership has become ambiguous | NO for lifecycle redesign; this is a bounded control-plane integrity problem |
+| runtime-use evidence conflicts with current deployment or artifact identity posture | `WakeTargetDeploymentWorker` or `WakeArtifactIdentityTransitionWorker` | refuse reverse-authority mutation and preserve runtime evidence as evidence only | authoritative lifecycle row remains whichever higher-authority row already exists | NO automatic retry of the forbidden inference | no dead-letter for lifecycle state; if a queue job caused the conflict, dead-letter only the queue job | manual review when repeated evidence conflicts point to a broader protected-path inconsistency | YES when cross-subsystem law/proof interpretation is required beyond the bounded C2 refusal |
 
 N) PROOF / GOVERNANCE / LAW VISIBILITY AT C2 SCOPE
 - PH1.J
