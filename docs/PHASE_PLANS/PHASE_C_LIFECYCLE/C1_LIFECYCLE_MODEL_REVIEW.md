@@ -3,7 +3,7 @@ PHASE C1 — LIFECYCLE MODEL REVIEW
 A) REPO TRUTH CHECK
 - `git status --short`: empty
 - current branch: `main`
-- HEAD commit: `c419ebc65f0b7bea1b08b0179be6d0a6dea329e7`
+- HEAD commit: `fbffd41caa1a32f48a29bf22c7847ec64e63a7ce`
 - exact files reviewed:
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A1_ARTIFACT_TRUST_ARCHITECTURE_REVIEW.md)
 - [/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_A_ARTIFACT_TRUST/A2_ARTIFACT_IDENTITY_TRUST_CONTRACT_LAYER_BUILD_PLAN.md)
@@ -125,6 +125,19 @@ B) CURRENT LIFECYCLE STATE
   - TARGET: storage must reflect one lifecycle vocabulary even if implemented across multiple tables.
   - GAP: storage is a real dual-source-of-truth risk today.
 
+**WORLD-CLASS UPGRADE — Current Surface-to-Canonical Lifecycle Mapping**
+| Current repo surface | Real current role | Canonical lifecycle plane | Canonical state(s) or function | Authority posture | Normalization needed |
+| --- | --- | --- | --- | --- | --- |
+| `os_process.artifacts_ledger` | append-only artifact row by scope/type/version | `ARTIFACT_IDENTITY_LIFECYCLE` | artifact-global or scope-authoritative `CREATED` / `PUBLISHED` / `ACTIVE` / `REPLACED` / `ROLLED_BACK` / `REVOKED` / `EXPIRED` / `ARCHIVED` / `PURGED` / `RESTORED` truth | authoritative storage truth | must never be overwritten by target deployment receipts or runtime-use observations |
+| `wake_artifact_apply_ledger` + `wake_artifact_apply_current` | device-local staged / active / rolled-back deployment truth with idempotent apply and rollback handling | `TARGET_DEPLOYMENT_LIFECYCLE` | current wake-specific fragment of `INSTALLED` / `APPLY_CONFIRMED` / target-local `ACTIVE` / `ROLLED_BACK` | authoritative only for target-local deployment posture | must be interpreted as deployment-instance truth, not artifact-global publication or revocation truth |
+| `wake_promotion_ledger` + `wake_promotion_current` | rollout/promotion decision and active-pointer fragment for wake artifacts | `ARTIFACT_IDENTITY_LIFECYCLE` plus rollout-scoped `TARGET_DEPLOYMENT_LIFECYCLE` bridge | current fragment of admission / activation / replacement / rollback posture | authoritative for wake rollout posture in current slice, not yet the repo-wide lifecycle model | must consume C1 vocabulary instead of remaining a wake-only state machine |
+| `audit.audit_events` `STATE_TRANSITION` plus `proof_entry_ref` / `proof_record_ref` | lifecycle evidence and proof linkage | evidence overlay across all lifecycle planes | lifecycle-significant transition evidence; never authoritative lifecycle state by itself | authoritative for audit/proof records only | must remain reference-aligned to lifecycle truth and must not become a parallel state store |
+| `memory.memory_archive_index` + memory retention surfaces | archive pointers, retention posture, identity-scoped memory lifecycle metadata | `MEMORY_LIFECYCLE` | memory-domain `ARCHIVED` / retention / `EXPIRED` / `PURGED` / `RESTORED` alignment | authoritative for memory-owned retention/archive posture | must stay memory-owned and must not be recast as artifact identity lifecycle truth |
+| builder release / rollout fragments in `ph1builder.rs` | publication, promotion, rollback readiness, and release rollback fragments | `ARTIFACT_IDENTITY_LIFECYCLE` | publication / replacement / rollback fragments | subsystem-local contract truth, not canonical lifecycle authority | must map into shared C1 states before C2 closure |
+| learn artifact fragments in `ph1learn.rs` | candidate packaging, replacement, rollbackability, and artifact lineage fragments | `ARTIFACT_IDENTITY_LIFECYCLE` | candidate creation / publication / replacement / rollback fragments | subsystem-local contract truth, not canonical lifecycle authority | must consume C1 state meanings rather than preserving learn-local lifecycle semantics |
+| self-heal promotion / remediation fragments in `ph1selfheal.rs` | remediation promotion, rollback readiness, and recovery fragments | `ARTIFACT_IDENTITY_LIFECYCLE` and `TARGET_DEPLOYMENT_LIFECYCLE` | remediation publication / apply / rollback / recovery fragments | subsystem-local contract truth, not canonical lifecycle authority | must normalize to C1 replacement / rollback / recovery semantics |
+| simulation catalog fragments in `ph1simcat.rs` | catalog activation, replacement, deprecation, and archive fragments | `ARTIFACT_IDENTITY_LIFECYCLE` | publication / activation / replacement / expiry / archive fragments | subsystem-local contract truth, not canonical lifecycle authority | must consume the same canonical states as artifact identity lifecycle rather than a catalog-local vocabulary |
+
 C) CANONICAL C1 LIFECYCLE DESIGN
 **WORLD-CLASS UPGRADE — State Taxonomy by Terminality / Restorability / Proof Visibility**
 | State | Terminal or non-terminal | Restorable or non-restorable | Proof-visible or operational-only | Globally authoritative or target-local operational |
@@ -207,6 +220,18 @@ C) CANONICAL C1 LIFECYCLE DESIGN
 - `occurred_at`
 - This is lifecycle evidence, not a second proof system.
 - If a transition is already governed by Phase A proof requirements, lifecycle evidence must align to that proof path rather than fork it.
+
+**WORLD-CLASS UPGRADE — Plane / Subject-Class / Valid-State Applicability Table**
+- Canonical lifecycle-subject identity tuple is:
+- `(lifecycle_plane, subject_class, subject_id, subject_scope, lineage_root_or_parent_ref)`
+- `subject_id` must identify the lifecycle subject owned by that plane, not a neighboring plane's receipt, cache row, or projection.
+- A lifecycle event must reference exactly one lifecycle-subject identity tuple.
+| lifecycle_plane | subject_class | subject_id | subject_scope | lineage_root_or_parent_ref | valid canonical states directly owned at this plane |
+| --- | --- | --- | --- | --- | --- |
+| `ARTIFACT_IDENTITY_LIFECYCLE` | `ARTIFACT_IDENTITY_SUBJECT` | canonical artifact identity ref (`artifact_id`, `artifact_identity_ref`, or equivalent artifact-global subject id) | `ARTIFACT_GLOBAL_SCOPE` and any explicit governed `TENANT_SCOPE` / `ENVIRONMENT_SCOPE` / `CLUSTER_SCOPE` | lineage root plus replacement / rollback parent refs where applicable | `CREATED` / `PUBLISHED` / `ACTIVE` / `REPLACED` / `ROLLED_BACK` / `REVOKED` / `EXPIRED` / `ARCHIVED` / `PURGED` / `RESTORED`; `DISTRIBUTED` / `INSTALLED` / `APPLY_REQUESTED` / `APPLY_CONFIRMED` / `IN_RUNTIME_USE` are not owned here |
+| `TARGET_DEPLOYMENT_LIFECYCLE` | `TARGET_DEPLOYMENT_INSTANCE` | canonical deployment-instance subject id such as `(artifact_identity_ref, target_id)` or current equivalent device-local apply subject | `TARGET_DEPLOYMENT_SCOPE` or `DEVICE_LOCAL_SCOPE` | parent artifact identity ref and any explicit replacement / rollback parent deployment ref | `DISTRIBUTED` / `INSTALLED` / `APPLY_REQUESTED` / `APPLY_CONFIRMED` / target-local `ACTIVE` / `REPLACED` / `ROLLED_BACK` / `REVOKED` / `EXPIRED` / `ARCHIVED` / `PURGED` / `RESTORED`; `PUBLISHED` is not owned here |
+| `RUNTIME_USE_LIFECYCLE` | `RUNTIME_CONSUMPTION_INSTANCE` | canonical runtime/session consumption id | `SESSION_SCOPE`, `DEVICE_LOCAL_SCOPE`, `TENANT_SCOPE`, or `ENVIRONMENT_SCOPE` depending runtime substrate | parent admitted deployment or parent active artifact ref | `IN_RUNTIME_USE` is the directly owned state here; `ACTIVE`, `REVOKED`, and `EXPIRED` may govern runtime admissibility but are consumed from authoritative neighboring planes rather than written by runtime-use receipts |
+| `MEMORY_LIFECYCLE` | `MEMORY_OBJECT` or `MEMORY_ARCHIVE_REF` | canonical memory-domain key, thread/domain key, or `archive_ref_id` | identity-scoped tenant/user scope plus any explicit archive scope | parent conversation/thread/archive lineage where applicable | canonical alignment applies for retention posture plus `ARCHIVED` / `EXPIRED` / `PURGED` / `RESTORED`; `PUBLISHED` / `DISTRIBUTED` / `INSTALLED` / `APPLY_REQUESTED` / `APPLY_CONFIRMED` are not valid memory-owned states |
 
 **WORLD-CLASS UPGRADE — Multi-Target Deployment Model**
 - C1 distinguishes:
@@ -339,6 +364,15 @@ C) CANONICAL C1 LIFECYCLE DESIGN
 - These are lifecycle-visible compensation states and must not be hidden as local-only cleanup.
 - Compensation may not invent new lifecycle truth; it must consume the canonical states and guards.
 
+**WORLD-CLASS UPGRADE — Collision-Resolution Matrix**
+| Collision | Winning outcome | Losing outcome | Receipt behavior | Proof / governance / law visibility expectation | Compensation requirement |
+| --- | --- | --- | --- | --- | --- |
+| replacement vs rollback | the first authoritative transition admitted under stable ordering and still pointing at a lawful target remains canonical | the later conflicting transition loses if its target is no longer lawful and becomes blocked or historical-only | both receipts may persist as evidence, but only the winner materializes authoritative state | proof-visible; governance-visible when governed; law-visible when runtime posture changes | required when the losing side already emitted operational receipts; no silent overwrite |
+| revoke vs restore | `REVOKED` wins for the same subject and scope; restore may proceed only through governed replacement or re-approval as a fresh lawful subject | direct restoration of the revoked same subject loses | restore receipt remains operational evidence only and may not reopen the revoked subject | proof-visible and governance/law visible where admissibility is affected | required to convert the losing restore attempt into historical-only posture or a new-subject admission path |
+| expiry vs activate | `EXPIRED` wins once authoritative at the same subject and scope unless a fresh governed lifecycle subject is admitted | late activation of the expired same subject loses | local activation receipt may remain, but it does not erase expiry | proof-visible where safety/compliance relevant; governance/law visible when active use is denied | required as activation denial or fresh-subject replacement path; no silent resume |
+| hold vs purge | `LEGAL_HOLD` or `PRESERVATION_HOLD` wins over purge/delete | purge/delete loses while hold remains active | purge request receipt may persist, but terminal transition must not occur | proof/governance visibility when governed; law visibility when runtime loss posture matters | required as deferred, blocked, or refused purge outcome with explicit reason |
+| local apply success vs cloud activation denial | cloud authoritative denial wins; subject remains non-active or rolls back to a lawful target | local success receipt loses as an authority claim | local apply receipt remains operational evidence only | proof-visible when denial is lifecycle-significant; governance/law visible when activation was governed or safety-relevant | required as rollback or non-admission compensation; must not be hidden as local cleanup |
+
 **WORLD-CLASS UPGRADE — Storage Tier / Restoration Relationship**
 - Storage tiers are:
 - `HOT_TIER`
@@ -396,6 +430,15 @@ D) LIFECYCLE OWNERSHIP MODEL
 - memory retention lifecycle
   - owns retention, decay, forget/delete, and restoration posture for memory-domain objects
   - must align with canonical lifecycle semantics for expiry/archive/purge/restore, but must not erase the distinction between memory and artifact domains
+
+**WORLD-CLASS UPGRADE — Transition Authority Matrix**
+| Transition class | authoritative writer | operational receipt emitter | proof-visible consumer | governance-visible consumer | law-visible consumer | forbidden writers |
+| --- | --- | --- | --- | --- | --- | --- |
+| artifact identity admission / publication | canonical artifact identity storage rows such as `artifacts_ledger` or equivalent artifact-global persistence | builder/release publication receipts where present | `PH1.J` when publication is lifecycle-significant | `PH1.GOV` when governed admission or later activation path requires visibility | none by default; `PH1.LAW` only when later runtime admissibility depends on the published state | client devices, local caches, `PH1.J` as state writer, `PH1.GOV` as storage writer, `PH1.LAW` as storage writer |
+| target distribution / install / apply / restore | canonical target deployment storage rows such as `wake_artifact_apply_ledger` / `wake_artifact_apply_current` or equivalent deployment persistence after receipt acceptance | client/device runtime, pull/apply workers, local restore flows | `PH1.J` when the transition is lifecycle-significant | `PH1.GOV` when governed apply / restore / rollback eligibility requires visibility | `PH1.LAW` when runtime admissibility is affected | raw client receipts alone, `PH1.J` direct mutation, `PH1.GOV` direct mutation, `PH1.LAW` direct mutation |
+| activation / replacement / rollback | canonical storage commit after any required governance acceptance, including promotion/apply current truth | rollout workers, device apply flows, builder/learn/self-heal operational receipts | `PH1.J` | `PH1.GOV` | `PH1.LAW` | local-only clients, `PH1.J` as authoritative writer, `PH1.GOV` as authoritative storage writer, `PH1.LAW` as authoritative storage writer |
+| revocation / expiry / archive / purge / restore eligibility changes | canonical storage lifecycle persistence at the owning plane | local archive/restore/delete requests or receipts where they exist | `PH1.J` where governed or safety/compliance-relevant | `PH1.GOV` when governed visibility or authorization is required | `PH1.LAW` when runtime safety/admissibility is materially affected | device-local delete as authoritative truth, `PH1.J` direct mutation, `PH1.LAW` direct mutation |
+| memory retention / archive / purge / restore | `PH1.M` memory-authoritative storage surfaces | device outbox, sync, or restore cues | `PH1.J` only when an existing governed path already requires lifecycle proof visibility | existing governance path only when a governed runtime action depends on the memory transition | `PH1.LAW` only when memory posture changes live runtime admissibility in an already governed path | artifact ledgers as memory authority, client devices as authoritative deleters, `PH1.J` direct mutation |
 
 E) LIFECYCLE CONFLICTS / GAPS
 **WORLD-CLASS UPGRADE — Source-of-Truth Precedence Rule for Lifecycle**
