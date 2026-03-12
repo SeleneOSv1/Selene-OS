@@ -146,6 +146,74 @@ No task is complete until the tree is clean again.
 - Codex must not change Clash, macOS proxy settings, git config, ssh config, shell proxy variables, or network settings unless JD explicitly approves it first.
 - If connectivity fails, Codex must stop and report the failure instead of attempting fixes.
 
+## Task-State Resolution, Recovery, and Silent Execution Protocol
+Before any substantial work, Codex must classify the task into exactly one of:
+- `FRESH_AUTHORING`
+- `PARTIAL_AUTHORING_RECOVERY`
+- `EDIT_EXISTING_FILE`
+- `READ_ONLY_AUDIT`
+- `PUBLICATION_RECOVERY`
+
+### Fresh Authoring Rule
+Use `FRESH_AUTHORING` only when:
+- the target file does not exist
+- the target file is not already untracked
+- there is no partial-authoring state for the target
+
+### Partial Recovery Rule
+If the target file exists and is the only relevant modified or untracked file for the task, Codex must switch to `PARTIAL_AUTHORING_RECOVERY` instead of stopping.
+
+### Read-Only Audit Rule
+If the target file already exists and the task is verification or approval review, Codex must switch to `READ_ONLY_AUDIT` instead of using a fresh-authoring flow.
+
+### Existing-Target Rule
+Target existence is a stop condition only for `FRESH_AUTHORING`.
+It is not a stop condition for:
+- `PARTIAL_AUTHORING_RECOVERY`
+- `EDIT_EXISTING_FILE`
+- `READ_ONLY_AUDIT`
+- `PUBLICATION_RECOVERY`
+
+### Dirty-Tree Refinement
+A non-empty `git status --short` must not cause an automatic stop when:
+- the only changed or untracked file is the task target file
+
+Automatic stop is still required when:
+- unrelated files have changed
+- the repo is wrong
+- the branch is wrong
+- remote reachability is required and unavailable
+
+### Single-Preflight Rule
+- Run preflight once only per task.
+- Do not loop preflight.
+- Do not repeat target-file existence checks over and over.
+- Do not repeat remote-reachability checks over and over.
+- If repo state changes during the task, do one reconciliation pass only.
+
+### Silent Execution Rule
+- Do not emit repeated progress narration.
+- Do not emit repeated "I'm about to..." messages.
+- After preflight, complete the work and return one final completion pack.
+- If blocked, stop once with one concrete blocker.
+
+### Repo-Truth Precedence Rule
+If task instructions conflict with current repo truth, Codex must follow current repo truth plus these task-state rules and report the mode switch once in the final output.
+
+### Completion Discipline
+At the end of each task, Codex must explicitly state whether the target was:
+- authored
+- recovered
+- audited
+- committed/pushed
+- freeze-ready or not
+
+### No Hidden Mode Switching
+If a task begins as authoring but repo truth shows the target already exists, Codex must explicitly switch to recovery or audit mode instead of silently half-following the original authoring prompt.
+
+### No Progress-Spam in Compacted Sessions
+If context compaction happens, Codex must resume from current repo truth, not from the original fresh-authoring assumption.
+
 ## Shell-Only Inspection Rule
 Allowed inspection commands:
 - `git`
