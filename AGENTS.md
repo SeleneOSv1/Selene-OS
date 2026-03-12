@@ -141,6 +141,11 @@ End of every run:
 No new task may begin on a dirty tree.
 No task is complete until the tree is clean again.
 
+## Network Stability Rule
+- `🤖 ChatGPT` is locked to `🇸🇬 新加坡 01`.
+- Codex must not change Clash, macOS proxy settings, git config, ssh config, shell proxy variables, or network settings unless JD explicitly approves it first.
+- If connectivity fails, Codex must stop and report the failure instead of attempting fixes.
+
 ## Shell-Only Inspection Rule
 Allowed inspection commands:
 - `git`
