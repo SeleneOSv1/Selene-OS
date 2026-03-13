@@ -119,6 +119,10 @@ F) CANONICAL IPHONE PARITY MODEL
   8. iPhone parity is incomplete until a native client exists that emits the required authoritative inputs and receipts into the existing cloud-side model.
 - current repo truth makes one additional rule explicit:
   - iPhone parity currently means `EXPLICIT_ONLY` entry unless a future governed change explicitly widens that posture
+- explicit review frame for this freeze:
+  - `CURRENT`: repo truth already provides cloud-authoritative `IOS` platform classification, canonical runtime-envelope/session law, onboarding/setup receipt law, artifact authority and sync surfaces, and governance/law/proof participation; repo truth does not provide a native iPhone client, iPhone receipt producer, iPhone artifact consumer, or lawful wake path.
+  - `TARGET`: F1 freeze certifies the review boundary only: iPhone is a first-class platform surface inside the canonical cloud/runtime model, not an authority source; current parity is cloud/runtime parity only; all lawful gaps are explicit; and downstream client-definition work remains deferred to `F2-F5`.
+  - `GAP`: F1 closes review ambiguity by naming the current cloud-side parity surface and freezing the downstream boundary. F1 does not close the still-missing native iPhone client/runtime surfaces, which remain explicitly deferred to `F2-F5` and are not claimed as live parity in this phase.
 
 Current Repo Surface to Canonical F1 Mapping
 
@@ -131,7 +135,7 @@ Current Repo Surface to Canonical F1 Mapping
 | `PH1.VOICE.ID` and `device_artifact_sync.rs` | iPhone must participate in phone-first identity artifact custody and sync | present cloud-side | partial | no iPhone vault/outbox/sync client |
 | `PH1.PERSONA`, `PH1.CONTEXT`, `PH1.M`, Phase E | iPhone consumes cloud personality, context, and memory outputs only | present | current | no client proof yet, but no local authority exists in repo |
 | `PH1.GOV`, `PH1.LAW`, `PH1.J` | protected iPhone actions must end under governance, proof, and law posture | present | partial | no iPhone protected-action implementation path |
-| `PH1.ART` and artifact trust surfaces | iPhone artifacts must remain trust-bound and proof-linked | present | partial | no native iPhone artifact consumer/installer |
+| `ARTIFACTS_LEDGER_TABLES`, `ph1art.rs`, and `device_artifact_sync.rs` | iPhone artifacts must remain trust-bound, contract-bound, and proof-linked | present cloud-side | partial | no native iPhone artifact consumer/installer |
 | `PH1.COMP` | thresholds, scoring, and consensus decisions stay deterministic and cloud-side | present | current | no client-local override path exists |
 
 G) CURRENT RUNTIME / SESSION / IDENTITY / ARTIFACT / PLATFORM SURFACES
