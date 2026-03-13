@@ -1,0 +1,200 @@
+PHASE F3 — IPHONE CONTINUITY REVIEW
+
+A) REPO TRUTH CHECK
+- task-state mode for this pass: `FRESH_AUTHORING`
+- repo root: `/Users/xiamo/Documents/A-Selene/Selene-OS`
+- branch at authoring start: `main`
+- clean-tree truth at authoring start: `git status --short` empty
+- target-file truth at authoring start: `/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F3_IPHONE_CONTINUITY.md` did not exist
+- baseline proof before authoring: `bash scripts/selene_design_readiness_audit.sh` passed on clean tree
+- authoritative review bundle consumed for this freeze:
+  - F1 boundary: [F1_IPHONE_PARITY_REVIEW.md#L112](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L112), [F1_IPHONE_PARITY_REVIEW.md#L121](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L121), [F1_IPHONE_PARITY_REVIEW.md#L260](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L260)
+  - F2 boundary: [F2_IPHONE_INGRESS_CONTRACT.md#L41](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L41), [F2_IPHONE_INGRESS_CONTRACT.md#L88](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L88), [F2_IPHONE_INGRESS_CONTRACT.md#L197](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L197)
+  - core and build-order law: [CORE_ARCHITECTURE.md#L17](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L17), [CORE_ARCHITECTURE.md#L78](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L78), [CORE_ARCHITECTURE.md#L220](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L220), [SELENE_BUILD_EXECUTION_ORDER.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L13), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L80](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L80), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L81](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L81), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L100](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L100), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L108](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L108), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L109](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L109)
+  - repo-truth runtime surfaces: [runtime_execution.rs#L730](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L730), [runtime_execution.rs#L1194](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1194), [ph1f.rs#L791](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L791), [ph1f.rs#L3672](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L3672), [device_artifact_sync.rs#L17](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L17), [device_artifact_sync.rs#L92](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L92), [device_artifact_sync.rs#L492](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L492), [device_artifact_sync.rs#L631](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L631), [ph1m.rs#L1418](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/ph1m.rs#L1418)
+
+B) PURPOSE
+- freeze the iPhone client/runtime continuity boundary for session attach, resume, recover, detach, cross-device continuity, runtime-envelope propagation, durable retry/outbox discipline, and artifact-sync mechanics only
+- preserve F1 review truth and F2 ingress contract truth without reopening them
+- define how an eventual iPhone client may remain a first-class platform terminal while continuing to obey cloud-authoritative session, identity, artifact, memory, governance, proof, and runtime-law boundaries
+- stop before F4 and F5
+
+C) DEPENDENCY RULE
+- Section `01` remains the authority boundary: clients may cache, queue, retry, and apply bounded local mechanics, but only the cloud runtime may author session truth, memory truth, artifact activation truth, governance truth, proof truth, or runtime-law truth: [SELENE_BUILD_SECTION_01.md#L41](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_01.md#L41)
+- Section `02` and PH1.L remain the sole session owner: attach, resume, recover, detach, single-writer, transfer, and failover all resolve through the cloud session container: [SELENE_BUILD_SECTION_02.md#L23](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_02.md#L23), [CORE_ARCHITECTURE.md#L220](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L220)
+- Section `03` remains the canonical ingress/envelope seam: F3 may continue runtime execution from already-lawful F2 entry shapes only; it may not invent an iPhone-only execution path: [SELENE_BUILD_SECTION_03.md#L23](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md#L23), [SELENE_BUILD_SECTION_03.md#L49](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md#L49), [F2_IPHONE_INGRESS_CONTRACT.md#L81](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L81)
+- Section `04` remains the protected authority and artifact trust boundary: F3 may carry authoritative outputs and bounded refs only; client continuity state must never mint artifact trust, proof, governance, or law truth: [SELENE_BUILD_SECTION_04.md#L23](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_04.md#L23), [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L80](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L80)
+- Section `05` remains the durable outbox, replay, reconciliation, dedupe, and fresh-state law: F3 owns iPhone-local continuity mechanics only within this cloud-wins contract: [SELENE_BUILD_SECTION_05.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md#L21), [SELENE_BUILD_SECTION_05.md#L67](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md#L67), [SELENE_BUILD_SECTION_05.md#L87](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md#L87)
+- Section `06` and PH1.M remain cloud-authoritative memory truth: F3 may consume memory resume and continuity hints only; cached or suggested continuity may never become memory authority or session authority: [SELENE_BUILD_SECTION_06.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_06.md#L21), [SELENE_BUILD_SECTION_06.md#L49](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_06.md#L49), [ph1m.rs#L1418](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/ph1m.rs#L1418)
+- Section `07` remains cloud-authoritative identity and phone-first identity-artifact custody law: F3 may synchronize and reuse identity-scoped continuity only after the cloud has validated it: [SELENE_BUILD_SECTION_07.md#L29](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_07.md#L29), [SELENE_BUILD_SECTION_07.md#L43](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_07.md#L43), [SELENE_BUILD_SECTION_07.md#L159](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_07.md#L159)
+- Section `08` remains the iPhone posture anchor: iPhone is first-class, but `EXPLICIT_ONLY`, and continuity mechanics may not widen entry posture or claim wake parity: [SELENE_BUILD_SECTION_08.md#L47](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md#L47), [SELENE_BUILD_SECTION_08.md#L63](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md#L63), [SELENE_BUILD_SECTION_08.md#L119](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md#L119)
+- Sections `09`, `10`, and `11` remain downstream only for F3: F3 may preserve governance/law/proof/numeric dependency seams, but not implement protected-action enforcement or final law posture here: [SELENE_BUILD_SECTION_09.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_09.md#L21), [SELENE_BUILD_SECTION_10.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_10.md#L21), [SELENE_BUILD_SECTION_11.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_11.md#L21)
+- frozen C law remains in force:
+  - C1: receipts, install/apply progress, and local restore signals are evidence only, never authoritative lifecycle truth: [C1_LIFECYCLE_MODEL_REVIEW.md#L203](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C1_LIFECYCLE_MODEL_REVIEW.md#L203)
+  - C4: storage-before-visibility, replay-safe reuse, and no second authoritative mutation remain binding on continuity and sync recovery: [C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L63](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L63), [C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L95](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L95)
+- frozen D law remains in force:
+  - D1 freezes one session container, one turn stream, one ownership posture, and per-device monotonic sequencing: [D1_CROSS_DEVICE_SESSION_CONSISTENCY_REVIEW.md#L100](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D1_CROSS_DEVICE_SESSION_CONSISTENCY_REVIEW.md#L100)
+  - D2 freezes attach/resume/recover/detach meanings and blocked outcome families: [D2_ATTACH_RECOVER_DETACH_CONTRACT_FIXES_BUILD_PLAN.md#L107](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D2_ATTACH_RECOVER_DETACH_CONTRACT_FIXES_BUILD_PLAN.md#L107)
+  - D3 freezes runtime/persistence materialization order and blocked outcome visibility: [D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L62](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L62), [D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L118](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L118)
+  - D4 freezes governance/law/proof as downstream observers over already-committed session truth: [D4_LAW_GOVERNANCE_ALIGNMENT_BUILD_PLAN.md#L76](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D4_LAW_GOVERNANCE_ALIGNMENT_BUILD_PLAN.md#L76)
+- frozen E law remains in force:
+  - E1: personality is not deterministic execution authority: [E1_PERSONALITY_ARCHITECTURE_REVIEW.md#L61](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_E_PERSONALITY/E1_PERSONALITY_ARCHITECTURE_REVIEW.md#L61)
+  - E3: runtime tone may carry, but may not turn continuity into long-term behavioral authority: [E3_TONE_VS_LONG_TERM_BEHAVIOR_SEPARATION_BUILD_PLAN.md#L60](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_E_PERSONALITY/E3_TONE_VS_LONG_TERM_BEHAVIOR_SEPARATION_BUILD_PLAN.md#L60)
+  - E4: identity, platform, governance, and runtime law remain control layers only, even when continuity or memory resume is involved: [E4_SAFETY_LAW_MEMORY_CONTROLS_BUILD_PLAN.md#L66](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_E_PERSONALITY/E4_SAFETY_LAW_MEMORY_CONTROLS_BUILD_PLAN.md#L66)
+- F3 scope is locked by F1 and F2: session continuity, attach/resume/recover client behavior, durable retry/outbox, device artifact sync, and identity/artifact continuity on phone only: [F1_IPHONE_PARITY_REVIEW.md#L260](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L260), [F2_IPHONE_INGRESS_CONTRACT.md#L197](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L197)
+
+D) ARCHITECTURAL POSITION
+- iPhone remains a first-class platform surface, but never an authority source: [CORE_ARCHITECTURE.md#L17](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L17), [F1_IPHONE_PARITY_REVIEW.md#L112](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L112)
+- F3 sits after F2 ingress normalization and before F4 protected-action participation.
+- The canonical continuity flow remains:
+  1. lawful F2 entry produces canonical runtime-envelope/session context
+  2. client-local continuity state may cache request refs, idempotency keys, and sync jobs only
+  3. PH1.L resolves attach/resume/recover/detach against authoritative `SessionRecord`
+  4. Section `05` replay/reconciliation reuses or repairs the authoritative outcome
+  5. artifact sync queue, pull, apply, ack, retry, or dead-letter runs subordinate to cloud truth
+  6. PH1.GOV / PH1.J / PH1.LAW remain downstream-only observers in F3
+- F3 is cloud/runtime parity design only. No native iPhone client is claimed or implemented here.
+- iPhone remains `EXPLICIT_ONLY`, so continuity mechanics may not infer or widen wake behavior.
+
+E) CURRENT REPO SURFACES IN SCOPE
+- current F3 repo truth is bounded to cloud/runtime and generic mobile continuity surfaces that already exist:
+  - `RuntimeExecutionEnvelope` session/device/persistence carriage
+  - `SessionRecord` PH1.L current-row truth and `upsert_session_lifecycle`
+  - `SessionAttachOutcome` plus persistence recovery/ack/reconciliation families
+  - `MobileArtifactSyncQueueRecord`, sync queue states, dequeue/ack/fail/dead-letter functions, and the device sync worker runtime
+  - `DeviceArtifactPullRequest`, `DeviceArtifactPullResponse`, `DeviceArtifactSyncEnvelope`, and current pull/apply flow
+  - `Ph1mResumeSelectRequest` / `Ph1mResumeSelectResponse` as cloud continuity-hint selection, not local session authority
+- current F3 scope explicitly excludes:
+  - any native iPhone session/outbox/sync implementation
+  - any F2 ingress redesign
+  - any F4 governance/law/proof client participation
+  - any F5 tests or closure evidence
+
+F) CANONICAL IPHONE CONTINUITY MODEL
+- F3 freezes the following continuity/runtime model:
+  1. continuity attaches to one cloud-authoritative PH1.L session; the device never owns the session
+  2. attach, resume, recover, and detach must reuse frozen D semantics exactly
+  3. runtime continuity always carries the canonical `RuntimeExecutionEnvelope` tuple and per-device ordering context
+  4. local retry/outbox/journal state exists only to resend or repair against prior authoritative cloud results
+  5. artifact sync uses one queue/ack/retry/dead-letter/pull/apply family that remains subordinate to cloud artifact truth
+  6. memory continuity and resume hints remain cloud-chosen, session-bound, and non-authoritative
+  7. iPhone remains `EXPLICIT_ONLY`; continuity is not a lawful wake-expansion path
+- explicit review frame for this freeze:
+  - `CURRENT`: repo truth already provides PH1.L session storage with attached-device, lease, per-device sequence, and idempotency anchors; runtime envelopes already carry `session_id`, `turn_id`, `device_turn_sequence`, `session_attach_outcome`, and `persistence_state`; mobile artifact sync already has queue, pull, ack, retry, dead-letter, and wake apply mechanics; PH1.M already defines cloud continuity-hint selection for resume. Repo truth does not provide a native iPhone client, explicit iPhone outbox/journal implementation, explicit iPhone attach/resume request family, or generic non-wake apply workers: [ph1f.rs#L791](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L791), [ph1f.rs#L3672](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L3672), [runtime_execution.rs#L730](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L730), [runtime_execution.rs#L1194](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1194), [device_artifact_sync.rs#L492](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L492), [device_artifact_sync.rs#L631](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L631), [ph1m.rs#L1418](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/ph1m.rs#L1418)
+  - `TARGET`: F3 freeze certifies one enterprise-grade iPhone continuity contract that reuses the existing cloud-authoritative session, persistence, memory-hint, and artifact-sync law without redefining F2 ingress semantics, Section `02` session authority, Section `05` replay law, Section `07` identity law, or F4/F5 protected participation.
+  - `GAP`: F3 does not create a native iPhone client, native outbox store, native attach/resume packet implementation, native artifact apply worker for voice/profile kinds, or F4 governance/law/proof participation. Those remain explicitly deferred to F4-F5 or still absent from repo truth.
+
+G) SESSION ATTACH / RESUME / RECOVER / DETACH SURFACES
+- PH1.L current storage truth already supports multi-device continuity via `attached_devices`, `device_turn_sequences`, `device_last_idempotency_keys`, and lease fields: [ph1f.rs#L795](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L795), [ph1f.rs#L804](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L804), [ph1f.rs#L807](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L807)
+- current runtime visibility already carries only the success/reuse subset of attach outcomes, so F3 must preserve D2/D3 semantics without pretending the richer outcome family is already materialized in code: [runtime_execution.rs#L730](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L730)
+- continuity mechanics must always reread authoritative PH1.L truth first, then decide retry reuse, stale rejection, or fresh-state repair: [ph1f.rs#L3850](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L3850), [D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L197](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D3_RUNTIME_AND_PERSISTENCE_WIRING_BUILD_PLAN.md#L197)
+
+Session Lifecycle Coverage matrix
+
+| lifecycle action | current authoritative source | F3 freeze rule | explicit deferred gap |
+| --- | --- | --- | --- |
+| attach | `SessionRecord.attached_devices`, `last_attached_device_id`, PH1.L current-row upsert | iPhone continuity may request attach, but only PH1.L decides authoritative participation scope | no native iPhone attach caller exists |
+| resume | `SessionRecord.session_id`, `last_turn_id`, `active_turn_id`, recoverable session law | iPhone continuity may reuse the same canonical session only through cloud-authoritative resume/reuse law | no native iPhone resume packet exists |
+| recover | PH1.L session truth plus lease and persistence recovery posture | iPhone recovery must remain explicit, fail-closed, and subordinate to authoritative ownership certainty | current runtime outcome enum does not yet expose all recovery classes |
+| detach | PH1.L-owned participation scope when materialized | iPhone continuity may stop active participation only through canonical session-scope update, never by local claim | repo truth lacks a first-class iPhone detach implementation |
+| same-device retry | `device_turn_sequences` plus `device_last_idempotency_keys` | equal device sequence must reuse prior authoritative outcome, not mutate again | no native iPhone durable outbox exists |
+| stale request | authoritative per-device sequence in `SessionRecord` | lower sequence must fail closed and request fresh authoritative state when needed | no native iPhone stale-recovery UX exists |
+
+H) CROSS-DEVICE CONTINUITY / RUNTIME ENVELOPE PROPAGATION
+- runtime-envelope propagation remains the single continuity carrier across devices: [runtime_execution.rs#L1194](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1194)
+- Section `08` requires trigger differences to affect session entry only and never alter the runtime execution pipeline, so iPhone continuity must preserve the same envelope after lawful entry: [SELENE_BUILD_SECTION_08.md#L127](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md#L127)
+- multiple devices may observe and submit into the same session, but the cloud serializes execution and the device must reconcile against authoritative responses: [CORE_ARCHITECTURE.md#L220](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L220), [D1_CROSS_DEVICE_SESSION_CONSISTENCY_REVIEW.md#L151](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D1_CROSS_DEVICE_SESSION_CONSISTENCY_REVIEW.md#L151)
+
+Multi-Device Timeline matrix
+
+| continuity case | authoritative source | F3 continuity rule | fail-closed outcome |
+| --- | --- | --- | --- |
+| second device attaches to active session | PH1.L session row plus attached-device set | iPhone must fetch authoritative session state, attach to the same `session_id`, and adopt canonical turn ordering | identity/platform/ownership mismatch blocks |
+| same-device reconnect after partial success | PH1.L row plus `persistence_state` | continuity rereads canonical state first and repairs only missing local visibility or queued submission posture | duplicate mutation is refused |
+| simultaneous multi-device submission | PH1.L single-writer rule plus authoritative serialization | clients may queue and retry, but only the cloud decides the winner and resulting turn state | losing side receives reuse, fresh-state, or blocked posture |
+| transfer or failover posture | lease and recovery posture anchored in PH1.L/session storage | continuity must surface explicit degraded or blocked posture; no client may self-elect ownership | uncertainty stays blocked or degraded |
+| detach then later resume | authoritative participation scope plus same cloud session law | detach removes active participation only; later lawful resume still reuses cloud session truth if recoverable | local detach claim cannot rewrite cloud truth |
+
+Ingress-Envelope Mapping matrix
+
+| continuity input or carryover | canonical envelope/storage target | F3 mapping rule | note |
+| --- | --- | --- | --- |
+| F2 explicit-entry result | `RuntimeExecutionEnvelope.session_id`, `turn_id`, `platform_context` | continuity begins only after a lawful F2 envelope exists | F3 does not redefine F2 ingress |
+| device retry intent | `device_turn_sequence`, `idempotency_key`, `persistence_state` | local continuity state may store request refs and resend deterministically | same sequence reuses prior authoritative result |
+| attach/resume target session | `session_id`, `SessionRecord` | continuity may reference existing canonical session only as cloud-visible target, never as device-owned session | session creation/reuse remains PH1.L-owned |
+| actor/device/platform continuity | `actor_identity`, `device_identity`, `platform_context` | continuity must preserve validated actor/device/platform bindings across retries and handoff | mismatches fail closed |
+| memory resume hint | `memory_state` and PH1.M response carriage | continuity may display or request cloud-chosen resume hints only | no client-local memory authority |
+| sync-linked continuity ref | `receipt_ref`, `artifact_profile_id`, `onboarding_session_id`, `device_id` | continuity may bridge app-open/setup results into sync job visibility only through canonical sync envelope fields | sync refs are evidence/coordination, not alternate authority |
+
+I) ARTIFACT-SYNC MECHANICS
+- current repo truth already has a generic mobile artifact sync queue record with `Queued`, `InFlight`, `Acked`, and `DeadLetter` states plus per-job idempotency and receipt binding: [ph1f.rs#L2936](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L2936)
+- current repo truth already has queue operations for dequeue, ack, fail, dead-letter, replay-due reads, and device enumeration: [ph1f.rs#L13665](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/ph1f.rs#L13665)
+- current runtime worker already performs dequeue, send, ack, retry scheduling, or dead-letter, then runs a pull/apply pass: [device_artifact_sync.rs#L492](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L492)
+- current pull/apply repo truth is still concrete only for wake artifact activation/rollback on-device; the queue/sync envelope is broader than the current apply worker: [device_artifact_sync.rs#L631](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L631), [device_artifact_sync.rs#L671](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L671)
+
+Artifact Sync Coverage matrix
+
+| sync surface | current repo truth | F3 freeze rule | explicit deferred gap |
+| --- | --- | --- | --- |
+| `MobileArtifactSyncQueueRecord` | generic queue row with receipt, device, attempt, lease, worker, and idempotency | iPhone continuity must use this one canonical queue family for outbound sync work | no native iPhone queue store exists |
+| dequeue / ack / fail / dead-letter | canonical sync-control operations in storage/runtime | iPhone continuity must preserve ack, retry-after, and dead-letter semantics without alternate local shortcuts | no native iPhone sync worker exists |
+| `DeviceArtifactSyncEnvelope` | sync job carries receipt ref, artifact profile id, onboarding session id, user id, device id, attempt count, and idempotency key | F3 freezes this as the canonical continuity/sync bridge payload | no iPhone producer/consumer yet |
+| pull request / response | device reports active versions; cloud returns payload refs, hashes, optional idempotency | F3 freezes cloud/device artifact fetch semantics as the one lawful pull family | no generic iPhone pull client exists |
+| current apply worker | concrete apply path currently activates or rolls back `WakePack` only | F3 may define iPhone continuity to consume this mechanic where lawful, but must not pretend voice/profile apply parity already exists | non-wake apply workers are absent from repo truth |
+| identity/artifact continuity | voice and wake sync kinds already exist cloud-side | F3 must preserve phone-first identity/artifact custody without giving the phone authority | no native iPhone vault/apply/ack client exists |
+
+J) GOVERNANCE / LAW / PROOF DEPENDENCY
+- F3 continuity is upstream of protected participation, so governance, proof, and runtime law remain dependency seams only in this phase: [SELENE_BUILD_SECTION_09.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_09.md#L21), [SELENE_BUILD_SECTION_11.md#L21](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_11.md#L21), [D4_LAW_GOVERNANCE_ALIGNMENT_BUILD_PLAN.md#L76](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_D_CROSS_DEVICE_SESSION/D4_LAW_GOVERNANCE_ALIGNMENT_BUILD_PLAN.md#L76)
+- C4 remains binding: authoritative session or artifact truth may exist before proof/governance/law visibility succeeds, but protected completion is withheld when required downstream visibility is missing: [C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L71](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L71), [C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L99](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_C_LIFECYCLE/C4_STORAGE_PROOF_LAW_INTEGRATION_BUILD_PLAN.md#L99)
+- F3 therefore freezes dependency seams only:
+  - continuity actions may carry blocked/recovery/refusal posture into later governance/law evaluation
+  - artifact sync repair may carry audit or proof refs only after authoritative truth exists
+  - memory resume and session continuity may be constrained by governance/law, but may not author those decisions
+
+Governance / Law / Proof Dependency matrix
+
+| continuity concern | authoritative source today | F3 role | downstream dependency |
+| --- | --- | --- | --- |
+| ordinary attach/resume continuity | PH1.L session truth plus persistence visibility | preserve runtime/persistence carriage only | F4 may later classify protected cases |
+| degraded recovery or ownership uncertainty | PH1.L plus lease and reconciliation posture | preserve explicit blocked/degraded surfaces only | F4 owns governance/law escalation |
+| artifact sync ack/retry/dead-letter | sync queue plus cloud artifact truth | preserve deterministic retry/dead-letter mechanics only | F4/F5 own protected completion and verification visibility |
+| artifact pull/apply failure | cloud truth plus local sync-control posture | preserve rollback/noop/retry/dead-letter seams only | F4 owns law/proof interpretation if protected |
+| memory resume suggestion | PH1.M cloud-selected resume response | consume or display bounded hint only | F4/F5 may later verify governed delivery posture |
+| platform or identity mismatch during continuity | validated actor/device/platform bindings in envelope/session truth | fail closed and preserve authoritative prior state | F4 may escalate protected mismatch posture |
+
+K) CURRENT CONFLICTS / GAPS
+- `P1` no native iPhone client exists in repo truth today: [F1_IPHONE_PARITY_REVIEW.md#L239](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L239)
+- `P1` no native iPhone durable outbox, session journal, attach/resume/detach packet family, or local continuity worker exists in repo truth today.
+- `P1` `RuntimeExecutionEnvelope.session_attach_outcome` currently exposes only `NEW_SESSION_CREATED`, `EXISTING_SESSION_REUSED`, `EXISTING_SESSION_ATTACHED`, and `RETRY_REUSED_RESULT`, so recover/detach and blocked families remain a materialization gap rather than a live current surface: [runtime_execution.rs#L730](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L730)
+- `P1` current artifact pull/apply runtime is concrete for wake artifacts only, even though queue and sync-kind surfaces are broader: [device_artifact_sync.rs#L631](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L631), [device_artifact_sync.rs#L671](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/device_artifact_sync.rs#L671)
+- `P2` current PH1.L contract file `ph1l.rs` models session snapshots and transitions, but current multi-device attach/recover/detach runtime packets remain implicit rather than one explicit iPhone client contract family: [ph1l.rs#L131](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/ph1l.rs#L131)
+- `P2` PH1.M resume selection already exists as cloud continuity-hint law, but F3 must not reinterpret it as client-local session or memory authority: [ph1m.rs#L1418](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/ph1m.rs#L1418)
+- `P2` iPhone remains `EXPLICIT_ONLY`; continuity and artifact sync may not be used to smuggle wake parity: [F1_IPHONE_PARITY_REVIEW.md#L121](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F1_IPHONE_PARITY_REVIEW.md#L121), [F2_IPHONE_INGRESS_CONTRACT.md#L47](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/F2_IPHONE_INGRESS_CONTRACT.md#L47)
+
+L) F3 -> F4 / F5 FREEZE BOUNDARY
+- F3 freezes iPhone continuity and artifact-sync mechanics only.
+- F3 may define local continuity behavior, request retry/outbox discipline, authoritative reread rules, sync worker semantics, and bounded memory resume consumption.
+- F3 may not redefine F2 ingress semantics, Section `02` session authority, Section `05` replay law, Section `07` identity law, Section `08` `EXPLICIT_ONLY` posture, or any protected governance/law/proof meaning.
+
+F3 -> F4 / F5 Boundary matrix
+
+| downstream phase | may define | must not redefine | frozen upstream it must consume | freeze-boundary result |
+| --- | --- | --- | --- | --- |
+| `F4` | iPhone governance/law/proof enforcement, protected completion participation, compatibility/integrity enforcement feed, quarantine and safe-fail client participation | F1 parity law, F2 ingress law, F3 continuity/session/artifact mechanics, Section `02` session authority, Section `05` replay law, any wake widening | Sections `04`, `09`, `10`, `11`, C4, D4, E4, F1, F2, F3 | F4 owns protected participation only |
+| `F5` | tests, docs, traceability, evidence pack, final freeze gate for the iPhone continuity slice | any new runtime semantics or weakening of F1/F2/F3/F4 obligations | all prior F phases plus C5, D5, E5 | F5 owns closure proof only |
+
+M) COMPLETION CRITERIA
+- F3 is complete only if all of the following are true:
+  - iPhone remains first-class platform, non-authority source
+  - `EXPLICIT_ONLY` posture remains explicit and unchanged
+  - session attach, resume, recover, detach, cross-device continuity, runtime-envelope propagation, and artifact-sync mechanics are all defined against current repo truth
+  - `CURRENT`, `TARGET`, and `GAP` are explicit
+  - frozen F1/F2 and frozen C/D/E dependencies are explicit and preserved
+  - all 6 required matrix sections are present
+  - no native iPhone client is claimed as present in repo truth
+  - no wake parity claim is made
+  - F4 and F5 boundaries remain explicit and frozen downstream only
+- F3 final truth:
+  - design freeze-ready: `YES`
+  - native iPhone implementation present in repo today: `NO`
+  - remaining work beyond F3: governance/law/proof client participation and closure evidence remain deferred to `F4-F5`
