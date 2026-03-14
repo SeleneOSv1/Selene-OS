@@ -64,6 +64,7 @@ pub mod ph1wake_training;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
+pub mod runtime_bootstrap;
 pub mod runtime_governance;
 pub mod runtime_law;
 pub mod section40_exit;
