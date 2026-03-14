@@ -58,17 +58,22 @@ E) slice-1 scope and dependency matrix
 | runtime state machine | `IN_SCOPE_SLICE_1` | Required to control `STARTING` through shutdown posture |
 | execution envelope foundation | `IN_SCOPE_SLICE_1` | Required as the canonical carrier for later protected execution |
 | request security middleware foundation | `IN_SCOPE_SLICE_1` | Required as the fail-closed admission seam before Section 04 exists |
+| execution-budget propagation | `IN_SCOPE_SLICE_1` | Required so runtime resource budgets stay explicit and consistent across startup, routing, admission, and later runtime stages |
 | timeout, execution budget, and backpressure foundations | `IN_SCOPE_SLICE_1` | Required to keep Slice 1 runtime behavior bounded under load and before deeper execution exists |
 | redaction framework | `IN_SCOPE_SLICE_1` | Required to prevent raw sensitive runtime values from leaking through logs, traces, and diagnostics |
+| diagnostic mode | `IN_SCOPE_SLICE_1` | Required as a governed deep-debug posture that stays inside runtime law and redaction boundaries |
 | runtime identity, build metadata, and capability manifest | `IN_SCOPE_SLICE_1` | Required so every runtime instance identifies itself and its bounded capabilities consistently |
 | admission control | `IN_SCOPE_SLICE_1` | Required to refuse work safely before deeper execution begins under unsafe runtime conditions |
 | invariant checker | `IN_SCOPE_SLICE_1` | Required to block invalid startup or runtime combinations before they drift into execution |
 | feature flags | `IN_SCOPE_SLICE_1` | Required only as deterministic runtime enablement controls |
 | request classification and rate limiting foundations | `IN_SCOPE_SLICE_1` | Required to preserve real-time runtime posture and basic abuse-defense before later slices expand |
+| standardized metrics schema | `IN_SCOPE_SLICE_1` | Required so runtime metrics, labels, and units stay canonical and comparable across kernel surfaces |
 | circuit breaker, dependency health graph, and resource guardrails | `IN_SCOPE_SLICE_1` | Required to keep the runtime stable under dependency or capacity failure |
 | internal runtime event bus | `IN_SCOPE_SLICE_1` | Required to coordinate lifecycle and health events without introducing hidden coupling |
 | replay foundation | `IN_SCOPE_SLICE_1` | Required to support deterministic debugging and envelope-based replay later without retrofitting the kernel |
+| service-level objectives / latency governance | `IN_SCOPE_SLICE_1` | Required so runtime performance posture is defined and observable before later slices attach heavier execution |
 | cold start, safe runtime upgrade, and multi-region failover foundations | `IN_SCOPE_SLICE_1` | Required to keep the runtime kernel operable under restart, rollout, and failover conditions |
+| data residency / retention governance | `IN_SCOPE_SLICE_1` | Required so runtime outputs, diagnostics, and bounded recovery artifacts stay governed from Slice 1 onward |
 | runtime sandbox mode | `IN_SCOPE_SLICE_1` | Required only as a controlled non-authoritative isolation surface inside the runtime kernel |
 | cryptographic execution proof foundation | `IN_SCOPE_SLICE_1` | Required as the runtime primitive layer for later PH1.J and runtime governance integration, not as Section 04 enforcement |
 | simulation registry hardening, dependency trust grading, and gold-path certification foundations | `IN_SCOPE_SLICE_1` | Required as kernel-level hardening primitives that later sections will rely on without redefining them |
@@ -120,14 +125,19 @@ F) core-runtime component matrix
 | runtime lifecycle state machine | `IN_SCOPE_SLICE_1` | Implement the canonical runtime state progression and degrade posture | state transitions are deterministic, ordered, and auditable |
 | execution envelope foundation | `IN_SCOPE_SLICE_1` | Define the canonical runtime carrier for request identity, session scoping, and later protected execution context | envelope fields are required, validated, and consistently propagated |
 | request security middleware foundation | `IN_SCOPE_SLICE_1` | Enforce baseline admission and envelope validation before later authority logic exists | invalid or incomplete requests fail closed before work begins |
+| execution-budget propagation | `IN_SCOPE_SLICE_1` | Carry execution budgets across runtime stages so resource posture remains explicit from admission onward | execution budgets propagate deterministically and remain visible to downstream kernel services |
 | timeout, execution budget, request classification, and backpressure foundations | `IN_SCOPE_SLICE_1` | Bound request behavior before deep execution exists and prevent runtime overload drift | the runtime keeps admission, timeout, and overload posture explicit and deterministic |
 | redaction framework | `IN_SCOPE_SLICE_1` | Sanitize sensitive values across logs, traces, diagnostics, and errors | sensitive runtime values never appear raw in observable outputs |
+| diagnostic mode | `IN_SCOPE_SLICE_1` | Provide a governed deep-debug posture without bypassing admission, redaction, or lifecycle controls | diagnostic mode can be enabled safely without creating hidden execution paths or raw-data leakage |
 | runtime identity, build metadata, and capability manifest | `IN_SCOPE_SLICE_1` | Expose node identity, build posture, and active kernel capabilities deterministically | operators can identify the runtime instance and its bounded capability set without guesswork |
 | admission control and invariant checker | `IN_SCOPE_SLICE_1` | Refuse unsafe work before deep execution and reject invalid foundational runtime combinations | invalid runtime posture blocks work before deeper sections attach |
 | feature flag surface | `IN_SCOPE_SLICE_1` | Provide deterministic enablement controls for Slice 1 runtime capabilities only | flags do not create alternate authority paths |
+| standardized metrics schema | `IN_SCOPE_SLICE_1` | Keep runtime metrics names, labels, units, and cardinality posture canonical from the kernel outward | emitted runtime metrics conform to one standardized schema rather than local conventions |
 | event bus and replay foundation | `IN_SCOPE_SLICE_1` | Coordinate lifecycle events and preserve deterministic replay hooks without retrofitting the kernel later | lifecycle events are publishable and replay hooks exist without creating alternate execution paths |
 | circuit breaker, dependency health, and resource guardrails | `IN_SCOPE_SLICE_1` | Preserve runtime stability under dependency failure, saturation, and degraded capacity | the runtime degrades or refuses safely instead of drifting into uncontrolled failure |
+| service-level objectives / latency governance | `IN_SCOPE_SLICE_1` | Define runtime service objectives and latency posture before later slices attach deeper execution | runtime latency governance is observable, bounded, and not left to app-side interpretation |
 | cold start, safe runtime upgrade, runtime sandbox, and failover foundations | `IN_SCOPE_SLICE_1` | Keep restart, rollout, isolated non-authoritative execution, and failover posture inside the kernel | these operational modes exist without creating alternate authority paths |
+| data residency / retention governance | `IN_SCOPE_SLICE_1` | Define governance for runtime diagnostics, replay artifacts, and bounded Slice 1 data handling | runtime data location and retention posture remain governed and auditable from the kernel onward |
 | cryptographic proof and certification foundations | `IN_SCOPE_SLICE_1` | Provide runtime primitives for later proof, dependency trust, simulation registry hardening, and gold-path certification work | later Sections 04, 09, and 11 can attach without inventing parallel kernel primitives |
 | graceful shutdown and panic isolation | `IN_SCOPE_SLICE_1` | Drain safely, preserve audit posture, and prevent uncontrolled crash semantics | shutdown is orderly and panic isolation does not bypass lifecycle state handling |
 
@@ -163,8 +173,9 @@ H) repository workstream / file-impact matrix
 |---|---|---|
 | runtime contract surfaces | `crates/selene_kernel_contracts/src/runtime_execution.rs`, `crates/selene_kernel_contracts/src/ph1health.rs`, `crates/selene_kernel_contracts/src/lib.rs` | Contract carriers for runtime lifecycle, request routing boundaries, health posture, execution envelope, and startup readiness foundations |
 | session contract surfaces | `crates/selene_kernel_contracts/src/common.rs`, `crates/selene_kernel_contracts/src/ph1l.rs`, `crates/selene_kernel_contracts/src/ph1lease.rs` | Canonical session states, identifiers, snapshots, lease, and transition contracts |
-| runtime bootstrap and orchestration | `crates/selene_os/src/lib.rs`, `crates/selene_os/src/ph1os.rs`, `crates/selene_os/src/ph1health.rs` | Process startup, request routing shell, runtime clock, health/readiness, admission control, invariant checker, and lifecycle hosting |
-| runtime observability and replay foundations | `crates/selene_os/src/lib.rs`, `crates/selene_os/src/ph1health.rs`, `crates/selene_kernel_contracts/src/runtime_execution.rs` | Structured metrics, event bus, replay foundation, runtime identity, and capability-manifest posture |
+| runtime bootstrap and orchestration | `crates/selene_os/src/lib.rs`, `crates/selene_os/src/ph1os.rs`, `crates/selene_os/src/ph1health.rs` | Process startup, request routing shell, runtime clock, health/readiness, admission control, invariant checker, execution-budget propagation, and lifecycle hosting |
+| runtime observability and replay foundations | `crates/selene_os/src/lib.rs`, `crates/selene_os/src/ph1health.rs`, `crates/selene_kernel_contracts/src/runtime_execution.rs` | Standardized metrics schema, diagnostic mode, event bus, replay foundation, runtime identity, capability manifest, and latency-observability posture |
+| runtime governance and retention foundations | `crates/selene_os/src/runtime_governance.rs`, `crates/selene_os/src/runtime_law.rs`, `crates/selene_storage/src/ph1f.rs` | Service-level objectives / latency governance plus data residency / retention governance foundations that Slice 1 must define without pulling Section 05 forward |
 | session runtime implementation | `crates/selene_os/src/ph1l.rs`, `crates/selene_os/src/ph1lease.rs` | Session container, transition handling, response exposure, ownership transfer, coordination-state, conflict resolution, integrity checks, backpressure, and recovery foundations |
 | runtime guardrail seams | `crates/selene_os/src/runtime_governance.rs`, `crates/selene_os/src/runtime_law.rs` | Downstream seams that Slice 1 must preserve without pulling full Section 09 or 11 logic forward |
 | session storage seam | `crates/selene_storage/src/ph1f.rs`, `crates/selene_storage/src/lib.rs` | Bounded session snapshot and recovery foundations only |
@@ -176,9 +187,9 @@ Implementation order inside Slice 1 must be:
 
 1. establish runtime bootstrap, service framework, dependency injection, engine registry, and the request routing layer as a runtime shell only
 2. establish configuration governance, secure secrets provider posture, runtime clock service, global error model, and runtime identity / build metadata foundations
-3. establish structured observability, health and readiness, startup self-check / preflight, dependency graph validation, and the invariant checker
-4. establish admission control, request classification, timeout and execution budget posture, backpressure foundations, circuit breaker posture, dependency health visibility, and resource guardrails
-5. establish the execution envelope foundation, request security middleware foundation, redaction framework, event bus, replay foundation, runtime capability manifest, and graceful shutdown / panic isolation
+3. establish structured observability, the standardized metrics schema, health and readiness, startup self-check / preflight, dependency graph validation, and the invariant checker
+4. establish admission control, request classification, execution-budget propagation, timeout posture, backpressure foundations, circuit breaker posture, dependency health visibility, resource guardrails, and service-level objectives / latency governance
+5. establish the execution envelope foundation, request security middleware foundation, redaction framework, diagnostic mode, data residency / retention governance, event bus, replay foundation, runtime capability manifest, and graceful shutdown / panic isolation
 6. establish cold start, safe runtime upgrade, runtime sandbox, failover, proof foundation, and certification hardening primitives without pulling Section 04 or Section 09 logic forward
 7. establish canonical session contracts, session state transitions, session identifiers, and session exposure to the runtime response layer
 8. establish attach / resume / recover / detach behavior, the single-writer rule, device timeline tracking, access classes, and conflict resolution
@@ -203,7 +214,12 @@ J) verification and acceptance matrix
 | execution envelope proof | required envelope fields are validated and propagated consistently | no Slice 1 work begins without a valid envelope |
 | request security proof | invalid or incomplete admission posture is rejected fail closed | baseline middleware foundation blocks unsafe entry rather than guessing |
 | admission control and invariant checker proof | unsafe runtime posture, invalid combinations, and overload conditions refuse before deep execution begins | the runtime blocks unsafe work before later sections attach |
+| execution-budget propagation proof | execution budgets remain explicit and correctly propagated across runtime stages, routing shells, and bounded kernel services | resource posture stays deterministic across the Slice 1 runtime path |
+| diagnostic mode proof | diagnostic mode can be enabled in a governed way without bypassing admission, redaction, or lifecycle controls | deep debugging exists without creating hidden execution or data-leak paths |
+| standardized metrics schema proof | runtime metrics emit with canonical names, labels, units, and bounded cardinality | runtime telemetry is comparable and machine-consumable without local reinterpretation |
 | event bus and replay foundation proof | lifecycle events are publishable and replay artifacts can be captured without creating alternate execution paths | runtime coordination and deterministic replay hooks exist from the kernel onward |
+| service-level objectives / latency governance proof | runtime objectives and latency posture are defined, observable, and enforced at the kernel boundary | latency governance exists before later slices add heavier execution |
+| data residency / retention governance proof | runtime diagnostics, replay artifacts, and bounded Slice 1 data handling follow explicit residency and retention posture | runtime data governance is auditable and not left to local convention |
 | runtime control-surface proof | feature flags, request classification, redaction, runtime identity, capability manifest, guardrails, and graceful shutdown all behave deterministically | operators can observe and govern the runtime without local workaround logic |
 | session-state proof | lawful session transitions succeed and invalid transitions refuse deterministically | canonical session state semantics are preserved |
 | identifier proof | `session_id`, `turn_id`, and device-sequencing foundations remain consistent and monotonic | downstream sections can rely on canonical identifiers without redefinition |
@@ -243,13 +259,16 @@ L) SLICE 1 COMPLETION STANDARD
 Slice 1 is complete only when the runtime kernel and canonical session container are both present, bounded to Sections 01 and 02, and proven by acceptance and verification evidence. Completion requires:
 
 - deterministic runtime startup and shutdown posture
-- request routing, runtime clock, global error model, configuration governance, dependency graph validation, startup self-check / preflight, admission control, and invariant checker evidence
-- execution envelope, request security, redaction, event bus, replay foundation, runtime identity, capability manifest, and runtime control-surface evidence
+- request routing, runtime clock, global error model, configuration governance, dependency graph validation, startup self-check / preflight, admission control, invariant checker, execution-budget propagation, and diagnostic mode evidence
+- execution envelope, request security, redaction, standardized metrics schema, event bus, replay foundation, runtime identity, capability manifest, runtime control-surface evidence, and service-level objectives / latency governance evidence
+- data residency / retention governance evidence for bounded Slice 1 runtime diagnostics, replay artifacts, and governed data-handling posture
 - canonical session state, identifiers, session exposure, attach / resume / recover / detach, single-writer, device timeline, ownership transfer, coordination-state, consistency levels, access classes, conflict resolution, integrity checks, session backpressure, and recovery evidence
 - certification-target evidence for both session correctness and distributed coordination posture
 - fail-closed behavior where Slice 1 owns the boundary
 - proof that Section 03 and later remain deferred
 - proof that Apple implementation is still deferred
+- proof that no mandatory Section 01 or Section 02 foundation is missing from the scope matrix, runtime/session matrices, internal implementation order, verification matrix, or completion standard
+- proof that no mandatory Section 01 or Section 02 foundation remains uncaptured, unordered, or unverified when Slice 1 is declared complete
 - proof that no mandatory Section 01 or Section 02 foundation remains uncaptured or unverified in this plan
 
 M) PHASE BOUNDARY
