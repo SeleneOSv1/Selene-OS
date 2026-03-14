@@ -527,16 +527,26 @@ where
     }
 
     pub fn start(&mut self) -> Result<RuntimeStartupSummary, RuntimeBootstrapError> {
+        if !start_state_allowed(self.state) {
+            return Err(RuntimeBootstrapError::invalid_state_transition(
+                self.state,
+                RuntimeLifecycleState::Warming,
+            ));
+        }
+
+        self.transition_to(RuntimeLifecycleState::Warming)
+            .expect("validated startup states must transition into Warming");
+        self.last_error = None;
         self.startup_status = RuntimeStartupStatus::RunningPreflight;
         self.preflight_status = RuntimePreflightStatus::Running;
         self.log("INFO", "runtime bootstrap starting");
-        self.transition_to(RuntimeLifecycleState::Warming)?;
 
         if let Err(error) = self.run_preflight() {
             self.preflight_status = RuntimePreflightStatus::Failed;
             self.startup_status = RuntimeStartupStatus::Failed;
             self.last_error = Some(error.clone());
-            self.transition_to(RuntimeLifecycleState::Degraded)?;
+            self.transition_to(RuntimeLifecycleState::Degraded)
+                .expect("warming startup failures must degrade deterministically");
             self.log(
                 "ERROR",
                 &format!("runtime startup failed: {}", error.message),
@@ -546,7 +556,9 @@ where
 
         self.preflight_status = RuntimePreflightStatus::Succeeded;
         self.startup_status = RuntimeStartupStatus::Succeeded;
-        self.transition_to(RuntimeLifecycleState::Ready)?;
+        self.last_error = None;
+        self.transition_to(RuntimeLifecycleState::Ready)
+            .expect("warming startup success must transition into Ready");
         self.log("INFO", "runtime startup reached READY after preflight");
         Ok(RuntimeStartupSummary {
             state: self.state,
@@ -628,19 +640,19 @@ where
     fn run_preflight(&mut self) -> Result<(), RuntimeBootstrapError> {
         self.preflight_results.clear();
 
-        self.config.validate().map_err(|error| {
+        if let Err(error) = self.config.validate() {
             self.record_failure("config_validation", &error);
-            error
-        })?;
+            return Err(error);
+        }
         self.record_success(
             "config_validation",
             "startup configuration passed validation",
         );
 
-        self.services.validate_dependency_graph().map_err(|error| {
+        if let Err(error) = self.services.validate_dependency_graph() {
             self.record_failure("dependency_graph_validation", &error);
-            error
-        })?;
+            return Err(error);
+        }
         self.record_success(
             "dependency_graph_validation",
             "startup dependency graph is acyclic and complete",
@@ -807,6 +819,13 @@ fn state_transition_allowed(current: RuntimeLifecycleState, next: RuntimeLifecyc
     )
 }
 
+fn start_state_allowed(current: RuntimeLifecycleState) -> bool {
+    matches!(
+        current,
+        RuntimeLifecycleState::Starting | RuntimeLifecycleState::Degraded
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,6 +893,30 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct MutableSecretsProvider {
+        secrets: std::rc::Rc<std::cell::RefCell<BTreeMap<ProviderSecretId, RuntimeSecretValue>>>,
+    }
+
+    impl MutableSecretsProvider {
+        fn insert(
+            &self,
+            secret_id: ProviderSecretId,
+            value: &str,
+        ) -> Result<(), RuntimeBootstrapError> {
+            self.secrets
+                .borrow_mut()
+                .insert(secret_id, RuntimeSecretValue::new(value.to_string())?);
+            Ok(())
+        }
+    }
+
+    impl RuntimeSecretsProvider for MutableSecretsProvider {
+        fn get_secret(&self, secret_id: ProviderSecretId) -> Option<RuntimeSecretValue> {
+            self.secrets.borrow().get(&secret_id).cloned()
+        }
+    }
+
     fn build_metadata() -> RuntimeBuildMetadata {
         RuntimeBuildMetadata {
             node_id: "node-a".to_string(),
@@ -917,7 +960,7 @@ mod tests {
                 RuntimeLifecycleTransition {
                     from: RuntimeLifecycleState::Starting,
                     to: RuntimeLifecycleState::Warming,
-                    at_unix_ms: 101,
+                    at_unix_ms: 100,
                 },
                 RuntimeLifecycleTransition {
                     from: RuntimeLifecycleState::Warming,
@@ -1002,6 +1045,88 @@ mod tests {
         assert_eq!(startup.preflight_status, RuntimePreflightStatus::Succeeded);
         assert!(startup.complete);
         assert!(startup.succeeded);
+    }
+
+    #[test]
+    fn slice_1a_repeated_start_on_ready_is_rejected_without_corrupting_health_posture() {
+        let clock = FixedClock::new(450);
+        let secrets = StaticSecretsProvider::default()
+            .with_secret(ProviderSecretId::OpenAIApiKey, "secret")
+            .expect("secret should be valid");
+        let services =
+            RuntimeServiceContainer::with_startup_foundation(clock, secrets).expect("services");
+        let mut runtime =
+            RuntimeProcess::new(config(vec![ProviderSecretId::OpenAIApiKey]), services);
+
+        runtime.start().expect("startup should succeed");
+        let readiness_before = runtime.readiness_endpoint();
+        let startup_before = runtime.startup_endpoint();
+        let transitions_before = runtime.transition_history().to_vec();
+        let log_count_before = runtime.log_events().len();
+        let preflight_before = runtime.preflight_results().to_vec();
+
+        let error = runtime
+            .start()
+            .expect_err("repeated READY start must be rejected");
+        assert_eq!(error.reason_code, "runtime_invalid_state_transition");
+        assert_eq!(runtime.state(), RuntimeLifecycleState::Ready);
+        assert_eq!(runtime.readiness_endpoint(), readiness_before);
+        assert_eq!(runtime.startup_endpoint(), startup_before);
+        assert_eq!(runtime.transition_history(), transitions_before.as_slice());
+        assert_eq!(runtime.log_events().len(), log_count_before);
+        assert_eq!(runtime.preflight_results(), preflight_before.as_slice());
+        assert_eq!(runtime.last_error(), None);
+    }
+
+    #[test]
+    fn slice_1a_invalid_restart_states_reject_coherently_without_changing_posture() {
+        let clock = FixedClock::new(475);
+        let secrets = StaticSecretsProvider::default()
+            .with_secret(ProviderSecretId::OpenAIApiKey, "secret")
+            .expect("secret should be valid");
+        let services =
+            RuntimeServiceContainer::with_startup_foundation(clock, secrets).expect("services");
+        let mut runtime =
+            RuntimeProcess::new(config(vec![ProviderSecretId::OpenAIApiKey]), services);
+
+        runtime.start().expect("startup should succeed");
+        runtime.begin_shutdown().expect("drain should succeed");
+
+        let draining_readiness = runtime.readiness_endpoint();
+        let draining_startup = runtime.startup_endpoint();
+        let draining_transitions = runtime.transition_history().to_vec();
+        let draining_logs = runtime.log_events().len();
+        let error = runtime
+            .start()
+            .expect_err("restart during draining must be rejected");
+        assert_eq!(error.reason_code, "runtime_invalid_state_transition");
+        assert_eq!(runtime.state(), RuntimeLifecycleState::Draining);
+        assert_eq!(runtime.readiness_endpoint(), draining_readiness);
+        assert_eq!(runtime.startup_endpoint(), draining_startup);
+        assert_eq!(
+            runtime.transition_history(),
+            draining_transitions.as_slice()
+        );
+        assert_eq!(runtime.log_events().len(), draining_logs);
+
+        runtime.finish_shutdown().expect("shutdown should succeed");
+        let shutting_down_readiness = runtime.readiness_endpoint();
+        let shutting_down_startup = runtime.startup_endpoint();
+        let shutting_down_transitions = runtime.transition_history().to_vec();
+        let shutting_down_logs = runtime.log_events().len();
+        let error = runtime
+            .start()
+            .expect_err("restart during shutdown must be rejected");
+        assert_eq!(error.reason_code, "runtime_invalid_state_transition");
+        assert_eq!(runtime.state(), RuntimeLifecycleState::ShuttingDown);
+        assert_eq!(runtime.readiness_endpoint(), shutting_down_readiness);
+        assert_eq!(runtime.startup_endpoint(), shutting_down_startup);
+        assert_eq!(
+            runtime.transition_history(),
+            shutting_down_transitions.as_slice()
+        );
+        assert_eq!(runtime.log_events().len(), shutting_down_logs);
+        assert_eq!(runtime.last_error(), None);
     }
 
     #[test]
@@ -1122,6 +1247,47 @@ mod tests {
         assert_eq!(secret_error.reason_code, "runtime_missing_required_secret");
         assert_eq!(secret_runtime.state(), RuntimeLifecycleState::Degraded);
         assert!(!secret_runtime.readiness_endpoint().ready);
+    }
+
+    #[test]
+    fn slice_1a_recovery_after_failed_start_clears_stale_error_and_reaches_ready() {
+        let clock = FixedClock::new(1050);
+        let secrets = MutableSecretsProvider::default();
+        let services = RuntimeServiceContainer::with_startup_foundation(clock, secrets.clone())
+            .expect("services");
+        let mut runtime =
+            RuntimeProcess::new(config(vec![ProviderSecretId::OpenAIApiKey]), services);
+
+        let first_error = runtime
+            .start()
+            .expect_err("missing secret must fail closed");
+        assert_eq!(first_error.reason_code, "runtime_missing_required_secret");
+        assert_eq!(runtime.state(), RuntimeLifecycleState::Degraded);
+        assert_eq!(
+            runtime.readiness_endpoint().reason_code,
+            Some("runtime_missing_required_secret")
+        );
+        assert_eq!(
+            runtime.startup_endpoint().reason_code,
+            Some("runtime_missing_required_secret")
+        );
+
+        secrets
+            .insert(ProviderSecretId::OpenAIApiKey, "secret")
+            .expect("secret should become available");
+        let summary = runtime
+            .start()
+            .expect("restart from degraded should recover");
+        assert_eq!(summary.state, RuntimeLifecycleState::Ready);
+        assert_eq!(summary.startup_status, RuntimeStartupStatus::Succeeded);
+        assert_eq!(summary.preflight_status, RuntimePreflightStatus::Succeeded);
+        assert_eq!(runtime.state(), RuntimeLifecycleState::Ready);
+        assert!(runtime.readiness_endpoint().ready);
+        assert_eq!(runtime.readiness_endpoint().reason_code, None);
+        assert!(runtime.startup_endpoint().complete);
+        assert!(runtime.startup_endpoint().succeeded);
+        assert_eq!(runtime.startup_endpoint().reason_code, None);
+        assert_eq!(runtime.last_error(), None);
     }
 
     #[test]
