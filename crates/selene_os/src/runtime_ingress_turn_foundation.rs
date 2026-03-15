@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+use crate::app_ingress::{AppOnboardingContinueAction, AppOnboardingContinueRequest};
 use selene_kernel_contracts::ph1_voice_id::UserId;
-use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
+use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1link::{AppPlatform, InviteOpenActivateCommitRequest, TokenId};
+use selene_kernel_contracts::ph1onb::OnboardingSessionId;
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, FailureClass, PlatformRuntimeContext, RuntimeEntryTrigger,
     RuntimeExecutionEnvelope, SessionAttachOutcome,
@@ -70,13 +72,6 @@ impl CanonicalIngressFamily {
             }
         }
     }
-
-    pub const fn executable_in_slice_2b(self) -> bool {
-        matches!(
-            self,
-            CanonicalIngressFamily::VoiceTurn | CanonicalIngressFamily::InviteClickCompatibility
-        )
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,12 +116,13 @@ pub enum RawTurnPayload {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum CompatibilityRequestPayload {
     InviteClick(InviteOpenActivateCommitRequest),
+    OnboardingContinue(AppOnboardingContinueRequest),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RuntimeCanonicalIngressRequest {
     pub family: CanonicalIngressFamily,
     pub envelope_input: RuntimeRequestEnvelopeInput,
@@ -204,6 +200,37 @@ impl RuntimeCanonicalIngressRequest {
         Ok(request)
     }
 
+    pub fn onboarding_continue(
+        envelope_input: RuntimeRequestEnvelopeInput,
+        platform_context: PlatformRuntimeContext,
+        onboarding_request: AppOnboardingContinueRequest,
+    ) -> Result<Self, ContractViolation> {
+        revalidate_onboarding_continue_request(&onboarding_request)?;
+        let request = Self {
+            family: CanonicalIngressFamily::OnboardingContinueCompatibility,
+            envelope_input,
+            authorization_bearer: String::new(),
+            actor_identity: onboarding_compatibility_actor_identity(&onboarding_request)?,
+            device_identity: onboarding_compatibility_device_identity(
+                &onboarding_request,
+                platform_context.platform_type,
+            )?,
+            platform_context,
+            session_hint: None,
+            device_turn_sequence: None,
+            session_resolve_mode: SessionResolveMode::ResolveOrOpen,
+            modality: None,
+            payload: None,
+            compatibility_payload: Some(CompatibilityRequestPayload::OnboardingContinue(
+                onboarding_request,
+            )),
+            overload_active: false,
+            feature_flag_overrides: RuntimeFeatureFlagOverrides::default(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
     pub fn compatibility(
         family: CanonicalIngressFamily,
         envelope_input: RuntimeRequestEnvelopeInput,
@@ -244,6 +271,59 @@ impl RuntimeCanonicalIngressRequest {
             overload_active: self.overload_active,
             feature_flag_overrides: self.feature_flag_overrides.clone(),
         })
+    }
+
+    fn executable_in_slice_2c(&self) -> bool {
+        match self.family {
+            CanonicalIngressFamily::VoiceTurn
+            | CanonicalIngressFamily::InviteClickCompatibility => true,
+            CanonicalIngressFamily::OnboardingContinueCompatibility => matches!(
+                self.compatibility_payload.as_ref(),
+                Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request))
+                    if matches!(
+                        &onboarding_request.action,
+                        AppOnboardingContinueAction::AskMissingSubmit { .. }
+                    )
+            ),
+        }
+    }
+
+    fn compatibility_only_detail(&self) -> String {
+        match self.compatibility_payload.as_ref() {
+            Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) => {
+                match &onboarding_request.action {
+                    AppOnboardingContinueAction::PlatformSetupReceipt { .. } => {
+                        "platform-setup onboarding compatibility remains deferred after Slice 2C"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::TermsAccept { .. } => {
+                        "terms-accept onboarding compatibility remains deferred after Slice 2C"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::PrimaryDeviceConfirm { .. } => {
+                        "primary-device-confirm onboarding compatibility remains deferred after Slice 2C"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::VoiceEnrollLock { .. } => {
+                        "voice-enroll onboarding compatibility remains deferred after Slice 2C"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::AskMissingSubmit { .. } => {
+                        "onboarding ask-missing compatibility is the only executable onboarding action in Slice 2C"
+                            .to_string()
+                    }
+                    _ => {
+                        "selected onboarding action remains deferred after Slice 2C".to_string()
+                    }
+                }
+            }
+            Some(CompatibilityRequestPayload::InviteClick(_)) => {
+                "invite-click compatibility is executable and should not reach the compatibility-only boundary"
+                    .to_string()
+            }
+            None => "compatibility request is missing the bounded Slice 2C payload shape"
+                .to_string(),
+        }
     }
 }
 
@@ -324,12 +404,33 @@ impl Validate for RuntimeCanonicalIngressRequest {
                     || self.modality.is_some()
                     || self.payload.is_some()
                     || self.session_hint.is_some()
-                    || self.compatibility_payload.is_some()
                 {
                     return Err(ContractViolation::InvalidValue {
                         field: "runtime_canonical_ingress_request",
                         reason:
                             "compatibility-only family requests may not carry executable turn state",
+                    });
+                }
+                if !matches!(self.session_resolve_mode, SessionResolveMode::ResolveOrOpen) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.session_resolve_mode",
+                        reason: "onboarding compatibility requests require ResolveOrOpen",
+                    });
+                }
+                let Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) =
+                    self.compatibility_payload.as_ref()
+                else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.compatibility_payload",
+                        reason:
+                            "onboarding compatibility requests require bounded onboarding request state",
+                    });
+                };
+                revalidate_onboarding_continue_request(onboarding_request)?;
+                if self.envelope_input.idempotency_key != onboarding_request.idempotency_key {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.envelope_input.idempotency_key",
+                        reason: "must match onboarding request idempotency_key",
                     });
                 }
             }
@@ -364,6 +465,12 @@ pub enum CanonicalTurnPayloadCarrier {
         deep_link_nonce: String,
         link_opened_at: MonotonicTimeNs,
     },
+    OnboardingAskMissing {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+        field_value: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -390,6 +497,7 @@ pub enum TurnStartClassification {
     ExistingSessionResumed,
     ExistingSessionRecovered,
     InviteClickCompatibilityPrepared,
+    OnboardingAskMissingCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -675,7 +783,8 @@ impl RuntimeIngressTurnFoundation {
             .map_err(map_request_error)?;
         let rejection_at_ms = prepared.prepared_at_ms;
 
-        if !request.family.executable_in_slice_2b() {
+        if !request.executable_in_slice_2c() {
+            let compatibility_detail = request.compatibility_only_detail();
             self.counters.rejected_requests += 1;
             let request_id = prepared
                 .envelope
@@ -689,12 +798,12 @@ impl RuntimeIngressTurnFoundation {
                 session_id: None,
                 turn_id: None,
                 classification: None,
-                detail: "route family is compatibility-only in Slice 2B".to_string(),
+                detail: compatibility_detail.clone(),
             });
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "route family is registered but not executable in Slice 2B",
+                compatibility_detail,
             )
             .with_request_envelope(prepared.envelope)
             .rejecting(rejection_at_ms));
@@ -833,15 +942,7 @@ impl RuntimeIngressTurnFoundation {
                     session_id: Some(permit.session_id),
                     turn_id: Some(permit.turn_id),
                     classification: Some(classification),
-                    detail: if matches!(
-                        normalized.family,
-                        CanonicalIngressFamily::InviteClickCompatibility
-                    ) {
-                        "invite-click compatibility reached the bounded pre-authority handoff"
-                            .to_string()
-                    } else {
-                        "turn reached the bounded pre-authority handoff".to_string()
-                    },
+                    detail: pre_authority_ready_detail(&normalized),
                 });
                 Ok(RuntimePreAuthorityTurnResult::Ready(
                     RuntimePreAuthorityTurnHandoff {
@@ -1017,11 +1118,7 @@ fn normalize_turn_request(
         CanonicalIngressFamily::VoiceTurn => normalize_executable_turn_request(request),
         CanonicalIngressFamily::InviteClickCompatibility => normalize_invite_click_request(request),
         CanonicalIngressFamily::OnboardingContinueCompatibility => {
-            Err(RuntimeIngressTurnError::new(
-                reason_codes::INGRESS_COMPATIBILITY_ONLY,
-                FailureClass::PolicyViolation,
-                "onboarding-continue remains compatibility-only in Slice 2B",
-            ))
+            normalize_onboarding_continue_request(request)
         }
     }
 }
@@ -1210,6 +1307,53 @@ fn normalize_invite_click_request(
     })
 }
 
+fn normalize_onboarding_continue_request(
+    request: &RuntimeCanonicalIngressRequest,
+) -> Result<CanonicalTurnRequestCarrier, RuntimeIngressTurnError> {
+    let Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) =
+        request.compatibility_payload.as_ref()
+    else {
+        return Err(RuntimeIngressTurnError::new(
+            reason_codes::INGRESS_PAYLOAD_INVALID,
+            FailureClass::InvalidPayload,
+            "onboarding compatibility execution requires a bounded onboarding request shape",
+        ));
+    };
+    let AppOnboardingContinueAction::AskMissingSubmit { field_value } = &onboarding_request.action
+    else {
+        return Err(RuntimeIngressTurnError::new(
+            reason_codes::INGRESS_COMPATIBILITY_ONLY,
+            FailureClass::PolicyViolation,
+            "only onboarding ask-missing compatibility is executable in Slice 2C",
+        ));
+    };
+
+    let request_content_hash = canonical_onboarding_ask_missing_hash(onboarding_request);
+    let device_turn_sequence = onboarding_compatibility_device_turn_sequence(
+        request.device_identity.as_str(),
+        onboarding_request,
+    );
+    Ok(CanonicalTurnRequestCarrier {
+        canonical_route: ONBOARDING_CONTINUE_ENDPOINT_PATH,
+        family: request.family,
+        modality: CanonicalTurnModality::Compatibility,
+        actor_identity: request.actor_identity.clone(),
+        device_identity: request.device_identity.clone(),
+        platform: request.platform_context.platform_type,
+        requested_trigger: request.platform_context.requested_trigger,
+        session_hint: request.session_hint,
+        device_turn_sequence,
+        session_resolve_mode: request.session_resolve_mode,
+        request_content_hash,
+        payload: CanonicalTurnPayloadCarrier::OnboardingAskMissing {
+            correlation_id: onboarding_request.correlation_id,
+            onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+            tenant_id: onboarding_request.tenant_id.clone(),
+            field_value: field_value.clone(),
+        },
+    })
+}
+
 // Invite-click is pre-authority compatibility execution, so these anchors must
 // be deterministic without claiming a pre-known authenticated actor.
 fn compatibility_actor_identity(
@@ -1250,6 +1394,50 @@ fn compatibility_device_identity(
     ))
 }
 
+fn onboarding_compatibility_actor_identity(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> Result<UserId, ContractViolation> {
+    let tenant_anchor = onboarding_request
+        .tenant_id
+        .as_deref()
+        .unwrap_or("tenant:none");
+    let anchor_material = format!(
+        "onboarding_session_id={}|tenant={tenant_anchor}",
+        onboarding_request.onboarding_session_id.as_str(),
+    );
+    UserId::new(format!(
+        "onboarding-compat-actor:{}",
+        canonical_content_hash(
+            "ONBOARDING_ASK_MISSING_COMPAT_ACTOR",
+            onboarding_request.onboarding_session_id.as_str().as_bytes(),
+            anchor_material.as_bytes(),
+        )
+    ))
+}
+
+fn onboarding_compatibility_device_identity(
+    onboarding_request: &AppOnboardingContinueRequest,
+    platform: AppPlatform,
+) -> Result<DeviceId, ContractViolation> {
+    let tenant_anchor = onboarding_request
+        .tenant_id
+        .as_deref()
+        .unwrap_or("tenant:none");
+    let anchor_material = format!(
+        "platform={}|onboarding_session_id={}|tenant={tenant_anchor}",
+        platform.as_str(),
+        onboarding_request.onboarding_session_id.as_str(),
+    );
+    DeviceId::new(format!(
+        "onboarding-compat-device:{}",
+        canonical_content_hash(
+            "ONBOARDING_ASK_MISSING_COMPAT_DEVICE",
+            platform.as_str().as_bytes(),
+            anchor_material.as_bytes(),
+        )
+    ))
+}
+
 fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
     match normalized.family {
         CanonicalIngressFamily::VoiceTurn => format!(
@@ -1261,7 +1449,8 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
                 .to_string()
         }
         CanonicalIngressFamily::OnboardingContinueCompatibility => {
-            "normalized deferred onboarding-continue compatibility request".to_string()
+            "normalized onboarding ask-missing compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
         }
     }
 }
@@ -1281,6 +1470,28 @@ fn canonical_invite_click_hash(invite_request: &InviteOpenActivateCommitRequest)
     canonical_content_hash(
         CanonicalTurnModality::Compatibility.as_str(),
         INVITE_CLICK_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
+fn canonical_onboarding_ask_missing_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::AskMissingSubmit { field_value } = &onboarding_request.action
+    else {
+        unreachable!("selected onboarding normalization requires ask-missing action");
+    };
+    let shape = format!(
+        "correlation_id={}|onboarding_session_id={}|tenant_id={}|field_value={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        field_value.as_deref().unwrap_or(""),
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
         shape.as_bytes(),
     )
 }
@@ -1317,6 +1528,56 @@ fn compatibility_device_turn_sequence(
     } else {
         hash
     }
+}
+
+fn onboarding_compatibility_device_turn_sequence(
+    device_id: &str,
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> u64 {
+    let AppOnboardingContinueAction::AskMissingSubmit { field_value } = &onboarding_request.action
+    else {
+        unreachable!("selected onboarding device-turn sequence requires ask-missing action");
+    };
+    let correlation_id = onboarding_request.correlation_id.0.to_string();
+    let mut hash = 0xcbf29ce484222325u64;
+    for component in [
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        device_id.as_bytes(),
+        correlation_id.as_bytes(),
+        onboarding_request.onboarding_session_id.as_str().as_bytes(),
+        onboarding_request.idempotency_key.as_bytes(),
+        onboarding_request
+            .tenant_id
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes(),
+        field_value.as_deref().unwrap_or("").as_bytes(),
+    ] {
+        for byte in component {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= u64::from(b'|');
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
+}
+
+fn revalidate_onboarding_continue_request(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> Result<(), ContractViolation> {
+    AppOnboardingContinueRequest::v1(
+        onboarding_request.correlation_id,
+        onboarding_request.onboarding_session_id.clone(),
+        onboarding_request.idempotency_key.clone(),
+        onboarding_request.tenant_id.clone(),
+        onboarding_request.action.clone(),
+    )
+    .map(|_| ())
 }
 
 fn validate_authorization_header(value: &str) -> Result<(), RuntimeIngressTurnError> {
@@ -1446,6 +1707,35 @@ fn validate_trigger_posture(
     Ok(())
 }
 
+fn compatibility_prepared_classification(
+    family: CanonicalIngressFamily,
+) -> Option<TurnStartClassification> {
+    match family {
+        CanonicalIngressFamily::InviteClickCompatibility => {
+            Some(TurnStartClassification::InviteClickCompatibilityPrepared)
+        }
+        CanonicalIngressFamily::OnboardingContinueCompatibility => {
+            Some(TurnStartClassification::OnboardingAskMissingCompatibilityPrepared)
+        }
+        CanonicalIngressFamily::VoiceTurn => None,
+    }
+}
+
+fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
+    match normalized.family {
+        CanonicalIngressFamily::InviteClickCompatibility => {
+            "invite-click compatibility reached the bounded pre-authority handoff".to_string()
+        }
+        CanonicalIngressFamily::OnboardingContinueCompatibility => {
+            "onboarding ask-missing compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalIngressFamily::VoiceTurn => {
+            "turn reached the bounded pre-authority handoff".to_string()
+        }
+    }
+}
+
 fn resolve_session_turn(
     sessions: &mut RuntimeSessionFoundation,
     request: &RuntimeCanonicalIngressRequest,
@@ -1495,14 +1785,10 @@ fn resolve_session_turn(
                                         .session_snapshot(session_id)?
                                         .session_state,
                                     permit,
-                                    classification: if matches!(
+                                    classification: compatibility_prepared_classification(
                                         request.family,
-                                        CanonicalIngressFamily::InviteClickCompatibility
-                                    ) {
-                                        TurnStartClassification::InviteClickCompatibilityPrepared
-                                    } else {
-                                        TurnStartClassification::ExistingSessionAttached
-                                    },
+                                    )
+                                    .unwrap_or(TurnStartClassification::ExistingSessionAttached),
                                     attach_outcome: attach.projection.attach_outcome,
                                 })
                             }
@@ -1529,14 +1815,8 @@ fn resolve_session_turn(
                         session_state: sessions.session_snapshot(permit.session_id)?.session_state,
                         attach_outcome: permit.attach_outcome,
                         permit,
-                        classification: if matches!(
-                            request.family,
-                            CanonicalIngressFamily::InviteClickCompatibility
-                        ) {
-                            TurnStartClassification::InviteClickCompatibilityPrepared
-                        } else {
-                            TurnStartClassification::NewSessionOpenBypass
-                        },
+                        classification: compatibility_prepared_classification(request.family)
+                            .unwrap_or(TurnStartClassification::NewSessionOpenBypass),
                     }),
                     SessionTurnResolution::Retry(_) | SessionTurnResolution::Deferred(_) => {
                         unreachable!("start_new_session_turn cannot reuse or defer the first turn")
@@ -1704,7 +1984,7 @@ fn validate_ready_invariants(
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "Slice 2B must stop before Section 04, Section 05, or later runtime execution state appears",
+            "Section 03 ingress must stop before Section 04, Section 05, or later runtime execution state appears",
         ));
     }
     validate_stage_history(
@@ -1937,6 +2217,10 @@ mod tests {
             .expect("slice 2a foundation")
     }
 
+    fn onboarding_session(id: &str) -> OnboardingSessionId {
+        OnboardingSessionId::new(id).expect("onboarding session id")
+    }
+
     fn text_turn_request(
         request_id: &str,
         trace_id: &str,
@@ -1995,6 +2279,50 @@ mod tests {
             },
         )
         .expect("invite click request")
+    }
+
+    fn onboarding_continue_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+        action: AppOnboardingContinueAction,
+    ) -> RuntimeCanonicalIngressRequest {
+        RuntimeCanonicalIngressRequest::onboarding_continue(
+            envelope_input(
+                request_id,
+                trace_id,
+                &format!("idem-{request_id}"),
+                AppPlatform::Android,
+                trigger,
+                1_060,
+            ),
+            platform_context(AppPlatform::Android, trigger),
+            AppOnboardingContinueRequest::v1(
+                CorrelationId(101),
+                onboarding_session("onb-session-1"),
+                format!("idem-{request_id}"),
+                Some("tenant-a".to_string()),
+                action,
+            )
+            .expect("onboarding continue request"),
+        )
+        .expect("onboarding compatibility request")
+    }
+
+    fn onboarding_ask_missing_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+        field_value: Option<&str>,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::AskMissingSubmit {
+                field_value: field_value.map(str::to_string),
+            },
+        )
     }
 
     #[test]
@@ -2439,31 +2767,288 @@ mod tests {
     }
 
     #[test]
-    fn slice_2b_onboarding_continue_remains_non_executable() {
+    fn slice_2c_onboarding_ask_missing_is_the_only_newly_executable_onboarding_action() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
-        let request = RuntimeCanonicalIngressRequest::compatibility(
-            CanonicalIngressFamily::OnboardingContinueCompatibility,
-            envelope_input(
-                "onb-1",
-                "trace-onb-1",
-                "idem-onb-1",
-                AppPlatform::Android,
-                RuntimeEntryTrigger::Explicit,
-                1_020,
-            ),
-            "Bearer token-1".to_string(),
-            user("user_runtime_1"),
-            device("device-a"),
-            platform_context(AppPlatform::Android, RuntimeEntryTrigger::Explicit),
-        )
-        .expect("compatibility request");
+        let request = onboarding_ask_missing_request(
+            "onb-ask-1",
+            "trace-onb-ask-1",
+            RuntimeEntryTrigger::Explicit,
+            Some("display_name"),
+        );
+        assert!(request.authorization_bearer.is_empty());
+        assert!(request
+            .actor_identity
+            .as_str()
+            .starts_with("onboarding-compat-actor:"));
+        assert!(request
+            .device_identity
+            .as_str()
+            .starts_with("onboarding-compat-device:"));
+
+        let result = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect("onboarding ask-missing should execute in Slice 2C");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingAskMissingCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready
+            .runtime_execution_envelope
+            .actor_identity
+            .as_str()
+            .starts_with("onboarding-compat-actor:"));
+    }
+
+    #[test]
+    fn slice_2c_platform_setup_receipt_remains_non_executable() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_continue_request(
+            "onb-platform-1",
+            "trace-onb-platform-1",
+            RuntimeEntryTrigger::Explicit,
+            AppOnboardingContinueAction::PlatformSetupReceipt {
+                receipt_kind: "DEVICE_ATTEST".to_string(),
+                receipt_ref: "receipt-ref-1".to_string(),
+                signer: "signer-a".to_string(),
+                payload_hash: "payload-hash-1".to_string(),
+            },
+        );
+
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect_err("onboarding continue must remain non-executable");
+            .expect_err("platform setup must remain non-executable");
         assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
         assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2c_terms_accept_remains_non_executable() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_continue_request(
+            "onb-terms-1",
+            "trace-onb-terms-1",
+            RuntimeEntryTrigger::Explicit,
+            AppOnboardingContinueAction::TermsAccept {
+                terms_version_id: "terms-v1".to_string(),
+                accepted: true,
+            },
+        );
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("terms accept must remain non-executable");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
+        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2c_primary_device_confirm_remains_non_executable() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_continue_request(
+            "onb-primary-1",
+            "trace-onb-primary-1",
+            RuntimeEntryTrigger::Explicit,
+            AppOnboardingContinueAction::PrimaryDeviceConfirm {
+                device_id: device("device-a"),
+                proof_ok: true,
+            },
+        );
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("primary device confirm must remain non-executable");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
+        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2c_voice_enroll_lock_remains_non_executable() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_continue_request(
+            "onb-voice-1",
+            "trace-onb-voice-1",
+            RuntimeEntryTrigger::Explicit,
+            AppOnboardingContinueAction::VoiceEnrollLock {
+                device_id: device("device-a"),
+                sample_seed: "seed-1".to_string(),
+            },
+        );
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("voice enroll lock must remain non-executable");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
+        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2c_onboarding_ask_missing_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_ask_missing_request(
+            "onb-shape-1",
+            "trace-onb-shape-1",
+            RuntimeEntryTrigger::Explicit,
+            Some("display_name"),
+        );
+        let first = normalize_turn_request(&request).expect("onboarding ask-missing normalized");
+        let second = normalize_turn_request(&request).expect("onboarding ask-missing normalized");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingAskMissing {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+                field_value,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+                assert_eq!(field_value, Some("display_name".to_string()));
+            }
+            other => panic!("expected onboarding ask-missing payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slice_2c_malformed_onboarding_ask_missing_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = onboarding_ask_missing_request(
+            "onb-bad-1",
+            "trace-onb-bad-1",
+            RuntimeEntryTrigger::Explicit,
+            Some("display_name"),
+        );
+        request.envelope_input.idempotency_key = "mismatch".to_string();
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("onboarding ask-missing idempotency mismatch must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2c_onboarding_ask_missing_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_ask_missing_request(
+                    "onb-session-1",
+                    "trace-onb-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                    None,
+                ),
+            )
+            .expect("onboarding ask-missing request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingAskMissingCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+    }
+
+    #[test]
+    fn slice_2c_onboarding_ask_missing_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_ask_missing_request(
+                    "onb-obs-1",
+                    "trace-onb-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                    None,
+                ),
+            )
+            .expect("onboarding ask-missing request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::OnboardingAskMissingCompatibilityPrepared)
+        );
     }
 
     #[test]
