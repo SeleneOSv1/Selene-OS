@@ -14,6 +14,9 @@ use crate::runtime_bootstrap::{
 };
 
 pub const FOUNDATION_STATUS_ENDPOINT_PATH: &str = "/runtime/foundation/status";
+pub const CANONICAL_TURN_ENDPOINT_PATH: &str = "/v1/voice/turn";
+pub const INVITE_CLICK_ENDPOINT_PATH: &str = "/v1/invite/click";
+pub const ONBOARDING_CONTINUE_ENDPOINT_PATH: &str = "/v1/onboarding/continue";
 
 const MAX_TOKEN_LEN: usize = 128;
 
@@ -43,6 +46,7 @@ pub enum RuntimeRequestClass {
     Health,
     Startup,
     System,
+    CanonicalTurnIngress,
 }
 
 impl RuntimeRequestClass {
@@ -51,6 +55,7 @@ impl RuntimeRequestClass {
             RuntimeRequestClass::Health => 250,
             RuntimeRequestClass::Startup => 500,
             RuntimeRequestClass::System => 1_500,
+            RuntimeRequestClass::CanonicalTurnIngress => 3_000,
         }
     }
 
@@ -59,6 +64,7 @@ impl RuntimeRequestClass {
             RuntimeRequestClass::Health => "HEALTH",
             RuntimeRequestClass::Startup => "STARTUP",
             RuntimeRequestClass::System => "SYSTEM",
+            RuntimeRequestClass::CanonicalTurnIngress => "CANONICAL_TURN_INGRESS",
         }
     }
 }
@@ -69,6 +75,9 @@ pub enum RuntimeRouteHandlerKind {
     Readiness,
     Startup,
     FoundationStatus,
+    CanonicalTurnIngress,
+    InviteClickCompatibility,
+    OnboardingContinueCompatibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -214,10 +223,53 @@ impl RuntimeRouteDefinition {
         })
     }
 
+    pub fn canonical_turn() -> Result<Self, RuntimeRequestFoundationError> {
+        Ok(Self {
+            key: RuntimeRouteKey::new(RuntimeHttpMethod::Post, CANONICAL_TURN_ENDPOINT_PATH)?,
+            handler: RuntimeRouteHandlerKind::CanonicalTurnIngress,
+            request_class: RuntimeRequestClass::CanonicalTurnIngress,
+            admission_policy: RuntimeAdmissionPolicy::RequireReady,
+            required_middleware: section03_required_middleware(),
+            description: "Slice 2A canonical executable turn-ingress route",
+        })
+    }
+
+    pub fn invite_click_compatibility() -> Result<Self, RuntimeRequestFoundationError> {
+        Ok(Self {
+            key: RuntimeRouteKey::new(RuntimeHttpMethod::Post, INVITE_CLICK_ENDPOINT_PATH)?,
+            handler: RuntimeRouteHandlerKind::InviteClickCompatibility,
+            request_class: RuntimeRequestClass::CanonicalTurnIngress,
+            admission_policy: RuntimeAdmissionPolicy::RequireReady,
+            required_middleware: section03_required_middleware(),
+            description: "Slice 2A canonical invite-click family compatibility route",
+        })
+    }
+
+    pub fn onboarding_continue_compatibility() -> Result<Self, RuntimeRequestFoundationError> {
+        Ok(Self {
+            key: RuntimeRouteKey::new(RuntimeHttpMethod::Post, ONBOARDING_CONTINUE_ENDPOINT_PATH)?,
+            handler: RuntimeRouteHandlerKind::OnboardingContinueCompatibility,
+            request_class: RuntimeRequestClass::CanonicalTurnIngress,
+            admission_policy: RuntimeAdmissionPolicy::RequireReady,
+            required_middleware: section03_required_middleware(),
+            description: "Slice 2A canonical onboarding-continue family compatibility route",
+        })
+    }
+
     fn requires_envelope(&self) -> bool {
         self.required_middleware
             .contains(&RuntimeRouteMiddlewareKind::EnvelopeFoundation)
     }
+}
+
+fn section03_required_middleware() -> BTreeSet<RuntimeRouteMiddlewareKind> {
+    BTreeSet::from([
+        RuntimeRouteMiddlewareKind::EnvelopeFoundation,
+        RuntimeRouteMiddlewareKind::RequestSecurity,
+        RuntimeRouteMiddlewareKind::AdmissionControl,
+        RuntimeRouteMiddlewareKind::FeatureFlags,
+        RuntimeRouteMiddlewareKind::InvariantValidation,
+    ])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -756,6 +808,15 @@ pub struct RuntimeRouteDispatchResult {
     pub admission: RuntimeAdmissionDecision,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimePreparedRequest {
+    pub definition: RuntimeRouteDefinition,
+    pub envelope: Option<RuntimeRequestEnvelopeFoundation>,
+    pub admission: RuntimeAdmissionDecision,
+    pub feature_flags: RuntimeFeatureFlagSnapshot,
+    pub prepared_at_ms: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeRouter {
     config: RuntimeRequestFoundationConfig,
@@ -791,6 +852,21 @@ impl RuntimeRouter {
         definition: RuntimeRouteDefinition,
     ) -> Result<(), RuntimeRequestFoundationError> {
         validate_route_definition(&definition)?;
+        self.register_validated_route(definition)
+    }
+
+    pub fn register_canonical_ingress_route(
+        &mut self,
+        definition: RuntimeRouteDefinition,
+    ) -> Result<(), RuntimeRequestFoundationError> {
+        validate_canonical_ingress_route_definition(&definition)?;
+        self.register_validated_route(definition)
+    }
+
+    fn register_validated_route(
+        &mut self,
+        definition: RuntimeRouteDefinition,
+    ) -> Result<(), RuntimeRequestFoundationError> {
         if self.routes.contains_key(&definition.key) {
             return Err(RuntimeRequestFoundationError::duplicate_route(
                 definition.key.path.as_str(),
@@ -838,6 +914,150 @@ impl RuntimeRouter {
         runtime: &RuntimeProcess<C, S>,
         request: RuntimeFoundationRequest,
     ) -> Result<RuntimeRouteDispatchResult, RuntimeRequestFoundationError>
+    where
+        C: RuntimeClock,
+        S: RuntimeSecretsProvider,
+    {
+        let mut prepared = self.prepare_request(runtime, request)?;
+
+        let response = match prepared.definition.handler {
+            RuntimeRouteHandlerKind::Liveness => {
+                emit_success_metrics(
+                    &self.config,
+                    &mut self.metrics,
+                    &prepared.definition,
+                    &prepared.feature_flags,
+                    "ok",
+                );
+                RuntimeRouteResponse::Liveness(runtime.liveness_endpoint())
+            }
+            RuntimeRouteHandlerKind::Readiness => {
+                emit_success_metrics(
+                    &self.config,
+                    &mut self.metrics,
+                    &prepared.definition,
+                    &prepared.feature_flags,
+                    "ok",
+                );
+                RuntimeRouteResponse::Readiness(runtime.readiness_endpoint())
+            }
+            RuntimeRouteHandlerKind::Startup => {
+                emit_success_metrics(
+                    &self.config,
+                    &mut self.metrics,
+                    &prepared.definition,
+                    &prepared.feature_flags,
+                    "ok",
+                );
+                RuntimeRouteResponse::Startup(runtime.startup_endpoint())
+            }
+            RuntimeRouteHandlerKind::FoundationStatus => {
+                let routed_envelope = prepared
+                    .envelope
+                    .take()
+                    .expect("foundation status route requires an envelope")
+                    .with_admission_state(prepared.admission.admission_state)
+                    .advance_to(RuntimeRequestStage::Admitted, prepared.prepared_at_ms)
+                    .advance_to(RuntimeRequestStage::Routed, prepared.prepared_at_ms)
+                    .advance_to(RuntimeRequestStage::Responded, prepared.prepared_at_ms);
+                let response = RuntimeRouteResponse::FoundationStatus(Box::new(
+                    RuntimeFoundationStatusResponse {
+                        request_id: routed_envelope.header().request_id.clone(),
+                        trace_id: routed_envelope.header().trace_id.clone(),
+                        received_at_ms: routed_envelope.header().received_at_ms,
+                        service_name: self.config.service_name.clone(),
+                        node_id: self.config.build_metadata.node_id.clone(),
+                        runtime_instance_identity: self
+                            .config
+                            .build_metadata
+                            .runtime_instance_identity
+                            .clone(),
+                        environment_identity: self
+                            .config
+                            .build_metadata
+                            .environment_identity
+                            .clone(),
+                        build_version: self.config.build_metadata.build_version.clone(),
+                        git_commit: self.config.build_metadata.git_commit.clone(),
+                        runtime_state: runtime.state(),
+                        liveness: runtime.liveness_endpoint(),
+                        readiness: runtime.readiness_endpoint(),
+                        startup: runtime.startup_endpoint(),
+                        capability_manifest: self.capability_manifest(&prepared.feature_flags),
+                        diagnostic_mode_enabled: prepared
+                            .feature_flags
+                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode),
+                        execution_budget: routed_envelope.execution_budget(),
+                        preflight_results: prepared
+                            .feature_flags
+                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode)
+                            .then(|| runtime.preflight_results().to_vec()),
+                        service_ids: prepared
+                            .feature_flags
+                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode)
+                            .then(|| {
+                                runtime
+                                    .service_ids()
+                                    .into_iter()
+                                    .map(str::to_string)
+                                    .collect()
+                            }),
+                    },
+                ));
+                emit_success_metrics(
+                    &self.config,
+                    &mut self.metrics,
+                    &prepared.definition,
+                    &prepared.feature_flags,
+                    "ok",
+                );
+                prepared.envelope = Some(routed_envelope);
+                response
+            }
+            RuntimeRouteHandlerKind::CanonicalTurnIngress
+            | RuntimeRouteHandlerKind::InviteClickCompatibility
+            | RuntimeRouteHandlerKind::OnboardingContinueCompatibility => {
+                let reason_code = reason_codes::ROUTE_SCOPE_VIOLATION;
+                self.emit_rejection_metric(
+                    &prepared.definition,
+                    prepared.definition.request_class,
+                    reason_code,
+                    &prepared.feature_flags,
+                );
+                self.event_bus
+                    .publish(RuntimeFoundationEvent::RequestRejected {
+                        request_id: prepared
+                            .envelope
+                            .as_ref()
+                            .map(|env| env.header().request_id.clone()),
+                        path: prepared.definition.key.path.clone(),
+                        reason_code,
+                    });
+                let error = RuntimeRequestFoundationError::scope_violation(
+                    "canonical Section 03 ingress routes must be consumed through runtime_ingress_turn_foundation",
+                );
+                if let Some(rejected_envelope) = prepared.envelope.take() {
+                    return Err(error.with_envelope(
+                        rejected_envelope
+                            .advance_to(RuntimeRequestStage::Rejected, prepared.prepared_at_ms),
+                    ));
+                }
+                return Err(error);
+            }
+        };
+
+        Ok(RuntimeRouteDispatchResult {
+            response,
+            envelope: prepared.envelope,
+            admission: prepared.admission,
+        })
+    }
+
+    pub fn prepare_request<C, S>(
+        &mut self,
+        runtime: &RuntimeProcess<C, S>,
+        request: RuntimeFoundationRequest,
+    ) -> Result<RuntimePreparedRequest, RuntimeRequestFoundationError>
     where
         C: RuntimeClock,
         S: RuntimeSecretsProvider,
@@ -949,102 +1169,12 @@ impl RuntimeRouter {
             ));
         }
 
-        let response = match definition.handler {
-            RuntimeRouteHandlerKind::Liveness => {
-                emit_success_metrics(
-                    &self.config,
-                    &mut self.metrics,
-                    &definition,
-                    &snapshot,
-                    "ok",
-                );
-                RuntimeRouteResponse::Liveness(runtime.liveness_endpoint())
-            }
-            RuntimeRouteHandlerKind::Readiness => {
-                emit_success_metrics(
-                    &self.config,
-                    &mut self.metrics,
-                    &definition,
-                    &snapshot,
-                    "ok",
-                );
-                RuntimeRouteResponse::Readiness(runtime.readiness_endpoint())
-            }
-            RuntimeRouteHandlerKind::Startup => {
-                emit_success_metrics(
-                    &self.config,
-                    &mut self.metrics,
-                    &definition,
-                    &snapshot,
-                    "ok",
-                );
-                RuntimeRouteResponse::Startup(runtime.startup_endpoint())
-            }
-            RuntimeRouteHandlerKind::FoundationStatus => {
-                let routed_envelope = envelope
-                    .take()
-                    .expect("foundation status route requires an envelope")
-                    .with_admission_state(admission.admission_state)
-                    .advance_to(RuntimeRequestStage::Admitted, now_unix_ms)
-                    .advance_to(RuntimeRequestStage::Routed, now_unix_ms)
-                    .advance_to(RuntimeRequestStage::Responded, now_unix_ms);
-                let response = RuntimeRouteResponse::FoundationStatus(Box::new(
-                    RuntimeFoundationStatusResponse {
-                        request_id: routed_envelope.header().request_id.clone(),
-                        trace_id: routed_envelope.header().trace_id.clone(),
-                        received_at_ms: routed_envelope.header().received_at_ms,
-                        service_name: self.config.service_name.clone(),
-                        node_id: self.config.build_metadata.node_id.clone(),
-                        runtime_instance_identity: self
-                            .config
-                            .build_metadata
-                            .runtime_instance_identity
-                            .clone(),
-                        environment_identity: self
-                            .config
-                            .build_metadata
-                            .environment_identity
-                            .clone(),
-                        build_version: self.config.build_metadata.build_version.clone(),
-                        git_commit: self.config.build_metadata.git_commit.clone(),
-                        runtime_state: runtime.state(),
-                        liveness: runtime.liveness_endpoint(),
-                        readiness: runtime.readiness_endpoint(),
-                        startup: runtime.startup_endpoint(),
-                        capability_manifest: self.capability_manifest(&snapshot),
-                        diagnostic_mode_enabled: snapshot
-                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode),
-                        execution_budget: routed_envelope.execution_budget(),
-                        preflight_results: snapshot
-                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode)
-                            .then(|| runtime.preflight_results().to_vec()),
-                        service_ids: snapshot
-                            .is_enabled(RuntimeFeatureFlag::DiagnosticMode)
-                            .then(|| {
-                                runtime
-                                    .service_ids()
-                                    .into_iter()
-                                    .map(str::to_string)
-                                    .collect()
-                            }),
-                    },
-                ));
-                emit_success_metrics(
-                    &self.config,
-                    &mut self.metrics,
-                    &definition,
-                    &snapshot,
-                    "ok",
-                );
-                envelope = Some(routed_envelope);
-                response
-            }
-        };
-
-        Ok(RuntimeRouteDispatchResult {
-            response,
+        Ok(RuntimePreparedRequest {
+            definition,
             envelope,
             admission,
+            feature_flags: snapshot,
+            prepared_at_ms: now_unix_ms,
         })
     }
 
@@ -1444,6 +1574,48 @@ fn validate_route_definition(
     }
 
     Ok(())
+}
+
+fn validate_canonical_ingress_route_definition(
+    definition: &RuntimeRouteDefinition,
+) -> Result<(), RuntimeRequestFoundationError> {
+    validate_route_path(&definition.key.path)?;
+    if !definition.key.path.starts_with("/v1/") {
+        return Err(RuntimeRequestFoundationError::scope_violation(
+            "Slice 2A canonical ingress routes must live under /v1/",
+        ));
+    }
+    if definition.key.method != RuntimeHttpMethod::Post {
+        return Err(RuntimeRequestFoundationError::invalid_route_middleware(
+            "Slice 2A canonical ingress routes must use POST",
+        ));
+    }
+    if definition.request_class != RuntimeRequestClass::CanonicalTurnIngress {
+        return Err(RuntimeRequestFoundationError::invalid_route_middleware(
+            "Slice 2A canonical ingress routes must use the canonical turn-ingress request class",
+        ));
+    }
+    if definition.admission_policy != RuntimeAdmissionPolicy::RequireReady {
+        return Err(RuntimeRequestFoundationError::invalid_route_middleware(
+            "Slice 2A canonical ingress routes must remain readiness-gated",
+        ));
+    }
+    if definition.required_middleware != section03_required_middleware() {
+        return Err(RuntimeRequestFoundationError::invalid_route_middleware(
+            "Slice 2A canonical ingress routes must carry the complete request foundation middleware set",
+        ));
+    }
+    match (definition.key.path.as_str(), definition.handler) {
+        (CANONICAL_TURN_ENDPOINT_PATH, RuntimeRouteHandlerKind::CanonicalTurnIngress)
+        | (INVITE_CLICK_ENDPOINT_PATH, RuntimeRouteHandlerKind::InviteClickCompatibility)
+        | (
+            ONBOARDING_CONTINUE_ENDPOINT_PATH,
+            RuntimeRouteHandlerKind::OnboardingContinueCompatibility,
+        ) => Ok(()),
+        _ => Err(RuntimeRequestFoundationError::scope_violation(
+            "Slice 2A may register only the canonical Section 03 ingress family",
+        )),
+    }
 }
 
 #[cfg(test)]
