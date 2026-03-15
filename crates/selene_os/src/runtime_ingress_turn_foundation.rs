@@ -181,18 +181,15 @@ impl RuntimeCanonicalIngressRequest {
     #[allow(clippy::too_many_arguments)]
     pub fn invite_click(
         envelope_input: RuntimeRequestEnvelopeInput,
-        authorization_bearer: String,
-        actor_identity: UserId,
-        device_identity: DeviceId,
         platform_context: PlatformRuntimeContext,
         invite_request: InviteOpenActivateCommitRequest,
     ) -> Result<Self, ContractViolation> {
         let request = Self {
             family: CanonicalIngressFamily::InviteClickCompatibility,
             envelope_input,
-            authorization_bearer,
-            actor_identity,
-            device_identity,
+            authorization_bearer: String::new(),
+            actor_identity: compatibility_actor_identity(&invite_request)?,
+            device_identity: compatibility_device_identity(&invite_request)?,
             platform_context,
             session_hint: None,
             device_turn_sequence: None,
@@ -254,14 +251,14 @@ impl Validate for RuntimeCanonicalIngressRequest {
     fn validate(&self) -> Result<(), ContractViolation> {
         self.device_identity.validate()?;
         self.platform_context.validate()?;
-        if self.authorization_bearer.trim().is_empty() {
-            return Err(ContractViolation::InvalidValue {
-                field: "runtime_canonical_ingress_request.authorization_bearer",
-                reason: "must not be empty",
-            });
-        }
         match self.family {
             CanonicalIngressFamily::VoiceTurn => {
+                if self.authorization_bearer.trim().is_empty() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.authorization_bearer",
+                        reason: "must not be empty",
+                    });
+                }
                 if self.device_turn_sequence.is_none() {
                     return Err(ContractViolation::InvalidValue {
                         field: "runtime_canonical_ingress_request.device_turn_sequence",
@@ -1177,7 +1174,6 @@ fn normalize_executable_turn_request(
 fn normalize_invite_click_request(
     request: &RuntimeCanonicalIngressRequest,
 ) -> Result<CanonicalTurnRequestCarrier, RuntimeIngressTurnError> {
-    validate_authorization_header(&request.authorization_bearer)?;
     let Some(CompatibilityRequestPayload::InviteClick(invite_request)) =
         request.compatibility_payload.as_ref()
     else {
@@ -1212,6 +1208,46 @@ fn normalize_invite_click_request(
             link_opened_at: invite_request.link_opened_at,
         },
     })
+}
+
+// Invite-click is pre-authority compatibility execution, so these anchors must
+// be deterministic without claiming a pre-known authenticated actor.
+fn compatibility_actor_identity(
+    invite_request: &InviteOpenActivateCommitRequest,
+) -> Result<UserId, ContractViolation> {
+    let anchor_material = format!(
+        "token_id={}|device_fingerprint={}|app_instance_id={}",
+        invite_request.token_id.as_str(),
+        invite_request.device_fingerprint,
+        invite_request.app_instance_id,
+    );
+    UserId::new(format!(
+        "invite-compat-actor:{}",
+        canonical_content_hash(
+            "INVITE_CLICK_COMPAT_ACTOR",
+            invite_request.token_id.as_str().as_bytes(),
+            anchor_material.as_bytes(),
+        )
+    ))
+}
+
+fn compatibility_device_identity(
+    invite_request: &InviteOpenActivateCommitRequest,
+) -> Result<DeviceId, ContractViolation> {
+    let anchor_material = format!(
+        "app_platform={}|device_fingerprint={}|app_instance_id={}",
+        invite_request.app_platform.as_str(),
+        invite_request.device_fingerprint,
+        invite_request.app_instance_id,
+    );
+    DeviceId::new(format!(
+        "invite-compat-device:{}",
+        canonical_content_hash(
+            "INVITE_CLICK_COMPAT_DEVICE",
+            invite_request.app_platform.as_str().as_bytes(),
+            anchor_material.as_bytes(),
+        )
+    ))
 }
 
 fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
@@ -1946,9 +1982,6 @@ mod tests {
                 trigger,
                 1_040,
             ),
-            "Bearer token-1".to_string(),
-            user("user_runtime_1"),
-            device("device-a"),
             platform_context(AppPlatform::Android, trigger),
             InviteOpenActivateCommitRequest {
                 token_id: TokenId::new("invite-token-1").expect("token"),
@@ -2301,17 +2334,23 @@ mod tests {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
+        let request = invite_click_request(
+            "invite-compat-1",
+            "trace-invite-compat-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        assert!(request.authorization_bearer.is_empty());
+        assert!(request
+            .actor_identity
+            .as_str()
+            .starts_with("invite-compat-actor:"));
+        assert!(request
+            .device_identity
+            .as_str()
+            .starts_with("invite-compat-device:"));
 
         let result = foundation
-            .process_turn_start(
-                &runtime,
-                &mut sessions,
-                invite_click_request(
-                    "invite-compat-1",
-                    "trace-invite-compat-1",
-                    RuntimeEntryTrigger::Explicit,
-                ),
-            )
+            .process_turn_start(&runtime, &mut sessions, request)
             .expect("invite click compatibility should execute in slice 2B");
         let ready = match result {
             RuntimePreAuthorityTurnResult::Ready(ready) => ready,
@@ -2341,6 +2380,11 @@ mod tests {
         assert!(ready.runtime_execution_envelope.authority_state.is_none());
         assert!(ready.runtime_execution_envelope.persistence_state.is_none());
         assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready
+            .runtime_execution_envelope
+            .actor_identity
+            .as_str()
+            .starts_with("invite-compat-actor:"));
     }
 
     #[test]
