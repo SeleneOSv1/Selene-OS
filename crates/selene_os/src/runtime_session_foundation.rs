@@ -1,0 +1,1864 @@
+#![forbid(unsafe_code)]
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
+use selene_kernel_contracts::ph1l::SessionId;
+use selene_kernel_contracts::runtime_execution::{
+    FailureClass, RuntimeExecutionEnvelope, SessionAttachOutcome,
+};
+use selene_kernel_contracts::{ContractViolation, SessionState, Validate};
+
+use crate::runtime_bootstrap::{
+    RuntimeBootstrapError, RuntimeClock, RuntimeSecretsProvider, RuntimeServiceContainer,
+};
+
+mod reason_codes {
+    pub const SESSION_NOT_FOUND: &str = "runtime_session_not_found";
+    pub const INVALID_TRANSITION: &str = "runtime_session_invalid_transition";
+    pub const SINGLE_WRITER_CONFLICT: &str = "runtime_session_single_writer_conflict";
+    pub const INVALID_DEVICE_SEQUENCE: &str = "runtime_session_invalid_device_sequence";
+    pub const STALE_DEVICE_TURN: &str = "runtime_session_stale_device_turn";
+    pub const DEVICE_NOT_ATTACHED: &str = "runtime_session_device_not_attached";
+    pub const ATTACH_NOT_ALLOWED: &str = "runtime_session_attach_not_allowed";
+    pub const RESUME_NOT_RECOVERABLE: &str = "runtime_session_resume_not_recoverable";
+    pub const RECOVER_NOT_SUSPENDED: &str = "runtime_session_recover_not_suspended";
+    pub const DETACH_NOT_ATTACHED: &str = "runtime_session_detach_not_attached";
+    pub const CLOSE_REQUIRES_SOFT_CLOSED: &str = "runtime_session_close_requires_soft_closed";
+    pub const CLOSE_REQUIRES_NO_ATTACHMENTS: &str = "runtime_session_close_requires_no_attachments";
+    pub const TOO_MANY_DEVICES: &str = "runtime_session_too_many_attached_devices";
+    pub const INTEGRITY_VIOLATION: &str = "runtime_session_integrity_violation";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionFoundationErrorKind {
+    SessionNotFound,
+    InvalidTransition,
+    SingleWriterConflict,
+    InvalidDeviceSequence,
+    StaleDeviceTurn,
+    DeviceNotAttached,
+    AttachNotAllowed,
+    ResumeNotRecoverable,
+    RecoverNotSuspended,
+    DetachNotAttached,
+    CloseRequiresSoftClosed,
+    CloseRequiresNoAttachments,
+    TooManyDevices,
+    IntegrityViolation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionFoundationError {
+    pub kind: SessionFoundationErrorKind,
+    pub failure_class: FailureClass,
+    pub reason_code: &'static str,
+    pub message: String,
+}
+
+impl SessionFoundationError {
+    fn session_not_found(session_id: SessionId) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::SessionNotFound,
+            failure_class: FailureClass::ExecutionFailure,
+            reason_code: reason_codes::SESSION_NOT_FOUND,
+            message: format!("session {} was not found", session_id.0),
+        }
+    }
+
+    fn invalid_transition(from: SessionState, to: SessionState) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::InvalidTransition,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::INVALID_TRANSITION,
+            message: format!("session transition {from:?} -> {to:?} is not allowed"),
+        }
+    }
+
+    fn single_writer_conflict(session_id: SessionId) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::SingleWriterConflict,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::SINGLE_WRITER_CONFLICT,
+            message: format!(
+                "session {} already has an in-flight writer and cannot accept another mutation",
+                session_id.0
+            ),
+        }
+    }
+
+    fn invalid_device_sequence(device_id: &str, sequence: u64) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::InvalidDeviceSequence,
+            failure_class: FailureClass::InvalidPayload,
+            reason_code: reason_codes::INVALID_DEVICE_SEQUENCE,
+            message: format!(
+                "device {} supplied invalid device_turn_sequence {}",
+                device_id, sequence
+            ),
+        }
+    }
+
+    fn stale_device_turn(device_id: &str, sequence: u64, highest_seen_sequence: u64) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::StaleDeviceTurn,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::STALE_DEVICE_TURN,
+            message: format!(
+                "device {} supplied stale sequence {} below highest seen {}",
+                device_id, sequence, highest_seen_sequence
+            ),
+        }
+    }
+
+    fn device_not_attached(session_id: SessionId, device_id: &str) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::DeviceNotAttached,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::DEVICE_NOT_ATTACHED,
+            message: format!(
+                "device {} is not attached to session {}",
+                device_id, session_id.0
+            ),
+        }
+    }
+
+    fn attach_not_allowed(session_id: SessionId, state: SessionState) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::AttachNotAllowed,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::ATTACH_NOT_ALLOWED,
+            message: format!(
+                "session {} cannot accept attachment while in state {:?}",
+                session_id.0, state
+            ),
+        }
+    }
+
+    fn resume_not_recoverable(session_id: SessionId, state: SessionState) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::ResumeNotRecoverable,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::RESUME_NOT_RECOVERABLE,
+            message: format!(
+                "session {} in state {:?} is not resumable; recover or create a new session",
+                session_id.0, state
+            ),
+        }
+    }
+
+    fn recover_not_suspended(session_id: SessionId, state: SessionState) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::RecoverNotSuspended,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::RECOVER_NOT_SUSPENDED,
+            message: format!(
+                "session {} in state {:?} cannot be recovered because it is not suspended",
+                session_id.0, state
+            ),
+        }
+    }
+
+    fn detach_not_attached(session_id: SessionId, device_id: &str) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::DetachNotAttached,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::DETACH_NOT_ATTACHED,
+            message: format!(
+                "device {} cannot detach from session {} because it is not attached",
+                device_id, session_id.0
+            ),
+        }
+    }
+
+    fn close_requires_soft_closed(session_id: SessionId, state: SessionState) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::CloseRequiresSoftClosed,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::CLOSE_REQUIRES_SOFT_CLOSED,
+            message: format!(
+                "session {} cannot close from state {:?}; it must be SoftClosed first",
+                session_id.0, state
+            ),
+        }
+    }
+
+    fn close_requires_no_attachments(session_id: SessionId) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::CloseRequiresNoAttachments,
+            failure_class: FailureClass::SessionConflict,
+            reason_code: reason_codes::CLOSE_REQUIRES_NO_ATTACHMENTS,
+            message: format!(
+                "session {} cannot close while devices remain attached",
+                session_id.0
+            ),
+        }
+    }
+
+    fn too_many_devices(session_id: SessionId, max_attached_devices: usize) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::TooManyDevices,
+            failure_class: FailureClass::PolicyViolation,
+            reason_code: reason_codes::TOO_MANY_DEVICES,
+            message: format!(
+                "session {} exceeded the Slice 1C attached-device limit of {}",
+                session_id.0, max_attached_devices
+            ),
+        }
+    }
+
+    fn integrity_violation(session_id: SessionId, detail: &str) -> Self {
+        Self {
+            kind: SessionFoundationErrorKind::IntegrityViolation,
+            failure_class: FailureClass::ExecutionFailure,
+            reason_code: reason_codes::INTEGRITY_VIOLATION,
+            message: format!("session {} integrity violation: {detail}", session_id.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeSessionFoundationConfig {
+    pub max_attached_devices: usize,
+    pub max_events: usize,
+}
+
+impl RuntimeSessionFoundationConfig {
+    pub fn slice_1c_defaults() -> Self {
+        Self {
+            max_attached_devices: 8,
+            max_events: 256,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceTimelineClassification {
+    New,
+    Retry,
+    Stale,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionDetachDisposition {
+    Detached,
+    DetachedAndSoftClosed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionFoundationEventKind {
+    SessionCreated,
+    SessionResumed,
+    SessionRecovered,
+    SessionSuspended,
+    SessionClosed,
+    DeviceAttached,
+    DeviceDetached,
+    TurnStarted,
+    TurnCompleted,
+    RetryReused,
+    StaleRejected,
+    IntegrityViolation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionFoundationEvent {
+    pub kind: SessionFoundationEventKind,
+    pub session_id: SessionId,
+    pub session_state: SessionState,
+    pub turn_id: Option<TurnId>,
+    pub device_id: Option<String>,
+    pub device_turn_sequence: Option<u64>,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionFoundationCounters {
+    pub sessions_created: u64,
+    pub devices_attached: u64,
+    pub resumes: u64,
+    pub recovers: u64,
+    pub suspends: u64,
+    pub detaches: u64,
+    pub turns_started: u64,
+    pub turns_completed: u64,
+    pub retries_reused: u64,
+    pub stale_rejections: u64,
+    pub single_writer_rejections: u64,
+    pub integrity_violations: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRuntimeProjection {
+    pub session_id: SessionId,
+    pub turn_id: Option<TurnId>,
+    pub session_state: SessionState,
+    pub device_turn_sequence: Option<u64>,
+    pub attach_outcome: Option<SessionAttachOutcome>,
+}
+
+impl SessionRuntimeProjection {
+    pub fn bind_to_runtime_envelope(
+        &self,
+        envelope: &RuntimeExecutionEnvelope,
+    ) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+        let mut bound = envelope.clone();
+        bound.session_id = Some(self.session_id);
+        if let Some(turn_id) = self.turn_id {
+            bound.turn_id = turn_id;
+        }
+        bound.device_turn_sequence = self.device_turn_sequence;
+        bound.session_attach_outcome = self.attach_outcome;
+        bound.validate()?;
+        Ok(bound)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionAttachResult {
+    pub projection: SessionRuntimeProjection,
+    pub attached_devices: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionResumeResult {
+    pub projection: SessionRuntimeProjection,
+    pub attached_devices: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRecoverResult {
+    pub projection: SessionRuntimeProjection,
+    pub attached_devices: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDetachResult {
+    pub projection: SessionRuntimeProjection,
+    pub remaining_devices: Vec<String>,
+    pub disposition: SessionDetachDisposition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTurnPermit {
+    pub session_id: SessionId,
+    pub turn_id: TurnId,
+    pub device_id: String,
+    pub device_turn_sequence: u64,
+    pub previous_state: SessionState,
+    pub attach_outcome: Option<SessionAttachOutcome>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionTurnResolution {
+    Started(SessionTurnPermit),
+    Retry(SessionRuntimeProjection),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTurnCommit {
+    pub projection: SessionRuntimeProjection,
+    pub classification: DeviceTimelineClassification,
+    pub previous_state: SessionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceTimelineSnapshot {
+    pub device_id: String,
+    pub highest_seen_sequence: u64,
+    pub last_turn_id: TurnId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveWriterSnapshot {
+    pub device_id: String,
+    pub turn_id: TurnId,
+    pub device_turn_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionFoundationSnapshot {
+    pub session_id: SessionId,
+    pub session_state: SessionState,
+    pub next_turn_id: u64,
+    pub attached_devices: Vec<String>,
+    pub device_timelines: Vec<DeviceTimelineSnapshot>,
+    pub active_writer: Option<ActiveWriterSnapshot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeviceTimelineRecord {
+    highest_seen_sequence: u64,
+    last_turn_id: TurnId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActiveTurnMutation {
+    turn_id: TurnId,
+    device_id: String,
+    device_turn_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionRecord {
+    state: SessionState,
+    attached_devices: BTreeSet<String>,
+    device_timeline_map: BTreeMap<String, DeviceTimelineRecord>,
+    next_turn_id: u64,
+    active_writer: Option<ActiveTurnMutation>,
+}
+
+impl SessionRecord {
+    fn new() -> Self {
+        Self {
+            state: SessionState::Closed,
+            attached_devices: BTreeSet::new(),
+            device_timeline_map: BTreeMap::new(),
+            next_turn_id: 1,
+            active_writer: None,
+        }
+    }
+
+    fn projection(
+        &self,
+        session_id: SessionId,
+        turn_id: Option<TurnId>,
+        device_turn_sequence: Option<u64>,
+        attach_outcome: Option<SessionAttachOutcome>,
+    ) -> SessionRuntimeProjection {
+        SessionRuntimeProjection {
+            session_id,
+            turn_id,
+            session_state: self.state,
+            device_turn_sequence,
+            attach_outcome,
+        }
+    }
+
+    fn attached_devices(&self) -> Vec<String> {
+        self.attached_devices.iter().cloned().collect()
+    }
+
+    fn snapshot(&self, session_id: SessionId) -> SessionFoundationSnapshot {
+        SessionFoundationSnapshot {
+            session_id,
+            session_state: self.state,
+            next_turn_id: self.next_turn_id,
+            attached_devices: self.attached_devices(),
+            device_timelines: self
+                .device_timeline_map
+                .iter()
+                .map(|(device_id, record)| DeviceTimelineSnapshot {
+                    device_id: device_id.clone(),
+                    highest_seen_sequence: record.highest_seen_sequence,
+                    last_turn_id: record.last_turn_id,
+                })
+                .collect(),
+            active_writer: self
+                .active_writer
+                .as_ref()
+                .map(|writer| ActiveWriterSnapshot {
+                    device_id: writer.device_id.clone(),
+                    turn_id: writer.turn_id,
+                    device_turn_sequence: writer.device_turn_sequence,
+                }),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeSessionFoundation {
+    config: RuntimeSessionFoundationConfig,
+    next_session_id: u128,
+    sessions: BTreeMap<SessionId, SessionRecord>,
+    events: Vec<SessionFoundationEvent>,
+    counters: SessionFoundationCounters,
+}
+
+impl Default for RuntimeSessionFoundation {
+    fn default() -> Self {
+        Self::new(RuntimeSessionFoundationConfig::slice_1c_defaults())
+    }
+}
+
+impl RuntimeSessionFoundation {
+    pub fn new(config: RuntimeSessionFoundationConfig) -> Self {
+        Self {
+            config,
+            next_session_id: 1,
+            sessions: BTreeMap::new(),
+            events: Vec::new(),
+            counters: SessionFoundationCounters::default(),
+        }
+    }
+
+    pub fn register_slice_1c_session_foundation_services<C, S>(
+        container: &mut RuntimeServiceContainer<C, S>,
+    ) -> Result<(), RuntimeBootstrapError>
+    where
+        C: RuntimeClock,
+        S: RuntimeSecretsProvider,
+    {
+        container.register_service("runtime_session_store", &["runtime_clock"])?;
+        container.register_service(
+            "runtime_session_identifier_generator",
+            &["runtime_session_store"],
+        )?;
+        container.register_service(
+            "runtime_session_turn_gate",
+            &[
+                "runtime_session_store",
+                "runtime_session_identifier_generator",
+            ],
+        )?;
+        container.register_service(
+            "runtime_session_event_stream",
+            &["runtime_session_store", "runtime_session_turn_gate"],
+        )?;
+        container.register_service(
+            "runtime_session_projection",
+            &["runtime_session_store", "runtime_session_turn_gate"],
+        )?;
+        Ok(())
+    }
+
+    pub fn counters(&self) -> &SessionFoundationCounters {
+        &self.counters
+    }
+
+    pub fn events(&self) -> &[SessionFoundationEvent] {
+        &self.events
+    }
+
+    pub fn session_snapshot(
+        &self,
+        session_id: SessionId,
+    ) -> Result<SessionFoundationSnapshot, SessionFoundationError> {
+        let record = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+        Ok(record.snapshot(session_id))
+    }
+
+    pub fn create_session(
+        &mut self,
+        device_id: DeviceId,
+    ) -> Result<SessionAttachResult, SessionFoundationError> {
+        let session_id = self.allocate_session_id();
+        let device_key = device_id.as_str().to_string();
+
+        let mut record = SessionRecord::new();
+        attach_device_to_record(
+            session_id,
+            &mut record,
+            &device_key,
+            self.config.max_attached_devices,
+        )?;
+        transition_record_state(&mut record, SessionState::Open, false)?;
+
+        let projection = record.projection(
+            session_id,
+            None,
+            None,
+            Some(SessionAttachOutcome::NewSessionCreated),
+        );
+        let attached_devices = record.attached_devices();
+        self.sessions.insert(session_id, record);
+        self.counters.sessions_created += 1;
+        self.counters.devices_attached += 1;
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionCreated,
+            session_id,
+            session_state: SessionState::Open,
+            turn_id: None,
+            device_id: Some(device_key),
+            device_turn_sequence: None,
+            detail: "session created in Open state".to_string(),
+        });
+
+        Ok(SessionAttachResult {
+            projection,
+            attached_devices,
+        })
+    }
+
+    pub fn start_new_session_turn(
+        &mut self,
+        device_id: DeviceId,
+        device_turn_sequence: u64,
+    ) -> Result<SessionTurnResolution, SessionFoundationError> {
+        validate_device_turn_sequence(device_id.as_str(), device_turn_sequence)?;
+
+        let session_id = self.allocate_session_id();
+        let device_key = device_id.as_str().to_string();
+
+        let mut record = SessionRecord::new();
+        attach_device_to_record(
+            session_id,
+            &mut record,
+            &device_key,
+            self.config.max_attached_devices,
+        )?;
+        transition_record_state(&mut record, SessionState::Active, true)?;
+
+        let turn_id = allocate_turn_id(&mut record);
+        record.active_writer = Some(ActiveTurnMutation {
+            turn_id,
+            device_id: device_key.clone(),
+            device_turn_sequence,
+        });
+        self.counters.sessions_created += 1;
+        self.counters.devices_attached += 1;
+        self.counters.turns_started += 1;
+
+        self.sessions.insert(session_id, record);
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionCreated,
+            session_id,
+            session_state: SessionState::Active,
+            turn_id: Some(turn_id),
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: Some(device_turn_sequence),
+            detail: "session created through lawful Closed -> Active open bypass".to_string(),
+        });
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::TurnStarted,
+            session_id,
+            session_state: SessionState::Active,
+            turn_id: Some(turn_id),
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: Some(device_turn_sequence),
+            detail: "first session turn started through open bypass".to_string(),
+        });
+
+        Ok(SessionTurnResolution::Started(SessionTurnPermit {
+            session_id,
+            turn_id,
+            device_id: device_key,
+            device_turn_sequence,
+            previous_state: SessionState::Closed,
+            attach_outcome: Some(SessionAttachOutcome::NewSessionCreated),
+        }))
+    }
+
+    pub fn attach_session(
+        &mut self,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<SessionAttachResult, SessionFoundationError> {
+        let device_key = device_id.as_str().to_string();
+        let (projection, attached_devices, session_state, attach_outcome) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            if record.state == SessionState::Closed {
+                return Err(SessionFoundationError::attach_not_allowed(
+                    session_id,
+                    record.state,
+                ));
+            }
+
+            let attached = attach_device_to_record(
+                session_id,
+                record,
+                &device_key,
+                self.config.max_attached_devices,
+            )?;
+            let attach_outcome = if attached {
+                SessionAttachOutcome::ExistingSessionAttached
+            } else {
+                SessionAttachOutcome::ExistingSessionReused
+            };
+            let session_state = record.state;
+            let attached_devices = record.attached_devices();
+            let projection = record.projection(session_id, None, None, Some(attach_outcome));
+            (projection, attached_devices, session_state, attach_outcome)
+        };
+
+        if attach_outcome == SessionAttachOutcome::ExistingSessionAttached {
+            self.counters.devices_attached += 1;
+        }
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::DeviceAttached,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: None,
+            detail: "device attached to existing session".to_string(),
+        });
+
+        Ok(SessionAttachResult {
+            projection,
+            attached_devices,
+        })
+    }
+
+    pub fn resume_session(
+        &mut self,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<SessionResumeResult, SessionFoundationError> {
+        let device_key = device_id.as_str().to_string();
+        let (projection, attached_devices, session_state, attach_outcome) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            if matches!(record.state, SessionState::Closed | SessionState::Suspended) {
+                return Err(SessionFoundationError::resume_not_recoverable(
+                    session_id,
+                    record.state,
+                ));
+            }
+
+            let attached = attach_device_to_record(
+                session_id,
+                record,
+                &device_key,
+                self.config.max_attached_devices,
+            )?;
+            let attach_outcome = if attached {
+                SessionAttachOutcome::ExistingSessionAttached
+            } else {
+                SessionAttachOutcome::ExistingSessionReused
+            };
+            transition_record_state(record, SessionState::Active, false)?;
+            let session_state = record.state;
+            let projection = record.projection(session_id, None, None, Some(attach_outcome));
+            let attached_devices = record.attached_devices();
+            (projection, attached_devices, session_state, attach_outcome)
+        };
+        if attach_outcome == SessionAttachOutcome::ExistingSessionAttached {
+            self.counters.devices_attached += 1;
+        }
+        self.counters.resumes += 1;
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionResumed,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: None,
+            detail: "session resumed into Active state".to_string(),
+        });
+
+        Ok(SessionResumeResult {
+            projection,
+            attached_devices,
+        })
+    }
+
+    pub fn suspend_session(
+        &mut self,
+        session_id: SessionId,
+        detail: &str,
+    ) -> Result<SessionRuntimeProjection, SessionFoundationError> {
+        let (projection, session_state) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            transition_record_state(record, SessionState::Suspended, false)?;
+            let session_state = record.state;
+            let projection = record.projection(session_id, None, None, None);
+            (projection, session_state)
+        };
+        self.counters.suspends += 1;
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionSuspended,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: None,
+            device_turn_sequence: None,
+            detail: detail.to_string(),
+        });
+
+        Ok(projection)
+    }
+
+    pub fn recover_session(
+        &mut self,
+        session_id: SessionId,
+        device_id: DeviceId,
+    ) -> Result<SessionRecoverResult, SessionFoundationError> {
+        let device_key = device_id.as_str().to_string();
+        let (projection, attached_devices, session_state, attach_outcome) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            if record.state != SessionState::Suspended {
+                return Err(SessionFoundationError::recover_not_suspended(
+                    session_id,
+                    record.state,
+                ));
+            }
+
+            let attached = attach_device_to_record(
+                session_id,
+                record,
+                &device_key,
+                self.config.max_attached_devices,
+            )?;
+            let attach_outcome = if attached {
+                SessionAttachOutcome::ExistingSessionAttached
+            } else {
+                SessionAttachOutcome::ExistingSessionReused
+            };
+            transition_record_state(record, SessionState::Open, false)?;
+            let session_state = record.state;
+            let projection = record.projection(session_id, None, None, Some(attach_outcome));
+            let attached_devices = record.attached_devices();
+            (projection, attached_devices, session_state, attach_outcome)
+        };
+        if attach_outcome == SessionAttachOutcome::ExistingSessionAttached {
+            self.counters.devices_attached += 1;
+        }
+        self.counters.recovers += 1;
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionRecovered,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: None,
+            detail: "suspended session recovered into Open state".to_string(),
+        });
+
+        Ok(SessionRecoverResult {
+            projection,
+            attached_devices,
+        })
+    }
+
+    pub fn detach_session(
+        &mut self,
+        session_id: SessionId,
+        device_id: &DeviceId,
+    ) -> Result<SessionDetachResult, SessionFoundationError> {
+        let device_key = device_id.as_str().to_string();
+        let (projection, remaining_devices, disposition, session_state) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            if !record.attached_devices.remove(&device_key) {
+                return Err(SessionFoundationError::detach_not_attached(
+                    session_id,
+                    &device_key,
+                ));
+            }
+
+            let disposition =
+                if record.attached_devices.is_empty() && record.state == SessionState::Active {
+                    transition_record_state(record, SessionState::SoftClosed, false)?;
+                    SessionDetachDisposition::DetachedAndSoftClosed
+                } else {
+                    SessionDetachDisposition::Detached
+                };
+
+            let session_state = record.state;
+            let projection = record.projection(session_id, None, None, None);
+            let remaining_devices = record.attached_devices();
+            (projection, remaining_devices, disposition, session_state)
+        };
+        self.counters.detaches += 1;
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::DeviceDetached,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: Some(device_key.clone()),
+            device_turn_sequence: None,
+            detail: "device detached from session".to_string(),
+        });
+
+        Ok(SessionDetachResult {
+            projection,
+            remaining_devices,
+            disposition,
+        })
+    }
+
+    pub fn close_soft_closed_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<SessionRuntimeProjection, SessionFoundationError> {
+        let (projection, session_state) = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_no_active_writer(session_id, record)?;
+            if record.state != SessionState::SoftClosed {
+                return Err(SessionFoundationError::close_requires_soft_closed(
+                    session_id,
+                    record.state,
+                ));
+            }
+            if !record.attached_devices.is_empty() {
+                return Err(SessionFoundationError::close_requires_no_attachments(
+                    session_id,
+                ));
+            }
+            transition_record_state(record, SessionState::Closed, false)?;
+            let session_state = record.state;
+            let projection = record.projection(session_id, None, None, None);
+            (projection, session_state)
+        };
+
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::SessionClosed,
+            session_id,
+            session_state,
+            turn_id: None,
+            device_id: None,
+            device_turn_sequence: None,
+            detail: "soft-closed session closed deterministically".to_string(),
+        });
+
+        Ok(projection)
+    }
+
+    pub fn begin_turn(
+        &mut self,
+        session_id: SessionId,
+        device_id: &DeviceId,
+        device_turn_sequence: u64,
+    ) -> Result<SessionTurnResolution, SessionFoundationError> {
+        enum BeginTurnOutcome {
+            Stale {
+                session_state: SessionState,
+                last_turn_id: TurnId,
+                highest_seen_sequence: u64,
+            },
+            Retry {
+                projection: SessionRuntimeProjection,
+                session_state: SessionState,
+                last_turn_id: TurnId,
+            },
+            Started {
+                permit: SessionTurnPermit,
+                session_state: SessionState,
+            },
+        }
+
+        validate_device_turn_sequence(device_id.as_str(), device_turn_sequence)?;
+        let device_key = device_id.as_str().to_string();
+
+        let outcome = {
+            let record = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+            ensure_device_attached(session_id, record, &device_key)?;
+            ensure_no_active_writer(session_id, record)?;
+            match record.state {
+                SessionState::Open | SessionState::Active | SessionState::SoftClosed => {}
+                _ => {
+                    return Err(SessionFoundationError::invalid_transition(
+                        record.state,
+                        SessionState::Active,
+                    ));
+                }
+            }
+
+            if let Some(timeline) = record.device_timeline_map.get(&device_key) {
+                if device_turn_sequence < timeline.highest_seen_sequence {
+                    BeginTurnOutcome::Stale {
+                        session_state: record.state,
+                        last_turn_id: timeline.last_turn_id,
+                        highest_seen_sequence: timeline.highest_seen_sequence,
+                    }
+                } else if device_turn_sequence == timeline.highest_seen_sequence {
+                    let projection = record.projection(
+                        session_id,
+                        Some(timeline.last_turn_id),
+                        Some(device_turn_sequence),
+                        Some(SessionAttachOutcome::RetryReusedResult),
+                    );
+                    BeginTurnOutcome::Retry {
+                        projection,
+                        session_state: record.state,
+                        last_turn_id: timeline.last_turn_id,
+                    }
+                } else {
+                    let previous_state = record.state;
+                    transition_record_state(record, SessionState::Active, false)?;
+                    let turn_id = allocate_turn_id(record);
+                    record.active_writer = Some(ActiveTurnMutation {
+                        turn_id,
+                        device_id: device_key.clone(),
+                        device_turn_sequence,
+                    });
+                    BeginTurnOutcome::Started {
+                        permit: SessionTurnPermit {
+                            session_id,
+                            turn_id,
+                            device_id: device_key.clone(),
+                            device_turn_sequence,
+                            previous_state,
+                            attach_outcome: None,
+                        },
+                        session_state: record.state,
+                    }
+                }
+            } else {
+                let previous_state = record.state;
+                transition_record_state(record, SessionState::Active, false)?;
+                let turn_id = allocate_turn_id(record);
+                record.active_writer = Some(ActiveTurnMutation {
+                    turn_id,
+                    device_id: device_key.clone(),
+                    device_turn_sequence,
+                });
+                BeginTurnOutcome::Started {
+                    permit: SessionTurnPermit {
+                        session_id,
+                        turn_id,
+                        device_id: device_key.clone(),
+                        device_turn_sequence,
+                        previous_state,
+                        attach_outcome: None,
+                    },
+                    session_state: record.state,
+                }
+            }
+        };
+
+        match outcome {
+            BeginTurnOutcome::Stale {
+                session_state,
+                last_turn_id,
+                highest_seen_sequence,
+            } => {
+                self.counters.stale_rejections += 1;
+                self.emit_event(SessionFoundationEvent {
+                    kind: SessionFoundationEventKind::StaleRejected,
+                    session_id,
+                    session_state,
+                    turn_id: Some(last_turn_id),
+                    device_id: Some(device_key),
+                    device_turn_sequence: Some(device_turn_sequence),
+                    detail: "stale device turn rejected without mutating session state".to_string(),
+                });
+                Err(SessionFoundationError::stale_device_turn(
+                    device_id.as_str(),
+                    device_turn_sequence,
+                    highest_seen_sequence,
+                ))
+            }
+            BeginTurnOutcome::Retry {
+                projection,
+                session_state,
+                last_turn_id,
+            } => {
+                self.counters.retries_reused += 1;
+                self.emit_event(SessionFoundationEvent {
+                    kind: SessionFoundationEventKind::RetryReused,
+                    session_id,
+                    session_state,
+                    turn_id: Some(last_turn_id),
+                    device_id: Some(device_key),
+                    device_turn_sequence: Some(device_turn_sequence),
+                    detail: "retry reused prior turn result without mutating session state"
+                        .to_string(),
+                });
+                Ok(SessionTurnResolution::Retry(projection))
+            }
+            BeginTurnOutcome::Started {
+                permit,
+                session_state,
+            } => {
+                self.counters.turns_started += 1;
+                self.emit_event(SessionFoundationEvent {
+                    kind: SessionFoundationEventKind::TurnStarted,
+                    session_id,
+                    session_state,
+                    turn_id: Some(permit.turn_id),
+                    device_id: Some(device_key),
+                    device_turn_sequence: Some(device_turn_sequence),
+                    detail: "new session turn admitted into the single-writer gate".to_string(),
+                });
+                Ok(SessionTurnResolution::Started(permit))
+            }
+        }
+    }
+
+    pub fn finish_turn(
+        &mut self,
+        permit: SessionTurnPermit,
+        target_state: SessionState,
+    ) -> Result<SessionTurnCommit, SessionFoundationError> {
+        let (projection, previous_state, session_state) = {
+            let record = self
+                .sessions
+                .get_mut(&permit.session_id)
+                .ok_or_else(|| SessionFoundationError::session_not_found(permit.session_id))?;
+
+            let Some(active_writer) = record.active_writer.as_ref() else {
+                return Err(SessionFoundationError::single_writer_conflict(
+                    permit.session_id,
+                ));
+            };
+
+            if active_writer.turn_id != permit.turn_id
+                || active_writer.device_id != permit.device_id
+                || active_writer.device_turn_sequence != permit.device_turn_sequence
+            {
+                return Err(SessionFoundationError::integrity_violation(
+                    permit.session_id,
+                    "finish_turn permit did not match the active writer",
+                ));
+            }
+
+            if !matches!(
+                target_state,
+                SessionState::Active | SessionState::SoftClosed | SessionState::Suspended
+            ) {
+                return Err(SessionFoundationError::invalid_transition(
+                    record.state,
+                    target_state,
+                ));
+            }
+
+            record.device_timeline_map.insert(
+                permit.device_id.clone(),
+                DeviceTimelineRecord {
+                    highest_seen_sequence: permit.device_turn_sequence,
+                    last_turn_id: permit.turn_id,
+                },
+            );
+            record.active_writer = None;
+
+            let previous_state = record.state;
+            transition_record_state(record, target_state, false)?;
+            let session_state = record.state;
+            let projection = record.projection(
+                permit.session_id,
+                Some(permit.turn_id),
+                Some(permit.device_turn_sequence),
+                permit.attach_outcome,
+            );
+            (projection, previous_state, session_state)
+        };
+        self.counters.turns_completed += 1;
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::TurnCompleted,
+            session_id: permit.session_id,
+            session_state,
+            turn_id: Some(permit.turn_id),
+            device_id: Some(permit.device_id.clone()),
+            device_turn_sequence: Some(permit.device_turn_sequence),
+            detail: "session turn committed and timeline advanced deterministically".to_string(),
+        });
+
+        Ok(SessionTurnCommit {
+            projection,
+            classification: DeviceTimelineClassification::New,
+            previous_state,
+        })
+    }
+
+    pub fn integrity_check(&mut self, session_id: SessionId) -> Result<(), SessionFoundationError> {
+        let record = self
+            .sessions
+            .get(&session_id)
+            .cloned()
+            .ok_or_else(|| SessionFoundationError::session_not_found(session_id))?;
+
+        if record.next_turn_id == 0 {
+            return self.record_integrity_violation(
+                session_id,
+                "next_turn_id must remain greater than zero",
+            );
+        }
+
+        if record.state == SessionState::Closed && !record.attached_devices.is_empty() {
+            return self.record_integrity_violation(
+                session_id,
+                "closed sessions must not retain attached devices",
+            );
+        }
+
+        if matches!(record.state, SessionState::Closed | SessionState::Suspended)
+            && record.active_writer.is_some()
+        {
+            return self.record_integrity_violation(
+                session_id,
+                "closed or suspended sessions must not retain an active writer",
+            );
+        }
+
+        if let Some(writer) = &record.active_writer {
+            if writer.turn_id.0 == 0 || writer.turn_id.0 >= record.next_turn_id {
+                return self.record_integrity_violation(
+                    session_id,
+                    "active writer turn_id must be > 0 and below next_turn_id",
+                );
+            }
+            if writer.device_turn_sequence == 0 {
+                return self.record_integrity_violation(
+                    session_id,
+                    "active writer device_turn_sequence must be > 0",
+                );
+            }
+            if !record.attached_devices.contains(&writer.device_id) {
+                return self.record_integrity_violation(
+                    session_id,
+                    "active writer device must remain attached to the session",
+                );
+            }
+        }
+
+        for (device_id, timeline) in &record.device_timeline_map {
+            if timeline.highest_seen_sequence == 0 {
+                return self.record_integrity_violation(
+                    session_id,
+                    &format!("device {device_id} recorded impossible sequence 0"),
+                );
+            }
+            if timeline.last_turn_id.0 == 0 || timeline.last_turn_id.0 >= record.next_turn_id {
+                return self.record_integrity_violation(
+                    session_id,
+                    &format!("device {device_id} has impossible last_turn_id history"),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn allocate_session_id(&mut self) -> SessionId {
+        let session_id = SessionId(self.next_session_id);
+        self.next_session_id = self.next_session_id.saturating_add(1);
+        session_id
+    }
+
+    fn emit_event(&mut self, event: SessionFoundationEvent) {
+        if self.events.len() == self.config.max_events {
+            self.events.remove(0);
+        }
+        self.events.push(event);
+    }
+
+    fn record_integrity_violation<T>(
+        &mut self,
+        session_id: SessionId,
+        detail: &str,
+    ) -> Result<T, SessionFoundationError> {
+        self.counters.integrity_violations += 1;
+        self.emit_event(SessionFoundationEvent {
+            kind: SessionFoundationEventKind::IntegrityViolation,
+            session_id,
+            session_state: self
+                .sessions
+                .get(&session_id)
+                .map(|record| record.state)
+                .unwrap_or(SessionState::Closed),
+            turn_id: None,
+            device_id: None,
+            device_turn_sequence: None,
+            detail: detail.to_string(),
+        });
+        Err(SessionFoundationError::integrity_violation(
+            session_id, detail,
+        ))
+    }
+}
+
+fn validate_device_turn_sequence(
+    device_id: &str,
+    device_turn_sequence: u64,
+) -> Result<(), SessionFoundationError> {
+    if device_turn_sequence == 0 {
+        return Err(SessionFoundationError::invalid_device_sequence(
+            device_id,
+            device_turn_sequence,
+        ));
+    }
+    Ok(())
+}
+
+fn allocate_turn_id(record: &mut SessionRecord) -> TurnId {
+    let turn_id = TurnId(record.next_turn_id);
+    record.next_turn_id = record.next_turn_id.saturating_add(1);
+    turn_id
+}
+
+fn attach_device_to_record(
+    session_id: SessionId,
+    record: &mut SessionRecord,
+    device_id: &str,
+    max_attached_devices: usize,
+) -> Result<bool, SessionFoundationError> {
+    if record.attached_devices.contains(device_id) {
+        return Ok(false);
+    }
+    if record.attached_devices.len() >= max_attached_devices {
+        return Err(SessionFoundationError::too_many_devices(
+            session_id,
+            max_attached_devices,
+        ));
+    }
+    record.attached_devices.insert(device_id.to_string());
+    Ok(true)
+}
+
+fn ensure_device_attached(
+    session_id: SessionId,
+    record: &SessionRecord,
+    device_id: &str,
+) -> Result<(), SessionFoundationError> {
+    if record.attached_devices.contains(device_id) {
+        Ok(())
+    } else {
+        Err(SessionFoundationError::device_not_attached(
+            session_id, device_id,
+        ))
+    }
+}
+
+fn ensure_no_active_writer(
+    session_id: SessionId,
+    record: &SessionRecord,
+) -> Result<(), SessionFoundationError> {
+    if record.active_writer.is_some() {
+        Err(SessionFoundationError::single_writer_conflict(session_id))
+    } else {
+        Ok(())
+    }
+}
+
+fn transition_record_state(
+    record: &mut SessionRecord,
+    target_state: SessionState,
+    allow_open_bypass: bool,
+) -> Result<(), SessionFoundationError> {
+    if record.state == target_state {
+        return Ok(());
+    }
+    if !is_transition_allowed(record.state, target_state, allow_open_bypass) {
+        return Err(SessionFoundationError::invalid_transition(
+            record.state,
+            target_state,
+        ));
+    }
+    record.state = target_state;
+    Ok(())
+}
+
+fn is_transition_allowed(from: SessionState, to: SessionState, allow_open_bypass: bool) -> bool {
+    match (from, to) {
+        (SessionState::Closed, SessionState::Open) => true,
+        (SessionState::Closed, SessionState::Active) => allow_open_bypass,
+        (SessionState::Open, SessionState::Active) => true,
+        (SessionState::Active, SessionState::Active) => true,
+        (SessionState::Active, SessionState::SoftClosed) => true,
+        (SessionState::SoftClosed, SessionState::Active) => true,
+        (SessionState::SoftClosed, SessionState::Closed) => true,
+        (SessionState::Suspended, SessionState::Open) => true,
+        (_, SessionState::Suspended) => true,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::runtime_bootstrap::{
+        RuntimeBootstrapConfig, RuntimeBuildMetadata, RuntimeSecretValue,
+    };
+    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1j::DeviceId;
+    use selene_kernel_contracts::ph1link::AppPlatform;
+    use selene_kernel_contracts::provider_secrets::ProviderSecretId;
+    use selene_kernel_contracts::runtime_execution::AdmissionState;
+
+    #[derive(Debug, Clone, Copy)]
+    struct FixedClock;
+
+    impl RuntimeClock for FixedClock {
+        fn now_unix_ms(&self) -> i64 {
+            1_700_000_000_000
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct StaticSecretsProvider;
+
+    impl RuntimeSecretsProvider for StaticSecretsProvider {
+        fn get_secret(&self, _secret_id: ProviderSecretId) -> Option<RuntimeSecretValue> {
+            Some(RuntimeSecretValue::new("slice_1c_secret".to_string()).expect("secret"))
+        }
+    }
+
+    fn device(id: &str) -> DeviceId {
+        DeviceId::new(id).expect("device_id")
+    }
+
+    fn user(id: &str) -> UserId {
+        UserId::new(id).expect("user_id")
+    }
+
+    fn base_runtime_envelope() -> RuntimeExecutionEnvelope {
+        RuntimeExecutionEnvelope::v1(
+            "req-1".to_string(),
+            "trace-1".to_string(),
+            "idem-1".to_string(),
+            user("user-1"),
+            device("device-a"),
+            AppPlatform::Desktop,
+            None,
+            TurnId(1),
+            AdmissionState::IngressValidated,
+        )
+        .expect("envelope")
+    }
+
+    fn session_runtime() -> RuntimeSessionFoundation {
+        RuntimeSessionFoundation::default()
+    }
+
+    fn startup_container() -> RuntimeServiceContainer<FixedClock, StaticSecretsProvider> {
+        RuntimeServiceContainer::with_startup_foundation(FixedClock, StaticSecretsProvider)
+            .expect("container")
+    }
+
+    #[test]
+    fn slice_1c_session_id_generation_is_bounded_to_foundation_service() {
+        let mut runtime = session_runtime();
+
+        let first = runtime
+            .create_session(device("device-a"))
+            .expect("first session");
+        let second = runtime
+            .create_session(device("device-b"))
+            .expect("second session");
+
+        assert_eq!(first.projection.session_id, SessionId(1));
+        assert_eq!(second.projection.session_id, SessionId(2));
+        assert_eq!(first.projection.session_state, SessionState::Open);
+        assert_eq!(second.projection.session_state, SessionState::Open);
+    }
+
+    #[test]
+    fn slice_1c_turn_id_generation_is_deterministic_and_retry_safe() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+        assert_eq!(permit.turn_id, TurnId(1));
+
+        runtime
+            .finish_turn(permit.clone(), SessionState::Active)
+            .expect("turn finish");
+
+        let retry = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("retry");
+        match retry {
+            SessionTurnResolution::Retry(projection) => {
+                assert_eq!(projection.turn_id, Some(TurnId(1)));
+                assert_eq!(
+                    projection.attach_outcome,
+                    Some(SessionAttachOutcome::RetryReusedResult)
+                );
+            }
+            _ => panic!("expected retry reuse"),
+        }
+
+        let next_started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 2)
+            .expect("second turn");
+        let next_permit = match next_started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected second started turn"),
+        };
+        assert_eq!(next_permit.turn_id, TurnId(2));
+    }
+
+    #[test]
+    fn slice_1c_valid_state_transitions_succeed() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+        assert_eq!(created.projection.session_state, SessionState::Open);
+
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+
+        let committed = runtime
+            .finish_turn(permit, SessionState::SoftClosed)
+            .expect("turn finish");
+        assert_eq!(committed.projection.session_state, SessionState::SoftClosed);
+
+        let detached = runtime
+            .detach_session(created.projection.session_id, &device("device-a"))
+            .expect("detach");
+        assert!(detached.remaining_devices.is_empty());
+
+        let closed = runtime
+            .close_soft_closed_session(created.projection.session_id)
+            .expect("close");
+        assert_eq!(closed.session_state, SessionState::Closed);
+    }
+
+    #[test]
+    fn slice_1c_invalid_state_transitions_fail_closed() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let close_err = runtime
+            .close_soft_closed_session(created.projection.session_id)
+            .expect_err("open session cannot close directly");
+        assert_eq!(
+            close_err.kind,
+            SessionFoundationErrorKind::CloseRequiresSoftClosed
+        );
+
+        let suspend = runtime
+            .suspend_session(created.projection.session_id, "runtime guard")
+            .expect("suspend");
+        assert_eq!(suspend.session_state, SessionState::Suspended);
+
+        let resume_err = runtime
+            .resume_session(created.projection.session_id, device("device-a"))
+            .expect_err("suspended session must recover first");
+        assert_eq!(
+            resume_err.kind,
+            SessionFoundationErrorKind::ResumeNotRecoverable
+        );
+
+        let seq_err = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 0)
+            .expect_err("zero sequence must fail");
+        assert_eq!(
+            seq_err.kind,
+            SessionFoundationErrorKind::InvalidDeviceSequence
+        );
+    }
+
+    #[test]
+    fn slice_1c_open_bypass_rule_is_lawful_for_first_turn() {
+        let mut runtime = session_runtime();
+
+        let started = runtime
+            .start_new_session_turn(device("device-a"), 1)
+            .expect("open bypass");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+
+        assert_eq!(permit.previous_state, SessionState::Closed);
+        assert_eq!(permit.turn_id, TurnId(1));
+        assert_eq!(
+            permit.attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+
+        let snapshot = runtime
+            .session_snapshot(permit.session_id)
+            .expect("snapshot");
+        assert_eq!(snapshot.session_state, SessionState::Active);
+        assert_eq!(
+            snapshot.active_writer.as_ref().map(|writer| writer.turn_id),
+            Some(TurnId(1))
+        );
+    }
+
+    #[test]
+    fn slice_1c_attach_resume_recover_and_detach_are_coherent() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let attached = runtime
+            .attach_session(created.projection.session_id, device("device-b"))
+            .expect("attach second device");
+        assert_eq!(
+            attached.projection.attach_outcome,
+            Some(SessionAttachOutcome::ExistingSessionAttached)
+        );
+        assert_eq!(
+            attached.attached_devices,
+            vec!["device-a".to_string(), "device-b".to_string()]
+        );
+
+        let resumed = runtime
+            .resume_session(created.projection.session_id, device("device-a"))
+            .expect("resume");
+        assert_eq!(resumed.projection.session_state, SessionState::Active);
+
+        runtime
+            .suspend_session(created.projection.session_id, "capture degraded")
+            .expect("suspend");
+
+        let recovered = runtime
+            .recover_session(created.projection.session_id, device("device-b"))
+            .expect("recover");
+        assert_eq!(recovered.projection.session_state, SessionState::Open);
+
+        let detached = runtime
+            .detach_session(created.projection.session_id, &device("device-b"))
+            .expect("detach");
+        assert_eq!(detached.projection.session_state, SessionState::Open);
+        assert_eq!(detached.remaining_devices, vec!["device-a".to_string()]);
+    }
+
+    #[test]
+    fn slice_1c_single_writer_gate_rejects_concurrent_mutation_attempts() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+
+        let err = runtime
+            .attach_session(created.projection.session_id, device("device-b"))
+            .expect_err("attach must fail while writer is active");
+        assert_eq!(err.kind, SessionFoundationErrorKind::SingleWriterConflict);
+
+        runtime
+            .finish_turn(permit, SessionState::Active)
+            .expect("finish");
+    }
+
+    #[test]
+    fn slice_1c_device_timeline_classifies_new_retry_and_stale() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+        let committed = runtime
+            .finish_turn(permit, SessionState::Active)
+            .expect("finish");
+        assert_eq!(committed.classification, DeviceTimelineClassification::New);
+
+        let retry = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("retry");
+        match retry {
+            SessionTurnResolution::Retry(projection) => {
+                assert_eq!(projection.turn_id, Some(TurnId(1)));
+            }
+            _ => panic!("expected retry"),
+        }
+
+        let stale_err = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 0)
+            .expect_err("zero sequence is invalid");
+        assert_eq!(
+            stale_err.kind,
+            SessionFoundationErrorKind::InvalidDeviceSequence
+        );
+    }
+
+    #[test]
+    fn slice_1c_stale_and_retry_device_turns_do_not_mutate_session_state() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+
+        let started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect("turn start");
+        let first_permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+        runtime
+            .finish_turn(first_permit, SessionState::Active)
+            .expect("finish");
+
+        let next_started = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 2)
+            .expect("second turn");
+        let second_permit = match next_started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected second started turn"),
+        };
+        runtime
+            .finish_turn(second_permit, SessionState::SoftClosed)
+            .expect("finish second");
+
+        let before = runtime
+            .session_snapshot(created.projection.session_id)
+            .expect("snapshot before");
+
+        let retry = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 2)
+            .expect("retry");
+        match retry {
+            SessionTurnResolution::Retry(projection) => {
+                assert_eq!(projection.turn_id, Some(TurnId(2)));
+                assert_eq!(projection.session_state, SessionState::SoftClosed);
+            }
+            _ => panic!("expected retry"),
+        }
+
+        let stale_err = runtime
+            .begin_turn(created.projection.session_id, &device("device-a"), 1)
+            .expect_err("stale turn must fail");
+        assert_eq!(stale_err.kind, SessionFoundationErrorKind::StaleDeviceTurn);
+
+        let after = runtime
+            .session_snapshot(created.projection.session_id)
+            .expect("snapshot after");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn slice_1c_integrity_checks_detect_impossible_state_or_timeline() {
+        let mut runtime = session_runtime();
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+
+        {
+            let record = runtime.sessions.get_mut(&session_id).expect("record");
+            record.state = SessionState::Closed;
+            record.attached_devices.insert("device-b".to_string());
+        }
+
+        let err = runtime
+            .integrity_check(session_id)
+            .expect_err("closed session with attached devices must fail");
+        assert_eq!(err.kind, SessionFoundationErrorKind::IntegrityViolation);
+
+        {
+            let record = runtime.sessions.get_mut(&session_id).expect("record");
+            record.state = SessionState::Open;
+            record.attached_devices.clear();
+            record.attached_devices.insert("device-a".to_string());
+            record.device_timeline_map.insert(
+                "device-a".to_string(),
+                DeviceTimelineRecord {
+                    highest_seen_sequence: 2,
+                    last_turn_id: TurnId(record.next_turn_id),
+                },
+            );
+        }
+
+        let timeline_err = runtime
+            .integrity_check(session_id)
+            .expect_err("impossible timeline must fail");
+        assert_eq!(
+            timeline_err.kind,
+            SessionFoundationErrorKind::IntegrityViolation
+        );
+    }
+
+    #[test]
+    fn slice_1c_projection_binds_session_fields_into_runtime_envelope() {
+        let mut runtime = session_runtime();
+        let started = runtime
+            .start_new_session_turn(device("device-a"), 1)
+            .expect("open bypass");
+        let permit = match started {
+            SessionTurnResolution::Started(permit) => permit,
+            _ => panic!("expected started turn"),
+        };
+        let committed = runtime
+            .finish_turn(permit, SessionState::Active)
+            .expect("finish");
+
+        let bound = committed
+            .projection
+            .bind_to_runtime_envelope(&base_runtime_envelope())
+            .expect("bind");
+
+        assert_eq!(bound.session_id, Some(committed.projection.session_id));
+        assert_eq!(bound.turn_id, TurnId(1));
+        assert_eq!(bound.device_turn_sequence, Some(1));
+        assert_eq!(
+            bound.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+    }
+
+    #[test]
+    fn slice_1c_registers_internal_foundation_services_without_section03_or_authority_drift() {
+        let mut container = startup_container();
+        RuntimeSessionFoundation::register_slice_1c_session_foundation_services(&mut container)
+            .expect("register services");
+
+        let service_ids = container.service_ids();
+        assert!(service_ids.contains(&"runtime_session_store"));
+        assert!(service_ids.contains(&"runtime_session_identifier_generator"));
+        assert!(service_ids.contains(&"runtime_session_turn_gate"));
+        assert!(service_ids.contains(&"runtime_session_event_stream"));
+        assert!(service_ids.contains(&"runtime_session_projection"));
+        assert!(service_ids
+            .iter()
+            .all(|service_id| !service_id.starts_with("/v1/")));
+        assert!(service_ids
+            .iter()
+            .all(|service_id| !service_id.contains("authority")));
+    }
+
+    #[test]
+    fn slice_1c_service_registration_reuses_slice_1a_container_and_leaves_bootstrap_contracts_valid(
+    ) {
+        let mut container = startup_container();
+        RuntimeSessionFoundation::register_slice_1c_session_foundation_services(&mut container)
+            .expect("register services");
+
+        let config = RuntimeBootstrapConfig {
+            service_name: "slice_1c_runtime".to_string(),
+            shutdown_grace_period_ms: 1_000,
+            required_secrets: vec![ProviderSecretId::OpenAIApiKey],
+            build_metadata: RuntimeBuildMetadata {
+                node_id: "node-a".to_string(),
+                runtime_instance_identity: "runtime-a".to_string(),
+                environment_identity: "test".to_string(),
+                build_version: "1.0.0".to_string(),
+                git_commit: "deadbeef".to_string(),
+            },
+        };
+        let runtime = crate::runtime_bootstrap::RuntimeProcess::new(config, container);
+        assert!(runtime.service_ids().contains(&"runtime_session_store"));
+        assert!(runtime.service_ids().contains(&"runtime_session_turn_gate"));
+    }
+}

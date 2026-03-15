@@ -68,6 +68,7 @@ pub mod runtime_bootstrap;
 pub mod runtime_governance;
 pub mod runtime_law;
 pub mod runtime_request_foundation;
+pub mod runtime_session_foundation;
 pub mod section40_exit;
 pub mod simulation_executor;
 pub mod web_search_plan;
