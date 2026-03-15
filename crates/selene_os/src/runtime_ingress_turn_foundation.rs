@@ -3,12 +3,12 @@
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
 use selene_kernel_contracts::ph1l::SessionId;
-use selene_kernel_contracts::ph1link::AppPlatform;
+use selene_kernel_contracts::ph1link::{AppPlatform, InviteOpenActivateCommitRequest, TokenId};
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, FailureClass, PlatformRuntimeContext, RuntimeEntryTrigger,
     RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
-use selene_kernel_contracts::{ContractViolation, SessionState, Validate};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, SessionState, Validate};
 
 use crate::runtime_bootstrap::{
     RuntimeBootstrapError, RuntimeClock, RuntimeProcess, RuntimeSecretsProvider,
@@ -71,8 +71,11 @@ impl CanonicalIngressFamily {
         }
     }
 
-    pub const fn executable_in_slice_2a(self) -> bool {
-        matches!(self, CanonicalIngressFamily::VoiceTurn)
+    pub const fn executable_in_slice_2b(self) -> bool {
+        matches!(
+            self,
+            CanonicalIngressFamily::VoiceTurn | CanonicalIngressFamily::InviteClickCompatibility
+        )
     }
 }
 
@@ -83,6 +86,7 @@ pub enum CanonicalTurnModality {
     File,
     Image,
     Camera,
+    Compatibility,
 }
 
 impl CanonicalTurnModality {
@@ -93,6 +97,7 @@ impl CanonicalTurnModality {
             CanonicalTurnModality::File => "FILE",
             CanonicalTurnModality::Image => "IMAGE",
             CanonicalTurnModality::Camera => "CAMERA",
+            CanonicalTurnModality::Compatibility => "COMPATIBILITY",
         }
     }
 }
@@ -117,6 +122,11 @@ pub enum RawTurnPayload {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompatibilityRequestPayload {
+    InviteClick(InviteOpenActivateCommitRequest),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCanonicalIngressRequest {
     pub family: CanonicalIngressFamily,
     pub envelope_input: RuntimeRequestEnvelopeInput,
@@ -129,6 +139,7 @@ pub struct RuntimeCanonicalIngressRequest {
     pub session_resolve_mode: SessionResolveMode,
     pub modality: Option<CanonicalTurnModality>,
     pub payload: Option<RawTurnPayload>,
+    pub compatibility_payload: Option<CompatibilityRequestPayload>,
     pub overload_active: bool,
     pub feature_flag_overrides: RuntimeFeatureFlagOverrides,
 }
@@ -159,6 +170,36 @@ impl RuntimeCanonicalIngressRequest {
             session_resolve_mode,
             modality: Some(modality),
             payload: Some(payload),
+            compatibility_payload: None,
+            overload_active: false,
+            feature_flag_overrides: RuntimeFeatureFlagOverrides::default(),
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn invite_click(
+        envelope_input: RuntimeRequestEnvelopeInput,
+        authorization_bearer: String,
+        actor_identity: UserId,
+        device_identity: DeviceId,
+        platform_context: PlatformRuntimeContext,
+        invite_request: InviteOpenActivateCommitRequest,
+    ) -> Result<Self, ContractViolation> {
+        let request = Self {
+            family: CanonicalIngressFamily::InviteClickCompatibility,
+            envelope_input,
+            authorization_bearer,
+            actor_identity,
+            device_identity,
+            platform_context,
+            session_hint: None,
+            device_turn_sequence: None,
+            session_resolve_mode: SessionResolveMode::ResolveOrOpen,
+            modality: None,
+            payload: None,
+            compatibility_payload: Some(CompatibilityRequestPayload::InviteClick(invite_request)),
             overload_active: false,
             feature_flag_overrides: RuntimeFeatureFlagOverrides::default(),
         };
@@ -186,6 +227,7 @@ impl RuntimeCanonicalIngressRequest {
             session_resolve_mode: SessionResolveMode::ResolveOrOpen,
             modality: None,
             payload: None,
+            compatibility_payload: None,
             overload_active: false,
             feature_flag_overrides: RuntimeFeatureFlagOverrides::default(),
         };
@@ -232,13 +274,60 @@ impl Validate for RuntimeCanonicalIngressRequest {
                         reason: "voice turn requests require a modality and payload",
                     });
                 }
+                if self.compatibility_payload.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.compatibility_payload",
+                        reason: "voice turn requests must not carry compatibility request state",
+                    });
+                }
             }
-            CanonicalIngressFamily::InviteClickCompatibility
-            | CanonicalIngressFamily::OnboardingContinueCompatibility => {
+            CanonicalIngressFamily::InviteClickCompatibility => {
                 if self.device_turn_sequence.is_some()
                     || self.modality.is_some()
                     || self.payload.is_some()
                     || self.session_hint.is_some()
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request",
+                        reason:
+                            "compatibility-only family requests may not carry executable turn state",
+                    });
+                }
+                if !matches!(self.session_resolve_mode, SessionResolveMode::ResolveOrOpen) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.session_resolve_mode",
+                        reason: "invite-click compatibility requests require ResolveOrOpen",
+                    });
+                }
+                let Some(CompatibilityRequestPayload::InviteClick(invite_request)) =
+                    self.compatibility_payload.as_ref()
+                else {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.compatibility_payload",
+                        reason:
+                            "invite-click compatibility requests require invite-click request state",
+                    });
+                };
+                invite_request.validate()?;
+                if self.envelope_input.idempotency_key != invite_request.idempotency_key {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.envelope_input.idempotency_key",
+                        reason: "must match invite-click request idempotency_key",
+                    });
+                }
+                if self.platform_context.platform_type != invite_request.app_platform {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "runtime_canonical_ingress_request.platform_context.platform_type",
+                        reason: "must match invite-click request app_platform",
+                    });
+                }
+            }
+            CanonicalIngressFamily::OnboardingContinueCompatibility => {
+                if self.device_turn_sequence.is_some()
+                    || self.modality.is_some()
+                    || self.payload.is_some()
+                    || self.session_hint.is_some()
+                    || self.compatibility_payload.is_some()
                 {
                     return Err(ContractViolation::InvalidValue {
                         field: "runtime_canonical_ingress_request",
@@ -270,6 +359,14 @@ pub enum CanonicalTurnPayloadCarrier {
         normalized_content_type: String,
         byte_len: usize,
     },
+    InviteClick {
+        token_id: TokenId,
+        token_signature: String,
+        device_fingerprint: String,
+        app_instance_id: String,
+        deep_link_nonce: String,
+        link_opened_at: MonotonicTimeNs,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -295,6 +392,7 @@ pub enum TurnStartClassification {
     ExistingSessionContinued,
     ExistingSessionResumed,
     ExistingSessionRecovered,
+    InviteClickCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -580,7 +678,7 @@ impl RuntimeIngressTurnFoundation {
             .map_err(map_request_error)?;
         let rejection_at_ms = prepared.prepared_at_ms;
 
-        if !request.family.executable_in_slice_2a() {
+        if !request.family.executable_in_slice_2b() {
             self.counters.rejected_requests += 1;
             let request_id = prepared
                 .envelope
@@ -594,12 +692,12 @@ impl RuntimeIngressTurnFoundation {
                 session_id: None,
                 turn_id: None,
                 classification: None,
-                detail: "route family is compatibility-only in Slice 2A".to_string(),
+                detail: "route family is compatibility-only in Slice 2B".to_string(),
             });
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "route family is registered but not executable in Slice 2A",
+                "route family is registered but not executable in Slice 2B",
             )
             .with_request_envelope(prepared.envelope)
             .rejecting(rejection_at_ms));
@@ -623,10 +721,7 @@ impl RuntimeIngressTurnFoundation {
             session_id: request.session_hint,
             turn_id: None,
             classification: None,
-            detail: format!(
-                "normalized {} turn into the canonical /v1/voice/turn carrier",
-                normalized.modality.as_str()
-            ),
+            detail: normalized_event_detail(&normalized),
         });
 
         validate_trigger_posture(&prepared, &request).map_err(|err| {
@@ -649,7 +744,7 @@ impl RuntimeIngressTurnFoundation {
             at_unix_ms: runtime.clock().now_unix_ms(),
         });
 
-        let resolved = resolve_session_turn(sessions, &request).map_err(|err| {
+        let resolved = resolve_session_turn(sessions, &request, &normalized).map_err(|err| {
             self.counters.rejected_requests += 1;
             self.events.push(RuntimeIngressTurnEvent {
                 kind: RuntimeIngressTurnEventKind::TurnRejected,
@@ -741,7 +836,15 @@ impl RuntimeIngressTurnFoundation {
                     session_id: Some(permit.session_id),
                     turn_id: Some(permit.turn_id),
                     classification: Some(classification),
-                    detail: "turn reached the bounded pre-authority handoff".to_string(),
+                    detail: if matches!(
+                        normalized.family,
+                        CanonicalIngressFamily::InviteClickCompatibility
+                    ) {
+                        "invite-click compatibility reached the bounded pre-authority handoff"
+                            .to_string()
+                    } else {
+                        "turn reached the bounded pre-authority handoff".to_string()
+                    },
                 });
                 Ok(RuntimePreAuthorityTurnResult::Ready(
                     RuntimePreAuthorityTurnHandoff {
@@ -913,6 +1016,22 @@ enum ResolvedSessionTurn {
 fn normalize_turn_request(
     request: &RuntimeCanonicalIngressRequest,
 ) -> Result<CanonicalTurnRequestCarrier, RuntimeIngressTurnError> {
+    match request.family {
+        CanonicalIngressFamily::VoiceTurn => normalize_executable_turn_request(request),
+        CanonicalIngressFamily::InviteClickCompatibility => normalize_invite_click_request(request),
+        CanonicalIngressFamily::OnboardingContinueCompatibility => {
+            Err(RuntimeIngressTurnError::new(
+                reason_codes::INGRESS_COMPATIBILITY_ONLY,
+                FailureClass::PolicyViolation,
+                "onboarding-continue remains compatibility-only in Slice 2B",
+            ))
+        }
+    }
+}
+
+fn normalize_executable_turn_request(
+    request: &RuntimeCanonicalIngressRequest,
+) -> Result<CanonicalTurnRequestCarrier, RuntimeIngressTurnError> {
     validate_authorization_header(&request.authorization_bearer)?;
     let modality = request.modality.ok_or_else(|| {
         RuntimeIngressTurnError::new(
@@ -1055,6 +1174,115 @@ fn normalize_turn_request(
     }
 }
 
+fn normalize_invite_click_request(
+    request: &RuntimeCanonicalIngressRequest,
+) -> Result<CanonicalTurnRequestCarrier, RuntimeIngressTurnError> {
+    validate_authorization_header(&request.authorization_bearer)?;
+    let Some(CompatibilityRequestPayload::InviteClick(invite_request)) =
+        request.compatibility_payload.as_ref()
+    else {
+        return Err(RuntimeIngressTurnError::new(
+            reason_codes::INGRESS_PAYLOAD_INVALID,
+            FailureClass::InvalidPayload,
+            "invite-click execution requires a bounded invite-click request shape",
+        ));
+    };
+
+    let request_content_hash = canonical_invite_click_hash(invite_request);
+    let device_turn_sequence =
+        compatibility_device_turn_sequence(request.device_identity.as_str(), invite_request);
+    Ok(CanonicalTurnRequestCarrier {
+        canonical_route: INVITE_CLICK_ENDPOINT_PATH,
+        family: request.family,
+        modality: CanonicalTurnModality::Compatibility,
+        actor_identity: request.actor_identity.clone(),
+        device_identity: request.device_identity.clone(),
+        platform: request.platform_context.platform_type,
+        requested_trigger: request.platform_context.requested_trigger,
+        session_hint: request.session_hint,
+        device_turn_sequence,
+        session_resolve_mode: request.session_resolve_mode,
+        request_content_hash,
+        payload: CanonicalTurnPayloadCarrier::InviteClick {
+            token_id: invite_request.token_id.clone(),
+            token_signature: invite_request.token_signature.clone(),
+            device_fingerprint: invite_request.device_fingerprint.clone(),
+            app_instance_id: invite_request.app_instance_id.clone(),
+            deep_link_nonce: invite_request.deep_link_nonce.clone(),
+            link_opened_at: invite_request.link_opened_at,
+        },
+    })
+}
+
+fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
+    match normalized.family {
+        CanonicalIngressFamily::VoiceTurn => format!(
+            "normalized {} turn into the canonical /v1/voice/turn carrier",
+            normalized.modality.as_str()
+        ),
+        CanonicalIngressFamily::InviteClickCompatibility => {
+            "normalized invite-click compatibility into the bounded /v1/invite/click carrier"
+                .to_string()
+        }
+        CanonicalIngressFamily::OnboardingContinueCompatibility => {
+            "normalized deferred onboarding-continue compatibility request".to_string()
+        }
+    }
+}
+
+fn canonical_invite_click_hash(invite_request: &InviteOpenActivateCommitRequest) -> String {
+    let shape = format!(
+        "token_id={}|token_signature={}|device_fingerprint={}|app_platform={}|app_instance_id={}|deep_link_nonce={}|link_opened_at={}|idempotency_key={}",
+        invite_request.token_id.as_str(),
+        invite_request.token_signature,
+        invite_request.device_fingerprint,
+        invite_request.app_platform.as_str(),
+        invite_request.app_instance_id,
+        invite_request.deep_link_nonce,
+        invite_request.link_opened_at.0,
+        invite_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        INVITE_CLICK_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
+fn compatibility_device_turn_sequence(
+    device_id: &str,
+    invite_request: &InviteOpenActivateCommitRequest,
+) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for component in [
+        INVITE_CLICK_ENDPOINT_PATH.as_bytes(),
+        device_id.as_bytes(),
+        invite_request.token_id.as_str().as_bytes(),
+        invite_request.token_signature.as_bytes(),
+        invite_request.device_fingerprint.as_bytes(),
+        invite_request.app_instance_id.as_bytes(),
+        invite_request.deep_link_nonce.as_bytes(),
+        invite_request.idempotency_key.as_bytes(),
+    ] {
+        for byte in component {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash ^= u64::from(b'|');
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let link_opened_at = invite_request.link_opened_at.0.to_le_bytes();
+    for byte in link_opened_at {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    if hash == 0 {
+        1
+    } else {
+        hash
+    }
+}
+
 fn validate_authorization_header(value: &str) -> Result<(), RuntimeIngressTurnError> {
     if value.len() > MAX_AUTHORIZATION_LEN || !value.is_ascii() {
         return Err(RuntimeIngressTurnError::new(
@@ -1101,6 +1329,7 @@ fn validate_binary_content_type(
                 || normalized_content_type.starts_with("video/")
         }
         CanonicalTurnModality::Text => false,
+        CanonicalTurnModality::Compatibility => false,
     };
     if allowed {
         Ok(())
@@ -1167,16 +1396,26 @@ fn validate_trigger_posture(
             "platform runtime context rejected the requested trigger",
         ));
     }
+    if matches!(
+        request.family,
+        CanonicalIngressFamily::InviteClickCompatibility
+    ) && request.platform_context.requested_trigger != RuntimeEntryTrigger::Explicit
+    {
+        return Err(RuntimeIngressTurnError::new(
+            reason_codes::INGRESS_TRIGGER_INVALID,
+            FailureClass::PolicyViolation,
+            "invite-click compatibility requests require EXPLICIT trigger posture",
+        ));
+    }
     Ok(())
 }
 
 fn resolve_session_turn(
     sessions: &mut RuntimeSessionFoundation,
     request: &RuntimeCanonicalIngressRequest,
+    normalized: &CanonicalTurnRequestCarrier,
 ) -> Result<ResolvedSessionTurn, SessionFoundationError> {
-    let device_turn_sequence = request
-        .device_turn_sequence
-        .expect("validated voice turn requests carry a device_turn_sequence");
+    let device_turn_sequence = normalized.device_turn_sequence;
     match request.session_resolve_mode {
         SessionResolveMode::ResolveOrOpen => {
             if let Some(session_id) = request.session_hint {
@@ -1220,8 +1459,14 @@ fn resolve_session_turn(
                                         .session_snapshot(session_id)?
                                         .session_state,
                                     permit,
-                                    classification:
-                                        TurnStartClassification::ExistingSessionAttached,
+                                    classification: if matches!(
+                                        request.family,
+                                        CanonicalIngressFamily::InviteClickCompatibility
+                                    ) {
+                                        TurnStartClassification::InviteClickCompatibilityPrepared
+                                    } else {
+                                        TurnStartClassification::ExistingSessionAttached
+                                    },
                                     attach_outcome: attach.projection.attach_outcome,
                                 })
                             }
@@ -1248,7 +1493,14 @@ fn resolve_session_turn(
                         session_state: sessions.session_snapshot(permit.session_id)?.session_state,
                         attach_outcome: permit.attach_outcome,
                         permit,
-                        classification: TurnStartClassification::NewSessionOpenBypass,
+                        classification: if matches!(
+                            request.family,
+                            CanonicalIngressFamily::InviteClickCompatibility
+                        ) {
+                            TurnStartClassification::InviteClickCompatibilityPrepared
+                        } else {
+                            TurnStartClassification::NewSessionOpenBypass
+                        },
                     }),
                     SessionTurnResolution::Retry(_) | SessionTurnResolution::Deferred(_) => {
                         unreachable!("start_new_session_turn cannot reuse or defer the first turn")
@@ -1365,20 +1617,20 @@ fn validate_ready_invariants(
     stage_history: &[PreAuthorityStageRecord],
     classification: TurnStartClassification,
 ) -> Result<(), RuntimeIngressTurnError> {
-    if prepared.definition.key.path != CANONICAL_TURN_ENDPOINT_PATH
-        || prepared.definition.handler != RuntimeRouteHandlerKind::CanonicalTurnIngress
+    if prepared.definition.key.path != normalized.family.route_path()
+        || prepared.definition.handler != normalized.family.handler()
     {
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "pre-authority handoff must originate from the canonical /v1/voice/turn route",
+            "pre-authority handoff must originate from the selected canonical Section 03 route",
         ));
     }
-    if normalized.canonical_route != CANONICAL_TURN_ENDPOINT_PATH {
+    if normalized.canonical_route != normalized.family.route_path() {
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "normalized requests must preserve the canonical turn route",
+            "normalized requests must preserve the canonical route selected for their family",
         ));
     }
     if envelope.session_id.is_none() {
@@ -1416,7 +1668,7 @@ fn validate_ready_invariants(
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "Slice 2A must stop before Section 04, Section 05, or later runtime execution state appears",
+            "Slice 2B must stop before Section 04, Section 05, or later runtime execution state appears",
         ));
     }
     validate_stage_history(
@@ -1444,14 +1696,14 @@ fn validate_deferred_invariants(
     normalized: &CanonicalTurnRequestCarrier,
     stage_history: &[PreAuthorityStageRecord],
 ) -> Result<(), RuntimeIngressTurnError> {
-    if prepared.definition.key.path != CANONICAL_TURN_ENDPOINT_PATH
-        || prepared.definition.handler != RuntimeRouteHandlerKind::CanonicalTurnIngress
-        || normalized.canonical_route != CANONICAL_TURN_ENDPOINT_PATH
+    if prepared.definition.key.path != normalized.family.route_path()
+        || prepared.definition.handler != normalized.family.handler()
+        || normalized.canonical_route != normalized.family.route_path()
     {
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "deferred turn outcomes must still originate from the canonical /v1/voice/turn path",
+            "deferred outcomes must still originate from the selected canonical Section 03 route",
         ));
     }
     validate_stage_history(
@@ -1474,7 +1726,7 @@ fn validate_stage_history(
         return Err(RuntimeIngressTurnError::new(
             reason_codes::INGRESS_STAGE_INVALID,
             FailureClass::ExecutionFailure,
-            "pre-authority stage order drifted from the canonical Slice 2A scaffold",
+            "pre-authority stage order drifted from the canonical Section 03 scaffold",
         ));
     }
     Ok(())
@@ -1514,6 +1766,7 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 
     use crate::runtime_bootstrap::{
@@ -1677,6 +1930,38 @@ mod tests {
             },
         )
         .expect("text turn request")
+    }
+
+    fn invite_click_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        RuntimeCanonicalIngressRequest::invite_click(
+            envelope_input(
+                request_id,
+                trace_id,
+                &format!("idem-{request_id}"),
+                AppPlatform::Android,
+                trigger,
+                1_040,
+            ),
+            "Bearer token-1".to_string(),
+            user("user_runtime_1"),
+            device("device-a"),
+            platform_context(AppPlatform::Android, trigger),
+            InviteOpenActivateCommitRequest {
+                token_id: TokenId::new("invite-token-1").expect("token"),
+                token_signature: "v1.k1.signature".to_string(),
+                device_fingerprint: "fingerprint-device-a".to_string(),
+                app_platform: AppPlatform::Android,
+                app_instance_id: "app-instance-1".to_string(),
+                deep_link_nonce: "deep-link-1".to_string(),
+                link_opened_at: MonotonicTimeNs(1_000_000_000),
+                idempotency_key: format!("idem-{request_id}"),
+            },
+        )
+        .expect("invite click request")
     }
 
     #[test]
@@ -2012,6 +2297,53 @@ mod tests {
     }
 
     #[test]
+    fn slice_2b_invite_click_is_the_only_newly_executable_compatibility_path() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                invite_click_request(
+                    "invite-compat-1",
+                    "trace-invite-compat-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("invite click compatibility should execute in slice 2B");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::InviteClickCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::InviteClickCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            INVITE_CLICK_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+    }
+
+    #[test]
     fn slice_2a_success_path_stops_before_section04_or_section05_execution() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -2063,16 +2395,16 @@ mod tests {
     }
 
     #[test]
-    fn slice_2a_compatibility_routes_remain_registered_but_non_executable() {
+    fn slice_2b_onboarding_continue_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
         let request = RuntimeCanonicalIngressRequest::compatibility(
-            CanonicalIngressFamily::InviteClickCompatibility,
+            CanonicalIngressFamily::OnboardingContinueCompatibility,
             envelope_input(
-                "invite-1",
-                "trace-invite-1",
-                "idem-invite-1",
+                "onb-1",
+                "trace-onb-1",
+                "idem-onb-1",
                 AppPlatform::Android,
                 RuntimeEntryTrigger::Explicit,
                 1_020,
@@ -2085,9 +2417,158 @@ mod tests {
         .expect("compatibility request");
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect_err("compatibility route must not execute in slice 2A");
+            .expect_err("onboarding continue must remain non-executable");
         assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
         assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2b_invite_click_normalization_reuses_the_existing_canonical_carrier() {
+        let request = invite_click_request(
+            "invite-shape-1",
+            "trace-invite-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first = normalize_turn_request(&request).expect("invite click normalized");
+        let second = normalize_turn_request(&request).expect("invite click normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, INVITE_CLICK_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::InviteClickCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::InviteClick {
+                token_id,
+                app_instance_id,
+                deep_link_nonce,
+                ..
+            } => {
+                assert_eq!(token_id.as_str(), "invite-token-1");
+                assert_eq!(app_instance_id, "app-instance-1".to_string());
+                assert_eq!(deep_link_nonce, "deep-link-1".to_string());
+            }
+            other => panic!("expected invite-click payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn slice_2b_malformed_invite_click_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = invite_click_request(
+            "invite-bad-1",
+            "trace-invite-bad-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        request.envelope_input.idempotency_key = "mismatch".to_string();
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("invite-click idempotency mismatch must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2b_invite_click_trigger_validation_is_deterministic_and_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = invite_click_request(
+            "invite-trigger-1",
+            "trace-invite-trigger-1",
+            RuntimeEntryTrigger::WakeWord,
+        );
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("invite click wake-word trigger must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_TRIGGER_INVALID);
+        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2b_invite_click_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                invite_click_request(
+                    "invite-session-1",
+                    "trace-invite-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("invite-click request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::InviteClickCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+    }
+
+    #[test]
+    fn slice_2b_invite_click_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                invite_click_request(
+                    "invite-obs-1",
+                    "trace-invite-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("invite-click request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            INVITE_CLICK_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            INVITE_CLICK_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::InviteClickCompatibilityPrepared)
+        );
     }
 
     #[test]
