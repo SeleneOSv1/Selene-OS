@@ -728,7 +728,12 @@ struct SessionRecord {
 }
 
 impl SessionRecord {
-    fn new(session_id: SessionId, runtime_identity: &str, lease_duration_ms: i64) -> Self {
+    fn new(
+        session_id: SessionId,
+        runtime_identity: &str,
+        logical_now_ms: i64,
+        lease_duration_ms: i64,
+    ) -> Self {
         Self {
             state: SessionState::Closed,
             coordination_state: SessionCoordinationState::PrimaryOwned,
@@ -737,7 +742,7 @@ impl SessionRecord {
                 owner_runtime_id: runtime_identity.to_string(),
                 lease_generation: 1,
                 lease_token: lease_token(session_id, runtime_identity, 1),
-                lease_expires_at_ms: lease_duration_ms,
+                lease_expires_at_ms: logical_now_ms.saturating_add(lease_duration_ms),
             },
             pending_transfer_target: None,
             attached_devices: BTreeSet::new(),
@@ -963,10 +968,12 @@ impl RuntimeSessionFoundation {
     ) -> Result<SessionAttachResult, SessionFoundationError> {
         let session_id = self.allocate_session_id();
         let device_key = device_id.as_str().to_string();
+        let logical_now_ms = self.logical_now_ms;
 
         let mut record = SessionRecord::new(
             session_id,
             self.local_runtime_id(),
+            logical_now_ms,
             self.config.lease_duration_ms,
         );
         attach_device_to_record(
@@ -1021,10 +1028,12 @@ impl RuntimeSessionFoundation {
 
         let session_id = self.allocate_session_id();
         let device_key = device_id.as_str().to_string();
+        let logical_now_ms = self.logical_now_ms;
 
         let mut record = SessionRecord::new(
             session_id,
             self.local_runtime_id(),
+            logical_now_ms,
             self.config.lease_duration_ms,
         );
         attach_device_to_record(
@@ -3363,6 +3372,62 @@ mod tests {
     }
 
     #[test]
+    fn slice_1d_late_created_sessions_start_with_a_fresh_primary_owned_strict_lease_window() {
+        let mut runtime = session_runtime();
+        runtime.advance_logical_time_ms(120_000);
+        let creation_time_ms = runtime.current_logical_time_ms();
+
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+        let view = runtime.coordination_view(session_id).expect("coordination");
+
+        assert_eq!(
+            view.coordination_state,
+            SessionCoordinationState::PrimaryOwned
+        );
+        assert_eq!(view.consistency_level, SessionConsistencyLevel::Strict);
+        assert_eq!(view.owner_runtime_id, "runtime.slice1.local");
+        assert_eq!(
+            view.lease_expires_at_ms,
+            creation_time_ms.saturating_add(runtime.config.lease_duration_ms)
+        );
+        assert!(view.lease_expires_at_ms > creation_time_ms);
+    }
+
+    #[test]
+    fn slice_1d_late_created_sessions_expire_only_after_their_own_lease_window_elapses() {
+        let mut runtime = session_runtime();
+        runtime.advance_logical_time_ms(120_000);
+
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+
+        runtime.advance_logical_time_ms(runtime.config.lease_duration_ms - 1);
+        let before_expiry = runtime
+            .coordination_view(session_id)
+            .expect("before expiry");
+        assert_eq!(
+            before_expiry.coordination_state,
+            SessionCoordinationState::PrimaryOwned
+        );
+        assert_eq!(
+            before_expiry.consistency_level,
+            SessionConsistencyLevel::Strict
+        );
+
+        runtime.advance_logical_time_ms(1);
+        let after_expiry = runtime.coordination_view(session_id).expect("after expiry");
+        assert_eq!(
+            after_expiry.coordination_state,
+            SessionCoordinationState::OwnershipUncertain
+        );
+        assert_eq!(
+            after_expiry.consistency_level,
+            SessionConsistencyLevel::DegradedRecovery
+        );
+    }
+
+    #[test]
     fn slice_1d_ownership_and_lease_foundation_is_coherent_in_process() {
         let mut runtime = session_runtime();
         let created = runtime.create_session(device("device-a")).expect("session");
@@ -3375,6 +3440,35 @@ mod tests {
         assert_eq!(renewed.owner_runtime_id, before.owner_runtime_id);
         assert_ne!(renewed.lease_token, before.lease_token);
         assert!(renewed.lease_expires_at_ms >= before.lease_expires_at_ms);
+    }
+
+    #[test]
+    fn slice_1d_lease_renewal_extends_from_current_logical_time_for_late_created_sessions() {
+        let mut runtime = session_runtime();
+        runtime.advance_logical_time_ms(90_000);
+
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+        let before = runtime
+            .coordination_view(session_id)
+            .expect("before renewal");
+
+        runtime.advance_logical_time_ms(5_000);
+        let renewal_base_ms = runtime.current_logical_time_ms();
+        let renewed = runtime
+            .renew_session_lease(session_id)
+            .expect("lease renewal");
+
+        assert_eq!(
+            renewed.lease_expires_at_ms,
+            renewal_base_ms.saturating_add(runtime.config.lease_duration_ms)
+        );
+        assert!(renewed.lease_expires_at_ms > before.lease_expires_at_ms);
+        assert_eq!(
+            renewed.coordination_state,
+            SessionCoordinationState::PrimaryOwned
+        );
+        assert_eq!(renewed.consistency_level, SessionConsistencyLevel::Strict);
     }
 
     #[test]
@@ -3419,6 +3513,66 @@ mod tests {
         runtime
             .finish_turn(permit, SessionState::Active)
             .expect("finish transferred turn");
+    }
+
+    #[test]
+    fn slice_1d_transfer_and_failover_remain_coherent_after_late_session_creation() {
+        let mut runtime = session_runtime();
+        runtime.advance_logical_time_ms(75_000);
+
+        let created = runtime.create_session(device("device-a")).expect("session");
+        let session_id = created.projection.session_id;
+
+        runtime
+            .begin_ownership_transfer(session_id, "runtime-b")
+            .expect("transfer request");
+        let transferred = runtime
+            .acknowledge_ownership_transfer(session_id, "runtime-b")
+            .expect("transfer ack");
+        assert_eq!(
+            transferred.coordination_state,
+            SessionCoordinationState::PrimaryOwned
+        );
+        assert_eq!(
+            transferred.consistency_level,
+            SessionConsistencyLevel::Strict
+        );
+        assert_eq!(transferred.owner_runtime_id, "runtime-b");
+        assert!(transferred.lease_expires_at_ms > runtime.current_logical_time_ms());
+
+        runtime.advance_logical_time_ms(runtime.config.lease_duration_ms);
+        let uncertain = runtime
+            .coordination_view(session_id)
+            .expect("expired lease view");
+        assert_eq!(
+            uncertain.coordination_state,
+            SessionCoordinationState::OwnershipUncertain
+        );
+        assert_eq!(
+            uncertain.consistency_level,
+            SessionConsistencyLevel::DegradedRecovery
+        );
+
+        let recovering = runtime
+            .begin_failover_recovery(session_id, "runtime-c")
+            .expect("failover recovery");
+        assert_eq!(
+            recovering.coordination_state,
+            SessionCoordinationState::FailoverRecovering
+        );
+        assert_eq!(recovering.owner_runtime_id, "runtime-c");
+        assert!(recovering.lease_expires_at_ms > runtime.current_logical_time_ms());
+
+        let recovered = runtime
+            .complete_failover_recovery(session_id, "runtime-c")
+            .expect("recovery complete");
+        assert_eq!(
+            recovered.coordination_state,
+            SessionCoordinationState::PrimaryOwned
+        );
+        assert_eq!(recovered.consistency_level, SessionConsistencyLevel::Strict);
+        assert_eq!(recovered.owner_runtime_id, "runtime-c");
+        assert!(recovered.lease_expires_at_ms > runtime.current_logical_time_ms());
     }
 
     #[test]
