@@ -273,7 +273,7 @@ impl RuntimeCanonicalIngressRequest {
         })
     }
 
-    fn executable_in_slice_2d(&self) -> bool {
+    fn executable_in_slice_2e(&self) -> bool {
         match self.family {
             CanonicalIngressFamily::VoiceTurn
             | CanonicalIngressFamily::InviteClickCompatibility => true,
@@ -284,6 +284,7 @@ impl RuntimeCanonicalIngressRequest {
                         &onboarding_request.action,
                         AppOnboardingContinueAction::AskMissingSubmit { .. }
                             | AppOnboardingContinueAction::PlatformSetupReceipt { .. }
+                            | AppOnboardingContinueAction::TermsAccept { .. }
                     )
             ),
         }
@@ -294,35 +295,35 @@ impl RuntimeCanonicalIngressRequest {
             Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) => {
                 match &onboarding_request.action {
                     AppOnboardingContinueAction::PlatformSetupReceipt { .. } => {
-                        "platform-setup onboarding compatibility is executable in Slice 2D and should not reach the compatibility-only boundary"
+                        "platform-setup onboarding compatibility is executable in Slice 2E and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::TermsAccept { .. } => {
-                        "terms-accept onboarding compatibility remains deferred after Slice 2D"
+                        "terms-accept onboarding compatibility is executable in Slice 2E and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::PrimaryDeviceConfirm { .. } => {
-                        "primary-device-confirm onboarding compatibility remains deferred after Slice 2D"
+                        "primary-device-confirm onboarding compatibility remains deferred after Slice 2E"
                             .to_string()
                     }
                     AppOnboardingContinueAction::VoiceEnrollLock { .. } => {
-                        "voice-enroll onboarding compatibility remains deferred after Slice 2D"
+                        "voice-enroll onboarding compatibility remains deferred after Slice 2E"
                             .to_string()
                     }
                     AppOnboardingContinueAction::AskMissingSubmit { .. } => {
-                        "onboarding ask-missing compatibility is executable in Slice 2D and should not reach the compatibility-only boundary"
+                        "onboarding ask-missing compatibility is executable in Slice 2E and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollSampleCommit { .. } => {
-                        "voice-sample onboarding compatibility remains deferred after Slice 2D"
+                        "voice-sample onboarding compatibility remains deferred after Slice 2E"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. } => {
-                        "voice-complete onboarding compatibility remains deferred after Slice 2D"
+                        "voice-complete onboarding compatibility remains deferred after Slice 2E"
                             .to_string()
                     }
                     _ => {
-                        "selected onboarding action remains deferred after Slice 2D".to_string()
+                        "selected onboarding action remains deferred after Slice 2E".to_string()
                     }
                 }
             }
@@ -489,6 +490,13 @@ pub enum CanonicalTurnPayloadCarrier {
         signer: String,
         payload_hash: String,
     },
+    OnboardingTermsAccept {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+        terms_version_id: String,
+        accepted: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -517,6 +525,7 @@ pub enum TurnStartClassification {
     InviteClickCompatibilityPrepared,
     OnboardingAskMissingCompatibilityPrepared,
     OnboardingPlatformSetupReceiptCompatibilityPrepared,
+    OnboardingTermsAcceptCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -802,7 +811,7 @@ impl RuntimeIngressTurnFoundation {
             .map_err(map_request_error)?;
         let rejection_at_ms = prepared.prepared_at_ms;
 
-        if !request.executable_in_slice_2d() {
+        if !request.executable_in_slice_2e() {
             let compatibility_detail = request.compatibility_only_detail();
             self.counters.rejected_requests += 1;
             let request_id = prepared
@@ -1365,11 +1374,24 @@ fn normalize_onboarding_continue_request(
                 payload_hash: payload_hash.clone(),
             },
         ),
+        AppOnboardingContinueAction::TermsAccept {
+            terms_version_id,
+            accepted,
+        } => (
+            canonical_onboarding_terms_accept_hash(onboarding_request),
+            CanonicalTurnPayloadCarrier::OnboardingTermsAccept {
+                correlation_id: onboarding_request.correlation_id,
+                onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+                tenant_id: onboarding_request.tenant_id.clone(),
+                terms_version_id: terms_version_id.clone(),
+                accepted: *accepted,
+            },
+        ),
         _ => {
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "only onboarding ask-missing and platform-setup compatibility are executable in Slice 2D",
+                "only onboarding ask-missing, platform-setup, and terms-accept compatibility are executable in Slice 2E",
             ))
         }
     };
@@ -1497,6 +1519,10 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
             "normalized onboarding platform-setup receipt compatibility into the bounded /v1/onboarding/continue carrier"
                 .to_string()
         }
+        CanonicalTurnPayloadCarrier::OnboardingTermsAccept { .. } => {
+            "normalized onboarding terms-accept compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
+        }
     }
 }
 
@@ -1571,6 +1597,32 @@ fn canonical_onboarding_platform_setup_receipt_hash(
     )
 }
 
+fn canonical_onboarding_terms_accept_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::TermsAccept {
+        terms_version_id,
+        accepted,
+    } = &onboarding_request.action
+    else {
+        unreachable!("selected onboarding normalization requires terms-accept action");
+    };
+    let shape = format!(
+        "correlation_id={}|onboarding_session_id={}|tenant_id={}|terms_version_id={}|accepted={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        terms_version_id,
+        accepted,
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
 fn compatibility_device_turn_sequence(
     device_id: &str,
     invite_request: &InviteOpenActivateCommitRequest,
@@ -1628,8 +1680,20 @@ fn onboarding_compatibility_device_turn_sequence(
             signer.as_bytes(),
             payload_hash.as_bytes(),
         ],
+        AppOnboardingContinueAction::TermsAccept {
+            terms_version_id,
+            accepted,
+        } => vec![
+            b"TERMS_ACCEPT".as_slice(),
+            terms_version_id.as_bytes(),
+            if *accepted {
+                b"true".as_slice()
+            } else {
+                b"false".as_slice()
+            },
+        ],
         _ => unreachable!(
-            "selected onboarding device-turn sequence requires an executable Slice 2D action"
+            "selected onboarding device-turn sequence requires an executable Slice 2E action"
         ),
     };
     let mut components = vec![
@@ -1813,6 +1877,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingPlatformSetupReceipt { .. } => {
             Some(TurnStartClassification::OnboardingPlatformSetupReceiptCompatibilityPrepared)
         }
+        CanonicalTurnPayloadCarrier::OnboardingTermsAccept { .. } => {
+            Some(TurnStartClassification::OnboardingTermsAcceptCompatibilityPrepared)
+        }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -1830,6 +1897,10 @@ fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> Strin
         }
         CanonicalTurnPayloadCarrier::OnboardingPlatformSetupReceipt { .. } => {
             "onboarding platform-setup receipt compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingTermsAccept { .. } => {
+            "onboarding terms-accept compatibility reached the bounded pre-authority handoff"
                 .to_string()
         }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
@@ -2445,6 +2516,22 @@ mod tests {
         )
     }
 
+    fn onboarding_terms_accept_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::TermsAccept {
+                terms_version_id: "terms-v1".to_string(),
+                accepted: true,
+            },
+        )
+    }
+
     #[test]
     fn slice_2a_registers_only_the_h3_canonical_route_family() {
         let foundation = foundation();
@@ -2887,7 +2974,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_2c_onboarding_ask_missing_remains_executable_in_slice_2d() {
+    fn slice_2c_onboarding_ask_missing_remains_executable_in_slice_2e() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -2909,7 +2996,7 @@ mod tests {
 
         let result = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect("onboarding ask-missing should execute in Slice 2C");
+            .expect("onboarding ask-missing should execute in Slice 2E");
         let ready = match result {
             RuntimePreAuthorityTurnResult::Ready(ready) => ready,
             other => panic!("expected ready handoff, got {other:?}"),
@@ -2946,7 +3033,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_2d_platform_setup_receipt_is_the_one_newly_executable_onboarding_action() {
+    fn slice_2d_platform_setup_receipt_remains_executable_in_slice_2e() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -2967,7 +3054,7 @@ mod tests {
 
         let result = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect("platform setup should execute in Slice 2D");
+            .expect("platform setup should execute in Slice 2E");
         let ready = match result {
             RuntimePreAuthorityTurnResult::Ready(ready) => ready,
             other => panic!("expected ready handoff, got {other:?}"),
@@ -2999,29 +3086,60 @@ mod tests {
     }
 
     #[test]
-    fn slice_2d_terms_accept_remains_non_executable() {
+    fn slice_2e_terms_accept_is_the_one_newly_executable_onboarding_action() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
-        let request = onboarding_continue_request(
+        let request = onboarding_terms_accept_request(
             "onb-terms-1",
             "trace-onb-terms-1",
             RuntimeEntryTrigger::Explicit,
-            AppOnboardingContinueAction::TermsAccept {
-                terms_version_id: "terms-v1".to_string(),
-                accepted: true,
-            },
         );
+        assert!(request.authorization_bearer.is_empty());
+        assert!(request
+            .actor_identity
+            .as_str()
+            .starts_with("onboarding-compat-actor:"));
+        assert!(request
+            .device_identity
+            .as_str()
+            .starts_with("onboarding-compat-device:"));
 
-        let err = foundation
+        let result = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect_err("terms accept must remain non-executable");
-        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
-        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+            .expect("terms accept should execute in Slice 2E");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingTermsAcceptCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
     }
 
     #[test]
-    fn slice_2d_primary_device_confirm_remains_non_executable() {
+    fn slice_2e_primary_device_confirm_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -3043,7 +3161,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_2d_voice_enroll_lock_remains_non_executable() {
+    fn slice_2e_voice_enroll_lock_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -3065,7 +3183,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_2d_wake_enroll_sample_commit_remains_non_executable() {
+    fn slice_2e_wake_enroll_sample_commit_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -3087,7 +3205,7 @@ mod tests {
     }
 
     #[test]
-    fn slice_2d_wake_enroll_complete_commit_remains_non_executable() {
+    fn slice_2e_wake_enroll_complete_commit_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
@@ -3182,6 +3300,42 @@ mod tests {
     }
 
     #[test]
+    fn slice_2e_terms_accept_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_terms_accept_request(
+            "onb-terms-shape-1",
+            "trace-onb-terms-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first = normalize_turn_request(&request).expect("onboarding terms accept normalized");
+        let second =
+            normalize_turn_request(&request).expect("onboarding terms accept normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingTermsAccept {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+                terms_version_id,
+                accepted,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+                assert_eq!(terms_version_id, "terms-v1".to_string());
+                assert!(accepted);
+            }
+            other => panic!("expected onboarding terms-accept payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn slice_2c_malformed_onboarding_ask_missing_inputs_fail_closed() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -3226,6 +3380,33 @@ mod tests {
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
             .expect_err("malformed platform setup receipt must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2e_malformed_terms_accept_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = onboarding_terms_accept_request(
+            "onb-terms-bad-1",
+            "trace-onb-terms-bad-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) =
+            request.compatibility_payload.as_mut()
+        else {
+            panic!("expected onboarding compatibility payload");
+        };
+        onboarding_request.action = AppOnboardingContinueAction::TermsAccept {
+            terms_version_id: String::new(),
+            accepted: true,
+        };
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("malformed terms accept must fail closed");
         assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
         assert_eq!(err.failure_class, FailureClass::InvalidPayload);
     }
@@ -3324,6 +3505,52 @@ mod tests {
     }
 
     #[test]
+    fn slice_2e_terms_accept_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_terms_accept_request(
+                    "onb-terms-session-1",
+                    "trace-onb-terms-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding terms accept request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingTermsAcceptCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+    }
+
+    #[test]
     fn slice_2c_onboarding_ask_missing_observability_stays_bounded_to_section03() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -3389,6 +3616,40 @@ mod tests {
         assert_eq!(
             foundation.events()[1].classification,
             Some(TurnStartClassification::OnboardingPlatformSetupReceiptCompatibilityPrepared)
+        );
+    }
+
+    #[test]
+    fn slice_2e_terms_accept_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_terms_accept_request(
+                    "onb-terms-obs-1",
+                    "trace-onb-terms-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding terms accept request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::OnboardingTermsAcceptCompatibilityPrepared)
         );
     }
 
