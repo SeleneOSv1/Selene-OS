@@ -273,7 +273,7 @@ impl RuntimeCanonicalIngressRequest {
         })
     }
 
-    fn executable_in_slice_2h(&self) -> bool {
+    fn executable_in_slice_2i(&self) -> bool {
         match self.family {
             CanonicalIngressFamily::VoiceTurn
             | CanonicalIngressFamily::InviteClickCompatibility => true,
@@ -288,6 +288,7 @@ impl RuntimeCanonicalIngressRequest {
                             | AppOnboardingContinueAction::PrimaryDeviceConfirm { .. }
                             | AppOnboardingContinueAction::EmployeePhotoCaptureSend { .. }
                             | AppOnboardingContinueAction::EmployeeSenderVerifyCommit { .. }
+                            | AppOnboardingContinueAction::VoiceEnrollLock { .. }
                     )
             ),
         }
@@ -298,51 +299,51 @@ impl RuntimeCanonicalIngressRequest {
             Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) => {
                 match &onboarding_request.action {
                     AppOnboardingContinueAction::PlatformSetupReceipt { .. } => {
-                        "platform-setup onboarding compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "platform-setup onboarding compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::TermsAccept { .. } => {
-                        "terms-accept onboarding compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "terms-accept onboarding compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::PrimaryDeviceConfirm { .. } => {
-                        "primary-device-confirm onboarding compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "primary-device-confirm onboarding compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeePhotoCaptureSend { .. } => {
-                        "employee-photo sender-verification compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "employee-photo sender-verification compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeeSenderVerifyCommit { .. } => {
-                        "employee-sender-verify compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "employee-sender-verify compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::VoiceEnrollLock { .. } => {
-                        "voice-enroll onboarding compatibility remains deferred after Slice 2H"
+                        "voice-enroll onboarding compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::AskMissingSubmit { .. } => {
-                        "onboarding ask-missing compatibility is executable in Slice 2H and should not reach the compatibility-only boundary"
+                        "onboarding ask-missing compatibility is executable in Slice 2I and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollStartDraft { .. } => {
-                        "wake-enroll start compatibility remains deferred after Slice 2H"
+                        "wake-enroll start compatibility remains deferred after Slice 2I"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollSampleCommit { .. } => {
-                        "voice-sample onboarding compatibility remains deferred after Slice 2H"
+                        "voice-sample onboarding compatibility remains deferred after Slice 2I"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. } => {
-                        "voice-complete onboarding compatibility remains deferred after Slice 2H"
+                        "voice-complete onboarding compatibility remains deferred after Slice 2I"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollDeferCommit { .. } => {
-                        "wake-enroll defer compatibility remains deferred after Slice 2H"
+                        "wake-enroll defer compatibility remains deferred after Slice 2I"
                             .to_string()
                     }
                     _ => {
-                        "selected onboarding action remains deferred after Slice 2H".to_string()
+                        "selected onboarding action remains deferred after Slice 2I".to_string()
                     }
                 }
             }
@@ -535,6 +536,13 @@ pub enum CanonicalTurnPayloadCarrier {
         tenant_id: Option<String>,
         decision: SenderVerifyDecision,
     },
+    OnboardingVoiceEnrollLock {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+        device_id: DeviceId,
+        sample_seed: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -567,6 +575,7 @@ pub enum TurnStartClassification {
     OnboardingPrimaryDeviceConfirmCompatibilityPrepared,
     OnboardingEmployeePhotoCaptureSendCompatibilityPrepared,
     OnboardingEmployeeSenderVerifyCommitCompatibilityPrepared,
+    OnboardingVoiceEnrollLockCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -852,7 +861,7 @@ impl RuntimeIngressTurnFoundation {
             .map_err(map_request_error)?;
         let rejection_at_ms = prepared.prepared_at_ms;
 
-        if !request.executable_in_slice_2h() {
+        if !request.executable_in_slice_2i() {
             let compatibility_detail = request.compatibility_only_detail();
             self.counters.rejected_requests += 1;
             let request_id = prepared
@@ -1459,11 +1468,24 @@ fn normalize_onboarding_continue_request(
                 decision: *decision,
             },
         ),
+        AppOnboardingContinueAction::VoiceEnrollLock {
+            device_id,
+            sample_seed,
+        } => (
+            canonical_onboarding_voice_enroll_lock_hash(onboarding_request),
+            CanonicalTurnPayloadCarrier::OnboardingVoiceEnrollLock {
+                correlation_id: onboarding_request.correlation_id,
+                onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+                tenant_id: onboarding_request.tenant_id.clone(),
+                device_id: device_id.clone(),
+                sample_seed: sample_seed.clone(),
+            },
+        ),
         _ => {
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, and employee-sender-verify compatibility are executable in Slice 2H",
+                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, and voice-enroll-lock compatibility are executable in Slice 2I",
             ))
         }
     };
@@ -1605,6 +1627,10 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
         }
         CanonicalTurnPayloadCarrier::OnboardingEmployeeSenderVerifyCommit { .. } => {
             "normalized onboarding employee-sender-verify compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingVoiceEnrollLock { .. } => {
+            "normalized onboarding voice-enroll-lock compatibility into the bounded /v1/onboarding/continue carrier"
                 .to_string()
         }
     }
@@ -1788,6 +1814,32 @@ fn canonical_onboarding_employee_sender_verify_commit_hash(
     )
 }
 
+fn canonical_onboarding_voice_enroll_lock_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::VoiceEnrollLock {
+        device_id,
+        sample_seed,
+    } = &onboarding_request.action
+    else {
+        unreachable!("selected onboarding normalization requires voice-enroll-lock action");
+    };
+    let shape = format!(
+        "correlation_id={}|onboarding_session_id={}|tenant_id={}|device_id={}|sample_seed={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        device_id.as_str(),
+        sample_seed,
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
 fn compatibility_device_turn_sequence(
     device_id: &str,
     invite_request: &InviteOpenActivateCommitRequest,
@@ -1877,8 +1929,16 @@ fn onboarding_compatibility_device_turn_sequence(
             b"EMPLOYEE_SENDER_VERIFY_COMMIT".as_slice(),
             sender_verify_decision_token(*decision).as_bytes(),
         ],
+        AppOnboardingContinueAction::VoiceEnrollLock {
+            device_id,
+            sample_seed,
+        } => vec![
+            b"VOICE_ENROLL_LOCK".as_slice(),
+            device_id.as_str().as_bytes(),
+            sample_seed.as_bytes(),
+        ],
         _ => unreachable!(
-            "selected onboarding device-turn sequence requires an executable Slice 2H action"
+            "selected onboarding device-turn sequence requires an executable Slice 2I action"
         ),
     };
     let mut components = vec![
@@ -2074,6 +2134,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingEmployeeSenderVerifyCommit { .. } => {
             Some(TurnStartClassification::OnboardingEmployeeSenderVerifyCommitCompatibilityPrepared)
         }
+        CanonicalTurnPayloadCarrier::OnboardingVoiceEnrollLock { .. } => {
+            Some(TurnStartClassification::OnboardingVoiceEnrollLockCompatibilityPrepared)
+        }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -2107,6 +2170,10 @@ fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> Strin
         }
         CanonicalTurnPayloadCarrier::OnboardingEmployeeSenderVerifyCommit { .. } => {
             "onboarding employee-sender-verify compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingVoiceEnrollLock { .. } => {
+            "onboarding voice-enroll-lock compatibility reached the bounded pre-authority handoff"
                 .to_string()
         }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
@@ -2780,6 +2847,22 @@ mod tests {
             trigger,
             AppOnboardingContinueAction::EmployeeSenderVerifyCommit {
                 decision: selene_kernel_contracts::ph1onb::SenderVerifyDecision::Confirm,
+            },
+        )
+    }
+
+    fn onboarding_voice_enroll_lock_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::VoiceEnrollLock {
+                device_id: device("device-a"),
+                sample_seed: "seed-1".to_string(),
             },
         )
     }
@@ -3564,25 +3647,58 @@ mod tests {
     }
 
     #[test]
-    fn slice_2h_voice_enroll_lock_remains_non_executable() {
+    fn slice_2i_voice_enroll_lock_is_the_one_newly_executable_onboarding_action() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
         let mut sessions = RuntimeSessionFoundation::default();
-        let request = onboarding_continue_request(
+        let request = onboarding_voice_enroll_lock_request(
             "onb-voice-1",
             "trace-onb-voice-1",
             RuntimeEntryTrigger::Explicit,
-            AppOnboardingContinueAction::VoiceEnrollLock {
-                device_id: device("device-a"),
-                sample_seed: "seed-1".to_string(),
-            },
         );
 
-        let err = foundation
+        let result = foundation
             .process_turn_start(&runtime, &mut sessions, request)
-            .expect_err("voice enroll lock must remain non-executable");
-        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
-        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+            .expect("voice enroll lock should execute in Slice 2I");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingVoiceEnrollLockCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.request_id,
+            "onb-voice-1".to_string()
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.trace_id,
+            "trace-onb-voice-1".to_string()
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
     }
 
     #[test]
@@ -3889,6 +4005,43 @@ mod tests {
     }
 
     #[test]
+    fn slice_2i_voice_enroll_lock_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_voice_enroll_lock_request(
+            "onb-voice-shape-1",
+            "trace-onb-voice-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first =
+            normalize_turn_request(&request).expect("onboarding voice enroll lock normalized");
+        let second = normalize_turn_request(&request)
+            .expect("onboarding voice enroll lock normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingVoiceEnrollLock {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+                device_id,
+                sample_seed,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+                assert_eq!(device_id.as_str(), "device-a");
+                assert_eq!(sample_seed, "seed-1".to_string());
+            }
+            other => panic!("expected onboarding voice-enroll-lock payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn slice_2c_malformed_onboarding_ask_missing_inputs_fail_closed() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -4024,6 +4177,33 @@ mod tests {
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
             .expect_err("malformed employee sender verify commit must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2i_malformed_voice_enroll_lock_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = onboarding_voice_enroll_lock_request(
+            "onb-voice-bad-1",
+            "trace-onb-voice-bad-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) =
+            request.compatibility_payload.as_mut()
+        else {
+            panic!("expected onboarding compatibility payload");
+        };
+        onboarding_request.action = AppOnboardingContinueAction::VoiceEnrollLock {
+            device_id: device("device-a"),
+            sample_seed: String::new(),
+        };
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("malformed voice enroll lock must fail closed");
         assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
         assert_eq!(err.failure_class, FailureClass::InvalidPayload);
     }
@@ -4326,6 +4506,58 @@ mod tests {
     }
 
     #[test]
+    fn slice_2i_voice_enroll_lock_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_voice_enroll_lock_request(
+                    "onb-voice-session-1",
+                    "trace-onb-voice-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding voice enroll lock request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingVoiceEnrollLockCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
     fn slice_2c_onboarding_ask_missing_observability_stays_bounded_to_section03() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -4529,6 +4761,40 @@ mod tests {
             Some(
                 TurnStartClassification::OnboardingEmployeeSenderVerifyCommitCompatibilityPrepared
             )
+        );
+    }
+
+    #[test]
+    fn slice_2i_voice_enroll_lock_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_voice_enroll_lock_request(
+                    "onb-voice-obs-1",
+                    "trace-onb-voice-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding voice enroll lock request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::OnboardingVoiceEnrollLockCompatibilityPrepared)
         );
     }
 
