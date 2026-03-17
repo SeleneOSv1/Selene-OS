@@ -292,6 +292,7 @@ impl RuntimeCanonicalIngressRequest {
                             | AppOnboardingContinueAction::WakeEnrollStartDraft { .. }
                             | AppOnboardingContinueAction::WakeEnrollSampleCommit { .. }
                             | AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. }
+                            | AppOnboardingContinueAction::EmoPersonaLock
                     )
             ),
         }
@@ -302,51 +303,60 @@ impl RuntimeCanonicalIngressRequest {
             Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) => {
                 match &onboarding_request.action {
                     AppOnboardingContinueAction::PlatformSetupReceipt { .. } => {
-                        "platform-setup onboarding compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "platform-setup onboarding compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::TermsAccept { .. } => {
-                        "terms-accept onboarding compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "terms-accept onboarding compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::PrimaryDeviceConfirm { .. } => {
-                        "primary-device-confirm onboarding compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "primary-device-confirm onboarding compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeePhotoCaptureSend { .. } => {
-                        "employee-photo sender-verification compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "employee-photo sender-verification compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeeSenderVerifyCommit { .. } => {
-                        "employee-sender-verify compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "employee-sender-verify compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::VoiceEnrollLock { .. } => {
-                        "voice-enroll onboarding compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "voice-enroll onboarding compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::AskMissingSubmit { .. } => {
-                        "onboarding ask-missing compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "onboarding ask-missing compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollStartDraft { .. } => {
-                        "wake-enroll start compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "wake-enroll start compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollSampleCommit { .. } => {
-                        "wake-enroll sample compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "wake-enroll sample compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. } => {
-                        "wake-enroll complete compatibility is executable in Slice 2L and should not reach the compatibility-only boundary"
+                        "wake-enroll complete compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::EmoPersonaLock => {
+                        "emo-persona-lock compatibility is executable in Slice 2M and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollDeferCommit { .. } => {
-                        "wake-enroll defer compatibility remains deferred after Slice 2L"
+                        "wake-enroll defer compatibility remains deferred after Slice 2M"
                             .to_string()
                     }
-                    _ => {
-                        "selected onboarding action remains deferred after Slice 2L".to_string()
+                    AppOnboardingContinueAction::AccessProvisionCommit => {
+                        "access-provision compatibility remains deferred after Slice 2M"
+                            .to_string()
+                    }
+                    AppOnboardingContinueAction::CompleteCommit => {
+                        "complete compatibility remains deferred after Slice 2M"
+                            .to_string()
                     }
                 }
             }
@@ -565,6 +575,11 @@ pub enum CanonicalTurnPayloadCarrier {
         tenant_id: Option<String>,
         device_id: DeviceId,
     },
+    OnboardingEmoPersonaLock {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -601,6 +616,7 @@ pub enum TurnStartClassification {
     OnboardingWakeEnrollStartDraftCompatibilityPrepared,
     OnboardingWakeEnrollSampleCommitCompatibilityPrepared,
     OnboardingWakeEnrollCompleteCommitCompatibilityPrepared,
+    OnboardingEmoPersonaLockCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -1537,11 +1553,19 @@ fn normalize_onboarding_continue_request(
                 device_id: device_id.clone(),
             },
         ),
+        AppOnboardingContinueAction::EmoPersonaLock => (
+            canonical_onboarding_emo_persona_lock_hash(onboarding_request),
+            CanonicalTurnPayloadCarrier::OnboardingEmoPersonaLock {
+                correlation_id: onboarding_request.correlation_id,
+                onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+                tenant_id: onboarding_request.tenant_id.clone(),
+            },
+        ),
         _ => {
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, and wake-enroll-complete compatibility are executable in Slice 2L",
+                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, wake-enroll-complete, and emo-persona-lock compatibility are executable in Slice 2M",
             ))
         }
     };
@@ -1699,6 +1723,10 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
         }
         CanonicalTurnPayloadCarrier::OnboardingWakeEnrollCompleteCommit { .. } => {
             "normalized onboarding wake-enroll-complete compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingEmoPersonaLock { .. } => {
+            "normalized onboarding emo-persona-lock compatibility into the bounded /v1/onboarding/continue carrier"
                 .to_string()
         }
     }
@@ -1980,6 +2008,26 @@ fn canonical_onboarding_wake_enroll_complete_commit_hash(
     )
 }
 
+fn canonical_onboarding_emo_persona_lock_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::EmoPersonaLock = &onboarding_request.action else {
+        unreachable!("selected onboarding normalization requires emo-persona-lock action");
+    };
+    let shape = format!(
+        "correlation_id={}|onboarding_session_id={}|tenant_id={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
 fn compatibility_device_turn_sequence(
     device_id: &str,
     invite_request: &InviteOpenActivateCommitRequest,
@@ -2097,8 +2145,9 @@ fn onboarding_compatibility_device_turn_sequence(
             b"WAKE_ENROLL_COMPLETE_COMMIT".as_slice(),
             device_id.as_str().as_bytes(),
         ],
+        AppOnboardingContinueAction::EmoPersonaLock => vec![b"EMO_PERSONA_LOCK".as_slice()],
         _ => unreachable!(
-            "selected onboarding device-turn sequence requires an executable Slice 2L action"
+            "selected onboarding device-turn sequence requires an executable Slice 2M action"
         ),
     };
     let mut components = vec![
@@ -2306,6 +2355,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingWakeEnrollCompleteCommit { .. } => {
             Some(TurnStartClassification::OnboardingWakeEnrollCompleteCommitCompatibilityPrepared)
         }
+        CanonicalTurnPayloadCarrier::OnboardingEmoPersonaLock { .. } => {
+            Some(TurnStartClassification::OnboardingEmoPersonaLockCompatibilityPrepared)
+        }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -2355,6 +2407,10 @@ fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> Strin
         }
         CanonicalTurnPayloadCarrier::OnboardingWakeEnrollCompleteCommit { .. } => {
             "onboarding wake-enroll-complete compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingEmoPersonaLock { .. } => {
+            "onboarding emo-persona-lock compatibility reached the bounded pre-authority handoff"
                 .to_string()
         }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
@@ -3091,6 +3147,19 @@ mod tests {
             AppOnboardingContinueAction::WakeEnrollCompleteCommit {
                 device_id: device("device-a"),
             },
+        )
+    }
+
+    fn onboarding_emo_persona_lock_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::EmoPersonaLock,
         )
     }
 
@@ -4094,6 +4163,223 @@ mod tests {
     }
 
     #[test]
+    fn slice_2m_emo_persona_lock_is_the_one_newly_executable_onboarding_action() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_emo_persona_lock_request(
+            "onb-emo-1",
+            "trace-onb-emo-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+
+        let result = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect("emo persona lock should execute in Slice 2M");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingEmoPersonaLockCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.request_id,
+            "onb-emo-1".to_string()
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.trace_id,
+            "trace-onb-emo-1".to_string()
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.computation_state.is_none());
+        assert!(ready.runtime_execution_envelope.memory_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
+    fn slice_2m_previously_accepted_onboarding_actions_remain_executable() {
+        let runtime = ready_runtime();
+        let cases = vec![
+            (
+                "ask-missing",
+                onboarding_ask_missing_request(
+                    "onb-ask-retained-1",
+                    "trace-onb-ask-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                    Some("display_name"),
+                ),
+                TurnStartClassification::OnboardingAskMissingCompatibilityPrepared,
+            ),
+            (
+                "platform-setup",
+                onboarding_platform_setup_request(
+                    "onb-platform-retained-1",
+                    "trace-onb-platform-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingPlatformSetupReceiptCompatibilityPrepared,
+            ),
+            (
+                "terms-accept",
+                onboarding_terms_accept_request(
+                    "onb-terms-retained-1",
+                    "trace-onb-terms-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingTermsAcceptCompatibilityPrepared,
+            ),
+            (
+                "primary-device-confirm",
+                onboarding_primary_device_confirm_request(
+                    "onb-primary-retained-1",
+                    "trace-onb-primary-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingPrimaryDeviceConfirmCompatibilityPrepared,
+            ),
+            (
+                "employee-photo-capture-send",
+                onboarding_employee_photo_capture_send_request(
+                    "onb-photo-retained-1",
+                    "trace-onb-photo-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingEmployeePhotoCaptureSendCompatibilityPrepared,
+            ),
+            (
+                "employee-sender-verify-commit",
+                onboarding_employee_sender_verify_commit_request(
+                    "onb-sender-retained-1",
+                    "trace-onb-sender-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingEmployeeSenderVerifyCommitCompatibilityPrepared,
+            ),
+            (
+                "voice-enroll-lock",
+                onboarding_voice_enroll_lock_request(
+                    "onb-voice-retained-1",
+                    "trace-onb-voice-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingVoiceEnrollLockCompatibilityPrepared,
+            ),
+            (
+                "wake-enroll-start-draft",
+                onboarding_wake_enroll_start_draft_request(
+                    "onb-wake-start-retained-1",
+                    "trace-onb-wake-start-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingWakeEnrollStartDraftCompatibilityPrepared,
+            ),
+            (
+                "wake-enroll-sample-commit",
+                onboarding_wake_enroll_sample_commit_request(
+                    "onb-wake-sample-retained-1",
+                    "trace-onb-wake-sample-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingWakeEnrollSampleCommitCompatibilityPrepared,
+            ),
+            (
+                "wake-enroll-complete-commit",
+                onboarding_wake_enroll_complete_commit_request(
+                    "onb-wake-complete-retained-1",
+                    "trace-onb-wake-complete-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingWakeEnrollCompleteCommitCompatibilityPrepared,
+            ),
+        ];
+
+        for (label, request, classification) in cases {
+            let mut foundation = foundation();
+            let mut sessions = RuntimeSessionFoundation::default();
+            let result = foundation
+                .process_turn_start(&runtime, &mut sessions, request)
+                .unwrap_or_else(|err| {
+                    panic!("{label} should remain executable in Slice 2M: {err:?}")
+                });
+            let ready = match result {
+                RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+                other => panic!("{label} expected ready handoff, got {other:?}"),
+            };
+
+            assert_eq!(ready.response.classification, classification, "{label}");
+            assert_eq!(
+                ready.response.outcome,
+                PreAuthorityOutcome::ReadyForSection04Boundary,
+                "{label}"
+            );
+            assert_eq!(
+                ready.normalized_request.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH,
+                "{label}"
+            );
+            assert_eq!(
+                ready.normalized_request.modality,
+                CanonicalTurnModality::Compatibility,
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.identity_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.authority_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.persistence_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.proof_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.governance_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.computation_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.memory_state.is_none(),
+                "{label}"
+            );
+            assert!(
+                ready.runtime_execution_envelope.law_state.is_none(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
     fn slice_2l_wake_enroll_defer_commit_remains_non_executable() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -4112,6 +4398,56 @@ mod tests {
             .expect_err("wake enroll defer must remain non-executable");
         assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
         assert_eq!(err.failure_class, FailureClass::PolicyViolation);
+    }
+
+    #[test]
+    fn slice_2m_deferred_onboarding_actions_remain_non_executable() {
+        let runtime = ready_runtime();
+        let cases = vec![
+            (
+                "wake-enroll-defer",
+                onboarding_continue_request(
+                    "onb-defer-2m-1",
+                    "trace-onb-defer-2m-1",
+                    RuntimeEntryTrigger::Explicit,
+                    AppOnboardingContinueAction::WakeEnrollDeferCommit {
+                        device_id: device("device-a"),
+                    },
+                ),
+            ),
+            (
+                "access-provision",
+                onboarding_continue_request(
+                    "onb-access-2m-1",
+                    "trace-onb-access-2m-1",
+                    RuntimeEntryTrigger::Explicit,
+                    AppOnboardingContinueAction::AccessProvisionCommit,
+                ),
+            ),
+            (
+                "complete",
+                onboarding_continue_request(
+                    "onb-complete-2m-1",
+                    "trace-onb-complete-2m-1",
+                    RuntimeEntryTrigger::Explicit,
+                    AppOnboardingContinueAction::CompleteCommit,
+                ),
+            ),
+        ];
+
+        for (label, request) in cases {
+            let mut foundation = foundation();
+            let mut sessions = RuntimeSessionFoundation::default();
+            let err = foundation
+                .process_turn_start(&runtime, &mut sessions, request)
+                .expect_err("later onboarding action must remain non-executable");
+            assert_eq!(
+                err.reason_code,
+                reason_codes::INGRESS_COMPATIBILITY_ONLY,
+                "{label}"
+            );
+            assert_eq!(err.failure_class, FailureClass::PolicyViolation, "{label}");
+        }
     }
 
     #[test]
@@ -4477,6 +4813,39 @@ mod tests {
     }
 
     #[test]
+    fn slice_2m_emo_persona_lock_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_emo_persona_lock_request(
+            "onb-emo-shape-1",
+            "trace-onb-emo-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first =
+            normalize_turn_request(&request).expect("onboarding emo persona lock normalized");
+        let second =
+            normalize_turn_request(&request).expect("onboarding emo persona lock normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingEmoPersonaLock {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+            }
+            other => panic!("expected onboarding emo-persona-lock payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn slice_2c_malformed_onboarding_ask_missing_inputs_fail_closed() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -4696,6 +5065,25 @@ mod tests {
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
             .expect_err("malformed wake enroll complete commit must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2m_malformed_emo_persona_lock_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = onboarding_emo_persona_lock_request(
+            "onb-emo-bad-1",
+            "trace-onb-emo-bad-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        request.envelope_input.idempotency_key = "mismatch".to_string();
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("malformed emo persona lock must fail closed");
         assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
         assert_eq!(err.failure_class, FailureClass::InvalidPayload);
     }
@@ -5208,6 +5596,60 @@ mod tests {
     }
 
     #[test]
+    fn slice_2m_emo_persona_lock_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_emo_persona_lock_request(
+                    "onb-emo-session-1",
+                    "trace-onb-emo-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding emo persona lock request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingEmoPersonaLockCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.computation_state.is_none());
+        assert!(ready.runtime_execution_envelope.memory_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
     fn slice_2c_onboarding_ask_missing_observability_stays_bounded_to_section03() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -5547,6 +5989,40 @@ mod tests {
         assert_eq!(
             foundation.events()[1].classification,
             Some(TurnStartClassification::OnboardingWakeEnrollCompleteCommitCompatibilityPrepared)
+        );
+    }
+
+    #[test]
+    fn slice_2m_emo_persona_lock_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_emo_persona_lock_request(
+                    "onb-emo-obs-1",
+                    "trace-onb-emo-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding emo persona lock request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::OnboardingEmoPersonaLockCompatibilityPrepared)
         );
     }
 
