@@ -294,6 +294,7 @@ impl RuntimeCanonicalIngressRequest {
                             | AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. }
                             | AppOnboardingContinueAction::EmoPersonaLock
                             | AppOnboardingContinueAction::AccessProvisionCommit
+                            | AppOnboardingContinueAction::CompleteCommit
                     )
             ),
         }
@@ -304,59 +305,59 @@ impl RuntimeCanonicalIngressRequest {
             Some(CompatibilityRequestPayload::OnboardingContinue(onboarding_request)) => {
                 match &onboarding_request.action {
                     AppOnboardingContinueAction::PlatformSetupReceipt { .. } => {
-                        "platform-setup onboarding compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "platform-setup onboarding compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::TermsAccept { .. } => {
-                        "terms-accept onboarding compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "terms-accept onboarding compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::PrimaryDeviceConfirm { .. } => {
-                        "primary-device-confirm onboarding compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "primary-device-confirm onboarding compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeePhotoCaptureSend { .. } => {
-                        "employee-photo sender-verification compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "employee-photo sender-verification compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmployeeSenderVerifyCommit { .. } => {
-                        "employee-sender-verify compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "employee-sender-verify compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::VoiceEnrollLock { .. } => {
-                        "voice-enroll onboarding compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "voice-enroll onboarding compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::AskMissingSubmit { .. } => {
-                        "onboarding ask-missing compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "onboarding ask-missing compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollStartDraft { .. } => {
-                        "wake-enroll start compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "wake-enroll start compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollSampleCommit { .. } => {
-                        "wake-enroll sample compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "wake-enroll sample compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollCompleteCommit { .. } => {
-                        "wake-enroll complete compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "wake-enroll complete compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::EmoPersonaLock => {
-                        "emo-persona-lock compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "emo-persona-lock compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::AccessProvisionCommit => {
-                        "access-provision compatibility is executable in Slice 2N and should not reach the compatibility-only boundary"
+                        "access-provision compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                     AppOnboardingContinueAction::WakeEnrollDeferCommit { .. } => {
-                        "wake-enroll defer compatibility remains deferred after Slice 2N"
+                        "wake-enroll defer compatibility remains deferred after Slice 2O"
                             .to_string()
                     }
                     AppOnboardingContinueAction::CompleteCommit => {
-                        "complete compatibility remains deferred after Slice 2N"
+                        "complete compatibility is executable in Slice 2O and should not reach the compatibility-only boundary"
                             .to_string()
                     }
                 }
@@ -586,6 +587,11 @@ pub enum CanonicalTurnPayloadCarrier {
         onboarding_session_id: OnboardingSessionId,
         tenant_id: Option<String>,
     },
+    OnboardingCompleteCommit {
+        correlation_id: CorrelationId,
+        onboarding_session_id: OnboardingSessionId,
+        tenant_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -624,6 +630,7 @@ pub enum TurnStartClassification {
     OnboardingWakeEnrollCompleteCommitCompatibilityPrepared,
     OnboardingEmoPersonaLockCompatibilityPrepared,
     OnboardingAccessProvisionCommitCompatibilityPrepared,
+    OnboardingCompleteCommitCompatibilityPrepared,
     RetryReused,
     Deferred,
 }
@@ -1576,11 +1583,19 @@ fn normalize_onboarding_continue_request(
                 tenant_id: onboarding_request.tenant_id.clone(),
             },
         ),
+        AppOnboardingContinueAction::CompleteCommit => (
+            canonical_onboarding_complete_commit_hash(onboarding_request),
+            CanonicalTurnPayloadCarrier::OnboardingCompleteCommit {
+                correlation_id: onboarding_request.correlation_id,
+                onboarding_session_id: onboarding_request.onboarding_session_id.clone(),
+                tenant_id: onboarding_request.tenant_id.clone(),
+            },
+        ),
         _ => {
             return Err(RuntimeIngressTurnError::new(
                 reason_codes::INGRESS_COMPATIBILITY_ONLY,
                 FailureClass::PolicyViolation,
-                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, wake-enroll-complete, emo-persona-lock, and access-provision compatibility are executable in Slice 2N",
+                "only onboarding ask-missing, platform-setup, terms-accept, primary-device-confirm, employee-photo-capture-send, employee-sender-verify, voice-enroll-lock, wake-enroll-start, wake-enroll-sample, wake-enroll-complete, emo-persona-lock, access-provision, and complete compatibility are executable in Slice 2O",
             ))
         }
     };
@@ -1746,6 +1761,10 @@ fn normalized_event_detail(normalized: &CanonicalTurnRequestCarrier) -> String {
         }
         CanonicalTurnPayloadCarrier::OnboardingAccessProvisionCommit { .. } => {
             "normalized onboarding access-provision compatibility into the bounded /v1/onboarding/continue carrier"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
+            "normalized onboarding complete compatibility into the bounded /v1/onboarding/continue carrier"
                 .to_string()
         }
     }
@@ -2067,6 +2086,26 @@ fn canonical_onboarding_access_provision_commit_hash(
     )
 }
 
+fn canonical_onboarding_complete_commit_hash(
+    onboarding_request: &AppOnboardingContinueRequest,
+) -> String {
+    let AppOnboardingContinueAction::CompleteCommit = &onboarding_request.action else {
+        unreachable!("selected onboarding normalization requires complete action");
+    };
+    let shape = format!(
+        "action=complete_commit|correlation_id={}|onboarding_session_id={}|tenant_id={}|idempotency_key={}",
+        onboarding_request.correlation_id.0,
+        onboarding_request.onboarding_session_id.as_str(),
+        onboarding_request.tenant_id.as_deref().unwrap_or(""),
+        onboarding_request.idempotency_key,
+    );
+    canonical_content_hash(
+        CanonicalTurnModality::Compatibility.as_str(),
+        ONBOARDING_CONTINUE_ENDPOINT_PATH.as_bytes(),
+        shape.as_bytes(),
+    )
+}
+
 fn compatibility_device_turn_sequence(
     device_id: &str,
     invite_request: &InviteOpenActivateCommitRequest,
@@ -2188,8 +2227,9 @@ fn onboarding_compatibility_device_turn_sequence(
         AppOnboardingContinueAction::AccessProvisionCommit => {
             vec![b"ACCESS_PROVISION_COMMIT".as_slice()]
         }
+        AppOnboardingContinueAction::CompleteCommit => vec![b"COMPLETE_COMMIT".as_slice()],
         _ => unreachable!(
-            "selected onboarding device-turn sequence requires an executable Slice 2N action"
+            "selected onboarding device-turn sequence requires an executable Slice 2O action"
         ),
     };
     let mut components = vec![
@@ -2403,6 +2443,9 @@ fn compatibility_prepared_classification(
         CanonicalTurnPayloadCarrier::OnboardingAccessProvisionCommit { .. } => {
             Some(TurnStartClassification::OnboardingAccessProvisionCommitCompatibilityPrepared)
         }
+        CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
+            Some(TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared)
+        }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
             None
         }
@@ -2460,6 +2503,10 @@ fn pre_authority_ready_detail(normalized: &CanonicalTurnRequestCarrier) -> Strin
         }
         CanonicalTurnPayloadCarrier::OnboardingAccessProvisionCommit { .. } => {
             "onboarding access-provision compatibility reached the bounded pre-authority handoff"
+                .to_string()
+        }
+        CanonicalTurnPayloadCarrier::OnboardingCompleteCommit { .. } => {
+            "onboarding complete compatibility reached the bounded pre-authority handoff"
                 .to_string()
         }
         CanonicalTurnPayloadCarrier::Text { .. } | CanonicalTurnPayloadCarrier::Binary { .. } => {
@@ -3222,6 +3269,19 @@ mod tests {
             trace_id,
             trigger,
             AppOnboardingContinueAction::AccessProvisionCommit,
+        )
+    }
+
+    fn onboarding_complete_commit_request(
+        request_id: &str,
+        trace_id: &str,
+        trigger: RuntimeEntryTrigger,
+    ) -> RuntimeCanonicalIngressRequest {
+        onboarding_continue_request(
+            request_id,
+            trace_id,
+            trigger,
+            AppOnboardingContinueAction::CompleteCommit,
         )
     }
 
@@ -4339,7 +4399,64 @@ mod tests {
     }
 
     #[test]
-    fn slice_2n_previously_accepted_onboarding_actions_remain_executable() {
+    fn slice_2o_complete_commit_is_the_one_newly_executable_onboarding_action() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = onboarding_complete_commit_request(
+            "onb-complete-1",
+            "trace-onb-complete-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+
+        let result = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect("complete commit should execute in Slice 2O");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared
+        );
+        assert_eq!(
+            ready.normalized_request.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(
+            ready.normalized_request.canonical_route,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            ready.normalized_request.modality,
+            CanonicalTurnModality::Compatibility
+        );
+        assert_eq!(
+            ready.response.outcome,
+            PreAuthorityOutcome::ReadyForSection04Boundary
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.request_id,
+            "onb-complete-1".to_string()
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.trace_id,
+            "trace-onb-complete-1".to_string()
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.computation_state.is_none());
+        assert!(ready.runtime_execution_envelope.memory_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
+    fn slice_2o_previously_accepted_onboarding_actions_remain_executable() {
         let runtime = ready_runtime();
         let cases = vec![
             (
@@ -4442,6 +4559,15 @@ mod tests {
                 ),
                 TurnStartClassification::OnboardingEmoPersonaLockCompatibilityPrepared,
             ),
+            (
+                "access-provision-commit",
+                onboarding_access_provision_commit_request(
+                    "onb-access-retained-1",
+                    "trace-onb-access-retained-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+                TurnStartClassification::OnboardingAccessProvisionCommitCompatibilityPrepared,
+            ),
         ];
 
         for (label, request, classification) in cases {
@@ -4450,7 +4576,7 @@ mod tests {
             let result = foundation
                 .process_turn_start(&runtime, &mut sessions, request)
                 .unwrap_or_else(|err| {
-                    panic!("{label} should remain executable in Slice 2N: {err:?}")
+                    panic!("{label} should remain executable in Slice 2O: {err:?}")
                 });
             let ready = match result {
                 RuntimePreAuthorityTurnResult::Ready(ready) => ready,
@@ -4508,51 +4634,19 @@ mod tests {
     }
 
     #[test]
-    fn slice_2l_wake_enroll_defer_commit_remains_non_executable() {
+    fn slice_2o_wake_enroll_defer_commit_remains_non_executable() {
         let runtime = ready_runtime();
-        let mut foundation = foundation();
-        let mut sessions = RuntimeSessionFoundation::default();
-        let request = onboarding_continue_request(
-            "onb-defer-1",
-            "trace-onb-defer-1",
-            RuntimeEntryTrigger::Explicit,
-            AppOnboardingContinueAction::WakeEnrollDeferCommit {
-                device_id: device("device-a"),
-            },
-        );
-
-        let err = foundation
-            .process_turn_start(&runtime, &mut sessions, request)
-            .expect_err("wake enroll defer must remain non-executable");
-        assert_eq!(err.reason_code, reason_codes::INGRESS_COMPATIBILITY_ONLY);
-        assert_eq!(err.failure_class, FailureClass::PolicyViolation);
-    }
-
-    #[test]
-    fn slice_2n_deferred_onboarding_actions_remain_non_executable() {
-        let runtime = ready_runtime();
-        let cases = vec![
-            (
-                "wake-enroll-defer",
-                onboarding_continue_request(
-                    "onb-defer-2n-1",
-                    "trace-onb-defer-2n-1",
-                    RuntimeEntryTrigger::Explicit,
-                    AppOnboardingContinueAction::WakeEnrollDeferCommit {
-                        device_id: device("device-a"),
-                    },
-                ),
+        let cases = vec![(
+            "wake-enroll-defer",
+            onboarding_continue_request(
+                "onb-defer-2o-1",
+                "trace-onb-defer-2o-1",
+                RuntimeEntryTrigger::Explicit,
+                AppOnboardingContinueAction::WakeEnrollDeferCommit {
+                    device_id: device("device-a"),
+                },
             ),
-            (
-                "complete",
-                onboarding_continue_request(
-                    "onb-complete-2n-1",
-                    "trace-onb-complete-2n-1",
-                    RuntimeEntryTrigger::Explicit,
-                    AppOnboardingContinueAction::CompleteCommit,
-                ),
-            ),
-        ];
+        )];
 
         for (label, request) in cases {
             let mut foundation = foundation();
@@ -4998,6 +5092,39 @@ mod tests {
     }
 
     #[test]
+    fn slice_2o_complete_commit_normalization_reuses_the_existing_canonical_carrier() {
+        let request = onboarding_complete_commit_request(
+            "onb-complete-shape-1",
+            "trace-onb-complete-shape-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        let first =
+            normalize_turn_request(&request).expect("onboarding complete commit normalized");
+        let second =
+            normalize_turn_request(&request).expect("onboarding complete commit normalized again");
+        assert_eq!(first, second);
+        assert_eq!(first.canonical_route, ONBOARDING_CONTINUE_ENDPOINT_PATH);
+        assert_eq!(
+            first.family,
+            CanonicalIngressFamily::OnboardingContinueCompatibility
+        );
+        assert_eq!(first.modality, CanonicalTurnModality::Compatibility);
+        assert!(first.device_turn_sequence > 0);
+        match first.payload {
+            CanonicalTurnPayloadCarrier::OnboardingCompleteCommit {
+                correlation_id,
+                onboarding_session_id,
+                tenant_id,
+            } => {
+                assert_eq!(correlation_id, CorrelationId(101));
+                assert_eq!(onboarding_session_id.as_str(), "onb-session-1");
+                assert_eq!(tenant_id, Some("tenant-a".to_string()));
+            }
+            other => panic!("expected onboarding complete payload, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn slice_2c_malformed_onboarding_ask_missing_inputs_fail_closed() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -5255,6 +5382,25 @@ mod tests {
         let err = foundation
             .process_turn_start(&runtime, &mut sessions, request)
             .expect_err("malformed access provision commit must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::InvalidPayload);
+    }
+
+    #[test]
+    fn slice_2o_malformed_complete_commit_inputs_fail_closed() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let mut request = onboarding_complete_commit_request(
+            "onb-complete-bad-1",
+            "trace-onb-complete-bad-1",
+            RuntimeEntryTrigger::Explicit,
+        );
+        request.envelope_input.idempotency_key = "mismatch".to_string();
+
+        let err = foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect_err("malformed complete commit must fail closed");
         assert_eq!(err.reason_code, reason_codes::INGRESS_ENVELOPE_INVALID);
         assert_eq!(err.failure_class, FailureClass::InvalidPayload);
     }
@@ -5875,6 +6021,60 @@ mod tests {
     }
 
     #[test]
+    fn slice_2o_complete_commit_reuses_session_foundation_and_pre_authority_stage_order() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let result = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_complete_commit_request(
+                    "onb-complete-session-1",
+                    "trace-onb-complete-session-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding complete commit request");
+        let ready = match result {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert_eq!(ready.response.session_state, SessionState::Active);
+        assert_eq!(
+            ready.response.classification,
+            TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared
+        );
+        assert_eq!(
+            ready
+                .stage_history
+                .iter()
+                .map(|record| record.stage)
+                .collect::<Vec<_>>(),
+            vec![
+                PreAuthorityStage::IngressValidated,
+                PreAuthorityStage::TriggerValidated,
+                PreAuthorityStage::SessionResolved,
+                PreAuthorityStage::EnvelopeCreated,
+                PreAuthorityStage::TurnClassified,
+                PreAuthorityStage::PreAuthorityReady,
+            ]
+        );
+        assert_eq!(
+            ready.runtime_execution_envelope.session_attach_outcome,
+            Some(SessionAttachOutcome::NewSessionCreated)
+        );
+        assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.authority_state.is_none());
+        assert!(ready.runtime_execution_envelope.persistence_state.is_none());
+        assert!(ready.runtime_execution_envelope.proof_state.is_none());
+        assert!(ready.runtime_execution_envelope.governance_state.is_none());
+        assert!(ready.runtime_execution_envelope.computation_state.is_none());
+        assert!(ready.runtime_execution_envelope.memory_state.is_none());
+        assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
     fn slice_2c_onboarding_ask_missing_observability_stays_bounded_to_section03() {
         let runtime = ready_runtime();
         let mut foundation = foundation();
@@ -6282,6 +6482,40 @@ mod tests {
         assert_eq!(
             foundation.events()[1].classification,
             Some(TurnStartClassification::OnboardingAccessProvisionCommitCompatibilityPrepared)
+        );
+    }
+
+    #[test]
+    fn slice_2o_complete_commit_observability_stays_bounded_to_section03() {
+        let runtime = ready_runtime();
+        let mut foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let _ = foundation
+            .process_turn_start(
+                &runtime,
+                &mut sessions,
+                onboarding_complete_commit_request(
+                    "onb-complete-obs-1",
+                    "trace-onb-complete-obs-1",
+                    RuntimeEntryTrigger::Explicit,
+                ),
+            )
+            .expect("onboarding complete commit request");
+
+        assert_eq!(foundation.counters().normalized_turns, 1);
+        assert_eq!(foundation.counters().ready_handoffs, 1);
+        assert_eq!(foundation.events().len(), 2);
+        assert_eq!(
+            foundation.events()[0].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].route_path,
+            ONBOARDING_CONTINUE_ENDPOINT_PATH
+        );
+        assert_eq!(
+            foundation.events()[1].classification,
+            Some(TurnStartClassification::OnboardingCompleteCommitCompatibilityPrepared)
         );
     }
 
