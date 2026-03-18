@@ -1,5 +1,3 @@
-System _Core
-
 Selene Client Runtime Architecture — Universal Device Session Model
 
 Core Architecture Rule
@@ -29,6 +27,7 @@ Every meaningful interaction with Selene must ultimately resolve to a cloud-cont
 This rule establishes the fundamental separation between:
 
 interaction surfaces (client devices)andauthority layers (Selene cloud runtime)
+
 
 
 
@@ -84,6 +83,8 @@ Client devices may improve the user experience through local caching, temporary 
 No Selene client may introduce a different logical execution model, bypass the canonical session‑first architecture, or perform system authority decisions locally.
 
 All clients must therefore behave as interchangeable terminals attached to the same cloud‑authoritative Selene runtime.
+
+
 
 
 
@@ -1233,9 +1234,13 @@ platform trigger enforcement through PH1.OS
 
 client ingress contract consistency
 
+canonical session identifier exposure across all client-visible responses
+
 capture-bundle trust and attestation validation
 
 artifact authenticity and trust-root verification
+
+cross-device session continuity behavior
 
 wake runtime parity across supported platforms
 
@@ -1584,6 +1589,8 @@ PH1.OS must validate allowed trigger policy by platform
 the canonical session runtime must remain identical after trigger acceptance
 
 This section therefore establishes the hard rule that Selene is one session system with multiple entry methods, not multiple runtime systems.
+
+
 
 
 
@@ -2321,6 +2328,8 @@ The first engineering phase must focus on aligning the current runtime with the 
 
 This phase must include:
 
+exposing the canonical session identifiers in client responses
+
 centralizing platform trigger policy enforcement in PH1.OS
 
 introducing capture‑bundle attestation before runtime execution
@@ -2330,6 +2339,10 @@ implementing artifact authenticity and trust‑root verification
 completing Android microphone and wake runtime parity
 
 implementing retention, purge, and deletion workers
+
+preparing cross‑device session continuity support
+
+formalizing tablet as a supported runtime platform
 
 During this phase no new product features should be introduced that bypass or alter the session‑first system law.
 
@@ -2835,9 +2848,11 @@ turn ordering must remain deterministic
 
 local device caches must reconcile with cloud state
 
-Current implementation status
+Current implementation limitation
 
-Current runtime behavior resolves session continuity through a canonical actor‑scoped cloud session with authoritative session identifier exposure, per‑device turn ordering, and cross‑device session attachment under one cloud session container.
+Current runtime behavior resolves session continuity primarily by actor plus device scope.
+
+True shared cross‑device session continuity remains a target architecture capability and is not yet fully implemented in the current runtime contract.
 
 Session authority principle
 
@@ -3434,6 +3449,7 @@ memory governance
 artifact activation
 
 All behavioral evolution must pass through the governed learning pipeline described above.
+
 
 
 
@@ -4102,7 +4118,13 @@ Core architectural gaps
 
 The following system areas currently remain incomplete relative to the approved architecture:
 
+canonical session identifiers are not yet exposed consistently across all client-visible responses
+
+true cross-device shared session continuity is not yet fully implemented
+
 Android microphone and wake runtime parity remains incomplete relative to Desktop behavior
+
+Tablet remains a TARGET platform class and is not yet fully integrated into runtime contracts
 
 personality behavior remains tone-scoped without long-term adaptive behavioral balancing
 
@@ -4128,6 +4150,32 @@ Temporary mitigation strategies must never be interpreted as architectural compl
 
 Priority-classed architectural gaps
 
+P0 — Canonical session contract exposure
+
+The /v1/voice/turn response must consistently expose canonical identifiers required for session-first behavior.
+
+Required identifiers:
+
+session_id
+
+turn_id
+
+session_state
+
+This ensures every client follows an explicit session contract rather than inferring continuity indirectly.
+
+P0 — Platform-trigger policy enforcement in PH1.OS
+
+Platform trigger policy must be enforced centrally by PH1.OS instead of relying solely on adapter-level validation.
+
+This ensures that platform rules such as iPhone explicit-only entry and non-iPhone wake behavior become true orchestration policies.
+
+P0 — Capture-bundle attestation
+
+Client-provided capture metadata must not be trusted without verification.
+
+Capture-bundle attestation must be implemented before PH1.K and PH1.W rely on device-provided capture information.
+
 P0 — Artifact authenticity and trust-root verification
 
 Artifact verification must extend beyond hash validation.
@@ -4141,6 +4189,14 @@ Android runtime behavior must reach parity with the Desktop wake and microphone 
 P1 — Wake lifecycle workers
 
 Retention, purge, and delete lifecycle workers must be implemented for wake artifacts together with verification receipts.
+
+P1 — Cross-device session continuity
+
+Current reopen logic resolves sessions primarily by actor plus device scope. True shared session continuity across device classes remains incomplete.
+
+P2 — Tablet runtime contract integration
+
+Tablet must be formally integrated into platform enums, trigger policy enforcement, and runtime contract validation.
 
 Gap closure rule
 
@@ -4296,6 +4352,8 @@ Wake artifact lifecycle workers (retention, purge, delete) are not fully impleme
 
 Wake rejection reasoning and runtime diagnostics require expansion.
 
+Wake decision logic must integrate with capture‑bundle attestation once implemented.
+
 PH1.K — Voice Runtime I/O
 
 Responsibilities:
@@ -4311,6 +4369,8 @@ voice pipeline integration with PH1.VOICE.ID
 Current gaps:
 
 Android microphone runtime parity is incomplete relative to Desktop.
+
+Capture‑bundle attestation must be implemented so client‑provided capture metadata cannot be trusted without verification.
 
 Audio pipeline resilience and runtime diagnostics require additional hardening.
 
@@ -4328,7 +4388,13 @@ cross‑device session coordination
 
 Current gaps:
 
+Session reopening logic currently resolves primarily using actor + device scope.
+
+True shared cross‑device session continuity is not yet implemented.
+
 Session inactivity confirmation and close behavior require refinement.
+
+Canonical identifier exposure (session_id, turn_id, session_state) remains incomplete in some runtime responses.
 
 PH1.VOICE.ID — Voice Identity Engine
 
@@ -4400,6 +4466,10 @@ client platform compatibility validation
 
 Current gaps:
 
+Platform trigger policy must be enforced centrally in PH1.OS instead of adapter‑level guards.
+
+Tablet platform modeling must be fully integrated into runtime policy enforcement.
+
 Cross‑device session attachment behavior must remain consistent across runtime paths.
 
 PH1.F — Persistence Foundation
@@ -4431,6 +4501,10 @@ black‑box proof capture
 compliance record generation
 
 Current gaps:
+
+Proof capture must integrate tightly with the canonical runtime execution pipeline.
+
+Session‑bound audit guarantees require strengthening.
 
 Artifact authenticity verification receipts must integrate with the audit system.
 
@@ -4496,6 +4570,8 @@ The first engineering phase must align the current runtime implementation with t
 
 Phase‑0 objectives include:
 
+exposing canonical session identifiers in /v1/voice/turn responses
+
 centralizing trigger policy enforcement in PH1.OS
 
 implementing capture‑bundle attestation for client‑originated media
@@ -4516,7 +4592,11 @@ Android microphone and wake runtime parity with Desktop
 
 wake artifact retention, purge, and delete lifecycle workers
 
+cross‑device shared session continuity
+
 memory retention and lifecycle enforcement
+
+audit and proof capture integration with execution gates
 
 These improvements ensure Selene behaves as a consistent distributed runtime across devices and sessions.
 
@@ -4526,7 +4606,13 @@ Once runtime parity is verified, the architecture supports controlled platform e
 
 Phase‑2 objectives include:
 
+Tablet runtime contract integration
+
+Tablet trigger policy enforcement through PH1.OS
+
 Tablet client capability parity with other platforms
+
+formal platform enumeration across runtime contracts
 
 This phase ensures new platforms integrate without altering the core architecture.
 
