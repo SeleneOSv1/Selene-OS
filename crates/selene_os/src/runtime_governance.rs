@@ -692,6 +692,165 @@ impl RuntimeGovernanceRuntime {
         ))
     }
 
+    pub fn govern_protected_action_proof_state_execution(
+        &self,
+        envelope: &RuntimeExecutionEnvelope,
+        action_class: GovernanceProtectedActionClass,
+    ) -> Result<RuntimeExecutionEnvelope, Box<RuntimeGovernanceDecision>> {
+        if envelope.session_id.is_none() {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_SESSION_REQUIRED,
+                SUBSYSTEM_SESSION_ENGINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_SESSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution requires the canonical runtime session".to_string(),
+                ),
+                None,
+                None,
+            )));
+        }
+        if envelope.admission_state != AdmissionState::ExecutionAdmitted {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_ENV_ADMISSION_REQUIRED,
+                    SUBSYSTEM_INGRESS_PIPELINE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                    envelope.session_id.map(|value| value.0),
+                    Some(envelope.turn_id.0),
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "proof-governance execution requires the admitted Section 03 handoff"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+            ));
+        }
+        if envelope.device_turn_sequence.is_none() {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
+                    SUBSYSTEM_INGRESS_PIPELINE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED,
+                    envelope.session_id.map(|value| value.0),
+                    Some(envelope.turn_id.0),
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "proof-governance execution requires canonical device turn ordering"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+            ));
+        }
+        let Some(governance_state) = envelope.governance_state.as_ref() else {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_ENV_ADMISSION_REQUIRED,
+                    SUBSYSTEM_RUNTIME_GOVERNANCE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                    envelope.session_id.map(|value| value.0),
+                    Some(envelope.turn_id.0),
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "proof-governance execution requires the accepted H11 governance_state"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+            ));
+        };
+        if governance_state.decision_log_ref.is_none()
+            || governance_state_has_deferred_artifact_trust_linkage(governance_state)
+        {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution only accepts the canonical H11 governance-first posture"
+                        .to_string(),
+                ),
+                None,
+                None,
+            )));
+        }
+        if proof_state_execution_has_deferred_state(envelope) {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_ENV_ADMISSION_REQUIRED,
+                    SUBSYSTEM_RUNTIME_GOVERNANCE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                    envelope.session_id.map(|value| value.0),
+                    Some(envelope.turn_id.0),
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "proof-governance execution only accepts governance_state plus proof_state"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                ),
+            ));
+        }
+        let Some(proof_state) = envelope.proof_state.as_ref() else {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_PROOF_REQUIRED,
+                    SUBSYSTEM_PROOF_CAPTURE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_PROOF_REQUIRED,
+                    envelope.session_id.map(|value| value.0),
+                    Some(envelope.turn_id.0),
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "proof-governance execution requires canonical proof_state transport"
+                            .to_string(),
+                    ),
+                    Some(GovernanceCertificationStatus::Warning),
+                    Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+                ),
+            ));
+        };
+        self.govern_protected_action_proof_state(
+            action_class,
+            envelope.session_id.map(|value| value.0),
+            Some(envelope.turn_id.0),
+            proof_state,
+        )
+        .map_err(Box::new)?;
+        Ok(envelope.clone())
+    }
+
     pub fn govern_artifact_activation_execution(
         &self,
         envelope: &RuntimeExecutionEnvelope,
@@ -1268,6 +1427,22 @@ fn voice_turn_execution_has_deferred_state(envelope: &RuntimeExecutionEnvelope) 
         || envelope.law_state.is_some()
 }
 
+fn proof_state_execution_has_deferred_state(envelope: &RuntimeExecutionEnvelope) -> bool {
+    envelope.persistence_state.is_some()
+        || envelope.computation_state.is_some()
+        || envelope.identity_state.is_some()
+        || envelope.memory_state.is_some()
+        || envelope.authority_state.is_some()
+        || envelope.artifact_trust_state.is_some()
+        || envelope.law_state.is_some()
+}
+
+fn governance_state_has_deferred_artifact_trust_linkage(state: &GovernanceExecutionState) -> bool {
+    !state.artifact_trust_decision_ids.is_empty()
+        || !state.artifact_trust_proof_entry_refs.is_empty()
+        || state.artifact_trust_proof_record_ref.is_some()
+}
+
 fn artifact_trust_governance_linkage(
     state: &ArtifactTrustExecutionState,
 ) -> ArtifactTrustGovernanceLinkage {
@@ -1576,6 +1751,7 @@ mod tests {
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
+    use selene_kernel_contracts::runtime_execution::ProofExecutionState;
     use selene_kernel_contracts::runtime_execution::{
         PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
     };
@@ -1669,6 +1845,39 @@ mod tests {
                 "artifact.trust.proof.record.gov.1".to_string(),
             )),
         }
+    }
+
+    fn available_proof_state() -> ProofExecutionState {
+        ProofExecutionState::v1(
+            Some("proof.record.gov.1".to_string()),
+            selene_kernel_contracts::ph1j::ProofWriteOutcome::Written,
+            None,
+            selene_kernel_contracts::ph1j::ProofChainStatus::ChainLinked,
+            selene_kernel_contracts::ph1j::ProofVerificationPosture::VerificationReady,
+            selene_kernel_contracts::ph1j::TimestampTrustPosture::RuntimeMonotonic,
+            Some("proof.meta.gov.1".to_string()),
+        )
+        .expect("proof state must validate")
+    }
+
+    fn failed_proof_state() -> ProofExecutionState {
+        ProofExecutionState::v1(
+            None,
+            selene_kernel_contracts::ph1j::ProofWriteOutcome::Failed,
+            Some(ProofFailureClass::ProofChainIntegrityFailure),
+            selene_kernel_contracts::ph1j::ProofChainStatus::ChainBreakDetected,
+            selene_kernel_contracts::ph1j::ProofVerificationPosture::VerificationUnavailable,
+            selene_kernel_contracts::ph1j::TimestampTrustPosture::TrustedTimeUnavailable,
+            Some("proof.meta.gov.fail.1".to_string()),
+        )
+        .expect("failed proof state must validate")
+    }
+
+    fn governance_linked_envelope() -> RuntimeExecutionEnvelope {
+        let runtime = RuntimeGovernanceRuntime::default();
+        runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governance-first envelope must be accepted")
     }
 
     #[test]
@@ -1807,6 +2016,178 @@ mod tests {
         let decision = runtime
             .govern_voice_turn_execution(&governed)
             .expect_err("governance-first execution must reject alternate reentry");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02f_proof_governance_reuses_h11_envelope_and_populates_only_proof_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let governed = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governance-first execution must succeed");
+        let proof_envelope = governed
+            .with_proof_state(Some(available_proof_state()))
+            .expect("proof state must attach");
+
+        let out = runtime
+            .govern_protected_action_proof_state_execution(
+                &proof_envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect("canonical admitted proof-governance handoff must succeed");
+
+        assert_eq!(out.request_id, proof_envelope.request_id);
+        assert_eq!(out.trace_id, proof_envelope.trace_id);
+        assert_eq!(out.idempotency_key, proof_envelope.idempotency_key);
+        assert_eq!(out.session_id, proof_envelope.session_id);
+        assert_eq!(out.turn_id, proof_envelope.turn_id);
+        assert_eq!(
+            out.device_turn_sequence,
+            proof_envelope.device_turn_sequence
+        );
+        assert_eq!(out.admission_state, AdmissionState::ExecutionAdmitted);
+        assert_eq!(out.governance_state, governed.governance_state);
+        assert_eq!(out.proof_state, proof_envelope.proof_state);
+        assert!(out.persistence_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.identity_state.is_none());
+        assert!(out.memory_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.artifact_trust_state.is_none());
+        assert!(out.law_state.is_none());
+
+        let log = runtime.decision_log_snapshot();
+        let last = log
+            .last()
+            .expect("proof-governance decision log entry must exist");
+        assert_eq!(last.reason_code, reason_codes::GOV_PROOF_REQUIRED);
+        assert_eq!(
+            last.note.as_deref(),
+            Some("proof-critical protected action VOICE_TURN_EXECUTION cleared governance")
+        );
+        assert!(last.artifact_trust_decision_ids.is_empty());
+        assert!(last.artifact_trust_proof_entry_refs.is_empty());
+        assert!(last.artifact_trust_proof_record_ref.is_none());
+    }
+
+    #[test]
+    fn at_runtime_gov_02g_proof_governance_requires_h11_governance_prerequisite() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope()
+            .with_proof_state(Some(available_proof_state()))
+            .expect("proof state must attach");
+
+        let decision = runtime
+            .govern_protected_action_proof_state_execution(
+                &envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect_err("proof-governance requires the H11 governance-first output");
+
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02h_proof_governance_rejects_non_admitted_handoff() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = governance_linked_envelope()
+            .with_proof_state(Some(available_proof_state()))
+            .and_then(|value| {
+                value.with_session_and_admission_state(
+                    value.session_id,
+                    AdmissionState::IngressValidated,
+                )
+            })
+            .expect("non-admitted envelope must validate structurally");
+
+        let decision = runtime
+            .govern_protected_action_proof_state_execution(
+                &envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect_err("non-admitted proof-governance handoff must fail closed");
+
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02i_proof_governance_rejects_malformed_proof_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = governance_linked_envelope()
+            .with_proof_state(Some(failed_proof_state()))
+            .expect("failed proof state must attach");
+
+        let decision = runtime
+            .govern_protected_action_proof_state_execution(
+                &envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect_err("malformed proof posture must fail closed");
+
+        assert_eq!(decision.response_class, GovernanceResponseClass::Quarantine);
+        assert_eq!(decision.reason_code, reason_codes::GOV_PROOF_REQUIRED);
+    }
+
+    #[test]
+    fn at_runtime_gov_02j_later_section04_state_remains_deferred_for_proof_governance() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = governance_linked_envelope()
+            .with_proof_state(Some(available_proof_state()))
+            .and_then(|value| {
+                value.with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            })
+            .expect("artifact-trust state must attach");
+
+        let decision = runtime
+            .govern_protected_action_proof_state_execution(
+                &envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect_err("artifact-trust governance must remain deferred");
+
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02k_proof_governance_rejects_governance_state_with_later_linkage() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let governed = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governance-first execution must succeed");
+        let mut governance_state = governed
+            .governance_state
+            .clone()
+            .expect("governance-first execution must populate governance_state");
+        governance_state.artifact_trust_decision_ids =
+            vec!["artifact.decision.later.1".to_string()];
+        let envelope = governed
+            .with_governance_state(Some(governance_state))
+            .and_then(|value| value.with_proof_state(Some(available_proof_state())))
+            .expect("later governance linkage must attach");
+
+        let decision = runtime
+            .govern_protected_action_proof_state_execution(
+                &envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect_err("proof-governance must reject alternate later authority posture");
+
         assert_eq!(decision.response_class, GovernanceResponseClass::Block);
         assert_eq!(
             decision.reason_code,
