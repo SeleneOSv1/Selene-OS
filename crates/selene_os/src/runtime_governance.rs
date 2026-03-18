@@ -23,6 +23,7 @@ use selene_kernel_contracts::{ContractViolation, SessionState};
 pub mod reason_codes {
     pub const GOV_ENVELOPE_SESSION_REQUIRED: &str = "GOV_ENVELOPE_SESSION_REQUIRED";
     pub const GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED: &str = "GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED";
+    pub const GOV_ENVELOPE_ADMISSION_REQUIRED: &str = "GOV_ENVELOPE_ADMISSION_REQUIRED";
     pub const GOV_PERSISTENCE_DEGRADED: &str = "GOV_PERSISTENCE_DEGRADED";
     pub const GOV_PERSISTENCE_STALE_REJECTED: &str = "GOV_PERSISTENCE_STALE_REJECTED";
     pub const GOV_PERSISTENCE_QUARANTINE_REQUIRED: &str = "GOV_PERSISTENCE_QUARANTINE_REQUIRED";
@@ -48,6 +49,7 @@ const SUBSYSTEM_ARTIFACT_AUTHORITY: &str = "ARTIFACT_AUTHORITY";
 
 const RULE_ENV_SESSION_REQUIRED: &str = "RG-SESSION-001";
 const RULE_ENV_DEVICE_SEQUENCE_REQUIRED: &str = "RG-ENV-001";
+const RULE_ENV_ADMISSION_REQUIRED: &str = "RG-ENV-002";
 const RULE_PERSISTENCE_DEGRADED: &str = "RG-PERSIST-001";
 const RULE_PERSISTENCE_STALE_REJECTED: &str = "RG-PERSIST-002";
 const RULE_PERSISTENCE_QUARANTINE: &str = "RG-PERSIST-003";
@@ -345,6 +347,25 @@ impl RuntimeGovernanceRuntime {
                 None,
             ));
         }
+        if envelope.admission_state != AdmissionState::ExecutionAdmitted {
+            return Err(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "governance-first protected execution requires the admitted Section 03 handoff"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ));
+        }
         if envelope.device_turn_sequence.is_none() {
             return Err(self.apply_violation(
                 RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
@@ -357,6 +378,25 @@ impl RuntimeGovernanceRuntime {
                 Some(envelope.turn_id.0),
                 Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
                 Some("device turn sequence is mandatory for governed ordering".to_string()),
+                None,
+                None,
+            ));
+        }
+        if voice_turn_execution_has_deferred_state(envelope) {
+            return Err(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "governance-first protected execution only accepts the clean Section 03 handoff"
+                        .to_string(),
+                ),
                 None,
                 None,
             ));
@@ -446,7 +486,7 @@ impl RuntimeGovernanceRuntime {
             .record_existing_decision_locked(
                 &mut guard,
                 decision,
-                Some("runtime governance cleared voice execution".to_string()),
+                Some("runtime governance cleared canonical Section 04 voice execution".to_string()),
             )
             .expect("runtime governance decision must record");
         let envelope = envelope
@@ -742,7 +782,10 @@ impl RuntimeGovernanceRuntime {
                 )
             };
         let note = if response_class == GovernanceResponseClass::Degrade {
-            Some("artifact activation allowed with warning from canonical degraded trust state".to_string())
+            Some(
+                "artifact activation allowed with warning from canonical degraded trust state"
+                    .to_string(),
+            )
         } else {
             Some("artifact activation cleared canonical trust governance".to_string())
         };
@@ -1214,6 +1257,17 @@ fn subsystem_certification_snapshot(
         .collect()
 }
 
+fn voice_turn_execution_has_deferred_state(envelope: &RuntimeExecutionEnvelope) -> bool {
+    envelope.governance_state.is_some()
+        || envelope.proof_state.is_some()
+        || envelope.computation_state.is_some()
+        || envelope.identity_state.is_some()
+        || envelope.memory_state.is_some()
+        || envelope.authority_state.is_some()
+        || envelope.artifact_trust_state.is_some()
+        || envelope.law_state.is_some()
+}
+
 fn artifact_trust_governance_linkage(
     state: &ArtifactTrustExecutionState,
 ) -> ArtifactTrustGovernanceLinkage {
@@ -1275,7 +1329,9 @@ fn strongest_artifact_trust_failure(
     state: &ArtifactTrustExecutionState,
 ) -> Option<ArtifactVerificationFailureClass> {
     state.decision_records.iter().find_map(|decision| {
-        if decision.artifact_verification_result.artifact_verification_outcome
+        if decision
+            .artifact_verification_result
+            .artifact_verification_outcome
             == ArtifactVerificationOutcome::Failed
         {
             decision
@@ -1289,7 +1345,9 @@ fn strongest_artifact_trust_failure(
 
 fn artifact_trust_is_degraded(state: &ArtifactTrustExecutionState) -> bool {
     state.decision_records.iter().any(|decision| {
-        decision.artifact_verification_result.artifact_verification_outcome
+        decision
+            .artifact_verification_result
+            .artifact_verification_outcome
             == ArtifactVerificationOutcome::DegradedVerified
     })
 }
@@ -1358,6 +1416,14 @@ fn default_rule_registry() -> Vec<GovernanceRuleDescriptor> {
         .expect("governance rule must validate"),
         GovernanceRuleDescriptor::v1(
             RULE_ENV_DEVICE_SEQUENCE_REQUIRED.to_string(),
+            GovernanceRuleCategory::EnvelopeDiscipline,
+            SUBSYSTEM_INGRESS_PIPELINE.to_string(),
+            "1".to_string(),
+            true,
+        )
+        .expect("governance rule must validate"),
+        GovernanceRuleDescriptor::v1(
+            RULE_ENV_ADMISSION_REQUIRED.to_string(),
             GovernanceRuleCategory::EnvelopeDiscipline,
             SUBSYSTEM_INGRESS_PIPELINE.to_string(),
             "1".to_string(),
@@ -1499,15 +1565,14 @@ pub fn governance_runtime_reason(decision: &RuntimeGovernanceDecision) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1art::{
         ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
         ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
         ArtifactTrustExecutionState, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
-        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
-        ArtifactVerificationResult, TrustPolicySnapshotRef, TrustSetSnapshotRef,
-        VerificationBasisFingerprint,
+        ArtifactVerificationFailureClass, ArtifactVerificationOutcome, ArtifactVerificationResult,
+        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
-    use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
@@ -1560,9 +1625,7 @@ mod tests {
                     trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                         "policy.snap.gov.1".to_string(),
                     ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.gov.1".to_string(),
-                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.gov.1".to_string()),
                     verification_basis_fingerprint: VerificationBasisFingerprint(
                         "basis.fp.gov.1".to_string(),
                     ),
@@ -1583,9 +1646,7 @@ mod tests {
                     trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                         "policy.snap.gov.1".to_string(),
                     ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.gov.1".to_string(),
-                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.gov.1".to_string()),
                     evidence_refs: vec!["evidence.gov.1".to_string()],
                     historical_snapshot_ref: None,
                     replay_reconstructable: true,
@@ -1648,6 +1709,109 @@ mod tests {
             .expect_err("quarantined persistence must quarantine execution");
         assert_eq!(decision.response_class, GovernanceResponseClass::Quarantine);
         assert_eq!(decision.severity, GovernanceSeverity::QuarantineRequired);
+    }
+
+    #[test]
+    fn at_runtime_gov_02b_section03_handoff_populates_only_governance_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope();
+        let out = runtime
+            .govern_voice_turn_execution(&envelope)
+            .expect("accepted Section 03 handoff must enter governance-first execution");
+        assert_eq!(out.request_id, envelope.request_id);
+        assert_eq!(out.trace_id, envelope.trace_id);
+        assert_eq!(out.idempotency_key, envelope.idempotency_key);
+        assert_eq!(out.session_id, envelope.session_id);
+        assert_eq!(out.turn_id, envelope.turn_id);
+        assert_eq!(out.device_turn_sequence, envelope.device_turn_sequence);
+        assert_eq!(out.admission_state, AdmissionState::ExecutionAdmitted);
+        assert_eq!(out.persistence_state, envelope.persistence_state);
+        let governance_state = out
+            .governance_state
+            .as_ref()
+            .expect("governance state must be attached to the admitted envelope");
+        assert_eq!(
+            governance_state.last_response_class,
+            Some(GovernanceResponseClass::Allow)
+        );
+        assert!(governance_state.decision_log_ref.is_some());
+        assert!(governance_state.artifact_trust_decision_ids.is_empty());
+        assert!(governance_state.artifact_trust_proof_entry_refs.is_empty());
+        assert!(governance_state.artifact_trust_proof_record_ref.is_none());
+        assert!(out.proof_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.identity_state.is_none());
+        assert!(out.memory_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.artifact_trust_state.is_none());
+        assert!(out.law_state.is_none());
+        let log = runtime.decision_log_snapshot();
+        let last = log
+            .last()
+            .expect("governance decision log entry must exist");
+        assert_eq!(
+            last.note.as_deref(),
+            Some("runtime governance cleared canonical Section 04 voice execution")
+        );
+        assert!(last.artifact_trust_decision_ids.is_empty());
+        assert!(last.artifact_trust_proof_entry_refs.is_empty());
+        assert!(last.artifact_trust_proof_record_ref.is_none());
+    }
+
+    #[test]
+    fn at_runtime_gov_02c_non_admitted_handoff_blocks_voice_execution() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope()
+            .with_session_and_admission_state(Some(SessionId(1)), AdmissionState::IngressValidated)
+            .unwrap();
+        let decision = runtime
+            .govern_voice_turn_execution(&envelope)
+            .expect_err("non-admitted envelopes must fail closed");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+        let log = runtime.decision_log_snapshot();
+        let last = log
+            .last()
+            .expect("governance decision log entry must exist");
+        assert_eq!(
+            last.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02d_later_section04_state_remains_deferred_for_voice_execution() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .unwrap();
+        let decision = runtime
+            .govern_voice_turn_execution(&envelope)
+            .expect_err("later Section 04 artifact-trust posture must remain deferred");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_02e_pre_governed_envelope_cannot_reenter_voice_execution() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let governed = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("first governance pass must succeed");
+        let decision = runtime
+            .govern_voice_turn_execution(&governed)
+            .expect_err("governance-first execution must reject alternate reentry");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
     }
 
     #[test]
