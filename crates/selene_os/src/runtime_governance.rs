@@ -854,56 +854,251 @@ impl RuntimeGovernanceRuntime {
     pub fn govern_artifact_activation_execution(
         &self,
         envelope: &RuntimeExecutionEnvelope,
-    ) -> Result<RuntimeExecutionEnvelope, RuntimeGovernanceDecision> {
+    ) -> Result<RuntimeExecutionEnvelope, Box<RuntimeGovernanceDecision>> {
         let session_id = envelope.session_id.map(|value| value.0);
         let turn_id = Some(envelope.turn_id.0);
-        let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
-            return Err(self.apply_violation_with_artifact_trust(
-                RULE_ARTIFACT_TRUST_REQUIRED,
-                SUBSYSTEM_ARTIFACT_AUTHORITY,
+        {
+            let guard = self
+                .state
+                .lock()
+                .expect("runtime governance state lock poisoned");
+            if guard.safe_mode_active {
+                let decision = self.build_decision_from_locked(
+                    &guard,
+                    RULE_GOVERNANCE_INTEGRITY,
+                    SUBSYSTEM_RUNTIME_GOVERNANCE,
+                    GovernanceDecisionOutcome::SafeModeActive,
+                    GovernanceSeverity::Critical,
+                    GovernanceResponseClass::SafeMode,
+                    reason_codes::GOV_SAFE_MODE_ACTIVE,
+                    session_id,
+                    turn_id,
+                );
+                drop(guard);
+                return Err(Box::new(self.record_governance_decision(
+                    decision,
+                    Some("safe mode blocks artifact-trust protected execution".to_string()),
+                    None,
+                    None,
+                    None,
+                )));
+            }
+        }
+        if envelope.session_id.is_none() {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_SESSION_REQUIRED,
+                SUBSYSTEM_SESSION_ENGINE,
                 GovernanceDecisionOutcome::Failed,
                 GovernanceSeverity::Blocking,
                 GovernanceResponseClass::Block,
-                reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                reason_codes::GOV_ENVELOPE_SESSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some("artifact activation requires the canonical runtime session".to_string()),
+                None,
+                None,
+            )));
+        }
+        if envelope.admission_state != AdmissionState::ExecutionAdmitted {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some("artifact activation requires the admitted Section 03 handoff".to_string()),
+                None,
+                None,
+            )));
+        }
+        if envelope.device_turn_sequence.is_none() {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some("artifact activation requires canonical device turn ordering".to_string()),
+                None,
+                None,
+            )));
+        }
+        let Some(governance_state) = envelope.governance_state.as_ref() else {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some("artifact activation requires the accepted H11 governance_state".to_string()),
+                None,
+                None,
+            )));
+        };
+        if governance_state.decision_log_ref.is_none()
+            || governance_state_has_deferred_artifact_trust_linkage(governance_state)
+        {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
                 session_id,
                 turn_id,
                 Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
                 Some(
-                    "artifact activation requires canonical artifact_trust_state transport"
+                    "artifact activation only accepts the pre-artifact-trust H11 governance posture"
                         .to_string(),
                 ),
-                Some(GovernanceCertificationStatus::Warning),
-                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                 None,
+                None,
+            )));
+        }
+        if artifact_activation_execution_has_deferred_state(envelope) {
+            return Err(Box::new(self.apply_violation(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "artifact activation only accepts governance_state, proof_state, and artifact_trust_state"
+                        .to_string(),
+                ),
+                None,
+                None,
+            )));
+        }
+        let Some(proof_state) = envelope.proof_state.as_ref() else {
+            return Err(Box::new(
+                self.apply_violation(
+                    RULE_PROOF_REQUIRED,
+                    SUBSYSTEM_PROOF_CAPTURE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_PROOF_REQUIRED,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "artifact activation requires the accepted H12 proof-governance posture"
+                            .to_string(),
+                    ),
+                    Some(GovernanceCertificationStatus::Warning),
+                    Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+                ),
+            ));
+        };
+        let proof_available = matches!(
+            proof_state.proof_write_outcome,
+            selene_kernel_contracts::ph1j::ProofWriteOutcome::Written
+                | selene_kernel_contracts::ph1j::ProofWriteOutcome::ReusedExisting
+        ) && proof_state.proof_record_ref.is_some();
+        if !proof_available {
+            let (severity, response_class) = match proof_state.proof_failure_class {
+                Some(ProofFailureClass::ProofChainIntegrityFailure)
+                | Some(ProofFailureClass::ProofSignatureFailure) => (
+                    GovernanceSeverity::QuarantineRequired,
+                    GovernanceResponseClass::Quarantine,
+                ),
+                _ => (GovernanceSeverity::Blocking, GovernanceResponseClass::Block),
+            };
+            let note = match proof_state.proof_failure_class {
+                Some(class) => format!(
+                    "artifact activation requires H12 proof-governance posture; current proof posture failed with {}",
+                    class.as_str()
+                ),
+                None => {
+                    "artifact activation requires H12 proof-governance posture with a proof record"
+                        .to_string()
+                }
+            };
+            return Err(Box::new(self.apply_violation(
+                RULE_PROOF_REQUIRED,
+                SUBSYSTEM_PROOF_CAPTURE,
+                GovernanceDecisionOutcome::Failed,
+                severity,
+                response_class,
+                reason_codes::GOV_PROOF_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(note),
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            )));
+        }
+        let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
+            return Err(Box::new(
+                self.apply_violation_with_artifact_trust(
+                    RULE_ARTIFACT_TRUST_REQUIRED,
+                    SUBSYSTEM_ARTIFACT_AUTHORITY,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "artifact activation requires canonical artifact_trust_state transport"
+                            .to_string(),
+                    ),
+                    Some(GovernanceCertificationStatus::Warning),
+                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                    None,
+                ),
             ));
         };
 
         let linkage = artifact_trust_governance_linkage(artifact_trust_state);
         if !artifact_trust_evidence_complete(artifact_trust_state) {
-            return Err(self.apply_violation_with_artifact_trust(
-                RULE_ARTIFACT_TRUST_EVIDENCE,
-                SUBSYSTEM_ARTIFACT_AUTHORITY,
-                GovernanceDecisionOutcome::Failed,
-                GovernanceSeverity::Blocking,
-                GovernanceResponseClass::Block,
-                reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
-                session_id,
-                turn_id,
-                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                Some(
-                    "artifact activation requires complete trust decision and proof linkage"
-                        .to_string(),
+            return Err(Box::new(
+                self.apply_violation_with_artifact_trust(
+                    RULE_ARTIFACT_TRUST_EVIDENCE,
+                    SUBSYSTEM_ARTIFACT_AUTHORITY,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "artifact activation requires complete trust decision and proof linkage"
+                            .to_string(),
+                    ),
+                    Some(GovernanceCertificationStatus::Warning),
+                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                    Some(&linkage),
                 ),
-                Some(GovernanceCertificationStatus::Warning),
-                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
-                Some(&linkage),
             ));
         }
 
         if let Some(failure_class) = strongest_artifact_trust_failure(artifact_trust_state) {
             let (severity, response_class, outcome, certification_status, drift_signal) =
                 artifact_trust_governance_failure_posture(failure_class);
-            return Err(self.apply_violation_with_artifact_trust(
+            return Err(Box::new(self.apply_violation_with_artifact_trust(
                 RULE_ARTIFACT_TRUST_FAILED,
                 SUBSYSTEM_ARTIFACT_AUTHORITY,
                 outcome,
@@ -919,7 +1114,7 @@ impl RuntimeGovernanceRuntime {
                 Some(certification_status),
                 Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                 Some(&linkage),
-            ));
+            )));
         }
 
         let (outcome, severity, response_class, reason_code, certification_status) =
@@ -1437,6 +1632,15 @@ fn proof_state_execution_has_deferred_state(envelope: &RuntimeExecutionEnvelope)
         || envelope.law_state.is_some()
 }
 
+fn artifact_activation_execution_has_deferred_state(envelope: &RuntimeExecutionEnvelope) -> bool {
+    envelope.persistence_state.is_some()
+        || envelope.computation_state.is_some()
+        || envelope.identity_state.is_some()
+        || envelope.memory_state.is_some()
+        || envelope.authority_state.is_some()
+        || envelope.law_state.is_some()
+}
+
 fn governance_state_has_deferred_artifact_trust_linkage(state: &GovernanceExecutionState) -> bool {
     !state.artifact_trust_decision_ids.is_empty()
         || !state.artifact_trust_proof_entry_refs.is_empty()
@@ -1748,12 +1952,14 @@ mod tests {
         ArtifactVerificationFailureClass, ArtifactVerificationOutcome, ArtifactVerificationResult,
         TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
+    use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
-    use selene_kernel_contracts::runtime_execution::ProofExecutionState;
     use selene_kernel_contracts::runtime_execution::{
-        PlatformRuntimeContext, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+        AuthorityExecutionState, AuthorityPolicyDecision, OnboardingReadinessState,
+        PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+        SimulationCertificationState,
     };
     use selene_kernel_contracts::MonotonicTimeNs;
 
@@ -1878,6 +2084,21 @@ mod tests {
         runtime
             .govern_voice_turn_execution(&base_envelope())
             .expect("governance-first envelope must be accepted")
+    }
+
+    fn proof_governed_envelope(runtime: &RuntimeGovernanceRuntime) -> RuntimeExecutionEnvelope {
+        let governed = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governance-first execution must succeed");
+        let proof_envelope = governed
+            .with_proof_state(Some(available_proof_state()))
+            .expect("proof state must attach");
+        runtime
+            .govern_protected_action_proof_state_execution(
+                &proof_envelope,
+                GovernanceProtectedActionClass::VoiceTurnExecution,
+            )
+            .expect("proof-governance execution must succeed")
     }
 
     #[test]
@@ -2264,8 +2485,9 @@ mod tests {
     #[test]
     fn at_runtime_gov_07_artifact_activation_missing_trust_state_blocks() {
         let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = proof_governed_envelope(&runtime);
         let decision = runtime
-            .govern_artifact_activation_execution(&base_envelope())
+            .govern_artifact_activation_execution(&envelope)
             .expect_err("artifact activation must refuse missing canonical trust state");
         assert_eq!(decision.response_class, GovernanceResponseClass::Block);
         assert_eq!(
@@ -2285,7 +2507,7 @@ mod tests {
             .artifact_verification_result
             .artifact_verification_failure_class =
             Some(ArtifactVerificationFailureClass::ClusterTrustDivergence);
-        let envelope = base_envelope()
+        let envelope = proof_governed_envelope(&runtime)
             .with_artifact_trust_state(Some(state))
             .unwrap();
         let decision = runtime
@@ -2300,7 +2522,7 @@ mod tests {
         let mut state = verified_artifact_trust_state();
         state.proof_record_ref = None;
         state.decision_records[0].proof_entry_ref = None;
-        let envelope = base_envelope()
+        let envelope = proof_governed_envelope(&runtime)
             .with_artifact_trust_state(Some(state))
             .unwrap();
         let decision = runtime
@@ -2318,7 +2540,7 @@ mod tests {
         let runtime = RuntimeGovernanceRuntime::default();
         let mut state = verified_artifact_trust_state();
         state.decision_records[0].proof_entry_ref = None;
-        let envelope = base_envelope()
+        let envelope = proof_governed_envelope(&runtime)
             .with_artifact_trust_state(Some(state))
             .unwrap();
         let decision = runtime
@@ -2336,15 +2558,32 @@ mod tests {
     #[test]
     fn at_runtime_gov_11_verified_artifact_activation_records_canonical_linkage() {
         let runtime = RuntimeGovernanceRuntime::default();
-        let envelope = base_envelope()
+        let proof_governed = proof_governed_envelope(&runtime);
+        let envelope = proof_governed
             .with_artifact_trust_state(Some(verified_artifact_trust_state()))
             .unwrap();
         let out = runtime
             .govern_artifact_activation_execution(&envelope)
             .expect("verified artifact activation must pass governance");
+        assert_eq!(out.request_id, envelope.request_id);
+        assert_eq!(out.trace_id, envelope.trace_id);
+        assert_eq!(out.idempotency_key, envelope.idempotency_key);
+        assert_eq!(out.session_id, envelope.session_id);
+        assert_eq!(out.turn_id, envelope.turn_id);
+        assert_eq!(out.device_turn_sequence, envelope.device_turn_sequence);
+        assert_eq!(out.admission_state, AdmissionState::ExecutionAdmitted);
+        assert_eq!(out.proof_state, proof_governed.proof_state);
+        assert_eq!(out.artifact_trust_state, envelope.artifact_trust_state);
+        assert!(out.identity_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.law_state.is_none());
+        assert!(out.persistence_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.memory_state.is_none());
         let state = out
             .governance_state
             .expect("governance state must be attached to envelope");
+        assert!(state.decision_log_ref.is_some());
         assert_eq!(
             state.artifact_trust_decision_ids,
             vec!["authority.decision.gov.1".to_string()]
@@ -2359,9 +2598,109 @@ mod tests {
         );
         let log = runtime.decision_log_snapshot();
         let last = log.last().expect("decision log entry must exist");
+        assert_eq!(last.reason_code, reason_codes::GOV_ARTIFACT_TRUST_REQUIRED);
+        assert_eq!(
+            last.note.as_deref(),
+            Some("artifact activation cleared canonical trust governance")
+        );
         assert_eq!(
             last.artifact_trust_policy_snapshot_refs,
             vec!["policy.snap.gov.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_12_artifact_activation_requires_h11_governance_and_h12_proof_prerequisites() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let envelope = base_envelope()
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .expect("artifact-trust state must attach");
+        let decision = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect_err("artifact activation requires the accepted H11 and H12 outputs");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+
+        let governed_only = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governance-first execution must succeed")
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .expect("artifact-trust state must attach");
+        let decision = runtime
+            .govern_artifact_activation_execution(&governed_only)
+            .expect_err("artifact activation requires the accepted H12 proof-governance output");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(decision.reason_code, reason_codes::GOV_PROOF_REQUIRED);
+    }
+
+    #[test]
+    fn at_runtime_gov_13_artifact_activation_rejects_non_admitted_and_later_state_reentry() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let non_admitted = proof_governed_envelope(&runtime)
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .and_then(|value| {
+                value.with_session_and_admission_state(
+                    value.session_id,
+                    AdmissionState::IngressValidated,
+                )
+            })
+            .expect("non-admitted artifact envelope must validate structurally");
+        let decision = runtime
+            .govern_artifact_activation_execution(&non_admitted)
+            .expect_err("artifact activation must fail closed on non-admitted handoff");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+
+        let later_state = proof_governed_envelope(&runtime)
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .and_then(|value| {
+                value.with_authority_state(Some(
+                    AuthorityExecutionState::v1(
+                        Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
+                        SimulationCertificationState::CertifiedActive,
+                        OnboardingReadinessState::Ready,
+                        AuthorityPolicyDecision::Allowed,
+                        true,
+                        true,
+                        false,
+                        Some(1),
+                    )
+                    .expect("authority state must validate"),
+                ))
+            })
+            .expect("later authority state must attach");
+        let decision = runtime
+            .govern_artifact_activation_execution(&later_state)
+            .expect_err("later protected state must remain deferred");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_14_artifact_activation_rejects_reentry_after_artifact_linkage() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let first_input = proof_governed_envelope(&runtime)
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .expect("artifact-trust state must attach");
+        let first = runtime
+            .govern_artifact_activation_execution(&first_input)
+            .expect("first artifact activation pass must succeed");
+        let decision = runtime
+            .govern_artifact_activation_execution(&first)
+            .expect_err("artifact activation must reject reentry after artifact linkage");
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
         );
     }
 }
