@@ -1068,7 +1068,7 @@ impl RuntimeGovernanceRuntime {
                 turn_id,
                 Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
                 Some(
-                    "artifact activation only accepts governance_state, proof_state, and artifact_trust_state"
+                    "artifact activation only accepts governance_state, proof_state, artifact_trust_state, and optional voice_identity_assertion"
                         .to_string(),
                 ),
                 None,
@@ -1268,9 +1268,13 @@ impl RuntimeGovernanceRuntime {
                 Some(&linkage),
             )
             .expect("artifact trust governance decision must record");
+        drop(guard);
         let envelope = envelope
             .with_governance_state(Some(decision.governance_state.clone()))
             .expect("governance state must validate");
+        if let Some(assertion) = envelope.voice_identity_assertion.as_ref() {
+            return self.govern_artifact_activation_identity_state_execution(&envelope, assertion);
+        }
         Ok(envelope)
     }
 
@@ -3173,6 +3177,54 @@ mod tests {
         assert_eq!(
             last.artifact_trust_policy_snapshot_refs,
             vec!["policy.snap.gov.1".to_string()]
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_11b_artifact_activation_adopts_voice_identity_into_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let proof_governed = proof_governed_envelope(&runtime);
+        let assertion = confirmed_voice_assertion(proof_governed.actor_identity.clone());
+        let envelope = proof_governed
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .and_then(|value| value.with_voice_identity_assertion(Some(assertion.clone())))
+            .expect("artifact-trust state and voice identity assertion must attach");
+
+        let out = runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect("artifact activation must adopt canonical voice identity transport");
+
+        assert_eq!(out.request_id, envelope.request_id);
+        assert_eq!(out.trace_id, envelope.trace_id);
+        assert_eq!(out.idempotency_key, envelope.idempotency_key);
+        assert_eq!(out.session_id, envelope.session_id);
+        assert_eq!(out.turn_id, envelope.turn_id);
+        assert_eq!(out.device_turn_sequence, envelope.device_turn_sequence);
+        assert_eq!(out.admission_state, AdmissionState::ExecutionAdmitted);
+        assert_eq!(out.proof_state, proof_governed.proof_state);
+        assert_eq!(out.artifact_trust_state, envelope.artifact_trust_state);
+        assert!(out.persistence_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.memory_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.law_state.is_none());
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("artifact activation must now attach identity_state when the canonical carrier is present");
+        assert_eq!(
+            *identity_state,
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+                trust_tier: IdentityTrustTier::Verified,
+                identity_tier_v2: IdentityTierV2::Confirmed,
+                spoof_liveness_status: SpoofLivenessStatus::Unknown,
+                step_up_required: false,
+                recovery_state: IdentityRecoveryState::None,
+                cluster_drift_detected: false,
+                reason_code: None,
+            })
+            .expect("expected identity state must validate")
         );
     }
 
