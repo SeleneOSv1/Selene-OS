@@ -86,10 +86,11 @@ use selene_kernel_contracts::ph1x::{
 };
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
-    IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
-    MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
-    OnboardingReadinessState, PlatformRuntimeContext, ProofExecutionState,
-    RuntimeEntryTrigger, RuntimeExecutionEnvelope, SimulationCertificationState,
+    IdentityExecutionStateInput, IdentityRecoveryState, IdentityTrustTier,
+    IdentityVerificationConsistencyLevel, MemoryConsistencyLevel, MemoryEligibilityDecision,
+    MemoryExecutionState, MemoryTrustLevel, OnboardingReadinessState,
+    PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger,
+    RuntimeExecutionEnvelope, SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
@@ -939,7 +940,7 @@ impl AppServerIngressRuntime {
                 ));
             }
         }
-        let effective_tenant = request_tenant.or(link_tenant).ok_or_else(|| {
+        let effective_tenant = request_tenant.or(link_tenant).ok_or({
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_invite_link_open_request.tenant_id",
                 reason: "missing tenant scope for invite-open activation",
@@ -971,7 +972,7 @@ impl AppServerIngressRuntime {
         .map_err(StorageError::ContractViolation)?;
         let link_response = self.executor.execute_link(store, &link_req)?;
         let activation = match link_response {
-            Ph1LinkResponse::Ok(ok) => ok.link_activation_result.ok_or_else(|| {
+            Ph1LinkResponse::Ok(ok) => ok.link_activation_result.ok_or({
                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                     field: "ph1link_response.link_activation_result",
                     reason: "invite-open activation result must be present",
@@ -1012,7 +1013,7 @@ impl AppServerIngressRuntime {
         .map_err(StorageError::ContractViolation)?;
         let onb_response = self.executor.execute_onb(store, &onb_req)?;
         let session_start = match onb_response {
-            Ph1OnbResponse::Ok(ok) => ok.session_start_result.ok_or_else(|| {
+            Ph1OnbResponse::Ok(ok) => ok.session_start_result.ok_or({
                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                     field: "ph1onb_response.session_start_result",
                     reason: "onboarding session start result must be present",
@@ -1111,7 +1112,7 @@ impl AppServerIngressRuntime {
         let effective_tenant = request_tenant
             .or(session_tenant)
             .or(link_tenant)
-            .ok_or_else(|| {
+            .ok_or({
                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                     field: "app_onboarding_continue_request.tenant_id",
                     reason: "missing tenant scope for onboarding continuation",
@@ -1154,7 +1155,7 @@ impl AppServerIngressRuntime {
                             if next_step == AppOnboardingContinueNextStep::AskMissing {
                                 ask.field_key
                                     .clone()
-                                    .or_else(|| ask.remaining_missing_fields.first().cloned())
+                                    .or(ask.remaining_missing_fields.first().cloned())
                             } else {
                                 None
                             };
@@ -1289,7 +1290,7 @@ impl AppServerIngressRuntime {
                 let terms_status = match out {
                     Ph1OnbResponse::Ok(ok) => {
                         ok.terms_accept_result
-                            .ok_or_else(|| {
+                            .ok_or({
                                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                                     field: "ph1onb_response.terms_accept_result",
                                     reason: "terms accept result must be present",
@@ -1379,7 +1380,7 @@ impl AppServerIngressRuntime {
                 let primary_device_confirmed = match out {
                     Ph1OnbResponse::Ok(ok) => {
                         ok.primary_device_confirm_result
-                            .ok_or_else(|| {
+                            .ok_or({
                                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                                     field: "ph1onb_response.primary_device_confirm_result",
                                     reason: "primary device confirm result must be present",
@@ -1627,11 +1628,11 @@ impl AppServerIngressRuntime {
                 wake_req
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
-                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_out = Ph1wRuntime.run(store, &wake_req)?;
                 let wake_status = match wake_out {
                     Ph1wResponse::Ok(ok) => {
                         ok.enroll_start_result
-                            .ok_or_else(|| {
+                            .ok_or({
                                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                                     field: "ph1w_response.enroll_start_result",
                                     reason: "wake enroll start result must be present",
@@ -1684,7 +1685,7 @@ impl AppServerIngressRuntime {
                 )?;
                 let wake_session = store
                     .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "app_onboarding_continue_request.action",
                             reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_SAMPLE",
@@ -1727,11 +1728,11 @@ impl AppServerIngressRuntime {
                 wake_req
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
-                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_out = Ph1wRuntime.run(store, &wake_req)?;
                 let wake_status = match wake_out {
                     Ph1wResponse::Ok(ok) => {
                         ok.enroll_sample_result
-                            .ok_or_else(|| {
+                            .ok_or({
                                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                                     field: "ph1w_response.enroll_sample_result",
                                     reason: "wake enroll sample result must be present",
@@ -1780,7 +1781,7 @@ impl AppServerIngressRuntime {
                 )?;
                 let wake_session = store
                     .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "app_onboarding_continue_request.action",
                             reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_COMPLETE",
@@ -1814,11 +1815,11 @@ impl AppServerIngressRuntime {
                 wake_req
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
-                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_out = Ph1wRuntime.run(store, &wake_req)?;
                 let wake_status = match wake_out {
                     Ph1wResponse::Ok(ok) => {
                         ok.enroll_complete_result
-                            .ok_or_else(|| {
+                            .ok_or({
                                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                                     field: "ph1w_response.enroll_complete_result",
                                     reason: "wake enroll complete result must be present",
@@ -1866,7 +1867,7 @@ impl AppServerIngressRuntime {
                 )?;
                 let wake_session = store
                     .ph1w_latest_session_for_onboarding_device(&onboarding_session_id, &device_id)
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "app_onboarding_continue_request.action",
                             reason: "ONB_WAKE_ENROLL_START_REQUIRED_BEFORE_DEFER",
@@ -1893,7 +1894,7 @@ impl AppServerIngressRuntime {
                 wake_req
                     .validate()
                     .map_err(StorageError::ContractViolation)?;
-                let wake_out = Ph1wRuntime::default().run(store, &wake_req)?;
+                let wake_out = Ph1wRuntime.run(store, &wake_req)?;
                 match wake_out {
                     Ph1wResponse::Ok(ok) => {
                         if ok.enroll_defer_result.is_none() {
@@ -2028,7 +2029,7 @@ impl AppServerIngressRuntime {
         let verification_status = match out {
             Ph1OnbResponse::Ok(ok) => {
                 ok.employee_photo_result
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "ph1onb_response.employee_photo_result",
                             reason: "employee photo result must be present",
@@ -2110,7 +2111,7 @@ impl AppServerIngressRuntime {
         let verification_status = match out {
             Ph1OnbResponse::Ok(ok) => {
                 ok.employee_sender_verify_result
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "ph1onb_response.employee_sender_verify_result",
                             reason: "employee sender verify result must be present",
@@ -2247,7 +2248,7 @@ impl AppServerIngressRuntime {
             "SIM_DISPATCH_GUARD_SIMULATION_NOT_ACTIVE",
         )?;
 
-        let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
+        let device_id = session.primary_device_device_id.clone().ok_or({
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_onboarding_continue_request.action",
                 reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_EMO_PERSONA_LOCK",
@@ -2613,7 +2614,7 @@ impl AppServerIngressRuntime {
             &onboarding_session_id,
             "ONB_WAKE_ENROLL_REQUIRED_BEFORE_ACCESS_PROVISION",
         )?;
-        let device_id = session.primary_device_device_id.clone().ok_or_else(|| {
+        let device_id = session.primary_device_device_id.clone().ok_or({
             StorageError::ContractViolation(ContractViolation::InvalidValue {
                 field: "app_onboarding_continue_request.action",
                 reason: "ONB_PRIMARY_DEVICE_CONFIRM_REQUIRED_BEFORE_ACCESS_PROVISION",
@@ -2655,7 +2656,7 @@ impl AppServerIngressRuntime {
         let access_engine_instance_id = match out {
             Ph1OnbResponse::Ok(ok) => {
                 ok.access_instance_create_result
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "ph1onb_response.access_instance_create_result",
                             reason: "access instance create result must be present",
@@ -2721,7 +2722,7 @@ impl AppServerIngressRuntime {
         }
         let voice_artifact_sync_receipt_ref = store
             .ph1onb_latest_locked_voice_receipt_ref(&onboarding_session_id)
-            .ok_or_else(|| {
+            .ok_or({
                 StorageError::ContractViolation(ContractViolation::InvalidValue {
                     field: "app_onboarding_continue_request.action",
                     reason: "ONB_VOICE_ENROLL_REQUIRED_BEFORE_COMPLETE",
@@ -2784,7 +2785,7 @@ impl AppServerIngressRuntime {
         let onboarding_status = match out {
             Ph1OnbResponse::Ok(ok) => {
                 ok.complete_result
-                    .ok_or_else(|| {
+                    .ok_or({
                         StorageError::ContractViolation(ContractViolation::InvalidValue {
                             field: "ph1onb_response.complete_result",
                             reason: "complete result must be present",
@@ -2846,7 +2847,7 @@ impl AppServerIngressRuntime {
     > {
         let correlation_id = request.correlation_id;
         let turn_id = request.turn_id;
-        let app_platform = request.app_platform.clone();
+        let app_platform = request.app_platform;
         let request_session_id = request.voice_id_request.session_state_ref.session_id;
         let request_tenant_id = request.tenant_id.clone();
         let (outcome, governed_runtime_execution_envelope) =
@@ -2856,13 +2857,15 @@ impl AppServerIngressRuntime {
             OsVoiceLiveTurnOutcome::Forwarded(forwarded) => {
                 Some(self.build_ph1x_request_for_forwarded_voice(
                     store,
-                    correlation_id,
-                    turn_id,
-                    app_platform,
-                    forwarded,
-                    request_session_id,
-                    request_tenant_id.as_deref(),
-                    x_build,
+                    ForwardedVoicePh1xRequestInput {
+                        correlation_id,
+                        turn_id,
+                        app_platform,
+                        forwarded,
+                        request_session_id,
+                        tenant_id: request_tenant_id.as_deref(),
+                        x_build,
+                    },
                 )?)
             }
             OsVoiceLiveTurnOutcome::NotInvokedDisabled | OsVoiceLiveTurnOutcome::Refused(_) => None,
@@ -3218,11 +3221,7 @@ impl AppServerIngressRuntime {
             .proof_state
             .as_ref()
             .and_then(|state| state.proof_record_ref.clone())
-            .or_else(|| {
-                out.dispatch_outcome
-                    .as_ref()
-                    .map(dispatch_outcome_proof_ref_token)
-            });
+            .or(out.dispatch_outcome.as_ref().map(dispatch_outcome_proof_ref_token));
         let idempotency_key = format!(
             "agent_exec:{}:{}:{}:{}",
             correlation_id.0, turn_id.0, finder_packet_kind, execution_stage
@@ -3253,13 +3252,16 @@ impl AppServerIngressRuntime {
     fn run_ph1x_and_dispatch(
         &self,
         store: &mut Ph1fStore,
-        runtime_execution_envelope: RuntimeExecutionEnvelope,
-        voice_outcome: OsVoiceLiveTurnOutcome,
-        session_state: SessionState,
-        ph1x_request: Ph1xRequest,
-        actor_user_id: &UserId,
-        dispatch_now: MonotonicTimeNs,
+        input: Ph1xDispatchRunInput<'_>,
     ) -> Result<AppVoiceTurnExecutionOutcome, StorageError> {
+        let Ph1xDispatchRunInput {
+            runtime_execution_envelope,
+            voice_outcome,
+            session_state,
+            ph1x_request,
+            actor_user_id,
+            dispatch_now,
+        } = input;
         let ph1x_response = self
             .ph1x_runtime
             .decide(&ph1x_request)
@@ -3388,12 +3390,14 @@ impl AppServerIngressRuntime {
         let turn_id = TurnId(ph1x_request.turn_id);
         match self.run_ph1x_and_dispatch(
             store,
-            runtime_execution_envelope.clone(),
-            voice_outcome.clone(),
-            session_state,
-            ph1x_request.clone(),
-            actor_user_id,
-            dispatch_now,
+            Ph1xDispatchRunInput {
+                runtime_execution_envelope: runtime_execution_envelope.clone(),
+                voice_outcome: voice_outcome.clone(),
+                session_state,
+                ph1x_request: ph1x_request.clone(),
+                actor_user_id,
+                dispatch_now,
+            },
         ) {
             Ok(outcome) => Ok(outcome),
             Err(err) => {
@@ -3475,25 +3479,19 @@ impl AppServerIngressRuntime {
     fn build_ph1x_request_for_forwarded_voice(
         &self,
         store: &mut Ph1fStore,
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        app_platform: AppPlatform,
-        forwarded: &crate::ph1os::OsVoiceLiveForwardBundle,
-        request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
-        tenant_id: Option<&str>,
-        x_build: AppVoicePh1xBuildInput,
+        input: ForwardedVoicePh1xRequestInput<'_>,
     ) -> Result<Ph1xRequest, StorageError> {
         let agent_input_packet = self.build_agent_input_packet_for_forwarded_voice(
             store,
-            correlation_id,
-            turn_id,
-            forwarded,
-            request_session_id,
-            tenant_id,
-            x_build,
+            input.correlation_id,
+            input.turn_id,
+            input.forwarded,
+            input.request_session_id,
+            input.tenant_id,
+            input.x_build,
         )?;
         *self.last_agent_input_packet.borrow_mut() = Some(agent_input_packet.clone());
-        build_ph1x_request_from_agent_input_packet(app_platform, &agent_input_packet)
+        build_ph1x_request_from_agent_input_packet(input.app_platform, &agent_input_packet)
     }
 
     pub fn debug_agent_input_packet_build_count(&self) -> u64 {
@@ -3675,6 +3673,31 @@ fn runtime_law_storage_error(
     })
 }
 
+struct Ph1xDispatchRunInput<'a> {
+    runtime_execution_envelope: RuntimeExecutionEnvelope,
+    voice_outcome: OsVoiceLiveTurnOutcome,
+    session_state: SessionState,
+    ph1x_request: Ph1xRequest,
+    actor_user_id: &'a UserId,
+    dispatch_now: MonotonicTimeNs,
+}
+
+struct ForwardedVoicePh1xRequestInput<'a> {
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    app_platform: AppPlatform,
+    forwarded: &'a crate::ph1os::OsVoiceLiveForwardBundle,
+    request_session_id: Option<selene_kernel_contracts::ph1l::SessionId>,
+    tenant_id: Option<&'a str>,
+    x_build: AppVoicePh1xBuildInput,
+}
+
+type ProofSimulationTrace = (
+    Option<SimulationId>,
+    Option<SimulationVersion>,
+    Option<String>,
+);
+
 fn proof_failure_class_for_storage_error(error: &StorageError) -> ProofFailureClass {
     match error {
         StorageError::ProofFailure { class, .. } => *class,
@@ -3828,7 +3851,7 @@ fn proof_simulation_trace_for_voice_turn(
     out: &AppVoiceTurnExecutionOutcome,
     finder_terminal: Option<&FinderTerminalPacket>,
     actor_tenant_id: Option<&str>,
-) -> Result<(Option<SimulationId>, Option<SimulationVersion>, Option<String>), StorageError> {
+) -> Result<ProofSimulationTrace, StorageError> {
     let runtime_execution_envelope = &out.runtime_execution_envelope;
     let simulation_id = match finder_terminal {
         Some(FinderTerminalPacket::SimulationMatch(packet)) => Some(
@@ -4010,16 +4033,16 @@ fn identity_execution_state_from_voice_assertion(
                 step_up_required = true;
                 recovery_state = IdentityRecoveryState::RecoveryRestricted;
             }
-            IdentityExecutionState::v1(
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
                 consistency_level,
                 trust_tier,
-                ok.identity_v2.identity_tier_v2,
-                ok.spoof_liveness_status,
+                identity_tier_v2: ok.identity_v2.identity_tier_v2,
+                spoof_liveness_status: ok.spoof_liveness_status,
                 step_up_required,
                 recovery_state,
                 cluster_drift_detected,
-                ok.reason_code.map(|code| u64::from(code.0)),
-            )
+                reason_code: ok.reason_code.map(|code| u64::from(code.0)),
+            })
         }
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
             let (mut consistency_level, mut trust_tier, step_up_required, recovery_state) =
@@ -4079,16 +4102,16 @@ fn identity_execution_state_from_voice_assertion(
                 consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
                 trust_tier = IdentityTrustTier::Restricted;
             }
-            IdentityExecutionState::v1(
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
                 consistency_level,
                 trust_tier,
-                unknown.identity_v2.identity_tier_v2,
-                unknown.spoof_liveness_status,
+                identity_tier_v2: unknown.identity_v2.identity_tier_v2,
+                spoof_liveness_status: unknown.spoof_liveness_status,
                 step_up_required,
                 recovery_state,
                 cluster_drift_detected,
-                Some(u64::from(unknown.reason_code.0)),
-            )
+                reason_code: Some(u64::from(unknown.reason_code.0)),
+            })
         }
     }
     .map_err(StorageError::ContractViolation)?;
@@ -5431,7 +5454,7 @@ fn resolve_actor_single_tenant(
     actor_user_id: &UserId,
 ) -> Result<TenantId, StorageError> {
     let mut inferred: Option<String> = None;
-    for ((tenant_id, user_id), _row) in store.ph2access_instance_rows() {
+    for (tenant_id, user_id) in store.ph2access_instance_rows().keys() {
         if user_id != actor_user_id {
             continue;
         }
@@ -5448,7 +5471,7 @@ fn resolve_actor_single_tenant(
             inferred = Some(tenant_id.clone());
         }
     }
-    let tenant = inferred.ok_or_else(|| {
+    let tenant = inferred.ok_or({
         StorageError::ContractViolation(ContractViolation::InvalidValue {
             field: "app_voice_turn_execution_outcome.tool_request.query",
             reason: "message policy query requires actor tenant access instance",
@@ -5491,7 +5514,7 @@ fn build_finder_run_request_for_simulation_intent(
     let transcript_text = packet
         .srl_repaired_transcript
         .clone()
-        .or_else(|| packet.transcript_text.clone())
+        .or(packet.transcript_text.clone())
         .unwrap_or_else(|| intent_draft_transcript_fallback(intent_draft));
     let intent_family = finder_intent_family(intent_draft.intent_type);
     let simulation_catalog = match simulation_id_for_intent_draft_v1(intent_draft) {
@@ -6440,37 +6463,38 @@ mod tests {
     }
 
     fn runtime_with_search_tool_fixtures() -> AppServerIngressRuntime {
-        let mut runtime = AppServerIngressRuntime::default();
-        runtime.ph1e_runtime = Ph1eRuntime::new_with_provider_config(
-            Ph1eConfig::mvp_v1(),
-            Ph1eProviderConfig {
-                brave_api_key: Some("fixture_brave_key".to_string()),
-                brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
-                brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
-                brave_web_fixture_json: Some(
-                    r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
-                        .to_string(),
-                ),
-                brave_news_fixture_json: Some(
-                    r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
-                        .to_string(),
-                ),
-                openai_api_key: None,
-                openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
-                openai_model: "gpt-4o-mini".to_string(),
-                user_agent: "selene-os-app-ingress-test/1.0".to_string(),
-                proxy_config: Ph1eProxyConfig {
-                    mode: Ph1eProxyMode::Off,
-                    http_proxy_url: None,
-                    https_proxy_url: None,
+        AppServerIngressRuntime {
+            ph1e_runtime: Ph1eRuntime::new_with_provider_config(
+                Ph1eConfig::mvp_v1(),
+                Ph1eProviderConfig {
+                    brave_api_key: Some("fixture_brave_key".to_string()),
+                    brave_web_url: "https://search.selene.ai/res/v1/web/search".to_string(),
+                    brave_news_url: "https://search.selene.ai/res/v1/news/search".to_string(),
+                    brave_web_fixture_json: Some(
+                        r#"{"web":{"results":[{"title":"Selene web result","url":"https://search.selene.ai/result-1","description":"Provider-backed web snippet"}]}}"#
+                            .to_string(),
+                    ),
+                    brave_news_fixture_json: Some(
+                        r#"{"results":[{"title":"Selene news result","url":"https://news.selene.ai/story-1","description":"Provider-backed news snippet"}]}"#
+                            .to_string(),
+                    ),
+                    openai_api_key: None,
+                    openai_responses_url: "https://api.openai.com/v1/responses".to_string(),
+                    openai_model: "gpt-4o-mini".to_string(),
+                    user_agent: "selene-os-app-ingress-test/1.0".to_string(),
+                    proxy_config: Ph1eProxyConfig {
+                        mode: Ph1eProxyMode::Off,
+                        http_proxy_url: None,
+                        https_proxy_url: None,
+                    },
+                    url_fetch_fixture_html: Some(
+                        "<html><body><h1>Selene URL source</h1><p>This is a deterministic fixture page for URL fetch and citation chunking with provenance metadata.</p></body></html>"
+                            .to_string(),
+                    ),
                 },
-                url_fetch_fixture_html: Some(
-                    "<html><body><h1>Selene URL source</h1><p>This is a deterministic fixture page for URL fetch and citation chunking with provenance metadata.</p></body></html>"
-                        .to_string(),
-                ),
-            },
-        );
-        runtime
+            ),
+            ..AppServerIngressRuntime::default()
+        }
     }
 
     fn document_understand_draft(query: &str) -> Ph1nResponse {
@@ -7178,13 +7202,15 @@ mod tests {
         let ph1x_request = runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9502),
-                TurnId(9602),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9502),
+                    turn_id: TurnId(9602),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
         assert!(ph1x_request
@@ -7267,13 +7293,15 @@ mod tests {
         let ph1x_request = runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9514),
-                TurnId(9614),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9514),
+                    turn_id: TurnId(9614),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
         assert!(
@@ -7343,13 +7371,15 @@ mod tests {
         let ph1x_request = runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9515),
-                TurnId(9615),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9515),
+                    turn_id: TurnId(9615),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
         let candidate = ph1x_request
@@ -7420,13 +7450,15 @@ mod tests {
         runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9521),
-                TurnId(9621),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9521),
+                    turn_id: TurnId(9621),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
 
@@ -7493,13 +7525,15 @@ mod tests {
         runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9522),
-                TurnId(9622),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9522),
+                    turn_id: TurnId(9622),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
 
@@ -7568,13 +7602,15 @@ mod tests {
         runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9524),
-                TurnId(9624),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9524),
+                    turn_id: TurnId(9624),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
 
@@ -7658,13 +7694,15 @@ mod tests {
         runtime
             .build_ph1x_request_for_forwarded_voice(
                 &mut store,
-                CorrelationId(9523),
-                TurnId(9623),
-                AppPlatform::Desktop,
-                &forwarded,
-                None,
-                Some("tenant_1"),
-                x_build,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9523),
+                    turn_id: TurnId(9623),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
             )
             .unwrap();
 

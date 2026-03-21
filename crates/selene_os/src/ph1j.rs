@@ -3,11 +3,7 @@
 use std::cell::RefCell;
 
 use selene_kernel_contracts::ph1art::{
-    ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
-    ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
-    ArtifactTrustExecutionState, ArtifactVerificationOutcome, ArtifactVerificationResult,
-    NegativeVerificationResultRef, TrustPolicySnapshotRef, TrustSetSnapshotRef,
-    VerificationBasisFingerprint,
+    ArtifactTrustDecisionRecord, ArtifactTrustExecutionState,
 };
 use selene_kernel_contracts::ph1d::SafetyTier;
 use selene_kernel_contracts::ph1j::{
@@ -497,7 +493,13 @@ fn env_or_default(key: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1art::ArtifactVerificationFailureClass;
+    use selene_kernel_contracts::ph1art::{
+        ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
+        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance,
+        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
+        ArtifactVerificationResult, NegativeVerificationResultRef,
+        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
+    };
     use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::SessionId;

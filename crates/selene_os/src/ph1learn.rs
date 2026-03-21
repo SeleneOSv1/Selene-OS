@@ -438,20 +438,20 @@ pub struct LearnGovernedPromotionOutcome {
 #[derive(Debug, Clone)]
 pub enum LearnGovernedRefusal {
     Contract(ContractViolation),
-    Law(LearnGovernedLawRefusal),
-    Proof(LearnGovernedProofRefusal),
+    Law(Box<LearnGovernedLawRefusal>),
+    Proof(Box<LearnGovernedProofRefusal>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LearnGovernedLawRefusal {
     pub decision: RuntimeLawDecision,
-    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+    pub runtime_execution_envelope: Box<RuntimeExecutionEnvelope>,
 }
 
 #[derive(Debug, Clone)]
 pub struct LearnGovernedProofRefusal {
     pub error: StorageError,
-    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+    pub runtime_execution_envelope: Box<RuntimeExecutionEnvelope>,
 }
 
 fn attach_learning_proof_state(
@@ -482,21 +482,21 @@ fn attach_learning_proof_state(
     )
     .map_err(|error| LearnGovernedProofRefusal {
         error: StorageError::ContractViolation(error),
-        runtime_execution_envelope: runtime_execution_envelope.clone(),
+        runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
     })?;
     match ph1j_runtime.emit_protected_proof(store, request) {
         Ok(receipt) => {
             let proof_state = proof_execution_state_from_receipt(receipt).map_err(|error| {
                 LearnGovernedProofRefusal {
                     error,
-                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
                 }
             })?;
             runtime_execution_envelope
                 .with_proof_state(Some(proof_state))
                 .map_err(|error| LearnGovernedProofRefusal {
                     error: StorageError::ContractViolation(error),
-                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
                 })
         }
         Err(error) => {
@@ -510,7 +510,7 @@ fn attach_learning_proof_state(
                 .unwrap_or_else(|| runtime_execution_envelope.clone());
             Err(LearnGovernedProofRefusal {
                 error,
-                runtime_execution_envelope,
+                runtime_execution_envelope: Box::new(runtime_execution_envelope),
             })
         }
     }
@@ -528,7 +528,7 @@ fn govern_learning_completion_after_proof(
         Ok(proof_envelope) => (None, proof_envelope),
         Err(proof_refusal) => (
             Some(proof_refusal.error),
-            proof_refusal.runtime_execution_envelope,
+            *proof_refusal.runtime_execution_envelope,
         ),
     };
     let proof_state = proof_envelope
@@ -549,24 +549,32 @@ fn govern_learning_completion_after_proof(
     match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
         Ok(runtime_execution_envelope) => {
             if let Some(error) = proof_error {
-                Err(LearnGovernedRefusal::Proof(LearnGovernedProofRefusal {
+                Err(LearnGovernedRefusal::Proof(Box::new(LearnGovernedProofRefusal {
                     error,
-                    runtime_execution_envelope,
-                }))
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                })))
             } else {
                 Ok(runtime_execution_envelope)
             }
         }
         Err(decision) => {
             let runtime_execution_envelope = envelope_for_law
-                .with_law_state(Some(decision.law_state.clone()))
+                .with_law_state(Some(decision.law_state.as_ref().clone()))
                 .map_err(LearnGovernedRefusal::Contract)?;
-            Err(LearnGovernedRefusal::Law(LearnGovernedLawRefusal {
+            Err(LearnGovernedRefusal::Law(Box::new(LearnGovernedLawRefusal {
                 decision,
-                runtime_execution_envelope,
-            }))
+                runtime_execution_envelope: Box::new(runtime_execution_envelope),
+            })))
         }
     }
+}
+
+pub struct LearnGovernedPromotionInput<'a> {
+    envelope: &'a RuntimeExecutionEnvelope,
+    bundle: &'a LearnForwardBundle,
+    evaluated_at: MonotonicTimeNs,
+    override_state: Option<RuntimeLawOverrideState>,
+    dry_run_requested: bool,
 }
 
 pub fn govern_learn_bundle_promotion(
@@ -574,22 +582,22 @@ pub fn govern_learn_bundle_promotion(
     runtime_law: &RuntimeLawRuntime,
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
-    envelope: &RuntimeExecutionEnvelope,
-    bundle: &LearnForwardBundle,
-    evaluated_at: MonotonicTimeNs,
-    override_state: Option<RuntimeLawOverrideState>,
-    dry_run_requested: bool,
+    input: LearnGovernedPromotionInput<'_>,
 ) -> Result<LearnGovernedPromotionOutcome, LearnGovernedRefusal> {
-    bundle.validate().map_err(LearnGovernedRefusal::Contract)?;
-    let learning_input = RuntimeLawLearningInput::v1(Some(bundle.artifact_package_build.clone()))
+    input
+        .bundle
+        .validate()
+        .map_err(LearnGovernedRefusal::Contract)?;
+    let learning_input =
+        RuntimeLawLearningInput::v1(Some(input.bundle.artifact_package_build.clone()))
         .map_err(LearnGovernedRefusal::Contract)?;
     let law_context = RuntimeLawEvaluationContext::v1(
         None,
         Some(learning_input),
         None,
-        override_state,
-        evaluated_at,
-        dry_run_requested,
+        input.override_state,
+        input.evaluated_at,
+        input.dry_run_requested,
     )
     .map_err(LearnGovernedRefusal::Contract)?;
     let runtime_execution_envelope = govern_learning_completion_after_proof(
@@ -601,15 +609,15 @@ pub fn govern_learn_bundle_promotion(
         attach_learning_proof_state(
             ph1j_runtime,
             store,
-            envelope,
+            input.envelope,
             "LEARNING_PROMOTION_ALLOWED".to_string(),
             None,
-            vec![bundle.artifact_package_build.reason_code],
-            evaluated_at,
+            vec![input.bundle.artifact_package_build.reason_code],
+            input.evaluated_at,
         ),
     )?;
     Ok(LearnGovernedPromotionOutcome {
-        bundle: bundle.clone(),
+        bundle: input.bundle.clone(),
         runtime_execution_envelope,
     })
 }
@@ -1216,7 +1224,7 @@ fn voice_calibration_snapshot_from_signals(
     let frr_bp = ((false_reject_events * 10_000) / total).min(10_000) as u16;
     let tar_bp = 10_000u16.saturating_sub(frr_bp);
     let roc_auc_bp = 10_000u16.saturating_sub(((far_bp as u32 + frr_bp as u32) / 2) as u16);
-    let ci_margin_bp = ((4_000u32 / total).max(50)).min(2_000) as u16;
+    let ci_margin_bp = (4_000u32 / total).clamp(50, 2_000) as u16;
     let ci_low_bp = tar_bp.saturating_sub(ci_margin_bp);
     let ci_high_bp = tar_bp.saturating_add(ci_margin_bp).min(10_000);
 
@@ -2026,11 +2034,13 @@ mod tests {
             &runtime_law,
             &ph1j_runtime,
             &mut store,
-            &envelope,
-            &bundle,
-            MonotonicTimeNs(130),
-            None,
-            false,
+            LearnGovernedPromotionInput {
+                envelope: &envelope,
+                bundle: &bundle,
+                evaluated_at: MonotonicTimeNs(130),
+                override_state: None,
+                dry_run_requested: false,
+            },
         )
         .unwrap_err();
         match refusal {
@@ -2090,11 +2100,13 @@ mod tests {
             &runtime_law,
             &ph1j_runtime,
             &mut store,
-            &envelope,
-            &bundle,
-            MonotonicTimeNs(131),
-            None,
-            false,
+            LearnGovernedPromotionInput {
+                envelope: &envelope,
+                bundle: &bundle,
+                evaluated_at: MonotonicTimeNs(131),
+                override_state: None,
+                dry_run_requested: false,
+            },
         )
         .unwrap_err();
         match refusal {

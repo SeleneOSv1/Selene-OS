@@ -120,7 +120,7 @@ pub struct RuntimeLawDecision {
     pub response_class: RuntimeLawResponseClass,
     pub severity: RuntimeLawSeverity,
     pub reason_codes: Vec<String>,
-    pub law_state: RuntimeLawExecutionState,
+    pub law_state: Box<RuntimeLawExecutionState>,
 }
 
 #[derive(Debug, Clone)]
@@ -514,15 +514,14 @@ impl RuntimeLawRuntime {
             ));
         }
 
-        let decision = self.record_decision(
+        self.record_decision(
             envelope,
             action_class,
             context,
             triggered_rules,
             rollback_readiness_state,
             override_validity,
-        );
-        decision
+        )
     }
 
     pub fn govern_completion(
@@ -533,7 +532,7 @@ impl RuntimeLawRuntime {
     ) -> Result<RuntimeExecutionEnvelope, RuntimeLawDecision> {
         let decision = self.evaluate(envelope, action_class, context);
         let result = envelope
-            .with_law_state(Some(decision.law_state.clone()))
+            .with_law_state(Some(decision.law_state.as_ref().clone()))
             .expect("runtime law state must validate");
         if context.dry_run_requested {
             return Ok(result);
@@ -716,7 +715,7 @@ impl RuntimeLawRuntime {
             response_class,
             severity,
             reason_codes,
-            law_state,
+            law_state: Box::new(law_state),
         }
     }
 }
@@ -1524,9 +1523,10 @@ mod tests {
     };
     use selene_kernel_contracts::runtime_execution::{
         AuthorityExecutionState, ClientCompatibilityStatus, ClientIntegrityStatus,
-        DeviceTrustClass, IdentityExecutionState, IdentityRecoveryState, IdentityTrustTier,
-        IdentityVerificationConsistencyLevel, MemoryConsistencyLevel, MemoryEligibilityDecision,
-        MemoryExecutionState, MemoryTrustLevel, OnboardingReadinessState, PlatformRuntimeContext,
+        DeviceTrustClass, IdentityExecutionState, IdentityExecutionStateInput,
+        IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
+        MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState,
+        MemoryTrustLevel, OnboardingReadinessState, PlatformRuntimeContext,
         SimulationCertificationState,
     };
     use selene_kernel_contracts::runtime_governance::{
@@ -1574,16 +1574,16 @@ mod tests {
         ))
         .unwrap()
         .with_identity_state(Some(
-            IdentityExecutionState::v1(
-                IdentityVerificationConsistencyLevel::StrictVerified,
-                IdentityTrustTier::Verified,
-                IdentityTierV2::Confirmed,
-                SpoofLivenessStatus::Live,
-                false,
-                IdentityRecoveryState::None,
-                false,
-                None,
-            )
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+                trust_tier: IdentityTrustTier::Verified,
+                identity_tier_v2: IdentityTierV2::Confirmed,
+                spoof_liveness_status: SpoofLivenessStatus::Live,
+                step_up_required: false,
+                recovery_state: IdentityRecoveryState::None,
+                cluster_drift_detected: false,
+                reason_code: None,
+            })
             .unwrap(),
         ))
         .unwrap()

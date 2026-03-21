@@ -1342,66 +1342,70 @@ pub struct BuilderGovernedActivationHandoffOutcome {
 pub enum BuilderGovernedRefusal {
     Builder(BuilderRefusal),
     Contract(ContractViolation),
-    Law(BuilderGovernedLawRefusal),
-    Proof(BuilderGovernedProofRefusal),
+    Law(Box<BuilderGovernedLawRefusal>),
+    Proof(Box<BuilderGovernedProofRefusal>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuilderGovernedLawRefusal {
     pub decision: RuntimeLawDecision,
-    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+    pub runtime_execution_envelope: Box<RuntimeExecutionEnvelope>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BuilderGovernedProofRefusal {
     pub error: StorageError,
-    pub runtime_execution_envelope: RuntimeExecutionEnvelope,
+    pub runtime_execution_envelope: Box<RuntimeExecutionEnvelope>,
+}
+
+struct BuilderProofWriteInput {
+    action_class: ProofProtectedActionClass,
+    execution_outcome: String,
+    failure_class: Option<String>,
+    reason_codes: Vec<ReasonCodeId>,
+    executed_at: MonotonicTimeNs,
 }
 
 fn attach_builder_proof_state(
     ph1j_runtime: &Ph1jRuntime,
     store: &mut Ph1fStore,
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
-    action_class: ProofProtectedActionClass,
-    execution_outcome: String,
-    failure_class: Option<String>,
-    reason_codes: Vec<ReasonCodeId>,
-    executed_at: MonotonicTimeNs,
+    input: BuilderProofWriteInput,
 ) -> Result<RuntimeExecutionEnvelope, BuilderGovernedProofRefusal> {
     let request = ProtectedProofWriteRequest::v1(
         runtime_execution_envelope.clone(),
-        action_class,
+        input.action_class,
         proof_authority_decision_reference(runtime_execution_envelope),
         proof_policy_rule_identifiers(runtime_execution_envelope),
         proof_policy_version(runtime_execution_envelope),
         None,
         None,
         None,
-        execution_outcome,
-        failure_class,
-        reason_codes,
-        executed_at,
-        executed_at,
+        input.execution_outcome,
+        input.failure_class,
+        input.reason_codes,
+        input.executed_at,
+        input.executed_at,
         ProofRetentionClass::ComplianceRetention,
         Some(proof_verifier_metadata_ref(runtime_execution_envelope)),
     )
     .map_err(|error| BuilderGovernedProofRefusal {
         error: StorageError::ContractViolation(error),
-        runtime_execution_envelope: runtime_execution_envelope.clone(),
+        runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
     })?;
     match ph1j_runtime.emit_protected_proof(store, request) {
         Ok(receipt) => {
             let proof_state = proof_execution_state_from_receipt(receipt).map_err(|error| {
                 BuilderGovernedProofRefusal {
                     error,
-                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
                 }
             })?;
             runtime_execution_envelope
                 .with_proof_state(Some(proof_state))
                 .map_err(|error| BuilderGovernedProofRefusal {
                     error: StorageError::ContractViolation(error),
-                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope.clone()),
                 })
         }
         Err(error) => {
@@ -1415,7 +1419,7 @@ fn attach_builder_proof_state(
                 .unwrap_or_else(|| runtime_execution_envelope.clone());
             Err(BuilderGovernedProofRefusal {
                 error,
-                runtime_execution_envelope,
+                runtime_execution_envelope: Box::new(runtime_execution_envelope),
             })
         }
     }
@@ -1433,7 +1437,7 @@ fn govern_builder_completion_after_proof(
         Ok(proof_envelope) => (None, proof_envelope),
         Err(proof_refusal) => (
             Some(proof_refusal.error),
-            proof_refusal.runtime_execution_envelope,
+            *proof_refusal.runtime_execution_envelope,
         ),
     };
     let proof_state = proof_envelope
@@ -1454,22 +1458,22 @@ fn govern_builder_completion_after_proof(
     match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
         Ok(runtime_execution_envelope) => {
             if let Some(error) = proof_error {
-                Err(BuilderGovernedRefusal::Proof(BuilderGovernedProofRefusal {
+                Err(BuilderGovernedRefusal::Proof(Box::new(BuilderGovernedProofRefusal {
                     error,
-                    runtime_execution_envelope,
-                }))
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                })))
             } else {
                 Ok(runtime_execution_envelope)
             }
         }
         Err(decision) => {
             let runtime_execution_envelope = envelope_for_law
-                .with_law_state(Some(decision.law_state.clone()))
+                .with_law_state(Some(decision.law_state.as_ref().clone()))
                 .map_err(BuilderGovernedRefusal::Contract)?;
-            Err(BuilderGovernedRefusal::Law(BuilderGovernedLawRefusal {
+            Err(BuilderGovernedRefusal::Law(Box::new(BuilderGovernedLawRefusal {
                 decision,
-                runtime_execution_envelope,
-            }))
+                runtime_execution_envelope: Box::new(runtime_execution_envelope),
+            })))
         }
     }
 }
@@ -1548,11 +1552,13 @@ pub fn promote_with_judge_gates_governed(
             ph1j_runtime,
             store,
             envelope,
-            ProofProtectedActionClass::BuilderDeployment,
-            format!("PROMOTED_{:?}", release_state.stage),
-            None,
-            vec![release_state.reason_code],
-            now,
+            BuilderProofWriteInput {
+                action_class: ProofProtectedActionClass::BuilderDeployment,
+                execution_outcome: format!("PROMOTED_{:?}", release_state.stage),
+                failure_class: None,
+                reason_codes: vec![release_state.reason_code],
+                executed_at: now,
+            },
         ),
     )?;
     Ok(BuilderGovernedPromotionOutcome {
@@ -1687,15 +1693,17 @@ pub fn publish_runtime_activation_handoff_governed(
             ph1j_runtime,
             store,
             envelope,
-            ProofProtectedActionClass::BuilderDeployment,
-            if handoff.activation_published {
-                "ACTIVATION_PUBLISHED".to_string()
-            } else {
-                "ACTIVATION_WITHHELD".to_string()
+            BuilderProofWriteInput {
+                action_class: ProofProtectedActionClass::BuilderDeployment,
+                execution_outcome: if handoff.activation_published {
+                    "ACTIVATION_PUBLISHED".to_string()
+                } else {
+                    "ACTIVATION_WITHHELD".to_string()
+                },
+                failure_class: None,
+                reason_codes: vec![handoff.reason_code],
+                executed_at: now,
             },
-            None,
-            vec![handoff.reason_code],
-            now,
         ),
     )?;
     Ok(BuilderGovernedActivationHandoffOutcome {
@@ -1747,7 +1755,7 @@ pub enum BuilderOrchestrationOutcome {
     NotInvokedDisabled,
     NotInvokedNoSignals,
     Refused(BuilderRefusal),
-    Completed(BuilderCompletedBundle),
+    Completed(Box<BuilderCompletedBundle>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1802,7 +1810,7 @@ pub struct BuilderPostDeployDecisionBundle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuilderPostDeployJudgeOutcome {
     Refused(BuilderRefusal),
-    Completed(BuilderPostDeployDecisionBundle),
+    Completed(Box<BuilderPostDeployDecisionBundle>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2190,7 +2198,7 @@ where
             &rll_bundle.policy_rank.ordered_recommendations,
             &rll_bundle.policy_rank.selected_artifact_id,
         )
-        .ok_or_else(|| {
+        .ok_or({
             BuilderPipelineError::Contract(ContractViolation::InvalidValue {
                 field: "builder_orchestration.selected_artifact_id",
                 reason: "must exist in ordered_recommendations",
@@ -2289,16 +2297,16 @@ where
             learning_auto_report.as_ref(),
         )?;
         let decision_seed_files = generate_decision_seed_files(input, &proposal_id)?;
-        let permission_packet_path = generate_permission_packet(
+        let permission_packet_path = generate_permission_packet(BuilderPermissionPacketInput {
             input,
-            &input.outcome_entries,
+            outcome_entries: &input.outcome_entries,
             selected_recommendation,
-            &proposal_id,
+            proposal_id: &proposal_id,
             change_class,
-            learning_auto_report.as_ref(),
-            &change_brief_path,
-            &decision_seed_files,
-        )?;
+            learning_auto_report: learning_auto_report.as_ref(),
+            change_brief_path: &change_brief_path,
+            decision_seed_files: &decision_seed_files,
+        })?;
 
         let proposal_idempotency_key = input
             .proposal_idempotency_key
@@ -2368,7 +2376,7 @@ where
         )?;
         let release_row_id = store.append_builder_release_state_row(release_state.clone())?;
 
-        Ok(BuilderOrchestrationOutcome::Completed(
+        Ok(BuilderOrchestrationOutcome::Completed(Box::new(
             BuilderCompletedBundle {
                 proposal: final_proposal,
                 validation_run: run,
@@ -2403,7 +2411,7 @@ where
                 code_decision_file_path: Some(decision_seed_files.code_file_path),
                 launch_decision_file_path: Some(decision_seed_files.launch_file_path),
             },
-        ))
+        )))
     }
 
     pub fn run_post_deploy_judge<S>(
@@ -2500,14 +2508,14 @@ where
         };
         let release_row_id = store.append_builder_release_state_row(release_state.clone())?;
 
-        Ok(BuilderPostDeployJudgeOutcome::Completed(
+        Ok(BuilderPostDeployJudgeOutcome::Completed(Box::new(
             BuilderPostDeployDecisionBundle {
                 judge_result,
                 release_state,
                 judge_row_id,
                 release_row_id,
             },
-        ))
+        )))
     }
 }
 
@@ -2795,35 +2803,40 @@ fn write_change_brief_to_path(path: &str, content: &str) -> Result<(), BuilderPi
     Ok(())
 }
 
-fn generate_permission_packet(
-    input: &BuilderOfflineInput,
-    outcome_entries: &[OsOutcomeUtilizationEntry],
-    selected_recommendation: &RllRecommendationItem,
-    proposal_id: &str,
+struct BuilderPermissionPacketInput<'a> {
+    input: &'a BuilderOfflineInput,
+    outcome_entries: &'a [OsOutcomeUtilizationEntry],
+    selected_recommendation: &'a RllRecommendationItem,
+    proposal_id: &'a str,
     change_class: BuilderChangeClass,
-    learning_auto_report: Option<&BuilderLearningAutoReport>,
-    change_brief_path: &str,
-    decision_seed_files: &BuilderDecisionSeedFiles,
+    learning_auto_report: Option<&'a BuilderLearningAutoReport>,
+    change_brief_path: &'a str,
+    decision_seed_files: &'a BuilderDecisionSeedFiles,
+}
+
+fn generate_permission_packet(
+    input: BuilderPermissionPacketInput<'_>,
 ) -> Result<String, BuilderPipelineError> {
     let packet_path = input
+        .input
         .permission_packet_output_path
         .clone()
         .unwrap_or_else(|| DEFAULT_PERMISSION_PACKET_OUTPUT_PATH.to_string());
     validate_path_ascii("builder_permission_packet.path", &packet_path, 512)?;
 
-    let code_permission_ref = deterministic_permission_ref("code", proposal_id);
-    let launch_permission_ref = deterministic_permission_ref("launch", proposal_id);
+    let code_permission_ref = deterministic_permission_ref("code", input.proposal_id);
+    let launch_permission_ref = deterministic_permission_ref("launch", input.proposal_id);
 
     let content = render_permission_packet_markdown(
-        outcome_entries,
-        selected_recommendation,
-        proposal_id,
-        change_class,
-        learning_auto_report,
-        change_brief_path,
+        input.outcome_entries,
+        input.selected_recommendation,
+        input.proposal_id,
+        input.change_class,
+        input.learning_auto_report,
+        input.change_brief_path,
         &code_permission_ref,
         &launch_permission_ref,
-        decision_seed_files,
+        input.decision_seed_files,
     );
     write_permission_packet_to_path(&packet_path, &content)?;
     Ok(packet_path)
@@ -3984,11 +3997,11 @@ mod tests {
         let out2 = orchestrator.run_offline(&mut store, &input).unwrap();
 
         let b1 = match out1 {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
         let b2 = match out2 {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
 
@@ -4221,7 +4234,7 @@ mod tests {
         )
         .unwrap();
         let bundle = match orchestrator.run_offline(&mut store, &input()).unwrap() {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
         store
@@ -4286,7 +4299,7 @@ mod tests {
         )
         .unwrap();
         let bundle = match orchestrator.run_offline(&mut store, &input()).unwrap() {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
         store
@@ -4557,7 +4570,7 @@ mod tests {
             .run_offline(&mut store, &builder_input)
             .unwrap();
         let bundle = match out {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
 
@@ -4629,7 +4642,7 @@ mod tests {
             .run_offline(&mut store, &builder_input)
             .unwrap();
         let bundle = match out {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
 
@@ -4663,7 +4676,7 @@ mod tests {
             .run_offline(&mut store, &builder_input)
             .unwrap();
         let bundle = match out {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
 
@@ -4698,7 +4711,7 @@ mod tests {
             .run_offline(&mut store, &builder_input)
             .unwrap();
         let bundle = match out {
-            BuilderOrchestrationOutcome::Completed(bundle) => bundle,
+            BuilderOrchestrationOutcome::Completed(bundle) => *bundle,
             _ => panic!("expected Completed"),
         };
 

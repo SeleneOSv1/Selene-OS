@@ -4,7 +4,7 @@ use crate::ph1art::{
     ArtifactIdentityRef, ArtifactTrustExecutionState, TrustPolicySnapshotRef,
     TrustSetSnapshotRef,
 };
-use crate::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
+use crate::ph1_voice_id::{IdentityTierV2, Ph1VoiceIdResponse, SpoofLivenessStatus, UserId};
 use crate::ph1comp::ComputationExecutionState;
 use crate::ph1d::PolicyContextRef;
 use crate::ph1j::{
@@ -913,26 +913,29 @@ pub struct IdentityExecutionState {
     pub reason_code: Option<u64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentityExecutionStateInput {
+    pub consistency_level: IdentityVerificationConsistencyLevel,
+    pub trust_tier: IdentityTrustTier,
+    pub identity_tier_v2: IdentityTierV2,
+    pub spoof_liveness_status: SpoofLivenessStatus,
+    pub step_up_required: bool,
+    pub recovery_state: IdentityRecoveryState,
+    pub cluster_drift_detected: bool,
+    pub reason_code: Option<u64>,
+}
+
 impl IdentityExecutionState {
-    pub fn v1(
-        consistency_level: IdentityVerificationConsistencyLevel,
-        trust_tier: IdentityTrustTier,
-        identity_tier_v2: IdentityTierV2,
-        spoof_liveness_status: SpoofLivenessStatus,
-        step_up_required: bool,
-        recovery_state: IdentityRecoveryState,
-        cluster_drift_detected: bool,
-        reason_code: Option<u64>,
-    ) -> Result<Self, ContractViolation> {
+    pub fn v1(input: IdentityExecutionStateInput) -> Result<Self, ContractViolation> {
         let state = Self {
-            consistency_level,
-            trust_tier,
-            identity_tier_v2,
-            spoof_liveness_status,
-            step_up_required,
-            recovery_state,
-            cluster_drift_detected,
-            reason_code,
+            consistency_level: input.consistency_level,
+            trust_tier: input.trust_tier,
+            identity_tier_v2: input.identity_tier_v2,
+            spoof_liveness_status: input.spoof_liveness_status,
+            step_up_required: input.step_up_required,
+            recovery_state: input.recovery_state,
+            cluster_drift_detected: input.cluster_drift_detected,
+            reason_code: input.reason_code,
         };
         state.validate()?;
         Ok(state)
@@ -1180,7 +1183,7 @@ impl Validate for ProofExecutionState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeExecutionEnvelope {
     pub request_id: String,
     pub trace_id: String,
@@ -1206,7 +1209,11 @@ pub struct RuntimeExecutionEnvelope {
     /// Authoritative Section 04 trust output carried read-only for downstream consumers.
     pub artifact_trust_state: Option<ArtifactTrustExecutionState>,
     pub law_state: Option<RuntimeLawExecutionState>,
+    /// Canonical non-app PH1.VOICE.ID response carried read-only for later runtime adoption.
+    pub voice_identity_assertion: Option<Ph1VoiceIdResponse>,
 }
+
+impl Eq for RuntimeExecutionEnvelope {}
 
 impl RuntimeExecutionEnvelope {
     #[allow(clippy::too_many_arguments)]
@@ -1403,6 +1410,7 @@ impl RuntimeExecutionEnvelope {
             authority_state: None,
             artifact_trust_state: None,
             law_state: None,
+            voice_identity_assertion: None,
         };
         envelope.validate()?;
         Ok(envelope)
@@ -1482,6 +1490,16 @@ impl RuntimeExecutionEnvelope {
     ) -> Result<Self, ContractViolation> {
         let mut next = self.clone();
         next.identity_state = identity_state;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn with_voice_identity_assertion(
+        &self,
+        voice_identity_assertion: Option<Ph1VoiceIdResponse>,
+    ) -> Result<Self, ContractViolation> {
+        let mut next = self.clone();
+        next.voice_identity_assertion = voice_identity_assertion;
         next.validate()?;
         Ok(next)
     }
@@ -1634,6 +1652,9 @@ impl Validate for RuntimeExecutionEnvelope {
         if let Some(state) = self.law_state.as_ref() {
             state.validate()?;
         }
+        if let Some(assertion) = self.voice_identity_assertion.as_ref() {
+            assertion.validate()?;
+        }
         Ok(())
     }
 }
@@ -1647,7 +1668,11 @@ mod tests {
         ArtifactVerificationOutcome, ArtifactVerificationResult, ArtifactIdentityRef,
         TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
-    use crate::MonotonicTimeNs;
+    use crate::ph1_voice_id::{
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionUnknown,
+        SpeakerLabel,
+    };
+    use crate::{MonotonicTimeNs, ReasonCodeId};
 
     fn sample_platform_context() -> PlatformRuntimeContext {
         PlatformRuntimeContext::default_for_platform(AppPlatform::Android)
@@ -1718,6 +1743,24 @@ mod tests {
             )),
             proof_record_ref: None,
         }
+    }
+
+    fn sample_voice_identity_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1(
+                IdentityConfidence::Medium,
+                ReasonCodeId(1),
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .expect("diarization segment must validate"),
+                ],
+            )
+            .expect("voice assertion must validate"),
+        )
     }
 
     #[test]
@@ -1870,5 +1913,29 @@ mod tests {
 
         assert!(envelope.artifact_trust_inputs.is_some());
         assert!(envelope.artifact_trust_state.is_some());
+    }
+
+    #[test]
+    fn at_runtime_execution_08_envelope_accepts_voice_identity_assertion_transport() {
+        let assertion = sample_voice_identity_assertion();
+        let envelope = RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            "request:voice:1".to_string(),
+            "trace:voice:1".to_string(),
+            "idem:voice:1".to_string(),
+            UserId::new("user_runtime_voice_1").expect("valid actor user id"),
+            DeviceId::new("device_runtime_voice_1").expect("valid device id"),
+            AppPlatform::Android,
+            sample_platform_context(),
+            Some(SessionId(1)),
+            TurnId(1),
+            Some(1),
+            AdmissionState::SessionResolved,
+            None,
+        )
+        .expect("baseline envelope must validate")
+        .with_voice_identity_assertion(Some(assertion.clone()))
+        .expect("voice assertion transport must validate");
+
+        assert_eq!(envelope.voice_identity_assertion, Some(assertion));
     }
 }

@@ -974,7 +974,7 @@ impl Validate for OsTopLevelForwardBundle {
 pub enum OsTopLevelWiringOutcome {
     NotInvokedDisabled,
     Refused(OsRefuse),
-    Forwarded(OsTopLevelForwardBundle),
+    Forwarded(Box<OsTopLevelForwardBundle>),
 }
 
 pub trait Ph1OsEngine {
@@ -1334,7 +1334,7 @@ where
             OsWiringOutcome::NotInvokedDisabled => OsTopLevelWiringOutcome::NotInvokedDisabled,
             OsWiringOutcome::Refused(refuse) => OsTopLevelWiringOutcome::Refused(refuse),
             OsWiringOutcome::Forwarded(bundle) => {
-                OsTopLevelWiringOutcome::Forwarded(OsTopLevelForwardBundle::v1(
+                OsTopLevelWiringOutcome::Forwarded(Box::new(OsTopLevelForwardBundle::v1(
                     input.correlation_id,
                     input.turn_id,
                     runtime_execution_envelope,
@@ -1343,7 +1343,7 @@ where
                     optional_sequence_invoked,
                     optional_sequence_skipped_budget,
                     bundle,
-                )?)
+                )?))
             }
         };
 
@@ -1494,7 +1494,7 @@ impl OsVoiceLiveForwardBundle {
 pub enum OsVoiceLiveTurnOutcome {
     NotInvokedDisabled,
     Refused(OsRefuse),
-    Forwarded(OsVoiceLiveForwardBundle),
+    Forwarded(Box<OsVoiceLiveForwardBundle>),
 }
 
 #[derive(Debug, Clone)]
@@ -1551,7 +1551,7 @@ where
                 self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
                 return Ok(OsVoiceLiveTurnOutcome::Refused(refuse));
             }
-            OsTopLevelWiringOutcome::Forwarded(bundle) => bundle,
+            OsTopLevelWiringOutcome::Forwarded(bundle) => *bundle,
         };
 
         let voice_context = input
@@ -1585,16 +1585,20 @@ where
                 input.observation,
                 signal_scope,
             )?;
+        let runtime_execution_envelope = input
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(Some(voice_identity_assertion.clone()))
+            .map_err(StorageError::ContractViolation)?;
         self.run_device_artifact_sync_worker_pass(store, now, correlation_id, turn_id)?;
 
-        Ok(OsVoiceLiveTurnOutcome::Forwarded(
+        Ok(OsVoiceLiveTurnOutcome::Forwarded(Box::new(
             OsVoiceLiveForwardBundle {
                 top_level_bundle,
-                runtime_execution_envelope: input.runtime_execution_envelope,
+                runtime_execution_envelope,
                 voice_identity_assertion,
                 identity_prompt_scope_key,
             },
-        ))
+        )))
     }
 
     fn run_device_artifact_sync_worker_pass(
@@ -1645,8 +1649,8 @@ pub struct GovernedSelfHealCardChain {
 #[derive(Debug, Clone)]
 pub enum GovernedSelfHealChainRefusal {
     Contract(ContractViolation),
-    Law(GovernedSelfHealLawRefusal),
-    Proof(GovernedSelfHealProofRefusal),
+    Law(Box<GovernedSelfHealLawRefusal>),
+    Proof(Box<GovernedSelfHealProofRefusal>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1669,7 +1673,7 @@ fn attach_self_heal_proof_state(
     failure_class: Option<String>,
     reason_codes: Vec<selene_kernel_contracts::ReasonCodeId>,
     executed_at: MonotonicTimeNs,
-) -> Result<RuntimeExecutionEnvelope, GovernedSelfHealProofRefusal> {
+) -> Result<RuntimeExecutionEnvelope, Box<GovernedSelfHealProofRefusal>> {
     let request = ProtectedProofWriteRequest::v1(
         runtime_execution_envelope.clone(),
         ProofProtectedActionClass::SelfHealRemediation,
@@ -1687,23 +1691,27 @@ fn attach_self_heal_proof_state(
         ProofRetentionClass::ComplianceRetention,
         Some(proof_verifier_metadata_ref(runtime_execution_envelope)),
     )
-    .map_err(|error| GovernedSelfHealProofRefusal {
-        error: StorageError::ContractViolation(error),
-        runtime_execution_envelope: runtime_execution_envelope.clone(),
+    .map_err(|error| {
+        Box::new(GovernedSelfHealProofRefusal {
+            error: StorageError::ContractViolation(error),
+            runtime_execution_envelope: runtime_execution_envelope.clone(),
+        })
     })?;
     match ph1j_runtime.emit_protected_proof(store, request) {
         Ok(receipt) => {
             let proof_state = proof_execution_state_from_receipt(receipt).map_err(|error| {
-                GovernedSelfHealProofRefusal {
+                Box::new(GovernedSelfHealProofRefusal {
                     error,
                     runtime_execution_envelope: runtime_execution_envelope.clone(),
-                }
+                })
             })?;
             runtime_execution_envelope
                 .with_proof_state(Some(proof_state))
-                .map_err(|error| GovernedSelfHealProofRefusal {
-                    error: StorageError::ContractViolation(error),
-                    runtime_execution_envelope: runtime_execution_envelope.clone(),
+                .map_err(|error| {
+                    Box::new(GovernedSelfHealProofRefusal {
+                        error: StorageError::ContractViolation(error),
+                        runtime_execution_envelope: runtime_execution_envelope.clone(),
+                    })
                 })
         }
         Err(error) => {
@@ -1715,10 +1723,10 @@ fn attach_self_heal_proof_state(
                         .ok()
                 })
                 .unwrap_or_else(|| runtime_execution_envelope.clone());
-            Err(GovernedSelfHealProofRefusal {
+            Err(Box::new(GovernedSelfHealProofRefusal {
                 error,
                 runtime_execution_envelope,
-            })
+            }))
         }
     }
 }
@@ -1729,7 +1737,7 @@ fn govern_self_heal_completion_after_proof(
     governance_action_class: GovernanceProtectedActionClass,
     law_action_class: RuntimeProtectedActionClass,
     law_context: &RuntimeLawEvaluationContext,
-    proof_result: Result<RuntimeExecutionEnvelope, GovernedSelfHealProofRefusal>,
+    proof_result: Result<RuntimeExecutionEnvelope, Box<GovernedSelfHealProofRefusal>>,
 ) -> Result<RuntimeExecutionEnvelope, GovernedSelfHealChainRefusal> {
     let (proof_error, proof_envelope) = match proof_result {
         Ok(proof_envelope) => (None, proof_envelope),
@@ -1756,26 +1764,26 @@ fn govern_self_heal_completion_after_proof(
     match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
         Ok(runtime_execution_envelope) => {
             if let Some(error) = proof_error {
-                Err(GovernedSelfHealChainRefusal::Proof(
+                Err(GovernedSelfHealChainRefusal::Proof(Box::new(
                     GovernedSelfHealProofRefusal {
                         error,
                         runtime_execution_envelope,
                     },
-                ))
+                )))
             } else {
                 Ok(runtime_execution_envelope)
             }
         }
         Err(decision) => {
             let runtime_execution_envelope = envelope_for_law
-                .with_law_state(Some(decision.law_state.clone()))
+                .with_law_state(Some(decision.law_state.as_ref().clone()))
                 .map_err(GovernedSelfHealChainRefusal::Contract)?;
-            Err(GovernedSelfHealChainRefusal::Law(
+            Err(GovernedSelfHealChainRefusal::Law(Box::new(
                 GovernedSelfHealLawRefusal {
                     decision,
                     runtime_execution_envelope,
                 },
-            ))
+            )))
         }
     }
 }
@@ -2210,7 +2218,7 @@ impl Validate for OsOcrProviderForwardBundle {
 pub enum OsOcrRouteOutcome {
     NotInvokedDisabled,
     Refused(OsRefuse),
-    Forwarded(OsOcrProviderForwardBundle),
+    Forwarded(Box<OsOcrProviderForwardBundle>),
 }
 
 #[derive(Debug, Clone)]
@@ -2314,7 +2322,7 @@ where
             provider_resp,
             extracted_text,
         )?;
-        Ok(OsOcrRouteOutcome::Forwarded(bundle))
+        Ok(OsOcrRouteOutcome::Forwarded(Box::new(bundle)))
     }
 }
 
@@ -2418,6 +2426,18 @@ impl OsOcrConfidenceBand {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct OsOcrContextNlpForwardBundleInput {
+    pub correlation_id: CorrelationId,
+    pub turn_id: TurnId,
+    pub ocr_provider_bundle: OsOcrProviderForwardBundle,
+    pub confidence_band: OsOcrConfidenceBand,
+    pub clarify_policy_required: bool,
+    pub context_bundle: ContextForwardBundle,
+    pub nlp_output: Ph1nResponse,
+    pub nlp_fail_closed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct OsOcrContextNlpForwardBundle {
     pub correlation_id: CorrelationId,
     pub turn_id: TurnId,
@@ -2430,25 +2450,16 @@ pub struct OsOcrContextNlpForwardBundle {
 }
 
 impl OsOcrContextNlpForwardBundle {
-    pub fn v1(
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        ocr_provider_bundle: OsOcrProviderForwardBundle,
-        confidence_band: OsOcrConfidenceBand,
-        clarify_policy_required: bool,
-        context_bundle: ContextForwardBundle,
-        nlp_output: Ph1nResponse,
-        nlp_fail_closed: bool,
-    ) -> Result<Self, ContractViolation> {
+    pub fn v1(input: OsOcrContextNlpForwardBundleInput) -> Result<Self, ContractViolation> {
         let bundle = Self {
-            correlation_id,
-            turn_id,
-            ocr_provider_bundle,
-            confidence_band,
-            clarify_policy_required,
-            context_bundle,
-            nlp_output,
-            nlp_fail_closed,
+            correlation_id: input.correlation_id,
+            turn_id: input.turn_id,
+            ocr_provider_bundle: input.ocr_provider_bundle,
+            confidence_band: input.confidence_band,
+            clarify_policy_required: input.clarify_policy_required,
+            context_bundle: input.context_bundle,
+            nlp_output: input.nlp_output,
+            nlp_fail_closed: input.nlp_fail_closed,
         };
         bundle.validate()?;
         Ok(bundle)
@@ -2492,7 +2503,7 @@ impl Validate for OsOcrContextNlpForwardBundle {
 pub enum OsOcrContextNlpOutcome {
     NotInvokedDisabled,
     Refused(OsRefuse),
-    Forwarded(OsOcrContextNlpForwardBundle),
+    Forwarded(Box<OsOcrContextNlpForwardBundle>),
 }
 
 #[derive(Debug, Clone)]
@@ -2611,17 +2622,17 @@ where
             )?));
         }
 
-        let bundle = OsOcrContextNlpForwardBundle::v1(
-            ocr_bundle.correlation_id,
-            ocr_bundle.turn_id,
-            ocr_bundle.clone(),
+        let bundle = OsOcrContextNlpForwardBundle::v1(OsOcrContextNlpForwardBundleInput {
+            correlation_id: ocr_bundle.correlation_id,
+            turn_id: ocr_bundle.turn_id,
+            ocr_provider_bundle: ocr_bundle.clone(),
             confidence_band,
             clarify_policy_required,
             context_bundle,
             nlp_output,
             nlp_fail_closed,
-        )?;
-        Ok(OsOcrContextNlpOutcome::Forwarded(bundle))
+        })?;
+        Ok(OsOcrContextNlpOutcome::Forwarded(Box::new(bundle)))
     }
 }
 
@@ -4548,6 +4559,10 @@ mod tests {
             Ph1VoiceIdResponse::SpeakerAssertionUnknown(_)
         ));
         assert_eq!(
+            forwarded.runtime_execution_envelope.voice_identity_assertion,
+            Some(forwarded.voice_identity_assertion.clone())
+        );
+        assert_eq!(
             forwarded.identity_prompt_scope_key,
             Some(expected_scope_key)
         );
@@ -5332,7 +5347,7 @@ mod tests {
             ))
             .unwrap();
         match out {
-            OsOcrRouteOutcome::Forwarded(bundle) => bundle,
+            OsOcrRouteOutcome::Forwarded(bundle) => *bundle,
             _ => panic!("expected routed OCR forwarded bundle"),
         }
     }

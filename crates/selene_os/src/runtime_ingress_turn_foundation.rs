@@ -2755,6 +2755,7 @@ fn validate_ready_invariants(
         || envelope.governance_state.is_some()
         || envelope.proof_state.is_some()
         || envelope.identity_state.is_some()
+        || envelope.voice_identity_assertion.is_some()
         || envelope.memory_state.is_some()
         || envelope.authority_state.is_some()
         || envelope.artifact_trust_state.is_some()
@@ -2861,6 +2862,10 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    use selene_kernel_contracts::ph1_voice_id::{
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionUnknown,
+        SpeakerLabel,
+    };
     use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 
@@ -2963,6 +2968,24 @@ mod tests {
 
     fn user(id: &str) -> UserId {
         UserId::new(id).expect("user id")
+    }
+
+    fn sample_voice_identity_assertion() -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1(
+                IdentityConfidence::Medium,
+                selene_kernel_contracts::ReasonCodeId(1),
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .expect("diarization segment must validate"),
+                ],
+            )
+            .expect("voice assertion must validate"),
+        )
     }
 
     fn envelope_input(
@@ -3552,10 +3575,51 @@ mod tests {
             AdmissionState::ExecutionAdmitted
         );
         assert!(ready.runtime_execution_envelope.identity_state.is_none());
+        assert!(ready.runtime_execution_envelope.voice_identity_assertion.is_none());
         assert!(ready.runtime_execution_envelope.authority_state.is_none());
         assert!(ready.runtime_execution_envelope.persistence_state.is_none());
         assert!(ready.runtime_execution_envelope.governance_state.is_none());
         assert!(ready.runtime_execution_envelope.law_state.is_none());
+    }
+
+    #[test]
+    fn slice_2a_ready_invariants_reject_prepopulated_voice_identity_assertion() {
+        let runtime = ready_runtime();
+        let mut runtime_foundation = foundation();
+        let mut guardrail_foundation = foundation();
+        let mut sessions = RuntimeSessionFoundation::default();
+        let request = text_turn_request("voice-carrier-1", "trace-voice-carrier-1", None, 1);
+        let prepared = guardrail_foundation
+            .router
+            .prepare_request(
+                &runtime,
+                request
+                    .to_foundation_request()
+                    .expect("foundation request must build"),
+            )
+            .expect("prepared request must succeed");
+        let first = runtime_foundation
+            .process_turn_start(&runtime, &mut sessions, request)
+            .expect("baseline pre-authority handoff must succeed");
+        let ready = match first {
+            RuntimePreAuthorityTurnResult::Ready(ready) => ready,
+            other => panic!("expected ready handoff, got {other:?}"),
+        };
+        assert!(ready.runtime_execution_envelope.voice_identity_assertion.is_none());
+        let envelope = ready
+            .runtime_execution_envelope
+            .with_voice_identity_assertion(Some(sample_voice_identity_assertion()))
+            .expect("voice carrier attachment must validate");
+        let err = validate_ready_invariants(
+            &prepared,
+            &ready.normalized_request,
+            &envelope,
+            &ready.stage_history[..ready.stage_history.len() - 1],
+            ready.response.classification,
+        )
+        .expect_err("pre-authority voice assertion transport must fail closed");
+        assert_eq!(err.reason_code, reason_codes::INGRESS_STAGE_INVALID);
+        assert_eq!(err.failure_class, FailureClass::ExecutionFailure);
     }
 
     #[test]

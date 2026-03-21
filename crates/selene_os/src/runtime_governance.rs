@@ -3,13 +3,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
+use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
 use selene_kernel_contracts::ph1art::{
     ArtifactTrustExecutionState, ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
 };
 use selene_kernel_contracts::ph1j::ProofFailureClass;
+use selene_kernel_contracts::ph1_voice_id::{
+    IdentityTierV2, Ph1VoiceIdResponse, SpoofLivenessStatus,
+};
 use selene_kernel_contracts::runtime_execution::{
-    AdmissionState, FailureClass, PersistenceAcknowledgementState, PersistenceConflictSeverity,
-    PersistenceRecoveryMode, ProofExecutionState, RuntimeExecutionEnvelope,
+    AdmissionState, FailureClass, IdentityExecutionState, IdentityExecutionStateInput,
+    IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
+    PersistenceAcknowledgementState, PersistenceConflictSeverity, PersistenceRecoveryMode,
+    ProofExecutionState, RuntimeExecutionEnvelope,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceCertificationStatus, GovernanceClusterConsistency, GovernanceDecisionLogEntry,
@@ -18,7 +24,7 @@ use selene_kernel_contracts::runtime_governance::{
     GovernanceRuleCategory, GovernanceRuleDescriptor, GovernanceSeverity,
     GovernanceSubsystemCertification,
 };
-use selene_kernel_contracts::{ContractViolation, SessionState};
+use selene_kernel_contracts::{ContractViolation, SessionState, Validate};
 
 pub mod reason_codes {
     pub const GOV_ENVELOPE_SESSION_REQUIRED: &str = "GOV_ENVELOPE_SESSION_REQUIRED";
@@ -46,6 +52,7 @@ const SUBSYSTEM_PERSISTENCE_SYNC: &str = "PERSISTENCE_SYNC";
 const SUBSYSTEM_PROOF_CAPTURE: &str = "PROOF_CAPTURE";
 const SUBSYSTEM_CLUSTER_GOVERNANCE: &str = "CLUSTER_GOVERNANCE";
 const SUBSYSTEM_ARTIFACT_AUTHORITY: &str = "ARTIFACT_AUTHORITY";
+const SUBSYSTEM_IDENTITY_VOICE_ENGINE: &str = "IDENTITY_VOICE_ENGINE";
 
 const RULE_ENV_SESSION_REQUIRED: &str = "RG-SESSION-001";
 const RULE_ENV_DEVICE_SEQUENCE_REQUIRED: &str = "RG-ENV-001";
@@ -198,6 +205,85 @@ impl RuntimeGovernanceStateStore {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GovernanceDecisionBuildSpec<'a> {
+    rule_id: &'a str,
+    subsystem_id: &'a str,
+    outcome: GovernanceDecisionOutcome,
+    severity: GovernanceSeverity,
+    response_class: GovernanceResponseClass,
+    reason_code: &'a str,
+    session_id: Option<u128>,
+    turn_id: Option<u64>,
+}
+
+#[derive(Debug)]
+struct GovernanceViolationSpec<'a> {
+    decision: GovernanceDecisionBuildSpec<'a>,
+    drift_signal: Option<GovernanceDriftSignal>,
+    note: Option<String>,
+    certification_status: Option<GovernanceCertificationStatus>,
+    certification_subsystem: Option<String>,
+}
+
+macro_rules! governance_decision_spec {
+    (
+        $rule_id:expr,
+        $subsystem_id:expr,
+        $outcome:expr,
+        $severity:expr,
+        $response_class:expr,
+        $reason_code:expr,
+        $session_id:expr,
+        $turn_id:expr $(,)?
+    ) => {
+        GovernanceDecisionBuildSpec {
+            rule_id: $rule_id,
+            subsystem_id: $subsystem_id,
+            outcome: $outcome,
+            severity: $severity,
+            response_class: $response_class,
+            reason_code: $reason_code,
+            session_id: $session_id,
+            turn_id: $turn_id,
+        }
+    };
+}
+
+macro_rules! governance_violation_spec {
+    (
+        $rule_id:expr,
+        $subsystem_id:expr,
+        $outcome:expr,
+        $severity:expr,
+        $response_class:expr,
+        $reason_code:expr,
+        $session_id:expr,
+        $turn_id:expr,
+        $drift_signal:expr,
+        $note:expr,
+        $certification_status:expr,
+        $certification_subsystem:expr $(,)?
+    ) => {
+        GovernanceViolationSpec {
+            decision: governance_decision_spec!(
+                $rule_id,
+                $subsystem_id,
+                $outcome,
+                $severity,
+                $response_class,
+                $reason_code,
+                $session_id,
+                $turn_id,
+            ),
+            drift_signal: $drift_signal,
+            note: $note,
+            certification_status: $certification_status,
+            certification_subsystem: $certification_subsystem,
+        }
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimeGovernanceRuntime {
     config: RuntimeGovernanceConfig,
@@ -271,14 +357,16 @@ impl RuntimeGovernanceRuntime {
         );
         let decision = self.build_decision_from_locked(
             &guard,
-            RULE_GOVERNANCE_INTEGRITY,
-            SUBSYSTEM_RUNTIME_GOVERNANCE,
-            GovernanceDecisionOutcome::Passed,
-            GovernanceSeverity::Info,
-            GovernanceResponseClass::Allow,
-            reason_codes::GOV_SAFE_MODE_ACTIVE,
-            None,
-            None,
+            governance_decision_spec!(
+                RULE_GOVERNANCE_INTEGRITY,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Passed,
+                GovernanceSeverity::Info,
+                GovernanceResponseClass::Allow,
+                reason_codes::GOV_SAFE_MODE_ACTIVE,
+                None,
+                None,
+            ),
         );
         let _ = self.record_existing_decision_locked(
             &mut guard,
@@ -291,14 +379,14 @@ impl RuntimeGovernanceRuntime {
     pub fn govern_voice_turn_execution(
         &self,
         envelope: &RuntimeExecutionEnvelope,
-    ) -> Result<RuntimeExecutionEnvelope, RuntimeGovernanceDecision> {
+    ) -> Result<RuntimeExecutionEnvelope, Box<RuntimeGovernanceDecision>> {
         if self.config.force_integrity_failure {
-            return Err(self.enter_safe_mode(
+            return Err(Box::new(self.enter_safe_mode(
                 reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN,
                 envelope.session_id.map(|value| value.0),
                 Some(envelope.turn_id.0),
                 Some("forced governance integrity failure".to_string()),
-            ));
+            )));
         }
 
         {
@@ -309,30 +397,32 @@ impl RuntimeGovernanceRuntime {
             if guard.safe_mode_active {
                 let decision = self.build_decision_from_locked(
                     &guard,
-                    RULE_GOVERNANCE_INTEGRITY,
-                    SUBSYSTEM_RUNTIME_GOVERNANCE,
-                    GovernanceDecisionOutcome::SafeModeActive,
-                    GovernanceSeverity::Critical,
-                    GovernanceResponseClass::SafeMode,
-                    reason_codes::GOV_SAFE_MODE_ACTIVE,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
+                    governance_decision_spec!(
+                        RULE_GOVERNANCE_INTEGRITY,
+                        SUBSYSTEM_RUNTIME_GOVERNANCE,
+                        GovernanceDecisionOutcome::SafeModeActive,
+                        GovernanceSeverity::Critical,
+                        GovernanceResponseClass::SafeMode,
+                        reason_codes::GOV_SAFE_MODE_ACTIVE,
+                        envelope.session_id.map(|value| value.0),
+                        Some(envelope.turn_id.0),
+                    ),
                 );
                 drop(guard);
-                return Err(self.record_governance_decision(
+                return Err(Box::new(self.record_governance_decision(
                     decision,
                     Some("safe mode blocks protected voice execution".to_string()),
                     None,
                     None,
                     None,
-                ));
+                )));
             }
         }
 
         if envelope.admission_state != AdmissionState::IngressValidated
             && envelope.session_id.is_none()
         {
-            return Err(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_SESSION_REQUIRED,
                 SUBSYSTEM_SESSION_ENGINE,
                 GovernanceDecisionOutcome::Failed,
@@ -345,10 +435,10 @@ impl RuntimeGovernanceRuntime {
                 Some("session-first execution requires canonical session_id".to_string()),
                 None,
                 None,
-            ));
+            ))));
         }
         if envelope.admission_state != AdmissionState::ExecutionAdmitted {
-            return Err(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_INGRESS_PIPELINE,
                 GovernanceDecisionOutcome::Failed,
@@ -364,10 +454,10 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            ));
+            ))));
         }
         if envelope.device_turn_sequence.is_none() {
-            return Err(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
                 SUBSYSTEM_INGRESS_PIPELINE,
                 GovernanceDecisionOutcome::Failed,
@@ -380,10 +470,10 @@ impl RuntimeGovernanceRuntime {
                 Some("device turn sequence is mandatory for governed ordering".to_string()),
                 None,
                 None,
-            ));
+            ))));
         }
         if voice_turn_execution_has_deferred_state(envelope) {
-            return Err(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_RUNTIME_GOVERNANCE,
                 GovernanceDecisionOutcome::Failed,
@@ -399,7 +489,7 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            ));
+            ))));
         }
 
         if let Some(persistence_state) = envelope.persistence_state.as_ref() {
@@ -407,7 +497,7 @@ impl RuntimeGovernanceRuntime {
                 || persistence_state.conflict_severity
                     == Some(PersistenceConflictSeverity::QuarantineRequired)
             {
-                return Err(self.apply_violation(
+                return Err(Box::new(self.apply_violation(governance_violation_spec!(
                     RULE_PERSISTENCE_QUARANTINE,
                     SUBSYSTEM_PERSISTENCE_SYNC,
                     GovernanceDecisionOutcome::Quarantined,
@@ -420,14 +510,14 @@ impl RuntimeGovernanceRuntime {
                     Some("persistence quarantine blocks protected execution".to_string()),
                     Some(GovernanceCertificationStatus::Quarantined),
                     Some(SUBSYSTEM_PERSISTENCE_SYNC.to_string()),
-                ));
+                ))));
             }
             if persistence_state.acknowledgement_state
                 == PersistenceAcknowledgementState::StaleRejected
                 || persistence_state.conflict_severity
                     == Some(PersistenceConflictSeverity::StaleRejected)
             {
-                return Err(self.apply_violation(
+                return Err(Box::new(self.apply_violation(governance_violation_spec!(
                     RULE_PERSISTENCE_STALE_REJECTED,
                     SUBSYSTEM_PERSISTENCE_SYNC,
                     GovernanceDecisionOutcome::Failed,
@@ -440,13 +530,13 @@ impl RuntimeGovernanceRuntime {
                     Some("stale persistence replay rejected by runtime governance".to_string()),
                     Some(GovernanceCertificationStatus::Degraded),
                     Some(SUBSYSTEM_PERSISTENCE_SYNC.to_string()),
-                ));
+                ))));
             }
             if persistence_state.recovery_mode == PersistenceRecoveryMode::DegradedRecovery
                 || persistence_state.conflict_severity
                     == Some(PersistenceConflictSeverity::Retryable)
             {
-                let decision = self.apply_violation(
+                let decision = self.apply_violation(governance_violation_spec!(
                     RULE_PERSISTENCE_DEGRADED,
                     SUBSYSTEM_PERSISTENCE_SYNC,
                     GovernanceDecisionOutcome::Degraded,
@@ -459,7 +549,7 @@ impl RuntimeGovernanceRuntime {
                     Some("degraded persistence posture recorded".to_string()),
                     Some(GovernanceCertificationStatus::Degraded),
                     Some(SUBSYSTEM_PERSISTENCE_SYNC.to_string()),
-                );
+                ));
                 let envelope = envelope
                     .with_governance_state(Some(decision.governance_state.clone()))
                     .expect("governance state must validate");
@@ -473,14 +563,16 @@ impl RuntimeGovernanceRuntime {
             .expect("runtime governance state lock poisoned");
         let decision = self.build_decision_from_locked(
             &guard,
-            RULE_ENV_SESSION_REQUIRED,
-            SUBSYSTEM_RUNTIME_GOVERNANCE,
-            GovernanceDecisionOutcome::Passed,
-            GovernanceSeverity::Info,
-            GovernanceResponseClass::Allow,
-            reason_codes::GOV_ENVELOPE_SESSION_REQUIRED,
-            envelope.session_id.map(|value| value.0),
-            Some(envelope.turn_id.0),
+            governance_decision_spec!(
+                RULE_ENV_SESSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Passed,
+                GovernanceSeverity::Info,
+                GovernanceResponseClass::Allow,
+                reason_codes::GOV_ENVELOPE_SESSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+            ),
         );
         let decision = self
             .record_existing_decision_locked(
@@ -532,7 +624,7 @@ impl RuntimeGovernanceRuntime {
                     Some(GovernanceCertificationStatus::Degraded),
                 )
             };
-        self.apply_violation(
+        self.apply_violation(governance_violation_spec!(
             rule_id,
             SUBSYSTEM_PERSISTENCE_SYNC,
             outcome,
@@ -550,7 +642,7 @@ impl RuntimeGovernanceRuntime {
             })),
             certification_status,
             Some(SUBSYSTEM_PERSISTENCE_SYNC.to_string()),
-        )
+        ))
     }
 
     pub fn govern_protected_action_proof(
@@ -559,7 +651,7 @@ impl RuntimeGovernanceRuntime {
         session_id: Option<u128>,
         turn_id: Option<u64>,
         proof_available: bool,
-    ) -> Result<(), RuntimeGovernanceDecision> {
+    ) -> Result<(), Box<RuntimeGovernanceDecision>> {
         {
             let guard = self
                 .state
@@ -568,17 +660,19 @@ impl RuntimeGovernanceRuntime {
             if guard.safe_mode_active {
                 let decision = self.build_decision_from_locked(
                     &guard,
-                    RULE_GOVERNANCE_INTEGRITY,
-                    SUBSYSTEM_RUNTIME_GOVERNANCE,
-                    GovernanceDecisionOutcome::SafeModeActive,
-                    GovernanceSeverity::Critical,
-                    GovernanceResponseClass::SafeMode,
-                    reason_codes::GOV_SAFE_MODE_ACTIVE,
-                    session_id,
-                    turn_id,
+                    governance_decision_spec!(
+                        RULE_GOVERNANCE_INTEGRITY,
+                        SUBSYSTEM_RUNTIME_GOVERNANCE,
+                        GovernanceDecisionOutcome::SafeModeActive,
+                        GovernanceSeverity::Critical,
+                        GovernanceResponseClass::SafeMode,
+                        reason_codes::GOV_SAFE_MODE_ACTIVE,
+                        session_id,
+                        turn_id,
+                    ),
                 );
                 drop(guard);
-                return Err(self.record_governance_decision(
+                return Err(Box::new(self.record_governance_decision(
                     decision,
                     Some(format!(
                         "safe mode blocks protected action {}",
@@ -587,11 +681,11 @@ impl RuntimeGovernanceRuntime {
                     None,
                     None,
                     None,
-                ));
+                )));
             }
         }
         if !proof_available {
-            return Err(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_PROOF_REQUIRED,
                 SUBSYSTEM_PROOF_CAPTURE,
                 GovernanceDecisionOutcome::Failed,
@@ -607,7 +701,7 @@ impl RuntimeGovernanceRuntime {
                 )),
                 Some(GovernanceCertificationStatus::Warning),
                 Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
-            ));
+            ))));
         }
 
         let mut guard = self
@@ -616,14 +710,16 @@ impl RuntimeGovernanceRuntime {
             .expect("runtime governance state lock poisoned");
         let decision = self.build_decision_from_locked(
             &guard,
-            RULE_PROOF_REQUIRED,
-            SUBSYSTEM_PROOF_CAPTURE,
-            GovernanceDecisionOutcome::Passed,
-            GovernanceSeverity::Info,
-            GovernanceResponseClass::Allow,
-            reason_codes::GOV_PROOF_REQUIRED,
-            session_id,
-            turn_id,
+            governance_decision_spec!(
+                RULE_PROOF_REQUIRED,
+                SUBSYSTEM_PROOF_CAPTURE,
+                GovernanceDecisionOutcome::Passed,
+                GovernanceSeverity::Info,
+                GovernanceResponseClass::Allow,
+                reason_codes::GOV_PROOF_REQUIRED,
+                session_id,
+                turn_id,
+            ),
         );
         let _ = self
             .record_existing_decision_locked(
@@ -644,7 +740,7 @@ impl RuntimeGovernanceRuntime {
         session_id: Option<u128>,
         turn_id: Option<u64>,
         proof_state: &ProofExecutionState,
-    ) -> Result<(), RuntimeGovernanceDecision> {
+    ) -> Result<(), Box<RuntimeGovernanceDecision>> {
         let proof_available = matches!(
             proof_state.proof_write_outcome,
             selene_kernel_contracts::ph1j::ProofWriteOutcome::Written
@@ -664,7 +760,7 @@ impl RuntimeGovernanceRuntime {
                 action_class.as_str()
             ),
         };
-        Err(self.apply_violation(
+        Err(Box::new(self.apply_violation(governance_violation_spec!(
             RULE_PROOF_REQUIRED,
             SUBSYSTEM_PROOF_CAPTURE,
             GovernanceDecisionOutcome::Failed,
@@ -689,7 +785,7 @@ impl RuntimeGovernanceRuntime {
             Some(failure_note),
             Some(GovernanceCertificationStatus::Warning),
             Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
-        ))
+        ))))
     }
 
     pub fn govern_protected_action_proof_state_execution(
@@ -698,7 +794,7 @@ impl RuntimeGovernanceRuntime {
         action_class: GovernanceProtectedActionClass,
     ) -> Result<RuntimeExecutionEnvelope, Box<RuntimeGovernanceDecision>> {
         if envelope.session_id.is_none() {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_SESSION_REQUIRED,
                 SUBSYSTEM_SESSION_ENGINE,
                 GovernanceDecisionOutcome::Failed,
@@ -713,75 +809,69 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            )));
+            ))));
         }
         if envelope.admission_state != AdmissionState::ExecutionAdmitted {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_ENV_ADMISSION_REQUIRED,
-                    SUBSYSTEM_INGRESS_PIPELINE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "proof-governance execution requires the admitted Section 03 handoff"
-                            .to_string(),
-                    ),
-                    None,
-                    None,
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution requires the admitted Section 03 handoff"
+                        .to_string(),
                 ),
-            ));
+                None,
+                None,
+            ))));
         }
         if envelope.device_turn_sequence.is_none() {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
-                    SUBSYSTEM_INGRESS_PIPELINE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "proof-governance execution requires canonical device turn ordering"
-                            .to_string(),
-                    ),
-                    None,
-                    None,
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution requires canonical device turn ordering"
+                        .to_string(),
                 ),
-            ));
+                None,
+                None,
+            ))));
         }
         let Some(governance_state) = envelope.governance_state.as_ref() else {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_ENV_ADMISSION_REQUIRED,
-                    SUBSYSTEM_RUNTIME_GOVERNANCE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "proof-governance execution requires the accepted H11 governance_state"
-                            .to_string(),
-                    ),
-                    None,
-                    None,
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution requires the accepted H11 governance_state"
+                        .to_string(),
                 ),
-            ));
+                None,
+                None,
+            ))));
         };
         if governance_state.decision_log_ref.is_none()
             || governance_state_has_deferred_artifact_trust_linkage(governance_state)
         {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_RUNTIME_GOVERNANCE,
                 GovernanceDecisionOutcome::Failed,
@@ -797,57 +887,52 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            )));
+            ))));
         }
         if proof_state_execution_has_deferred_state(envelope) {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_ENV_ADMISSION_REQUIRED,
-                    SUBSYSTEM_RUNTIME_GOVERNANCE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "proof-governance execution only accepts governance_state plus proof_state"
-                            .to_string(),
-                    ),
-                    None,
-                    None,
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution only accepts governance_state plus proof_state"
+                        .to_string(),
                 ),
-            ));
+                None,
+                None,
+            ))));
         }
         let Some(proof_state) = envelope.proof_state.as_ref() else {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_PROOF_REQUIRED,
-                    SUBSYSTEM_PROOF_CAPTURE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_PROOF_REQUIRED,
-                    envelope.session_id.map(|value| value.0),
-                    Some(envelope.turn_id.0),
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "proof-governance execution requires canonical proof_state transport"
-                            .to_string(),
-                    ),
-                    Some(GovernanceCertificationStatus::Warning),
-                    Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_PROOF_REQUIRED,
+                SUBSYSTEM_PROOF_CAPTURE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_PROOF_REQUIRED,
+                envelope.session_id.map(|value| value.0),
+                Some(envelope.turn_id.0),
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "proof-governance execution requires canonical proof_state transport"
+                        .to_string(),
                 ),
-            ));
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            ))));
         };
         self.govern_protected_action_proof_state(
             action_class,
             envelope.session_id.map(|value| value.0),
             Some(envelope.turn_id.0),
             proof_state,
-        )
-        .map_err(Box::new)?;
+        )?;
         Ok(envelope.clone())
     }
 
@@ -865,14 +950,16 @@ impl RuntimeGovernanceRuntime {
             if guard.safe_mode_active {
                 let decision = self.build_decision_from_locked(
                     &guard,
-                    RULE_GOVERNANCE_INTEGRITY,
-                    SUBSYSTEM_RUNTIME_GOVERNANCE,
-                    GovernanceDecisionOutcome::SafeModeActive,
-                    GovernanceSeverity::Critical,
-                    GovernanceResponseClass::SafeMode,
-                    reason_codes::GOV_SAFE_MODE_ACTIVE,
-                    session_id,
-                    turn_id,
+                    governance_decision_spec!(
+                        RULE_GOVERNANCE_INTEGRITY,
+                        SUBSYSTEM_RUNTIME_GOVERNANCE,
+                        GovernanceDecisionOutcome::SafeModeActive,
+                        GovernanceSeverity::Critical,
+                        GovernanceResponseClass::SafeMode,
+                        reason_codes::GOV_SAFE_MODE_ACTIVE,
+                        session_id,
+                        turn_id,
+                    ),
                 );
                 drop(guard);
                 return Err(Box::new(self.record_governance_decision(
@@ -885,7 +972,7 @@ impl RuntimeGovernanceRuntime {
             }
         }
         if envelope.session_id.is_none() {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_SESSION_REQUIRED,
                 SUBSYSTEM_SESSION_ENGINE,
                 GovernanceDecisionOutcome::Failed,
@@ -898,10 +985,10 @@ impl RuntimeGovernanceRuntime {
                 Some("artifact activation requires the canonical runtime session".to_string()),
                 None,
                 None,
-            )));
+            ))));
         }
         if envelope.admission_state != AdmissionState::ExecutionAdmitted {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_INGRESS_PIPELINE,
                 GovernanceDecisionOutcome::Failed,
@@ -914,10 +1001,10 @@ impl RuntimeGovernanceRuntime {
                 Some("artifact activation requires the admitted Section 03 handoff".to_string()),
                 None,
                 None,
-            )));
+            ))));
         }
         if envelope.device_turn_sequence.is_none() {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
                 SUBSYSTEM_INGRESS_PIPELINE,
                 GovernanceDecisionOutcome::Failed,
@@ -930,10 +1017,10 @@ impl RuntimeGovernanceRuntime {
                 Some("artifact activation requires canonical device turn ordering".to_string()),
                 None,
                 None,
-            )));
+            ))));
         }
         let Some(governance_state) = envelope.governance_state.as_ref() else {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_RUNTIME_GOVERNANCE,
                 GovernanceDecisionOutcome::Failed,
@@ -946,12 +1033,12 @@ impl RuntimeGovernanceRuntime {
                 Some("artifact activation requires the accepted H11 governance_state".to_string()),
                 None,
                 None,
-            )));
+            ))));
         };
         if governance_state.decision_log_ref.is_none()
             || governance_state_has_deferred_artifact_trust_linkage(governance_state)
         {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_RUNTIME_GOVERNANCE,
                 GovernanceDecisionOutcome::Failed,
@@ -967,10 +1054,10 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            )));
+            ))));
         }
         if artifact_activation_execution_has_deferred_state(envelope) {
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_ENV_ADMISSION_REQUIRED,
                 SUBSYSTEM_RUNTIME_GOVERNANCE,
                 GovernanceDecisionOutcome::Failed,
@@ -986,28 +1073,26 @@ impl RuntimeGovernanceRuntime {
                 ),
                 None,
                 None,
-            )));
+            ))));
         }
         let Some(proof_state) = envelope.proof_state.as_ref() else {
-            return Err(Box::new(
-                self.apply_violation(
-                    RULE_PROOF_REQUIRED,
-                    SUBSYSTEM_PROOF_CAPTURE,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_PROOF_REQUIRED,
-                    session_id,
-                    turn_id,
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "artifact activation requires the accepted H12 proof-governance posture"
-                            .to_string(),
-                    ),
-                    Some(GovernanceCertificationStatus::Warning),
-                    Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_PROOF_REQUIRED,
+                SUBSYSTEM_PROOF_CAPTURE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_PROOF_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "artifact activation requires the accepted H12 proof-governance posture"
+                        .to_string(),
                 ),
-            ));
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            ))));
         };
         let proof_available = matches!(
             proof_state.proof_write_outcome,
@@ -1033,7 +1118,7 @@ impl RuntimeGovernanceRuntime {
                         .to_string()
                 }
             };
-            return Err(Box::new(self.apply_violation(
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
                 RULE_PROOF_REQUIRED,
                 SUBSYSTEM_PROOF_CAPTURE,
                 GovernanceDecisionOutcome::Failed,
@@ -1046,26 +1131,28 @@ impl RuntimeGovernanceRuntime {
                 Some(note),
                 Some(GovernanceCertificationStatus::Warning),
                 Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
-            )));
+            ))));
         }
         let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
             return Err(Box::new(
                 self.apply_violation_with_artifact_trust(
-                    RULE_ARTIFACT_TRUST_REQUIRED,
-                    SUBSYSTEM_ARTIFACT_AUTHORITY,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
-                    session_id,
-                    turn_id,
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "artifact activation requires canonical artifact_trust_state transport"
-                            .to_string(),
+                    governance_violation_spec!(
+                        RULE_ARTIFACT_TRUST_REQUIRED,
+                        SUBSYSTEM_ARTIFACT_AUTHORITY,
+                        GovernanceDecisionOutcome::Failed,
+                        GovernanceSeverity::Blocking,
+                        GovernanceResponseClass::Block,
+                        reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                        session_id,
+                        turn_id,
+                        Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                        Some(
+                            "artifact activation requires canonical artifact_trust_state transport"
+                                .to_string(),
+                        ),
+                        Some(GovernanceCertificationStatus::Warning),
+                        Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     ),
-                    Some(GovernanceCertificationStatus::Warning),
-                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     None,
                 ),
             ));
@@ -1075,21 +1162,23 @@ impl RuntimeGovernanceRuntime {
         if !artifact_trust_evidence_complete(artifact_trust_state) {
             return Err(Box::new(
                 self.apply_violation_with_artifact_trust(
-                    RULE_ARTIFACT_TRUST_EVIDENCE,
-                    SUBSYSTEM_ARTIFACT_AUTHORITY,
-                    GovernanceDecisionOutcome::Failed,
-                    GovernanceSeverity::Blocking,
-                    GovernanceResponseClass::Block,
-                    reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
-                    session_id,
-                    turn_id,
-                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
-                    Some(
-                        "artifact activation requires complete trust decision and proof linkage"
-                            .to_string(),
+                    governance_violation_spec!(
+                        RULE_ARTIFACT_TRUST_EVIDENCE,
+                        SUBSYSTEM_ARTIFACT_AUTHORITY,
+                        GovernanceDecisionOutcome::Failed,
+                        GovernanceSeverity::Blocking,
+                        GovernanceResponseClass::Block,
+                        reason_codes::GOV_ARTIFACT_TRUST_EVIDENCE_INCOMPLETE,
+                        session_id,
+                        turn_id,
+                        Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                        Some(
+                            "artifact activation requires complete trust decision and proof linkage"
+                                .to_string(),
+                        ),
+                        Some(GovernanceCertificationStatus::Warning),
+                        Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     ),
-                    Some(GovernanceCertificationStatus::Warning),
-                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     Some(&linkage),
                 ),
             ));
@@ -1099,20 +1188,22 @@ impl RuntimeGovernanceRuntime {
             let (severity, response_class, outcome, certification_status, drift_signal) =
                 artifact_trust_governance_failure_posture(failure_class);
             return Err(Box::new(self.apply_violation_with_artifact_trust(
-                RULE_ARTIFACT_TRUST_FAILED,
-                SUBSYSTEM_ARTIFACT_AUTHORITY,
-                outcome,
-                severity,
-                response_class,
-                reason_codes::GOV_ARTIFACT_TRUST_FAILED,
-                session_id,
-                turn_id,
-                drift_signal,
-                Some(format!(
-                    "artifact activation blocked by canonical trust failure {failure_class:?}"
-                )),
-                Some(certification_status),
-                Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                governance_violation_spec!(
+                    RULE_ARTIFACT_TRUST_FAILED,
+                    SUBSYSTEM_ARTIFACT_AUTHORITY,
+                    outcome,
+                    severity,
+                    response_class,
+                    reason_codes::GOV_ARTIFACT_TRUST_FAILED,
+                    session_id,
+                    turn_id,
+                    drift_signal,
+                    Some(format!(
+                        "artifact activation blocked by canonical trust failure {failure_class:?}"
+                    )),
+                    Some(certification_status),
+                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                ),
                 Some(&linkage),
             )));
         }
@@ -1154,18 +1245,20 @@ impl RuntimeGovernanceRuntime {
         );
         let decision = self.build_decision_from_locked(
             &guard,
-            if response_class == GovernanceResponseClass::Degrade {
-                RULE_ARTIFACT_TRUST_DEGRADED
-            } else {
-                RULE_ARTIFACT_TRUST_REQUIRED
-            },
-            SUBSYSTEM_ARTIFACT_AUTHORITY,
-            outcome,
-            severity,
-            response_class,
-            reason_code,
-            session_id,
-            turn_id,
+            governance_decision_spec!(
+                if response_class == GovernanceResponseClass::Degrade {
+                    RULE_ARTIFACT_TRUST_DEGRADED
+                } else {
+                    RULE_ARTIFACT_TRUST_REQUIRED
+                },
+                SUBSYSTEM_ARTIFACT_AUTHORITY,
+                outcome,
+                severity,
+                response_class,
+                reason_code,
+                session_id,
+                turn_id,
+            ),
         );
         let decision = self
             .record_existing_decision_with_artifact_trust_locked(
@@ -1179,6 +1272,285 @@ impl RuntimeGovernanceRuntime {
             .with_governance_state(Some(decision.governance_state.clone()))
             .expect("governance state must validate");
         Ok(envelope)
+    }
+
+    pub fn govern_artifact_activation_identity_state_execution(
+        &self,
+        envelope: &RuntimeExecutionEnvelope,
+        assertion: &Ph1VoiceIdResponse,
+    ) -> Result<RuntimeExecutionEnvelope, Box<RuntimeGovernanceDecision>> {
+        let session_id = envelope.session_id.map(|value| value.0);
+        let turn_id = Some(envelope.turn_id.0);
+        {
+            let guard = self
+                .state
+                .lock()
+                .expect("runtime governance state lock poisoned");
+            if guard.safe_mode_active {
+                let decision = self.build_decision_from_locked(
+                    &guard,
+                    governance_decision_spec!(
+                        RULE_GOVERNANCE_INTEGRITY,
+                        SUBSYSTEM_RUNTIME_GOVERNANCE,
+                        GovernanceDecisionOutcome::SafeModeActive,
+                        GovernanceSeverity::Critical,
+                        GovernanceResponseClass::SafeMode,
+                        reason_codes::GOV_SAFE_MODE_ACTIVE,
+                        session_id,
+                        turn_id,
+                    ),
+                );
+                drop(guard);
+                return Err(Box::new(self.record_governance_decision(
+                    decision,
+                    Some(
+                        "safe mode blocks canonical non-app identity-state construction"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                    None,
+                )));
+            }
+        }
+        if envelope.session_id.is_none() {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_SESSION_REQUIRED,
+                SUBSYSTEM_SESSION_ENGINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_SESSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires the canonical runtime session"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        if envelope.admission_state != AdmissionState::ExecutionAdmitted {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires the admitted artifact-governed handoff"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        if envelope.device_turn_sequence.is_none() {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_DEVICE_SEQUENCE_REQUIRED,
+                SUBSYSTEM_INGRESS_PIPELINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_DEVICE_SEQUENCE_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires canonical device turn ordering"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        let Some(governance_state) = envelope.governance_state.as_ref() else {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires the accepted artifact-governed governance_state"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        };
+        if governance_state.decision_log_ref.is_none()
+            || !governance_state_has_artifact_trust_linkage(governance_state)
+        {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ARTIFACT_TRUST_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires the accepted artifact-trust governance linkage"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        if envelope.proof_state.is_none() {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_PROOF_REQUIRED,
+                SUBSYSTEM_PROOF_CAPTURE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_PROOF_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires the accepted proof-governed posture"
+                        .to_string(),
+                ),
+                Some(GovernanceCertificationStatus::Warning),
+                Some(SUBSYSTEM_PROOF_CAPTURE.to_string()),
+            ))));
+        }
+        let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
+            return Err(Box::new(self.apply_violation_with_artifact_trust(
+                governance_violation_spec!(
+                    RULE_ARTIFACT_TRUST_REQUIRED,
+                    SUBSYSTEM_ARTIFACT_AUTHORITY,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_ARTIFACT_TRUST_REQUIRED,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "identity-state construction requires canonical artifact_trust_state transport"
+                            .to_string(),
+                    ),
+                    Some(GovernanceCertificationStatus::Warning),
+                    Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
+                ),
+                None,
+            )));
+        };
+        let linkage = artifact_trust_governance_linkage(artifact_trust_state);
+        if !governance_state_matches_artifact_trust_linkage(governance_state, &linkage) {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_GOVERNANCE_INTEGRITY,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires governance-state linkage to match artifact-trust evidence"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        if artifact_activation_identity_state_execution_has_deferred_state(envelope) {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_ENV_ADMISSION_REQUIRED,
+                SUBSYSTEM_RUNTIME_GOVERNANCE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction only accepts governance_state, proof_state, and artifact_trust_state"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        if assertion.validate().is_err() {
+            return Err(Box::new(self.apply_violation(governance_violation_spec!(
+                RULE_GOVERNANCE_INTEGRITY,
+                SUBSYSTEM_IDENTITY_VOICE_ENGINE,
+                GovernanceDecisionOutcome::Failed,
+                GovernanceSeverity::Blocking,
+                GovernanceResponseClass::Block,
+                reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN,
+                session_id,
+                turn_id,
+                Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                Some(
+                    "identity-state construction requires a valid PH1.VOICE.ID response"
+                        .to_string(),
+                ),
+                None,
+                None,
+            ))));
+        }
+        let identity_state = identity_execution_state_from_voice_assertion(assertion, envelope)
+            .map_err(|_| {
+                Box::new(self.apply_violation(governance_violation_spec!(
+                    RULE_GOVERNANCE_INTEGRITY,
+                    SUBSYSTEM_IDENTITY_VOICE_ENGINE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "identity-state construction failed for the canonical PH1.VOICE.ID response"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                )))
+            })?;
+        envelope
+            .clone()
+            .with_identity_state(Some(identity_state))
+            .map_err(|_| {
+                Box::new(self.apply_violation(governance_violation_spec!(
+                    RULE_GOVERNANCE_INTEGRITY,
+                    SUBSYSTEM_RUNTIME_GOVERNANCE,
+                    GovernanceDecisionOutcome::Failed,
+                    GovernanceSeverity::Blocking,
+                    GovernanceResponseClass::Block,
+                    reason_codes::GOV_GOVERNANCE_INTEGRITY_UNCERTAIN,
+                    session_id,
+                    turn_id,
+                    Some(GovernanceDriftSignal::EnvelopeIntegrityDrift),
+                    Some(
+                        "identity-state attachment failed for the canonical artifact-governed envelope"
+                            .to_string(),
+                    ),
+                    None,
+                    None,
+                )))
+            })
     }
 
     pub fn observe_node_policy_version(
@@ -1237,14 +1609,16 @@ impl RuntimeGovernanceRuntime {
         self.update_certification_locked(&mut guard, SUBSYSTEM_CLUSTER_GOVERNANCE, status);
         let decision = self.build_decision_from_locked(
             &guard,
-            RULE_POLICY_VERSION_DRIFT,
-            SUBSYSTEM_CLUSTER_GOVERNANCE,
-            outcome,
-            severity,
-            response_class,
-            reason_codes::GOV_POLICY_VERSION_DRIFT,
-            None,
-            None,
+            governance_decision_spec!(
+                RULE_POLICY_VERSION_DRIFT,
+                SUBSYSTEM_CLUSTER_GOVERNANCE,
+                outcome,
+                severity,
+                response_class,
+                reason_codes::GOV_POLICY_VERSION_DRIFT,
+                None,
+                None,
+            ),
         );
         self.record_existing_decision_locked(
             &mut guard,
@@ -1271,69 +1645,31 @@ impl RuntimeGovernanceRuntime {
         turn_id: Option<u64>,
         note: Option<String>,
     ) -> RuntimeGovernanceDecision {
-        self.apply_violation(
-            RULE_GOVERNANCE_INTEGRITY,
-            SUBSYSTEM_RUNTIME_GOVERNANCE,
-            GovernanceDecisionOutcome::SafeModeActive,
-            GovernanceSeverity::Critical,
-            GovernanceResponseClass::SafeMode,
-            reason_code,
-            session_id,
-            turn_id,
-            Some(GovernanceDriftSignal::SubsystemCertificationRegression),
+        self.apply_violation(GovernanceViolationSpec {
+            decision: GovernanceDecisionBuildSpec {
+                rule_id: RULE_GOVERNANCE_INTEGRITY,
+                subsystem_id: SUBSYSTEM_RUNTIME_GOVERNANCE,
+                outcome: GovernanceDecisionOutcome::SafeModeActive,
+                severity: GovernanceSeverity::Critical,
+                response_class: GovernanceResponseClass::SafeMode,
+                reason_code,
+                session_id,
+                turn_id,
+            },
+            drift_signal: Some(GovernanceDriftSignal::SubsystemCertificationRegression),
             note,
-            Some(GovernanceCertificationStatus::Quarantined),
-            Some(SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()),
-        )
+            certification_status: Some(GovernanceCertificationStatus::Quarantined),
+            certification_subsystem: Some(SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()),
+        })
     }
 
-    fn apply_violation(
-        &self,
-        rule_id: &str,
-        subsystem_id: &str,
-        outcome: GovernanceDecisionOutcome,
-        severity: GovernanceSeverity,
-        response_class: GovernanceResponseClass,
-        reason_code: &str,
-        session_id: Option<u128>,
-        turn_id: Option<u64>,
-        drift_signal: Option<GovernanceDriftSignal>,
-        note: Option<String>,
-        certification_status: Option<GovernanceCertificationStatus>,
-        certification_subsystem: Option<String>,
-    ) -> RuntimeGovernanceDecision {
-        self.apply_violation_with_artifact_trust(
-            rule_id,
-            subsystem_id,
-            outcome,
-            severity,
-            response_class,
-            reason_code,
-            session_id,
-            turn_id,
-            drift_signal,
-            note,
-            certification_status,
-            certification_subsystem,
-            None,
-        )
+    fn apply_violation(&self, spec: GovernanceViolationSpec<'_>) -> RuntimeGovernanceDecision {
+        self.apply_violation_with_artifact_trust(spec, None)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn apply_violation_with_artifact_trust(
         &self,
-        rule_id: &str,
-        subsystem_id: &str,
-        outcome: GovernanceDecisionOutcome,
-        severity: GovernanceSeverity,
-        response_class: GovernanceResponseClass,
-        reason_code: &str,
-        session_id: Option<u128>,
-        turn_id: Option<u64>,
-        drift_signal: Option<GovernanceDriftSignal>,
-        note: Option<String>,
-        certification_status: Option<GovernanceCertificationStatus>,
-        certification_subsystem: Option<String>,
+        spec: GovernanceViolationSpec<'_>,
         artifact_linkage: Option<&ArtifactTrustGovernanceLinkage>,
     ) -> RuntimeGovernanceDecision {
         let mut guard = self
@@ -1342,7 +1678,7 @@ impl RuntimeGovernanceRuntime {
             .expect("runtime governance state lock poisoned");
         let count = guard
             .violation_counts
-            .entry(rule_id.to_string())
+            .entry(spec.decision.rule_id.to_string())
             .or_insert(0);
         *count = count.saturating_add(1);
         if *count >= self.config.repeated_violation_threshold {
@@ -1350,19 +1686,22 @@ impl RuntimeGovernanceRuntime {
                 .drift_signals
                 .insert(GovernanceDriftSignal::RepeatedArchitectureViolations);
         }
-        if let Some(signal) = drift_signal {
+        if let Some(signal) = spec.drift_signal {
             guard.drift_signals.insert(signal);
         }
         if let (Some(subsystem), Some(status)) =
-            (certification_subsystem.as_deref(), certification_status)
+            (
+                spec.certification_subsystem.as_deref(),
+                spec.certification_status,
+            )
         {
             self.update_certification_locked(&mut guard, subsystem, status);
         }
-        match response_class {
+        match spec.decision.response_class {
             GovernanceResponseClass::Quarantine => {
                 guard
                     .quarantined_subsystems
-                    .insert(subsystem_id.to_string());
+                    .insert(spec.decision.subsystem_id.to_string());
             }
             GovernanceResponseClass::SafeMode => {
                 guard.safe_mode_active = true;
@@ -1379,21 +1718,11 @@ impl RuntimeGovernanceRuntime {
             | GovernanceResponseClass::AllowWithWarning
             | GovernanceResponseClass::Block => {}
         }
-        let decision = self.build_decision_from_locked(
-            &guard,
-            rule_id,
-            subsystem_id,
-            outcome,
-            severity,
-            response_class,
-            reason_code,
-            session_id,
-            turn_id,
-        );
+        let decision = self.build_decision_from_locked(&guard, spec.decision);
         self.record_existing_decision_with_artifact_trust_locked(
             &mut guard,
             decision,
-            note,
+            spec.note,
             artifact_linkage,
         )
         .expect("runtime governance decision must record")
@@ -1470,30 +1799,23 @@ impl RuntimeGovernanceRuntime {
     fn build_decision_from_locked(
         &self,
         guard: &RuntimeGovernanceStateStore,
-        rule_id: &str,
-        subsystem_id: &str,
-        outcome: GovernanceDecisionOutcome,
-        severity: GovernanceSeverity,
-        response_class: GovernanceResponseClass,
-        reason_code: &str,
-        session_id: Option<u128>,
-        turn_id: Option<u64>,
+        spec: GovernanceDecisionBuildSpec<'_>,
     ) -> RuntimeGovernanceDecision {
         RuntimeGovernanceDecision {
-            rule_id: rule_id.to_string(),
-            subsystem_id: subsystem_id.to_string(),
-            outcome,
-            severity,
-            response_class,
-            reason_code: reason_code.to_string(),
-            session_id,
-            turn_id,
+            rule_id: spec.rule_id.to_string(),
+            subsystem_id: spec.subsystem_id.to_string(),
+            outcome: spec.outcome,
+            severity: spec.severity,
+            response_class: spec.response_class,
+            reason_code: spec.reason_code.to_string(),
+            session_id: spec.session_id,
+            turn_id: spec.turn_id,
             governance_state: governance_execution_state_from_locked(
                 &self.config.policy_window,
                 guard,
-                Some(rule_id.to_string()),
-                Some(severity),
-                Some(response_class),
+                Some(spec.rule_id.to_string()),
+                Some(spec.severity),
+                Some(spec.response_class),
                 Some(format!("gov_decision_{}", guard.next_sequence)),
                 None,
             ),
@@ -1641,10 +1963,183 @@ fn artifact_activation_execution_has_deferred_state(envelope: &RuntimeExecutionE
         || envelope.law_state.is_some()
 }
 
+fn artifact_activation_identity_state_execution_has_deferred_state(
+    envelope: &RuntimeExecutionEnvelope,
+) -> bool {
+    envelope.persistence_state.is_some()
+        || envelope.computation_state.is_some()
+        || envelope.identity_state.is_some()
+        || envelope.memory_state.is_some()
+        || envelope.authority_state.is_some()
+        || envelope.law_state.is_some()
+}
+
 fn governance_state_has_deferred_artifact_trust_linkage(state: &GovernanceExecutionState) -> bool {
     !state.artifact_trust_decision_ids.is_empty()
         || !state.artifact_trust_proof_entry_refs.is_empty()
         || state.artifact_trust_proof_record_ref.is_some()
+}
+
+fn governance_state_has_artifact_trust_linkage(state: &GovernanceExecutionState) -> bool {
+    !state.artifact_trust_decision_ids.is_empty()
+}
+
+fn governance_state_matches_artifact_trust_linkage(
+    state: &GovernanceExecutionState,
+    linkage: &ArtifactTrustGovernanceLinkage,
+) -> bool {
+    state.artifact_trust_decision_ids == linkage.decision_ids
+        && state.artifact_trust_proof_entry_refs == linkage.proof_entry_refs
+        && state.artifact_trust_proof_record_ref == linkage.proof_record_ref
+        && state.artifact_trust_policy_snapshot_refs == linkage.policy_snapshot_refs
+        && state.artifact_trust_set_snapshot_refs == linkage.trust_set_snapshot_refs
+        && state.artifact_trust_basis_fingerprints == linkage.basis_fingerprints
+        && state.artifact_trust_negative_result_refs == linkage.negative_result_refs
+}
+
+fn governance_quarantines_subsystem(
+    governance_state: &GovernanceExecutionState,
+    subsystem_id: &str,
+) -> bool {
+    governance_state
+        .quarantined_subsystems
+        .iter()
+        .any(|candidate| candidate == subsystem_id)
+}
+
+fn identity_execution_state_from_voice_assertion(
+    assertion: &Ph1VoiceIdResponse,
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Result<IdentityExecutionState, ContractViolation> {
+    let governance_identity_quarantined = runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| {
+            state.safe_mode_active
+                || governance_quarantines_subsystem(state, SUBSYSTEM_IDENTITY_VOICE_ENGINE)
+        })
+        .unwrap_or(false);
+    let cluster_drift_detected = runtime_execution_envelope
+        .governance_state
+        .as_ref()
+        .map(|state| state.cluster_consistency != GovernanceClusterConsistency::Consistent)
+        .unwrap_or(false);
+
+    match assertion {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => {
+            let mut consistency_level = match ok.identity_v2.identity_tier_v2 {
+                IdentityTierV2::Confirmed => {
+                    IdentityVerificationConsistencyLevel::StrictVerified
+                }
+                IdentityTierV2::Probable => {
+                    IdentityVerificationConsistencyLevel::HighConfidenceVerified
+                }
+                IdentityTierV2::Unknown => {
+                    IdentityVerificationConsistencyLevel::DegradedVerification
+                }
+            };
+            let mut trust_tier = match ok.identity_v2.identity_tier_v2 {
+                IdentityTierV2::Confirmed => IdentityTrustTier::Verified,
+                IdentityTierV2::Probable => IdentityTrustTier::HighConfidence,
+                IdentityTierV2::Unknown => IdentityTrustTier::Conditional,
+            };
+            let mut step_up_required = false;
+            let mut recovery_state = IdentityRecoveryState::None;
+            if cluster_drift_detected
+                && consistency_level == IdentityVerificationConsistencyLevel::StrictVerified
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::HighConfidenceVerified;
+            }
+            if ok.spoof_liveness_status == SpoofLivenessStatus::SuspectedSpoof {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Rejected;
+                step_up_required = true;
+                recovery_state = IdentityRecoveryState::RecoveryRestricted;
+            } else if governance_identity_quarantined {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Restricted;
+                step_up_required = true;
+                recovery_state = IdentityRecoveryState::RecoveryRestricted;
+            }
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level,
+                trust_tier,
+                identity_tier_v2: ok.identity_v2.identity_tier_v2,
+                spoof_liveness_status: ok.spoof_liveness_status,
+                step_up_required,
+                recovery_state,
+                cluster_drift_detected,
+                reason_code: ok.reason_code.map(|code| u64::from(code.0)),
+            })
+        }
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
+            let (mut consistency_level, mut trust_tier, step_up_required, recovery_state) =
+                match unknown.reason_code {
+                    code
+                        if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+                            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
+                    {
+                        (
+                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                            IdentityTrustTier::Restricted,
+                            true,
+                            IdentityRecoveryState::ReauthRequired,
+                        )
+                    }
+                    code
+                        if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+                            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+                    {
+                        (
+                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                            IdentityTrustTier::Restricted,
+                            false,
+                            IdentityRecoveryState::ReEnrollmentRequired,
+                        )
+                    }
+                    code if code == voice_id_reason_codes::VID_SPOOF_RISK => (
+                        IdentityVerificationConsistencyLevel::RecoveryRestricted,
+                        IdentityTrustTier::Rejected,
+                        true,
+                        IdentityRecoveryState::RecoveryRestricted,
+                    ),
+                    _ if unknown.candidate_user_id.is_some() => (
+                        IdentityVerificationConsistencyLevel::DegradedVerification,
+                        IdentityTrustTier::Conditional,
+                        false,
+                        IdentityRecoveryState::None,
+                    ),
+                    _ => (
+                        IdentityVerificationConsistencyLevel::DegradedVerification,
+                        IdentityTrustTier::Restricted,
+                        false,
+                        IdentityRecoveryState::None,
+                    ),
+                };
+            if cluster_drift_detected
+                && consistency_level == IdentityVerificationConsistencyLevel::HighConfidenceVerified
+            {
+                consistency_level = IdentityVerificationConsistencyLevel::DegradedVerification;
+            }
+            if unknown.spoof_liveness_status == SpoofLivenessStatus::SuspectedSpoof {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Rejected;
+            } else if governance_identity_quarantined {
+                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
+                trust_tier = IdentityTrustTier::Restricted;
+            }
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level,
+                trust_tier,
+                identity_tier_v2: unknown.identity_v2.identity_tier_v2,
+                spoof_liveness_status: unknown.spoof_liveness_status,
+                step_up_required,
+                recovery_state,
+                cluster_drift_detected,
+                reason_code: Some(u64::from(unknown.reason_code.0)),
+            })
+        }
+    }
 }
 
 fn artifact_trust_governance_linkage(
@@ -1944,7 +2439,7 @@ pub fn governance_runtime_reason(decision: &RuntimeGovernanceDecision) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1_voice_id::UserId;
+    use crate::runtime_law::RuntimeLawRuntime;
     use selene_kernel_contracts::ph1art::{
         ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
         ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
@@ -1956,10 +2451,19 @@ mod tests {
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
+    use selene_kernel_contracts::ph1_voice_id::{
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
+        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel, UserId,
+    };
     use selene_kernel_contracts::runtime_execution::{
         AuthorityExecutionState, AuthorityPolicyDecision, OnboardingReadinessState,
-        PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+        IdentityExecutionState, IdentityExecutionStateInput, IdentityRecoveryState,
+        IdentityTrustTier, IdentityVerificationConsistencyLevel, PlatformRuntimeContext,
+        ProofExecutionState, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
         SimulationCertificationState,
+    };
+    use selene_kernel_contracts::runtime_law::{
+        RuntimeLawEvaluationContext, RuntimeLawResponseClass, RuntimeProtectedActionClass,
     };
     use selene_kernel_contracts::MonotonicTimeNs;
 
@@ -2099,6 +2603,69 @@ mod tests {
                 GovernanceProtectedActionClass::VoiceTurnExecution,
             )
             .expect("proof-governance execution must succeed")
+    }
+
+    fn artifact_governed_envelope(runtime: &RuntimeGovernanceRuntime) -> RuntimeExecutionEnvelope {
+        let proof_governed = proof_governed_envelope(runtime);
+        let envelope = proof_governed
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .expect("artifact-trust state must attach");
+        runtime
+            .govern_artifact_activation_execution(&envelope)
+            .expect("artifact activation must succeed")
+    }
+
+    fn confirmed_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionOk(
+            SpeakerAssertionOk::v1(
+                SpeakerId::new("spk_runtime_gov_confirmed").expect("speaker id must validate"),
+                Some(user_id),
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .expect("segment must validate"),
+                ],
+                SpeakerLabel::speaker_a(),
+            )
+            .expect("confirmed voice assertion must validate"),
+        )
+    }
+
+    fn reauth_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_REAUTH_REQUIRED,
+                vec![
+                    DiarizationSegment::v1(
+                        MonotonicTimeNs(1),
+                        MonotonicTimeNs(2),
+                        Some(SpeakerLabel::speaker_a()),
+                    )
+                    .expect("segment must validate"),
+                ],
+                Some(user_id),
+                None,
+            )
+            .expect("reauth voice assertion must validate"),
+        )
+    }
+
+    fn allowed_authority_state() -> AuthorityExecutionState {
+        AuthorityExecutionState::v1(
+            Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
+            SimulationCertificationState::CertifiedActive,
+            OnboardingReadinessState::Ready,
+            AuthorityPolicyDecision::Allowed,
+            true,
+            true,
+            false,
+            Some(1),
+        )
+        .expect("authority state must validate")
     }
 
     #[test]
@@ -2701,6 +3268,154 @@ mod tests {
         assert_eq!(
             decision.reason_code,
             reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_15_identity_state_execution_constructs_canonical_non_app_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let assertion = confirmed_voice_assertion(artifact_governed.actor_identity.clone());
+
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(&artifact_governed, &assertion)
+            .expect("identity-state construction must succeed after artifact activation");
+
+        assert_eq!(out.request_id, artifact_governed.request_id);
+        assert_eq!(out.trace_id, artifact_governed.trace_id);
+        assert_eq!(out.idempotency_key, artifact_governed.idempotency_key);
+        assert_eq!(out.session_id, artifact_governed.session_id);
+        assert_eq!(out.turn_id, artifact_governed.turn_id);
+        assert_eq!(
+            out.device_turn_sequence,
+            artifact_governed.device_turn_sequence
+        );
+        assert_eq!(out.governance_state, artifact_governed.governance_state);
+        assert_eq!(out.proof_state, artifact_governed.proof_state);
+        assert_eq!(out.artifact_trust_state, artifact_governed.artifact_trust_state);
+        assert!(out.persistence_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.memory_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.law_state.is_none());
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity-state construction must attach canonical identity state");
+        assert_eq!(
+            *identity_state,
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+                trust_tier: IdentityTrustTier::Verified,
+                identity_tier_v2: IdentityTierV2::Confirmed,
+                spoof_liveness_status: SpoofLivenessStatus::Unknown,
+                step_up_required: false,
+                recovery_state: IdentityRecoveryState::None,
+                cluster_drift_detected: false,
+                reason_code: None,
+            })
+            .expect("expected identity state must validate")
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_16_identity_state_execution_rejects_prepopulated_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime)
+            .with_identity_state(Some(
+                IdentityExecutionState::v1(IdentityExecutionStateInput {
+                    consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+                    trust_tier: IdentityTrustTier::Verified,
+                    identity_tier_v2: IdentityTierV2::Confirmed,
+                    spoof_liveness_status: SpoofLivenessStatus::Live,
+                    step_up_required: false,
+                    recovery_state: IdentityRecoveryState::None,
+                    cluster_drift_detected: false,
+                    reason_code: None,
+                })
+                .expect("identity state must validate"),
+            ))
+            .expect("identity state must attach");
+        let assertion = confirmed_voice_assertion(artifact_governed.actor_identity.clone());
+
+        let decision = runtime
+            .govern_artifact_activation_identity_state_execution(&artifact_governed, &assertion)
+            .expect_err("pre-populated identity_state must fail closed");
+
+        assert_eq!(decision.response_class, GovernanceResponseClass::Block);
+        assert_eq!(
+            decision.reason_code,
+            reason_codes::GOV_ENVELOPE_ADMISSION_REQUIRED
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_17_runtime_law_consumes_identity_state_from_canonical_non_app_flow() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let law = RuntimeLawRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let authority_state = allowed_authority_state();
+
+        let without_identity = artifact_governed
+            .clone()
+            .with_authority_state(Some(authority_state.clone()))
+            .expect("authority state must attach");
+        let without_identity_decision = law.evaluate(
+            &without_identity,
+            RuntimeProtectedActionClass::IdentitySensitive,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert!(without_identity_decision
+            .reason_codes
+            .iter()
+            .any(|code| code == crate::runtime_law::reason_codes::LAW_IDENTITY_POSTURE_REQUIRED));
+
+        let with_identity = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &confirmed_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("identity-state construction must succeed")
+            .with_authority_state(Some(authority_state))
+            .expect("authority state must attach");
+        let with_identity_decision = law.evaluate(
+            &with_identity,
+            RuntimeProtectedActionClass::IdentitySensitive,
+            &RuntimeLawEvaluationContext::default(),
+        );
+        assert_eq!(
+            with_identity_decision.response_class,
+            RuntimeLawResponseClass::Allow
+        );
+        assert!(!with_identity_decision
+            .reason_codes
+            .iter()
+            .any(|code| code == crate::runtime_law::reason_codes::LAW_IDENTITY_POSTURE_REQUIRED));
+    }
+
+    #[test]
+    fn at_runtime_gov_18_reauth_assertion_maps_to_restricted_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &reauth_required_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("reauth-required assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for reauth-required posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReauthRequired
         );
     }
 }

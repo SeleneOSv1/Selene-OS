@@ -1,0 +1,185 @@
+# Master Build Completion Plan
+
+## Purpose
+
+This file is the authoritative repo-truth completion plan for the currently exposed Selene build scope:
+
+- Build Sections 01 through 11
+- APP_IPHONE
+- APP_MAC_DESKTOP
+
+It may only be updated from current repo truth, exact command results, and exact file-and-line evidence. If repo truth is not explicit, the correct value is `NOT_EXPLICIT`, not inference. The detailed checkoff ledger lives in [MASTER_BUILD_COMPLETION_LEDGER.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md).
+
+## Repo Truth Snapshot
+
+- branch: `main` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS branch --show-current => main`
+- local HEAD: `5bc9a7b9eb589e5af5c8092720186fc6c602c969` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS rev-parse HEAD`
+- remote HEAD: `5bc9a7b9eb589e5af5c8092720186fc6c602c969` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS rev-parse origin/main`
+- clean tree at authoring start: `YES` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS status --short => <empty>`
+- readiness audit: `PASS` via `bash /Users/xiamo/Documents/A-Selene/Selene-OS/scripts/selene_design_readiness_audit.sh => exit 0`
+- readiness audit note: pre-existing warning only, `unused imports` in [ph1j.rs#L6](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1j.rs#L6)
+
+## Authoritative Sources
+
+- Repository law: [AGENTS.md#L1](/Users/xiamo/Documents/A-Selene/Selene-OS/AGENTS.md#L1)
+- Architecture law: [CORE_ARCHITECTURE.md#L15](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/CORE_ARCHITECTURE.md#L15)
+- Build dependency order: [SELENE_BUILD_EXECUTION_ORDER.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L13)
+- Engine inventory: [SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L75](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md#L75)
+- Wiring truth: [COVERAGE_MATRIX.md#L5](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L5)
+- Design lock order: [11_DESIGN_LOCK_SEQUENCE.md#L15](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/11_DESIGN_LOCK_SEQUENCE.md#L15)
+- Build-plan lock: [02_BUILD_PLAN.md#L9](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/02_BUILD_PLAN.md#L9)
+- Section completion criteria:
+  - [SELENE_BUILD_SECTION_01.md#L1067](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_01.md#L1067)
+  - [SELENE_BUILD_SECTION_02.md#L608](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_02.md#L608)
+  - [SELENE_BUILD_SECTION_03.md#L369](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_03.md#L369)
+  - [SELENE_BUILD_SECTION_04.md#L481](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_04.md#L481)
+  - [SELENE_BUILD_SECTION_05.md#L539](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_05.md#L539)
+  - [SELENE_BUILD_SECTION_06.md#L479](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_06.md#L479)
+  - [SELENE_BUILD_SECTION_07.md#L579](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_07.md#L579)
+  - [SELENE_BUILD_SECTION_08.md#L317](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_08.md#L317)
+  - [SELENE_BUILD_SECTION_09.md#L563](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_09.md#L563)
+  - [SELENE_BUILD_SECTION_10.md#L269](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_10.md#L269)
+  - [SELENE_BUILD_SECTION_11.md#L577](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_11.md#L577)
+- Apple freeze baselines:
+  - [PHASE_F_FREEZE_SUMMARY.md#L22](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L22)
+  - [PHASE_G_APPLE_FREEZE_SUMMARY.md#L34](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L34)
+- Current Section 04 seam boundary:
+  - [H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L221](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L221)
+
+## Verification Snapshot
+
+- `cargo test -p selene_os runtime_bootstrap -- --nocapture => 12 passed; 0 failed`
+- `cargo test -p selene_os runtime_session_foundation -- --nocapture => 26 passed; 0 failed`
+- `cargo test -p selene_os runtime_request_foundation -- --nocapture => 9 passed; 0 failed`
+- `cargo test -p selene_os runtime_ingress_turn_foundation -- --nocapture => 86 passed; 0 failed`
+- `cargo test -p selene_os runtime_governance -- --nocapture => 28 passed; 0 failed`
+- `cargo test -p selene_os runtime_law -- --nocapture => 20 passed; 0 failed`
+- `cargo test -p selene_os ph1j -- --nocapture => 5 passed; 0 failed`
+- `cargo test -p selene_os ph1m -- --nocapture => 19 passed; 0 failed`
+- `cargo test -p selene_os ph1_voice_id -- --nocapture => 16 passed; 0 failed`
+- `cargo test -p selene_os ph1os -- --nocapture => 49 passed; 0 failed`
+- `cargo test -p selene_os ph1comp -- --nocapture => 8 passed; 0 failed`
+
+## Master Status Snapshot
+
+| workstream | designed | implemented | verified | governed | canonical carrier | status summary |
+| --- | --- | --- | --- | --- | --- | --- |
+| Section 01 | YES | YES | YES | YES | [runtime_bootstrap.rs#L464](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_bootstrap.rs#L464) | Canonical runtime bootstrap is live and verified. |
+| Section 02 | YES | YES | YES | YES | [runtime_session_foundation.rs#L833](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_session_foundation.rs#L833) | Canonical session foundation is live and verified. |
+| Section 03 | YES | YES | YES | YES | [runtime_ingress_turn_foundation.rs#L899](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L899) | Canonical ingress path is live and stops lawfully at the Section 04 boundary. |
+| Section 04 | YES | PARTIAL | PARTIAL | YES | [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191) | Accepted winner chain is live, and the first exact canonical non-app `IdentityExecutionState::v1` producer seam now exists, but broader Section 04 closure remains partial. |
+| Section 05 | YES | PARTIAL | PARTIAL | PARTIAL | [lib.rs#L345](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_adapter/src/lib.rs#L345) | Persistence and sync surfaces are real, but full completion remains open. |
+| Section 06 | YES | YES | YES | PARTIAL | [ph1m.rs#L512](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1m.rs#L512) | Ledger-first memory runtime is live, but architecture closure remains partial per [COVERAGE_MATRIX.md#L10](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L10). |
+| Section 07 | YES | YES | YES | PARTIAL | [ph1_voice_id.rs#L438](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1_voice_id.rs#L438) | Identity and voice runtime is live, and the first canonical non-app Section 04 producer seam now exists, but broader runtime caller adoption remains partial. |
+| Section 08 | YES | YES | YES | PARTIAL | [ph1os.rs#L576](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L576) | Platform runtime is live, but final architecture closure remains partial per [COVERAGE_MATRIX.md#L11](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L11). |
+| Section 09 | YES | PARTIAL | PARTIAL | YES | [runtime_governance.rs#L230](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L230) | Governance runtime is live, but generalized cross-section closure is not yet proven. |
+| Section 10 | YES | YES | YES | PARTIAL | [ph1comp.rs#L284](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1comp.rs#L284) | Deterministic computation is live, but parallel quantitative authority still remains per [COVERAGE_MATRIX.md#L12](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L12). |
+| Section 11 | YES | PARTIAL | PARTIAL | YES | [runtime_law.rs#L528](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L528) | `runtime_law.rs` is canonical live runtime wiring, but generalized production adoption is still partial per [COVERAGE_MATRIX.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L13). |
+| APP_IPHONE | YES | PARTIAL | PARTIAL | PARTIAL | [PHASE_F_FREEZE_SUMMARY.md#L22](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L22) | Freeze-ready design plus shared iOS runtime carriers exist, but no native iPhone client implementation is exposed in-tree. |
+| APP_MAC_DESKTOP | YES | PARTIAL | PARTIAL | PARTIAL | [PHASE_G_APPLE_FREEZE_SUMMARY.md#L34](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L34) | Freeze-ready design plus shared desktop adapter/runtime carriers exist, but no native macOS app project is exposed in-tree. |
+
+## Section-By-Section Summary
+
+- Section 01: runtime bootstrap is canonically live via [runtime_bootstrap.rs#L529](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_bootstrap.rs#L529), [runtime_bootstrap.rs#L614](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_bootstrap.rs#L614), and [runtime_request_foundation.rs#L551](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_request_foundation.rs#L551).
+- Section 02: session coordination, projection, and runtime-envelope binding are canonically live via [runtime_session_foundation.rs#L543](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_session_foundation.rs#L543), [runtime_session_foundation.rs#L577](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_session_foundation.rs#L577), and [runtime_session_foundation.rs#L833](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_session_foundation.rs#L833).
+- Section 03: admitted turn ingress is canonically live via [runtime_ingress_turn_foundation.rs#L899](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L899), [runtime_ingress_turn_foundation.rs#L1040](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1040), and [runtime_ingress_turn_foundation.rs#L1090](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1090).
+- Section 04: current accepted canonical winner chain remains [runtime_governance.rs#L298](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L298), [runtime_governance.rs#L702](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L702), and [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861); the first exact canonical non-app producer seam now exists at [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191) with constructor mapping at [runtime_governance.rs#L1422](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1422) and attachment at [runtime_governance.rs#L1444](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1444); the prerequisite canonical PH1.VOICE.ID carrier now exists on [runtime_execution.rs#L1209](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1209) with helper support at [runtime_execution.rs#L1494](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1494) and first non-app source transport at [ph1os.rs#L1590](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1590).
+- Section 05: canonical persistence and sync surfaces exist in [lib.rs#L345](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_adapter/src/lib.rs#L345) and [repo.rs#L361](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/repo.rs#L361), but full cross-device and cross-node closure is still partial.
+- Section 06: PH1.M is live and verified in [ph1m.rs#L512](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1m.rs#L512) and remains partially wired by top-level repo truth at [COVERAGE_MATRIX.md#L10](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L10).
+- Section 07: PH1.VOICE.ID is live and verified in [ph1_voice_id.rs#L438](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1_voice_id.rs#L438), canonical non-app identity-state construction exists in [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191), and the canonical runtime carrier plus first non-app transport now exist at [runtime_execution.rs#L1209](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1209), [runtime_execution.rs#L1494](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1494), and [ph1os.rs#L1590](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1590), but broader runtime caller adoption remains partial while the app-layer comparison helper remains at [app_ingress.rs#L3959](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L3959).
+- Section 08: PH1.OS is live and verified in [ph1os.rs#L576](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L576), but remains partially wired by top-level repo truth at [COVERAGE_MATRIX.md#L11](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L11).
+- Section 09: runtime governance is live and verified in [runtime_governance.rs#L230](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L230), but full generalized governance closure is not yet proven.
+- Section 10: PH1.COMP is live and verified in [ph1comp.rs#L284](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1comp.rs#L284), but top-level repo truth still marks it partially wired at [COVERAGE_MATRIX.md#L12](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L12).
+- Section 11: runtime law is canonically live at [runtime_law.rs#L528](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L528), but generalized runtime-wide completion remains partial at [COVERAGE_MATRIX.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L13).
+- APP_IPHONE: repo truth shows frozen design plus iOS runtime posture in [PHASE_F_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L19), [ph1_voice_id.rs#L113](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1_voice_id.rs#L113), and [ph1os.rs#L3673](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L3673), but no native iPhone source or project is exposed by `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`.
+- APP_MAC_DESKTOP: repo truth shows frozen design plus shared desktop capture/runtime posture in [PHASE_G_APPLE_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L19), [ph1_voice_id.rs#L117](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1_voice_id.rs#L117), and [desktop_mic_producer.rs#L112](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_adapter/src/desktop_mic_producer.rs#L112), but no native macOS source or project is exposed by `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`.
+
+## Canonical Separation Truth
+
+- `CANONICAL_LIVE_RUNTIME`: active runtime carriers such as [runtime_bootstrap.rs#L529](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_bootstrap.rs#L529), [runtime_session_foundation.rs#L833](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_session_foundation.rs#L833), [runtime_ingress_turn_foundation.rs#L899](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L899), [runtime_governance.rs#L298](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L298), [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191), [runtime_law.rs#L528](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L528), [ph1j.rs#L198](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1j.rs#L198), [ph1m.rs#L512](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1m.rs#L512), [ph1_voice_id.rs#L438](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1_voice_id.rs#L438), [ph1os.rs#L576](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L576), and [ph1comp.rs#L284](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1comp.rs#L284)
+- `APP_LAYER_ONLY`: identity-state construction helper in [app_ingress.rs#L3959](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L3959) plus app-layer attachment at [app_ingress.rs#L3955](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L3955)
+- `TEST_ONLY`: helper identity-state construction in [runtime_law.rs#L1576](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L1576)
+- `DOC_ONLY`: historical Section 04 seam-boundary planning in [H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L221](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L221)
+
+## Exact Dependency Order
+
+The authoritative build dependency order remains the architecture-owned sequence in [SELENE_BUILD_EXECUTION_ORDER.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L13):
+
+1. Section 01: [SELENE_BUILD_EXECUTION_ORDER.md#L31](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L31)
+2. Section 02: [SELENE_BUILD_EXECUTION_ORDER.md#L69](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L69)
+3. Section 03: [SELENE_BUILD_EXECUTION_ORDER.md#L101](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L101)
+4. Section 04: [SELENE_BUILD_EXECUTION_ORDER.md#L133](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L133)
+5. Section 05: [SELENE_BUILD_EXECUTION_ORDER.md#L167](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L167)
+6. Section 06: [SELENE_BUILD_EXECUTION_ORDER.md#L201](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L201)
+7. Section 07: [SELENE_BUILD_EXECUTION_ORDER.md#L231](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L231)
+8. Section 08: [SELENE_BUILD_EXECUTION_ORDER.md#L263](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L263)
+9. Section 09: [SELENE_BUILD_EXECUTION_ORDER.md#L293](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L293)
+10. Section 10: [SELENE_BUILD_EXECUTION_ORDER.md#L327](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L327)
+11. Section 11: [SELENE_BUILD_EXECUTION_ORDER.md#L357](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/SELENE_BUILD_EXECUTION_ORDER.md#L357)
+12. APP_IPHONE after frozen runtime/build-law dependencies from Sections 01-11 plus Phase F/G design freeze truth at [PHASE_F_FREEZE_SUMMARY.md#L16](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L16) and [PHASE_G_APPLE_FREEZE_SUMMARY.md#L31](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L31)
+13. APP_MAC_DESKTOP after frozen runtime/build-law dependencies from Sections 01-11 plus Phase G design freeze truth at [PHASE_G_APPLE_FREEZE_SUMMARY.md#L31](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L31)
+
+## Blocker Map
+
+- Section 04 blocker: the first exact canonical non-app seam now exists at [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191) with constructor mapping at [runtime_governance.rs#L1422](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1422) and attachment at [runtime_governance.rs#L1444](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1444), but broader live caller adoption and generalized Section 04 closure remain partial; the prior H18 boundary remains historical planning truth at [H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L245](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H18_SECTION04_FIRST_CANONICAL_NONAPP_IDENTITYEXECUTIONSTATE_PRODUCER_LOGIC_BOUNDARY_AND_BUILD_PLAN.md#L245)
+- Section 05 blocker: full dedupe, reconcile, and telemetry closure remains partial across [lib.rs#L345](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_adapter/src/lib.rs#L345), [repo.rs#L361](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_storage/src/repo.rs#L361), and [runtime_execution.rs#L842](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L842)
+- Section 06 blocker: architecture-level closure still partial at [COVERAGE_MATRIX.md#L10](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L10)
+- Section 07 blocker: the first canonical non-app Section 04 producer seam now exists at [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191), but broader runtime caller adoption remains partial and app-layer comparison still remains at [app_ingress.rs#L4013](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L4013)
+- Section 08 blocker: final architecture closure remains partial at [COVERAGE_MATRIX.md#L11](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L11)
+- Section 09 blocker: generalized governance closure beyond the current protected winner chain is not yet proven in repo truth; current accepted protected chain remains [runtime_governance.rs#L298](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L298), [runtime_governance.rs#L702](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L702), and [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861), while full Section 09 scope remains broader in [SELENE_BUILD_SECTION_09.md#L563](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/BUILD_SECTIONS/SELENE_BUILD_SECTION_09.md#L563)
+- Section 10 blocker: parallel quantitative authority paths still remain at [COVERAGE_MATRIX.md#L12](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L12)
+- Section 11 blocker: generalized live production wiring is still partial at [COVERAGE_MATRIX.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L13)
+- APP_IPHONE blocker: freeze-ready design truth exists at [PHASE_F_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L19), shared iOS runtime carriers exist, but no native Apple client implementation is exposed in-tree by `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`
+- APP_MAC_DESKTOP blocker: freeze-ready design truth exists at [PHASE_G_APPLE_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L19), shared desktop runtime and adapter carriers exist, but no native Apple client implementation is exposed in-tree by `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`
+
+## Canonical Winner Chains Currently Accepted
+
+- Section 03 admitted handoff remains `ExecutionAdmitted -> ReadyForSection04Boundary` via [runtime_execution.rs#L685](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L685), [runtime_ingress_turn_foundation.rs#L1040](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1040), and [runtime_ingress_turn_foundation.rs#L1090](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L1090)
+- Current accepted Section 04 winner chain is still exactly:
+  - [runtime_governance.rs#L298](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L298) `govern_voice_turn_execution`
+  - [runtime_governance.rs#L702](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L702) `govern_protected_action_proof_state_execution`
+  - [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861) `govern_artifact_activation_execution`
+
+## Exact Unresolved Seams
+
+- The first exact canonical non-app runtime seam that materially constructs `IdentityExecutionState::v1` immediately upstream of `RuntimeExecutionEnvelope::with_identity_state` now exists in exposed repo truth at [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191), with constructor mapping at [runtime_governance.rs#L1422](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1422), helper logic at [runtime_governance.rs#L1970](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1970), and attachment through [runtime_governance.rs#L1444](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1444) upstream of [runtime_execution.rs#L1484](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1484).
+- The prerequisite canonical PH1.VOICE.ID runtime carrier is now live in repo truth: [runtime_execution.rs#L1209](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1209) exposes the optional carrier, [runtime_execution.rs#L1494](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1494) attaches it, [ph1os.rs#L1579](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1579) produces the assertion, [ph1os.rs#L1590](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1590) transports it into the envelope, and [runtime_ingress_turn_foundation.rs#L2758](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L2758) fail-closes pre-authority prepopulation, proven by [runtime_execution.rs#L1916](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1916), [ph1os.rs#L4555](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L4555), [ph1os.rs#L4556](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L4556), and [runtime_ingress_turn_foundation.rs#L3586](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L3586).
+- Current admitted and governance seams still reject pre-populated `identity_state` at [runtime_ingress_turn_foundation.rs#L2757](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L2757), [runtime_governance.rs#L1900](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1900), [runtime_governance.rs#L1910](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1910), [runtime_governance.rs#L1920](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1920), and [runtime_governance.rs#L1931](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1931).
+- The next unresolved runtime seam is caller adoption at [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861), because the prerequisite carrier is now live but `govern_artifact_activation_execution` still does not invoke the existing non-app producer at [runtime_governance.rs#L1191](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L1191); the current app-layer comparison seam remains [app_ingress.rs#L3959](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L3959) with constructor calls at [app_ingress.rs#L4013](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L4013) and [app_ingress.rs#L4082](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L4082).
+- `runtime_law.rs` is canonical live runtime wiring through [runtime_law.rs#L528](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L528), consumes `identity_state` downstream at [runtime_law.rs#L958](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_law.rs#L958), and that non-app consumption is now proven by [runtime_governance.rs#L3312](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L3312).
+- PH1.J proof enforcement is `RUNTIME_LIVE` and `PARTIAL` by current repo truth at [ph1j.rs#L198](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1j.rs#L198) and [COVERAGE_MATRIX.md#L9](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L9).
+- APP_IPHONE and APP_MAC_DESKTOP remain freeze-strong but implementation-light by [PHASE_F_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L19), [PHASE_G_APPLE_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L19), and `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`.
+
+## Next Smallest Safe Scopes In Strict Dependency Order
+
+1. Section 04 / Section 07 adjacent gap: the next exact frozen slice is caller adoption at [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861), because the prerequisite carrier is now live at [runtime_execution.rs#L1209](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1209), [runtime_execution.rs#L1494](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1494), [ph1os.rs#L1590](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1590), and [runtime_ingress_turn_foundation.rs#L2758](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_ingress_turn_foundation.rs#L2758), while app-layer comparison still remains at [app_ingress.rs#L3959](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L3959)
+2. Section 05: the first exact canonical persistence-and-sync closure item still partial after Section 04, starting from the active outbox and journal surfaces in [lib.rs#L345](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_adapter/src/lib.rs#L345)
+3. Section 06: the next exact memory-closure item still partial after Section 05, beginning from [COVERAGE_MATRIX.md#L10](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L10)
+4. Section 07: the next exact identity-and-voice closure item still partial after Section 04/05, beginning from runtime caller adoption at [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861) now that canonical carrier transport exists at [runtime_execution.rs#L1209](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_kernel_contracts/src/runtime_execution.rs#L1209) and [ph1os.rs#L1590](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1os.rs#L1590), while app-layer comparison remains at [app_ingress.rs#L4013](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/app_ingress.rs#L4013)
+5. Section 08: the next exact PH1.OS closure item still partial after the current live platform runtime, grounded by [COVERAGE_MATRIX.md#L11](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L11)
+6. Section 09: the next exact generalized governance closure item still partial after Sections 04-08, grounded by the current accepted protected chain at [runtime_governance.rs#L298](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L298), [runtime_governance.rs#L702](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L702), and [runtime_governance.rs#L861](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/runtime_governance.rs#L861)
+7. Section 10: the next exact convergence item removing parallel quantitative authority after the current live PH1.COMP runtime, grounded by [COVERAGE_MATRIX.md#L12](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L12)
+8. Section 11: the next exact generalized runtime-law adoption item after Sections 04-10, grounded by [COVERAGE_MATRIX.md#L13](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/COVERAGE_MATRIX.md#L13)
+9. APP_IPHONE: Apple implementation-readiness planning after the runtime blockers above and frozen Phase F/G design truth, grounded by [PHASE_F_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_F_IPHONE/PHASE_F_FREEZE_SUMMARY.md#L19), [PHASE_G_APPLE_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L19), and `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`
+10. APP_MAC_DESKTOP: Apple implementation-readiness planning after the runtime blockers above and frozen Phase G design truth, grounded by [PHASE_G_APPLE_FREEZE_SUMMARY.md#L19](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/PHASE_PLANS/PHASE_G_APPLE/PHASE_G_APPLE_FREEZE_SUMMARY.md#L19) and `rg --files /Users/xiamo/Documents/A-Selene/Selene-OS | rg '(/|^).*(\\.(swift|m|mm|xcodeproj|xcworkspace))$' => exit 1`
+
+## Update Protocol
+
+Future implementers must update both this plan and [MASTER_BUILD_COMPLETION_LEDGER.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md) after every build slice using this order:
+
+1. Confirm branch, local HEAD, remote HEAD, and clean-tree truth with exact git command output.
+2. Run the readiness audit and the targeted carrier tests for the touched workstream.
+3. Update the relevant section summary, blocker map, winner-chain note, and next-safe-scope ordering only if new repo truth changes them.
+4. Update only the affected ledger rows using exact file-and-line evidence and exact command results.
+5. If repo truth is still silent on a criterion, leave it as `NOT_EXPLICIT`.
+6. If a criterion is only partially live, leave it `PARTIAL` until code plus test or audit evidence prove completion.
+
+## Check-Off Rule
+
+Nothing in this plan or in the companion ledger may be marked complete unless repo truth proves it with:
+
+- exact file-and-line evidence
+- exact test or audit evidence
+- canonical separation truth showing whether the evidence is `CANONICAL_LIVE_RUNTIME`, `APP_LAYER_ONLY`, `TEST_ONLY`, or `DOC_ONLY`
+
+If one of those proof elements is missing, the correct ledger state is `PARTIAL`, `BLOCKED`, `NOT_STARTED`, or `NOT_EXPLICIT`, never silent completion.
