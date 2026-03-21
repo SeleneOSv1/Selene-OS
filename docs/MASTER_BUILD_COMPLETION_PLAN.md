@@ -10,14 +10,13 @@ This file is the authoritative repo-truth completion plan for the currently expo
 
 It may only be updated from current repo truth, exact command results, and exact file-and-line evidence. If repo truth is not explicit, the correct value is `NOT_EXPLICIT`, not inference. The detailed checkoff ledger lives in [MASTER_BUILD_COMPLETION_LEDGER.md](/Users/xiamo/Documents/A-Selene/Selene-OS/docs/MASTER_BUILD_COMPLETION_LEDGER.md).
 
-## Repo Truth Snapshot
+## Stable Milestone Snapshot
 
-- branch: `main` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS branch --show-current => main`
-- local HEAD: `5bc9a7b9eb589e5af5c8092720186fc6c602c969` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS rev-parse HEAD`
-- remote HEAD: `5bc9a7b9eb589e5af5c8092720186fc6c602c969` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS rev-parse origin/main`
-- clean tree at authoring start: `YES` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS status --short => <empty>`
-- readiness audit: `PASS` via `bash /Users/xiamo/Documents/A-Selene/Selene-OS/scripts/selene_design_readiness_audit.sh => exit 0`
-- readiness audit note: pre-existing warning only, `unused imports` in [ph1j.rs#L6](/Users/xiamo/Documents/A-Selene/Selene-OS/crates/selene_os/src/ph1j.rs#L6)
+- branch at Section 04 publish: `main` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS branch --show-current => main`
+- section04_published_commit: `e014bada997d38aaa01c6db9048b6ed42c39d07f`
+- published clean tree at authoring start: `YES` via `git -C /Users/xiamo/Documents/A-Selene/Selene-OS status --short => <empty>`
+- published readiness audit: `PASS` via `bash /Users/xiamo/Documents/A-Selene/Selene-OS/scripts/selene_design_readiness_audit.sh => exit 0`
+- live current repo truth must be verified from git commands at review time
 
 ## Authoritative Sources
 
