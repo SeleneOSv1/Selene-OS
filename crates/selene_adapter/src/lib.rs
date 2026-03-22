@@ -486,6 +486,76 @@ enum PersistenceInvocationMode {
     LegacyJournalReplay,
 }
 
+#[derive(Clone, Copy)]
+struct SyncImprovementBuilderContext<'a> {
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    metrics: &'a DeviceArtifactSyncWorkerPassMetrics,
+    queue_after: &'a AdapterSyncQueueCounters,
+    outcome_entries: &'a [OsOutcomeUtilizationEntry],
+}
+
+struct ReusedResponseTranscriptUpdate<'a> {
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &'a UserId,
+    device_id: &'a DeviceId,
+    response: &'a VoiceTurnAdapterResponse,
+    user_text_final: Option<&'a str>,
+    selene_text_final: Option<&'a str>,
+}
+
+struct FallbackRuntimeExecutionEnvelopeParams<'a> {
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    app_platform: AppPlatform,
+    actor_user_id: &'a UserId,
+    device_id: &'a DeviceId,
+    device_turn_sequence: Option<u64>,
+    session_attach_outcome: Option<SessionAttachOutcome>,
+    platform_context: Option<PlatformRuntimeContext>,
+}
+
+#[derive(Debug, Default)]
+struct OnboardingContinueActionInput {
+    field_value: Option<String>,
+    receipt_kind: Option<String>,
+    receipt_ref: Option<String>,
+    signer: Option<String>,
+    payload_hash: Option<String>,
+    terms_version_id: Option<String>,
+    accepted: Option<bool>,
+    device_id: Option<String>,
+    proof_ok: Option<bool>,
+    sample_seed: Option<String>,
+    photo_blob_ref: Option<String>,
+    sender_decision: Option<String>,
+}
+
+struct ResolveSessionTurnStateInput<'a> {
+    actor_user_id: &'a UserId,
+    device_id: &'a DeviceId,
+    trigger: OsVoiceTrigger,
+    ph1k: &'a Ph1kLiveSignalBundle,
+    wake_event: Option<WakeDecision>,
+    idempotency_key: &'a str,
+    device_turn_sequence: u64,
+    runtime_node_id: &'a str,
+    session_lease_ttl_ms: u64,
+    session_retry_cache: &'a Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+}
+
+struct PersistPh1xThreadStateInput<'a> {
+    actor_user_id: &'a UserId,
+    thread_key: &'a str,
+    thread_state: ThreadState,
+    reason_code: ReasonCodeId,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct InviteLinkOpenAdapterRequest {
     pub correlation_id: u64,
@@ -1369,18 +1439,20 @@ impl AdapterRuntime {
             .map_err(|err| format!("invalid onboarding_session_id: {err:?}"))?;
         let action = parse_onboarding_continue_action(
             &request.action,
-            request.field_value,
-            request.receipt_kind,
-            request.receipt_ref,
-            request.signer,
-            request.payload_hash,
-            request.terms_version_id,
-            request.accepted,
-            request.device_id,
-            request.proof_ok,
-            request.sample_seed,
-            request.photo_blob_ref,
-            request.sender_decision,
+            OnboardingContinueActionInput {
+                field_value: request.field_value,
+                receipt_kind: request.receipt_kind,
+                receipt_ref: request.receipt_ref,
+                signer: request.signer,
+                payload_hash: request.payload_hash,
+                terms_version_id: request.terms_version_id,
+                accepted: request.accepted,
+                device_id: request.device_id,
+                proof_ok: request.proof_ok,
+                sample_seed: request.sample_seed,
+                photo_blob_ref: request.photo_blob_ref,
+                sender_decision: request.sender_decision,
+            },
         )?;
         let ingress_request = AppOnboardingContinueRequest::v1(
             correlation_id,
@@ -1962,6 +2034,32 @@ impl AdapterRuntime {
         Ok(())
     }
 
+    fn record_reused_response_transcript_finals(
+        &self,
+        update: ReusedResponseTranscriptUpdate<'_>,
+    ) -> Result<(), String> {
+        if update.user_text_final.is_none() && update.selene_text_final.is_none() {
+            return Ok(());
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        self.record_transcript_updates(
+            &mut store,
+            update.now,
+            update.correlation_id,
+            update.turn_id,
+            update.actor_user_id,
+            Some(update.device_id),
+            adapter_response_session_id(update.response)?,
+            None,
+            update.user_text_final.map(str::to_string),
+            None,
+            update.selene_text_final.map(str::to_string),
+        )
+    }
+
     fn push_transcript_partial_event(
         &self,
         correlation_id: CorrelationId,
@@ -2059,12 +2157,14 @@ impl AdapterRuntime {
         };
         if let Err(err) = self.maybe_run_builder_for_sync_improvements(
             &mut store,
-            now,
-            correlation_id,
-            turn_id,
-            &metrics,
-            &queue_after,
-            &improvement.builder_input_entries,
+            SyncImprovementBuilderContext {
+                now,
+                correlation_id,
+                turn_id,
+                metrics: &metrics,
+                queue_after: &queue_after,
+                outcome_entries: &improvement.builder_input_entries,
+            },
         ) {
             eprintln!("selene_adapter builder auto-run failed: {err}");
         }
@@ -2318,22 +2418,17 @@ impl AdapterRuntime {
     fn maybe_run_builder_for_sync_improvements(
         &self,
         store: &mut Ph1fStore,
-        now: MonotonicTimeNs,
-        correlation_id: CorrelationId,
-        turn_id: TurnId,
-        metrics: &DeviceArtifactSyncWorkerPassMetrics,
-        queue_after: &AdapterSyncQueueCounters,
-        outcome_entries: &[OsOutcomeUtilizationEntry],
+        ctx: SyncImprovementBuilderContext<'_>,
     ) -> Result<(), String> {
         if !self.auto_builder_enabled {
             self.record_builder_status("DISABLED", BuilderStatusKind::NotInvoked)?;
             return Ok(());
         }
-        if outcome_entries.is_empty() {
+        if ctx.outcome_entries.is_empty() {
             self.record_builder_status("NO_SYNC_ISSUES", BuilderStatusKind::NotInvoked)?;
             return Ok(());
         }
-        let severe = metrics.dead_lettered_count > 0 || queue_after.replay_due_count > 0;
+        let severe = ctx.metrics.dead_lettered_count > 0 || ctx.queue_after.replay_due_count > 0;
         if !severe {
             self.record_builder_status("SKIPPED_NON_SEVERE", BuilderStatusKind::NotInvoked)?;
             return Ok(());
@@ -2347,14 +2442,14 @@ impl AdapterRuntime {
             DeterministicBuilderSandboxValidator,
         )
         .map_err(|err| format!("failed to initialize builder orchestrator: {err:?}"))?;
-        let window_start = MonotonicTimeNs(now.0.saturating_sub(60_000_000_000));
+        let window_start = MonotonicTimeNs(ctx.now.0.saturating_sub(60_000_000_000));
         let builder_input = BuilderOfflineInput::v1(
-            correlation_id,
-            turn_id,
+            ctx.correlation_id,
+            ctx.turn_id,
             window_start,
-            now,
-            now,
-            outcome_entries.to_vec(),
+            ctx.now,
+            ctx.now,
+            ctx.outcome_entries.to_vec(),
             None,
             None,
             None,
@@ -3248,7 +3343,7 @@ impl AdapterRuntime {
                 now,
                 tenant_id.clone(),
                 device_id.clone(),
-                session_id.clone(),
+                session_id,
                 Ph1kRuntimeEventKind::StreamRefs,
                 processed_stream_id,
                 None,
@@ -3277,12 +3372,12 @@ impl AdapterRuntime {
             .map_err(storage_error_to_string)?;
 
         for (idx, vad) in bundle.vad_events.iter().enumerate() {
-            store
-                .ph1k_runtime_event_commit(
-                    now,
-                    tenant_id.clone(),
-                    device_id.clone(),
-                    session_id.clone(),
+                store
+                    .ph1k_runtime_event_commit(
+                        now,
+                        tenant_id.clone(),
+                        device_id.clone(),
+                        session_id,
                     Ph1kRuntimeEventKind::VadEvent,
                     Some(vad.stream_id.0),
                     None,
@@ -3316,7 +3411,7 @@ impl AdapterRuntime {
                 now,
                 tenant_id.clone(),
                 device_id.clone(),
-                session_id.clone(),
+                session_id,
                 Ph1kRuntimeEventKind::DeviceState,
                 None,
                 None,
@@ -3349,7 +3444,7 @@ impl AdapterRuntime {
                 now,
                 tenant_id.clone(),
                 device_id.clone(),
-                session_id.clone(),
+                session_id,
                 Ph1kRuntimeEventKind::TimingStats,
                 None,
                 None,
@@ -3382,7 +3477,7 @@ impl AdapterRuntime {
                 now,
                 tenant_id.clone(),
                 device_id.clone(),
-                session_id.clone(),
+                session_id,
                 Ph1kRuntimeEventKind::DegradationFlags,
                 None,
                 None,
@@ -3415,7 +3510,7 @@ impl AdapterRuntime {
                 now,
                 tenant_id.clone(),
                 device_id.clone(),
-                session_id.clone(),
+                session_id,
                 Ph1kRuntimeEventKind::TtsPlaybackActive,
                 None,
                 None,
@@ -3750,9 +3845,8 @@ impl AdapterRuntime {
         let pre_session_error = |reason: String| {
             classify_voice_turn_runtime_error(&reason, response_turn_id, None, None)
         };
-        let app_platform =
-            parse_app_platform(&request.app_platform).map_err(pre_session_error.clone())?;
-        let trigger = parse_trigger(&request.trigger).map_err(pre_session_error.clone())?;
+        let app_platform = parse_app_platform(&request.app_platform).map_err(pre_session_error)?;
+        let trigger = parse_trigger(&request.trigger).map_err(pre_session_error)?;
         let actor_user_id = UserId::new(request.actor_user_id.clone())
             .map_err(|err| pre_session_error(format!("invalid actor_user_id: {err:?}")))?;
         let request_device_id = request
@@ -3770,7 +3864,7 @@ impl AdapterRuntime {
             .unwrap_or(request.turn_id)
             .max(1);
         let platform_context = normalize_platform_runtime_context(&request, app_platform, trigger)
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
         let now = MonotonicTimeNs(request.now_ns.unwrap_or(1));
         let runtime_device_id = match request_device_id {
             Some(id) => id,
@@ -3803,14 +3897,16 @@ impl AdapterRuntime {
                 })?
             }
             None => fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
-                correlation_id,
-                turn_id,
-                app_platform,
-                &actor_user_id,
-                &runtime_device_id,
-                Some(device_turn_sequence),
-                None,
-                Some(platform_context.clone()),
+                FallbackRuntimeExecutionEnvelopeParams {
+                    correlation_id,
+                    turn_id,
+                    app_platform,
+                    actor_user_id: &actor_user_id,
+                    device_id: &runtime_device_id,
+                    device_turn_sequence: Some(device_turn_sequence),
+                    session_attach_outcome: None,
+                    platform_context: Some(platform_context.clone()),
+                },
             )
             .map_err(|err| {
                 pre_session_error(format!("invalid runtime_execution_envelope: {err:?}"))
@@ -3823,8 +3919,27 @@ impl AdapterRuntime {
                     &actor_user_id,
                     &runtime_execution_envelope.idempotency_key,
                 )
-                .map_err(pre_session_error.clone())?
+                .map_err(pre_session_error)?
             {
+                let reused_result = match reused_result {
+                    Ok(response) => {
+                        self.record_reused_response_transcript_finals(
+                            ReusedResponseTranscriptUpdate {
+                                now,
+                                correlation_id,
+                                turn_id,
+                                actor_user_id: &actor_user_id,
+                                device_id: &runtime_device_id,
+                                response: &response,
+                                user_text_final: user_text_final.as_deref(),
+                                selene_text_final: selene_text_final.as_deref(),
+                            },
+                        )
+                        .map_err(pre_session_error)?;
+                        Ok(response)
+                    }
+                    Err(error) => Err(error),
+                };
                 return reused_result;
             }
         }
@@ -3835,7 +3950,7 @@ impl AdapterRuntime {
                 now,
                 persistence_mode,
             )
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
         if let Some(prepared) = prepared_persistence.as_ref() {
             runtime_execution_envelope = runtime_execution_envelope
                 .with_persistence_state(Some(prepared.persistence_state.clone()))
@@ -3850,9 +3965,23 @@ impl AdapterRuntime {
             &actor_user_id,
             &runtime_execution_envelope.idempotency_key,
         )
-        .map_err(pre_session_error.clone())?
+        .map_err(pre_session_error)?
         {
-            let result = Ok(response);
+            let result = match self.record_reused_response_transcript_finals(
+                ReusedResponseTranscriptUpdate {
+                    now,
+                    correlation_id,
+                    turn_id,
+                    actor_user_id: &actor_user_id,
+                    device_id: &runtime_device_id,
+                    response: &response,
+                    user_text_final: user_text_final.as_deref(),
+                    selene_text_final: selene_text_final.as_deref(),
+                },
+            ) {
+                Ok(()) => Ok(response),
+                Err(err) => Err(pre_session_error(err)),
+            };
             if let Some(prepared) = prepared_persistence.as_ref() {
                 self.finalize_persistence_operation(
                     prepared,
@@ -3861,7 +3990,7 @@ impl AdapterRuntime {
                     &runtime_execution_envelope.idempotency_key,
                     &result,
                 )
-                .map_err(pre_session_error.clone())?;
+                .map_err(pre_session_error)?;
             }
             return result;
         }
@@ -3879,7 +4008,7 @@ impl AdapterRuntime {
                 now,
                 allow_identity_auto_provision,
             )
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
             let tenant_id_for_ph1c = resolve_tenant_scope(
                 request.tenant_id.clone(),
                 &actor_user_id,
@@ -3892,7 +4021,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.as_deref(),
                 Some(&runtime_device_id),
             )
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
             let wake_evaluation = evaluate_wake_for_turn(
                 &store,
                 now,
@@ -3902,12 +4031,12 @@ impl AdapterRuntime {
                 trigger,
                 &ph1k_bundle,
             )
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
             if let Some(wake_eval) = wake_evaluation.as_ref() {
                 if !wake_eval.decision.accepted {
                     let session_id_for_reject =
                         latest_canonical_session_for_actor(&store, &actor_user_id)
-                            .map_err(pre_session_error.clone())?
+                            .map_err(pre_session_error)?
                             .map(|row| row.session_id);
                     commit_wake_runtime_event(
                         &mut store,
@@ -3920,7 +4049,7 @@ impl AdapterRuntime {
                         &ph1k_bundle,
                         wake_eval,
                     )
-                    .map_err(pre_session_error.clone())?;
+                    .map_err(pre_session_error)?;
                     commit_wake_learn_signal(
                         &mut store,
                         now,
@@ -3932,7 +4061,7 @@ impl AdapterRuntime {
                         &ph1k_bundle,
                         wake_eval,
                     )
-                    .map_err(pre_session_error.clone())?;
+                    .map_err(pre_session_error)?;
                     return Err(voice_turn_ingress_error(
                         FailureClass::PolicyViolation,
                         format!("WAKE_REJECTED_{}", wake_eval.decision.reason_code.0),
@@ -3951,18 +4080,20 @@ impl AdapterRuntime {
                 now,
                 correlation_id,
                 turn_id,
-                &actor_user_id,
-                &runtime_device_id,
-                trigger,
-                &ph1k_bundle,
-                wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
-                &runtime_execution_envelope.idempotency_key,
-                device_turn_sequence,
-                &self.runtime_node_id,
-                self.session_lease_ttl_ms,
-                &self.session_retry_cache,
+                ResolveSessionTurnStateInput {
+                    actor_user_id: &actor_user_id,
+                    device_id: &runtime_device_id,
+                    trigger,
+                    ph1k: &ph1k_bundle,
+                    wake_event: wake_evaluation.as_ref().map(|wake| wake.decision.clone()),
+                    idempotency_key: &runtime_execution_envelope.idempotency_key,
+                    device_turn_sequence,
+                    runtime_node_id: &self.runtime_node_id,
+                    session_lease_ttl_ms: self.session_lease_ttl_ms,
+                    session_retry_cache: &self.session_retry_cache,
+                },
             )
-            .map_err(pre_session_error.clone())?
+            .map_err(pre_session_error)?
             {
                 AdapterSessionResolution::Proceed(state) => state,
                 AdapterSessionResolution::Retry(response) => return Ok(response),
@@ -4004,7 +4135,7 @@ impl AdapterRuntime {
                     &ph1k_bundle,
                     wake_eval,
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
                 commit_wake_learn_signal(
                     &mut store,
                     now,
@@ -4016,7 +4147,7 @@ impl AdapterRuntime {
                     &ph1k_bundle,
                     wake_eval,
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
             }
             let voice_id_request = build_voice_id_request_from_ph1k_bundle(
                 now,
@@ -4056,7 +4187,7 @@ impl AdapterRuntime {
                     session_turn_state.session_id_for_commits,
                     ph1c,
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
             }
             self.run_ph1vision_os_orchestration_step(
                 &request,
@@ -4065,7 +4196,7 @@ impl AdapterRuntime {
                 tenant_id_for_ph1c.as_deref(),
                 user_text_final.as_deref(),
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
 
             self.commit_ph1k_live_runtime_events(
                 &mut store,
@@ -4077,7 +4208,7 @@ impl AdapterRuntime {
                 session_turn_state.session_id_for_commits,
                 &ph1k_bundle,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             self.emit_ph1k_feedback_capture(
                 &mut store,
                 now,
@@ -4089,7 +4220,7 @@ impl AdapterRuntime {
                 session_turn_state.session_id_for_commits,
                 &ph1k_bundle,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             if let Err(err) = append_ph1k_live_eval_snapshot_csv(
                 &store,
                 now,
@@ -4120,7 +4251,7 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 tenant_id_for_ph1c.as_deref(),
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             let thread_key = resolve_adapter_thread_key(request.thread_key.as_deref());
             let mut base_thread_state = load_ph1x_thread_state(&store, &actor_user_id, &thread_key);
             if request.project_id.is_some() || request.pinned_context_refs.is_some() {
@@ -4178,14 +4309,16 @@ impl AdapterRuntime {
                 persist_ph1x_thread_state(
                     &mut store,
                     now,
-                    &actor_user_id,
-                    &thread_key,
-                    ph1x_response.thread_state.clone(),
-                    ph1x_response.reason_code,
-                    correlation_id,
-                    turn_id,
+                    PersistPh1xThreadStateInput {
+                        actor_user_id: &actor_user_id,
+                        thread_key: &thread_key,
+                        thread_state: ph1x_response.thread_state.clone(),
+                        reason_code: ph1x_response.reason_code,
+                        correlation_id,
+                        turn_id,
+                    },
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
             }
             self.commit_ph1d_runtime_outcome(
                 &mut store,
@@ -4200,7 +4333,7 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 &execution_outcome.voice_outcome,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
                 &mut store,
                 now,
@@ -4227,7 +4360,7 @@ impl AdapterRuntime {
                 selene_text_partial,
                 selene_text_final,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
                 self.emit_ph1c_gold_capture_and_learning(
                     &mut store,
@@ -4240,7 +4373,7 @@ impl AdapterRuntime {
                     session_turn_state.session_id_for_commits,
                     ph1c,
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
                 self.emit_ph1d_gold_capture_and_learning(
                     &mut store,
                     now,
@@ -4254,7 +4387,7 @@ impl AdapterRuntime {
                     ph1c.final_text.clone(),
                     ph1c_language_locale(&ph1c.response),
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
                 self.emit_ph1c_live_telemetry(
                     &mut store,
                     now,
@@ -4263,7 +4396,7 @@ impl AdapterRuntime {
                     ph1c,
                     tenant_id_for_ph1c.as_deref(),
                 )
-                .map_err(post_session_error.clone())?;
+                .map_err(post_session_error)?;
             }
             finalize_session_turn_record(
                 &mut store,
@@ -4277,7 +4410,7 @@ impl AdapterRuntime {
                 &self.runtime_node_id,
                 self.session_lease_ttl_ms,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             let response = execution_outcome_to_adapter_response(execution_outcome);
             cache_authoritative_turn_response(
                 &self.session_retry_cache,
@@ -4285,7 +4418,7 @@ impl AdapterRuntime {
                 &runtime_execution_envelope.idempotency_key,
                 &response,
             )
-            .map_err(post_session_error.clone())?;
+            .map_err(post_session_error)?;
             if persist_on_success {
                 self.append_legacy_journal_entry(request_for_journal.clone())
                     .map_err(post_session_error)?;
@@ -4301,7 +4434,7 @@ impl AdapterRuntime {
                 &runtime_execution_envelope.idempotency_key,
                 &execution_result,
             )
-            .map_err(pre_session_error.clone())?;
+            .map_err(pre_session_error)?;
         }
 
         execution_result
@@ -5242,8 +5375,10 @@ impl AdapterRuntime {
                 state.schema_version
             )),
             Err(err) => {
-                let mut quarantined = AdapterPersistenceState::default();
-                quarantined.recovery_mode = PersistenceRecoveryMode::QuarantinedLocalState;
+                let mut quarantined = AdapterPersistenceState {
+                    recovery_mode: PersistenceRecoveryMode::QuarantinedLocalState,
+                    ..AdapterPersistenceState::default()
+                };
                 append_persistence_audit_locked(
                     &mut quarantined,
                     MonotonicTimeNs(1),
@@ -5771,14 +5906,16 @@ fn stale_replay_error_for_record(
     });
     if stale {
         let envelope = fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
-            CorrelationId(u128::from(record.request.correlation_id)),
-            TurnId(record.request.turn_id),
-            parse_app_platform(&record.request.app_platform).ok()?,
-            &UserId::new(record.actor_user_id.clone()).ok()?,
-            &DeviceId::new(record.device_id.clone()).ok()?,
-            record.device_turn_sequence,
-            None,
-            None,
+            FallbackRuntimeExecutionEnvelopeParams {
+                correlation_id: CorrelationId(u128::from(record.request.correlation_id)),
+                turn_id: TurnId(record.request.turn_id),
+                app_platform: parse_app_platform(&record.request.app_platform).ok()?,
+                actor_user_id: &UserId::new(record.actor_user_id.clone()).ok()?,
+                device_id: &DeviceId::new(record.device_id.clone()).ok()?,
+                device_turn_sequence: record.device_turn_sequence,
+                session_attach_outcome: None,
+                platform_context: None,
+            },
         )
         .ok()?
         .with_session_and_admission_state(
@@ -6212,6 +6349,21 @@ fn session_id_to_string(session_id: SessionId) -> String {
     session_id.0.to_string()
 }
 
+fn adapter_response_session_id(
+    response: &VoiceTurnAdapterResponse,
+) -> Result<Option<SessionId>, String> {
+    response
+        .session_id
+        .as_deref()
+        .map(|value| {
+            value
+                .parse::<u128>()
+                .map(SessionId)
+                .map_err(|err| format!("invalid reused response session_id '{value}': {err}"))
+        })
+        .transpose()
+}
+
 fn session_state_to_api_value(session_state: SessionState) -> String {
     match session_state {
         SessionState::Closed => "CLOSED",
@@ -6362,16 +6514,18 @@ fn fallback_runtime_execution_envelope_for_voice_turn_request(
             reason: "invalid normalized platform context",
         })?;
     fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
-        CorrelationId(request.correlation_id.into()),
-        TurnId(request.turn_id),
-        app_platform,
-        &actor_user_id,
-        &device_id,
-        request
-            .device_turn_sequence
-            .or(Some(request.turn_id.max(1))),
-        None,
-        Some(platform_context),
+        FallbackRuntimeExecutionEnvelopeParams {
+            correlation_id: CorrelationId(request.correlation_id.into()),
+            turn_id: TurnId(request.turn_id),
+            app_platform,
+            actor_user_id: &actor_user_id,
+            device_id: &device_id,
+            device_turn_sequence: request
+                .device_turn_sequence
+                .or(Some(request.turn_id.max(1))),
+            session_attach_outcome: None,
+            platform_context: Some(platform_context),
+        },
     )
 }
 
@@ -6409,15 +6563,18 @@ pub fn build_runtime_execution_envelope_for_voice_turn_request(
 }
 
 fn fallback_runtime_execution_envelope_for_voice_turn_request_with_identities(
-    correlation_id: CorrelationId,
-    turn_id: TurnId,
-    app_platform: AppPlatform,
-    actor_user_id: &UserId,
-    device_id: &DeviceId,
-    device_turn_sequence: Option<u64>,
-    session_attach_outcome: Option<SessionAttachOutcome>,
-    platform_context: Option<PlatformRuntimeContext>,
+    params: FallbackRuntimeExecutionEnvelopeParams<'_>,
 ) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    let FallbackRuntimeExecutionEnvelopeParams {
+        correlation_id,
+        turn_id,
+        app_platform,
+        actor_user_id,
+        device_id,
+        device_turn_sequence,
+        session_attach_outcome,
+        platform_context,
+    } = params;
     RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
         format!("corr-{}", correlation_id.0),
         format!("trace:voice:{}:{}", correlation_id.0, turn_id.0),
@@ -6446,19 +6603,22 @@ fn onboarding_next_step_to_api_value(next_step: OnboardingNextStep) -> String {
 
 fn parse_onboarding_continue_action(
     action: &str,
-    field_value: Option<String>,
-    receipt_kind: Option<String>,
-    receipt_ref: Option<String>,
-    signer: Option<String>,
-    payload_hash: Option<String>,
-    terms_version_id: Option<String>,
-    accepted: Option<bool>,
-    device_id: Option<String>,
-    proof_ok: Option<bool>,
-    sample_seed: Option<String>,
-    photo_blob_ref: Option<String>,
-    sender_decision: Option<String>,
+    input: OnboardingContinueActionInput,
 ) -> Result<AppOnboardingContinueAction, String> {
+    let OnboardingContinueActionInput {
+        field_value,
+        receipt_kind,
+        receipt_ref,
+        signer,
+        payload_hash,
+        terms_version_id,
+        accepted,
+        device_id,
+        proof_ok,
+        sample_seed,
+        photo_blob_ref,
+        sender_decision,
+    } = input;
     let normalized = action.trim().to_ascii_uppercase();
     match normalized.as_str() {
         "ASK_MISSING_SUBMIT" => Ok(AppOnboardingContinueAction::AskMissingSubmit { field_value }),
@@ -7773,17 +7933,20 @@ fn resolve_session_turn_state(
     now: MonotonicTimeNs,
     correlation_id: CorrelationId,
     turn_id: TurnId,
-    actor_user_id: &UserId,
-    device_id: &DeviceId,
-    trigger: OsVoiceTrigger,
-    ph1k: &Ph1kLiveSignalBundle,
-    wake_event: Option<WakeDecision>,
-    idempotency_key: &str,
-    device_turn_sequence: u64,
-    runtime_node_id: &str,
-    session_lease_ttl_ms: u64,
-    session_retry_cache: &Arc<Mutex<BTreeMap<AdapterRetryCacheKey, VoiceTurnAdapterResponse>>>,
+    input: ResolveSessionTurnStateInput<'_>,
 ) -> Result<AdapterSessionResolution, String> {
+    let ResolveSessionTurnStateInput {
+        actor_user_id,
+        device_id,
+        trigger,
+        ph1k,
+        wake_event,
+        idempotency_key,
+        device_turn_sequence,
+        runtime_node_id,
+        session_lease_ttl_ms,
+        session_retry_cache,
+    } = input;
     let selection = canonical_actor_session_selection(store, actor_user_id)?;
     if let Some(existing) = selection.latest_recoverable.as_ref() {
         match existing.device_turn_sequence_for(device_id) {
@@ -8224,13 +8387,16 @@ fn load_ph1x_thread_state(
 fn persist_ph1x_thread_state(
     store: &mut Ph1fStore,
     now: MonotonicTimeNs,
-    actor_user_id: &UserId,
-    thread_key: &str,
-    thread_state: ThreadState,
-    reason_code: ReasonCodeId,
-    correlation_id: CorrelationId,
-    turn_id: TurnId,
+    input: PersistPh1xThreadStateInput<'_>,
 ) -> Result<(), String> {
+    let PersistPh1xThreadStateInput {
+        actor_user_id,
+        thread_key,
+        thread_state,
+        reason_code,
+        correlation_id,
+        turn_id,
+    } = input;
     let idempotency_key = sanitize_idempotency_token(&format!(
         "adapter_ph1x_thread_state:{}:{}:{}",
         correlation_id.0, turn_id.0, thread_key
@@ -8963,8 +9129,7 @@ fn append_ph1k_live_eval_snapshot_csv(
                     .0
                     .saturating_sub(ext.timing_markers.window_start.0))
                     / 1_000_000)
-                    .max(1)
-                    .min(2_000) as u32
+                    .clamp(1, 2_000) as u32
             })
         })
         .collect::<Vec<_>>();
@@ -8974,8 +9139,7 @@ fn append_ph1k_live_eval_snapshot_csv(
             .last()
             .map(|ev| {
                 ((ev.t_end.0.saturating_sub(ev.t_start.0)) / 1_000_000)
-                    .max(1)
-                    .min(2_000) as u32
+                    .clamp(1, 2_000) as u32
             })
             .unwrap_or(180)
     });
@@ -9567,12 +9731,11 @@ fn synth_health_issue_events(
 ) -> Vec<HealthIssueEvent> {
     let mut out = Vec::new();
 
-    fn add_event(
-        out: &mut Vec<HealthIssueEvent>,
-        tenant: &TenantId,
+    struct HealthIssueEventSeed<'a> {
+        tenant: &'a TenantId,
         now_ns: u64,
-        issue_id: &str,
-        engine_owner_id: &str,
+        issue_id: &'a str,
+        engine_owner_id: &'a str,
         severity: HealthSeverity,
         status: HealthIssueStatus,
         reason_code: ReasonCodeId,
@@ -9584,7 +9747,26 @@ fn synth_health_issue_events(
         unresolved_reason_exact: Option<String>,
         issue_fingerprint: Option<String>,
         recurrence_observed: Option<bool>,
-    ) {
+    }
+
+    fn add_event(out: &mut Vec<HealthIssueEvent>, seed: HealthIssueEventSeed<'_>) {
+        let HealthIssueEventSeed {
+            tenant,
+            now_ns,
+            issue_id,
+            engine_owner_id,
+            severity,
+            status,
+            reason_code,
+            bcast_id,
+            ack_state,
+            impact_summary,
+            attempted_fix_actions,
+            current_monitoring_evidence,
+            unresolved_reason_exact,
+            issue_fingerprint,
+            recurrence_observed,
+        } = seed;
         let seed_status = if status == HealthIssueStatus::Escalated {
             HealthIssueStatus::Open
         } else {
@@ -9646,96 +9828,94 @@ fn synth_health_issue_events(
     }
 
     if health.sync.queue.dead_letter_count > 0 {
-        add_event(
-            &mut out,
+        add_event(&mut out, HealthIssueEventSeed {
             tenant,
             now_ns,
-            "sync_dead_letter",
-            "PH1.OS",
-            HealthSeverity::Critical,
-            HealthIssueStatus::Escalated,
-            reason_codes::ADAPTER_SYNC_DEADLETTER,
-            Some("bcast_sync_dead_letter".to_string()),
-            Some(HealthAckState::Waiting),
-            Some("Critical sync dead letters are blocking artifact continuity.".to_string()),
-            vec!["retry queued artifacts".to_string()],
-            Some(format!(
+            issue_id: "sync_dead_letter",
+            engine_owner_id: "PH1.OS",
+            severity: HealthSeverity::Critical,
+            status: HealthIssueStatus::Escalated,
+            reason_code: reason_codes::ADAPTER_SYNC_DEADLETTER,
+            bcast_id: Some("bcast_sync_dead_letter".to_string()),
+            ack_state: Some(HealthAckState::Waiting),
+            impact_summary: Some(
+                "Critical sync dead letters are blocking artifact continuity.".to_string(),
+            ),
+            attempted_fix_actions: vec!["retry queued artifacts".to_string()],
+            current_monitoring_evidence: Some(format!(
                 "dead_letter_count={} replay_due_count={}",
                 health.sync.queue.dead_letter_count, health.sync.queue.replay_due_count
             )),
-            Some("dead letters remain after retry budget".to_string()),
-            Some("sync_dead_letter_fingerprint".to_string()),
-            Some(true),
-        );
+            unresolved_reason_exact: Some("dead letters remain after retry budget".to_string()),
+            issue_fingerprint: Some("sync_dead_letter_fingerprint".to_string()),
+            recurrence_observed: Some(true),
+        });
     }
 
     if health.sync.queue.retry_pending_count > 0 {
-        add_event(
-            &mut out,
+        add_event(&mut out, HealthIssueEventSeed {
             tenant,
             now_ns,
-            "sync_retry_backlog",
-            "PH1.OS",
-            HealthSeverity::Warn,
-            HealthIssueStatus::Open,
-            reason_codes::ADAPTER_SYNC_RETRY,
-            None,
-            None,
-            Some("Retry queue backlog is above zero.".to_string()),
-            vec!["retry worker pass".to_string()],
-            Some(format!(
+            issue_id: "sync_retry_backlog",
+            engine_owner_id: "PH1.OS",
+            severity: HealthSeverity::Warn,
+            status: HealthIssueStatus::Open,
+            reason_code: reason_codes::ADAPTER_SYNC_RETRY,
+            bcast_id: None,
+            ack_state: None,
+            impact_summary: Some("Retry queue backlog is above zero.".to_string()),
+            attempted_fix_actions: vec!["retry worker pass".to_string()],
+            current_monitoring_evidence: Some(format!(
                 "retry_pending_count={}",
                 health.sync.queue.retry_pending_count
             )),
-            Some("retry queue has not drained yet".to_string()),
-            Some("sync_retry_fingerprint".to_string()),
-            Some(true),
-        );
+            unresolved_reason_exact: Some("retry queue has not drained yet".to_string()),
+            issue_fingerprint: Some("sync_retry_fingerprint".to_string()),
+            recurrence_observed: Some(true),
+        });
     }
 
     if health.sync.queue.replay_due_count > 0 {
-        add_event(
-            &mut out,
+        add_event(&mut out, HealthIssueEventSeed {
             tenant,
             now_ns,
-            "sync_replay_due",
-            "PH1.OS",
-            HealthSeverity::Critical,
-            HealthIssueStatus::Open,
-            reason_codes::ADAPTER_SYNC_REPLAY_DUE,
-            None,
-            None,
-            Some("Replay-due jobs exceeded threshold.".to_string()),
-            vec!["replay scan".to_string()],
-            Some(format!(
+            issue_id: "sync_replay_due",
+            engine_owner_id: "PH1.OS",
+            severity: HealthSeverity::Critical,
+            status: HealthIssueStatus::Open,
+            reason_code: reason_codes::ADAPTER_SYNC_REPLAY_DUE,
+            bcast_id: None,
+            ack_state: None,
+            impact_summary: Some("Replay-due jobs exceeded threshold.".to_string()),
+            attempted_fix_actions: vec!["replay scan".to_string()],
+            current_monitoring_evidence: Some(format!(
                 "replay_due_count={}",
                 health.sync.queue.replay_due_count
             )),
-            Some("replay-due jobs remain unresolved".to_string()),
-            Some("sync_replay_due_fingerprint".to_string()),
-            Some(true),
-        );
+            unresolved_reason_exact: Some("replay-due jobs remain unresolved".to_string()),
+            issue_fingerprint: Some("sync_replay_due_fingerprint".to_string()),
+            recurrence_observed: Some(true),
+        });
     }
 
     if out.is_empty() {
-        add_event(
-            &mut out,
+        add_event(&mut out, HealthIssueEventSeed {
             tenant,
             now_ns,
-            "health_nominal",
-            "PH1.HEALTH",
-            HealthSeverity::Info,
-            HealthIssueStatus::Resolved,
-            ReasonCodeId(health_reason_codes::PH1_HEALTH_OK_REPORT_QUERY_READ.0),
-            None,
-            Some(HealthAckState::Acknowledged),
-            Some("No active unresolved health issues.".to_string()),
-            vec!["daily health scan".to_string()],
-            Some("no recurrence detected".to_string()),
-            Some("resolved by live verification".to_string()),
-            Some("health_nominal_fingerprint".to_string()),
-            Some(false),
-        );
+            issue_id: "health_nominal",
+            engine_owner_id: "PH1.HEALTH",
+            severity: HealthSeverity::Info,
+            status: HealthIssueStatus::Resolved,
+            reason_code: ReasonCodeId(health_reason_codes::PH1_HEALTH_OK_REPORT_QUERY_READ.0),
+            bcast_id: None,
+            ack_state: Some(HealthAckState::Acknowledged),
+            impact_summary: Some("No active unresolved health issues.".to_string()),
+            attempted_fix_actions: vec!["daily health scan".to_string()],
+            current_monitoring_evidence: Some("no recurrence detected".to_string()),
+            unresolved_reason_exact: Some("resolved by live verification".to_string()),
+            issue_fingerprint: Some("health_nominal_fingerprint".to_string()),
+            recurrence_observed: Some(false),
+        });
     }
 
     out
@@ -12257,18 +12437,10 @@ mod tests {
     fn rung_onboarding_continue_adapter_parses_sender_verification_actions() {
         let photo = parse_onboarding_continue_action(
             "EMPLOYEE_PHOTO_CAPTURE_SEND",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("blob:photo:test".to_string()),
-            None,
+            OnboardingContinueActionInput {
+                photo_blob_ref: Some("blob:photo:test".to_string()),
+                ..OnboardingContinueActionInput::default()
+            },
         )
         .expect("photo capture action must parse");
         assert!(matches!(
@@ -12278,18 +12450,10 @@ mod tests {
 
         let verify = parse_onboarding_continue_action(
             "EMPLOYEE_SENDER_VERIFY_COMMIT",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("CONFIRM".to_string()),
+            OnboardingContinueActionInput {
+                sender_decision: Some("CONFIRM".to_string()),
+                ..OnboardingContinueActionInput::default()
+            },
         )
         .expect("sender verify action must parse");
         assert!(matches!(
@@ -12301,18 +12465,10 @@ mod tests {
 
         let wake_start = parse_onboarding_continue_action(
             "WAKE_ENROLL_START_DRAFT",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("wake_device_1".to_string()),
-            None,
-            None,
-            None,
-            None,
+            OnboardingContinueActionInput {
+                device_id: Some("wake_device_1".to_string()),
+                ..OnboardingContinueActionInput::default()
+            },
         )
         .expect("wake start action must parse");
         assert!(matches!(
@@ -12322,18 +12478,10 @@ mod tests {
 
         let err = parse_onboarding_continue_action(
             "EMPLOYEE_SENDER_VERIFY_COMMIT",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("MAYBE".to_string()),
+            OnboardingContinueActionInput {
+                sender_decision: Some("MAYBE".to_string()),
+                ..OnboardingContinueActionInput::default()
+            },
         )
         .expect_err("invalid sender decision must fail");
         assert!(err.contains("sender_decision must be CONFIRM or REJECT"));
@@ -12343,18 +12491,12 @@ mod tests {
     fn rund_onboarding_continue_adapter_requires_platform_receipt_fields() {
         let err = parse_onboarding_continue_action(
             "PLATFORM_SETUP_RECEIPT",
-            None,
-            Some("install_launch_handshake".to_string()),
-            Some("receipt:rund-adapter:install".to_string()),
-            None,
-            Some(format!("{:064x}", 1)),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            OnboardingContinueActionInput {
+                receipt_kind: Some("install_launch_handshake".to_string()),
+                receipt_ref: Some("receipt:rund-adapter:install".to_string()),
+                payload_hash: Some(format!("{:064x}", 1)),
+                ..OnboardingContinueActionInput::default()
+            },
         )
         .expect_err("missing signer must fail action parsing");
         assert_eq!(err, "signer is required for PLATFORM_SETUP_RECEIPT");

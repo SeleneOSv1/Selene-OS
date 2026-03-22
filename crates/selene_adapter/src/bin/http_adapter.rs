@@ -1168,6 +1168,12 @@ where
 mod tests {
     use super::*;
 
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use axum::body::to_bytes;
     use axum::http::header::AUTHORIZATION;
     use selene_adapter::VoiceTurnAudioCaptureRef;
@@ -1201,10 +1207,71 @@ mod tests {
         test_runtime_with_store().0
     }
 
+    fn test_persistence_state_path(journal_path: &std::path::Path) -> PathBuf {
+        PathBuf::from(format!("{}.state.json", journal_path.display()))
+    }
+
+    fn unique_test_journal_path(label: &str) -> PathBuf {
+        static NEXT_TEST_JOURNAL_ID: AtomicU64 = AtomicU64::new(1);
+
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be >= unix epoch")
+            .as_nanos();
+        let ordinal = NEXT_TEST_JOURNAL_ID.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "selene_ingress_http_test_{label}_{seed}_{ordinal}.jsonl"
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(test_persistence_state_path(&path));
+        path
+    }
+
+    fn attested_audio_capture_ref() -> VoiceTurnAudioCaptureRef {
+        VoiceTurnAudioCaptureRef {
+            stream_id: 11,
+            pre_roll_buffer_id: 1,
+            t_start_ns: 1,
+            t_end_ns: 3,
+            t_candidate_start_ns: 2,
+            t_confirmed_ns: 3,
+            locale_tag: Some("en-US".to_string()),
+            device_route: Some("BUILT_IN".to_string()),
+            selected_mic: Some("tablet_mic_default".to_string()),
+            selected_speaker: Some("tablet_speaker_default".to_string()),
+            tts_playback_active: Some(true),
+            detection_text: Some("stop".to_string()),
+            detection_confidence_bp: Some(9_600),
+            vad_confidence_bp: Some(9_400),
+            acoustic_confidence_bp: Some(9_300),
+            prosody_confidence_bp: Some(9_200),
+            speech_likeness_bp: Some(9_500),
+            echo_safe_confidence_bp: Some(9_100),
+            nearfield_confidence_bp: Some(9_000),
+            capture_degraded: Some(false),
+            stream_gap_detected: Some(false),
+            aec_unstable: Some(false),
+            device_changed: Some(false),
+            snr_db_milli: Some(22_000),
+            clipping_ratio_bp: Some(80),
+            echo_delay_ms_milli: Some(26_000),
+            packet_loss_bp: Some(25),
+            double_talk_bp: Some(400),
+            erle_db_milli: Some(20_000),
+            device_failures_24h: Some(0),
+            device_recoveries_24h: Some(0),
+            device_mean_recovery_ms: Some(100),
+            device_reliability_bp: Some(9_900),
+            timing_jitter_ms_milli: Some(7_000),
+            timing_drift_ppm_milli: Some(3_000),
+            timing_buffer_depth_ms_milli: Some(35_000),
+            timing_underruns: Some(0),
+            timing_overruns: Some(0),
+        }
+    }
+
     fn test_runtime_with_store() -> (AdapterRuntime, Arc<Mutex<Ph1fStore>>) {
-        let seed = system_time_now_ms();
-        let journal_path =
-            std::env::temp_dir().join(format!("selene_ingress_http_test_{seed}.jsonl"));
+        let journal_path = unique_test_journal_path("runtime");
         let store = Arc::new(Mutex::new(Ph1fStore::new_in_memory()));
         let runtime = AdapterRuntime::new_with_persistence(
             AppServerIngressRuntime::default(),
@@ -1698,11 +1765,13 @@ mod tests {
         request.claimed_capabilities = Some(vec![
             "MICROPHONE".to_string(),
             "CAMERA".to_string(),
+            "SPEAKER_OUTPUT".to_string(),
             "WAKE_WORD".to_string(),
             "SENSOR_AVAILABILITY".to_string(),
         ]);
         request.integrity_status = Some("ATTESTED".to_string());
         request.attestation_ref = Some("tablet_attest_http_01".to_string());
+        request.audio_capture_ref = Some(attested_audio_capture_ref());
         let now_ms = system_time_now_ms();
         let headers = security_headers(
             Some(bearer_for(
