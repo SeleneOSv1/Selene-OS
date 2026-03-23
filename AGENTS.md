@@ -10,8 +10,8 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
   - `Python is disallowed by AGENTS.md`
 
 ## Repository Locality Rule
-- Work only in the main Selene repository:
-  - `/Users/xiamo/Documents/A-Selene/Selene-OS`
+- Work only in the checked-out main Selene repository that contains this `AGENTS.md`.
+- If any prompt or older machine-specific instruction names a different absolute path, current repo truth wins.
 - Never create worktrees.
 - Never create extra repo folders.
 - Never move work into side repositories.
