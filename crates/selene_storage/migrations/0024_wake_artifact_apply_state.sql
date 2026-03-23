@@ -2,16 +2,16 @@
 -- State machine: Staged -> Active -> RolledBack.
 
 CREATE TABLE IF NOT EXISTS wake_artifact_apply_ledger (
-  apply_event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  apply_event_id BIGSERIAL PRIMARY KEY,
   schema_version INTEGER NOT NULL,
-  created_at_ns INTEGER NOT NULL,
+  created_at_ns BIGINT NOT NULL,
   device_id TEXT NOT NULL,
   artifact_version INTEGER NOT NULL,
   package_hash TEXT NOT NULL,
   payload_ref TEXT NOT NULL,
   local_cache_ref TEXT,
   state TEXT NOT NULL,
-  activated_at_ns INTEGER,
+  activated_at_ns BIGINT,
   rollback_reason_code INTEGER,
   idempotency_key TEXT NOT NULL
 );
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS wake_artifact_apply_current (
   staged_artifact_version INTEGER,
   active_artifact_version INTEGER,
   last_known_good_artifact_version INTEGER,
-  activated_at_ns INTEGER,
+  activated_at_ns BIGINT,
   rollback_reason_code INTEGER
 );
 

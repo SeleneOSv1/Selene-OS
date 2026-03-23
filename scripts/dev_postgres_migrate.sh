@@ -42,17 +42,25 @@ run_psql() {
 
 insert_schema_migration_row() {
   local migration_name="$1"
-  run_psql \
-    -v migration_name="${migration_name}" \
-    -c "INSERT INTO public.schema_migrations(file_name) VALUES (:'migration_name') ON CONFLICT (file_name) DO NOTHING;" \
-    >/dev/null
+  run_psql -v migration_name="${migration_name}" >/dev/null <<'SQL'
+INSERT INTO public.schema_migrations(file_name)
+VALUES (:'migration_name')
+ON CONFLICT (file_name) DO NOTHING;
+SQL
 }
 
 is_migration_applied() {
   local migration_name="$1"
-  run_psql \
-    -v migration_name="${migration_name}" \
-    -Atqc "SELECT CASE WHEN EXISTS (SELECT 1 FROM public.schema_migrations WHERE file_name = :'migration_name') THEN '1' ELSE '0' END;"
+  run_psql -v migration_name="${migration_name}" -Atq <<'SQL'
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM public.schema_migrations
+    WHERE file_name = :'migration_name'
+  ) THEN '1'
+  ELSE '0'
+END;
+SQL
 }
 
 migration_files=()
@@ -65,7 +73,11 @@ collect_migration_files() {
     migration_files=()
     return
   fi
-  mapfile -t migration_files < <(printf '%s\n' "${files[@]}" | sort)
+
+  migration_files=()
+  while IFS= read -r file; do
+    migration_files+=("${file}")
+  done < <(printf '%s\n' "${files[@]}" | sort)
 }
 
 run_psql -c "CREATE TABLE IF NOT EXISTS public.schema_migrations (
