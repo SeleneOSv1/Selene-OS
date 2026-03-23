@@ -831,6 +831,102 @@ fn at_vid_db_09_mobile_sync_fail_commit_records_error_and_retry_window() {
 }
 
 #[test]
+fn at_vid_db_09b_mobile_sync_dead_letter_commit_moves_row_out_of_replay() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_sync_dead_letter");
+    let d = device("tenant_a_device_sync_dead_letter");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+    let onb = seed_onboarding_session(&mut s, u, "fp_sync_dead_letter", 1_120);
+
+    let started = s
+        .ph1vid_enroll_start_draft_row(MonotonicTimeNs(1_130), onb, d, true, 8, 120_000, 2)
+        .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1_131),
+        started.voice_enrollment_session_id.clone(),
+        "sample_dead_letter_1".to_string(),
+        1,
+        1_340,
+        0.92,
+        17.4,
+        0.4,
+        0.0,
+        "vid-dead-letter-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1_132),
+        started.voice_enrollment_session_id.clone(),
+        "sample_dead_letter_2".to_string(),
+        2,
+        1_350,
+        0.93,
+        17.8,
+        0.3,
+        0.0,
+        "vid-dead-letter-sample-2".to_string(),
+    )
+    .unwrap();
+    let completed = s
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(1_133),
+            started.voice_enrollment_session_id,
+            "vid-dead-letter-complete".to_string(),
+        )
+        .unwrap();
+    let receipt = completed
+        .voice_artifact_sync_receipt_ref
+        .expect("voice receipt must exist");
+    let sync_job_id = s
+        .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+        .expect("sync queue row must exist")
+        .sync_job_id
+        .clone();
+
+    s.mobile_artifact_sync_dequeue_batch(
+        MonotonicTimeNs(1_134),
+        1,
+        30_000,
+        "worker_vid_dead_letter".to_string(),
+    )
+    .unwrap();
+    s.mobile_artifact_sync_dead_letter_commit(
+        MonotonicTimeNs(1_135),
+        &sync_job_id,
+        Some("worker_vid_dead_letter"),
+        "permanent decode error".to_string(),
+    )
+    .unwrap();
+
+    let row = s
+        .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+        .expect("dead-letter row should still exist");
+    assert_eq!(row.state, MobileArtifactSyncState::DeadLetter);
+    assert_eq!(row.last_error.as_deref(), Some("permanent decode error"));
+    assert_eq!(row.worker_id.as_deref(), Some("worker_vid_dead_letter"));
+    assert_eq!(row.lease_expires_at, None);
+    assert_eq!(row.acked_at, None);
+    assert_eq!(row.last_attempted_at, Some(MonotonicTimeNs(1_135)));
+
+    let dead_letter_rows = s.mobile_artifact_sync_dead_letter_rows();
+    assert_eq!(dead_letter_rows.len(), 1);
+    assert_eq!(dead_letter_rows[0].sync_job_id, sync_job_id);
+    assert!(s
+        .mobile_artifact_sync_replay_due_rows(MonotonicTimeNs(9_000_000_000))
+        .is_empty());
+
+    let none_left = s
+        .mobile_artifact_sync_dequeue_batch(
+            MonotonicTimeNs(9_000_000_001),
+            1,
+            1_000,
+            "worker_vid_after_dead_letter".to_string(),
+        )
+        .unwrap();
+    assert!(none_left.is_empty());
+}
+
+#[test]
 fn at_vid_db_10_voice_artifact_manifest_changes_enqueue_sync_rows() {
     let mut s = Ph1fStore::new_in_memory();
     let tenant_id = "tenant_a".to_string();
