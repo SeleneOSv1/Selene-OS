@@ -1938,4 +1938,93 @@ mod tests {
 
         assert_eq!(envelope.voice_identity_assertion, Some(assertion));
     }
+
+    #[test]
+    fn at_runtime_execution_09_envelope_accepts_persistence_state_transport() {
+        let persistence_state = PersistenceExecutionState::v1(
+            PersistenceRecoveryMode::Recovering,
+            PersistenceAcknowledgementState::StaleRejected,
+            Some(ReconciliationDecision::RejectStaleOperation),
+            Some(PersistenceConflictSeverity::StaleRejected),
+            true,
+            Some("audit.persistence.runtime.1".to_string()),
+        )
+        .expect("persistence execution state must validate");
+        let envelope = RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            "request:persistence:1".to_string(),
+            "trace:persistence:1".to_string(),
+            "idem:persistence:1".to_string(),
+            UserId::new("user_runtime_persistence_1").expect("valid actor user id"),
+            DeviceId::new("device_runtime_persistence_1").expect("valid device id"),
+            AppPlatform::Android,
+            sample_platform_context(),
+            Some(SessionId(1)),
+            TurnId(1),
+            Some(1),
+            AdmissionState::SessionResolved,
+            None,
+        )
+        .expect("baseline envelope must validate")
+        .with_persistence_state(Some(persistence_state.clone()))
+        .expect("persistence state transport must validate");
+        let transported = envelope
+            .persistence_state
+            .expect("persistence state must be present after transport");
+
+        assert_eq!(transported.recovery_mode, persistence_state.recovery_mode);
+        assert_eq!(
+            transported.acknowledgement_state,
+            persistence_state.acknowledgement_state
+        );
+        assert_eq!(
+            transported.reconciliation_decision,
+            persistence_state.reconciliation_decision
+        );
+        assert_eq!(
+            transported.conflict_severity,
+            persistence_state.conflict_severity
+        );
+        assert_eq!(
+            transported.cross_node_dedupe_applied,
+            persistence_state.cross_node_dedupe_applied
+        );
+        assert_eq!(transported.audit_ref, persistence_state.audit_ref);
+    }
+
+    #[test]
+    fn at_runtime_execution_10_persistence_state_transport_rejects_non_ascii_audit_ref() {
+        let invalid_state = PersistenceExecutionState {
+            recovery_mode: PersistenceRecoveryMode::Recovering,
+            acknowledgement_state: PersistenceAcknowledgementState::StaleRejected,
+            reconciliation_decision: Some(ReconciliationDecision::RejectStaleOperation),
+            conflict_severity: Some(PersistenceConflictSeverity::StaleRejected),
+            cross_node_dedupe_applied: false,
+            audit_ref: Some("审计.persistence.runtime.1".to_string()),
+        };
+        let err = RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+            "request:persistence:invalid:1".to_string(),
+            "trace:persistence:invalid:1".to_string(),
+            "idem:persistence:invalid:1".to_string(),
+            UserId::new("user_runtime_persistence_invalid_1").expect("valid actor user id"),
+            DeviceId::new("device_runtime_persistence_invalid_1").expect("valid device id"),
+            AppPlatform::Android,
+            sample_platform_context(),
+            Some(SessionId(1)),
+            TurnId(1),
+            Some(1),
+            AdmissionState::SessionResolved,
+            None,
+        )
+        .expect("baseline envelope must validate")
+        .with_persistence_state(Some(invalid_state))
+        .expect_err("non-ASCII persistence audit_ref must be rejected");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "persistence_execution_state.audit_ref");
+                assert_eq!(reason, "must be ASCII");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
 }
