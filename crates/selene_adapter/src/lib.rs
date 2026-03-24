@@ -2393,7 +2393,8 @@ impl AdapterRuntime {
                 package_hash,
                 payload_ref,
                 provenance_ref,
-                ArtifactStatus::Active,
+                // PH1.LEARN appends downstream artifacts; PH1.BUILDER owns ACTIVE promotion.
+                ArtifactStatus::Deprecated,
                 learn_idem,
             ) {
                 Ok(_) => {
@@ -14996,6 +14997,298 @@ mod tests {
         assert_eq!(health.outcome, "HEALTHY");
         assert!(health.sync.worker.pass_count >= 1);
         assert!(health.sync.worker.last_pass_at_ns.is_some());
+    }
+
+    #[test]
+    fn at_adapter_36_sync_retry_improvement_and_builder_observation_remain_downstream_only() {
+        let runtime = AdapterRuntime::default();
+        let correlation_id_raw = 10_136_u64;
+        let turn_id_raw = 20_136_u64;
+        let correlation_id = CorrelationId(correlation_id_raw as u128);
+        let turn_id = TurnId(turn_id_raw);
+        let improvement_now = MonotonicTimeNs(36_500);
+        let worker_id = "at_adapter_36_worker".to_string();
+
+        let mut request = base_request();
+        request.correlation_id = correlation_id_raw;
+        request.turn_id = turn_id_raw;
+        request.now_ns = Some(36_000);
+        request.app_platform = "ANDROID".to_string();
+        request.trigger = "WAKE_WORD".to_string();
+        request.actor_user_id = "tenant_a:user_adapter_test_36".to_string();
+        request.tenant_id = Some("tenant_a".to_string());
+        request.device_id = Some("adapter_android_device_36".to_string());
+
+        seed_wake_enrollment_complete_for_request(&runtime, &mut request, "at_adapter_36_retry");
+
+        let actor_user_id =
+            UserId::new(request.actor_user_id.clone()).expect("actor_user_id must parse");
+        let device_id = DeviceId::new(
+            request
+                .device_id
+                .clone()
+                .expect("device_id must be present for test"),
+        )
+        .expect("device_id must parse");
+
+        let (original_sync_job_id, original_retry_row_before, queue_before) = {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            let enrollment_rows = store
+                .ph1w_all_enrollment_session_rows()
+                .into_iter()
+                .filter(|row| row.user_id == actor_user_id && row.device_id == device_id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                enrollment_rows.len(),
+                1,
+                "wake enrollment seed should create one session for this actor/device"
+            );
+            let receipt_ref = enrollment_rows[0]
+                .wake_artifact_sync_receipt_ref
+                .clone()
+                .expect("wake enrollment seed should produce sync receipt");
+            let original_row = store
+                .mobile_artifact_sync_queue_row_for_receipt(&receipt_ref)
+                .cloned()
+                .expect("wake receipt should resolve queue row");
+            assert_eq!(original_row.state, MobileArtifactSyncState::Queued);
+            assert_eq!(original_row.user_id, Some(actor_user_id.clone()));
+            assert_eq!(original_row.device_id, device_id);
+
+            let dequeued = store
+                .device_artifact_sync_dequeue_batch(improvement_now, 1, 1_000, worker_id.clone())
+                .expect("retry dequeue should succeed");
+            assert_eq!(dequeued.len(), 1, "fresh retry path should dequeue one row");
+            assert_eq!(dequeued[0].sync_job_id, original_row.sync_job_id);
+            store
+                .device_artifact_sync_fail_commit(
+                    improvement_now,
+                    &original_row.sync_job_id,
+                    Some(worker_id.as_str()),
+                    "retry_pending_for_improvement".to_string(),
+                    1_000,
+                )
+                .expect("retry fail commit should succeed");
+
+            let retry_row_before = store
+                .device_artifact_sync_queue_rows()
+                .iter()
+                .find(|row| row.sync_job_id == original_row.sync_job_id)
+                .cloned()
+                .expect("retry row should remain present");
+            let queue_before = snapshot_sync_queue_counters(&store, improvement_now);
+            (original_row.sync_job_id, retry_row_before, queue_before)
+        };
+
+        let health_before = runtime
+            .health_report(Some(improvement_now.0))
+            .expect("pre-improvement health report should succeed");
+        let worker_before = health_before.sync.worker.clone();
+        let improvement_before = health_before.sync.improvement.clone();
+        assert_eq!(health_before.sync.queue, queue_before);
+
+        let (
+            emission,
+            feedback_before,
+            feedback_after,
+            bundle_before,
+            bundle_after,
+            outcome_before,
+            outcome_after,
+            learn_artifact_before,
+            learn_artifact_after,
+            original_retry_row_after,
+            queue_after,
+            new_queue_rows,
+        ) = {
+            let mut store = runtime.store.lock().expect("store lock should succeed");
+            let feedback_before = store.ph1feedback_audit_rows(correlation_id).len();
+            let bundle_before = store.ph1feedback_learn_signal_bundle_rows(correlation_id).len();
+            let outcome_before = store
+                .outcome_utilization_ledger_rows()
+                .iter()
+                .filter(|row| {
+                    row.correlation_id == correlation_id
+                        && row.engine_id == "PH1.FEEDBACK"
+                        && row.consumed_by == "PH1.LEARN"
+                        && row.outcome_type == "VOICE_SYNC_RETRY"
+                })
+                .count();
+            let tenant_scope =
+                tenant_scope_from_user_id(&actor_user_id).expect("tenant scope must resolve");
+            let learn_artifact_before = store
+                .ph1learn_artifact_rows(
+                    ArtifactScopeType::Tenant,
+                    tenant_scope,
+                    artifact_type_for_sync_issue(SyncIssueKind::Retry),
+                )
+                .len();
+            let queue_rows_before = store.device_artifact_sync_queue_rows().to_vec();
+            let before_sync_job_ids = queue_rows_before
+                .iter()
+                .map(|row| row.sync_job_id.clone())
+                .collect::<Vec<_>>();
+
+            let emission = runtime
+                .emit_sync_improvement_events(
+                    &mut store,
+                    improvement_now,
+                    correlation_id,
+                    turn_id,
+                    &DeviceArtifactSyncWorkerPassMetrics::default(),
+                    &queue_before,
+                )
+                .expect("retry improvement emission should succeed");
+            runtime
+                .maybe_run_builder_for_sync_improvements(
+                    &mut store,
+                    SyncImprovementBuilderContext {
+                        now: improvement_now,
+                        correlation_id,
+                        turn_id,
+                        metrics: &DeviceArtifactSyncWorkerPassMetrics::default(),
+                        queue_after: &queue_before,
+                        outcome_entries: &emission.builder_input_entries,
+                    },
+                )
+                .expect("builder observation should succeed");
+            runtime
+                .record_sync_improvement_metrics(&emission)
+                .expect("improvement metrics update should succeed");
+
+            let feedback_after = store.ph1feedback_audit_rows(correlation_id).len();
+            let bundle_after = store.ph1feedback_learn_signal_bundle_rows(correlation_id).len();
+            let outcome_after = store
+                .outcome_utilization_ledger_rows()
+                .iter()
+                .filter(|row| {
+                    row.correlation_id == correlation_id
+                        && row.engine_id == "PH1.FEEDBACK"
+                        && row.consumed_by == "PH1.LEARN"
+                        && row.outcome_type == "VOICE_SYNC_RETRY"
+                })
+                .count();
+            let learn_artifact_after = store
+                .ph1learn_artifact_rows(
+                    ArtifactScopeType::Tenant,
+                    tenant_scope,
+                    artifact_type_for_sync_issue(SyncIssueKind::Retry),
+                )
+                .len();
+            let original_retry_row_after = store
+                .device_artifact_sync_queue_rows()
+                .iter()
+                .find(|row| row.sync_job_id == original_sync_job_id)
+                .cloned()
+                .expect("original retry row should remain present after downstream emission");
+            let queue_after = snapshot_sync_queue_counters(&store, improvement_now);
+            let new_queue_rows = store
+                .device_artifact_sync_queue_rows()
+                .iter()
+                .filter(|row| !before_sync_job_ids.iter().any(|id| id == &row.sync_job_id))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            (
+                emission,
+                feedback_before,
+                feedback_after,
+                bundle_before,
+                bundle_after,
+                outcome_before,
+                outcome_after,
+                learn_artifact_before,
+                learn_artifact_after,
+                original_retry_row_after,
+                queue_after,
+                new_queue_rows,
+            )
+        };
+
+        let health_after = runtime
+            .health_report(Some(improvement_now.0))
+            .expect("post-improvement health report should succeed");
+
+        assert!(queue_before.retry_pending_count > 0);
+        assert_eq!(queue_before.dead_letter_count, 0);
+        assert_eq!(queue_before.replay_due_count, 0);
+        assert!(feedback_after > feedback_before);
+        assert_eq!(bundle_after, bundle_before);
+        assert!(outcome_after > outcome_before);
+        assert!(learn_artifact_after > learn_artifact_before);
+        assert!(emission.feedback_events_emitted > 0);
+        assert!(emission.learn_artifacts_emitted > 0);
+        assert!(!emission.builder_input_entries.is_empty());
+        assert!(emission.builder_input_entries.iter().any(|entry| {
+            entry.engine_id == "PH1.FEEDBACK"
+                && entry.outcome_type == "VOICE_SYNC_RETRY"
+                && entry.consumed_by == "PH1.LEARN"
+        }));
+        assert_eq!(
+            health_after.sync.improvement.last_builder_status.as_deref(),
+            Some("SKIPPED_NON_SEVERE")
+        );
+        assert_eq!(
+            health_after.sync.improvement.builder_not_invoked_total,
+            improvement_before.builder_not_invoked_total + 1
+        );
+        assert_eq!(
+            health_after.sync.improvement.builder_runs_total,
+            improvement_before.builder_runs_total
+        );
+        assert_eq!(
+            health_after.sync.improvement.feedback_events_emitted_total,
+            improvement_before.feedback_events_emitted_total + emission.feedback_events_emitted
+        );
+        assert_eq!(
+            health_after.sync.improvement.learn_artifacts_emitted_total,
+            improvement_before.learn_artifacts_emitted_total + emission.learn_artifacts_emitted
+        );
+        assert_eq!(health_after.sync.worker, worker_before);
+        assert_eq!(health_after.sync.queue, queue_after);
+
+        assert_eq!(
+            original_retry_row_after.sync_job_id,
+            original_retry_row_before.sync_job_id
+        );
+        assert_eq!(original_retry_row_after.state, original_retry_row_before.state);
+        assert_eq!(
+            original_retry_row_after.attempt_count,
+            original_retry_row_before.attempt_count
+        );
+        assert_eq!(
+            original_retry_row_after.worker_id,
+            original_retry_row_before.worker_id
+        );
+        assert_eq!(
+            original_retry_row_after.last_error,
+            original_retry_row_before.last_error
+        );
+        assert_eq!(
+            original_retry_row_after.lease_expires_at,
+            original_retry_row_before.lease_expires_at
+        );
+        assert_eq!(
+            original_retry_row_after.last_attempted_at,
+            original_retry_row_before.last_attempted_at
+        );
+        assert_eq!(queue_after.in_flight_count, queue_before.in_flight_count);
+        assert_eq!(queue_after.retry_pending_count, queue_before.retry_pending_count);
+        assert_eq!(queue_after.dead_letter_count, queue_before.dead_letter_count);
+        assert_eq!(queue_after.replay_due_count, queue_before.replay_due_count);
+        assert_eq!(queue_after.queued_count, queue_before.queued_count + 1);
+        assert_eq!(
+            new_queue_rows.len(),
+            1,
+            "retry improvement fan-out should append exactly one queued manifest row"
+        );
+        assert_ne!(new_queue_rows[0].sync_job_id, original_sync_job_id);
+        assert_eq!(new_queue_rows[0].state, MobileArtifactSyncState::Queued);
+        assert_eq!(new_queue_rows[0].attempt_count, 0);
+        assert_eq!(new_queue_rows[0].worker_id, None);
+        assert_eq!(new_queue_rows[0].last_error, None);
+        assert_eq!(new_queue_rows[0].last_attempted_at, None);
+        assert_eq!(new_queue_rows[0].lease_expires_at, None);
     }
 
     #[test]
