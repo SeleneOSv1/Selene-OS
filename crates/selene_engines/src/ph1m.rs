@@ -1430,12 +1430,20 @@ mod tests {
     }
 
     fn propose_item(key: &str, value: &str) -> MemoryProposedItem {
+        propose_item_with_confidence(key, value, MemoryConfidence::High)
+    }
+
+    fn propose_item_with_confidence(
+        key: &str,
+        value: &str,
+        confidence: MemoryConfidence,
+    ) -> MemoryProposedItem {
         MemoryProposedItem::v1(
             MemoryKey::new(key).unwrap(),
             MemoryValue::v1(value.to_string(), None).unwrap(),
             MemoryLayer::LongTerm,
             MemorySensitivityFlag::Low,
-            MemoryConfidence::High,
+            confidence,
             MemoryConsent::NotRequested,
             format!("Evidence: {value}"),
             MemoryProvenance::v1(None, None).unwrap(),
@@ -2204,6 +2212,124 @@ mod tests {
             .chain(out.pull_items.iter())
             .any(|v| v.tag == MemoryItemTag::Confirmed);
         assert!(has_confirmed);
+    }
+
+    #[test]
+    fn context_bundle_high_confidence_emits_confirmed_tag() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let key = MemoryKey::new("project:active:jp_trip").unwrap();
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                MonotonicTimeNs(10),
+                speaker_ok(),
+                policy_ok(),
+                vec![propose_item_with_confidence(
+                    key.as_str(),
+                    "Japan Trip",
+                    MemoryConfidence::High,
+                )],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    MonotonicTimeNs(11),
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![key.clone()],
+                    vec![],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 1);
+        let item = &out.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+    }
+
+    #[test]
+    fn context_bundle_confidence_ranking_prefers_high_over_low() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let high_key = MemoryKey::new("project:active:travel_priority").unwrap();
+        let low_key = MemoryKey::new("project:active:travel_note").unwrap();
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                MonotonicTimeNs(10),
+                speaker_ok(),
+                policy_ok(),
+                vec![
+                    propose_item_with_confidence(
+                        high_key.as_str(),
+                        "Book the flight first",
+                        MemoryConfidence::High,
+                    ),
+                    propose_item_with_confidence(
+                        low_key.as_str(),
+                        "Maybe visit a museum",
+                        MemoryConfidence::Low,
+                    ),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    MonotonicTimeNs(11),
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![high_key.clone(), low_key.clone()],
+                    vec![],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 2);
+
+        let high_index = out
+            .pull_items
+            .iter()
+            .position(|item| item.memory_key == high_key)
+            .expect("expected high-confidence pull item");
+        let low_index = out
+            .pull_items
+            .iter()
+            .position(|item| item.memory_key == low_key)
+            .expect("expected low-confidence pull item");
+        assert!(high_index < low_index);
+
+        let high_item = &out.pull_items[high_index];
+        let low_item = &out.pull_items[low_index];
+        assert_eq!(high_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(high_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(low_item.tag, MemoryItemTag::Tentative);
+        assert_eq!(low_item.provenance_tier, MemoryProvenanceTier::UserStated);
     }
 
     #[test]

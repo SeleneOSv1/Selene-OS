@@ -973,10 +973,10 @@ mod tests {
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1m::{
         MemoryCommitDecision, MemoryCommitStatus, MemoryConfidence, MemoryConsent,
-        MemoryContextFact, MemoryEmotionalThreadState, MemoryKey, MemoryLayer,
+        MemoryContextFact, MemoryEmotionalThreadState, MemoryItemTag, MemoryKey, MemoryLayer,
         MemoryLedgerEvent, MemoryLedgerEventKind, MemoryMetricPayload, MemoryProposedItem,
-        MemoryProvenance, MemoryResumeAction, MemoryResumeTier, MemoryRetentionMode,
-        MemorySensitivityFlag, MemorySuppressionRule,
+        MemoryProvenance, MemoryProvenanceTier, MemoryResumeAction, MemoryResumeTier,
+        MemoryRetentionMode, MemorySensitivityFlag, MemorySuppressionRule,
         MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest,
         MemoryUsePolicy, MemoryValue, Ph1mContextBundleBuildRequest,
         Ph1mContextBundleBuildResponse, Ph1mEmotionalThreadUpdateRequest,
@@ -1123,18 +1123,40 @@ mod tests {
     }
 
     fn base_propose_request() -> Ph1mProposeRequest {
+        let item = proposed_item_with_confidence(
+            "preferred_name",
+            "John",
+            MemoryConfidence::High,
+            "My name is John",
+        );
+        Ph1mProposeRequest::v1(MonotonicTimeNs(10), speaker_ok(), policy_ok(), vec![item]).unwrap()
+    }
+
+    fn proposed_item_with_confidence(
+        key: &str,
+        value: &str,
+        confidence: MemoryConfidence,
+        evidence_quote: &str,
+    ) -> MemoryProposedItem {
         let item = MemoryProposedItem::v1(
-            MemoryKey::new("preferred_name").unwrap(),
-            MemoryValue::v1("John".to_string(), None).unwrap(),
+            MemoryKey::new(key).unwrap(),
+            MemoryValue::v1(value.to_string(), None).unwrap(),
             MemoryLayer::LongTerm,
             MemorySensitivityFlag::Low,
-            MemoryConfidence::High,
+            confidence,
             MemoryConsent::NotRequested,
-            "My name is John".to_string(),
+            evidence_quote.to_string(),
             MemoryProvenance::v1(None, None).unwrap(),
         )
         .unwrap();
-        Ph1mProposeRequest::v1(MonotonicTimeNs(10), speaker_ok(), policy_ok(), vec![item]).unwrap()
+        item
+    }
+
+    fn propose_request_at(
+        now: MonotonicTimeNs,
+        proposals: Vec<MemoryProposedItem>,
+    ) -> Ph1mProposeRequest {
+        Ph1mProposeRequest::v1(now, speaker_ok(), policy_ok(), proposals).unwrap()
     }
 
     fn base_recall_request() -> Ph1mRecallRequest {
@@ -1272,6 +1294,18 @@ mod tests {
         }
     }
 
+    fn forwarded_context_bundle_response(
+        outcome: MemoryWiringOutcome,
+    ) -> Ph1mContextBundleBuildResponse {
+        match outcome {
+            MemoryWiringOutcome::Forwarded(bundle) => match bundle.output {
+                MemoryTurnOutput::ContextBundleBuild(resp) => resp,
+                _ => panic!("expected context bundle output"),
+            },
+            _ => panic!("expected forwarded context bundle"),
+        }
+    }
+
     fn base_hint_bundle_request() -> Ph1mHintBundleBuildRequest {
         Ph1mHintBundleBuildRequest::v1(MonotonicTimeNs(18), speaker_ok(), policy_ok(), 8).unwrap()
     }
@@ -1294,6 +1328,27 @@ mod tests {
             1024,
             8,
             1,
+        )
+        .unwrap()
+    }
+
+    fn context_bundle_request_at(
+        now: MonotonicTimeNs,
+        requested_keys: Vec<MemoryKey>,
+    ) -> Ph1mContextBundleBuildRequest {
+        Ph1mContextBundleBuildRequest::v1(
+            now,
+            speaker_ok(),
+            policy_ok(),
+            requested_keys,
+            vec![],
+            None,
+            None,
+            None,
+            true,
+            1024,
+            8,
+            0,
         )
         .unwrap()
     }
@@ -1828,6 +1883,111 @@ mod tests {
         assert_eq!(resp.resume_tier, None);
         assert_eq!(resp.resume_action, MemoryResumeAction::None);
         assert!(resp.resume_summary_bullets.is_empty());
+    }
+
+    #[test]
+    fn at_m_21_real_runtime_context_bundle_high_confidence_emits_confirmed_tag() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let key = MemoryKey::new("project:active:jp_trip").unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7932),
+            TurnId(8932),
+            MemoryOperation::Propose(propose_request_at(
+                MonotonicTimeNs(40),
+                vec![proposed_item_with_confidence(
+                    key.as_str(),
+                    "Japan Trip",
+                    MemoryConfidence::High,
+                    "I am planning a Japan trip",
+                )],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7933),
+            TurnId(8933),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_at(
+                MonotonicTimeNs(41),
+                vec![key.clone()],
+            )),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 1);
+        let item = &resp.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+    }
+
+    #[test]
+    fn at_m_22_real_runtime_context_bundle_confidence_ranking_prefers_high_over_low() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let high_key = MemoryKey::new("project:active:travel_priority").unwrap();
+        let low_key = MemoryKey::new("project:active:travel_note").unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7934),
+            TurnId(8934),
+            MemoryOperation::Propose(propose_request_at(
+                MonotonicTimeNs(42),
+                vec![
+                    proposed_item_with_confidence(
+                        high_key.as_str(),
+                        "Book the flight first",
+                        MemoryConfidence::High,
+                        "The flight should be booked first",
+                    ),
+                    proposed_item_with_confidence(
+                        low_key.as_str(),
+                        "Maybe visit a museum",
+                        MemoryConfidence::Low,
+                        "A museum might be nice",
+                    ),
+                ],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7935),
+            TurnId(8935),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_at(
+                MonotonicTimeNs(43),
+                vec![high_key.clone(), low_key.clone()],
+            )),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 2);
+
+        let high_index = resp
+            .pull_items
+            .iter()
+            .position(|item| item.memory_key == high_key)
+            .expect("expected high-confidence pull item");
+        let low_index = resp
+            .pull_items
+            .iter()
+            .position(|item| item.memory_key == low_key)
+            .expect("expected low-confidence pull item");
+        assert!(high_index < low_index);
+
+        let high_item = &resp.pull_items[high_index];
+        let low_item = &resp.pull_items[low_index];
+        assert_eq!(high_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(high_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(low_item.tag, MemoryItemTag::Tentative);
+        assert_eq!(low_item.provenance_tier, MemoryProvenanceTier::UserStated);
     }
 
     #[test]
