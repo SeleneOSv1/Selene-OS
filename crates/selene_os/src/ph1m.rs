@@ -966,15 +966,17 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
     use selene_kernel_contracts::ph1_voice_id::{
         DiarizationSegment, SpeakerAssertionOk, SpeakerId, SpeakerLabel, UserId,
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1m::{
         MemoryCommitDecision, MemoryCommitStatus, MemoryConfidence, MemoryConsent,
-        MemoryContextFact, MemoryEmotionalThreadState, MemoryKey, MemoryLayer, MemoryLedgerEvent,
-        MemoryLedgerEventKind, MemoryMetricPayload, MemoryProposedItem, MemoryProvenance,
-        MemoryRetentionMode, MemorySensitivityFlag, MemorySuppressionRule,
+        MemoryContextFact, MemoryEmotionalThreadState, MemoryKey, MemoryLayer,
+        MemoryLedgerEvent, MemoryLedgerEventKind, MemoryMetricPayload, MemoryProposedItem,
+        MemoryProvenance, MemoryResumeAction, MemoryResumeTier, MemoryRetentionMode,
+        MemorySensitivityFlag, MemorySuppressionRule,
         MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryThreadDigest,
         MemoryUsePolicy, MemoryValue, Ph1mContextBundleBuildRequest,
         Ph1mContextBundleBuildResponse, Ph1mEmotionalThreadUpdateRequest,
@@ -1196,6 +1198,78 @@ mod tests {
             None,
         )
         .unwrap()
+    }
+
+    fn ms_to_ns(ms: u64) -> u64 {
+        ms.saturating_mul(1_000_000)
+    }
+
+    fn thread_digest_upsert_request_at(
+        now: MonotonicTimeNs,
+        last_updated_at: MonotonicTimeNs,
+        thread_id: &str,
+        thread_title: &str,
+        summary_bullets: Vec<String>,
+        unresolved: bool,
+        pinned: bool,
+        revision: u32,
+        idempotency_key: &str,
+    ) -> Ph1mThreadDigestUpsertRequest {
+        let digest = MemoryThreadDigest::v1(
+            thread_id.to_string(),
+            thread_title.to_string(),
+            summary_bullets,
+            unresolved,
+            pinned,
+            last_updated_at,
+            revision,
+        )
+        .unwrap();
+        Ph1mThreadDigestUpsertRequest::v1(
+            now,
+            speaker_ok(),
+            policy_ok(),
+            MemoryRetentionMode::Default,
+            digest,
+            idempotency_key.to_string(),
+        )
+        .unwrap()
+    }
+
+    fn resume_select_request_at(now: MonotonicTimeNs) -> Ph1mResumeSelectRequest {
+        Ph1mResumeSelectRequest::v1(
+            now,
+            speaker_ok(),
+            policy_ok(),
+            MemoryRetentionMode::Default,
+            true,
+            true,
+            true,
+            false,
+            3,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn real_runtime_wiring() -> (Ph1mWiring<Ph1mRuntime>, Ph1mConfig) {
+        let cfg = Ph1mConfig::mvp_v1();
+        let wiring = Ph1mWiring::new(
+            Ph1mWiringConfig::mvp_v1(true),
+            Ph1mRuntime::new(Ph1mConfig::mvp_v1()),
+        )
+        .unwrap();
+        (wiring, cfg)
+    }
+
+    fn forwarded_resume_select_response(outcome: MemoryWiringOutcome) -> Ph1mResumeSelectResponse {
+        match outcome {
+            MemoryWiringOutcome::Forwarded(bundle) => match bundle.output {
+                MemoryTurnOutput::ResumeSelect(resp) => resp,
+                _ => panic!("expected resume select output"),
+            },
+            _ => panic!("expected forwarded resume select"),
+        }
     }
 
     fn base_hint_bundle_request() -> Ph1mHintBundleBuildRequest {
@@ -1644,6 +1718,116 @@ mod tests {
             },
             _ => panic!("expected forwarded resume select"),
         }
+    }
+
+    #[test]
+    fn at_m_17_real_runtime_resume_hot_surface() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let hot_delta_ns = ms_to_ns(cfg.resume_hot_window_ms.saturating_sub(1));
+        let now = MonotonicTimeNs(hot_delta_ns.saturating_add(5_000_000_000));
+        let seed_input = MemoryTurnInput::v1(
+            CorrelationId(7926),
+            TurnId(8926),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(hot_delta_ns)),
+                "thread_resume_hot",
+                "Japan ski trip",
+                vec![
+                    "Flights shortlisted".to_string(),
+                    "Need hotel confirmation".to_string(),
+                ],
+                false,
+                true,
+                5,
+                "idem_resume_hot",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7927),
+            TurnId(8927),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+        assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Hot));
+        assert_eq!(resp.resume_action, MemoryResumeAction::AutoLoad);
+    }
+
+    #[test]
+    fn at_m_18_real_runtime_resume_warm_surface() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let warm_delta_ns = ms_to_ns(cfg.resume_warm_window_ms.saturating_sub(1));
+        let hot_ns = ms_to_ns(cfg.resume_hot_window_ms);
+        let now = MonotonicTimeNs(warm_delta_ns.saturating_add(5_000_000_000));
+        let seed_input = MemoryTurnInput::v1(
+            CorrelationId(7928),
+            TurnId(8928),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at(
+                now,
+                MonotonicTimeNs(
+                    now.0
+                        .saturating_sub(warm_delta_ns.max(hot_ns.saturating_add(1))),
+                ),
+                "thread_resume_warm",
+                "Payroll follow-up",
+                vec!["Pending approval".to_string()],
+                false,
+                false,
+                2,
+                "idem_resume_warm",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7929),
+            TurnId(8929),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+        assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(resp.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
+    fn at_m_19_real_runtime_resume_cold_without_topic_surface() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let older_than_warm_ns = ms_to_ns(cfg.resume_warm_window_ms.saturating_add(1));
+        let now = MonotonicTimeNs(older_than_warm_ns.saturating_add(5_000_000_000));
+        let seed_input = MemoryTurnInput::v1(
+            CorrelationId(7930),
+            TurnId(8930),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(older_than_warm_ns)),
+                "thread_resume_cold",
+                "Old topic",
+                vec!["Old summary".to_string()],
+                false,
+                false,
+                1,
+                "idem_resume_cold",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7931),
+            TurnId(8931),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+        assert_eq!(resp.resume_tier, None);
+        assert_eq!(resp.resume_action, MemoryResumeAction::None);
+        assert!(resp.resume_summary_bullets.is_empty());
     }
 
     #[test]
