@@ -200,6 +200,22 @@ Automatic stop is still required when:
 ### Repo-Truth Precedence Rule
 If task instructions conflict with current repo truth, Codex must follow current repo truth plus these task-state rules and report the mode switch once in the final output.
 
+### Authority Conflict Stop Rule
+If current repo artifacts that should describe the same truth conflict with each other, Codex must stop and report the exact conflict with file-and-line evidence.
+
+Examples:
+- code vs plan doc
+- master plan vs phase plan
+- ledger vs completion claim
+- test name in prompt vs test name in repo
+
+Codex must not silently synthesize a new truth when repo authorities disagree.
+Codex must report:
+- the conflicting files
+- the exact conflicting lines
+- which authority order applies if it is already resolved by existing law
+- whether work is blocked or can continue under existing authority order
+
 ### Completion Discipline
 At the end of each task, Codex must explicitly state whether the target was:
 - authored
@@ -207,6 +223,18 @@ At the end of each task, Codex must explicitly state whether the target was:
 - audited
 - committed/pushed
 - freeze-ready or not
+
+### Strict No-Op Rule
+`NO_OP` is allowed only when the existing artifact already matches the full intended truth or behavior for the task.
+
+`NO_OP` is not allowed merely because:
+- a file already exists
+- a heading already exists
+- a partial implementation already exists
+- a similarly named test already exists
+- some of the requested truth is already present
+
+If full no-op equivalence is not proved from current repo truth, Codex must stop and report exact repo state instead of claiming `NO_OP`.
 
 ### No Hidden Mode Switching
 If a task begins as authoring but repo truth shows the target already exists, Codex must explicitly switch to recovery or audit mode instead of silently half-following the original authoring prompt.
@@ -357,6 +385,63 @@ For any change run, Codex must provide:
 - determinism checks where applicable
 - `git diff --stat`
 - proof that no unrelated files changed
+
+## Subjective-Gate Ban
+Task gates, stop conditions, and completion claims must not rely on subjective phrases such as:
+- `strongly implies`
+- `appears`
+- `seems`
+- `as if`
+- `looks like`
+
+Codex must use:
+- exact searchable text
+- exact command output
+- exact file-and-line evidence
+- exact counted hits
+- exact named tests/checks
+
+If a gate cannot be expressed objectively, Codex must stop and report the ambiguity instead of guessing.
+
+## No Vacuous Test Pass Rule
+A test, lint, or check only counts as proof if both conditions are true:
+1. the named target is explicitly proved to exist in current repo truth
+2. the command output proves that at least one matching test or check actually executed
+
+Passing with zero matched tests or zero executed checks does not count as proof.
+
+When the tool supports exact targeting, Codex should use exact targeting.
+If execution count cannot be proved from output, Codex must report the result as unproven.
+
+## Real-Path Proof Rule
+For any change run, Codex must state in the final proof pack:
+- the exact command run
+- the exact module, file, function, or runtime path exercised
+- what was real
+- what was mocked, stubbed, simulated, in-memory, or fixture-backed
+- what remains unproven
+
+Codex must not present narrow harness proof as broader production proof.
+
+## Harness Disclosure Rule
+If proof depends on a harness, fixture, fake clock, in-memory store, mock, stub, replay harness, or simulation layer, Codex must name that dependency explicitly in the final report.
+
+Codex must also state the proof scope honestly:
+- what the harness proves
+- what it does not prove
+- whether the exercised path is real wiring, partial wiring, or harness-only
+
+## Fresh Remote Truth Rule
+Remote branch state, publication state, and `HEAD == origin/main` may be reported only from a successful fetch performed in the same run.
+
+If that fetch fails:
+- remote publication state must be reported as `UNVERIFIED`
+- Codex must not claim remote equality from stale local refs
+
+If the fetch succeeds, Codex may report:
+- local `HEAD`
+- remote `origin/main`
+- whether they are equal
 
 ## Mandatory Cleanliness Gates
 Change runs:
