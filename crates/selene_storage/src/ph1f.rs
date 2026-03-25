@@ -1023,6 +1023,7 @@ pub struct MemoryLedgerRow {
     pub ledger_id: u64,
     pub user_id: UserId,
     pub event: MemoryLedgerEvent,
+    pub expires_at: Option<MonotonicTimeNs>,
     pub idempotency_key: Option<String>,
 }
 
@@ -3904,6 +3905,7 @@ impl Ph1fStore {
             ledger_id,
             user_id: user_id.clone(),
             event: event.clone(),
+            expires_at,
             idempotency_key: idempotency_key.clone(),
         });
         self.apply_memory_event_to_current(user_id, &event, use_policy, expires_at);
@@ -3981,7 +3983,12 @@ impl Ph1fStore {
                 MemoryLayer::Working => MemoryUsePolicy::ContextRelevantOnly,
                 MemoryLayer::Micro => MemoryUsePolicy::RepeatedOrConfirmed,
             };
-            self.apply_memory_event_to_current(&row.user_id, &row.event, use_policy, None);
+            self.apply_memory_event_to_current(
+                &row.user_id,
+                &row.event,
+                use_policy,
+                row.expires_at,
+            );
             if let Some(k) = &row.idempotency_key {
                 self.memory_idempotency_index
                     .insert((row.user_id.clone(), k.clone()), row.ledger_id);
@@ -24171,6 +24178,46 @@ mod tests {
         s.rebuild_memory_current_from_ledger();
         let after = s.memory_current().clone();
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn at_f_02b_current_state_rebuild_preserves_micro_expiry() {
+        let mut s = store_with_user_and_device();
+        let key = MemoryKey::new("micro:nickname").unwrap();
+        let expires_at = Some(MonotonicTimeNs(999));
+        let event = MemoryLedgerEvent::v1(
+            MemoryLedgerEventKind::Stored,
+            MonotonicTimeNs(10),
+            key.clone(),
+            Some(MemoryValue::v1("Benji".to_string(), None).unwrap()),
+            Some("evidence".to_string()),
+            MemoryProvenance::v1(Some(SessionId(1)), None).unwrap(),
+            MemoryLayer::Micro,
+            MemorySensitivityFlag::Low,
+            MemoryConfidence::High,
+            MemoryConsent::NotRequested,
+            ReasonCodeId(1),
+        )
+        .unwrap();
+        s.append_memory_ledger_event(
+            &user(),
+            event,
+            MemoryUsePolicy::RepeatedOrConfirmed,
+            expires_at,
+            None,
+        )
+        .unwrap();
+
+        let current_key = (user(), key);
+        let before = s.memory_current().get(&current_key).unwrap().clone();
+        assert_eq!(before.expires_at, expires_at);
+        assert_eq!(s.memory_ledger_rows().last().unwrap().expires_at, expires_at);
+
+        s.rebuild_memory_current_from_ledger();
+
+        let after = s.memory_current().get(&current_key).unwrap().clone();
+        assert_eq!(after.expires_at, expires_at);
+        assert_eq!(after, before);
     }
 
     #[test]
