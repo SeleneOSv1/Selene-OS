@@ -2125,6 +2125,93 @@ mod tests {
     }
 
     #[test]
+    fn resume_select_unresolved_within_decay_window_breaks_warm_tie() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let cfg = Ph1mConfig::mvp_v1();
+        assert!(cfg.resume_hot_window_ms < cfg.resume_warm_window_ms);
+        assert!(cfg.resume_warm_window_ms < cfg.unresolved_decay_window_ms);
+
+        let warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1);
+        assert!(warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(warm_age_ms <= cfg.unresolved_decay_window_ms);
+
+        let warm_age_ns = ms_to_ns(warm_age_ms);
+        let now = MonotonicTimeNs(warm_age_ns.saturating_add(9_000_000_000));
+        let last_updated = MonotonicTimeNs(now.0.saturating_sub(warm_age_ns));
+        let shared_title = "Same warm thread".to_string();
+        let shared_summary = vec!["Same summary".to_string()];
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_alpha_resolved".to_string(),
+                    shared_title.clone(),
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    last_updated,
+                    7,
+                )
+                .unwrap(),
+                "idem_thread_alpha_resolved".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_unresolved_warm".to_string(),
+                    shared_title,
+                    shared_summary,
+                    false,
+                    true,
+                    last_updated,
+                    7,
+                )
+                .unwrap(),
+                "idem_thread_unresolved_warm".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            out.selected_thread_id,
+            Some("thread_unresolved_warm".to_string())
+        );
+        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
     fn resume_select_blocks_unknown_speaker() {
         let rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
         let out = rt

@@ -1277,6 +1277,38 @@ mod tests {
         .unwrap()
     }
 
+    fn thread_digest_upsert_request_at_with_contract_flags(
+        now: MonotonicTimeNs,
+        last_updated_at: MonotonicTimeNs,
+        thread_id: &str,
+        thread_title: &str,
+        summary_bullets: Vec<String>,
+        pinned: bool,
+        unresolved: bool,
+        use_count: u32,
+        idempotency_key: &str,
+    ) -> Ph1mThreadDigestUpsertRequest {
+        let digest = MemoryThreadDigest::v1(
+            thread_id.to_string(),
+            thread_title.to_string(),
+            summary_bullets,
+            pinned,
+            unresolved,
+            last_updated_at,
+            use_count,
+        )
+        .unwrap();
+        Ph1mThreadDigestUpsertRequest::v1(
+            now,
+            speaker_ok(),
+            policy_ok(),
+            MemoryRetentionMode::Default,
+            digest,
+            idempotency_key.to_string(),
+        )
+        .unwrap()
+    }
+
     fn resume_select_request_at(now: MonotonicTimeNs) -> Ph1mResumeSelectRequest {
         Ph1mResumeSelectRequest::v1(
             now,
@@ -1910,6 +1942,74 @@ mod tests {
         assert_eq!(resp.resume_tier, None);
         assert_eq!(resp.resume_action, MemoryResumeAction::None);
         assert!(resp.resume_summary_bullets.is_empty());
+    }
+
+    #[test]
+    fn at_m_27_real_runtime_resume_unresolved_within_decay_window_breaks_warm_tie() {
+        let (mut w, cfg) = real_runtime_wiring();
+        assert!(cfg.resume_hot_window_ms < cfg.resume_warm_window_ms);
+        assert!(cfg.resume_warm_window_ms < cfg.unresolved_decay_window_ms);
+
+        let warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1);
+        assert!(warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(warm_age_ms <= cfg.unresolved_decay_window_ms);
+
+        let warm_age_ns = ms_to_ns(warm_age_ms);
+        let now = MonotonicTimeNs(warm_age_ns.saturating_add(5_000_000_000));
+        let last_updated = MonotonicTimeNs(now.0.saturating_sub(warm_age_ns));
+        let shared_title = "Same warm thread";
+        let shared_summary = vec!["Same summary".to_string()];
+
+        let resolved_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7936),
+            TurnId(8936),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                last_updated,
+                "thread_alpha_resolved",
+                shared_title,
+                shared_summary.clone(),
+                false,
+                false,
+                7,
+                "idem_resume_alpha_resolved",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&resolved_seed_input).unwrap();
+
+        let unresolved_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7937),
+            TurnId(8937),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                last_updated,
+                "thread_unresolved_warm",
+                shared_title,
+                shared_summary,
+                false,
+                true,
+                7,
+                "idem_resume_unresolved_warm",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&unresolved_seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7938),
+            TurnId(8938),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+
+        assert_eq!(
+            resp.selected_thread_id,
+            Some("thread_unresolved_warm".to_string())
+        );
+        assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(resp.resume_action, MemoryResumeAction::Suggest);
     }
 
     #[test]
