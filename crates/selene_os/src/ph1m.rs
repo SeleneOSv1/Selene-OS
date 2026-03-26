@@ -1336,12 +1336,20 @@ mod tests {
         now: MonotonicTimeNs,
         requested_keys: Vec<MemoryKey>,
     ) -> Ph1mContextBundleBuildRequest {
+        context_bundle_request_with_state_at(now, requested_keys, vec![])
+    }
+
+    fn context_bundle_request_with_state_at(
+        now: MonotonicTimeNs,
+        requested_keys: Vec<MemoryKey>,
+        current_state_facts: Vec<MemoryContextFact>,
+    ) -> Ph1mContextBundleBuildRequest {
         Ph1mContextBundleBuildRequest::v1(
             now,
             speaker_ok(),
             policy_ok(),
             requested_keys,
-            vec![],
+            current_state_facts,
             None,
             None,
             None,
@@ -1988,6 +1996,131 @@ mod tests {
         assert_eq!(high_item.provenance_tier, MemoryProvenanceTier::UserStated);
         assert_eq!(low_item.tag, MemoryItemTag::Tentative);
         assert_eq!(low_item.provenance_tier, MemoryProvenanceTier::UserStated);
+    }
+
+    #[test]
+    fn at_m_23_real_runtime_context_bundle_current_state_conflict_emits_conflict_tag() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let key = MemoryKey::new("project:active:trip_owner").unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7936),
+            TurnId(8936),
+            MemoryOperation::Propose(propose_request_at(
+                MonotonicTimeNs(44),
+                vec![proposed_item_with_confidence(
+                    key.as_str(),
+                    "Selene",
+                    MemoryConfidence::High,
+                    "Selene owns the trip plan",
+                )],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7937),
+            TurnId(8937),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_with_state_at(
+                MonotonicTimeNs(45),
+                vec![key.clone()],
+                vec![MemoryContextFact::v1(
+                    key.clone(),
+                    MemoryValue::v1("Jordan".to_string(), None).unwrap(),
+                )
+                .unwrap()],
+            )),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 1);
+        let item = &resp.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Conflict);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(resp.metric_payload.conflict_count, 1);
+        assert_eq!(resp.metric_payload.stale_count, 0);
+    }
+
+    #[test]
+    fn at_m_24_real_runtime_context_bundle_conflict_metric_counts_only_conflicting_entries() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let conflict_key = MemoryKey::new("project:active:flight_step").unwrap();
+        let aligned_key = MemoryKey::new("project:active:insurance_step").unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7938),
+            TurnId(8938),
+            MemoryOperation::Propose(propose_request_at(
+                MonotonicTimeNs(46),
+                vec![
+                    proposed_item_with_confidence(
+                        conflict_key.as_str(),
+                        "Book the flight",
+                        MemoryConfidence::High,
+                        "The next step is booking the flight",
+                    ),
+                    proposed_item_with_confidence(
+                        aligned_key.as_str(),
+                        "Buy travel insurance",
+                        MemoryConfidence::High,
+                        "The travel insurance should be bought",
+                    ),
+                ],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7939),
+            TurnId(8939),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_with_state_at(
+                MonotonicTimeNs(47),
+                vec![conflict_key.clone(), aligned_key.clone()],
+                vec![
+                    MemoryContextFact::v1(
+                        conflict_key.clone(),
+                        MemoryValue::v1("Change the flight".to_string(), None).unwrap(),
+                    )
+                    .unwrap(),
+                    MemoryContextFact::v1(
+                        aligned_key.clone(),
+                        MemoryValue::v1("Buy travel insurance".to_string(), None).unwrap(),
+                    )
+                    .unwrap(),
+                ],
+            )),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 2);
+
+        let conflict_item = resp
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == conflict_key)
+            .expect("expected conflicting pull item");
+        let aligned_item = resp
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == aligned_key)
+            .expect("expected aligned pull item");
+        assert_eq!(conflict_item.tag, MemoryItemTag::Conflict);
+        assert_eq!(aligned_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(resp.metric_payload.conflict_count, 1);
+        assert_eq!(resp.metric_payload.stale_count, 0);
+        assert_eq!(
+            conflict_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
+        assert_eq!(aligned_item.provenance_tier, MemoryProvenanceTier::UserStated);
     }
 
     #[test]

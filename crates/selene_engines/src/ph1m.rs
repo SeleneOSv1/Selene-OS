@@ -2333,6 +2333,142 @@ mod tests {
     }
 
     #[test]
+    fn context_bundle_current_state_conflict_emits_conflict_tag() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let key = MemoryKey::new("project:active:trip_owner").unwrap();
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                MonotonicTimeNs(10),
+                speaker_ok(),
+                policy_ok(),
+                vec![propose_item_with_confidence(
+                    key.as_str(),
+                    "Selene",
+                    MemoryConfidence::High,
+                )],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    MonotonicTimeNs(11),
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![key.clone()],
+                    vec![MemoryContextFact::v1(
+                        key.clone(),
+                        MemoryValue::v1("Jordan".to_string(), None).unwrap(),
+                    )
+                    .unwrap()],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 1);
+        let item = &out.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Conflict);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(out.metric_payload.conflict_count, 1);
+        assert_eq!(out.metric_payload.stale_count, 0);
+    }
+
+    #[test]
+    fn context_bundle_conflict_metric_counts_only_conflicting_entries() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let conflict_key = MemoryKey::new("project:active:flight_step").unwrap();
+        let aligned_key = MemoryKey::new("project:active:insurance_step").unwrap();
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                MonotonicTimeNs(10),
+                speaker_ok(),
+                policy_ok(),
+                vec![
+                    propose_item_with_confidence(
+                        conflict_key.as_str(),
+                        "Book the flight",
+                        MemoryConfidence::High,
+                    ),
+                    propose_item_with_confidence(
+                        aligned_key.as_str(),
+                        "Buy travel insurance",
+                        MemoryConfidence::High,
+                    ),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    MonotonicTimeNs(11),
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![conflict_key.clone(), aligned_key.clone()],
+                    vec![
+                        MemoryContextFact::v1(
+                            conflict_key.clone(),
+                            MemoryValue::v1("Change the flight".to_string(), None).unwrap(),
+                        )
+                        .unwrap(),
+                        MemoryContextFact::v1(
+                            aligned_key.clone(),
+                            MemoryValue::v1("Buy travel insurance".to_string(), None).unwrap(),
+                        )
+                        .unwrap(),
+                    ],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 2);
+
+        let conflict_item = out
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == conflict_key)
+            .expect("expected conflicting pull item");
+        let aligned_item = out
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == aligned_key)
+            .expect("expected aligned pull item");
+        assert_eq!(conflict_item.tag, MemoryItemTag::Conflict);
+        assert_eq!(aligned_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(out.metric_payload.conflict_count, 1);
+        assert_eq!(out.metric_payload.stale_count, 0);
+        assert_eq!(
+            conflict_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
+        assert_eq!(aligned_item.provenance_tier, MemoryProvenanceTier::UserStated);
+    }
+
+    #[test]
     fn safe_summary_is_bounded() {
         let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
         rt.propose(
