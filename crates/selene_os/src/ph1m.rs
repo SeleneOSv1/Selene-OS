@@ -1152,6 +1152,25 @@ mod tests {
         item
     }
 
+    fn proposed_micro_item_with_confidence(
+        key: &str,
+        value: &str,
+        confidence: MemoryConfidence,
+        evidence_quote: &str,
+    ) -> MemoryProposedItem {
+        MemoryProposedItem::v1(
+            MemoryKey::new(key).unwrap(),
+            MemoryValue::v1(value.to_string(), None).unwrap(),
+            MemoryLayer::Micro,
+            MemorySensitivityFlag::Low,
+            confidence,
+            MemoryConsent::NotRequested,
+            evidence_quote.to_string(),
+            MemoryProvenance::v1(None, None).unwrap(),
+        )
+        .unwrap()
+    }
+
     fn propose_request_at(
         now: MonotonicTimeNs,
         proposals: Vec<MemoryProposedItem>,
@@ -2120,7 +2139,129 @@ mod tests {
             conflict_item.provenance_tier,
             MemoryProvenanceTier::UserStated
         );
-        assert_eq!(aligned_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(
+            aligned_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
+    }
+
+    #[test]
+    fn at_m_25_real_runtime_context_bundle_expired_micro_entry_emits_stale_tag() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let key = MemoryKey::new("project:active:boarding_gate").unwrap();
+        let propose_time = MonotonicTimeNs(48);
+        let now = MonotonicTimeNs(
+            propose_time
+                .0
+                .saturating_add(ms_to_ns(cfg.micro_ttl_ms))
+                .saturating_add(1),
+        );
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7940),
+            TurnId(8940),
+            MemoryOperation::Propose(propose_request_at(
+                propose_time,
+                vec![proposed_micro_item_with_confidence(
+                    key.as_str(),
+                    "Gate A12",
+                    MemoryConfidence::High,
+                    "The boarding gate is A12",
+                )],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7941),
+            TurnId(8941),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_at(now, vec![key.clone()])),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 1);
+        let item = &resp.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Stale);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(resp.metric_payload.stale_count, 1);
+        assert_eq!(resp.metric_payload.conflict_count, 0);
+    }
+
+    #[test]
+    fn at_m_26_real_runtime_context_bundle_stale_metric_counts_only_expired_entries() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let stale_key = MemoryKey::new("project:active:boarding_gate").unwrap();
+        let confirmed_key = MemoryKey::new("project:active:hotel_booking").unwrap();
+        let propose_time = MonotonicTimeNs(50);
+        let now = MonotonicTimeNs(
+            propose_time
+                .0
+                .saturating_add(ms_to_ns(cfg.micro_ttl_ms))
+                .saturating_add(1),
+        );
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7942),
+            TurnId(8942),
+            MemoryOperation::Propose(propose_request_at(
+                propose_time,
+                vec![
+                    proposed_micro_item_with_confidence(
+                        stale_key.as_str(),
+                        "Gate A12",
+                        MemoryConfidence::High,
+                        "The boarding gate is A12",
+                    ),
+                    proposed_item_with_confidence(
+                        confirmed_key.as_str(),
+                        "Hotel booked",
+                        MemoryConfidence::High,
+                        "The hotel is booked",
+                    ),
+                ],
+            )),
+        )
+        .unwrap();
+        w.run_turn(&propose_input).unwrap();
+
+        let bundle_input = MemoryTurnInput::v1(
+            CorrelationId(7943),
+            TurnId(8943),
+            MemoryOperation::ContextBundleBuild(context_bundle_request_at(
+                now,
+                vec![stale_key.clone(), confirmed_key.clone()],
+            )),
+        )
+        .unwrap();
+        let resp = forwarded_context_bundle_response(w.run_turn(&bundle_input).unwrap());
+
+        assert!(resp.push_items.is_empty());
+        assert_eq!(resp.pull_items.len(), 2);
+
+        let stale_item = resp
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == stale_key)
+            .expect("expected expired pull item");
+        let confirmed_item = resp
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == confirmed_key)
+            .expect("expected non-expired pull item");
+        assert_eq!(stale_item.tag, MemoryItemTag::Stale);
+        assert_eq!(confirmed_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(resp.metric_payload.stale_count, 1);
+        assert_eq!(resp.metric_payload.conflict_count, 0);
+        assert_eq!(stale_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(
+            confirmed_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
     }
 
     #[test]

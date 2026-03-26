@@ -1451,6 +1451,24 @@ mod tests {
         .unwrap()
     }
 
+    fn propose_micro_item_with_confidence(
+        key: &str,
+        value: &str,
+        confidence: MemoryConfidence,
+    ) -> MemoryProposedItem {
+        MemoryProposedItem::v1(
+            MemoryKey::new(key).unwrap(),
+            MemoryValue::v1(value.to_string(), None).unwrap(),
+            MemoryLayer::Micro,
+            MemorySensitivityFlag::Low,
+            confidence,
+            MemoryConsent::NotRequested,
+            format!("Evidence: {value}"),
+            MemoryProvenance::v1(None, None).unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn at_m_01_no_fake_familiarity_candidates_are_evidence_backed() {
         let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
@@ -2465,7 +2483,147 @@ mod tests {
             conflict_item.provenance_tier,
             MemoryProvenanceTier::UserStated
         );
-        assert_eq!(aligned_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(
+            aligned_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
+    }
+
+    #[test]
+    fn context_bundle_expired_micro_entry_emits_stale_tag() {
+        let cfg = Ph1mConfig::mvp_v1();
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let key = MemoryKey::new("project:active:boarding_gate").unwrap();
+        let propose_time = MonotonicTimeNs(10);
+        let now = MonotonicTimeNs(
+            propose_time
+                .0
+                .saturating_add(ms_to_ns(cfg.micro_ttl_ms))
+                .saturating_add(1),
+        );
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                propose_time,
+                speaker_ok(),
+                policy_ok(),
+                vec![propose_micro_item_with_confidence(
+                    key.as_str(),
+                    "Gate A12",
+                    MemoryConfidence::High,
+                )],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![key.clone()],
+                    vec![],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 1);
+        let item = &out.pull_items[0];
+        assert_eq!(item.memory_key, key);
+        assert_eq!(item.tag, MemoryItemTag::Stale);
+        assert_eq!(item.confidence, MemoryConfidence::High);
+        assert_eq!(item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(out.metric_payload.stale_count, 1);
+        assert_eq!(out.metric_payload.conflict_count, 0);
+    }
+
+    #[test]
+    fn context_bundle_stale_metric_counts_only_expired_entries() {
+        let cfg = Ph1mConfig::mvp_v1();
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let stale_key = MemoryKey::new("project:active:boarding_gate").unwrap();
+        let confirmed_key = MemoryKey::new("project:active:hotel_booking").unwrap();
+        let propose_time = MonotonicTimeNs(10);
+        let now = MonotonicTimeNs(
+            propose_time
+                .0
+                .saturating_add(ms_to_ns(cfg.micro_ttl_ms))
+                .saturating_add(1),
+        );
+        rt.propose(
+            &Ph1mProposeRequest::v1(
+                propose_time,
+                speaker_ok(),
+                policy_ok(),
+                vec![
+                    propose_micro_item_with_confidence(
+                        stale_key.as_str(),
+                        "Gate A12",
+                        MemoryConfidence::High,
+                    ),
+                    propose_item_with_confidence(
+                        confirmed_key.as_str(),
+                        "Hotel booked",
+                        MemoryConfidence::High,
+                    ),
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .context_bundle_build(
+                &Ph1mContextBundleBuildRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    vec![stale_key.clone(), confirmed_key.clone()],
+                    vec![],
+                    None,
+                    None,
+                    None,
+                    true,
+                    1024,
+                    8,
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert!(out.push_items.is_empty());
+        assert_eq!(out.pull_items.len(), 2);
+
+        let stale_item = out
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == stale_key)
+            .expect("expected expired pull item");
+        let confirmed_item = out
+            .pull_items
+            .iter()
+            .find(|item| item.memory_key == confirmed_key)
+            .expect("expected non-expired pull item");
+        assert_eq!(stale_item.tag, MemoryItemTag::Stale);
+        assert_eq!(confirmed_item.tag, MemoryItemTag::Confirmed);
+        assert_eq!(out.metric_payload.stale_count, 1);
+        assert_eq!(out.metric_payload.conflict_count, 0);
+        assert_eq!(stale_item.provenance_tier, MemoryProvenanceTier::UserStated);
+        assert_eq!(
+            confirmed_item.provenance_tier,
+            MemoryProvenanceTier::UserStated
+        );
     }
 
     #[test]
