@@ -2013,6 +2013,81 @@ mod tests {
     }
 
     #[test]
+    fn at_m_28_real_runtime_propose_eligibility_decisions_recorded_in_envelope() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let rejected_key = MemoryKey::new("memory:do_not_store:trip_pin").unwrap();
+        let needs_consent_key = MemoryKey::new("memory:sensitive:medical_note").unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7944),
+            TurnId(8944),
+            MemoryOperation::Propose(propose_request_at(
+                MonotonicTimeNs(60),
+                vec![
+                    MemoryProposedItem::v1(
+                        rejected_key.clone(),
+                        MemoryValue::v1("Do not save this".to_string(), None).unwrap(),
+                        MemoryLayer::LongTerm,
+                        MemorySensitivityFlag::Low,
+                        MemoryConfidence::High,
+                        MemoryConsent::Denied,
+                        "Do not remember this".to_string(),
+                        MemoryProvenance::v1(None, None).unwrap(),
+                    )
+                    .unwrap(),
+                    MemoryProposedItem::v1(
+                        needs_consent_key.clone(),
+                        MemoryValue::v1("Migraine medication".to_string(), None).unwrap(),
+                        MemoryLayer::LongTerm,
+                        MemorySensitivityFlag::Sensitive,
+                        MemoryConfidence::High,
+                        MemoryConsent::NotRequested,
+                        "I am taking migraine medication".to_string(),
+                        MemoryProvenance::v1(None, None).unwrap(),
+                    )
+                    .unwrap(),
+                ],
+            )),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn(&propose_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded propose outcome");
+        };
+        let MemoryTurnOutput::Propose(resp) = bundle.output else {
+            panic!("expected propose output");
+        };
+
+        assert!(resp.ledger_events.is_empty());
+        assert_eq!(resp.decisions.len(), 2);
+
+        let rejected = resp
+            .decisions
+            .iter()
+            .find(|decision| decision.memory_key == rejected_key)
+            .expect("expected rejected propose decision");
+        assert_eq!(rejected.status, MemoryCommitStatus::Rejected);
+        assert_eq!(
+            rejected.reason_code,
+            selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED
+        );
+        assert_eq!(rejected.consent_prompt, None);
+
+        let needs_consent = resp
+            .decisions
+            .iter()
+            .find(|decision| decision.memory_key == needs_consent_key)
+            .expect("expected needs-consent propose decision");
+        assert_eq!(needs_consent.status, MemoryCommitStatus::NeedsConsent);
+        assert_eq!(
+            needs_consent.reason_code,
+            selene_engines::ph1m::reason_codes::M_NEEDS_CONSENT
+        );
+        assert!(needs_consent.consent_prompt.is_some());
+    }
+
+    #[test]
     fn at_m_21_real_runtime_context_bundle_high_confidence_emits_confirmed_tag() {
         let (mut w, _cfg) = real_runtime_wiring();
         let key = MemoryKey::new("project:active:jp_trip").unwrap();
