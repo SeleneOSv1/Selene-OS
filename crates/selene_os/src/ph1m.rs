@@ -2805,6 +2805,88 @@ mod tests {
     }
 
     #[test]
+    fn at_m_21_persist_forwarded_updated_propose_commits_memory_rows() {
+        let input = MemoryTurnInput::v1(
+            CorrelationId(7927),
+            TurnId(8927),
+            MemoryOperation::Propose(base_propose_request()),
+        )
+        .unwrap();
+        let memory_key = MemoryKey::new("preferred_name").unwrap();
+
+        let mut store = seeded_store_for_known_user();
+        store
+            .append_memory_row(
+                &UserId::new("user").unwrap(),
+                MemoryLedgerEvent::v1(
+                    MemoryLedgerEventKind::Stored,
+                    MonotonicTimeNs(31),
+                    memory_key.clone(),
+                    Some(MemoryValue::v1("John".to_string(), None).unwrap()),
+                    Some("My name is John".to_string()),
+                    MemoryProvenance::v1(None, None).unwrap(),
+                    MemoryLayer::LongTerm,
+                    MemorySensitivityFlag::Low,
+                    MemoryConfidence::High,
+                    MemoryConsent::ExplicitRemember,
+                    selene_engines::ph1m::reason_codes::M_STORED,
+                )
+                .unwrap(),
+                MemoryUsePolicy::AlwaysUsable,
+                None,
+                Some("seed_preferred_name".to_string()),
+            )
+            .unwrap();
+        assert_eq!(store.memory_current().len(), 1);
+
+        let propose_resp = Ph1mProposeResponse::v1(
+            vec![MemoryCommitDecision::v1(
+                memory_key.clone(),
+                MemoryCommitStatus::Updated,
+                selene_engines::ph1m::reason_codes::M_UPDATED,
+                None,
+            )
+            .unwrap()],
+            vec![
+                MemoryLedgerEvent::v1(
+                    MemoryLedgerEventKind::Updated,
+                    MonotonicTimeNs(32),
+                    memory_key.clone(),
+                    Some(MemoryValue::v1("Benji".to_string(), None).unwrap()),
+                    Some("Call me Benji".to_string()),
+                    MemoryProvenance::v1(None, None).unwrap(),
+                    MemoryLayer::LongTerm,
+                    MemorySensitivityFlag::Low,
+                    MemoryConfidence::High,
+                    MemoryConsent::ExplicitRemember,
+                    selene_engines::ph1m::reason_codes::M_UPDATED,
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let outcome = MemoryWiringOutcome::Forwarded(
+            MemoryForwardBundle::v1(
+                input.correlation_id,
+                input.turn_id,
+                MemoryTurnOutput::Propose(propose_resp),
+            )
+            .unwrap(),
+        );
+
+        let persisted = persist_memory_forwarded_outcome(&mut store, &input, &outcome).unwrap();
+        assert!(persisted);
+        assert_eq!(store.memory_ledger_rows().len(), 2);
+        assert_eq!(store.memory_current().len(), 1);
+        let current = store
+            .memory_current()
+            .get(&(UserId::new("user").unwrap(), memory_key.clone()))
+            .expect("updated memory current row should exist");
+        assert!(current.active);
+        assert_eq!(current.memory_value.as_ref().unwrap().verbatim, "Benji");
+    }
+
+    #[test]
     fn at_m_20_persist_forwarded_forget_commits_and_removes_current() {
         let input = MemoryTurnInput::v1(
             CorrelationId(7926),
