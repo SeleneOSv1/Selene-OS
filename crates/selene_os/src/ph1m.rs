@@ -968,7 +968,8 @@ mod tests {
     use super::*;
     use selene_engines::ph1m::{Ph1mConfig, Ph1mRuntime};
     use selene_kernel_contracts::ph1_voice_id::{
-        DiarizationSegment, SpeakerAssertionOk, SpeakerId, SpeakerLabel, UserId,
+        DiarizationSegment, IdentityConfidence, SpeakerAssertionOk, SpeakerAssertionUnknown,
+        SpeakerId, SpeakerLabel, UserId,
     };
     use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
     use selene_kernel_contracts::ph1m::{
@@ -1118,8 +1119,19 @@ mod tests {
         )
     }
 
+    fn speaker_unknown() -> selene_kernel_contracts::ph1_voice_id::Ph1VoiceIdResponse {
+        selene_kernel_contracts::ph1_voice_id::Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1(IdentityConfidence::Medium, ReasonCodeId(1), vec![])
+                .unwrap(),
+        )
+    }
+
     fn policy_ok() -> PolicyContextRef {
         PolicyContextRef::v1(false, false, SafetyTier::Standard)
+    }
+
+    fn policy_privacy_mode() -> PolicyContextRef {
+        PolicyContextRef::v1(true, false, SafetyTier::Standard)
     }
 
     fn base_propose_request() -> Ph1mProposeRequest {
@@ -2085,6 +2097,141 @@ mod tests {
             selene_engines::ph1m::reason_codes::M_NEEDS_CONSENT
         );
         assert!(needs_consent.consent_prompt.is_some());
+    }
+
+    #[test]
+    fn at_m_29_real_runtime_propose_unknown_speaker_rejected_before_loop() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7945),
+            TurnId(8945),
+            MemoryOperation::Propose(Ph1mProposeRequest::v1(
+                MonotonicTimeNs(61),
+                speaker_unknown(),
+                policy_ok(),
+                vec![proposed_item_with_confidence(
+                    "preferred_name",
+                    "John",
+                    MemoryConfidence::High,
+                    "My name is John",
+                )],
+            )
+            .unwrap()),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn(&propose_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded propose outcome");
+        };
+        let MemoryTurnOutput::Propose(resp) = bundle.output else {
+            panic!("expected propose output");
+        };
+
+        assert!(resp.ledger_events.is_empty());
+        assert_eq!(resp.decisions.len(), 1);
+        let decision = &resp.decisions[0];
+        assert_eq!(decision.status, MemoryCommitStatus::Rejected);
+        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_REJECT_UNKNOWN_SPEAKER);
+        assert_eq!(decision.consent_prompt, None);
+    }
+
+    #[test]
+    fn at_m_30_real_runtime_propose_privacy_mode_rejected_before_loop() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7946),
+            TurnId(8946),
+            MemoryOperation::Propose(Ph1mProposeRequest::v1(
+                MonotonicTimeNs(62),
+                speaker_ok(),
+                policy_privacy_mode(),
+                vec![proposed_item_with_confidence(
+                    "preferred_name",
+                    "John",
+                    MemoryConfidence::High,
+                    "My name is John",
+                )],
+            )
+            .unwrap()),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn(&propose_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded propose outcome");
+        };
+        let MemoryTurnOutput::Propose(resp) = bundle.output else {
+            panic!("expected propose output");
+        };
+
+        assert!(resp.ledger_events.is_empty());
+        assert_eq!(resp.decisions.len(), 1);
+        let decision = &resp.decisions[0];
+        assert_eq!(decision.status, MemoryCommitStatus::Rejected);
+        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED);
+        assert_eq!(decision.consent_prompt, None);
+    }
+
+    #[test]
+    fn at_m_31_real_runtime_propose_do_not_store_rejected_in_loop() {
+        let (mut w, _cfg) = real_runtime_wiring();
+
+        let suppression_input = MemoryTurnInput::v1(
+            CorrelationId(7947),
+            TurnId(8947),
+            MemoryOperation::SuppressionSet(Ph1mSuppressionSetRequest::v1(
+                MonotonicTimeNs(63),
+                speaker_ok(),
+                policy_ok(),
+                MemorySuppressionRule::v1(
+                    MemorySuppressionTargetType::TopicKey,
+                    "preferred_name".to_string(),
+                    MemorySuppressionRuleKind::DoNotStore,
+                    true,
+                    ReasonCodeId(101),
+                    MonotonicTimeNs(63),
+                )
+                .unwrap(),
+                "idem_sup_store".to_string(),
+            )
+            .unwrap()),
+        )
+        .unwrap();
+        w.run_turn(&suppression_input).unwrap();
+
+        let propose_input = MemoryTurnInput::v1(
+            CorrelationId(7948),
+            TurnId(8948),
+            MemoryOperation::Propose(Ph1mProposeRequest::v1(
+                MonotonicTimeNs(64),
+                speaker_ok(),
+                policy_ok(),
+                vec![proposed_item_with_confidence(
+                    "preferred_name",
+                    "John",
+                    MemoryConfidence::High,
+                    "My name is John",
+                )],
+            )
+            .unwrap()),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn(&propose_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = outcome else {
+            panic!("expected forwarded propose outcome");
+        };
+        let MemoryTurnOutput::Propose(resp) = bundle.output else {
+            panic!("expected propose output");
+        };
+
+        assert!(resp.ledger_events.is_empty());
+        assert_eq!(resp.decisions.len(), 1);
+        let decision = &resp.decisions[0];
+        assert_eq!(decision.status, MemoryCommitStatus::Rejected);
+        assert_eq!(decision.reason_code, selene_engines::ph1m::reason_codes::M_POLICY_BLOCKED);
+        assert_eq!(decision.consent_prompt, None);
     }
 
     #[test]
