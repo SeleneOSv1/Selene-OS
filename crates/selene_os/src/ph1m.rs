@@ -2937,6 +2937,46 @@ mod tests {
     }
 
     #[test]
+    fn at_m_35_real_runtime_run_turn_and_persist_retention_mode_set_commits_remember_everything_to_repo(
+    ) {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let mut store = seeded_store_for_known_user();
+
+        let input = MemoryTurnInput::v1(
+            CorrelationId(7953),
+            TurnId(8953),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(71),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "idem_real_runtime_run_turn_and_persist_retention_remember_everything"
+                        .to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn_and_persist(&mut store, &input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = &outcome else {
+            panic!("expected forwarded retention mode set outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(resp) = &bundle.output else {
+            panic!("expected retention mode set output");
+        };
+        assert_eq!(resp.memory_retention_mode, MemoryRetentionMode::RememberEverything);
+        assert_eq!(
+            store
+                .ph1m_retention_preference_row(&UserId::new("user").unwrap())
+                .unwrap()
+                .memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+    }
+
+    #[test]
     fn at_m_19_persist_forwarded_propose_commits_memory_rows() {
         let input = MemoryTurnInput::v1(
             CorrelationId(7925),
