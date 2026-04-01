@@ -2977,6 +2977,103 @@ mod tests {
     }
 
     #[test]
+    fn at_m_36_real_runtime_run_turn_and_persist_retention_mode_idempotent_retry_and_later_default_overwrite(
+    ) {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let mut store = seeded_store_for_known_user();
+        let user_id = UserId::new("user").unwrap();
+
+        let first_input = MemoryTurnInput::v1(
+            CorrelationId(7954),
+            TurnId(8954),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(72),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "ret_idem_1".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let retry_input = MemoryTurnInput::v1(
+            CorrelationId(7955),
+            TurnId(8955),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(73),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    "ret_idem_1".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let overwrite_input = MemoryTurnInput::v1(
+            CorrelationId(7956),
+            TurnId(8956),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(74),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    "ret_idem_2".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let first_outcome = w.run_turn_and_persist(&mut store, &first_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(first_bundle) = &first_outcome else {
+            panic!("expected forwarded retention mode set outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(first_resp) = &first_bundle.output else {
+            panic!("expected retention mode set output");
+        };
+        assert_eq!(
+            first_resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        let after_first = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(
+            after_first.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(after_first.updated_at, MonotonicTimeNs(72));
+        assert_eq!(after_first.idempotency_key, Some("ret_idem_1".to_string()));
+
+        let retry_outcome = w.run_turn_and_persist(&mut store, &retry_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(_) = &retry_outcome else {
+            panic!("expected forwarded retention mode set retry outcome");
+        };
+        let after_retry = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(
+            after_retry.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(after_retry.updated_at, MonotonicTimeNs(72));
+        assert_eq!(after_retry.idempotency_key, Some("ret_idem_1".to_string()));
+
+        let overwrite_outcome = w.run_turn_and_persist(&mut store, &overwrite_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(_) = &overwrite_outcome else {
+            panic!("expected forwarded retention mode set overwrite outcome");
+        };
+        let after_overwrite = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(after_overwrite.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(after_overwrite.updated_at, MonotonicTimeNs(74));
+        assert_eq!(
+            after_overwrite.idempotency_key,
+            Some("ret_idem_2".to_string())
+        );
+    }
+
+    #[test]
     fn at_m_19_persist_forwarded_propose_commits_memory_rows() {
         let input = MemoryTurnInput::v1(
             CorrelationId(7925),
