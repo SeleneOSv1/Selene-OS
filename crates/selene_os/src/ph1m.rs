@@ -2854,6 +2854,47 @@ mod tests {
     }
 
     #[test]
+    fn at_m_34_real_runtime_retention_mode_set_persists_remember_everything_to_repo() {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let mut store = seeded_store_for_known_user();
+
+        let input = MemoryTurnInput::v1(
+            CorrelationId(7952),
+            TurnId(8952),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(70),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "idem_real_runtime_retention_persist_remember_everything".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let outcome = w.run_turn(&input).unwrap();
+        let MemoryWiringOutcome::Forwarded(bundle) = &outcome else {
+            panic!("expected forwarded retention mode set outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(resp) = &bundle.output else {
+            panic!("expected retention mode set output");
+        };
+        assert_eq!(resp.memory_retention_mode, MemoryRetentionMode::RememberEverything);
+
+        let persisted = persist_memory_forwarded_outcome(&mut store, &input, &outcome).unwrap();
+        assert!(persisted);
+        assert_eq!(
+            store
+                .ph1m_retention_preference_row(&UserId::new("user").unwrap())
+                .unwrap()
+                .memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+    }
+
+    #[test]
     fn at_m_17_persist_non_write_outcome_noop() {
         let mut w = wiring(true);
         let input = MemoryTurnInput::v1(
