@@ -42,7 +42,7 @@ The Option-B documentation listed below is retained as archived reference and is
 - [03_BUILD_LEDGER.md](03_BUILD_LEDGER.md)
 - [04_KERNEL_CONTRACTS.md](04_KERNEL_CONTRACTS.md)
 - [05_OS_CONSTITUTION.md](05_OS_CONSTITUTION.md)
-- [CODEX_LAW.md](../CODEX_LAW.md)
+- [AGENTS.md](../AGENTS.md)
 - [06_ENGINE_MAP.md](06_ENGINE_MAP.md)
 - [07_ENGINE_REGISTRY.md](07_ENGINE_REGISTRY.md)
 - [08_SIMULATION_CATALOG.md](08_SIMULATION_CATALOG.md)

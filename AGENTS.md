@@ -130,15 +130,20 @@ Before any edit run, Codex must declare:
 No touching files outside declared scope.
 If more files are needed, stop and ask JD first.
 
+For any change run:
+- `git diff --name-only` must be a subset of declared scope
+- any out-of-scope file => stop and request approval
+
 ## Clean Tree Rule
 Start of every run:
 - `git status --short` must be empty
 - if not empty: stop and report it
+- the only narrow exception is the `Dirty-Tree Refinement` rule below, and it applies only within the same already-started task when the only changed or untracked file is the task target file
 
 End of every run:
 - `git status --short` must be empty again
 
-No new task may begin on a dirty tree.
+No new task may begin on a dirty tree unless the same-task target-file-only exception above already applies.
 No task is complete until the tree is clean again.
 
 ## Network Stability Rule
@@ -175,7 +180,9 @@ It is not a stop condition for:
 - `PUBLICATION_RECOVERY`
 
 ### Dirty-Tree Refinement
+This is the only narrow exception to the `Clean Tree Rule`.
 A non-empty `git status --short` must not cause an automatic stop when:
+- the task has already started
 - the only changed or untracked file is the task target file
 
 Automatic stop is still required when:
@@ -242,6 +249,25 @@ If a task begins as authoring but repo truth shows the target already exists, Co
 ### No Progress-Spam in Compacted Sessions
 If context compaction happens, Codex must resume from current repo truth, not from the original fresh-authoring assumption.
 
+### Deadlock Prevention and Next-Move Override
+If the same Section/item receives two consecutive read-only deadlock, `NOT_EXPLICIT`, or no-new-truth audits without any repo-truth change:
+- further audits of that same frontier are forbidden until repo truth changes
+- Codex must switch from repeat-audit mode to next-move selection mode
+
+Next-target precedence:
+- highest priority: `PARTIAL` item with an explicit live code carrier and a direct unimplemented, ignored, or dormant seam in current source
+- next priority: `PARTIAL` item with a broader live seam
+- lowest priority: `NOT_EXPLICIT` item
+
+A `NOT_EXPLICIT` item cannot outrank a live `PARTIAL` item with a direct source seam.
+
+If one target clearly outranks the others:
+- Codex must author the next build plan for that target instead of running another deadlock audit
+
+If a genuine tie remains after applying the precedence rule:
+- Codex must produce one short decision memo for JD approval
+- Codex must not continue looping audits
+
 ## Shell-Only Inspection Rule
 Allowed inspection commands:
 - `git`
@@ -263,11 +289,14 @@ Forbidden:
 - `python`
 - `python3`
 - `perl`
-- `ruby`
 - `node`
 - `php`
 - `lua`
 - any scripted workaround that bypasses this law
+
+Exception:
+- ruby only for bounded read-only extraction or line-order verification when a task instruction explicitly requires Ruby
+- ruby is not allowed for editing, code generation, or scripted workarounds
 
 If Codex violates this shell-only rule:
 - stop immediately
@@ -293,6 +322,10 @@ Class B:
 Class C:
 - touch spine / contracts / ordering / idempotency / shared behavior
 - requires explicit JD approval plus expanded proof
+
+## Approval Token Requirement
+- For Class B or Class C edits, Codex must have explicit JD approval in-thread before editing.
+- Missing approval token => stop.
 
 ## No Surprise Refactors
 No unrequested:
@@ -338,6 +371,14 @@ If a change would remove or replace existing functionality:
 
 STOP and request explicit JD authorization.
 
+## Conflict / Upgrade Workflow for Prior Code
+If existing code must change:
+- raise change request
+- require explicit JD approval before edits
+- apply minimal patch
+- run expanded proof
+- report before/after behavior and residual risk
+
 ## No Parallel Bypass Paths
 Execution must stay inside canonical boundaries:
 - PH1.X classification
@@ -365,7 +406,7 @@ Guessing is forbidden.
 All code delivered by Codex must aim for production-grade quality.
 
 Rules:
-- warnings must be fixed, not ignored
+- warnings must be fixed, not ignored, unless explicitly approved by JD
 - no shortcuts
 - no lazy fixes
 - no temporary hacks
@@ -379,12 +420,12 @@ Warning-free is the default expectation.
 
 ## Mandatory Proof Before Commit
 For any change run, Codex must provide:
-- baseline commands and results
-- targeted tests and results
-- relevant contract / reason / idempotency / state-machine checks
-- determinism checks where applicable
+- baseline commands passed
+- targeted tests passed
+- required contract / reason / idempotency / state-machine checks passed where applicable
+- determinism checks passed where applicable
 - `git diff --stat`
-- proof that no unrelated files changed
+- no unrelated core files modified
 
 ## Subjective-Gate Ban
 Task gates, stop conditions, and completion claims must not rely on subjective phrases such as:
@@ -484,8 +525,8 @@ Selene must not suffer:
 - messy dirty-tree iteration loops
 
 ## AGENTS.md Status Rule
-This `AGENTS.md` is the active Codex law file for this repository.
-`CODEX_LAW.md` is reference-only documentation unless JD says otherwise.
+This AGENTS.md is the only active repository law file.
+CODEX_LAW.md has been retired and must not be recreated unless JD explicitly authorizes it.
 
 ## Override
 These laws apply by default unless JD explicitly overrides them in-thread.
