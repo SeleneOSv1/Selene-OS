@@ -2025,6 +2025,148 @@ mod tests {
     }
 
     #[test]
+    fn at_m_32_real_runtime_remember_everything_prefers_higher_use_warm_thread() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let older_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(10_000);
+        let newer_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1_000);
+        assert!(older_warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(newer_warm_age_ms <= cfg.resume_warm_window_ms);
+        let now = MonotonicTimeNs(ms_to_ns(older_warm_age_ms).saturating_add(5_000_000_000));
+
+        let retention_input = MemoryTurnInput::v1(
+            CorrelationId(7945),
+            TurnId(8945),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "idem_real_runtime_ret_remember_everything".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        w.run_turn(&retention_input).unwrap();
+
+        let shared_title = "Shared warm thread";
+        let shared_summary = vec!["Shared summary".to_string()];
+
+        let high_use_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7946),
+            TurnId(8946),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                "thread_high_use_older",
+                shared_title,
+                shared_summary.clone(),
+                false,
+                false,
+                9,
+                "idem_real_runtime_high_use_older",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&high_use_seed_input).unwrap();
+
+        let lower_use_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7947),
+            TurnId(8947),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                "thread_low_use_newer",
+                shared_title,
+                shared_summary,
+                false,
+                false,
+                1,
+                "idem_real_runtime_low_use_newer",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&lower_use_seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7948),
+            TurnId(8948),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+
+        assert_eq!(
+            resp.selected_thread_id,
+            Some("thread_high_use_older".to_string())
+        );
+        assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(resp.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
+    fn at_m_33_real_runtime_default_prefers_more_recent_warm_thread_over_use_count() {
+        let (mut w, cfg) = real_runtime_wiring();
+        let older_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(10_000);
+        let newer_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1_000);
+        assert!(older_warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(newer_warm_age_ms <= cfg.resume_warm_window_ms);
+        let now = MonotonicTimeNs(ms_to_ns(older_warm_age_ms).saturating_add(5_000_000_000));
+
+        let shared_title = "Shared warm thread";
+        let shared_summary = vec!["Shared summary".to_string()];
+
+        let high_use_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7949),
+            TurnId(8949),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                "thread_high_use_older",
+                shared_title,
+                shared_summary.clone(),
+                false,
+                false,
+                9,
+                "idem_real_runtime_default_high_use_older",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&high_use_seed_input).unwrap();
+
+        let lower_use_seed_input = MemoryTurnInput::v1(
+            CorrelationId(7950),
+            TurnId(8950),
+            MemoryOperation::ThreadDigestUpsert(thread_digest_upsert_request_at_with_contract_flags(
+                now,
+                MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                "thread_low_use_newer",
+                shared_title,
+                shared_summary,
+                false,
+                false,
+                1,
+                "idem_real_runtime_default_low_use_newer",
+            )),
+        )
+        .unwrap();
+        w.run_turn(&lower_use_seed_input).unwrap();
+
+        let resume_input = MemoryTurnInput::v1(
+            CorrelationId(7951),
+            TurnId(8951),
+            MemoryOperation::ResumeSelect(resume_select_request_at(now)),
+        )
+        .unwrap();
+        let resp = forwarded_resume_select_response(w.run_turn(&resume_input).unwrap());
+
+        assert_eq!(resp.selected_thread_id, Some("thread_low_use_newer".to_string()));
+        assert_eq!(resp.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(resp.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
     fn at_m_28_real_runtime_propose_eligibility_decisions_recorded_in_envelope() {
         let (mut w, _cfg) = real_runtime_wiring();
         let rejected_key = MemoryKey::new("memory:do_not_store:trip_pin").unwrap();

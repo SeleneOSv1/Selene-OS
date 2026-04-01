@@ -2051,6 +2051,178 @@ mod tests {
     }
 
     #[test]
+    fn remember_everything_prefers_higher_use_warm_thread_for_resume() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let cfg = Ph1mConfig::mvp_v1();
+        let older_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(10_000);
+        let newer_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1_000);
+        assert!(older_warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(newer_warm_age_ms <= cfg.resume_warm_window_ms);
+        let now = MonotonicTimeNs(ms_to_ns(older_warm_age_ms).saturating_add(7_500_000_000));
+
+        rt.retention_mode_set(
+            &Ph1mRetentionModeSetRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                "idem_ret_rank_remember_everything".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let shared_title = "Shared warm thread".to_string();
+        let shared_summary = vec!["Shared summary".to_string()];
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                MemoryThreadDigest::v1(
+                    "thread_high_use_older".to_string(),
+                    shared_title.clone(),
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                    9,
+                )
+                .unwrap(),
+                "idem_thread_high_use_older".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::RememberEverything,
+                MemoryThreadDigest::v1(
+                    "thread_low_use_newer".to_string(),
+                    shared_title,
+                    shared_summary,
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                    1,
+                )
+                .unwrap(),
+                "idem_thread_low_use_newer".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_high_use_older"));
+        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
+    fn default_prefers_more_recent_warm_thread_over_use_count_for_resume() {
+        let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let cfg = Ph1mConfig::mvp_v1();
+        let older_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(10_000);
+        let newer_warm_age_ms = cfg.resume_hot_window_ms.saturating_add(1_000);
+        assert!(older_warm_age_ms <= cfg.resume_warm_window_ms);
+        assert!(newer_warm_age_ms <= cfg.resume_warm_window_ms);
+        let now = MonotonicTimeNs(ms_to_ns(older_warm_age_ms).saturating_add(7_500_000_000));
+
+        let shared_title = "Shared warm thread".to_string();
+        let shared_summary = vec!["Shared summary".to_string()];
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_high_use_older".to_string(),
+                    shared_title.clone(),
+                    shared_summary.clone(),
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(older_warm_age_ms))),
+                    9,
+                )
+                .unwrap(),
+                "idem_default_thread_high_use_older".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        rt.thread_digest_upsert(
+            &Ph1mThreadDigestUpsertRequest::v1(
+                now,
+                speaker_ok(),
+                policy_ok(),
+                MemoryRetentionMode::Default,
+                MemoryThreadDigest::v1(
+                    "thread_low_use_newer".to_string(),
+                    shared_title,
+                    shared_summary,
+                    false,
+                    false,
+                    MonotonicTimeNs(now.0.saturating_sub(ms_to_ns(newer_warm_age_ms))),
+                    1,
+                )
+                .unwrap(),
+                "idem_default_thread_low_use_newer".to_string(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = rt
+            .resume_select(
+                &Ph1mResumeSelectRequest::v1(
+                    now,
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    true,
+                    true,
+                    true,
+                    false,
+                    3,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(out.selected_thread_id.as_deref(), Some("thread_low_use_newer"));
+        assert_eq!(out.resume_tier, Some(MemoryResumeTier::Warm));
+        assert_eq!(out.resume_action, MemoryResumeAction::Suggest);
+    }
+
+    #[test]
     fn resume_select_prefers_actionable_warm_over_cold_without_topic() {
         let mut rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
         let warm_delta_ns = ms_to_ns(MEMORY_RESUME_WARM_WINDOW_MS.saturating_sub(1));
