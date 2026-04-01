@@ -143,7 +143,8 @@ Start of every run:
 End of every run:
 - `git status --short` must be empty again
 
-No new task may begin on a dirty tree unless the same-task target-file-only exception above already applies.
+No new task may begin on a dirty tree.
+The `Dirty-Tree Refinement` exception applies only after a task has already started.
 No task is complete until the tree is clean again.
 
 ## Network Stability Rule
@@ -280,6 +281,10 @@ Allowed inspection commands:
 - `tail`
 - `find`
 - `ls`
+- `nl`
+- `diff`
+- `printf`
+- `test`
 - `cut`
 - `sort`
 - `uniq`
