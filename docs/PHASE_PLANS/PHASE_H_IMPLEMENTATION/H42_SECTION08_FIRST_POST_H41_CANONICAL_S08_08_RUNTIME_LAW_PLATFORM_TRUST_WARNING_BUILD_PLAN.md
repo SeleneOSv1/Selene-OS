@@ -1,58 +1,58 @@
 # H42 Section 08: First Post-H41 Canonical S08-08 Runtime-Law Platform-Trust Warning Build Plan
 
-This is the first canonical H42 Section 08 build plan after the live H41 PH1.OS voice-live requested-trigger normalization proof slice.
+This H42 slice is now the first canonical Section 08 runtime-law `platform_trust_warning(...)` restricted-device degrade proof slice inside `S08-08`.
 
 ## Objective
 
-The next exact active winner is now `S08-08`.
+The exact seam implemented in this run is the first post-H41 canonical Section 08 runtime-law `platform_trust_warning(...)` degrade path on `RuntimeLawRuntime::evaluate(...)`.
 
-The exact seam is the first post-H41 canonical Section 08 runtime-law `platform_trust_warning(...)` degrade path on `RuntimeLawRuntime::evaluate(...)`.
+The smallest direct seam proved in this run is the restricted-device branch via `DeviceTrustClass::RestrictedDevice` while compatibility and integrity remain non-blocking.
 
-The smallest direct seam is the restricted-device branch via `DeviceTrustClass::RestrictedDevice` while compatibility and integrity remain non-blocking.
+The exact canonical proof published by this run is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
 
-No code is changed in this run; this run only publishes the next active target.
+`S08-08` remains `PARTIAL`.
+
+No post-H42 next exact winner is published in this run.
 
 ## Current Repo Truth
 
+H40 remains live as the first canonical PH1.OS voice-live `runtime_execution_envelope.platform` normalization fail-closed proof slice.
+
+H41 remains live as the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed proof slice.
+
+H39 remains live and Section 06 remains parked with next exact winner `NOT_EXPLICIT`.
+
 The live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_trust_warning(...)`.
 
-Current authoritative docs already map unresolved device trust-level closure to `runtime_law.rs#L1019` through the current `S08-08` ledger row.
+Current repo truth already preserved H40 `at_os_22i`, H41 `at_os_22j`, and `at_runtime_law_01_conflicting_inputs_resolve_deterministically` before this run.
 
-Current source already degrades protected execution with `RULE_PLATFORM_TRUST` and reason code `LAW_PLATFORM_TRUST_REQUIRED`.
+Current authoritative docs already mapped unresolved device trust-level closure to `runtime_law.rs#L1019` before this run.
 
-The exact H40 canonical proof already live is `at_os_22i_voice_live_entrypoint_rejects_envelope_platform_mismatch`.
+Current source already exposed `RULE_PLATFORM_TRUST` and reason code `LAW_PLATFORM_TRUST_REQUIRED` before this run.
 
-The exact H41 canonical proof already live is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
+Current `base_envelope()` default desktop platform context was not seam-isolated before this run because it came from `PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)` and therefore carried `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::Unknown`, and `ClientCompatibilityStatus::Unknown`.
 
-Current repo truth already preserves the mixed platform-compatibility block proof `at_runtime_law_01_conflicting_inputs_resolve_deterministically`.
-
-Current repo truth already suggests the restricted-device trust-warning seam may be satisfiable by proof alone with zero production-logic edits.
-
-No dedicated canonical proof has yet been published for the smaller restricted-device platform-trust degrade seam.
-
-The exact candidate canonical proof for the next implementation is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
-
-S08-06 remains partial but its mixed platform-compatibility block truth does not outrank the smaller zero-proof S08-08 trust-warning seam.
-
-Current H41 docs/plan/ledger no longer publish any smaller remaining S08-01 next-target candidate.
-
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
+Current contract validation already required `platform_context.platform_type == platform` before this run.
 
 ## Exact Seam
 
 The exact seam is the first post-H41 canonical Section 08 runtime-law `platform_trust_warning(...)` degrade path on `RuntimeLawRuntime::evaluate(...)`.
 
-The smallest direct seam is the restricted-device branch via `DeviceTrustClass::RestrictedDevice` while compatibility and integrity remain non-blocking.
+The H42 proof kept the adjacent compatibility hard-block seam and adjacent warning branches aligned and unselected by using `DeviceTrustClass::RestrictedDevice` with `ClientIntegrityStatus::IntegrityVerified` and `ClientCompatibilityStatus::Compatible`.
 
 ## Implementation Boundary
 
-The later implementation should stay on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-law scope beyond the selected restricted-device trust-warning seam.
+The implemented slice stays on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-governance scope beyond the selected restricted-device trust-warning seam.
+
+No production logic change was required in this run.
 
 ## Proof Plan
 
-The later implementation should publish the first canonical proof that `RuntimeLawRuntime::evaluate(...)` degrades protected execution through `platform_trust_warning(...)` when device trust is downgraded to `DeviceTrustClass::RestrictedDevice` while compatibility and integrity remain non-blocking.
+This run publishes the first canonical proof that `RuntimeLawRuntime::evaluate(...)` degrades protected execution through `platform_trust_warning(...)` when device trust is downgraded to `DeviceTrustClass::RestrictedDevice` while compatibility and integrity remain non-blocking.
 
-That proof should remain adjacent to the already-live H40/H41 PH1.OS normalization proofs and the mixed runtime-law platform-compatibility block proof without widening into broader Section 08 closure.
+The exact canonical proof published by this run is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
+
+That proof remains adjacent to the already-live H40/H41 PH1.OS normalization proofs and the mixed runtime-law platform-compatibility block proof without widening into broader Section 08 closure.
 
 ## Out Of Scope
 
