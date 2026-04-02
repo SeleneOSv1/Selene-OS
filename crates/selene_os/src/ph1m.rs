@@ -460,6 +460,43 @@ pub fn persist_memory_forwarded_outcome<R: Ph1MRepo>(
     }
 }
 
+fn replay_retention_mode_response_truth_from_repo<R: Ph1MRepo>(
+    repo: &R,
+    input: &MemoryTurnInput,
+    outcome: MemoryWiringOutcome,
+) -> Result<MemoryWiringOutcome, StorageError> {
+    let bundle = match outcome {
+        MemoryWiringOutcome::Forwarded(bundle) => bundle,
+        other => return Ok(other),
+    };
+    let (MemoryOperation::RetentionModeSet(_), MemoryTurnOutput::RetentionModeSet(_)) =
+        (&input.operation, &bundle.output)
+    else {
+        return Ok(MemoryWiringOutcome::Forwarded(bundle));
+    };
+
+    let user_id = operation_user_id(&input.operation)?;
+    let row = repo.ph1m_retention_preference_row(&user_id).ok_or_else(|| {
+        storage_contract_error(
+            "ph1m.persistence.retention_mode_set",
+            "retention preference row must exist after persistence",
+        )
+    })?;
+    let replayed = Ph1mRetentionModeSetResponse::v1(
+        row.memory_retention_mode,
+        row.updated_at,
+        row.reason_code,
+    )
+    .map_err(StorageError::ContractViolation)?;
+    let bundle = MemoryForwardBundle::v1(
+        bundle.correlation_id,
+        bundle.turn_id,
+        MemoryTurnOutput::RetentionModeSet(replayed),
+    )
+    .map_err(StorageError::ContractViolation)?;
+    Ok(MemoryWiringOutcome::Forwarded(bundle))
+}
+
 pub trait Ph1MemoryEngine {
     fn propose(
         &mut self,
@@ -959,7 +996,7 @@ where
             .run_turn(input)
             .map_err(StorageError::ContractViolation)?;
         let _ = persist_memory_forwarded_outcome(repo, input, &outcome)?;
-        Ok(outcome)
+        replay_retention_mode_response_truth_from_repo(repo, input, outcome)
     }
 }
 
@@ -3071,6 +3108,103 @@ mod tests {
             after_overwrite.idempotency_key,
             Some("ret_idem_2".to_string())
         );
+    }
+
+    #[test]
+    fn at_m_37_real_runtime_run_turn_and_persist_retention_mode_same_idempotency_key_replays_original_response_truth(
+    ) {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let mut store = seeded_store_for_known_user();
+        let user_id = UserId::new("user").unwrap();
+
+        let first_input = MemoryTurnInput::v1(
+            CorrelationId(7957),
+            TurnId(8957),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(75),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "ret_replay_1".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let retry_input = MemoryTurnInput::v1(
+            CorrelationId(7958),
+            TurnId(8958),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(76),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    "ret_replay_1".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let first_outcome = w.run_turn_and_persist(&mut store, &first_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(first_bundle) = &first_outcome else {
+            panic!("expected forwarded retention mode set outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(first_resp) = &first_bundle.output else {
+            panic!("expected retention mode set output");
+        };
+        assert_eq!(
+            first_resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(first_resp.effective_at, MonotonicTimeNs(75));
+        assert_eq!(
+            first_resp.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        let after_first = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(
+            after_first.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(after_first.updated_at, MonotonicTimeNs(75));
+        assert_eq!(
+            after_first.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_eq!(after_first.idempotency_key, Some("ret_replay_1".to_string()));
+
+        let retry_outcome = w.run_turn_and_persist(&mut store, &retry_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(retry_bundle) = &retry_outcome else {
+            panic!("expected forwarded retention mode set retry outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(retry_resp) = &retry_bundle.output else {
+            panic!("expected retention mode set retry output");
+        };
+        assert_eq!(
+            retry_resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(retry_resp.effective_at, MonotonicTimeNs(75));
+        assert_eq!(
+            retry_resp.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_ne!(retry_resp.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_ne!(retry_resp.effective_at, MonotonicTimeNs(76));
+        let after_retry = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(
+            after_retry.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(after_retry.updated_at, MonotonicTimeNs(75));
+        assert_eq!(
+            after_retry.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_eq!(after_retry.idempotency_key, Some("ret_replay_1".to_string()));
     }
 
     #[test]
