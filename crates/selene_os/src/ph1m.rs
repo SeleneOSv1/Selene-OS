@@ -3208,6 +3208,106 @@ mod tests {
     }
 
     #[test]
+    fn at_m_38_real_runtime_run_turn_and_persist_retention_mode_later_distinct_key_overwrite_returns_latest_response_truth(
+    ) {
+        let (mut w, _cfg) = real_runtime_wiring();
+        let mut store = seeded_store_for_known_user();
+        let user_id = UserId::new("user").unwrap();
+
+        let first_input = MemoryTurnInput::v1(
+            CorrelationId(7959),
+            TurnId(8959),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(77),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::RememberEverything,
+                    "ret_overwrite_resp_1".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let overwrite_input = MemoryTurnInput::v1(
+            CorrelationId(7960),
+            TurnId(8960),
+            MemoryOperation::RetentionModeSet(
+                Ph1mRetentionModeSetRequest::v1(
+                    MonotonicTimeNs(78),
+                    speaker_ok(),
+                    policy_ok(),
+                    MemoryRetentionMode::Default,
+                    "ret_overwrite_resp_2".to_string(),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let first_outcome = w.run_turn_and_persist(&mut store, &first_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(first_bundle) = &first_outcome else {
+            panic!("expected forwarded retention mode set outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(first_resp) = &first_bundle.output else {
+            panic!("expected retention mode set output");
+        };
+        assert_eq!(
+            first_resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(first_resp.effective_at, MonotonicTimeNs(77));
+        assert_eq!(
+            first_resp.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        let after_first = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(
+            after_first.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_eq!(after_first.updated_at, MonotonicTimeNs(77));
+        assert_eq!(
+            after_first.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_eq!(
+            after_first.idempotency_key,
+            Some("ret_overwrite_resp_1".to_string())
+        );
+
+        let overwrite_outcome = w.run_turn_and_persist(&mut store, &overwrite_input).unwrap();
+        let MemoryWiringOutcome::Forwarded(overwrite_bundle) = &overwrite_outcome else {
+            panic!("expected forwarded retention mode set overwrite outcome");
+        };
+        let MemoryTurnOutput::RetentionModeSet(overwrite_resp) = &overwrite_bundle.output else {
+            panic!("expected retention mode set overwrite output");
+        };
+        assert_eq!(overwrite_resp.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(overwrite_resp.effective_at, MonotonicTimeNs(78));
+        assert_eq!(
+            overwrite_resp.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_ne!(
+            overwrite_resp.memory_retention_mode,
+            MemoryRetentionMode::RememberEverything
+        );
+        assert_ne!(overwrite_resp.effective_at, MonotonicTimeNs(77));
+        let after_overwrite = store.ph1m_retention_preference_row(&user_id).unwrap();
+        assert_eq!(after_overwrite.memory_retention_mode, MemoryRetentionMode::Default);
+        assert_eq!(after_overwrite.updated_at, MonotonicTimeNs(78));
+        assert_eq!(
+            after_overwrite.reason_code,
+            selene_engines::ph1m::reason_codes::M_RETENTION_MODE_UPDATED
+        );
+        assert_eq!(
+            after_overwrite.idempotency_key,
+            Some("ret_overwrite_resp_2".to_string())
+        );
+    }
+
+    #[test]
     fn at_m_19_persist_forwarded_propose_commits_memory_rows() {
         let input = MemoryTurnInput::v1(
             CorrelationId(7925),
