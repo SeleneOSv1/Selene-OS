@@ -1,6 +1,6 @@
 # H41 Section 08: First Post-H40 Canonical S08-01 PH1.OS Voice-Live Requested-Trigger Normalization Build Plan
 
-This is the first canonical H41 Section 08 build plan after the live H40 PH1.OS voice-live envelope-platform normalization proof slice.
+This H41 slice is now the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed proof slice inside `S08-01`.
 
 ## Objective
 
@@ -8,7 +8,9 @@ The next exact active winner remains `S08-01`.
 
 The exact seam is the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed path on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)`.
 
-No code is changed in this run; this run only publishes the next active target.
+H40 remains live as the first canonical PH1.OS voice-live `runtime_execution_envelope.platform` normalization fail-closed proof slice.
+
+H39 remains live and Section 06 remains parked with the next exact winner `NOT_EXPLICIT`.
 
 ## Current Repo Truth
 
@@ -20,31 +22,35 @@ The current rejection reason already exists as `must match os_voice_live_turn_in
 
 The exact H40 canonical proof already live is `at_os_22i_voice_live_entrypoint_rejects_envelope_platform_mismatch`.
 
-Current repo truth already preserves adjacent PH1.OS voice-entrypoint proofs through `at_os_22c` through `at_os_22h`.
+Current repo truth already preserved H40 `at_os_22i` plus adjacent `at_os_22c` through `at_os_22h` voice-entrypoint proofs before this run.
 
-Current contract validation already required `platform_context.platform_type == platform`; the adjacent `platform_context.platform_type` branch remains preserved but does not outrank the requested-trigger seam as the next lawful proof target.
+Current contract validation already required `platform_context.platform_type == platform` before this run.
 
-No dedicated canonical proof has yet been published for the smaller requested-trigger mismatch seam.
+Canonical iOS trigger policy already remained `ExplicitOnly` before this run.
 
-Current repo truth suggests the later implementation may be proof-first and may require zero production-logic edits.
+The H41 proof used a contract-valid mutated platform context and kept the adjacent `runtime_execution_envelope.platform` and `platform_context.platform_type` branches aligned and unselected.
 
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
+The exact canonical proof published by this run is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
+
+No production logic change was required in this run.
+
+`S08-01` remains `PARTIAL`.
 
 ## Exact Seam
 
 The exact seam is the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed path on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)`.
 
-The exact candidate canonical proof for the next implementation is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
+The implemented canonical proof is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
 
 ## Implementation Boundary
 
-The later implementation should stay on the existing PH1.OS live voice-entrypoint carrier without widening engine, contract, or runtime-law surfaces.
+The implementation stayed on the existing PH1.OS live voice-entrypoint carrier without widening engine, contract, or runtime-law surfaces.
 
 ## Proof Plan
 
-The later implementation should publish the first canonical proof that the voice-live entrypoint fails closed when `platform_context.requested_trigger` does not match the canonical trigger derived from `voice_context.trigger`.
+This run publishes the first canonical proof that the voice-live entrypoint fails closed when `platform_context.requested_trigger` does not match the canonical trigger derived from `voice_context.trigger`.
 
-That proof should remain adjacent to the already-live H40 `at_os_22i` proof plus `at_os_22c` through `at_os_22h` voice-entrypoint coverage without widening into broader Section 08 closure.
+That proof remains adjacent to the already-live H40 `at_os_22i` proof plus `at_os_22c` through `at_os_22h` voice-entrypoint coverage without widening into broader Section 08 closure.
 
 ## Out Of Scope
 
