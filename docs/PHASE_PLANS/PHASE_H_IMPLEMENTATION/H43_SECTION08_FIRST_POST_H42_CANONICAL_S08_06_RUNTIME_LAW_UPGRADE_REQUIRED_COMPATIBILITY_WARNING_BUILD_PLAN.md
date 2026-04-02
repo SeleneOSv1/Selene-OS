@@ -1,24 +1,40 @@
 # H43 Section 08: First Post-H42 Canonical S08-06 Runtime-Law Upgrade-Required Compatibility Warning Build Plan
 
-This is the first canonical H43 Section 08 build plan after the live H42 restricted-device platform-trust proof slice.
+This H43 slice is now the first canonical Section 08 runtime-law `platform_trust_warning(...)` upgrade-required compatibility-warning proof slice inside `S08-06`.
 
 ## Objective
 
-the next exact active winner is now `S08-06`.
+H40 remains live as the first canonical PH1.OS voice-live `runtime_execution_envelope.platform` normalization fail-closed proof slice.
 
-the exact seam is the first post-H42 canonical Section 08 runtime-law `platform_trust_warning(...)` degrade path on `RuntimeLawRuntime::evaluate(...)`.
+H41 remains live as the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed proof slice.
 
-the smallest direct seam is the upgrade-required compatibility branch via `ClientCompatibilityStatus::UpgradeRequired` while device trust and integrity remain non-blocking.
+H42 remains live as the first canonical Section 08 runtime-law `platform_trust_warning(...)` restricted-device degrade proof slice.
 
-no code is changed in this run; this run only publishes the next active target.
+H39 remains live and Section 06 remains parked with next exact winner `NOT_EXPLICIT`.
 
 ## Current Repo Truth
 
-the live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_trust_warning(...)`.
+current repo truth already preserved H40 `at_os_22i`, H41 `at_os_22j`, H42 `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`, and `at_runtime_law_01_conflicting_inputs_resolve_deterministically` before this run.
 
-current authoritative docs already map unresolved compatibility-governance closure to `runtime_law.rs#L1010` through the current `S08-06` ledger row.
+current authoritative docs already mapped unresolved compatibility-governance closure to `runtime_law.rs#L1010` before this run.
 
-current source already degrades protected execution with `RULE_PLATFORM_TRUST` and reason code `LAW_PLATFORM_TRUST_REQUIRED`.
+current source already exposed `RULE_PLATFORM_TRUST` and reason code `LAW_PLATFORM_TRUST_REQUIRED` before this run.
+
+the live carrier path remains `RuntimeLawRuntime::evaluate(...)` -> `platform_trust_warning(...)`.
+
+current `base_envelope()` default desktop platform context was not seam-isolated before this run because it came from `PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)` and therefore carried `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::Unknown`, and `ClientCompatibilityStatus::Unknown`.
+
+current contract validation already required `platform_context.platform_type == platform` before this run.
+
+the exact canonical proof published by this run is `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`.
+
+no production logic change was required in this run.
+
+## Exact Seam
+
+the H43 proof kept the adjacent H42 restricted-device branch and adjacent `ClientIntegrityStatus::Unknown` warning branch aligned and unselected by using `DeviceTrustClass::StandardDevice` with `ClientIntegrityStatus::IntegrityVerified` and `ClientCompatibilityStatus::UpgradeRequired`.
+
+## Implementation Boundary
 
 the exact H40 canonical proof already live is `at_os_22i_voice_live_entrypoint_rejects_envelope_platform_mismatch`.
 
@@ -26,39 +42,15 @@ the exact H41 canonical proof already live is `at_os_22j_voice_live_entrypoint_r
 
 the exact H42 canonical proof already live is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
 
-current repo truth already preserves the mixed platform-compatibility hard-block proof `at_runtime_law_01_conflicting_inputs_resolve_deterministically`.
-
-current repo truth already suggests the upgrade-required compatibility-warning seam may be satisfiable by proof alone with zero production-logic edits.
-
-no dedicated canonical proof has yet been published for the smaller upgrade-required compatibility-warning seam.
-
-the exact candidate canonical proof for the next implementation is `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`.
-
-S08-08 remains partial but its restricted-device branch is already implemented and no longer the next active winner.
-
-S08-05 remains proven complete and the adjacent `ClientIntegrityStatus::Unknown` warning branch is not selected in this run.
-
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
-
-## Exact Seam
-
-the exact seam is the first post-H42 canonical Section 08 runtime-law `platform_trust_warning(...)` degrade path on `RuntimeLawRuntime::evaluate(...)`.
-
-the smallest direct seam is the upgrade-required compatibility branch via `ClientCompatibilityStatus::UpgradeRequired` while device trust and integrity remain non-blocking.
-
-## Implementation Boundary
-
-The later implementation should stay on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-law scope beyond the selected upgrade-required compatibility-warning seam.
-
-The later proof should keep device trust and integrity on non-blocking values so the selected seam stays isolated from the already-implemented restricted-device branch and the adjacent `ClientIntegrityStatus::Unknown` warning branch.
+`S08-06` remains `PARTIAL`.
 
 ## Proof Plan
 
-The later implementation should publish the first canonical proof that `RuntimeLawRuntime::evaluate(...)` degrades protected execution through `platform_trust_warning(...)` when compatibility is downgraded to `ClientCompatibilityStatus::UpgradeRequired` while device trust and integrity remain non-blocking.
+the proof published by this run stays on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-governance scope beyond the selected upgrade-required compatibility-warning seam.
 
-The exact candidate canonical proof for the next implementation is `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`.
+the proof publishes `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution` only through `RuntimeLawRuntime::evaluate(...)`, with `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::IntegrityVerified`, and `ClientCompatibilityStatus::UpgradeRequired`.
 
-That proof should remain adjacent to the already-live H40/H41 PH1.OS normalization proofs, the H42 restricted-device trust-warning proof, and the mixed runtime-law platform-compatibility hard-block proof without widening into broader Section 08 closure.
+no post-H43 next exact winner is published in this run.
 
 ## Out Of Scope
 
@@ -66,6 +58,7 @@ Broader Section 08 closure remains out of scope for this run, including:
 
 - the already-implemented H42 restricted-device trust-warning branch
 - the adjacent `ClientIntegrityStatus::Unknown` warning branch
+- broader `S08-06` compatibility governance closure beyond this proof slice
 - mixed `S08-06` hard-block bundles already preserved by `at_runtime_law_01_conflicting_inputs_resolve_deterministically`
 - `UnsupportedClient` and `IntegrityFailed` hard-block branches
 - `S08-03` device capability registry closure

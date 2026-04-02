@@ -2352,4 +2352,117 @@ mod tests {
             ClientCompatibilityStatus::UnsupportedClient
         );
     }
+
+    #[test]
+    fn at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution() {
+        let runtime = RuntimeLawRuntime::default();
+        let mut envelope = base_envelope();
+
+        assert_eq!(envelope.platform, AppPlatform::Desktop);
+        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.device_trust_class,
+            DeviceTrustClass::StandardDevice
+        );
+        assert_eq!(
+            envelope.platform_context.integrity_status,
+            ClientIntegrityStatus::Unknown
+        );
+        assert_eq!(
+            envelope.platform_context.compatibility_status,
+            ClientCompatibilityStatus::Unknown
+        );
+
+        envelope.platform_context.device_trust_class = DeviceTrustClass::StandardDevice;
+        envelope.platform_context.integrity_status = ClientIntegrityStatus::IntegrityVerified;
+        envelope.platform_context.compatibility_status =
+            ClientCompatibilityStatus::UpgradeRequired;
+
+        envelope
+            .validate()
+            .expect("upgrade-required envelope must remain contract-valid");
+
+        assert_eq!(envelope.platform, AppPlatform::Desktop);
+        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.device_trust_class,
+            DeviceTrustClass::StandardDevice
+        );
+        assert_eq!(
+            envelope.platform_context.integrity_status,
+            ClientIntegrityStatus::IntegrityVerified
+        );
+        assert_eq!(
+            envelope.platform_context.compatibility_status,
+            ClientCompatibilityStatus::UpgradeRequired
+        );
+
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ProofRequired,
+            &RuntimeLawEvaluationContext::default(),
+        );
+
+        assert_eq!(decision.primary_rule_id, RULE_PLATFORM_TRUST);
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Degrade);
+        assert_eq!(decision.severity, RuntimeLawSeverity::Warning);
+        assert_eq!(
+            decision.reason_codes,
+            vec![reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string()]
+        );
+        assert_eq!(
+            decision.law_state.protected_action_class,
+            RuntimeProtectedActionClass::ProofRequired
+        );
+        assert_eq!(
+            decision.law_state.final_law_response_class,
+            RuntimeLawResponseClass::Degrade
+        );
+        assert_eq!(
+            decision.law_state.final_law_severity,
+            RuntimeLawSeverity::Warning
+        );
+        assert_eq!(
+            decision.law_state.law_reason_codes,
+            vec![reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string()]
+        );
+        assert_eq!(
+            decision.law_state.blast_radius_scope,
+            RuntimeLawBlastRadiusScope::TenantScope
+        );
+        assert_eq!(
+            decision.law_state.triggered_rule_ids,
+            vec![RULE_PLATFORM_TRUST.to_string()]
+        );
+        assert_eq!(
+            decision.law_state.subsystem_inputs,
+            vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
+        );
+        assert!(
+            !decision
+                .reason_codes
+                .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string())
+        );
+        assert_ne!(decision.primary_rule_id, RULE_PLATFORM_COMPATIBILITY);
+        assert_ne!(
+            envelope.platform_context.device_trust_class,
+            DeviceTrustClass::RestrictedDevice
+        );
+        assert_ne!(
+            envelope.platform_context.device_trust_class,
+            DeviceTrustClass::UntrustedDevice
+        );
+        assert_ne!(
+            envelope.platform_context.integrity_status,
+            ClientIntegrityStatus::Unknown
+        );
+        assert_ne!(
+            envelope.platform_context.integrity_status,
+            ClientIntegrityStatus::IntegrityFailed
+        );
+        assert_ne!(
+            envelope.platform_context.compatibility_status,
+            ClientCompatibilityStatus::UnsupportedClient
+        );
+    }
 }
