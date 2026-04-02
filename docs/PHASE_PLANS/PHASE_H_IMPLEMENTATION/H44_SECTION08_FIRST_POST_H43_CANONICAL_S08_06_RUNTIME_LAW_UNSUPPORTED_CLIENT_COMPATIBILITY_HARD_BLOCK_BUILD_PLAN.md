@@ -1,66 +1,60 @@
 # H44 Section 08: First Post-H43 Canonical S08-06 Runtime-Law Unsupported-Client Compatibility Hard-Block Build Plan
 
-This is the first canonical H44 Section 08 build plan after the live H43 upgrade-required compatibility-warning proof slice.
+This H44 slice is now the first canonical Section 08 runtime-law `platform_hard_block_required(...)` unsupported-client compatibility hard-block proof slice inside `S08-06`.
 
 ## Objective
 
-the next exact active winner remains `S08-06`.
-
-the exact seam is the first post-H43 canonical Section 08 runtime-law `platform_hard_block_required(...)` block path on `RuntimeLawRuntime::evaluate(...)`.
-
-the smallest direct seam is the unsupported-client compatibility hard-block branch via `ClientCompatibilityStatus::UnsupportedClient` while integrity and device trust remain non-blocking.
-
-no code is changed in this run; this run only publishes the next active target.
-
-## Current Repo Truth
+the exact canonical proof published by this run is `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`.
 
 the live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
 
-current authoritative docs already map unresolved compatibility-governance closure to `runtime_law.rs#L1010` through the current `S08-06` ledger row.
+no production logic change was required in this run.
 
-current source already blocks protected execution with `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED`.
+## Current Repo Truth
 
-the exact H40 canonical proof already live is `at_os_22i_voice_live_entrypoint_rejects_envelope_platform_mismatch`.
+H40 remains live as the first canonical PH1.OS voice-live `runtime_execution_envelope.platform` normalization fail-closed proof slice.
 
-the exact H41 canonical proof already live is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
+H41 remains live as the first post-H40 canonical PH1.OS voice-live `platform_context.requested_trigger` normalization fail-closed proof slice.
 
-the exact H42 canonical proof already live is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
+H42 remains live as the first canonical Section 08 runtime-law `platform_trust_warning(...)` restricted-device degrade proof slice.
 
-the exact H43 canonical proof already live is `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`.
+H43 remains live as the first canonical Section 08 runtime-law `platform_trust_warning(...)` upgrade-required compatibility-warning proof slice.
 
-current repo truth already preserves the mixed platform-compatibility hard-block proof `at_runtime_law_01_conflicting_inputs_resolve_deterministically`.
+H39 remains live and Section 06 remains parked with next exact winner `NOT_EXPLICIT`.
 
-current repo truth already suggests the unsupported-client compatibility hard-block seam may be satisfiable by proof alone with zero production-logic edits.
+current repo truth already preserved H40 `at_os_22i`, H41 `at_os_22j`, H42 `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`, H43 `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`, and `at_runtime_law_01_conflicting_inputs_resolve_deterministically` before this run.
 
-no dedicated canonical proof has yet been published for the smaller unsupported-client compatibility hard-block seam.
+current authoritative docs already mapped unresolved compatibility-governance closure to `runtime_law.rs#L1010` before this run.
 
-the exact candidate canonical proof for the next implementation is `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`.
+current source already exposed `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED` before this run.
 
-S08-05 remains proven complete and the adjacent `ClientIntegrityStatus::Unknown` warning branch plus adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch are not selected in this run.
+current `base_envelope()` default desktop platform context was not seam-isolated before this run because it came from `PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)` and therefore carried `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::Unknown`, and `ClientCompatibilityStatus::Unknown`.
 
-S08-08 remains partial and the adjacent `DeviceTrustClass::UntrustedDevice` hard-block branch is not selected in this run.
+current `blocked_platform_envelope()` helper was not seam-isolated before this run because it already carried `ClientCompatibilityStatus::UnsupportedClient`, `ClientIntegrityStatus::IntegrityFailed`, and `DeviceTrustClass::UntrustedDevice`.
 
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
+current contract validation already required `platform_context.platform_type == platform` before this run.
 
 ## Exact Seam
 
-the exact seam is the first post-H43 canonical Section 08 runtime-law `platform_hard_block_required(...)` block path on `RuntimeLawRuntime::evaluate(...)`.
+the exact seam is the first canonical Section 08 runtime-law `platform_hard_block_required(...)` unsupported-client compatibility hard-block proof slice inside `S08-06`.
 
-the smallest direct seam is the unsupported-client compatibility hard-block branch via `ClientCompatibilityStatus::UnsupportedClient` while integrity and device trust remain non-blocking.
+the H44 proof kept the adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch, adjacent `DeviceTrustClass::UntrustedDevice` hard-block branch, and adjacent `ClientIntegrityStatus::Unknown` warning branch aligned and unselected by using `DeviceTrustClass::StandardDevice` with `ClientIntegrityStatus::IntegrityVerified` and `ClientCompatibilityStatus::UnsupportedClient`.
 
 ## Implementation Boundary
 
-The later implementation should stay on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-law scope beyond the selected unsupported-client compatibility hard-block seam.
+the implementation remained bounded to the live runtime-law carrier on `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
 
-The later proof should keep integrity and device trust on non-blocking values so the selected seam stays isolated from the adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch and the adjacent `DeviceTrustClass::UntrustedDevice` hard-block branch.
+no engine, contract, PH1.OS, or runtime-governance file changed in this run.
 
 ## Proof Plan
 
-The later implementation should publish the first canonical proof that `RuntimeLawRuntime::evaluate(...)` blocks protected execution through `platform_hard_block_required(...)` when compatibility is downgraded to `ClientCompatibilityStatus::UnsupportedClient` while integrity and device trust remain non-blocking.
+the exact canonical proof published by this run is `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`.
 
-The exact candidate canonical proof for the next implementation is `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`.
+the proof now establishes that a contract-valid runtime execution envelope reaches the live runtime-law carrier and blocks protected execution through `platform_hard_block_required(...)` when compatibility is set to `ClientCompatibilityStatus::UnsupportedClient` while integrity and device trust remain non-blocking.
 
-That proof should remain adjacent to the already-live H40/H41 PH1.OS normalization proofs, the H42 and H43 runtime-law warning proofs, and the mixed runtime-law platform-compatibility hard-block proof without widening into broader Section 08 closure.
+`S08-06` remains `PARTIAL`.
+
+no post-H44 next exact winner is published in this run.
 
 ## Out Of Scope
 
