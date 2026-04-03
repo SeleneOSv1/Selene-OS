@@ -2,19 +2,17 @@
 
 ## Objective
 
-This is the first canonical H48 post-H47 Section 08 next-target publication build plan.
+This H48 slice is now the first canonical post-H47 Section 08 runtime-law `platform_hard_block_required(...)` integrity-failed compatibility hard-block proof slice inside `S08-06`.
 
-H46 remains published as the first canonical post-H45 Section 08 next-target publication.
+The exact canonical proof implemented by this run is `at_runtime_law_19_integrity_failed_platform_compatibility_blocks_protected_execution`.
 
-H47 remains published as the first canonical post-H46 Section 08 frontier correction.
+The live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
+
+H48 remains published as the first canonical post-H47 Section 08 next-target publication.
 
 `S08-05` remains PROVEN_COMPLETE and is not reopened in this run.
 
-The next exact active winner is now `S08-06`.
-
-The exact seam is the first post-H47 canonical Section 08 runtime-law `platform_hard_block_required(...)` integrity-failed compatibility hard-block path on `RuntimeLawRuntime::evaluate(...)`.
-
-No code is changed in this run; this run only publishes the next active target.
+`S08-06` remains PARTIAL.
 
 ## Current Repo Truth
 
@@ -38,45 +36,37 @@ The exact H44 canonical proof already live is `at_runtime_law_17_unsupported_cli
 
 The exact H45 canonical proof already live is `at_runtime_law_18_untrusted_device_platform_compatibility_blocks_protected_execution`.
 
-Current authoritative docs already map unresolved compatibility-governance closure to `runtime_law.rs#L1010` through the current `S08-06` ledger row.
+Current authoritative docs already mapped unresolved compatibility-governance closure to `runtime_law.rs#L1010` before this run.
 
-Current source already exposes `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED`.
+Current source already exposed `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED` before this run.
 
-Current repo truth already preserves adjacent `at_os_22c` through `at_os_22h` voice-entrypoint proofs and `at_runtime_law_01_conflicting_inputs_resolve_deterministically`.
+Current `base_envelope()` default desktop platform context was not seam-isolated before this run because it came from `PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)` and therefore carried `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::Unknown`, and `ClientCompatibilityStatus::Unknown`.
 
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
+Current `blocked_platform_envelope()` helper was not seam-isolated before this run because it already carried `ClientCompatibilityStatus::UnsupportedClient`, `ClientIntegrityStatus::IntegrityFailed`, and `DeviceTrustClass::UntrustedDevice`.
 
-`S08-03` and `S08-04` remain partial and are not selected in this run.
+Current contract validation already required `platform_context.platform_type == platform` before this run.
 
-`S08-08` remains partial and is not selected in this run.
+Current platform runtime context validation only imposed attestation-only integrity metadata constraints before this run.
 
 ## Exact Seam
 
-The exact seam is the first post-H47 canonical Section 08 runtime-law `platform_hard_block_required(...)` integrity-failed compatibility hard-block path on `RuntimeLawRuntime::evaluate(...)`.
+The exact seam is the first canonical post-H47 Section 08 runtime-law `platform_hard_block_required(...)` integrity-failed compatibility hard-block path on `RuntimeLawRuntime::evaluate(...)`.
 
-The smallest direct seam is the `runtime_execution_envelope.platform_context.integrity_status == ClientIntegrityStatus::IntegrityFailed` branch while `runtime_execution_envelope.platform_context.device_trust_class == DeviceTrustClass::StandardDevice` and `runtime_execution_envelope.platform_context.compatibility_status == ClientCompatibilityStatus::Compatible` keep adjacent warning and hard-block branches aligned and unselected.
-
-The live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
-
-Current source already keeps the residual `ClientIntegrityStatus::IntegrityFailed` hard-block seam contract-reachable because current platform runtime context validation only imposes attestation-only integrity metadata constraints and does not preempt `IntegrityFailed` by itself.
+The H48 proof kept the adjacent `ClientCompatibilityStatus::UnsupportedClient` hard-block branch, adjacent `DeviceTrustClass::UntrustedDevice` hard-block branch, adjacent `DeviceTrustClass::RestrictedDevice` warning branch, adjacent `ClientCompatibilityStatus::UpgradeRequired` warning branch, and adjacent `ClientIntegrityStatus::Unknown` warning branch aligned and unselected by using `DeviceTrustClass::StandardDevice` with `ClientIntegrityStatus::IntegrityFailed` and `ClientCompatibilityStatus::Compatible`.
 
 ## Implementation Boundary
 
-This publication stays on the existing runtime-law carrier without widening PH1.OS, engine, contract, or runtime-governance scope beyond the residual `ClientIntegrityStatus::IntegrityFailed` hard-block seam.
+The implementation remained bounded to the live runtime-law carrier on `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
 
-No dedicated canonical proof has yet been published for the residual `ClientIntegrityStatus::IntegrityFailed` hard-block seam.
+No engine, contract, PH1.OS, or runtime-governance file changed in this run.
 
-The exact candidate canonical proof for the next implementation is `at_runtime_law_19_integrity_failed_platform_compatibility_blocks_protected_execution`.
-
-The adjacent `ClientIntegrityStatus::Unknown` warning branch is not selected in this run.
+No post-H48 next exact winner is published in this run.
 
 ## Proof Plan
 
-This run publishes the first explicit post-H47 next target on the already-live Section 08 compatibility-governance carrier.
+The exact canonical proof implemented by this run is `at_runtime_law_19_integrity_failed_platform_compatibility_blocks_protected_execution`.
 
-The next implementation should prove that a contract-valid runtime execution envelope reaches `RuntimeLawRuntime::evaluate(...)` and blocks protected execution through `platform_hard_block_required(...)` when integrity is set to `ClientIntegrityStatus::IntegrityFailed` while device trust remains `DeviceTrustClass::StandardDevice` and compatibility remains `ClientCompatibilityStatus::Compatible`.
-
-That next implementation should preserve the already-implemented H44 unsupported-client hard-block proof slice, the already-implemented H45 untrusted-device hard-block proof slice, the already-implemented H42 restricted-device warning proof slice, the already-implemented H43 upgrade-required warning proof slice, and the adjacent `ClientIntegrityStatus::Unknown` warning branch as aligned and unselected.
+The proof now establishes that a contract-valid runtime execution envelope reaches the live runtime-law carrier and blocks protected execution through `platform_hard_block_required(...)` when integrity is set to `ClientIntegrityStatus::IntegrityFailed` while device trust remains `DeviceTrustClass::StandardDevice` and compatibility remains `ClientCompatibilityStatus::Compatible`.
 
 ## Out Of Scope
 
