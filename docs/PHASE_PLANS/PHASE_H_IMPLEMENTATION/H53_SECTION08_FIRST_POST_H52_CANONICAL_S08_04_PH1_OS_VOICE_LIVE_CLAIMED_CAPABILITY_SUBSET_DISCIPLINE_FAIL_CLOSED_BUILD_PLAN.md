@@ -2,7 +2,7 @@
 
 ## Objective
 
-this is the first canonical H53 post-H52 Section 08 next-target publication build plan.
+this H53 file remains the first canonical H53 post-H52 Section 08 next-target publication build plan and now records the first implemented H53 proof slice.
 
 H52 remains published as the first canonical post-H51 Section 08 next-target publication.
 
@@ -10,13 +10,17 @@ the exact H52 canonical proof now live is `at_os_22m_voice_live_entrypoint_rejec
 
 S08-05 remains PROVEN_COMPLETE and is not reopened in this run.
 
-the post-H52 Section 08 next exact active winner is now `S08-04`.
+the post-H52 Section 08 next exact active winner remains `S08-04`.
 
 the exact seam is the first post-H52 canonical PH1.OS voice-live claimed capability subset-discipline fail-closed path on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` through `runtime_execution_envelope.validate()`.
 
 the live carrier path is `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` -> `runtime_execution_envelope.validate()`.
 
-no code is changed in this run; this run only publishes the next active target around a direct live seam.
+the first canonical H53 Section 08 PH1.OS voice-live claimed capability subset-discipline fail-closed proof slice is now live.
+
+the exact canonical proof implemented by this run is `at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities`.
+
+no production logic change was required in this run.
 
 ## Current Repo Truth
 
@@ -42,6 +46,8 @@ H51 remains live as the first canonical post-H50 Section 08 next-target publicat
 
 H52 remains live as the first canonical post-H51 Section 08 next-target publication and the exact H52 proof already live remains `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability`.
 
+H53 remains live as the first canonical post-H52 Section 08 next-target publication and the exact H53 proof now live remains `at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities`.
+
 current authoritative docs already map unresolved capability-negotiation closure to `ph1os.rs#L608` through the current `S08-04` ledger row.
 
 current source already exposes `PlatformRuntimeContext::default_for_platform_and_trigger(...)`, `supported_capabilities_for_platform(...)`, `DeviceCapability::Camera`, field `platform_runtime_context.claimed_capabilities`, and reason `claimed capabilities must be present in negotiated capabilities`.
@@ -64,11 +70,11 @@ the exact seam is the first post-H52 canonical PH1.OS voice-live claimed capabil
 
 the smallest direct seam is the `runtime_execution_envelope.platform_context.claimed_capabilities` still contains supported `DeviceCapability::Camera` while `runtime_execution_envelope.platform_context.negotiated_capabilities` deliberately removes `DeviceCapability::Camera`, with `runtime_execution_envelope.platform == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.platform_type == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.requested_trigger == RuntimeEntryTrigger::Explicit`, `runtime_execution_envelope.platform_context.trigger_allowed == true`, `runtime_execution_envelope.platform_context.negotiated_capabilities` still containing `DeviceCapability::Microphone`, and both capability lists still excluding `DeviceCapability::WakeWord`, which keeps unsupported-capability-registry, microphone-negotiation, wake-stage-only capability, trigger-governance, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
 
-the exact candidate canonical proof for the next implementation is `at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities`.
+the exact canonical proof implemented by this run is `at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities`.
 
 ## Implementation Boundary
 
-This run is docs-only and remains bounded to canonical publication truth for the next live PH1.OS claimed-subset discipline seam.
+This run is implementation-bounded to the already-published H53 PH1.OS claimed-subset discipline seam.
 
 S08-03 remains partial and is not selected in this run because current repo truth already preserves the smaller direct unsupported WakeWord registry proof slices `at_os_22l_voice_live_entrypoint_rejects_ios_explicit_unsupported_wake_word_capability` and `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability` on the same PH1.OS carrier.
 
@@ -86,19 +92,20 @@ S08-01 remains partial with the post-H46 next exact winner `NOT_EXPLICIT` after 
 
 Section 06 remains parked with the next exact winner `NOT_EXPLICIT`.
 
+S08-04 remains `PARTIAL`.
+
 ## Proof Plan
 
-The canonical publication basis for this H53 run is the live PH1.OS entrypoint carrier plus the current contract-side claimed-subset discipline truth in `PlatformRuntimeContext::validate()`.
+The canonical implementation basis for this H53 run is the live PH1.OS entrypoint carrier plus the current contract-side claimed-subset discipline truth in `PlatformRuntimeContext::validate()`.
 
-The next implementation should begin from the default iOS explicit runtime envelope and remove supported `DeviceCapability::Camera` only from `runtime_execution_envelope.platform_context.negotiated_capabilities` while leaving `runtime_execution_envelope.platform_context.claimed_capabilities` unchanged, so the fail-closed result selects field `platform_runtime_context.claimed_capabilities` with reason `claimed capabilities must be present in negotiated capabilities`.
+This implementation begins from the default iOS explicit runtime envelope and removes supported `DeviceCapability::Camera` only from `runtime_execution_envelope.platform_context.negotiated_capabilities` while leaving `runtime_execution_envelope.platform_context.claimed_capabilities` unchanged, so the fail-closed result selects field `platform_runtime_context.claimed_capabilities` with reason `claimed capabilities must be present in negotiated capabilities`.
 
-That publication boundary keeps the already-live H52 claimed-unsupported WakeWord seam, the already-live H51 negotiated-unsupported WakeWord seam, the already-live H50 microphone-negotiation seam, the residual PH1.OS WakeWord branch, and the adjacent trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
+That implementation boundary keeps the already-live H52 claimed-unsupported WakeWord seam, the already-live H51 negotiated-unsupported WakeWord seam, the already-live H50 microphone-negotiation seam, the residual PH1.OS WakeWord branch, and the adjacent trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
 
 ## Out Of Scope
 
-This H53 publication does not authorize:
+This H53 implementation does not authorize:
 
-- source edits
 - contract edits
 - engine edits
 - runtime-law edits
