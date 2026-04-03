@@ -6,6 +6,8 @@ this is the first canonical H54 post-H53 Section 08 next-target publication buil
 
 H53 remains published and the exact H53 proof now live is `at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities`.
 
+the first canonical H54 Section 08 PH1.OS voice-live wake-trigger negotiated WAKE_WORD capability contract-preemption fail-closed proof slice is now live and the exact canonical proof implemented by this run is `at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability`.
+
 S08-05 remains PROVEN_COMPLETE and is not reopened in this run.
 
 the post-H53 Section 08 next exact active winner remains `S08-04`.
@@ -14,7 +16,7 @@ the exact seam is the first post-H53 canonical PH1.OS voice-live wake-trigger ne
 
 the live carrier path is `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` -> `runtime_execution_envelope.validate()`.
 
-no code is changed in this run; this run only publishes the next active target around a direct live seam.
+no production logic change was required in this run; this run records the first canonical H54 proof slice while preserving the published H54 frontier truth in substance.
 
 ## Current Repo Truth
 
@@ -58,7 +60,7 @@ current source already proves the seam is live on the PH1.OS voice-live entrypoi
 
 current `runtime_envelope_for_voice_context(...)` helper is not seam-selected by itself for Android wake because unattested Android wake drifts onto `at_os_22d_voice_live_entrypoint_rejects_android_wake_without_attestation`.
 
-current `android_attested_wake_runtime_envelope(...)` helper is not seam-selected by itself because it preserves `DeviceCapability::WakeWord` in both claimed and negotiated capabilities and would pass the WakeWord contract gate.
+current `android_attested_wake_runtime_envelope(...)` helper was not seam-selected by itself before this run because it preserved `DeviceCapability::WakeWord` in both claimed and negotiated capabilities and would pass the WakeWord contract gate.
 
 ## Exact Seam
 
@@ -66,11 +68,11 @@ the exact seam is the first post-H53 canonical PH1.OS voice-live wake-trigger ne
 
 the smallest direct seam is the `platform_runtime_context.trigger_allowed` contract branch with reason `wake trigger requires negotiated WAKE_WORD capability` while `runtime_execution_envelope.platform == AppPlatform::Android`, `runtime_execution_envelope.platform_context.platform_type == AppPlatform::Android`, `runtime_execution_envelope.platform_context.requested_trigger == RuntimeEntryTrigger::WakeWord`, `runtime_execution_envelope.platform_context.trigger_allowed == true`, `runtime_execution_envelope.platform_context.integrity_status == ClientIntegrityStatus::Attested`, trusted capture-artifact posture remains valid, both capability lists still contain `DeviceCapability::Microphone`, and `DeviceCapability::WakeWord` is removed from both `claimed_capabilities` and `negotiated_capabilities`, which keeps the already-live claimed-subset seam, the already-live microphone seam, capture-artifact seams, integrity-attestation seam, and normalization seams aligned and unselected.
 
-the exact candidate canonical proof for the next implementation is `at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability`.
+the exact canonical proof implemented by this run is `at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability`.
 
 ## Implementation Boundary
 
-This run is docs-only and remains bounded to canonical publication truth for the next live PH1.OS wake-trigger negotiated-WakeWord contract-preemption seam.
+This run remains bounded to the first canonical H54 proof slice for the live PH1.OS wake-trigger negotiated-WakeWord contract-preemption seam.
 
 S08-03 remains partial and is not selected in this run because current repo truth already preserves the smaller direct unsupported WakeWord registry proof slices `at_os_22l_voice_live_entrypoint_rejects_ios_explicit_unsupported_wake_word_capability` and `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability`.
 
@@ -90,15 +92,15 @@ Section 06 remains parked with the next exact winner `NOT_EXPLICIT`.
 
 ## Proof Plan
 
-The canonical publication basis for this H54 run is the live PH1.OS entrypoint carrier plus the current contract-side WakeWord trigger truth in `PlatformRuntimeContext::validate()`.
+The canonical implementation basis for this H54 run is the live PH1.OS entrypoint carrier plus the current contract-side WakeWord trigger truth in `PlatformRuntimeContext::validate()`.
 
-The next implementation should begin from `android_attested_wake_runtime_envelope(...)` and remove `DeviceCapability::WakeWord` from both `runtime_execution_envelope.platform_context.claimed_capabilities` and `runtime_execution_envelope.platform_context.negotiated_capabilities` while keeping `runtime_execution_envelope.platform_context.trigger_allowed == true`, attestation valid, capture-artifact posture valid, and `DeviceCapability::Microphone` present in both capability lists, so the fail-closed result selects field `platform_runtime_context.trigger_allowed` with reason `wake trigger requires negotiated WAKE_WORD capability`.
+The implemented proof begins from `android_attested_wake_runtime_envelope(...)` and removes `DeviceCapability::WakeWord` from both `runtime_execution_envelope.platform_context.claimed_capabilities` and `runtime_execution_envelope.platform_context.negotiated_capabilities` while keeping `runtime_execution_envelope.platform_context.trigger_allowed == true`, attestation valid, capture-artifact posture valid, and `DeviceCapability::Microphone` present in both capability lists, so the fail-closed result selects field `platform_runtime_context.trigger_allowed` with reason `wake trigger requires negotiated WAKE_WORD capability`.
 
 That publication boundary keeps the already-live H53 claimed-subset seam, the already-live H52 claimed-unsupported WakeWord seam, the already-live H51 negotiated-unsupported WakeWord seam, the already-live H50 microphone seam, the later PH1.OS wake-governance WakeWord branch, and the adjacent trigger-governance, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
 
 ## Out Of Scope
 
-This H54 publication does not authorize:
+This H54 implementation record does not authorize:
 
 - source edits
 - contract edits

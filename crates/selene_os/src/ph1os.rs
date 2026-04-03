@@ -5414,6 +5414,148 @@ mod tests {
         }
     }
 
+    #[test]
+    fn at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_13").unwrap();
+        let voice_context =
+            voice_context_android_wake().expect("android wake voice context must exist");
+        let mut runtime_execution_envelope =
+            android_attested_wake_runtime_envelope(&actor_user_id, &device_id);
+        assert_eq!(runtime_execution_envelope.platform, AppPlatform::Android);
+        assert_eq!(
+            runtime_execution_envelope.platform_context.platform_type,
+            AppPlatform::Android
+        );
+        assert_eq!(
+            runtime_execution_envelope.platform_context.requested_trigger,
+            RuntimeEntryTrigger::WakeWord
+        );
+        assert!(runtime_execution_envelope.platform_context.trigger_allowed);
+        assert_eq!(
+            runtime_execution_envelope.platform_context.integrity_status,
+            ClientIntegrityStatus::Attested
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .attestation_ref
+                .is_some()
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .capture_artifact_trust_verified
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .capture_artifact_observed_at_ns
+                .is_some()
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .capture_artifact_retention_deadline_ns
+                .is_some()
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .claimed_capabilities
+                .contains(&DeviceCapability::Microphone)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .claimed_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::Microphone)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .retain(|capability| capability != &DeviceCapability::WakeWord);
+        runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .retain(|capability| capability != &DeviceCapability::WakeWord);
+        assert!(
+            !runtime_execution_envelope
+                .platform_context
+                .claimed_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        assert!(
+            !runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .claimed_capabilities
+                .contains(&DeviceCapability::Microphone)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::Microphone)
+        );
+        assert!(runtime_execution_envelope.platform_context.trigger_allowed);
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_wake(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_execution_envelope,
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("android attested wake without negotiated wake-word capability must fail closed");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "platform_runtime_context.trigger_allowed");
+                assert_eq!(
+                    reason,
+                    "wake trigger requires negotiated WAKE_WORD capability"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum OcrAdapterMode {
         SchemaOk,
