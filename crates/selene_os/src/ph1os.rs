@@ -5143,6 +5143,83 @@ mod tests {
         }
     }
 
+    #[test]
+    fn at_os_22l_voice_live_entrypoint_rejects_ios_explicit_unsupported_wake_word_capability() {
+        let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
+        let device_id = DeviceId::new("os_live_voice_device_12").unwrap();
+        let voice_context =
+            voice_context_ios_explicit().expect("ios explicit voice context must exist");
+        let mut runtime_execution_envelope =
+            runtime_envelope_for_voice_context(&actor_user_id, &device_id, voice_context);
+        assert_eq!(runtime_execution_envelope.platform, AppPlatform::Ios);
+        assert_eq!(
+            runtime_execution_envelope.platform_context.platform_type,
+            AppPlatform::Ios
+        );
+        assert_eq!(
+            runtime_execution_envelope.platform_context.requested_trigger,
+            RuntimeEntryTrigger::Explicit
+        );
+        assert!(runtime_execution_envelope.platform_context.trigger_allowed);
+        assert!(
+            !runtime_execution_envelope
+                .platform_context
+                .claimed_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        assert!(
+            runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::Microphone)
+        );
+        assert!(
+            !runtime_execution_envelope
+                .platform_context
+                .negotiated_capabilities
+                .contains(&DeviceCapability::WakeWord)
+        );
+        runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .push(DeviceCapability::WakeWord);
+
+        let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
+            OsTopLevelTurnInput::v1(
+                CorrelationId(7801),
+                TurnId(8801),
+                OsTopLevelTurnPath::Voice,
+                Some(voice_context),
+                always_on_voice_sequence_explicit(),
+                vec![],
+                1,
+                base_input(),
+            )
+            .unwrap(),
+            runtime_execution_envelope,
+            sample_live_voice_id_request(MonotonicTimeNs(3)),
+            actor_user_id,
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            EngineVoiceIdObservation {
+                primary_fingerprint: None,
+                secondary_fingerprint: None,
+                primary_embedding: None,
+                secondary_embedding: None,
+                spoof_risk: false,
+            },
+        )
+        .expect_err("ios explicit unsupported wake-word capability must fail closed");
+        match input {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "platform_runtime_context.negotiated_capabilities");
+                assert_eq!(reason, "contains capability unsupported by platform");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum OcrAdapterMode {
         SchemaOk,
