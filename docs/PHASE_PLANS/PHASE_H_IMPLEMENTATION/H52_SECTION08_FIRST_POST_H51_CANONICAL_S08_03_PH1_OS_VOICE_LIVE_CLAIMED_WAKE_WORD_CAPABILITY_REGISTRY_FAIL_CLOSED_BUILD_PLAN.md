@@ -4,6 +4,8 @@
 
 this is the first canonical H52 post-H51 Section 08 next-target publication build plan.
 
+the first canonical H52 Section 08 PH1.OS voice-live claimed WakeWord capability-registry fail-closed proof slice is now live.
+
 H51 remains published as the first canonical post-H50 Section 08 next-target publication.
 
 the exact H51 canonical proof already live is `at_os_22l_voice_live_entrypoint_rejects_ios_explicit_unsupported_wake_word_capability`.
@@ -12,11 +14,13 @@ S08-05 remains PROVEN_COMPLETE and is not reopened in this run.
 
 the post-H51 Section 08 next exact active winner is now `S08-03`.
 
+the exact canonical proof implemented by this run is `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability`.
+
 the exact seam is the first post-H51 canonical PH1.OS voice-live claimed WakeWord capability unsupported-platform fail-closed path on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` through `runtime_execution_envelope.validate()`.
 
 the live carrier path is `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` -> `runtime_execution_envelope.validate()`.
 
-no code is changed in this run; this run only publishes the next active target.
+no production logic change was required in this run.
 
 ## Current Repo Truth
 
@@ -50,27 +54,33 @@ current source already proves `supported_capabilities_for_platform(AppPlatform::
 
 current source already proves unsupported claimed-capability membership is checked before the later `claimed capabilities must be present in negotiated capabilities` discipline branch.
 
-current repo truth does not yet preserve a dedicated canonical PH1.OS proof for the unsupported claimed-WakeWord-on-iOS explicit registry seam.
-
 current source already proves the seam is live on the PH1.OS voice-live entrypoint because `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` validates `runtime_execution_envelope` before later PH1.OS governance checks.
+
+current `runtime_envelope_for_voice_context(...)` helper was not seam-selected by itself before this run because the default iOS explicit platform context excluded `DeviceCapability::WakeWord` from both `claimed_capabilities` and `negotiated_capabilities` and would pass the supported-capability registry gate.
+
+current `android_attested_wake_runtime_envelope(...)` helper was not seam-selected by itself before this run because it already carried Android wake / attested / capture-artifact posture and therefore selected adjacent seams.
+
+current repo truth now preserves the dedicated canonical PH1.OS proof `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability` for the unsupported claimed-WakeWord-on-iOS explicit registry seam.
 
 ## Exact Seam
 
 the exact seam is the first post-H51 canonical PH1.OS voice-live claimed WakeWord capability unsupported-platform fail-closed path on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` through `runtime_execution_envelope.validate()`.
 
-the smallest direct seam is the `runtime_execution_envelope.platform_context.claimed_capabilities` contains `DeviceCapability::WakeWord` branch while `runtime_execution_envelope.platform == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.platform_type == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.requested_trigger == RuntimeEntryTrigger::Explicit`, `runtime_execution_envelope.platform_context.trigger_allowed == true`, `runtime_execution_envelope.platform_context.negotiated_capabilities` remains unchanged and does not contain `DeviceCapability::WakeWord`, and both capability lists still contain `DeviceCapability::Microphone` keep adjacent negotiated-unsupported-capability, claimed-subset discipline, microphone-negotiation, trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
+the smallest direct seam is the `runtime_execution_envelope.platform_context.claimed_capabilities` contains `DeviceCapability::WakeWord` branch while `runtime_execution_envelope.platform == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.platform_type == AppPlatform::Ios`, `runtime_execution_envelope.platform_context.requested_trigger == RuntimeEntryTrigger::Explicit`, `runtime_execution_envelope.platform_context.trigger_allowed == true`, `runtime_execution_envelope.platform_context.negotiated_capabilities` remains unchanged and does not contain `DeviceCapability::WakeWord`, and both capability lists still contain `DeviceCapability::Microphone`, which keeps adjacent negotiated-unsupported-capability, claimed-subset discipline, microphone-negotiation, trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
 
-the exact candidate canonical proof for the next implementation is `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability`.
+the exact canonical proof implemented by this run is `at_os_22m_voice_live_entrypoint_rejects_ios_explicit_claimed_unsupported_wake_word_capability`.
 
 ## Implementation Boundary
 
-This run is docs-only and remains bounded to canonical publication truth for the next live PH1.OS claimed-capability registry seam.
+This run is implementation-bounded to the live PH1.OS claimed-capability registry seam on `OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(...)` plus the H52 documentation updates that record the implemented slice.
 
 H51 already canonically implemented the negotiated unsupported WakeWord fail-closed proof slice, so that H51 seam is not selected in this run.
 
 the residual later PH1.OS `wake trigger requires negotiated WAKE_WORD capability` branch on `validate_voice_turn_platform_governance(...)` is not the clearest lawful next winner because current contract validation already preempts missing-WakeWord wake-trigger envelopes by enforcing `trigger_allowed` alignment and already exposing the contract-side WakeWord reason on `platform_runtime_context.trigger_allowed`.
 
 the upstream claimed-subset discipline branch is not the clearest lawful next winner because current contract validation rejects unsupported claimed capabilities before it evaluates `claimed capabilities must be present in negotiated capabilities`.
+
+the H52 proof neutralized adjacent branches by keeping `AppPlatform::Ios`, `RuntimeEntryTrigger::Explicit`, `trigger_allowed == true`, `negotiated_capabilities` unchanged without `DeviceCapability::WakeWord` while still containing `DeviceCapability::Microphone`, and `claimed_capabilities` still containing `DeviceCapability::Microphone` while adding unsupported `DeviceCapability::WakeWord` only to `claimed_capabilities`.
 
 S08-04 remains partial and is not selected in this run.
 
@@ -80,24 +90,26 @@ S08-01 remains partial with the post-H46 next exact winner `NOT_EXPLICIT` after 
 
 Section 06 remains parked with the next exact winner `NOT_EXPLICIT`.
 
+H47 correction truth remains unchanged in substance and frozen `at_os_22k...` is not reopened.
+
 ## Proof Plan
 
-The canonical publication basis for this H52 run is the live PH1.OS entrypoint carrier plus the current contract-side capability-registry truth in `PlatformRuntimeContext::validate()`.
+The canonical implementation basis for this H52 run is the live PH1.OS entrypoint carrier plus the current contract-side capability-registry truth in `PlatformRuntimeContext::validate()`.
 
-The next implementation should begin from the default iOS explicit runtime envelope and add unsupported `DeviceCapability::WakeWord` only to `runtime_execution_envelope.platform_context.claimed_capabilities` while leaving `runtime_execution_envelope.platform_context.negotiated_capabilities` unchanged, so the fail-closed result selects field `platform_runtime_context.claimed_capabilities` with reason `contains capability unsupported by platform`.
+The implemented proof begins from the default iOS explicit runtime envelope and adds unsupported `DeviceCapability::WakeWord` only to `runtime_execution_envelope.platform_context.claimed_capabilities` while leaving `runtime_execution_envelope.platform_context.negotiated_capabilities` unchanged, so the fail-closed result selects field `platform_runtime_context.claimed_capabilities` with reason `contains capability unsupported by platform`.
 
-That publication boundary keeps the adjacent negotiated-unsupported-capability branch already implemented by H51, the later claimed-subset discipline branch, the H50 microphone-negotiation seam, the residual PH1.OS WakeWord branch, and the adjacent trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
+That implementation boundary keeps the adjacent negotiated-unsupported-capability branch already implemented by H51, the later claimed-subset discipline branch, the H50 microphone-negotiation seam, the residual PH1.OS WakeWord branch, and the adjacent trigger-governance, wake-stage-only capability, integrity-attestation, capture-artifact, and platform-normalization branches aligned and unselected.
 
 ## Out Of Scope
 
-This H52 publication does not authorize:
+This H52 implementation does not authorize:
 
-- source edits
+- source edits outside `ph1os.rs`
 - contract edits
 - engine edits
 - runtime-law edits
 - build-section wording edits
-- any H53 target or implementation publication
+- any post-H52 target or implementation publication
 - re-authoring the historical H51 build-plan file
 - broader `S08-01` closure claims
 - broader `S08-03` device-capability-registry closure beyond the unsupported claimed WakeWord seam
