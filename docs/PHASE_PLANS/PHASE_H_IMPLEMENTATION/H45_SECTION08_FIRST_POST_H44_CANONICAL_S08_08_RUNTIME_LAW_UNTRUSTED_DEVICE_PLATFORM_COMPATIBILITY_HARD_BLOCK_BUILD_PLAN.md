@@ -1,18 +1,14 @@
 # H45 Section 08: First Post-H44 Canonical S08-08 Runtime-Law Untrusted-Device Platform-Compatibility Hard-Block Build Plan
 
-This is the first canonical H45 Section 08 build plan after the live H44 unsupported-client compatibility hard-block proof slice.
+This H45 slice is now the first canonical Section 08 runtime-law `platform_hard_block_required(...)` untrusted-device platform-compatibility hard-block proof slice inside `S08-08`.
 
 ## Objective
 
-the next exact active winner is now `S08-08`.
+the exact canonical proof published by this run is `at_runtime_law_18_untrusted_device_platform_compatibility_blocks_protected_execution`.
 
-the exact seam is the first post-H44 canonical Section 08 runtime-law `platform_hard_block_required(...)` block path on `RuntimeLawRuntime::evaluate(...)`.
+the live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
 
-the smallest direct seam is the untrusted-device platform-compatibility hard-block branch via `DeviceTrustClass::UntrustedDevice` while compatibility and integrity remain non-blocking.
-
-the exact candidate canonical proof for the next implementation is `at_runtime_law_18_untrusted_device_platform_compatibility_blocks_protected_execution`.
-
-no code is changed in this run; this run only publishes the next active target.
+no production logic change was required in this run.
 
 ## Current Repo Truth
 
@@ -26,52 +22,55 @@ H43 remains live as the first canonical Section 08 runtime-law `platform_trust_w
 
 H44 remains live as the first canonical Section 08 runtime-law `platform_hard_block_required(...)` unsupported-client compatibility hard-block proof slice.
 
-the exact H40 canonical proof already live is `at_os_22i_voice_live_entrypoint_rejects_envelope_platform_mismatch`.
+H39 remains live and Section 06 remains parked with next exact winner `NOT_EXPLICIT`.
 
-the exact H41 canonical proof already live is `at_os_22j_voice_live_entrypoint_rejects_requested_trigger_mismatch`.
+current repo truth already preserved H40 `at_os_22i`, H41 `at_os_22j`, H42 `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`, H43 `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`, H44 `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`, and `at_runtime_law_01_conflicting_inputs_resolve_deterministically` before this run.
 
-the exact H42 canonical proof already live is `at_runtime_law_15_restricted_device_platform_trust_degrades_protected_execution`.
+current authoritative docs already mapped unresolved device trust-level closure to `runtime_law.rs#L1019` before this run.
 
-the exact H43 canonical proof already live is `at_runtime_law_16_upgrade_required_platform_trust_degrades_protected_execution`.
+current source already exposed `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED` before this run.
 
-the exact H44 canonical proof already live is `at_runtime_law_17_unsupported_client_platform_compatibility_blocks_protected_execution`.
+current `base_envelope()` default desktop platform context was not seam-isolated before this run because it came from `PlatformRuntimeContext::default_for_platform(AppPlatform::Desktop)` and therefore carried `DeviceTrustClass::StandardDevice`, `ClientIntegrityStatus::Unknown`, and `ClientCompatibilityStatus::Unknown`.
 
-current authoritative docs already map unresolved device trust-level closure to `runtime_law.rs#L1019` through the current `S08-08` ledger row.
+current `blocked_platform_envelope()` helper was not seam-isolated before this run because it already carried `ClientCompatibilityStatus::UnsupportedClient`, `ClientIntegrityStatus::IntegrityFailed`, and `DeviceTrustClass::UntrustedDevice`.
 
-current source already blocks protected execution with `RULE_PLATFORM_COMPATIBILITY` and reason code `LAW_PLATFORM_COMPATIBILITY_REQUIRED`.
-
-current repo truth already preserves the mixed platform-compatibility hard-block proof `at_runtime_law_01_conflicting_inputs_resolve_deterministically`.
-
-current repo truth already suggests the untrusted-device platform-compatibility hard-block seam may be satisfiable by proof alone with zero production-logic edits.
-
-no dedicated canonical proof has yet been published for the smaller untrusted-device platform-compatibility hard-block seam.
+current contract validation already required `platform_context.platform_type == platform` before this run.
 
 ## Exact Seam
 
-the exact seam is the first post-H44 canonical Section 08 runtime-law `platform_hard_block_required(...)` block path on `RuntimeLawRuntime::evaluate(...)`.
+the exact seam is the first canonical Section 08 runtime-law `platform_hard_block_required(...)` untrusted-device platform-compatibility hard-block proof slice inside `S08-08`.
 
-the live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
-
-the smallest direct seam is the untrusted-device platform-compatibility hard-block branch via `DeviceTrustClass::UntrustedDevice` while compatibility and integrity remain non-blocking.
+the H45 proof kept the adjacent `DeviceTrustClass::RestrictedDevice` warning branch, adjacent `ClientCompatibilityStatus::UnsupportedClient` hard-block branch, adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch, and adjacent `ClientIntegrityStatus::Unknown` warning branch aligned and unselected by using `DeviceTrustClass::UntrustedDevice` with `ClientIntegrityStatus::IntegrityVerified` and `ClientCompatibilityStatus::Compatible`.
 
 ## Implementation Boundary
 
-Section 06 remains parked with the next exact winner `NOT_EXPLICIT` and is not selected in this run.
+the implementation remained bounded to the live runtime-law carrier on `RuntimeLawRuntime::evaluate(...)` -> `platform_hard_block_required(...)`.
 
-no code is changed in this run; this run only publishes the next active target.
+no engine, contract, PH1.OS, or runtime-governance file changed in this run.
 
 ## Proof Plan
 
-the exact candidate canonical proof for the next implementation is `at_runtime_law_18_untrusted_device_platform_compatibility_blocks_protected_execution`.
+the exact canonical proof published by this run is `at_runtime_law_18_untrusted_device_platform_compatibility_blocks_protected_execution`.
 
-The next implementation should prove that `RuntimeLawRuntime::evaluate(...)` blocks protected execution through `platform_hard_block_required(...)` when `DeviceTrustClass::UntrustedDevice` is selected while compatibility and integrity remain non-blocking.
+the proof now establishes that a contract-valid runtime execution envelope reaches the live runtime-law carrier and blocks protected execution through `platform_hard_block_required(...)` when device trust is set to `DeviceTrustClass::UntrustedDevice` while integrity remains `ClientIntegrityStatus::IntegrityVerified` and compatibility remains `ClientCompatibilityStatus::Compatible`.
+
+`S08-08` remains `PARTIAL`.
+
+no post-H45 next exact winner is published in this run.
 
 ## Out Of Scope
 
-S08-05 remains proven complete and the adjacent `ClientIntegrityStatus::Unknown` warning branch plus adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch are not selected in this run.
+Broader Section 08 closure remains out of scope for this run, including:
 
-S08-06 remains partial and the already-implemented `ClientCompatibilityStatus::UpgradeRequired` warning branch plus already-implemented `ClientCompatibilityStatus::UnsupportedClient` hard-block branch are not selected in this run.
-
-the already-implemented H42 restricted-device warning branch is not selected in this run.
-
-any broader `platform_trust_warning(...)` warning bundle remains out of scope for this run.
+- the adjacent `DeviceTrustClass::RestrictedDevice` warning branch
+- the adjacent `ClientCompatibilityStatus::UnsupportedClient` hard-block branch
+- the adjacent `ClientIntegrityStatus::IntegrityFailed` hard-block branch
+- the adjacent `ClientIntegrityStatus::Unknown` warning branch
+- broader `S08-08` architecture closure beyond the restricted-device warning and untrusted-device hard-block proof slices
+- broader `S08-06` compatibility governance closure
+- `S08-03` device capability registry closure
+- `S08-04` capability negotiation closure
+- `S08-07` platform event stream closure
+- `S08-09` platform telemetry closure
+- top-level PH1.OS closure
+- any Section 06, Section 09, Section 10, or Section 11 implementation work
