@@ -8,6 +8,8 @@ H64 publication remains live as the first canonical corrected Section 11 next-ta
 
 H64 implementation update remains live and already recorded `at_runtime_law_11_cluster_divergence_safe_modes_artifact_authority`.
 
+This update also records the first canonical H65 implementation update for the already-live `S11-16` artifact-authority canonical trust-linkage proof slice.
+
 H1 remains the PH1.LAW sequencing authority and PH1.LAW generalized protected-path live wiring remains parallel closure work.
 
 H1 still preserves that PH1.LAW may not be treated as globally complete simply because partial wiring already exists.
@@ -24,7 +26,7 @@ H62 remains published as the Section 09 frontier correction and the Section 09 n
 
 H63 remains published as the Section 10 frontier correction and the Section 10 next exact winner remains `NOT_EXPLICIT`.
 
-No code is changed in this run; this run only publishes the current exact Section 11 next-target truth already live in repo truth.
+No code is changed in this run; this run only records current Section 11 repo truth already live in source and tests.
 
 ## Published Repo Truth
 
@@ -105,6 +107,78 @@ The next exact Section 11 winner is now `at_runtime_law_14_artifact_authority_re
 `S11-16` remains `PARTIAL`.
 
 No post-H65 next exact winner is published in this run.
+
+## H65 Implementation Update
+
+This run is the first canonical H65 implementation update for the already-live `S11-16` artifact-authority canonical trust-linkage proof slice.
+
+H65 remains published as the first post-H64 canonical Section 11 next-target publication.
+
+H64 publication and H64 implementation update remain live and already recorded `at_runtime_law_11_cluster_divergence_safe_modes_artifact_authority`.
+
+The exact canonical proof implemented by this run is `at_runtime_law_14_artifact_authority_records_canonical_trust_linkage`.
+
+The exact seam is the live canonical trust-linkage recording path on `RuntimeLawRuntime::evaluate(...)`.
+
+The live state-carrier path is `RuntimeLawRuntime::evaluate(...)` -> `artifact_trust_law_linkage(...)` -> `RuntimeLawExecutionState::with_artifact_trust_linkage(...)`.
+
+The live decision-log carrier path is `RuntimeLawDecisionLogEntry::v1(...)` -> `RuntimeLawDecisionLogEntry::with_artifact_trust_linkage(...)`.
+
+The exact proof establishes that a contract-valid artifact-authority execution path records canonical trust decision linkage into runtime-law state, records canonical proof-record linkage into runtime-law state, and records canonical proof-entry linkage into final decision-log state while preserving PH1.LAW final runtime-law posture.
+
+Current source already preserves `RuntimeLawRuntime::evaluate(...)`.
+
+Current source already preserves `RuntimeLawRuntime::govern_completion(...)`.
+
+Current source already preserves `RuntimeLawRuntime::decision_log_snapshot()`.
+
+Current source already preserves `RuntimeLawRuntime::rule_registry_snapshot()`.
+
+Current source already preserves `RuntimeLawRuntime::policy_version()`.
+
+Current source already preserves `RuntimeLawPolicyWindow`.
+
+Current source already preserves `RuntimeLawRuleDescriptor`.
+
+Current source already preserves `RuntimeExecutionEnvelope.law_state`.
+
+Current source already preserves `RuntimeExecutionEnvelope::with_law_state(...)`.
+
+Current source already preserves `RuntimeLawExecutionState.artifact_trust_decision_ids`.
+
+Current source already preserves `RuntimeLawExecutionState.artifact_trust_proof_record_ref`.
+
+Current source already preserves `RuntimeLawDecisionLogEntry.artifact_trust_proof_entry_refs`.
+
+Current repo truth already preserves Phase A artifact-trust A5 `PASS`.
+
+Current repo truth already preserves `A5-REQ-LAW-CANONICAL`.
+
+Current repo truth already preserves `A5-REQ-PROOF-ENTRY-PRECEDENCE`.
+
+Current repo truth already preserves `TEST-A5-LAW-02 -> at_runtime_law_12_artifact_authority_requires_canonical_proof_linkage`.
+
+Current repo truth already preserves `TEST-A5-LAW-03 -> at_runtime_law_13_turn_level_proof_without_per_artifact_entry_still_blocks`.
+
+Current source still does not expose a dedicated independent-verification support surface.
+
+`S11-11` remains `PROVEN_COMPLETE`.
+
+`S11-12` remains `PARTIAL`.
+
+`S11-13` remains `PROVEN_COMPLETE`.
+
+`S11-14` remains `PARTIAL`.
+
+`S11-15` remains `NOT_EXPLICIT`.
+
+`S11-16` remains `PARTIAL`.
+
+The adjacent already-live exact seams `at_runtime_law_10_artifact_authority_missing_trust_state_blocks`, `at_runtime_law_11_cluster_divergence_safe_modes_artifact_authority`, `at_runtime_law_12_artifact_authority_requires_canonical_proof_linkage`, and `at_runtime_law_13_turn_level_proof_without_per_artifact_entry_still_blocks` remained preserved and unselected in this run.
+
+No source change was required in this run.
+
+No post-H65 next-target publication is authored in this run.
 
 ## Publication Basis
 
