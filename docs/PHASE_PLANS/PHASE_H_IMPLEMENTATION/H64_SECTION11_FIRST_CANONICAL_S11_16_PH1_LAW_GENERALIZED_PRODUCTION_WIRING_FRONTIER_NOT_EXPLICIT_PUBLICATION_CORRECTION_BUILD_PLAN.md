@@ -2,7 +2,9 @@
 
 ## Objective
 
-This is the first canonical H64 Section 11 docs-only correction publication on the preauthorized H64 path.
+This file first published the canonical H64 Section 11 docs-only correction publication on the preauthorized H64 path.
+
+This update also records the first canonical corrected H64 implementation update for the already-live `S11-14` cluster-divergence safe-mode artifact-authority proof slice.
 
 The originally proposed H64 `S11-16` frontier-not-explicit publication is not lawful on current repo truth because current source already exposes dedicated Section 11 rule-registry and policy-versioning surfaces.
 
@@ -115,9 +117,61 @@ The next exact Section 11 winner is `at_runtime_law_11_cluster_divergence_safe_m
 
 `S11-16` remains `PARTIAL`.
 
-No Section 11 implementation work is performed in this run.
+This docs-only run records the first canonical corrected H64 implementation update for the already-live `S11-14` proof slice.
 
-No post-H64 implementation is published in this run.
+No post-H64 next-target publication is authored in this run.
+
+## H64 Implementation Update
+
+This run is the first canonical corrected H64 implementation update for the already-live `S11-14` cluster-divergence safe-mode artifact-authority proof slice.
+
+H64 remains published as the first canonical corrected Section 11 next-target publication.
+
+The exact canonical proof implemented by this run is `at_runtime_law_11_cluster_divergence_safe_modes_artifact_authority`.
+
+The exact seam is the first canonical corrected Section 11 cluster-divergence safe-mode artifact-authority path on `RuntimeLawRuntime::evaluate(...)`.
+
+The live carrier path is `RuntimeLawRuntime::evaluate(...)` -> `artifact_trust_failure_posture(...)`.
+
+The proof establishes that a contract-valid artifact-authority execution path reaches the live runtime-law carrier and safe-modes protected execution when artifact-trust failure class is `ArtifactVerificationFailureClass::ClusterTrustDivergence`.
+
+Current source already preserves `RuntimeLawRuntime::evaluate(...)`.
+
+Current source already preserves `RuntimeLawRuntime::govern_completion(...)`.
+
+Current source already preserves `RuntimeLawRuntime::decision_log_snapshot()`.
+
+Current source already preserves `RuntimeLawRuntime::rule_registry_snapshot()`.
+
+Current source already preserves `RuntimeLawRuntime::policy_version()`.
+
+Current source already preserves `RuntimeLawPolicyWindow`.
+
+Current source already preserves `RuntimeLawRuleDescriptor`.
+
+Current source already preserves `RuntimeExecutionEnvelope.law_state`.
+
+Current source already preserves `RuntimeExecutionEnvelope::with_law_state(...)`.
+
+Current source still does not expose a dedicated independent-verification support surface.
+
+`S11-11` remains `PROVEN_COMPLETE`.
+
+`S11-12` remains `PARTIAL`.
+
+`S11-13` remains `PROVEN_COMPLETE`.
+
+`S11-14` remains `PARTIAL`.
+
+`S11-15` remains `NOT_EXPLICIT`.
+
+`S11-16` remains `PARTIAL`.
+
+The adjacent already-live exact seams `at_runtime_law_10_artifact_authority_missing_trust_state_blocks`, `at_runtime_law_12_artifact_authority_requires_canonical_proof_linkage`, `at_runtime_law_13_turn_level_proof_without_per_artifact_entry_still_blocks`, and `at_runtime_law_14_artifact_authority_records_canonical_trust_linkage` remained preserved and unselected in this run.
+
+No source change was required in this run.
+
+No post-H64 next-target publication is authored in this run.
 
 ## Publication Basis
 
