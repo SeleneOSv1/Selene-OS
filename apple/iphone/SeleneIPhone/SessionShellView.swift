@@ -26,7 +26,7 @@ private enum ShellDisplayState: String {
         case .explicitEntryReady:
             return "The iPhone shell is waiting for lawful explicit entry through canonical app-open / invite-open ingress."
         case .onboardingEntryActive:
-            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding-outcome context only."
+            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, and remaining platform-receipt context only."
         }
     }
 }
@@ -60,6 +60,8 @@ struct ExplicitEntryContext: Identifiable, Equatable {
     let nextStep: String?
     let requiredFields: [String]
     let requiredVerificationGates: [String]
+    let onboardingStatus: String?
+    let remainingPlatformReceiptKinds: [String]
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -84,6 +86,11 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         let nextStep = Self.firstValue(in: queryItems, names: ["next_step"])
         let requiredFields = Self.values(in: queryItems, names: ["required_field"])
         let requiredVerificationGates = Self.values(in: queryItems, names: ["verification_gate"])
+        let onboardingStatus = Self.firstValue(in: queryItems, names: ["onboarding_status"])
+        let remainingPlatformReceiptKinds = Self.values(
+            in: queryItems,
+            names: ["remaining_platform_receipt_kind"]
+        )
 
         let lowerPath = path.lowercased()
         let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding") || token != nil
@@ -112,6 +119,8 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         self.nextStep = Self.boundedHint(nextStep)
         self.requiredFields = Self.boundedValues(requiredFields)
         self.requiredVerificationGates = Self.boundedValues(requiredVerificationGates)
+        self.onboardingStatus = Self.boundedHint(onboardingStatus)
+        self.remainingPlatformReceiptKinds = Self.boundedValues(remainingPlatformReceiptKinds)
     }
 
     var rows: [EntryMetadataRow] {
@@ -158,6 +167,21 @@ struct ExplicitEntryContext: Identifiable, Equatable {
             EntryMetadataRow(
                 label: "required_verification_gates",
                 value: requiredVerificationGates.isEmpty ? "none_provided" : "\(requiredVerificationGates.count)_provided"
+            ),
+        ]
+    }
+
+    var onboardingContinueRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(
+                label: "onboarding_status",
+                value: onboardingStatus ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "remaining_platform_receipt_kinds",
+                value: remainingPlatformReceiptKinds.isEmpty
+                    ? "none_provided"
+                    : "\(remainingPlatformReceiptKinds.count)_provided"
             ),
         ]
     }
@@ -309,6 +333,10 @@ struct SessionShellView: View {
             Text("Bounded explicit-entry shell for governed app-open / invite-open rendering only.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            Text("H75 adds read-only onboarding_status and remaining platform-receipt visibility only.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -370,6 +398,8 @@ struct SessionShellView: View {
 
                 onboardingOutcomeSummary(context)
 
+                onboardingContinueStatusSummary(context)
+
                 outcomeListCard(
                     title: "required_fields",
                     items: context.requiredFields,
@@ -380,6 +410,12 @@ struct SessionShellView: View {
                     title: "required_verification_gates",
                     items: context.requiredVerificationGates,
                     emptyText: "No required_verification_gates were provided in the bounded route context."
+                )
+
+                outcomeListCard(
+                    title: "remaining_platform_receipt_kinds",
+                    items: context.remainingPlatformReceiptKinds,
+                    emptyText: "No remaining_platform_receipt_kinds were provided in the bounded route context."
                 )
 
                 Button("Return to EXPLICIT_ENTRY_READY") {
@@ -397,7 +433,7 @@ struct SessionShellView: View {
     private func onboardingOutcomeSummary(_ context: ExplicitEntryContext) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Read-only onboarding outcome preview aligned to `AppInviteLinkOpenOutcome` only.")
+                Text("Read-only onboarding outcome preview aligned to `AppInviteLinkOpenOutcome` and bounded takeover posture only.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 ForEach(context.onboardingOutcomeRows) { row in
@@ -420,6 +456,36 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Onboarding Outcome")
+                .font(.headline)
+        }
+    }
+
+    private func onboardingContinueStatusSummary(_ context: ExplicitEntryContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Read-only onboarding continue status preview aligned to bounded `AppOnboardingContinueOutcome` status only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(context.onboardingContinueRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 180, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("This H75 surface preserves current receipt/task status only and does not surface blocking_field, blocking_question, remaining_missing_fields, voice_artifact_sync_receipt_ref, or access_engine_instance_id.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Onboarding Continue Status")
                 .font(.headline)
         }
     }

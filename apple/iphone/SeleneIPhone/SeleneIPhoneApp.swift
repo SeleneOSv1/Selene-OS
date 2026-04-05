@@ -12,6 +12,7 @@ struct SeleneIPhoneApp: App {
 
     private var rootShell: some View {
         SessionShellView(router: explicitEntryRouter)
+            // Canonical app-open / invite-open URLs are handed into the bounded shell only.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)
             }
