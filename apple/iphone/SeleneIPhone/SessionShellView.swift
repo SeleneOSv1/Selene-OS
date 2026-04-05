@@ -26,7 +26,7 @@ private enum ShellDisplayState: String {
         case .explicitEntryReady:
             return "The iPhone shell is waiting for lawful explicit entry through canonical app-open / invite-open ingress."
         case .onboardingEntryActive:
-            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, prompt-state, and remaining platform-receipt context only."
+            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, prompt-state, artifact/access identifier, and remaining platform-receipt context only."
         }
     }
 }
@@ -65,6 +65,8 @@ struct ExplicitEntryContext: Identifiable, Equatable {
     let remainingMissingFields: [String]
     let onboardingStatus: String?
     let remainingPlatformReceiptKinds: [String]
+    let voiceArtifactSyncReceiptRef: String?
+    let accessEngineInstanceID: String?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -96,6 +98,14 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         let remainingPlatformReceiptKinds = Self.values(
             in: queryItems,
             names: ["remaining_platform_receipt_kind"]
+        )
+        let voiceArtifactSyncReceiptRef = Self.firstValue(
+            in: queryItems,
+            names: ["voice_artifact_sync_receipt_ref"]
+        )
+        let accessEngineInstanceID = Self.firstValue(
+            in: queryItems,
+            names: ["access_engine_instance_id"]
         )
 
         let lowerPath = path.lowercased()
@@ -130,6 +140,8 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         self.remainingMissingFields = Self.boundedValues(remainingMissingFields)
         self.onboardingStatus = Self.boundedHint(onboardingStatus)
         self.remainingPlatformReceiptKinds = Self.boundedValues(remainingPlatformReceiptKinds)
+        self.voiceArtifactSyncReceiptRef = Self.boundedHint(voiceArtifactSyncReceiptRef)
+        self.accessEngineInstanceID = Self.boundedHint(accessEngineInstanceID)
     }
 
     var rows: [EntryMetadataRow] {
@@ -210,6 +222,19 @@ struct ExplicitEntryContext: Identifiable, Equatable {
                 value: remainingMissingFields.isEmpty
                     ? "none_provided"
                     : "\(remainingMissingFields.count)_provided"
+            ),
+        ]
+    }
+
+    var onboardingContinueArtifactAccessRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(
+                label: "voice_artifact_sync_receipt_ref",
+                value: voiceArtifactSyncReceiptRef ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "access_engine_instance_id",
+                value: accessEngineInstanceID ?? "not_provided"
             ),
         ]
     }
@@ -362,7 +387,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H76 adds read-only blocking_field, blocking_question, and remaining missing-field visibility while preserving the H74 and H75 takeover surfaces.")
+            Text("H77 adds read-only voice_artifact_sync_receipt_ref and access_engine_instance_id visibility while preserving the H74, H75, and H76 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -429,6 +454,8 @@ struct SessionShellView: View {
                 onboardingContinueStatusSummary(context)
 
                 onboardingContinuePromptSummary(context)
+
+                onboardingContinueArtifactAccessSummary(context)
 
                 outcomeListCard(
                     title: "required_fields",
@@ -515,7 +542,7 @@ struct SessionShellView: View {
                     }
                 }
 
-                Text("This H75 surface preserves current receipt/task status only, and H76 keeps that bounded while still refusing to surface voice_artifact_sync_receipt_ref or access_engine_instance_id.")
+                Text("This H75 surface still preserves current receipt/task status only, while H77 keeps voice_artifact_sync_receipt_ref and access_engine_instance_id in a separate read-only identifier surface.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -552,6 +579,36 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Onboarding Continue Prompt")
+                .font(.headline)
+        }
+    }
+
+    private func onboardingContinueArtifactAccessSummary(_ context: ExplicitEntryContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Read-only onboarding continue artifact/access preview aligned to bounded `AppOnboardingContinueOutcome` identifier state only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(context.onboardingContinueArtifactAccessRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 180, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("This H77 surface preserves identifier visibility only and does not start voice-artifact sync, activate access engines, or produce runtime requests locally.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Onboarding Continue Artifact/Access")
                 .font(.headline)
         }
     }
