@@ -12,7 +12,8 @@ struct SeleneIPhoneApp: App {
 
     private var rootShell: some View {
         SessionShellView(router: explicitEntryRouter)
-            // Canonical app-open / invite-open URLs are handed into the bounded shell only.
+            // Canonical app-open / invite-open URLs are handed into the bounded shell only,
+            // where H76 prompt-state preview remains read-only and cloud-authoritative.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)
             }

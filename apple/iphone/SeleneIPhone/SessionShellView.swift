@@ -26,7 +26,7 @@ private enum ShellDisplayState: String {
         case .explicitEntryReady:
             return "The iPhone shell is waiting for lawful explicit entry through canonical app-open / invite-open ingress."
         case .onboardingEntryActive:
-            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, and remaining platform-receipt context only."
+            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, prompt-state, and remaining platform-receipt context only."
         }
     }
 }
@@ -60,6 +60,9 @@ struct ExplicitEntryContext: Identifiable, Equatable {
     let nextStep: String?
     let requiredFields: [String]
     let requiredVerificationGates: [String]
+    let blockingField: String?
+    let blockingQuestion: String?
+    let remainingMissingFields: [String]
     let onboardingStatus: String?
     let remainingPlatformReceiptKinds: [String]
 
@@ -86,6 +89,9 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         let nextStep = Self.firstValue(in: queryItems, names: ["next_step"])
         let requiredFields = Self.values(in: queryItems, names: ["required_field"])
         let requiredVerificationGates = Self.values(in: queryItems, names: ["verification_gate"])
+        let blockingField = Self.firstValue(in: queryItems, names: ["blocking_field"])
+        let blockingQuestion = Self.firstValue(in: queryItems, names: ["blocking_question"])
+        let remainingMissingFields = Self.values(in: queryItems, names: ["remaining_missing_field"])
         let onboardingStatus = Self.firstValue(in: queryItems, names: ["onboarding_status"])
         let remainingPlatformReceiptKinds = Self.values(
             in: queryItems,
@@ -119,6 +125,9 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         self.nextStep = Self.boundedHint(nextStep)
         self.requiredFields = Self.boundedValues(requiredFields)
         self.requiredVerificationGates = Self.boundedValues(requiredVerificationGates)
+        self.blockingField = Self.boundedHint(blockingField)
+        self.blockingQuestion = Self.boundedHint(blockingQuestion)
+        self.remainingMissingFields = Self.boundedValues(remainingMissingFields)
         self.onboardingStatus = Self.boundedHint(onboardingStatus)
         self.remainingPlatformReceiptKinds = Self.boundedValues(remainingPlatformReceiptKinds)
     }
@@ -182,6 +191,25 @@ struct ExplicitEntryContext: Identifiable, Equatable {
                 value: remainingPlatformReceiptKinds.isEmpty
                     ? "none_provided"
                     : "\(remainingPlatformReceiptKinds.count)_provided"
+            ),
+        ]
+    }
+
+    var onboardingContinuePromptRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(
+                label: "blocking_field",
+                value: blockingField ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "blocking_question",
+                value: blockingQuestion ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "remaining_missing_fields",
+                value: remainingMissingFields.isEmpty
+                    ? "none_provided"
+                    : "\(remainingMissingFields.count)_provided"
             ),
         ]
     }
@@ -334,7 +362,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H75 adds read-only onboarding_status and remaining platform-receipt visibility only.")
+            Text("H76 adds read-only blocking_field, blocking_question, and remaining missing-field visibility while preserving the H74 and H75 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -400,6 +428,8 @@ struct SessionShellView: View {
 
                 onboardingContinueStatusSummary(context)
 
+                onboardingContinuePromptSummary(context)
+
                 outcomeListCard(
                     title: "required_fields",
                     items: context.requiredFields,
@@ -410,6 +440,12 @@ struct SessionShellView: View {
                     title: "required_verification_gates",
                     items: context.requiredVerificationGates,
                     emptyText: "No required_verification_gates were provided in the bounded route context."
+                )
+
+                outcomeListCard(
+                    title: "remaining_missing_fields",
+                    items: context.remainingMissingFields,
+                    emptyText: "No remaining_missing_fields were provided in the bounded route context."
                 )
 
                 outcomeListCard(
@@ -463,7 +499,7 @@ struct SessionShellView: View {
     private func onboardingContinueStatusSummary(_ context: ExplicitEntryContext) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Read-only onboarding continue status preview aligned to bounded `AppOnboardingContinueOutcome` status only.")
+                Text("Read-only onboarding continue status preview aligned to bounded `AppOnboardingContinueOutcome` status and receipt-state only.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 ForEach(context.onboardingContinueRows) { row in
@@ -479,13 +515,43 @@ struct SessionShellView: View {
                     }
                 }
 
-                Text("This H75 surface preserves current receipt/task status only and does not surface blocking_field, blocking_question, remaining_missing_fields, voice_artifact_sync_receipt_ref, or access_engine_instance_id.")
+                Text("This H75 surface preserves current receipt/task status only, and H76 keeps that bounded while still refusing to surface voice_artifact_sync_receipt_ref or access_engine_instance_id.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } label: {
             Text("Onboarding Continue Status")
+                .font(.headline)
+        }
+    }
+
+    private func onboardingContinuePromptSummary(_ context: ExplicitEntryContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Read-only onboarding continue prompt preview aligned to bounded `AppOnboardingContinueOutcome` missing-field prompt state only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(context.onboardingContinuePromptRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 180, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("This H76 surface preserves current missing-field prompt state only and does not submit required fields, advance onboarding, or produce runtime requests locally.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Onboarding Continue Prompt")
                 .font(.headline)
         }
     }
