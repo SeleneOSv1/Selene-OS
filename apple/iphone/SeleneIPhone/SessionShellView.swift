@@ -26,7 +26,7 @@ private enum ShellDisplayState: String {
         case .explicitEntryReady:
             return "The iPhone shell is waiting for lawful explicit entry through canonical app-open / invite-open ingress."
         case .onboardingEntryActive:
-            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface only."
+            return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding-outcome context only."
         }
     }
 }
@@ -56,6 +56,10 @@ struct ExplicitEntryContext: Identifiable, Equatable {
     let deepLinkNonce: String?
     let appInstance: String?
     let deviceFingerprint: String?
+    let onboardingSessionID: String?
+    let nextStep: String?
+    let requiredFields: [String]
+    let requiredVerificationGates: [String]
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -76,6 +80,10 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         let nonce = Self.firstValue(in: queryItems, names: ["nonce", "deep_link_nonce"])
         let appInstance = Self.firstValue(in: queryItems, names: ["app_instance", "app"])
         let deviceFingerprint = Self.firstValue(in: queryItems, names: ["device_fingerprint", "device"])
+        let onboardingSessionID = Self.firstValue(in: queryItems, names: ["onboarding_session_id"])
+        let nextStep = Self.firstValue(in: queryItems, names: ["next_step"])
+        let requiredFields = Self.values(in: queryItems, names: ["required_field"])
+        let requiredVerificationGates = Self.values(in: queryItems, names: ["verification_gate"])
 
         let lowerPath = path.lowercased()
         let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding") || token != nil
@@ -100,6 +108,10 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         self.deepLinkNonce = Self.boundedHint(nonce)
         self.appInstance = Self.boundedHint(appInstance)
         self.deviceFingerprint = Self.boundedHint(deviceFingerprint)
+        self.onboardingSessionID = Self.boundedHint(onboardingSessionID)
+        self.nextStep = Self.boundedHint(nextStep)
+        self.requiredFields = Self.boundedValues(requiredFields)
+        self.requiredVerificationGates = Self.boundedValues(requiredVerificationGates)
     }
 
     var rows: [EntryMetadataRow] {
@@ -129,6 +141,27 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         return rows
     }
 
+    var onboardingOutcomeRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(
+                label: "onboarding_session_id",
+                value: onboardingSessionID ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "next_step",
+                value: nextStep ?? "not_provided"
+            ),
+            EntryMetadataRow(
+                label: "required_fields",
+                value: requiredFields.isEmpty ? "none_provided" : "\(requiredFields.count)_provided"
+            ),
+            EntryMetadataRow(
+                label: "required_verification_gates",
+                value: requiredVerificationGates.isEmpty ? "none_provided" : "\(requiredVerificationGates.count)_provided"
+            ),
+        ]
+    }
+
     private static func firstValue(in queryItems: [URLQueryItem], names: [String]) -> String? {
         for name in names {
             if let value = queryItems.first(where: { $0.name.lowercased() == name })?.value,
@@ -138,6 +171,22 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         }
 
         return nil
+    }
+
+    private static func values(in queryItems: [URLQueryItem], names: [String]) -> [String] {
+        var values: [String] = []
+
+        for queryItem in queryItems {
+            guard names.contains(queryItem.name.lowercased()),
+                  let value = queryItem.value,
+                  !value.isEmpty else {
+                continue
+            }
+
+            values.append(value)
+        }
+
+        return values
     }
 
     private static func boundedHint(_ rawValue: String?) -> String? {
@@ -150,6 +199,20 @@ struct ExplicitEntryContext: Identifiable, Equatable {
         }
 
         return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
+    }
+
+    private static func boundedValues(_ rawValues: [String]) -> [String] {
+        var bounded: [String] = []
+
+        for rawValue in rawValues {
+            guard let value = boundedHint(rawValue), !bounded.contains(value) else {
+                continue
+            }
+
+            bounded.append(value)
+        }
+
+        return bounded
     }
 }
 
@@ -303,6 +366,22 @@ struct SessionShellView: View {
                     }
                 }
 
+                Divider()
+
+                onboardingOutcomeSummary(context)
+
+                outcomeListCard(
+                    title: "required_fields",
+                    items: context.requiredFields,
+                    emptyText: "No required_fields were provided in the bounded route context."
+                )
+
+                outcomeListCard(
+                    title: "required_verification_gates",
+                    items: context.requiredVerificationGates,
+                    emptyText: "No required_verification_gates were provided in the bounded route context."
+                )
+
                 Button("Return to EXPLICIT_ENTRY_READY") {
                     activeContext = nil
                     displayState = .explicitEntryReady
@@ -311,6 +390,64 @@ struct SessionShellView: View {
             }
         } label: {
             Text("ONBOARDING_ENTRY_ACTIVE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func onboardingOutcomeSummary(_ context: ExplicitEntryContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Read-only onboarding outcome preview aligned to `AppInviteLinkOpenOutcome` only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(context.onboardingOutcomeRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 180, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("This takeover surface does not activate invites, complete onboarding, bypass verification, or produce runtime requests locally.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Onboarding Outcome")
+                .font(.headline)
+        }
+    }
+
+    private func outcomeListCard(title: String, items: [String], emptyText: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if items.isEmpty {
+                    Text(emptyText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text("\(index + 1).")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 24, alignment: .leading)
+
+                            Text(item)
+                                .font(.body.monospaced())
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text(title)
                 .font(.headline.monospaced())
         }
     }

@@ -6,10 +6,14 @@ struct SeleneIPhoneApp: App {
 
     var body: some Scene {
         WindowGroup {
-            SessionShellView(router: explicitEntryRouter)
-                .onOpenURL { url in
-                    explicitEntryRouter.receive(url: url)
-                }
+            rootShell
         }
+    }
+
+    private var rootShell: some View {
+        SessionShellView(router: explicitEntryRouter)
+            .onOpenURL { url in
+                explicitEntryRouter.receive(url: url)
+            }
     }
 }
