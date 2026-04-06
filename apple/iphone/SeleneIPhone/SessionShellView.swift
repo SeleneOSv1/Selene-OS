@@ -6,11 +6,21 @@ import SwiftUI
 final class ExplicitEntryRouter: ObservableObject {
     @Published private(set) var latestContext: ExplicitEntryContext?
     @Published private(set) var latestSessionActiveVisibleContext: SessionActiveVisibleContext?
+    @Published private(set) var latestSessionSoftClosedVisibleContext: SessionSoftClosedVisibleContext?
     @Published private(set) var latestSessionOpenVisibleContext: SessionOpenVisibleContext?
 
     func receive(url: URL) {
         if let sessionActiveContext = SessionActiveVisibleContext(url: url) {
             latestSessionActiveVisibleContext = sessionActiveContext
+            latestSessionSoftClosedVisibleContext = nil
+            latestSessionOpenVisibleContext = nil
+            latestContext = nil
+            return
+        }
+
+        if let sessionSoftClosedContext = SessionSoftClosedVisibleContext(url: url) {
+            latestSessionActiveVisibleContext = nil
+            latestSessionSoftClosedVisibleContext = sessionSoftClosedContext
             latestSessionOpenVisibleContext = nil
             latestContext = nil
             return
@@ -18,6 +28,7 @@ final class ExplicitEntryRouter: ObservableObject {
 
         if let sessionOpenContext = SessionOpenVisibleContext(url: url) {
             latestSessionActiveVisibleContext = nil
+            latestSessionSoftClosedVisibleContext = nil
             latestSessionOpenVisibleContext = sessionOpenContext
             latestContext = nil
             return
@@ -28,6 +39,7 @@ final class ExplicitEntryRouter: ObservableObject {
         }
 
         latestSessionActiveVisibleContext = nil
+        latestSessionSoftClosedVisibleContext = nil
         latestSessionOpenVisibleContext = nil
         latestContext = context
     }
@@ -38,6 +50,7 @@ private enum ShellDisplayState: String {
     case onboardingEntryActive = "ONBOARDING_ENTRY_ACTIVE"
     case sessionOpenVisible = "SESSION_OPEN_VISIBLE"
     case sessionActiveVisible = "SESSION_ACTIVE_VISIBLE"
+    case sessionSoftClosedVisible = "SESSION_SOFT_CLOSED_VISIBLE"
 
     var title: String {
         rawValue
@@ -53,6 +66,8 @@ private enum ShellDisplayState: String {
             return "A lawful app-open route has been parsed and is being rendered as a bounded current session banner with session attach outcome continuity labeling only."
         case .sessionActiveVisible:
             return "A lawful app-open route has been parsed and is being rendered as a bounded active-session surface with live dual transcript, current turn envelope, and current governed-output summary only."
+        case .sessionSoftClosedVisible:
+            return "A lawful app-open route has been parsed and is being rendered as a bounded soft-closed session surface with explicit resume affordance, archived recent slice, and bounded PH1.M resume context only."
         }
     }
 }
@@ -377,6 +392,230 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return "\(trimmed.prefix(217))..."
+    }
+}
+
+struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
+    let id: String
+    let sessionID: String
+    let sessionState: String
+    let selectedThreadID: String?
+    let selectedThreadTitle: String?
+    let pendingWorkOrderID: String?
+    let resumeTier: String?
+    let resumeSummaryBullets: [String]
+    let archivedUserTurnText: String
+    let archivedSeleneTurnText: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let scheme = (components.scheme ?? "").lowercased()
+        guard ["selene", "https", "http"].contains(scheme) else {
+            return nil
+        }
+
+        let host = (components.host ?? "no-host").lowercased()
+        let path = components.path.isEmpty ? "/" : components.path
+        let lowerPath = path.lowercased()
+        let queryItems = components.queryItems ?? []
+        let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding")
+        let appOpenLike = host.contains("open")
+            || lowerPath.contains("open")
+            || lowerPath.contains("entry")
+            || Self.hasQueryItem(in: queryItems, name: "session_state")
+
+        let sessionState = Self.canonicalSessionState(
+            Self.firstQueryValue(in: queryItems, name: "session_state")
+        )
+        let sessionID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "session_id")
+        )
+        let selectedThreadID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "selected_thread_id")
+        )
+        let selectedThreadTitle = Self.boundedTitle(
+            Self.firstQueryValue(in: queryItems, name: "selected_thread_title")
+        )
+        let pendingWorkOrderID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "pending_work_order_id")
+        )
+        let resumeTier = Self.canonicalResumeTier(
+            Self.firstQueryValue(in: queryItems, name: "resume_tier")
+        )
+        let resumeSummaryBullets = Self.resumeSummaryBullets(in: queryItems)
+        let archivedUserTurnText = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "archived_user_turn_text")
+        )
+        let archivedSeleneTurnText = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "archived_selene_turn_text")
+        )
+
+        guard !inviteLike,
+              appOpenLike,
+              let sessionState,
+              let sessionID,
+              let archivedUserTurnText,
+              let archivedSeleneTurnText else {
+            return nil
+        }
+
+        self.id = url.absoluteString
+        self.sessionID = sessionID
+        self.sessionState = sessionState
+        self.selectedThreadID = selectedThreadID
+        self.selectedThreadTitle = selectedThreadTitle
+        self.pendingWorkOrderID = pendingWorkOrderID
+        self.resumeTier = resumeTier
+        self.resumeSummaryBullets = resumeSummaryBullets
+        self.archivedUserTurnText = archivedUserTurnText
+        self.archivedSeleneTurnText = archivedSeleneTurnText
+    }
+
+    var sessionRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "session_state", value: sessionState),
+            EntryMetadataRow(label: "session_id", value: sessionID),
+        ]
+    }
+
+    var archivedRecentSliceEntries: [RecentThreadPreviewEntry] {
+        [
+            RecentThreadPreviewEntry(
+                speaker: "You",
+                posture: "archived_user_turn_text",
+                body: archivedUserTurnText,
+                detail: "Archived recent slice remains durable archived conversation truth and stays distinct from bounded PH1.M `resume context` output."
+            ),
+            RecentThreadPreviewEntry(
+                speaker: "Selene",
+                posture: "archived_selene_turn_text",
+                body: archivedSeleneTurnText,
+                detail: "Archived recent slice remains text-visible after visual reset without local auto-reopen, hidden spoken-only output, or local transcript authority."
+            ),
+        ]
+    }
+
+    var resumeContextRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "selected_thread_id", value: selectedThreadID ?? "not_provided"),
+            EntryMetadataRow(label: "selected_thread_title", value: selectedThreadTitle ?? "not_provided"),
+            EntryMetadataRow(label: "pending_work_order_id", value: pendingWorkOrderID ?? "not_provided"),
+            EntryMetadataRow(label: "resume_tier", value: resumeTier ?? "not_provided"),
+        ]
+    }
+
+    private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
+        queryItems.contains { $0.name.lowercased() == name }
+    }
+
+    private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
+        queryItems.first(where: { $0.name.lowercased() == name })?.value
+    }
+
+    private static func resumeSummaryBullets(in queryItems: [URLQueryItem]) -> [String] {
+        queryItems.compactMap { queryItem in
+            guard queryItem.name.lowercased() == "resume_summary_bullets" else {
+                return nil
+            }
+
+            return boundedBullet(queryItem.value)
+        }
+    }
+
+    private static func canonicalSessionState(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized == "SOFT_CLOSED" else {
+            return nil
+        }
+
+        return "SessionState::SoftClosed"
+    }
+
+    private static func canonicalResumeTier(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "HOT":
+            return "MemoryResumeTier::Hot"
+        case "WARM":
+            return "MemoryResumeTier::Warm"
+        case "COLD":
+            return "MemoryResumeTier::Cold"
+        default:
+            return nil
+        }
+    }
+
+    private static func boundedHint(_ rawValue: String?) -> String? {
+        guard let rawValue, !rawValue.isEmpty else {
+            return nil
+        }
+
+        if rawValue.count <= 18 {
+            return rawValue
+        }
+
+        return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
+    }
+
+    private static func boundedTitle(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 72 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(69))..."
+    }
+
+    private static func boundedTranscript(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 180 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(177))..."
+    }
+
+    private static func boundedBullet(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 140 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(137))..."
     }
 }
 
@@ -1042,6 +1281,7 @@ struct SessionShellView: View {
     @State private var displayState: ShellDisplayState = .explicitEntryReady
     @State private var activeContext: ExplicitEntryContext?
     @State private var activeSessionActiveContext: SessionActiveVisibleContext?
+    @State private var activeSessionSoftClosedContext: SessionSoftClosedVisibleContext?
     @State private var activeSessionOpenContext: SessionOpenVisibleContext?
     @State private var typedTurnDraft: String = ""
     @State private var typedTurnPendingRequest: TypedTurnRequestState?
@@ -1185,6 +1425,8 @@ struct SessionShellView: View {
                     takeoverCard(activeContext)
                 } else if displayState == .sessionActiveVisible, let activeSessionActiveContext {
                     sessionActiveVisibleCard(activeSessionActiveContext)
+                } else if displayState == .sessionSoftClosedVisible, let activeSessionSoftClosedContext {
+                    sessionSoftClosedVisibleCard(activeSessionSoftClosedContext)
                 } else if displayState == .sessionOpenVisible, let activeSessionOpenContext {
                     sessionOpenVisibleCard(activeSessionOpenContext)
                 } else {
@@ -1194,7 +1436,7 @@ struct SessionShellView: View {
                 setupReceiptCard
                 boundedSurfaceCard(
                     title: "Session",
-                    detail: "One dominant session surface remains primary. Bounded typed-turn request production now lives here while authoritative transcript acceptance and response remain cloud-side."
+                    detail: "One dominant session surface remains primary. Bounded typed-turn request production lives in lawful explicit-ready / open / active posture while bounded soft-closed posture remains limited to explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only."
                 )
             }
             .padding(24)
@@ -1207,6 +1449,7 @@ struct SessionShellView: View {
             }
 
             activeSessionActiveContext = nil
+            activeSessionSoftClosedContext = nil
             activeSessionOpenContext = nil
             activeContext = newContext
             displayState = .onboardingEntryActive
@@ -1217,9 +1460,21 @@ struct SessionShellView: View {
             }
 
             activeContext = nil
+            activeSessionSoftClosedContext = nil
             activeSessionOpenContext = nil
             activeSessionActiveContext = newContext
             displayState = .sessionActiveVisible
+        }
+        .onChange(of: router.latestSessionSoftClosedVisibleContext) { _, newContext in
+            guard let newContext else {
+                return
+            }
+
+            activeContext = nil
+            activeSessionActiveContext = nil
+            activeSessionOpenContext = nil
+            activeSessionSoftClosedContext = newContext
+            displayState = .sessionSoftClosedVisible
         }
         .onChange(of: router.latestSessionOpenVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1228,11 +1483,12 @@ struct SessionShellView: View {
 
             activeContext = nil
             activeSessionActiveContext = nil
+            activeSessionSoftClosedContext = nil
             activeSessionOpenContext = newContext
             displayState = .sessionOpenVisible
         }
         .onChange(of: displayState) { _, newState in
-            if newState == .onboardingEntryActive {
+            if newState == .onboardingEntryActive || newState == .sessionSoftClosedVisible {
                 explicitVoiceController.haltCaptureSession()
             }
         }
@@ -1261,7 +1517,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H86 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, and the H74-H77 takeover surfaces while preserving the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam and adding bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary only.")
+            Text("H87 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, the H74-H77 takeover surfaces, the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam, the H86 bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary seam, and now also adds bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -1276,7 +1532,7 @@ struct SessionShellView: View {
                 Text(displayState.detail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, and authoritative transcript state while the typed and explicit voice surfaces only produce bounded explicit turn requests.")
+                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, authoritative transcript state, archived recent slice truth, and bounded PH1.M `resume context` while typed and explicit voice surfaces produce bounded explicit turn requests only where those surfaces remain lawful.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1293,7 +1549,7 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H86 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE` or `SESSION_ACTIVE_VISIBLE` route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
+                Text("H87 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, or `SESSION_SOFT_CLOSED_VISIBLE` route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
@@ -1346,6 +1602,152 @@ struct SessionShellView: View {
         } label: {
             Text("SESSION_OPEN_VISIBLE")
                 .font(.headline.monospaced())
+        }
+    }
+
+    private func sessionSoftClosedVisibleCard(_ context: SessionSoftClosedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Resume the selected thread explicitly")
+                    .font(.headline)
+
+                Text("H87 adds a bounded native `SESSION_SOFT_CLOSED_VISIBLE` surface aligned to `SessionState::SoftClosed`, archived conversation truth, and bounded PH1.M `resume context` while preserving the H85 open-session and H86 active-session route-seeding contracts.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("SessionState::SoftClosed")
+                    posturePill("Cloud authoritative")
+                }
+
+                ForEach(context.sessionRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                archivedRecentSliceCard(context)
+                resumeContextCard(context)
+
+                Text("Visual reset may clear the screen, but archive truth remains durable.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local auto-reopen from cache alone, no typed-turn request production, no explicit voice-turn request production, no local session resurrection, and no local decision shortcuts are introduced by this surface.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Resume the selected thread explicitly") {}
+                        .buttonStyle(.borderedProminent)
+                        .disabled(true)
+
+                    Button("Return to EXPLICIT_ENTRY_READY") {
+                        activeSessionSoftClosedContext = nil
+                        displayState = .explicitEntryReady
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        } label: {
+            Text("SESSION_SOFT_CLOSED_VISIBLE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func archivedRecentSliceCard(_ context: SessionSoftClosedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.archivedRecentSliceEntries) { entry in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(entry.speaker)
+                                .font(.headline)
+
+                            Spacer()
+
+                            Text(entry.posture)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(entry.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(entry.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                Text("Archived recent slice remains distinct from PH1.M memory and stays bounded to durable archive truth only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Archived recent slice")
+                .font(.headline)
+        }
+    }
+
+    private func resumeContextCard(_ context: SessionSoftClosedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.resumeContextRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                if context.resumeSummaryBullets.isEmpty {
+                    Text("No bounded `resume_summary_bullets` were provided for this soft-closed preview.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(Array(context.resumeSummaryBullets.prefix(3).enumerated()), id: \.offset) { index, bullet in
+                        HStack(alignment: .top, spacing: 12) {
+                            Text("\(index + 1).")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 24, alignment: .leading)
+
+                            Text(bullet)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+
+                Text("Resume context remains bounded PH1.M output only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume context")
+                .font(.headline)
         }
     }
 
