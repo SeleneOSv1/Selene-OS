@@ -5,12 +5,20 @@ import SwiftUI
 
 final class ExplicitEntryRouter: ObservableObject {
     @Published private(set) var latestContext: ExplicitEntryContext?
+    @Published private(set) var latestSessionOpenVisibleContext: SessionOpenVisibleContext?
 
     func receive(url: URL) {
+        if let sessionOpenContext = SessionOpenVisibleContext(url: url) {
+            latestSessionOpenVisibleContext = sessionOpenContext
+            latestContext = nil
+            return
+        }
+
         guard let context = ExplicitEntryContext(url: url) else {
             return
         }
 
+        latestSessionOpenVisibleContext = nil
         latestContext = context
     }
 }
@@ -18,6 +26,7 @@ final class ExplicitEntryRouter: ObservableObject {
 private enum ShellDisplayState: String {
     case explicitEntryReady = "EXPLICIT_ENTRY_READY"
     case onboardingEntryActive = "ONBOARDING_ENTRY_ACTIVE"
+    case sessionOpenVisible = "SESSION_OPEN_VISIBLE"
 
     var title: String {
         rawValue
@@ -29,6 +38,8 @@ private enum ShellDisplayState: String {
             return "The iPhone shell is waiting for lawful explicit entry through canonical app-open / invite-open ingress."
         case .onboardingEntryActive:
             return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, prompt-state, artifact/access identifier, and remaining platform-receipt context only."
+        case .sessionOpenVisible:
+            return "A lawful app-open route has been parsed and is being rendered as a bounded current session banner with session attach outcome continuity labeling only."
         }
     }
 }
@@ -44,6 +55,138 @@ enum ExplicitEntryRouteKind: String {
         case .appOpen:
             return "App-open takeover"
         }
+    }
+}
+
+struct SessionOpenVisibleContext: Identifiable, Equatable {
+    let id: String
+    let sessionID: String
+    let sessionState: String
+    let sessionAttachOutcome: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let scheme = (components.scheme ?? "").lowercased()
+        guard ["selene", "https", "http"].contains(scheme) else {
+            return nil
+        }
+
+        let host = (components.host ?? "no-host").lowercased()
+        let path = components.path.isEmpty ? "/" : components.path
+        let lowerPath = path.lowercased()
+        let queryItems = components.queryItems ?? []
+        let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding")
+        let appOpenLike = host.contains("open")
+            || lowerPath.contains("open")
+            || lowerPath.contains("entry")
+            || Self.hasQueryItem(in: queryItems, name: "session_state")
+
+        let sessionState = Self.canonicalSessionState(
+            Self.firstQueryValue(in: queryItems, name: "session_state")
+        )
+        let sessionID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "session_id")
+        )
+        let sessionAttachOutcome = Self.canonicalSessionAttachOutcome(
+            Self.firstQueryValue(in: queryItems, name: "session_attach_outcome")
+        )
+
+        guard !inviteLike,
+              appOpenLike,
+              let sessionState,
+              let sessionID,
+              let sessionAttachOutcome else {
+            return nil
+        }
+
+        self.id = url.absoluteString
+        self.sessionID = sessionID
+        self.sessionState = sessionState
+        self.sessionAttachOutcome = sessionAttachOutcome
+    }
+
+    var bannerRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "session_state", value: sessionState),
+            EntryMetadataRow(label: "session_id", value: sessionID),
+        ]
+    }
+
+    var attachOutcomeRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "session_attach_outcome", value: sessionAttachOutcome),
+            EntryMetadataRow(label: "continuity_label", value: continuityLabel),
+        ]
+    }
+
+    var continuityLabel: String {
+        switch sessionAttachOutcome {
+        case "NEW_SESSION_CREATED":
+            return "Continuity follows the newly created cloud session for this current session banner."
+        case "EXISTING_SESSION_REUSED":
+            return "Continuity stays on the existing cloud session without creating a new local session."
+        case "EXISTING_SESSION_ATTACHED":
+            return "Continuity attaches to the existing cloud session already selected by the authoritative runtime."
+        case "RETRY_REUSED_RESULT":
+            return "Continuity stays on the existing cloud session while authoritative retry reuse remains visible."
+        default:
+            return "Continuity remains cloud-authoritative and session-bound."
+        }
+    }
+
+    private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
+        queryItems.contains { $0.name.lowercased() == name }
+    }
+
+    private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
+        queryItems.first(where: { $0.name.lowercased() == name })?.value
+    }
+
+    private static func canonicalSessionState(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized == "OPEN" else {
+            return nil
+        }
+
+        return "SessionState::Open"
+    }
+
+    private static func canonicalSessionAttachOutcome(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "NEW_SESSION_CREATED":
+            return "NEW_SESSION_CREATED"
+        case "EXISTING_SESSION_REUSED":
+            return "EXISTING_SESSION_REUSED"
+        case "EXISTING_SESSION_ATTACHED":
+            return "EXISTING_SESSION_ATTACHED"
+        case "RETRY_REUSED_RESULT":
+            return "RETRY_REUSED_RESULT"
+        default:
+            return nil
+        }
+    }
+
+    private static func boundedHint(_ rawValue: String?) -> String? {
+        guard let rawValue, !rawValue.isEmpty else {
+            return nil
+        }
+
+        if rawValue.count <= 18 {
+            return rawValue
+        }
+
+        return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
     }
 }
 
@@ -708,6 +851,7 @@ struct SessionShellView: View {
 
     @State private var displayState: ShellDisplayState = .explicitEntryReady
     @State private var activeContext: ExplicitEntryContext?
+    @State private var activeSessionOpenContext: SessionOpenVisibleContext?
     @State private var typedTurnDraft: String = ""
     @State private var typedTurnPendingRequest: TypedTurnRequestState?
     @State private var typedTurnFailedRequest: OperationalQueueEntry?
@@ -848,6 +992,8 @@ struct SessionShellView: View {
 
                 if displayState == .onboardingEntryActive, let activeContext {
                     takeoverCard(activeContext)
+                } else if displayState == .sessionOpenVisible, let activeSessionOpenContext {
+                    sessionOpenVisibleCard(activeSessionOpenContext)
                 } else {
                     explicitEntryReadyCard
                 }
@@ -867,11 +1013,21 @@ struct SessionShellView: View {
                 return
             }
 
+            activeSessionOpenContext = nil
             activeContext = newContext
             displayState = .onboardingEntryActive
         }
+        .onChange(of: router.latestSessionOpenVisibleContext) { _, newContext in
+            guard let newContext else {
+                return
+            }
+
+            activeContext = nil
+            activeSessionOpenContext = newContext
+            displayState = .sessionOpenVisible
+        }
         .onChange(of: displayState) { _, newState in
-            if newState != .explicitEntryReady {
+            if newState == .onboardingEntryActive {
                 explicitVoiceController.haltCaptureSession()
             }
         }
@@ -900,9 +1056,9 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-                Text("H84 preserves the H79 recent thread window, preserves the H83 typed-turn request production posture, advances the explicit voice entry affordance into bounded explicit voice-turn request production, preserves the H80 history side-drawer recall, incremental history expansion, and archived session recall, preserves the H81 System Activity operational queue with separate Pending and Failed visibility, and preserves the H82 Needs Attention actionable queue while preserving the H74, H75, H76, and H77 takeover surfaces.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+            Text("H85 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, and the H74-H77 takeover surfaces while adding bounded `SESSION_OPEN_VISIBLE` current session banner and attach-outcome continuity labeling only.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -915,7 +1071,7 @@ struct SessionShellView: View {
                 Text(displayState.detail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This shell remains session-bound and cloud-authoritative for onboarding, identity, governance, runtime law, and authoritative transcript state while the typed and explicit voice surfaces only produce bounded explicit turn requests.")
+                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, and authoritative transcript state while the typed and explicit voice surfaces only produce bounded explicit turn requests.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -932,7 +1088,7 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H84 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice now produce bounded explicit turn requests.")
+                Text("H85 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE` session-open route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
@@ -950,6 +1106,104 @@ struct SessionShellView: View {
         } label: {
             Text("EXPLICIT_ENTRY_READY")
                 .font(.headline.monospaced())
+        }
+    }
+
+    private func sessionOpenVisibleCard(_ context: SessionOpenVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Ready for next explicit turn")
+                    .font(.headline)
+
+                Text("H85 adds a bounded native `SESSION_OPEN_VISIBLE` surface aligned to `SessionState::Open`, `SessionAttachOutcome`, and `session_attach_outcome` carried inside `RuntimeExecutionEnvelope` while preserving the H79-H84 surfaces and keeping the shell `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                currentSessionBannerCard(context)
+                sessionAttachOutcomeContinuityCard(context)
+                recentThreadWindowCard
+                typedInputAffordanceCard
+                explicitVoiceEntryAffordanceCard
+                historySideDrawerCard
+                systemActivityQueueCard
+                needsAttentionQueueCard
+
+                Text("No local promotion to `Active`, no hidden new session, no local session resurrection, no wake parity claim, no proven live side-button producer claim, and no autonomous unlock are introduced by this surface.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Return to EXPLICIT_ENTRY_READY") {
+                    activeSessionOpenContext = nil
+                    displayState = .explicitEntryReady
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } label: {
+            Text("SESSION_OPEN_VISIBLE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func currentSessionBannerCard(_ context: SessionOpenVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Ready for next explicit turn")
+                    .font(.headline)
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("SessionState::Open")
+                    posturePill("Cloud authoritative")
+                }
+
+                ForEach(context.bannerRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 160, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Current session stays open, session-bound, and ready for the next explicit turn while authoritative transcript acceptance, response, and session lifecycle ownership remain cloud-side.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Current session banner")
+                .font(.headline)
+        }
+    }
+
+    private func sessionAttachOutcomeContinuityCard(_ context: SessionOpenVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.attachOutcomeRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Attach outcome changes inline continuity labeling only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Session attach outcome")
+                .font(.headline)
         }
     }
 
