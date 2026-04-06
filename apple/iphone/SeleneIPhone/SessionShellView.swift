@@ -311,6 +311,17 @@ private struct SetupReceipt: Identifiable {
     }
 }
 
+private struct RecentThreadPreviewEntry: Identifiable {
+    let speaker: String
+    let posture: String
+    let body: String
+    let detail: String
+
+    var id: String {
+        "\(speaker)-\(posture)-\(body)"
+    }
+}
+
 struct SessionShellView: View {
     @ObservedObject var router: ExplicitEntryRouter
 
@@ -333,6 +344,26 @@ struct SessionShellView: View {
         SetupReceipt(
             name: "ios_side_button_configured",
             detail: "Canonical side-button setup receipt family rendered without claiming a proven live side-button producer."
+        ),
+    ]
+    private let recentThreadPreviewEntries = [
+        RecentThreadPreviewEntry(
+            speaker: "You",
+            posture: "explicit_recent_user_turn",
+            body: "Show the latest lawful session context before any cloud-authoritative request path is opened.",
+            detail: "User-side thread preview only; no typed-turn dispatch or local transcript authority is introduced here."
+        ),
+        RecentThreadPreviewEntry(
+            speaker: "Selene",
+            posture: "bounded_resume_context",
+            body: "The shell stays EXPLICIT_ONLY and cloud-authoritative; onboarding fields, setup receipts, and runtime law remain read-only in this surface.",
+            detail: "Assistant-side bounded resume context only; append-only conversation storage remains distinct from PH1.M memory."
+        ),
+        RecentThreadPreviewEntry(
+            speaker: "You",
+            posture: "next_explicit_step",
+            body: "Hold this session surface until a lawful app-open or explicit voice ingress can be rendered without local production.",
+            detail: "Read-only preview only; no invite activation, no onboarding mutation, and no session resurrection occur locally."
         ),
     ]
 
@@ -387,7 +418,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H77 adds read-only voice_artifact_sync_receipt_ref and access_engine_instance_id visibility while preserving the H74, H75, and H76 takeover surfaces.")
+            Text("H79 adds a read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance while preserving the H74, H75, H76, and H77 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -415,11 +446,151 @@ struct SessionShellView: View {
 
     private var explicitEntryReadyCard: some View {
         GroupBox {
-            Text("Waiting for lawful app-open / invite-open ingress. Canonical entry URLs are parsed and displayed only; no invite activation, no onboarding mutation, and no runtime request production occur locally.")
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Waiting for lawful app-open / invite-open ingress.")
+                    .font(.headline)
+
+                Text("H79 makes `EXPLICIT_ENTRY_READY` the dominant bounded session surface. Recent thread, typed input, and explicit voice affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                recentThreadWindowCard
+                typedInputAffordanceCard
+                explicitVoiceEntryAffordanceCard
+
+                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, no history-side-drawer behavior, and no runtime request production occur locally.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         } label: {
             Text("EXPLICIT_ENTRY_READY")
                 .font(.headline.monospaced())
+        }
+    }
+
+    private var recentThreadWindowCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Recent thread preview only. This bounded window reflects append-only conversation posture distinct from PH1.M memory and keeps resume context bounded.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(recentThreadPreviewEntries) { entry in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(entry.speaker)
+                                .font(.headline)
+
+                            Spacer()
+
+                            Text(entry.posture)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(entry.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(entry.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                Text("History remains bounded recall only. No local transcript authority or session resurrection is created here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Recent Thread Window")
+                .font(.headline)
+        }
+    }
+
+    private var typedInputAffordanceCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Composer-style surface only. This affordance previews where typed follow-up will live once a lawful cloud-authoritative request path exists.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "text.cursor")
+                        .foregroundStyle(.secondary)
+
+                    TextField(
+                        "Type a follow-up once cloud-authoritative ingress is available.",
+                        text: .constant("")
+                    )
+                    .disabled(true)
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("Read-only composer")
+                    posturePill("No typed-turn dispatch")
+                    posturePill("Session-bound")
+                }
+
+                Text("No local authority, no runtime request production, and no onboarding mutation are introduced by this affordance.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Typed Input Affordance")
+                .font(.headline)
+        }
+    }
+
+    private var explicitVoiceEntryAffordanceCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Explicit voice entry remains a lawful session-bound preview only. This surface does not start capture, produce a request, or activate wake behavior.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center, spacing: 12) {
+                    Image(systemName: "mic.circle")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Explicit voice entry")
+                            .font(.headline)
+
+                        Text("Read-only non-producing posture aligned to `voice_context_ios_explicit()` and cloud-authoritative session control.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text("Not live here")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(Capsule())
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("No voice-turn dispatch")
+                    posturePill("No wake parity")
+                }
+
+                Text("No side-button producer claim, no wake claim, and no autonomous unlock claim are introduced by this affordance.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Explicit Voice Entry Affordance")
+                .font(.headline)
         }
     }
 
