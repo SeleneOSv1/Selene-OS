@@ -333,11 +333,29 @@ private struct OperationalQueueEntry: Identifiable {
     }
 }
 
+private struct TypedTurnRequestState: Identifiable {
+    let id: String
+    let text: String
+    let byteCount: Int
+
+    var boundedPreview: String {
+        if text.count <= 96 {
+            return text
+        }
+
+        return "\(text.prefix(93))..."
+    }
+}
+
 struct SessionShellView: View {
     @ObservedObject var router: ExplicitEntryRouter
 
     @State private var displayState: ShellDisplayState = .explicitEntryReady
     @State private var activeContext: ExplicitEntryContext?
+    @State private var typedTurnDraft: String = ""
+    @State private var typedTurnPendingRequest: TypedTurnRequestState?
+    @State private var typedTurnFailedRequest: OperationalQueueEntry?
+    @State private var typedTurnRequestSequence: Int = 0
 
     private let setupReceipts = [
         SetupReceipt(
@@ -362,7 +380,7 @@ struct SessionShellView: View {
             speaker: "You",
             posture: "explicit_recent_user_turn",
             body: "Show the latest lawful session context before any cloud-authoritative request path is opened.",
-            detail: "User-side thread preview only; no typed-turn dispatch or local transcript authority is introduced here."
+            detail: "User-side thread preview only; recent-thread visibility stays separate from typed-turn request production and local transcript authority."
         ),
         RecentThreadPreviewEntry(
             speaker: "Selene",
@@ -373,8 +391,8 @@ struct SessionShellView: View {
         RecentThreadPreviewEntry(
             speaker: "You",
             posture: "next_explicit_step",
-            body: "Hold this session surface until a lawful app-open or explicit voice ingress can be rendered without local production.",
-            detail: "Read-only preview only; no invite activation, no onboarding mutation, and no session resurrection occur locally."
+            body: "Keep this session surface ready for bounded explicit text-turn production while explicit voice entry remains non-producing.",
+            detail: "Recent-thread preview only; no invite activation, no onboarding mutation, and no session resurrection occur locally."
         ),
     ]
     private let systemActivityEntries = [
@@ -425,6 +443,7 @@ struct SessionShellView: View {
             detail: "Operational detail only; no local state rewrite, no queue mutation, and no session resurrection occur here."
         ),
     ]
+    private let maxTypedTurnBytes = 16_384
     private let needsAttentionEntries = [
         OperationalQueueEntry(
             name: "unresolved_protected_prompt",
@@ -477,7 +496,10 @@ struct SessionShellView: View {
                 }
 
                 setupReceiptCard
-                boundedSurfaceCard(title: "Session", detail: "One dominant session surface remains primary. No local runtime request production occurs inside this shell.")
+                boundedSurfaceCard(
+                    title: "Session",
+                    detail: "One dominant session surface remains primary. Bounded typed-turn request production now lives here while authoritative transcript acceptance and response remain cloud-side."
+                )
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -513,7 +535,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H82 preserves the H79 read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance, preserves the H80 read-only history side-drawer recall, incremental history expansion, and archived session recall, preserves the H81 read-only System Activity operational queue with separate Pending and Failed visibility, and adds a separate read-only Needs Attention actionable queue while preserving the H74, H75, H76, and H77 takeover surfaces.")
+            Text("H83 preserves the H79 recent thread window and explicit voice entry affordance, advances the typed input affordance into bounded typed-turn request production, preserves the H80 history side-drawer recall, incremental history expansion, and archived session recall, preserves the H81 System Activity operational queue with separate Pending and Failed visibility, and preserves the H82 Needs Attention actionable queue while preserving the H74, H75, H76, and H77 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -528,7 +550,7 @@ struct SessionShellView: View {
                 Text(displayState.detail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This shell remains session-bound, read-only over parsed explicit-entry context, and cloud-authoritative for onboarding, identity, governance, and runtime law.")
+                Text("This shell remains session-bound and cloud-authoritative for onboarding, identity, governance, runtime law, and authoritative transcript state while the typed surface only produces bounded explicit text-turn requests.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -545,7 +567,7 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H82 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
+                Text("H83 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input now produces a bounded explicit text-turn request.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
@@ -555,7 +577,7 @@ struct SessionShellView: View {
                 systemActivityQueueCard
                 needsAttentionQueueCard
 
-                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, and no runtime request production occur locally.")
+                Text("No invite activation, no onboarding mutation, no explicit voice-turn dispatch, and no local authoritative transcript mutation occur locally. Typed-turn request production stays bounded to the canonical explicit text path only.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -613,7 +635,7 @@ struct SessionShellView: View {
     private var typedInputAffordanceCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Composer-style surface only. This affordance previews where typed follow-up will live once a lawful cloud-authoritative request path exists.")
+                Text("Composer-style surface now produces a bounded typed-turn request while transcript authority, authoritative acceptance, and authoritative response remain cloud-side.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(alignment: .center, spacing: 12) {
@@ -621,20 +643,60 @@ struct SessionShellView: View {
                         .foregroundStyle(.secondary)
 
                     TextField(
-                        "Type a follow-up once cloud-authoritative ingress is available.",
-                        text: .constant("")
+                        "Type a follow-up for canonical text-turn ingress.",
+                        text: $typedTurnDraft
                     )
-                    .disabled(true)
                     .textFieldStyle(.roundedBorder)
                 }
 
+                HStack(spacing: 12) {
+                    Button("Send typed turn") {
+                        submitTypedTurn()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(trimmedTypedTurnDraft.isEmpty)
+
+                    Button("Clear draft") {
+                        typedTurnDraft = ""
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(typedTurnDraft.isEmpty)
+                }
+
                 HStack(spacing: 8) {
-                    posturePill("Read-only composer")
-                    posturePill("No typed-turn dispatch")
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("CanonicalTurnModality::Text")
+                    posturePill("RawTurnPayload::Text")
+                }
+
+                HStack(spacing: 8) {
+                    posturePill("SessionResolveMode::ResumeExisting")
+                    posturePill("text/plain")
                     posturePill("Session-bound")
                 }
 
-                Text("No local authority, no runtime request production, and no onboarding mutation are introduced by this affordance.")
+                Text("Bounded request production only: `RuntimeCanonicalIngressRequest::turn(...)` stays aligned to `CanonicalTurnModality::Text`, `RawTurnPayload::Text`, `SessionResolveMode::ResumeExisting`, canonical `text/plain` validation, and explicit requested-trigger posture.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Draft validation: trimmed non-empty text only, `text/plain`, \(trimmedTypedTurnDraft.utf8.count) / \(maxTypedTurnBytes) UTF-8 bytes.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let pendingRequest = typedTurnPendingRequest {
+                    typedTurnPendingRequestCard(pendingRequest)
+                }
+
+                if typedTurnFailedRequest != nil {
+                    Text("Latest failed typed-turn posture stays visible below in `Failed` until canonical follow-up occurs.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("No local authority, no local assistant output, no onboarding mutation, and no authoritative transcript mutation are introduced by this affordance.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -788,7 +850,7 @@ struct SessionShellView: View {
     private var systemActivityQueueCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 16) {
-                Text("H81 replaces the placeholder `System Activity` posture with a bounded read-only operational queue. Persistence acknowledgement, reconciliation decision, broadcast waiting / follow-up / reminder state, sync queue posture, dead-letter posture, and recovery posture remain visible only, separate from transcript history, the recent thread window, the history side drawer, archived recall, and PH1.M memory, while H82 keeps `Needs Attention` as a separate actionable subset below.")
+                Text("H81 replaces the placeholder `System Activity` posture with a bounded read-only operational queue. Persistence acknowledgement, reconciliation decision, broadcast waiting / follow-up / reminder state, sync queue posture, dead-letter posture, and recovery posture remain visible only, separate from transcript history, the recent thread window, the history side drawer, archived recall, and PH1.M memory, while H82 keeps `Needs Attention` as a separate actionable subset below and H83 allows bounded typed-turn pending / failure posture to surface through the existing `Pending` / `Failed` queues.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack(spacing: 8) {
@@ -818,10 +880,10 @@ struct SessionShellView: View {
     private var pendingOperationalQueueCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Text("`Pending` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and session-bound.")
+                Text("`Pending` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and session-bound while H83 also surfaces bounded typed-turn request posture here when an explicit text turn is awaiting authoritative response.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                ForEach(pendingOperationalEntries) { entry in
+                ForEach(displayedPendingOperationalEntries) { entry in
                     operationalQueueEntryRow(entry)
                 }
 
@@ -839,10 +901,10 @@ struct SessionShellView: View {
     private var failedOperationalQueueCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Text("`Failed` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and distinct from the current visible thread window.")
+                Text("`Failed` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and distinct from the current visible thread window while H83 also surfaces bounded typed-turn failure posture here without implying local transport repair authority.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                ForEach(failedOperationalEntries) { entry in
+                ForEach(displayedFailedOperationalEntries) { entry in
                     operationalQueueEntryRow(entry)
                 }
 
@@ -1202,6 +1264,55 @@ struct SessionShellView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    private func typedTurnPendingRequestCard(_ request: TypedTurnRequestState) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Awaiting authoritative response")
+                    .font(.headline)
+
+                ForEach(
+                    [
+                        EntryMetadataRow(label: "request_id", value: request.id),
+                        EntryMetadataRow(label: "content_type", value: "text/plain"),
+                        EntryMetadataRow(label: "modality", value: "CanonicalTurnModality::Text"),
+                        EntryMetadataRow(label: "payload", value: "RawTurnPayload::Text"),
+                        EntryMetadataRow(
+                            label: "session_resolve_mode",
+                            value: "SessionResolveMode::ResumeExisting"
+                        ),
+                        EntryMetadataRow(
+                            label: "requested_trigger",
+                            value: "RuntimeEntryTrigger::Explicit"
+                        ),
+                        EntryMetadataRow(label: "draft_bytes", value: "\(request.byteCount)"),
+                    ]
+                ) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(request.boundedPreview)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This bounded request preview is session-bound, non-authoritative, and stays separate from transcript history until cloud-visible acceptance or response exists.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Typed Turn Request")
+                .font(.headline)
+        }
+    }
+
     private var operationalAffordanceCopy: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -1271,6 +1382,73 @@ struct SessionShellView: View {
             .padding(.vertical, 6)
             .background(Color.accentColor.opacity(0.12))
             .clipShape(Capsule())
+    }
+
+    private var trimmedTypedTurnDraft: String {
+        typedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var displayedPendingOperationalEntries: [OperationalQueueEntry] {
+        var entries = pendingOperationalEntries
+
+        if let request = typedTurnPendingRequest {
+            entries.insert(
+                OperationalQueueEntry(
+                    name: request.id,
+                    posture: "pending",
+                    summary: "Bounded typed-turn request mirrors `RuntimeCanonicalIngressRequest::turn(...)` with `CanonicalTurnModality::Text`, `RawTurnPayload::Text`, `SessionResolveMode::ResumeExisting`, `text/plain`, and explicit requested-trigger posture. Awaiting authoritative response.",
+                    detail: "Preview: \(request.boundedPreview). This request stays non-authoritative until cloud-visible acceptance or response exists and does not append an authoritative transcript turn locally."
+                ),
+                at: 0
+            )
+        }
+
+        return entries
+    }
+
+    private var displayedFailedOperationalEntries: [OperationalQueueEntry] {
+        var entries = failedOperationalEntries
+
+        if let typedTurnFailedRequest {
+            entries.insert(typedTurnFailedRequest, at: 0)
+        }
+
+        return entries
+    }
+
+    private func submitTypedTurn() {
+        let trimmedDraft = trimmedTypedTurnDraft
+        guard !trimmedDraft.isEmpty else {
+            return
+        }
+
+        if trimmedDraft.utf8.count > maxTypedTurnBytes {
+            typedTurnFailedRequest = OperationalQueueEntry(
+                name: "failed_typed_turn_text_plain_validation",
+                posture: "failed",
+                summary: "Canonical text-turn validation held this request because the bounded `text/plain` payload exceeded 16384 UTF-8 bytes before any authoritative acceptance occurred.",
+                detail: "Failed visibility only; shorten the draft and retry through the canonical typed-turn path. No local assistant output or authoritative transcript mutation was produced."
+            )
+            return
+        }
+
+        guard typedTurnPendingRequest == nil else {
+            typedTurnFailedRequest = OperationalQueueEntry(
+                name: "failed_typed_turn_awaiting_authoritative_response",
+                posture: "failed",
+                summary: "A later typed-turn request could not be produced while the current explicit text turn is already awaiting authoritative response.",
+                detail: "The shell keeps bounded failed posture only; it does not queue a second request locally, repair transport, fabricate local assistant output, or complete pending work."
+            )
+            return
+        }
+
+        typedTurnRequestSequence += 1
+        typedTurnPendingRequest = TypedTurnRequestState(
+            id: String(format: "typed_turn_request_%03d", typedTurnRequestSequence),
+            text: trimmedDraft,
+            byteCount: trimmedDraft.utf8.count
+        )
+        typedTurnDraft = ""
     }
 }
 
