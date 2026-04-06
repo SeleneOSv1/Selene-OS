@@ -20,5 +20,9 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Selene uses the microphone only when you explicitly start a bounded voice turn in the foreground session surface.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Selene uses speech recognition only when you explicitly start a bounded voice turn so it can prepare a non-authoritative transcript preview.</string>
 </dict>
 </plist>
