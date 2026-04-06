@@ -322,6 +322,17 @@ private struct RecentThreadPreviewEntry: Identifiable {
     }
 }
 
+private struct OperationalQueueEntry: Identifiable {
+    let name: String
+    let posture: String
+    let summary: String
+    let detail: String
+
+    var id: String {
+        name
+    }
+}
+
 struct SessionShellView: View {
     @ObservedObject var router: ExplicitEntryRouter
 
@@ -366,6 +377,54 @@ struct SessionShellView: View {
             detail: "Read-only preview only; no invite activation, no onboarding mutation, and no session resurrection occur locally."
         ),
     ]
+    private let systemActivityEntries = [
+        OperationalQueueEntry(
+            name: "persistence_acknowledgement_state",
+            posture: "recovery_posture_visible",
+            summary: "Persistence acknowledgement state remains visible as bounded operational posture only while authoritative recovery state is reread from the cloud side.",
+            detail: "Recovery posture only; no local persistence repair, no manual resend console, and no hidden auto-heal claim are introduced here."
+        ),
+        OperationalQueueEntry(
+            name: "reconciliation_decision",
+            posture: "decision_visibility_only",
+            summary: "Reconciliation decision posture remains visible without granting local authority to resolve, rewrite, or complete operational work.",
+            detail: "Cloud-authoritative decision visibility only; no local completion of pending work or silent disappearance of failed work occurs here."
+        ),
+        OperationalQueueEntry(
+            name: "broadcast_waiting_followup_reminder_state",
+            posture: "operational_wait_state",
+            summary: "Broadcast waiting, follow-up, and reminder posture remain bounded operational signals separate from transcript history and archived recall.",
+            detail: "Session-bound operational visibility only; no local resend, queue mutation, or transcript blending is introduced by this surface."
+        ),
+    ]
+    private let pendingOperationalEntries = [
+        OperationalQueueEntry(
+            name: "pending_sync_queue",
+            posture: "pending",
+            summary: "Sync queue work remains pending and visible while authoritative completion stays cloud-side.",
+            detail: "Pending visibility only; this shell does not complete, resend, or repair work locally."
+        ),
+        OperationalQueueEntry(
+            name: "pending_recovery_followup",
+            posture: "pending",
+            summary: "Recovery follow-up remains pending until canonical authoritative state is reread.",
+            detail: "Read-only recovery follow-up only; no local transport authority or autonomous unlock posture is introduced here."
+        ),
+    ]
+    private let failedOperationalEntries = [
+        OperationalQueueEntry(
+            name: "failed_dead_letter_posture",
+            posture: "failed",
+            summary: "Dead-letter posture remains visible as failed operational state without claiming local recovery or hidden repair authority.",
+            detail: "Failed visibility only; no silent disappearance of failed work and no manual resend console exist in this shell."
+        ),
+        OperationalQueueEntry(
+            name: "failed_reconciliation_review",
+            posture: "failed",
+            summary: "Reconciliation review remains visibly failed until canonical follow-up occurs in the cloud-authoritative flow.",
+            detail: "Operational detail only; no local state rewrite, no queue mutation, and no session resurrection occur here."
+        ),
+    ]
 
     var body: some View {
         ScrollView {
@@ -381,7 +440,6 @@ struct SessionShellView: View {
 
                 setupReceiptCard
                 boundedSurfaceCard(title: "Session", detail: "One dominant session surface remains primary. No local runtime request production occurs inside this shell.")
-                boundedSurfaceCard(title: "System Activity", detail: "System Activity remains a governed visibility surface only, separate from transcript history and local authority.")
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -417,7 +475,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H80 preserves the H79 read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance, and adds read-only history side-drawer recall, incremental history expansion, and archived session recall while preserving the H74, H75, H76, and H77 takeover surfaces.")
+            Text("H81 preserves the H79 read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance, preserves the H80 read-only history side-drawer recall, incremental history expansion, and archived session recall, and adds a read-only System Activity operational queue with separate Pending and Failed visibility while preserving the H74, H75, H76, and H77 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -449,15 +507,16 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H80 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, typed input, explicit voice, and history recall affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
+                Text("H81 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, typed input, explicit voice, history recall, and System Activity operational queue affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
                 typedInputAffordanceCard
                 explicitVoiceEntryAffordanceCard
                 historySideDrawerCard
+                systemActivityQueueCard
 
-                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, no `System Activity` queue behavior, no `Needs Attention` queue behavior, and no runtime request production occur locally.")
+                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, no `Needs Attention` queue behavior, and no runtime request production occur locally.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -676,13 +735,85 @@ struct SessionShellView: View {
                     detail: "Archived recall stays cloud-authoritative and session-scoped only; it does not blend cross-session history into the active window."
                 )
 
-                Text("Archived recall stays separate from the recent visible thread window and from `System Activity` / `Needs Attention` queue behavior, which remain unimplemented here.")
+                Text("Archived recall stays separate from the recent visible thread window and from `System Activity` queue behavior, while `Needs Attention` remains unimplemented here.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         } label: {
             Text("Archived Session Recall")
+                .font(.headline)
+        }
+    }
+
+    private var systemActivityQueueCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("H81 replaces the placeholder `System Activity` posture with a bounded read-only operational queue. Persistence acknowledgement, reconciliation decision, broadcast waiting / follow-up / reminder state, sync queue posture, dead-letter posture, and recovery posture remain visible only, separate from transcript history, the recent thread window, the history side drawer, archived recall, and PH1.M memory.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("Read-only operational queue")
+                    posturePill("Pending visibility")
+                    posturePill("Failed visibility")
+                }
+
+                ForEach(systemActivityEntries) { entry in
+                    operationalQueueEntryRow(entry)
+                }
+
+                pendingOperationalQueueCard
+                failedOperationalQueueCard
+
+                Text("No manual resend console, no local transport repair authority, no hidden auto-heal claim, no local completion of pending work, and no silent disappearance of failed work occur in this shell.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("System Activity")
+                .font(.headline)
+        }
+    }
+
+    private var pendingOperationalQueueCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("`Pending` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and session-bound.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(pendingOperationalEntries) { entry in
+                    operationalQueueEntryRow(entry)
+                }
+
+                Text("Pending visibility does not complete work locally, resend work, or blur transcript boundaries.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Pending")
+                .font(.headline)
+        }
+    }
+
+    private var failedOperationalQueueCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("`Failed` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and distinct from the current visible thread window.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(failedOperationalEntries) { entry in
+                    operationalQueueEntryRow(entry)
+                }
+
+                Text("Failed visibility does not repair work locally, erase failure posture, or reanimate a local session.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Failed")
                 .font(.headline)
         }
     }
@@ -945,6 +1076,59 @@ struct SessionShellView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func operationalQueueEntryRow(_ entry: OperationalQueueEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(entry.name)
+                    .font(.caption.monospaced())
+
+                Spacer()
+
+                Text(entry.posture)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(entry.summary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(entry.detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            operationalAffordanceCopy
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var operationalAffordanceCopy: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button("Inspect status") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Reread authoritative state") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+            }
+
+            HStack(spacing: 8) {
+                Button("Continue canonical flow") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Open linked operational detail") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+            }
+        }
     }
 
     private func boundedSurfaceCard(title: String, detail: String) -> some View {
