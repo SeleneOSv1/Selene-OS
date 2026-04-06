@@ -13,8 +13,9 @@ struct SeleneIPhoneApp: App {
     private var rootShell: some View {
         SessionShellView(router: explicitEntryRouter)
             // Canonical app-open / invite-open URLs are handed into the bounded shell only,
-            // where H79 adds read-only EXPLICIT_ENTRY_READY recent-thread, typed-input,
-            // and explicit-voice affordances while preserving the H74-H77 takeover posture.
+            // where H80 preserves the H79 recent-thread / typed-input / explicit-voice
+            // surfaces and adds read-only history side-drawer, incremental expansion,
+            // and archived-session recall while preserving the H74-H77 takeover posture.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)
             }

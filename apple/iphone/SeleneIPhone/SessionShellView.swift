@@ -381,7 +381,6 @@ struct SessionShellView: View {
 
                 setupReceiptCard
                 boundedSurfaceCard(title: "Session", detail: "One dominant session surface remains primary. No local runtime request production occurs inside this shell.")
-                boundedSurfaceCard(title: "History", detail: "History remains a bounded recall surface only. No local memory or transcript authority is created here.")
                 boundedSurfaceCard(title: "System Activity", detail: "System Activity remains a governed visibility surface only, separate from transcript history and local authority.")
             }
             .padding(24)
@@ -418,7 +417,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H79 adds a read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance while preserving the H74, H75, H76, and H77 takeover surfaces.")
+            Text("H80 preserves the H79 read-only EXPLICIT_ENTRY_READY recent thread window, typed input affordance, and explicit voice entry affordance, and adds read-only history side-drawer recall, incremental history expansion, and archived session recall while preserving the H74, H75, H76, and H77 takeover surfaces.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -450,14 +449,15 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H79 makes `EXPLICIT_ENTRY_READY` the dominant bounded session surface. Recent thread, typed input, and explicit voice affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
+                Text("H80 keeps `EXPLICIT_ENTRY_READY` as the dominant bounded session surface. Recent thread, typed input, explicit voice, and history recall affordances remain read-only, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
                 typedInputAffordanceCard
                 explicitVoiceEntryAffordanceCard
+                historySideDrawerCard
 
-                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, no history-side-drawer behavior, and no runtime request production occur locally.")
+                Text("No invite activation, no onboarding mutation, no typed-turn dispatch, no explicit voice-turn dispatch, no `System Activity` queue behavior, no `Needs Attention` queue behavior, and no runtime request production occur locally.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -501,7 +501,7 @@ struct SessionShellView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
-                Text("History remains bounded recall only. No local transcript authority or session resurrection is created here.")
+                Text("Older history remains bounded recall only in the explicit side drawer below. No local transcript authority or session resurrection is created here.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -590,6 +590,99 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Explicit Voice Entry Affordance")
+                .font(.headline)
+        }
+    }
+
+    private var historySideDrawerCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("H80 replaces the placeholder History posture with a bounded read-only side drawer. Older recall remains explicit, session-bound, `EXPLICIT_ONLY`, and cloud-authoritative.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("Read-only side drawer")
+                    posturePill("Windowed recall")
+                    posturePill("Archived recall only")
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Recent visible transcript stays in the main session surface. Older messages remain behind explicit side-drawer recall only, distinct from PH1.M memory and separate from `System Activity` / `Needs Attention` surfaces.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                incrementalHistoryExpansionCard
+                archivedSessionRecallCard
+
+                Text("No full-history eager load, no silent mutation, no cross-session blending, no raw memory-ledger dump, and no local session resurrection occur in this shell.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("History Side Drawer")
+                .font(.headline)
+        }
+    }
+
+    private var incrementalHistoryExpansionCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Windowed incremental recall only. Older transcript remains behind explicit user action and never eager-loads the full conversation locally.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Load older messages") {}
+                        .buttonStyle(.bordered)
+                        .disabled(true)
+
+                    Button("Show more history") {}
+                        .buttonStyle(.bordered)
+                        .disabled(true)
+                }
+
+                Text("These controls are read-only affordances only. They do not dispatch requests, synthesize local transcript authority, or blur session boundaries.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Incremental History Expansion")
+                .font(.headline)
+        }
+    }
+
+    private var archivedSessionRecallCard: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Archived session recall remains explicit after close. This surface previews archived recall without resurrecting a local session, synthesizing an active session, or claiming transcript authority.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                archivedSessionRecallRow(
+                    sessionID: "archive_recent_explicit_session",
+                    summary: "Most recent explicit-entry session remains recallable only as bounded archived history.",
+                    detail: "Closed-session recall only; no synthetic reopen, no local authority, and no PH1.M memory dump are introduced here."
+                )
+
+                archivedSessionRecallRow(
+                    sessionID: "archive_prior_onboarding_window",
+                    summary: "Earlier onboarding-adjacent session remains archived and separate from the current visible thread window.",
+                    detail: "Archived recall stays cloud-authoritative and session-scoped only; it does not blend cross-session history into the active window."
+                )
+
+                Text("Archived recall stays separate from the recent visible thread window and from `System Activity` / `Needs Attention` queue behavior, which remain unimplemented here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Archived Session Recall")
                 .font(.headline)
         }
     }
@@ -833,6 +926,25 @@ struct SessionShellView: View {
             Text("Setup Receipts")
                 .font(.headline)
         }
+    }
+
+    private func archivedSessionRecallRow(sessionID: String, summary: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(sessionID)
+                .font(.caption.monospaced())
+
+            Text(summary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func boundedSurfaceCard(title: String, detail: String) -> some View {
