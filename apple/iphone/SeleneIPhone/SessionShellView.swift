@@ -5,10 +5,19 @@ import SwiftUI
 
 final class ExplicitEntryRouter: ObservableObject {
     @Published private(set) var latestContext: ExplicitEntryContext?
+    @Published private(set) var latestSessionActiveVisibleContext: SessionActiveVisibleContext?
     @Published private(set) var latestSessionOpenVisibleContext: SessionOpenVisibleContext?
 
     func receive(url: URL) {
+        if let sessionActiveContext = SessionActiveVisibleContext(url: url) {
+            latestSessionActiveVisibleContext = sessionActiveContext
+            latestSessionOpenVisibleContext = nil
+            latestContext = nil
+            return
+        }
+
         if let sessionOpenContext = SessionOpenVisibleContext(url: url) {
+            latestSessionActiveVisibleContext = nil
             latestSessionOpenVisibleContext = sessionOpenContext
             latestContext = nil
             return
@@ -18,6 +27,7 @@ final class ExplicitEntryRouter: ObservableObject {
             return
         }
 
+        latestSessionActiveVisibleContext = nil
         latestSessionOpenVisibleContext = nil
         latestContext = context
     }
@@ -27,6 +37,7 @@ private enum ShellDisplayState: String {
     case explicitEntryReady = "EXPLICIT_ENTRY_READY"
     case onboardingEntryActive = "ONBOARDING_ENTRY_ACTIVE"
     case sessionOpenVisible = "SESSION_OPEN_VISIBLE"
+    case sessionActiveVisible = "SESSION_ACTIVE_VISIBLE"
 
     var title: String {
         rawValue
@@ -40,6 +51,8 @@ private enum ShellDisplayState: String {
             return "A lawful app-open / invite-open route has been parsed and is being rendered as a bounded onboarding-entry takeover surface with read-only onboarding outcome, onboarding_status, prompt-state, artifact/access identifier, and remaining platform-receipt context only."
         case .sessionOpenVisible:
             return "A lawful app-open route has been parsed and is being rendered as a bounded current session banner with session attach outcome continuity labeling only."
+        case .sessionActiveVisible:
+            return "A lawful app-open route has been parsed and is being rendered as a bounded active-session surface with live dual transcript, current turn envelope, and current governed-output summary only."
         }
     }
 }
@@ -187,6 +200,183 @@ struct SessionOpenVisibleContext: Identifiable, Equatable {
         }
 
         return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
+    }
+}
+
+struct SessionActiveVisibleContext: Identifiable, Equatable {
+    let id: String
+    let sessionID: String
+    let sessionState: String
+    let turnID: String
+    let currentUserTurnText: String
+    let currentSeleneTurnText: String
+    let currentGovernedOutputSummary: String
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let scheme = (components.scheme ?? "").lowercased()
+        guard ["selene", "https", "http"].contains(scheme) else {
+            return nil
+        }
+
+        let host = (components.host ?? "no-host").lowercased()
+        let path = components.path.isEmpty ? "/" : components.path
+        let lowerPath = path.lowercased()
+        let queryItems = components.queryItems ?? []
+        let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding")
+        let appOpenLike = host.contains("open")
+            || lowerPath.contains("open")
+            || lowerPath.contains("entry")
+            || Self.hasQueryItem(in: queryItems, name: "session_state")
+
+        let sessionState = Self.canonicalSessionState(
+            Self.firstQueryValue(in: queryItems, name: "session_state")
+        )
+        let sessionID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "session_id")
+        )
+        let turnID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "turn_id")
+        )
+        let currentUserTurnText = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "current_user_turn_text")
+        )
+        let currentSeleneTurnText = Self.boundedTranscript(
+            Self.firstQueryValue(in: queryItems, name: "current_selene_turn_text")
+        )
+        let currentGovernedOutputSummary = Self.boundedSummary(
+            Self.firstQueryValue(in: queryItems, name: "current_governed_output_summary")
+        )
+
+        guard !inviteLike,
+              appOpenLike,
+              let sessionState,
+              let sessionID,
+              let turnID,
+              let currentUserTurnText,
+              let currentSeleneTurnText,
+              let currentGovernedOutputSummary else {
+            return nil
+        }
+
+        self.id = url.absoluteString
+        self.sessionID = sessionID
+        self.sessionState = sessionState
+        self.turnID = turnID
+        self.currentUserTurnText = currentUserTurnText
+        self.currentSeleneTurnText = currentSeleneTurnText
+        self.currentGovernedOutputSummary = currentGovernedOutputSummary
+    }
+
+    var liveTranscriptEntries: [RecentThreadPreviewEntry] {
+        [
+            RecentThreadPreviewEntry(
+                speaker: "You",
+                posture: "current_user_turn_text",
+                body: currentUserTurnText,
+                detail: "Current user turn remains text-visible inside the append-only `conversation_ledger` even when it began as explicit voice."
+            ),
+            RecentThreadPreviewEntry(
+                speaker: "Selene",
+                posture: "current_selene_turn_text",
+                body: currentSeleneTurnText,
+                detail: "Current Selene turn remains text-visible, cloud-authoritative, and tied to the same active session without a local-only transcript fork."
+            ),
+        ]
+    }
+
+    var currentTurnEnvelopeRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "session_state", value: sessionState),
+            EntryMetadataRow(label: "session_id", value: sessionID),
+            EntryMetadataRow(label: "turn_id", value: turnID),
+            EntryMetadataRow(label: "runtime_execution_envelope", value: "current_turn_visible"),
+            EntryMetadataRow(label: "governance_state", value: "cloud_authoritative_visible"),
+            EntryMetadataRow(label: "proof_state", value: "cloud_authoritative_visible"),
+            EntryMetadataRow(label: "computation_state", value: "cloud_authoritative_visible"),
+            EntryMetadataRow(label: "identity_state", value: "cloud_authoritative_visible"),
+            EntryMetadataRow(label: "memory_state", value: "append_only_conversation_ledger_visible"),
+            EntryMetadataRow(label: "authority_state", value: "cloud_authoritative_visible"),
+            EntryMetadataRow(label: "artifact_trust_state", value: "cloud_authoritative_visible"),
+        ]
+    }
+
+    var governedOutputRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(label: "current_governed_output_summary", value: currentGovernedOutputSummary),
+            EntryMetadataRow(label: "governed_content_mode", value: "bounded_summary_only"),
+            EntryMetadataRow(label: "artifact_loading", value: "explicit_open_required"),
+        ]
+    }
+
+    private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
+        queryItems.contains { $0.name.lowercased() == name }
+    }
+
+    private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
+        queryItems.first(where: { $0.name.lowercased() == name })?.value
+    }
+
+    private static func canonicalSessionState(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized == "ACTIVE" else {
+            return nil
+        }
+
+        return "SessionState::Active"
+    }
+
+    private static func boundedHint(_ rawValue: String?) -> String? {
+        guard let rawValue, !rawValue.isEmpty else {
+            return nil
+        }
+
+        if rawValue.count <= 18 {
+            return rawValue
+        }
+
+        return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
+    }
+
+    private static func boundedTranscript(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 180 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(177))..."
+    }
+
+    private static func boundedSummary(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 220 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(217))..."
     }
 }
 
@@ -456,7 +646,7 @@ private struct SetupReceipt: Identifiable {
     }
 }
 
-private struct RecentThreadPreviewEntry: Identifiable {
+struct RecentThreadPreviewEntry: Identifiable {
     let speaker: String
     let posture: String
     let body: String
@@ -851,6 +1041,7 @@ struct SessionShellView: View {
 
     @State private var displayState: ShellDisplayState = .explicitEntryReady
     @State private var activeContext: ExplicitEntryContext?
+    @State private var activeSessionActiveContext: SessionActiveVisibleContext?
     @State private var activeSessionOpenContext: SessionOpenVisibleContext?
     @State private var typedTurnDraft: String = ""
     @State private var typedTurnPendingRequest: TypedTurnRequestState?
@@ -992,6 +1183,8 @@ struct SessionShellView: View {
 
                 if displayState == .onboardingEntryActive, let activeContext {
                     takeoverCard(activeContext)
+                } else if displayState == .sessionActiveVisible, let activeSessionActiveContext {
+                    sessionActiveVisibleCard(activeSessionActiveContext)
                 } else if displayState == .sessionOpenVisible, let activeSessionOpenContext {
                     sessionOpenVisibleCard(activeSessionOpenContext)
                 } else {
@@ -1013,9 +1206,20 @@ struct SessionShellView: View {
                 return
             }
 
+            activeSessionActiveContext = nil
             activeSessionOpenContext = nil
             activeContext = newContext
             displayState = .onboardingEntryActive
+        }
+        .onChange(of: router.latestSessionActiveVisibleContext) { _, newContext in
+            guard let newContext else {
+                return
+            }
+
+            activeContext = nil
+            activeSessionOpenContext = nil
+            activeSessionActiveContext = newContext
+            displayState = .sessionActiveVisible
         }
         .onChange(of: router.latestSessionOpenVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1023,6 +1227,7 @@ struct SessionShellView: View {
             }
 
             activeContext = nil
+            activeSessionActiveContext = nil
             activeSessionOpenContext = newContext
             displayState = .sessionOpenVisible
         }
@@ -1056,7 +1261,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H85 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, and the H74-H77 takeover surfaces while adding bounded `SESSION_OPEN_VISIBLE` current session banner and attach-outcome continuity labeling only.")
+            Text("H86 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, and the H74-H77 takeover surfaces while preserving the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam and adding bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary only.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -1088,7 +1293,7 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H85 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE` session-open route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
+                Text("H86 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE` or `SESSION_ACTIVE_VISIBLE` route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
@@ -1140,6 +1345,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("SESSION_OPEN_VISIBLE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func sessionActiveVisibleCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Live authoritative active session")
+                    .font(.headline)
+
+                Text("H86 adds a bounded native `SESSION_ACTIVE_VISIBLE` surface aligned to `SessionState::Active`, current `turn_id`, `RuntimeExecutionEnvelope`, the authoritative envelope-state family, and append-only `conversation_ledger` truth while preserving the H85 `session_state`, `session_id`, and `session_attach_outcome` route-seeding contract for `SESSION_OPEN_VISIBLE`.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                liveDualTranscriptCard(context)
+                currentTurnEnvelopeCard(context)
+                currentGovernedOutputSummaryCard(context)
+                recentThreadWindowCard
+                typedInputAffordanceCard
+                explicitVoiceEntryAffordanceCard
+                historySideDrawerCard
+                systemActivityQueueCard
+                needsAttentionQueueCard
+
+                Text("No explicit interrupt control, no local turn authority, no local decision shortcuts, no heavy governed-content hydration, no wake parity claim, no proven live side-button producer claim, and no autonomous unlock are introduced by this surface.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Return to EXPLICIT_ENTRY_READY") {
+                    activeSessionActiveContext = nil
+                    displayState = .explicitEntryReady
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } label: {
+            Text("SESSION_ACTIVE_VISIBLE")
                 .font(.headline.monospaced())
         }
     }
@@ -1203,6 +1444,113 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Session attach outcome")
+                .font(.headline)
+        }
+    }
+
+    private func liveDualTranscriptCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("Append-only conversation_ledger")
+                    posturePill("Cloud authoritative")
+                }
+
+                ForEach(context.liveTranscriptEntries) { entry in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            Text(entry.speaker)
+                                .font(.headline)
+
+                            Spacer()
+
+                            Text(entry.posture)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(entry.body)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Text(entry.detail)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                Text("Live transcript remains text-visible even when spoken.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Live dual transcript")
+                .font(.headline)
+        }
+    }
+
+    private func currentTurnEnvelopeCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    posturePill("RuntimeExecutionEnvelope")
+                    posturePill("SessionState::Active")
+                    posturePill("Turn-bound")
+                }
+
+                ForEach(context.currentTurnEnvelopeRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 170, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Current turn envelope remains session-bound, cloud-authoritative, and visible only as bounded runtime state while governance, proof, computation, identity, memory, authority, and artifact-trust ownership remain authoritative.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Current turn envelope")
+                .font(.headline)
+        }
+    }
+
+    private func currentGovernedOutputSummaryCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.governedOutputRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 190, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Current governed output summary remains a bounded summary card only. No eager artifact, chart, report, or heavy-content hydration is introduced in this run.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Current governed output summary")
                 .font(.headline)
         }
     }
