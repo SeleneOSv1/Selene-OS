@@ -29,8 +29,11 @@ struct SeleneIPhoneApp: App {
             // suspended-status explanation, and allowed next step only,
             // while H89 now also preserves bounded `RECOVERING` /
             // `DEGRADED_RECOVERY` inline restriction posture and
-            // `QUARANTINED_LOCAL_STATE` hard takeover posture through the
-            // same cloud-authored session route, all while remaining
+            // `QUARANTINED_LOCAL_STATE` hard takeover posture, and H90 now
+            // also preserves bounded `INTERRUPT_VISIBLE` interruption
+            // continuity posture with clarify / continue previous topic /
+            // switch topic / resume later visibility only through the same
+            // cloud-authored session route, all while remaining
             // cloud-authoritative and session-bound.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)

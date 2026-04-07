@@ -69,6 +69,7 @@ enum ShellDisplayState: String {
     case recovering = "RECOVERING"
     case degradedRecovery = "DEGRADED_RECOVERY"
     case quarantinedLocalState = "QUARANTINED_LOCAL_STATE"
+    case interruptVisible = "INTERRUPT_VISIBLE"
 
     var title: String {
         rawValue
@@ -94,6 +95,8 @@ enum ShellDisplayState: String {
             return "A lawful app-open route has been parsed and is being rendered as a degraded recovery inline restriction while the main session surface remains visible."
         case .quarantinedLocalState:
             return "A lawful app-open route has been parsed and is being rendered as a hard quarantine takeover because normal interaction is not lawful."
+        case .interruptVisible:
+            return "A lawful app-open route has been parsed and is being rendered as a strong inline interruption continuity posture while the main session surface remains visible."
         }
     }
 }
@@ -160,6 +163,79 @@ private func normalizedRecoveryEnumToken(_ rawValue: String) -> String {
         .filter { $0.isLetter || $0.isNumber }
 }
 
+enum CanonicalInterruptSubjectRelation: String, Equatable {
+    case same = "InterruptSubjectRelation::Same"
+    case switchTopic = "InterruptSubjectRelation::Switch"
+    case uncertain = "InterruptSubjectRelation::Uncertain"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptSubjectRelation? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "same":
+            return .same
+        case "switch":
+            return .switchTopic
+        case "uncertain":
+            return .uncertain
+        default:
+            return nil
+        }
+    }
+}
+
+enum CanonicalInterruptContinuityOutcome: String, Equatable {
+    case sameSubjectAppend = "InterruptContinuityOutcome::SameSubjectAppend"
+    case switchTopicThenReturnCheck = "InterruptContinuityOutcome::SwitchTopicThenReturnCheck"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptContinuityOutcome? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "samesubjectappend":
+            return .sameSubjectAppend
+        case "switchtopicthenreturncheck":
+            return .switchTopicThenReturnCheck
+        default:
+            return nil
+        }
+    }
+}
+
+enum CanonicalInterruptResumePolicy: String, Equatable {
+    case resumeNow = "InterruptResumePolicy::ResumeNow"
+    case resumeLater = "InterruptResumePolicy::ResumeLater"
+    case discard = "InterruptResumePolicy::Discard"
+
+    static func parse(_ rawValue: String?) -> CanonicalInterruptResumePolicy? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedInterruptEnumToken(rawValue) {
+        case "resumenow":
+            return .resumeNow
+        case "resumelater":
+            return .resumeLater
+        case "discard":
+            return .discard
+        default:
+            return nil
+        }
+    }
+}
+
+private func normalizedInterruptEnumToken(_ rawValue: String) -> String {
+    rawValue
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .filter { $0.isLetter || $0.isNumber }
+}
+
 private func resolvedRecoveryDisplayState(
     recoveryMode: CanonicalRecoveryMode?,
     reconciliationDecision: CanonicalReconciliationDecision?
@@ -176,6 +252,32 @@ private func resolvedRecoveryDisplayState(
     default:
         return nil
     }
+}
+
+private func resolvedInterruptDisplayState(
+    interruptSubjectRelation: CanonicalInterruptSubjectRelation?,
+    interruptContinuityOutcome: CanonicalInterruptContinuityOutcome?,
+    interruptResumePolicy: CanonicalInterruptResumePolicy?,
+    returnCheckPending: Bool?,
+    continuityFieldsPresent: Bool
+) -> ShellDisplayState? {
+    if returnCheckPending == true {
+        return .interruptVisible
+    }
+
+    if interruptSubjectRelation == .uncertain {
+        return .interruptVisible
+    }
+
+    if interruptResumePolicy == .resumeLater {
+        return .interruptVisible
+    }
+
+    if interruptContinuityOutcome == .switchTopicThenReturnCheck && continuityFieldsPresent {
+        return .interruptVisible
+    }
+
+    return nil
 }
 
 private func recoveryPostureRowsForVisibleSession(
@@ -387,6 +489,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let currentGovernedOutputSummary: String
     let recoveryMode: CanonicalRecoveryMode?
     let reconciliationDecision: CanonicalReconciliationDecision?
+    let interruptSubjectRelation: CanonicalInterruptSubjectRelation?
+    let interruptContinuityOutcome: CanonicalInterruptContinuityOutcome?
+    let interruptResumePolicy: CanonicalInterruptResumePolicy?
+    let activeSubjectRef: String?
+    let interruptedSubjectRef: String?
+    let returnCheckPending: Bool?
+    let returnCheckExpiresAt: String?
+    let resumeBufferLive: Bool?
+    let resumeBufferTopicHint: String?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -432,6 +543,33 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let reconciliationDecision = CanonicalReconciliationDecision.parse(
             Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
         )
+        let interruptSubjectRelation = CanonicalInterruptSubjectRelation.parse(
+            Self.firstQueryValue(in: queryItems, name: "interrupt_subject_relation")
+        )
+        let interruptContinuityOutcome = CanonicalInterruptContinuityOutcome.parse(
+            Self.firstQueryValue(in: queryItems, name: "interrupt_continuity_outcome")
+        )
+        let interruptResumePolicy = CanonicalInterruptResumePolicy.parse(
+            Self.firstQueryValue(in: queryItems, name: "interrupt_resume_policy")
+        )
+        let activeSubjectRef = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "active_subject_ref")
+        )
+        let interruptedSubjectRef = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "interrupted_subject_ref")
+        )
+        let returnCheckPending = Self.canonicalBoolean(
+            Self.firstQueryValue(in: queryItems, name: "return_check_pending")
+        )
+        let returnCheckExpiresAt = Self.boundedContinuityDetail(
+            Self.firstQueryValue(in: queryItems, name: "return_check_expires_at")
+        )
+        let resumeBufferLive = Self.canonicalBoolean(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_live")
+        )
+        let resumeBufferTopicHint = Self.boundedContinuityDetail(
+            Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
+        )
 
         guard !inviteLike,
               appOpenLike,
@@ -453,6 +591,15 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.currentGovernedOutputSummary = currentGovernedOutputSummary
         self.recoveryMode = recoveryMode
         self.reconciliationDecision = reconciliationDecision
+        self.interruptSubjectRelation = interruptSubjectRelation
+        self.interruptContinuityOutcome = interruptContinuityOutcome
+        self.interruptResumePolicy = interruptResumePolicy
+        self.activeSubjectRef = activeSubjectRef
+        self.interruptedSubjectRef = interruptedSubjectRef
+        self.returnCheckPending = returnCheckPending
+        self.returnCheckExpiresAt = returnCheckExpiresAt
+        self.resumeBufferLive = resumeBufferLive
+        self.resumeBufferTopicHint = resumeBufferTopicHint
     }
 
     var liveTranscriptEntries: [RecentThreadPreviewEntry] {
@@ -510,6 +657,125 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             recoveryMode: recoveryMode,
             reconciliationDecision: reconciliationDecision
         )
+    }
+
+    var interruptDisplayState: ShellDisplayState? {
+        resolvedInterruptDisplayState(
+            interruptSubjectRelation: interruptSubjectRelation,
+            interruptContinuityOutcome: interruptContinuityOutcome,
+            interruptResumePolicy: interruptResumePolicy,
+            returnCheckPending: returnCheckPending,
+            continuityFieldsPresent: hasInterruptContinuityFieldsPresent
+        )
+    }
+
+    var interruptContinuityRows: [EntryMetadataRow] {
+        var rows = [
+            EntryMetadataRow(label: "session_state", value: sessionState),
+            EntryMetadataRow(label: "session_id", value: sessionID),
+        ]
+
+        if let interruptSubjectRelation {
+            rows.append(
+                EntryMetadataRow(
+                    label: "interrupt_subject_relation",
+                    value: interruptSubjectRelation.rawValue
+                )
+            )
+        }
+
+        if let interruptContinuityOutcome {
+            rows.append(
+                EntryMetadataRow(
+                    label: "interrupt_continuity_outcome",
+                    value: interruptContinuityOutcome.rawValue
+                )
+            )
+        }
+
+        if let interruptResumePolicy {
+            rows.append(
+                EntryMetadataRow(
+                    label: "interrupt_resume_policy",
+                    value: interruptResumePolicy.rawValue
+                )
+            )
+        }
+
+        if let activeSubjectRef {
+            rows.append(EntryMetadataRow(label: "active_subject_ref", value: activeSubjectRef))
+        }
+
+        if let interruptedSubjectRef {
+            rows.append(
+                EntryMetadataRow(label: "interrupted_subject_ref", value: interruptedSubjectRef)
+            )
+        }
+
+        if let returnCheckPending {
+            rows.append(
+                EntryMetadataRow(
+                    label: "return_check_pending",
+                    value: Self.booleanValue(returnCheckPending)
+                )
+            )
+        }
+
+        if let returnCheckExpiresAt {
+            rows.append(
+                EntryMetadataRow(label: "return_check_expires_at", value: returnCheckExpiresAt)
+            )
+        }
+
+        if let resumeBufferLive {
+            rows.append(
+                EntryMetadataRow(
+                    label: "resume_buffer_live",
+                    value: Self.booleanValue(resumeBufferLive)
+                )
+            )
+        }
+
+        if let resumeBufferTopicHint {
+            rows.append(
+                EntryMetadataRow(label: "resume_buffer_topic_hint", value: resumeBufferTopicHint)
+            )
+        }
+
+        return rows
+    }
+
+    var acceptedInterruptPostureSummary: String {
+        if returnCheckPending == true {
+            return "Clarify before continuing remains the lawful cloud-authored posture while the active session stays visible and the return check remains pending."
+        }
+
+        if interruptSubjectRelation == .uncertain {
+            return "Clarify before continuing remains the lawful cloud-authored posture until subject relation becomes certain again."
+        }
+
+        if interruptContinuityOutcome == .switchTopicThenReturnCheck {
+            return "Switch topic remains lawful now while authoritative continuity keeps a later return check for the interrupted topic."
+        }
+
+        if interruptResumePolicy == .resumeLater {
+            return "Resume later remains the lawful cloud-authored posture for the interrupted topic while the current active session stays visible."
+        }
+
+        return "Continue previous topic remains lawful only when cloud-authored interruption continuity keeps the same subject active."
+    }
+
+    var shouldPromptReturnCheck: Bool {
+        returnCheckPending == true || interruptContinuityOutcome == .switchTopicThenReturnCheck
+    }
+
+    private var hasInterruptContinuityFieldsPresent: Bool {
+        activeSubjectRef != nil
+            || interruptedSubjectRef != nil
+            || returnCheckPending != nil
+            || returnCheckExpiresAt != nil
+            || resumeBufferLive != nil
+            || resumeBufferTopicHint != nil
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -577,6 +843,42 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return "\(trimmed.prefix(217))..."
+    }
+
+    private static func boundedContinuityDetail(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        if trimmed.count <= 96 {
+            return trimmed
+        }
+
+        return "\(trimmed.prefix(93))..."
+    }
+
+    private static func canonicalBoolean(_ rawValue: String?) -> Bool? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true":
+            return true
+        case "false":
+            return false
+        default:
+            return nil
+        }
+    }
+
+    private static func booleanValue(_ value: Bool) -> String {
+        value ? "true" : "false"
     }
 }
 
@@ -1907,6 +2209,8 @@ struct SessionShellView: View {
                     degradedRecoveryVisibleCard(activeRecoveryVisibleSurface)
                 } else if displayState == .quarantinedLocalState, let activeRecoveryVisibleSurface {
                     quarantinedLocalStateCard(activeRecoveryVisibleSurface)
+                } else if displayState == .interruptVisible, let activeSessionActiveContext {
+                    interruptVisibleCard(activeSessionActiveContext)
                 } else if displayState == .sessionActiveVisible, let activeSessionActiveContext {
                     sessionActiveVisibleCard(activeSessionActiveContext)
                 } else if displayState == .sessionSoftClosedVisible, let activeSessionSoftClosedContext {
@@ -1951,7 +2255,9 @@ struct SessionShellView: View {
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeSessionActiveContext = newContext
-            displayState = newContext.recoveryDisplayState ?? .sessionActiveVisible
+            displayState = newContext.recoveryDisplayState
+                ?? newContext.interruptDisplayState
+                ?? .sessionActiveVisible
         }
         .onChange(of: router.latestSessionSoftClosedVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1995,7 +2301,8 @@ struct SessionShellView: View {
                 || newState == .sessionSuspendedVisible
                 || newState == .recovering
                 || newState == .degradedRecovery
-                || newState == .quarantinedLocalState {
+                || newState == .quarantinedLocalState
+                || newState == .interruptVisible {
                 explicitVoiceController.haltCaptureSession()
             }
         }
@@ -2233,6 +2540,104 @@ struct SessionShellView: View {
             return "Quarantine removes lawful normal interaction from the visible surface until authoritative state is reread and the canonical recovery path clears cloud-side."
         default:
             return "Only bounded reread, canonical retry posture, and failure-detail inspection remain visible here."
+        }
+    }
+
+    private func interruptVisibleCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Interrupt continuity")
+                    .font(.headline)
+
+                Text("H90 adds bounded `INTERRUPT_VISIBLE` inline interruption continuity posture while the lawful main active-session surface remains visible and cloud-authored continuity truth is rendered without local interrupt authority.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("SESSION_ACTIVE_VISIBLE")
+                    posturePill("Cloud authoritative")
+                }
+
+                liveDualTranscriptCard(context)
+                currentTurnEnvelopeCard(context)
+                currentGovernedOutputSummaryCard(context)
+                interruptContinuityCard(context)
+                interruptLawfulActionsCard(context)
+                recentThreadWindowCard
+                historySideDrawerCard
+                systemActivityQueueCard
+                needsAttentionQueueCard
+            }
+        } label: {
+            Text("INTERRUPT_VISIBLE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func interruptContinuityCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Accepted interrupt posture")
+                    .font(.headline)
+
+                ForEach(context.interruptContinuityRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 230, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(context.acceptedInterruptPostureSummary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if context.shouldPromptReturnCheck {
+                    Text("Do you still want to continue the previous topic?")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        } label: {
+            Text("Interrupt continuity")
+                .font(.headline)
+        }
+    }
+
+    private func interruptLawfulActionsCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Interrupt posture is rendered, not authored.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local interrupt law, no fake resume authority, no silent discard.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Clarify before continuing") {}
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+
+                Button("Continue previous topic") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Switch topic") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Resume later") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+            }
+        } label: {
+            Text("Lawful interrupt actions")
+                .font(.headline)
         }
     }
 

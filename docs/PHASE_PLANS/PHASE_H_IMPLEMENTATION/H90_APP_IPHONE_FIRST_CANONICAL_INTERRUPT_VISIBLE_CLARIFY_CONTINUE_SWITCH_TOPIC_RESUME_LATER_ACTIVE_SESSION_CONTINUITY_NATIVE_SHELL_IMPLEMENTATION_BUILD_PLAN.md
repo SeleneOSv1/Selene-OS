@@ -1,0 +1,21 @@
+# H90 APP_IPHONE First Canonical `INTERRUPT_VISIBLE` Clarify / Continue / Switch-Topic / Resume-Later Active-Session Continuity Native Shell Implementation Build Plan
+
+- This is the first canonical APP_IPHONE `INTERRUPT_VISIBLE` clarify / continue / switch-topic / resume-later active-session continuity native shell implementation build.
+- H89 implementation remains live and the native iPhone shell already exposes bounded `RECOVERING`, `DEGRADED_RECOVERY`, and `QUARANTINED_LOCAL_STATE` recovery posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 implementation remains live and the native iPhone shell already exposes bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 route seeding remains live through exact `session_state=suspended`, `session_id`, `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`, and this H90 run preserves that contract.
+- H87 route seeding remains live through exact `session_state`, `session_id`, `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, repeated `resume_summary_bullets`, `resume_tier`, `archived_user_turn_text`, and `archived_selene_turn_text`, and this H90 run preserves that contract.
+- H86 route seeding remains live through exact `session_state`, `session_id`, `turn_id`, `current_user_turn_text`, `current_selene_turn_text`, and `current_governed_output_summary`, and this H90 run preserves that contract while extending bounded active-session interruption continuity posture.
+- H85 route seeding remains live through exact `session_state`, `session_id`, and `session_attach_outcome`, and this H90 run preserves that contract.
+- G1 freezes accepted interrupt posture as rendered, not authored, with clarify / continue previous topic / switch topic / resume later inside the visible session surface after cloud-side TTS cancel.
+- This run adds bounded `INTERRUPT_VISIBLE` posture only.
+- This run preserves H79-H89 surfaces, exact H83 / H84 / H85 / H86 / H87 / H88 / H89 copy, H74-H77 takeover fields, exact setup-receipt visibility, and H83 / H84 producer copy.
+- This run does not add local interrupt authoring, manual interrupt controls, heavy resume-buffer detail hydration, `resume_buffer_answer_id`, `resume_buffer_spoken_prefix`, `resume_buffer_unsaid_remainder`, side-button producer wiring, wake parity, or autonomous unlock.
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- native iPhone shell now exposes bounded `INTERRUPT_VISIBLE` interruption continuity posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- no post-H90 next exact winner is published in this run.
