@@ -1,0 +1,29 @@
+# H95 APP_IPHONE First Canonical `INTERRUPT_VISIBLE` Cloud-Authored Clarify Requires-Confirmation Visible Native Shell Implementation Build Plan
+
+- This is the first canonical APP_IPHONE `INTERRUPT_VISIBLE` cloud-authored clarify requires-confirmation visible native shell implementation build.
+- H94 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify routing-hint visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H93 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify ambiguity-flag visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H92 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify missing-field boundary visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H91 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify-directive and return-check response-production posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H90 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` interruption continuity posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H89 implementation remains live and the native iPhone shell already exposes bounded `RECOVERING`, `DEGRADED_RECOVERY`, and `QUARANTINED_LOCAL_STATE` recovery posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 implementation remains live and the native iPhone shell already exposes bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 route seeding remains live through exact `session_state=suspended`, `session_id`, `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`, and this H95 run preserves that contract.
+- H87 / H86 / H85 route seeding remains live and this H95 run preserves those contracts.
+- current shared source already preserves `SensitivityLevel::{Public, Private, Confidential}`, `ClarifyDirective`, `ClarifyDirective.accepted_answer_formats`, `ClarifyDirective.what_is_missing`, PH1.N `requires_confirmation`, PH1.N `ambiguity_flags`, PH1.N `routing_hints`, `AmbiguityFlag::{ReferenceAmbiguous, RecipientAmbiguous, DateAmbiguous, AmountAmbiguous, MultiIntent}`, `RoutingHint::{OnboardingStart, OnboardingConfirmIdentity, OnboardingComplete, OnboardingLanguageDetect}`, `ConfirmAnswer::{Yes, No}`, `InterruptSubjectRelation::{Same, Switch, Uncertain}`, `InterruptContinuityOutcome::{SameSubjectAppend, SwitchTopicThenReturnCheck}`, `InterruptResumePolicy::{ResumeNow, ResumeLater, Discard}`, and PH1.X continuity state.
+- PH1.N `requires_confirmation` is non-authoritative downstream UX/audit metadata and never grants authority or action unlock.
+- PH1.N ambiguity flags are non-authoritative downstream UX/audit metadata and never grant authority.
+- PH1.N routing hints are non-authoritative downstream UX/audit metadata and must never bypass Access/Simulation gates.
+- G1 freezes interruption posture as rendered, not authored, and allows cloud-authored clarify / return-check posture without local interrupt law.
+- if both clarify-directive detail and `return_check_pending=true` appear together, fail closed into read-only `INTERRUPT_VISIBLE` and do not enable continuity-response production.
+- this run adds bounded clarify requires-confirmation visibility only.
+- this run preserves H79-H94 surfaces, exact H83 / H84 / H85 / H86 / H87 / H88 / H89 / H90 / H91 / H92 / H93 / H94 copy, H74-H77 takeover fields, exact setup-receipt visibility, and H83 / H84 producer copy.
+- this run does not add local interrupt authoring, local ambiguity inference, local field inference, local routing guidance, local confirmation law, local action unlock, local onboarding authority, local gate bypass, sensitivity-level rendering, subject-relation-confidence rendering, heavy resume-buffer detail hydration, wake parity, side-button producer wiring, or autonomous unlock.
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- native iPhone shell now exposes bounded `INTERRUPT_VISIBLE` clarify requires-confirmation visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- no post-H95 next exact winner is published in this run.

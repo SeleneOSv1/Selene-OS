@@ -574,6 +574,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
     let interruptClarifyRoutingHints: [String]
+    let interruptClarifyRequiresConfirmation: Bool?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -653,6 +654,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let interruptClarifyWhatIsMissing = Self.interruptClarifyWhatIsMissing(in: queryItems)
         let interruptClarifyAmbiguityFlags = Self.interruptClarifyAmbiguityFlags(in: queryItems)
         let interruptClarifyRoutingHints = Self.interruptClarifyRoutingHints(in: queryItems)
+        let interruptClarifyRequiresConfirmation = Self.interruptClarifyRequiresConfirmation(
+            in: queryItems
+        )
         let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
@@ -688,6 +692,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
         self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
         self.interruptClarifyRoutingHints = interruptClarifyRoutingHints
+        self.interruptClarifyRequiresConfirmation = interruptClarifyRequiresConfirmation
         self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
@@ -868,6 +873,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
 
     var hasLawfulInterruptClarifyRoutingHints: Bool {
         (1...2).contains(interruptClarifyRoutingHints.count)
+    }
+
+    var hasLawfulInterruptClarifyRequiresConfirmation: Bool {
+        interruptClarifyRequiresConfirmation != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1052,6 +1061,17 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return hints
+    }
+
+    private static func interruptClarifyRequiresConfirmation(in queryItems: [URLQueryItem]) -> Bool? {
+        let values = queryItems.filter {
+            $0.name.lowercased() == "interrupt_clarify_requires_confirmation"
+        }
+        guard values.count == 1 else {
+            return nil
+        }
+
+        return canonicalBoolean(values[0].value)
     }
 
     private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
@@ -2963,6 +2983,11 @@ struct SessionShellView: View {
                     interruptClarifyRoutingCard(context.interruptClarifyRoutingHints)
                 }
 
+                if let interruptClarifyRequiresConfirmation = context.interruptClarifyRequiresConfirmation,
+                   context.hasLawfulInterruptClarifyRequiresConfirmation {
+                    interruptClarifyConfirmationCard(interruptClarifyRequiresConfirmation)
+                }
+
                 ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                     if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                         Button(answerFormat) {
@@ -3075,6 +3100,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Clarify routing")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifyConfirmationCard(_ requiresConfirmation: Bool) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored confirmation evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Confirmation posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Requires confirmation")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(requiresConfirmation ? "true" : "false")
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored confirmation truth only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local confirmation law, no local execution unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Clarify confirmation")
                 .font(.headline)
         }
     }
