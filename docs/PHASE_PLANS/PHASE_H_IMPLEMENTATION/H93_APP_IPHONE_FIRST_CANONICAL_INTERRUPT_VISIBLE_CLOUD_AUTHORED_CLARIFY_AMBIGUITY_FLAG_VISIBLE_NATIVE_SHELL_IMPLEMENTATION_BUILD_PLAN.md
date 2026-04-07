@@ -1,0 +1,25 @@
+# H93 APP_IPHONE First Canonical `INTERRUPT_VISIBLE` Cloud-Authored Clarify Ambiguity-Flag Visible Native Shell Implementation Build Plan
+
+- This is the first canonical APP_IPHONE `INTERRUPT_VISIBLE` cloud-authored clarify ambiguity-flag visible native shell implementation build.
+- H92 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify missing-field boundary visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H91 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify-directive and return-check response-production posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H90 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` interruption continuity posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H89 implementation remains live and the native iPhone shell already exposes bounded `RECOVERING`, `DEGRADED_RECOVERY`, and `QUARANTINED_LOCAL_STATE` recovery posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 implementation remains live and the native iPhone shell already exposes bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H88 route seeding remains live through exact `session_state=suspended`, `session_id`, `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`, and this H93 run preserves that contract.
+- H87 / H86 / H85 route seeding remains live and this H93 run preserves those contracts.
+- current shared source already preserves `ClarifyDirective`, `ClarifyDirective.accepted_answer_formats`, `ClarifyDirective.what_is_missing`, PH1.N `ambiguity_flags`, `AmbiguityFlag::{ReferenceAmbiguous, RecipientAmbiguous, DateAmbiguous, AmountAmbiguous, MultiIntent}`, `ConfirmAnswer::{Yes, No}`, `InterruptSubjectRelation::{Same, Switch, Uncertain}`, `InterruptContinuityOutcome::{SameSubjectAppend, SwitchTopicThenReturnCheck}`, `InterruptResumePolicy::{ResumeNow, ResumeLater, Discard}`, and PH1.X continuity state.
+- PH1.N ambiguity flags are non-authoritative downstream UX/audit metadata and never grant authority.
+- G1 freezes interruption posture as rendered, not authored, and allows cloud-authored clarify / return-check posture without local interrupt law.
+- if both clarify-directive detail and `return_check_pending=true` appear together, fail closed into read-only `INTERRUPT_VISIBLE` and do not enable continuity-response production.
+- this run adds bounded clarify ambiguity-flag visibility only.
+- this run preserves H79-H92 surfaces, exact H83 / H84 / H85 / H86 / H87 / H88 / H89 / H90 / H91 / H92 copy, H74-H77 takeover fields, exact setup-receipt visibility, and H83 / H84 producer copy.
+- this run does not add local interrupt authoring, local ambiguity inference, local rewrite authority, routing-hint rendering, subject-relation-confidence rendering, heavy resume-buffer detail hydration, wake parity, side-button producer wiring, or autonomous unlock.
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- native iPhone shell now exposes bounded `INTERRUPT_VISIBLE` clarify ambiguity-flag visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- no post-H93 next exact winner is published in this run.

@@ -252,6 +252,22 @@ private enum CanonicalInterruptAcceptedAnswerFormat: String, CaseIterable, Ident
     }
 }
 
+private enum CanonicalInterruptClarifyAmbiguityFlag: String, CaseIterable, Identifiable {
+    case referenceAmbiguous = "reference_ambiguous"
+    case recipientAmbiguous = "recipient_ambiguous"
+    case dateAmbiguous = "date_ambiguous"
+    case amountAmbiguous = "amount_ambiguous"
+    case multiIntent = "multi_intent"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifyAmbiguityFlag? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private enum CanonicalReturnCheckResponse: String, CaseIterable, Identifiable {
     case yes = "Yes"
     case no = "No"
@@ -541,6 +557,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferTopicHint: String?
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
+    let interruptClarifyAmbiguityFlags: [String]
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -618,6 +635,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             Self.firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
         let interruptClarifyWhatIsMissing = Self.interruptClarifyWhatIsMissing(in: queryItems)
+        let interruptClarifyAmbiguityFlags = Self.interruptClarifyAmbiguityFlags(in: queryItems)
         let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
@@ -651,6 +669,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
+        self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
         self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
@@ -825,6 +844,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         interruptClarifyQuestion != nil && (2...3).contains(interruptAcceptedAnswerFormats.count)
     }
 
+    var hasLawfulInterruptClarifyAmbiguityFlags: Bool {
+        (1...2).contains(interruptClarifyAmbiguityFlags.count)
+    }
+
     var hasInterruptResponseConflict: Bool {
         hasLawfulInterruptClarifyDirective && returnCheckPending == true
     }
@@ -965,6 +988,27 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return boundedClarifyMissingField(values[0].value)
+    }
+
+    private static func interruptClarifyAmbiguityFlags(in queryItems: [URLQueryItem]) -> [String] {
+        var flags: [String] = []
+
+        for queryItem in queryItems where queryItem.name.lowercased() == "interrupt_clarify_ambiguity_flag" {
+            guard let value = queryItem.value,
+                  let canonicalValue = CanonicalInterruptClarifyAmbiguityFlag.parse(value)?.rawValue,
+                  !flags.contains(canonicalValue),
+                  flags.count < 2 else {
+                return []
+            }
+
+            flags.append(canonicalValue)
+        }
+
+        if flags.isEmpty {
+            return []
+        }
+
+        return flags
     }
 
     private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
@@ -2868,6 +2912,10 @@ struct SessionShellView: View {
                     interruptClarifyBoundaryCard(interruptClarifyWhatIsMissing)
                 }
 
+                if context.hasLawfulInterruptClarifyAmbiguityFlags {
+                    interruptClarifyAmbiguityCard(context.interruptClarifyAmbiguityFlags)
+                }
+
                 ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                     if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                         Button(answerFormat) {
@@ -2918,6 +2966,37 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Clarify boundary")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifyAmbiguityCard(_ ambiguityFlags: [String]) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored ambiguity evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Ambiguity flags")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(ambiguityFlags, id: \.self) { ambiguityFlag in
+                    Text(ambiguityFlag)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored flags only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local ambiguity inference, no local rewrite.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Clarify ambiguity")
                 .font(.headline)
         }
     }
