@@ -268,6 +268,21 @@ private enum CanonicalInterruptClarifyAmbiguityFlag: String, CaseIterable, Ident
     }
 }
 
+private enum CanonicalInterruptClarifyRoutingHint: String, CaseIterable, Identifiable {
+    case onboardingStart = "onboarding_start"
+    case onboardingConfirmIdentity = "onboarding_confirm_identity"
+    case onboardingComplete = "onboarding_complete"
+    case onboardingLanguageDetect = "onboarding_language_detect"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifyRoutingHint? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private enum CanonicalReturnCheckResponse: String, CaseIterable, Identifiable {
     case yes = "Yes"
     case no = "No"
@@ -558,6 +573,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let interruptClarifyQuestion: String?
     let interruptClarifyWhatIsMissing: String?
     let interruptClarifyAmbiguityFlags: [String]
+    let interruptClarifyRoutingHints: [String]
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -636,6 +652,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         )
         let interruptClarifyWhatIsMissing = Self.interruptClarifyWhatIsMissing(in: queryItems)
         let interruptClarifyAmbiguityFlags = Self.interruptClarifyAmbiguityFlags(in: queryItems)
+        let interruptClarifyRoutingHints = Self.interruptClarifyRoutingHints(in: queryItems)
         let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
@@ -670,6 +687,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.interruptClarifyQuestion = interruptClarifyQuestion
         self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
         self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
+        self.interruptClarifyRoutingHints = interruptClarifyRoutingHints
         self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
@@ -848,6 +866,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         (1...2).contains(interruptClarifyAmbiguityFlags.count)
     }
 
+    var hasLawfulInterruptClarifyRoutingHints: Bool {
+        (1...2).contains(interruptClarifyRoutingHints.count)
+    }
+
     var hasInterruptResponseConflict: Bool {
         hasLawfulInterruptClarifyDirective && returnCheckPending == true
     }
@@ -1009,6 +1031,27 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return flags
+    }
+
+    private static func interruptClarifyRoutingHints(in queryItems: [URLQueryItem]) -> [String] {
+        var hints: [String] = []
+
+        for queryItem in queryItems where queryItem.name.lowercased() == "interrupt_clarify_routing_hint" {
+            guard let value = queryItem.value,
+                  let canonicalValue = CanonicalInterruptClarifyRoutingHint.parse(value)?.rawValue,
+                  !hints.contains(canonicalValue),
+                  hints.count < 2 else {
+                return []
+            }
+
+            hints.append(canonicalValue)
+        }
+
+        if hints.isEmpty {
+            return []
+        }
+
+        return hints
     }
 
     private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
@@ -2916,6 +2959,10 @@ struct SessionShellView: View {
                     interruptClarifyAmbiguityCard(context.interruptClarifyAmbiguityFlags)
                 }
 
+                if context.hasLawfulInterruptClarifyRoutingHints {
+                    interruptClarifyRoutingCard(context.interruptClarifyRoutingHints)
+                }
+
                 ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                     if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                         Button(answerFormat) {
@@ -2997,6 +3044,37 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Clarify ambiguity")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifyRoutingCard(_ routingHints: [String]) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored routing evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Routing hints")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(routingHints, id: \.self) { routingHint in
+                    Text(routingHint)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored hints only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local routing guidance, no local gate bypass.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Clarify routing")
                 .font(.headline)
         }
     }
