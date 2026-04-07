@@ -229,6 +229,47 @@ enum CanonicalInterruptResumePolicy: String, Equatable {
     }
 }
 
+private enum CanonicalInterruptAcceptedAnswerFormat: String, CaseIterable, Identifiable {
+    case continuePreviousTopic = "Continue previous topic"
+    case switchToNewTopic = "Switch to new topic"
+    case notSureYet = "Not sure yet"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptAcceptedAnswerFormat? {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case Self.continuePreviousTopic.rawValue:
+            return .continuePreviousTopic
+        case Self.switchToNewTopic.rawValue:
+            return .switchToNewTopic
+        case Self.notSureYet.rawValue:
+            return .notSureYet
+        default:
+            return nil
+        }
+    }
+}
+
+private enum CanonicalReturnCheckResponse: String, CaseIterable, Identifiable {
+    case yes = "Yes"
+    case no = "No"
+
+    var id: String {
+        rawValue
+    }
+
+    var confirmAnswerValue: String {
+        switch self {
+        case .yes:
+            return "ConfirmAnswer::Yes"
+        case .no:
+            return "ConfirmAnswer::No"
+        }
+    }
+}
+
 private func normalizedInterruptEnumToken(_ rawValue: String) -> String {
     rawValue
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -498,6 +539,8 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let returnCheckExpiresAt: String?
     let resumeBufferLive: Bool?
     let resumeBufferTopicHint: String?
+    let interruptClarifyQuestion: String?
+    let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -570,6 +613,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let resumeBufferTopicHint = Self.boundedContinuityDetail(
             Self.firstQueryValue(in: queryItems, name: "resume_buffer_topic_hint")
         )
+        let interruptClarifyQuestion = Self.boundedClarifyQuestion(
+            Self.firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
+        )
+        let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
               appOpenLike,
@@ -600,6 +647,8 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.returnCheckExpiresAt = returnCheckExpiresAt
         self.resumeBufferLive = resumeBufferLive
         self.resumeBufferTopicHint = resumeBufferTopicHint
+        self.interruptClarifyQuestion = interruptClarifyQuestion
+        self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
     var liveTranscriptEntries: [RecentThreadPreviewEntry] {
@@ -769,6 +818,18 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         returnCheckPending == true || interruptContinuityOutcome == .switchTopicThenReturnCheck
     }
 
+    var hasLawfulInterruptClarifyDirective: Bool {
+        interruptClarifyQuestion != nil && (2...3).contains(interruptAcceptedAnswerFormats.count)
+    }
+
+    var hasInterruptResponseConflict: Bool {
+        hasLawfulInterruptClarifyDirective && returnCheckPending == true
+    }
+
+    var hasInterruptResponseProductionSurface: Bool {
+        hasLawfulInterruptClarifyDirective || returnCheckPending == true
+    }
+
     private var hasInterruptContinuityFieldsPresent: Bool {
         activeSubjectRef != nil
             || interruptedSubjectRef != nil
@@ -860,6 +921,42 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return "\(trimmed.prefix(93))..."
+    }
+
+    private static func boundedClarifyQuestion(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= 240,
+              !trimmed.contains("\n"),
+              !trimmed.contains("\r") else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
+        var formats: [String] = []
+
+        for queryItem in queryItems where queryItem.name.lowercased() == "interrupt_accepted_answer_format" {
+            guard let value = queryItem.value,
+                  let canonicalValue = CanonicalInterruptAcceptedAnswerFormat.parse(value)?.rawValue,
+                  !formats.contains(canonicalValue) else {
+                return []
+            }
+
+            formats.append(canonicalValue)
+        }
+
+        guard (2...3).contains(formats.count) else {
+            return []
+        }
+
+        return formats
     }
 
     private static func canonicalBoolean(_ rawValue: String?) -> Bool? {
@@ -1698,6 +1795,37 @@ private struct ExplicitVoiceTurnRequestState: Identifiable {
     }
 }
 
+private enum InterruptContinuityResponseKind: String {
+    case clarifyDirective = "clarify_directive"
+    case returnCheckResponse = "return_check_response"
+}
+
+private struct InterruptContinuityResponseRequestState: Identifiable {
+    let id: String
+    let kind: InterruptContinuityResponseKind
+    let responseLabel: String
+    let canonicalValue: String
+    let sessionID: String
+    let turnID: String
+
+    var pendingOperationalEntry: OperationalQueueEntry {
+        let responseDetail: String
+        switch kind {
+        case .clarifyDirective:
+            responseDetail = "Clarify directive response: \(responseLabel)."
+        case .returnCheckResponse:
+            responseDetail = "Return-check response: \(responseLabel) (`\(canonicalValue)`)."
+        }
+
+        return OperationalQueueEntry(
+            name: id,
+            posture: "pending",
+            summary: "Awaiting authoritative interruption continuity response.",
+            detail: "Bounded continuity response production only. \(responseDetail) Session `\(sessionID)` turn `\(turnID)` remains non-authoritative until canonical follow-up occurs, and this shell does not invent local interrupt law, fake resume authority, or silent discard."
+        )
+    }
+}
+
 private enum VoicePermissionState: String {
     case notRequested = "not_requested"
     case granted = "granted"
@@ -2051,6 +2179,9 @@ struct SessionShellView: View {
     @State private var typedTurnPendingRequest: TypedTurnRequestState?
     @State private var typedTurnFailedRequest: OperationalQueueEntry?
     @State private var typedTurnRequestSequence: Int = 0
+    @State private var interruptResponsePendingRequest: InterruptContinuityResponseRequestState?
+    @State private var interruptResponseFailedRequest: OperationalQueueEntry?
+    @State private var interruptResponseRequestSequence: Int = 0
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
 
     private var activeRecoveryVisibleSurface: RecoveryVisibleSurface? {
@@ -2242,6 +2373,7 @@ struct SessionShellView: View {
             activeSessionSoftClosedContext = nil
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
+            clearInterruptResponseState()
             activeContext = newContext
             displayState = .onboardingEntryActive
         }
@@ -2254,6 +2386,7 @@ struct SessionShellView: View {
             activeSessionSoftClosedContext = nil
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
+            clearInterruptResponseState()
             activeSessionActiveContext = newContext
             displayState = newContext.recoveryDisplayState
                 ?? newContext.interruptDisplayState
@@ -2268,6 +2401,7 @@ struct SessionShellView: View {
             activeSessionActiveContext = nil
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
+            clearInterruptResponseState()
             activeSessionSoftClosedContext = newContext
             displayState = newContext.recoveryDisplayState ?? .sessionSoftClosedVisible
         }
@@ -2280,6 +2414,7 @@ struct SessionShellView: View {
             activeSessionActiveContext = nil
             activeSessionSoftClosedContext = nil
             activeSessionOpenContext = nil
+            clearInterruptResponseState()
             activeSessionSuspendedContext = newContext
             displayState = .sessionSuspendedVisible
         }
@@ -2292,6 +2427,7 @@ struct SessionShellView: View {
             activeSessionActiveContext = nil
             activeSessionSoftClosedContext = nil
             activeSessionSuspendedContext = nil
+            clearInterruptResponseState()
             activeSessionOpenContext = newContext
             displayState = newContext.recoveryDisplayState ?? .sessionOpenVisible
         }
@@ -2563,6 +2699,9 @@ struct SessionShellView: View {
                 currentGovernedOutputSummaryCard(context)
                 interruptContinuityCard(context)
                 interruptLawfulActionsCard(context)
+                if context.hasInterruptResponseProductionSurface {
+                    interruptResponseProductionCard(context)
+                }
                 recentThreadWindowCard
                 historySideDrawerCard
                 systemActivityQueueCard
@@ -2637,6 +2776,117 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Lawful interrupt actions")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResponseProductionCard(_ context: SessionActiveVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Bounded continuity response production only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if context.hasInterruptResponseConflict {
+                    Text("Authoritative interruption truth exposed both clarify-directive detail and a return check, so this shell fails closed and keeps continuity response production read-only until the cloud narrows to one lawful path.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    interruptClarifyDirectiveCard(context, productionEnabled: false)
+                    interruptReturnCheckResponseCard(context, productionEnabled: false)
+                } else if context.hasLawfulInterruptClarifyDirective {
+                    interruptClarifyDirectiveCard(
+                        context,
+                        productionEnabled: interruptResponsePendingRequest == nil
+                    )
+                } else if context.returnCheckPending == true {
+                    interruptReturnCheckResponseCard(
+                        context,
+                        productionEnabled: interruptResponsePendingRequest == nil
+                    )
+                }
+            }
+        } label: {
+            Text("Continuity response production")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifyDirectiveCard(
+        _ context: SessionActiveVisibleContext,
+        productionEnabled: Bool
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored clarify directive")
+                    .font(.headline)
+
+                if let interruptClarifyQuestion = context.interruptClarifyQuestion {
+                    Text(interruptClarifyQuestion)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Accepted answer formats")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
+                    Text(answerFormat)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
+                    if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
+                        Button(answerFormat) {
+                            submitInterruptClarifyResponse(answerFormat, context: context)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!productionEnabled)
+                    } else {
+                        Button(answerFormat) {
+                            submitInterruptClarifyResponse(answerFormat, context: context)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!productionEnabled)
+                    }
+                }
+            }
+        } label: {
+            Text("Cloud-authored clarify directive")
+                .font(.headline)
+        }
+    }
+
+    private func interruptReturnCheckResponseCard(
+        _ context: SessionActiveVisibleContext,
+        productionEnabled: Bool
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Return-check response")
+                    .font(.headline)
+
+                Text("Do you still want to continue the previous topic?")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 12) {
+                    Button("Yes") {
+                        submitInterruptReturnCheckResponse(.yes, context: context)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!productionEnabled)
+
+                    Button("No") {
+                        submitInterruptReturnCheckResponse(.no, context: context)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(!productionEnabled)
+                }
+            }
+        } label: {
+            Text("Return-check response")
                 .font(.headline)
         }
     }
@@ -3486,6 +3736,10 @@ struct SessionShellView: View {
                 Text("`Pending` remains a separate operational queue from history. It stays visible only, cloud-authoritative, and session-bound while H83 surfaces bounded typed-turn request posture here and H84 also surfaces bounded explicit voice-turn request posture here when an explicit request is awaiting authoritative response.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if let interruptResponsePendingRequest {
+                    interruptResponsePendingRequestCard(interruptResponsePendingRequest)
+                }
+
                 ForEach(displayedPendingOperationalEntries) { entry in
                     operationalQueueEntryRow(entry)
                 }
@@ -4082,6 +4336,12 @@ struct SessionShellView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    private func interruptResponsePendingRequestCard(
+        _ request: InterruptContinuityResponseRequestState
+    ) -> some View {
+        operationalQueueEntryRow(request.pendingOperationalEntry)
+    }
+
     private var trimmedTypedTurnDraft: String {
         typedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -4119,6 +4379,10 @@ struct SessionShellView: View {
     private var displayedFailedOperationalEntries: [OperationalQueueEntry] {
         var entries = failedOperationalEntries
 
+        if let interruptResponseFailedRequest {
+            entries.insert(interruptResponseFailedRequest, at: 0)
+        }
+
         if let explicitVoiceFailedRequest = explicitVoiceController.failedRequest {
             entries.insert(explicitVoiceFailedRequest, at: 0)
         }
@@ -4128,6 +4392,63 @@ struct SessionShellView: View {
         }
 
         return entries
+    }
+
+    private func clearInterruptResponseState() {
+        interruptResponsePendingRequest = nil
+        interruptResponseFailedRequest = nil
+    }
+
+    private func submitInterruptClarifyResponse(
+        _ answerFormat: String,
+        context: SessionActiveVisibleContext
+    ) {
+        submitInterruptResponse(
+            kind: .clarifyDirective,
+            responseLabel: answerFormat,
+            canonicalValue: answerFormat,
+            context: context
+        )
+    }
+
+    private func submitInterruptReturnCheckResponse(
+        _ response: CanonicalReturnCheckResponse,
+        context: SessionActiveVisibleContext
+    ) {
+        submitInterruptResponse(
+            kind: .returnCheckResponse,
+            responseLabel: response.rawValue,
+            canonicalValue: response.confirmAnswerValue,
+            context: context
+        )
+    }
+
+    private func submitInterruptResponse(
+        kind: InterruptContinuityResponseKind,
+        responseLabel: String,
+        canonicalValue: String,
+        context: SessionActiveVisibleContext
+    ) {
+        guard interruptResponsePendingRequest == nil else {
+            interruptResponseFailedRequest = OperationalQueueEntry(
+                name: "failed_interrupt_continuity_awaiting_authoritative_response",
+                posture: "failed",
+                summary: "A later interruption continuity response could not be produced while the current bounded interruption continuity response is already awaiting authoritative response.",
+                detail: "Latest failed interruption continuity response stays visible below in Failed until canonical follow-up occurs."
+            )
+            return
+        }
+
+        interruptResponseRequestSequence += 1
+        interruptResponsePendingRequest = InterruptContinuityResponseRequestState(
+            id: String(format: "interrupt_continuity_response_%03d", interruptResponseRequestSequence),
+            kind: kind,
+            responseLabel: responseLabel,
+            canonicalValue: canonicalValue,
+            sessionID: context.sessionID,
+            turnID: context.turnID
+        )
+        interruptResponseFailedRequest = nil
     }
 
     private func submitTypedTurn() {
