@@ -26,8 +26,12 @@ struct SeleneIPhoneApp: App {
             // `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance,
             // archived recent slice, and bounded PH1.M `resume context`,
             // plus bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover,
-            // suspended-status explanation, and allowed next step only, all
-            // while remaining cloud-authoritative and session-bound.
+            // suspended-status explanation, and allowed next step only,
+            // while H89 now also preserves bounded `RECOVERING` /
+            // `DEGRADED_RECOVERY` inline restriction posture and
+            // `QUARANTINED_LOCAL_STATE` hard takeover posture through the
+            // same cloud-authored session route, all while remaining
+            // cloud-authoritative and session-bound.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)
             }

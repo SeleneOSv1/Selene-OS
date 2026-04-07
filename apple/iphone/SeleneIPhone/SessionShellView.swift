@@ -59,13 +59,16 @@ final class ExplicitEntryRouter: ObservableObject {
     }
 }
 
-private enum ShellDisplayState: String {
+enum ShellDisplayState: String {
     case explicitEntryReady = "EXPLICIT_ENTRY_READY"
     case onboardingEntryActive = "ONBOARDING_ENTRY_ACTIVE"
     case sessionOpenVisible = "SESSION_OPEN_VISIBLE"
     case sessionActiveVisible = "SESSION_ACTIVE_VISIBLE"
     case sessionSoftClosedVisible = "SESSION_SOFT_CLOSED_VISIBLE"
     case sessionSuspendedVisible = "SESSION_SUSPENDED_VISIBLE"
+    case recovering = "RECOVERING"
+    case degradedRecovery = "DEGRADED_RECOVERY"
+    case quarantinedLocalState = "QUARANTINED_LOCAL_STATE"
 
     var title: String {
         rawValue
@@ -85,8 +88,121 @@ private enum ShellDisplayState: String {
             return "A lawful app-open route has been parsed and is being rendered as a bounded soft-closed session surface with explicit resume affordance, archived recent slice, and bounded PH1.M resume context only."
         case .sessionSuspendedVisible:
             return "A lawful app-open route has been parsed and is being rendered as a bounded suspended-session hard full takeover with suspended-status explanation and allowed next step only."
+        case .recovering:
+            return "A lawful app-open route has been parsed and is being rendered as a strong inline recovery restriction while the main session surface remains visible."
+        case .degradedRecovery:
+            return "A lawful app-open route has been parsed and is being rendered as a degraded recovery inline restriction while the main session surface remains visible."
+        case .quarantinedLocalState:
+            return "A lawful app-open route has been parsed and is being rendered as a hard quarantine takeover because normal interaction is not lawful."
         }
     }
+}
+
+enum CanonicalRecoveryMode: String, Equatable {
+    case normal = "PersistenceRecoveryMode::Normal"
+    case recovering = "PersistenceRecoveryMode::Recovering"
+    case degradedRecovery = "PersistenceRecoveryMode::DegradedRecovery"
+    case quarantinedLocalState = "PersistenceRecoveryMode::QuarantinedLocalState"
+
+    static func parse(_ rawValue: String?) -> CanonicalRecoveryMode? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedRecoveryEnumToken(rawValue) {
+        case "normal":
+            return .normal
+        case "recovering":
+            return .recovering
+        case "degradedrecovery":
+            return .degradedRecovery
+        case "quarantinedlocalstate":
+            return .quarantinedLocalState
+        default:
+            return nil
+        }
+    }
+}
+
+enum CanonicalReconciliationDecision: String, Equatable {
+    case retrySameOperation = "ReconciliationDecision::RetrySameOperation"
+    case reusePriorAuthoritativeOutcome = "ReconciliationDecision::ReusePriorAuthoritativeOutcome"
+    case rejectStaleOperation = "ReconciliationDecision::RejectStaleOperation"
+    case requestFreshSessionState = "ReconciliationDecision::RequestFreshSessionState"
+    case quarantineLocalState = "ReconciliationDecision::QuarantineLocalState"
+
+    static func parse(_ rawValue: String?) -> CanonicalReconciliationDecision? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedRecoveryEnumToken(rawValue) {
+        case "retrysameoperation":
+            return .retrySameOperation
+        case "reusepriorauthoritativeoutcome":
+            return .reusePriorAuthoritativeOutcome
+        case "rejectstaleoperation":
+            return .rejectStaleOperation
+        case "requestfreshsessionstate":
+            return .requestFreshSessionState
+        case "quarantinelocalstate":
+            return .quarantineLocalState
+        default:
+            return nil
+        }
+    }
+}
+
+private func normalizedRecoveryEnumToken(_ rawValue: String) -> String {
+    rawValue
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .filter { $0.isLetter || $0.isNumber }
+}
+
+private func resolvedRecoveryDisplayState(
+    recoveryMode: CanonicalRecoveryMode?,
+    reconciliationDecision: CanonicalReconciliationDecision?
+) -> ShellDisplayState? {
+    if recoveryMode == .quarantinedLocalState || reconciliationDecision == .quarantineLocalState {
+        return .quarantinedLocalState
+    }
+
+    switch recoveryMode {
+    case .recovering:
+        return .recovering
+    case .degradedRecovery:
+        return .degradedRecovery
+    default:
+        return nil
+    }
+}
+
+private func recoveryPostureRowsForVisibleSession(
+    sessionState: String,
+    sessionID: String,
+    recoveryMode: CanonicalRecoveryMode?,
+    reconciliationDecision: CanonicalReconciliationDecision?
+) -> [EntryMetadataRow] {
+    var rows = [
+        EntryMetadataRow(label: "session_state", value: sessionState),
+        EntryMetadataRow(label: "session_id", value: sessionID),
+    ]
+
+    if let recoveryMode {
+        rows.append(EntryMetadataRow(label: "recovery_mode", value: recoveryMode.rawValue))
+    }
+
+    if let reconciliationDecision {
+        rows.append(
+            EntryMetadataRow(
+                label: "reconciliation_decision",
+                value: reconciliationDecision.rawValue
+            )
+        )
+    }
+
+    return rows
 }
 
 enum ExplicitEntryRouteKind: String {
@@ -108,6 +224,8 @@ struct SessionOpenVisibleContext: Identifiable, Equatable {
     let sessionID: String
     let sessionState: String
     let sessionAttachOutcome: String
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -138,6 +256,12 @@ struct SessionOpenVisibleContext: Identifiable, Equatable {
         let sessionAttachOutcome = Self.canonicalSessionAttachOutcome(
             Self.firstQueryValue(in: queryItems, name: "session_attach_outcome")
         )
+        let recoveryMode = CanonicalRecoveryMode.parse(
+            Self.firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        let reconciliationDecision = CanonicalReconciliationDecision.parse(
+            Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
 
         guard !inviteLike,
               appOpenLike,
@@ -151,6 +275,8 @@ struct SessionOpenVisibleContext: Identifiable, Equatable {
         self.sessionID = sessionID
         self.sessionState = sessionState
         self.sessionAttachOutcome = sessionAttachOutcome
+        self.recoveryMode = recoveryMode
+        self.reconciliationDecision = reconciliationDecision
     }
 
     var bannerRows: [EntryMetadataRow] {
@@ -180,6 +306,22 @@ struct SessionOpenVisibleContext: Identifiable, Equatable {
         default:
             return "Continuity remains cloud-authoritative and session-bound."
         }
+    }
+
+    var recoveryDisplayState: ShellDisplayState? {
+        resolvedRecoveryDisplayState(
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
+    }
+
+    var recoveryPostureRows: [EntryMetadataRow] {
+        recoveryPostureRowsForVisibleSession(
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -243,6 +385,8 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let currentUserTurnText: String
     let currentSeleneTurnText: String
     let currentGovernedOutputSummary: String
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -282,6 +426,12 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let currentGovernedOutputSummary = Self.boundedSummary(
             Self.firstQueryValue(in: queryItems, name: "current_governed_output_summary")
         )
+        let recoveryMode = CanonicalRecoveryMode.parse(
+            Self.firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        let reconciliationDecision = CanonicalReconciliationDecision.parse(
+            Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
 
         guard !inviteLike,
               appOpenLike,
@@ -301,6 +451,8 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.currentUserTurnText = currentUserTurnText
         self.currentSeleneTurnText = currentSeleneTurnText
         self.currentGovernedOutputSummary = currentGovernedOutputSummary
+        self.recoveryMode = recoveryMode
+        self.reconciliationDecision = reconciliationDecision
     }
 
     var liveTranscriptEntries: [RecentThreadPreviewEntry] {
@@ -342,6 +494,22 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             EntryMetadataRow(label: "governed_content_mode", value: "bounded_summary_only"),
             EntryMetadataRow(label: "artifact_loading", value: "explicit_open_required"),
         ]
+    }
+
+    var recoveryDisplayState: ShellDisplayState? {
+        resolvedRecoveryDisplayState(
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
+    }
+
+    var recoveryPostureRows: [EntryMetadataRow] {
+        recoveryPostureRowsForVisibleSession(
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -423,6 +591,8 @@ struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
     let resumeSummaryBullets: [String]
     let archivedUserTurnText: String
     let archivedSeleneTurnText: String
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -469,6 +639,12 @@ struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
         let archivedSeleneTurnText = Self.boundedTranscript(
             Self.firstQueryValue(in: queryItems, name: "archived_selene_turn_text")
         )
+        let recoveryMode = CanonicalRecoveryMode.parse(
+            Self.firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        let reconciliationDecision = CanonicalReconciliationDecision.parse(
+            Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
 
         guard !inviteLike,
               appOpenLike,
@@ -489,6 +665,8 @@ struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
         self.resumeSummaryBullets = resumeSummaryBullets
         self.archivedUserTurnText = archivedUserTurnText
         self.archivedSeleneTurnText = archivedSeleneTurnText
+        self.recoveryMode = recoveryMode
+        self.reconciliationDecision = reconciliationDecision
     }
 
     var sessionRows: [EntryMetadataRow] {
@@ -522,6 +700,22 @@ struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
             EntryMetadataRow(label: "pending_work_order_id", value: pendingWorkOrderID ?? "not_provided"),
             EntryMetadataRow(label: "resume_tier", value: resumeTier ?? "not_provided"),
         ]
+    }
+
+    var recoveryDisplayState: ShellDisplayState? {
+        resolvedRecoveryDisplayState(
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
+    }
+
+    var recoveryPostureRows: [EntryMetadataRow] {
+        recoveryPostureRowsForVisibleSession(
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
     }
 
     private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
@@ -643,8 +837,8 @@ struct SessionSuspendedVisibleContext: Identifiable, Equatable {
     let nextAllowedActionsMaySpeak: Bool
     let nextAllowedActionsMustWait: Bool
     let nextAllowedActionsMustRewake: Bool
-    let recoveryMode: String?
-    let reconciliationDecision: String?
+    let recoveryMode: CanonicalRecoveryMode?
+    let reconciliationDecision: CanonicalReconciliationDecision?
 
     init?(url: URL) {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -681,10 +875,10 @@ struct SessionSuspendedVisibleContext: Identifiable, Equatable {
         let nextAllowedActionsMustRewake = Self.canonicalBoolean(
             Self.firstQueryValue(in: queryItems, name: "next_allowed_actions_must_rewake")
         )
-        let recoveryMode = Self.canonicalRecoveryMode(
+        let recoveryMode = CanonicalRecoveryMode.parse(
             Self.firstQueryValue(in: queryItems, name: "recovery_mode")
         )
-        let reconciliationDecision = Self.canonicalReconciliationDecision(
+        let reconciliationDecision = CanonicalReconciliationDecision.parse(
             Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
         )
 
@@ -715,11 +909,16 @@ struct SessionSuspendedVisibleContext: Identifiable, Equatable {
         ]
 
         if let recoveryMode {
-            rows.append(EntryMetadataRow(label: "recovery_mode", value: recoveryMode))
+            rows.append(EntryMetadataRow(label: "recovery_mode", value: recoveryMode.rawValue))
         }
 
         if let reconciliationDecision {
-            rows.append(EntryMetadataRow(label: "reconciliation_decision", value: reconciliationDecision))
+            rows.append(
+                EntryMetadataRow(
+                    label: "reconciliation_decision",
+                    value: reconciliationDecision.rawValue
+                )
+            )
         }
 
         return rows
@@ -794,53 +993,6 @@ struct SessionSuspendedVisibleContext: Identifiable, Equatable {
         }
     }
 
-    private static func canonicalRecoveryMode(_ rawValue: String?) -> String? {
-        guard let rawValue else {
-            return nil
-        }
-
-        switch normalizedEnumToken(rawValue) {
-        case "normal":
-            return "PersistenceRecoveryMode::Normal"
-        case "recovering":
-            return "PersistenceRecoveryMode::Recovering"
-        case "degradedrecovery":
-            return "PersistenceRecoveryMode::DegradedRecovery"
-        case "quarantinedlocalstate":
-            return "PersistenceRecoveryMode::QuarantinedLocalState"
-        default:
-            return nil
-        }
-    }
-
-    private static func canonicalReconciliationDecision(_ rawValue: String?) -> String? {
-        guard let rawValue else {
-            return nil
-        }
-
-        switch normalizedEnumToken(rawValue) {
-        case "retrysameoperation":
-            return "ReconciliationDecision::RetrySameOperation"
-        case "reusepriorauthoritativeoutcome":
-            return "ReconciliationDecision::ReusePriorAuthoritativeOutcome"
-        case "rejectstaleoperation":
-            return "ReconciliationDecision::RejectStaleOperation"
-        case "requestfreshsessionstate":
-            return "ReconciliationDecision::RequestFreshSessionState"
-        case "quarantinelocalstate":
-            return "ReconciliationDecision::QuarantineLocalState"
-        default:
-            return nil
-        }
-    }
-
-    private static func normalizedEnumToken(_ rawValue: String) -> String {
-        rawValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .filter { $0.isLetter || $0.isNumber }
-    }
-
     private static func boundedHint(_ rawValue: String?) -> String? {
         guard let rawValue, !rawValue.isEmpty else {
             return nil
@@ -855,6 +1007,76 @@ struct SessionSuspendedVisibleContext: Identifiable, Equatable {
 
     private static func booleanValue(_ value: Bool) -> String {
         value ? "true" : "false"
+    }
+}
+
+private enum RecoveryVisibleSurface {
+    case sessionOpen(SessionOpenVisibleContext)
+    case sessionActive(SessionActiveVisibleContext)
+    case sessionSoftClosed(SessionSoftClosedVisibleContext)
+
+    var sessionState: String {
+        switch self {
+        case .sessionOpen(let context):
+            return context.sessionState
+        case .sessionActive(let context):
+            return context.sessionState
+        case .sessionSoftClosed(let context):
+            return context.sessionState
+        }
+    }
+
+    var sessionID: String {
+        switch self {
+        case .sessionOpen(let context):
+            return context.sessionID
+        case .sessionActive(let context):
+            return context.sessionID
+        case .sessionSoftClosed(let context):
+            return context.sessionID
+        }
+    }
+
+    var recoveryMode: CanonicalRecoveryMode? {
+        switch self {
+        case .sessionOpen(let context):
+            return context.recoveryMode
+        case .sessionActive(let context):
+            return context.recoveryMode
+        case .sessionSoftClosed(let context):
+            return context.recoveryMode
+        }
+    }
+
+    var reconciliationDecision: CanonicalReconciliationDecision? {
+        switch self {
+        case .sessionOpen(let context):
+            return context.reconciliationDecision
+        case .sessionActive(let context):
+            return context.reconciliationDecision
+        case .sessionSoftClosed(let context):
+            return context.reconciliationDecision
+        }
+    }
+
+    var sourceSurfaceTitle: String {
+        switch self {
+        case .sessionOpen:
+            return "SESSION_OPEN_VISIBLE"
+        case .sessionActive:
+            return "SESSION_ACTIVE_VISIBLE"
+        case .sessionSoftClosed:
+            return "SESSION_SOFT_CLOSED_VISIBLE"
+        }
+    }
+
+    var recoveryPostureRows: [EntryMetadataRow] {
+        recoveryPostureRowsForVisibleSession(
+            sessionState: sessionState,
+            sessionID: sessionID,
+            recoveryMode: recoveryMode,
+            reconciliationDecision: reconciliationDecision
+        )
     }
 }
 
@@ -1529,6 +1751,22 @@ struct SessionShellView: View {
     @State private var typedTurnRequestSequence: Int = 0
     @StateObject private var explicitVoiceController = ExplicitVoiceCaptureController()
 
+    private var activeRecoveryVisibleSurface: RecoveryVisibleSurface? {
+        if let activeSessionActiveContext {
+            return .sessionActive(activeSessionActiveContext)
+        }
+
+        if let activeSessionSoftClosedContext {
+            return .sessionSoftClosed(activeSessionSoftClosedContext)
+        }
+
+        if let activeSessionOpenContext {
+            return .sessionOpen(activeSessionOpenContext)
+        }
+
+        return nil
+    }
+
     private let setupReceipts = [
         SetupReceipt(
             name: "install_launch_handshake",
@@ -1663,6 +1901,12 @@ struct SessionShellView: View {
 
                 if displayState == .onboardingEntryActive, let activeContext {
                     takeoverCard(activeContext)
+                } else if displayState == .recovering, let activeRecoveryVisibleSurface {
+                    recoveringVisibleCard(activeRecoveryVisibleSurface)
+                } else if displayState == .degradedRecovery, let activeRecoveryVisibleSurface {
+                    degradedRecoveryVisibleCard(activeRecoveryVisibleSurface)
+                } else if displayState == .quarantinedLocalState, let activeRecoveryVisibleSurface {
+                    quarantinedLocalStateCard(activeRecoveryVisibleSurface)
                 } else if displayState == .sessionActiveVisible, let activeSessionActiveContext {
                     sessionActiveVisibleCard(activeSessionActiveContext)
                 } else if displayState == .sessionSoftClosedVisible, let activeSessionSoftClosedContext {
@@ -1678,7 +1922,7 @@ struct SessionShellView: View {
                 setupReceiptCard
                 boundedSurfaceCard(
                     title: "Session",
-                    detail: "One dominant session surface remains primary. Bounded typed-turn request production lives in lawful explicit-ready / open / active posture while bounded soft-closed posture remains limited to explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only, and bounded suspended posture remains limited to hard full takeover, suspended-status explanation, and allowed next step only."
+                    detail: "One dominant session surface remains primary. Bounded typed-turn request production lives in lawful explicit-ready / open / active posture while bounded soft-closed posture remains limited to explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only, bounded suspended posture remains limited to hard full takeover, suspended-status explanation, and allowed next step only, and bounded recovery posture remains limited to inline restriction or quarantine takeover plus reread-authoritative-state / canonical-retry / failure-detail visibility only."
                 )
             }
             .padding(24)
@@ -1707,7 +1951,7 @@ struct SessionShellView: View {
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeSessionActiveContext = newContext
-            displayState = .sessionActiveVisible
+            displayState = newContext.recoveryDisplayState ?? .sessionActiveVisible
         }
         .onChange(of: router.latestSessionSoftClosedVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1719,7 +1963,7 @@ struct SessionShellView: View {
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeSessionSoftClosedContext = newContext
-            displayState = .sessionSoftClosedVisible
+            displayState = newContext.recoveryDisplayState ?? .sessionSoftClosedVisible
         }
         .onChange(of: router.latestSessionSuspendedVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1743,12 +1987,15 @@ struct SessionShellView: View {
             activeSessionSoftClosedContext = nil
             activeSessionSuspendedContext = nil
             activeSessionOpenContext = newContext
-            displayState = .sessionOpenVisible
+            displayState = newContext.recoveryDisplayState ?? .sessionOpenVisible
         }
         .onChange(of: displayState) { _, newState in
             if newState == .onboardingEntryActive
                 || newState == .sessionSoftClosedVisible
-                || newState == .sessionSuspendedVisible {
+                || newState == .sessionSuspendedVisible
+                || newState == .recovering
+                || newState == .degradedRecovery
+                || newState == .quarantinedLocalState {
                 explicitVoiceController.haltCaptureSession()
             }
         }
@@ -1777,7 +2024,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H88 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, the H74-H77 takeover surfaces, the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam, the H86 bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary seam, the H87 bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance plus archived recent slice plus bounded PH1.M `resume context`, and now also adds bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only.")
+            Text("H89 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, the H74-H77 takeover surfaces, the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam, the H86 bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary seam, the H87 bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance plus archived recent slice plus bounded PH1.M `resume context`, the H88 bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only, and now also adds bounded `RECOVERING`, `DEGRADED_RECOVERY`, and `QUARANTINED_LOCAL_STATE` recovery posture.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -1792,7 +2039,7 @@ struct SessionShellView: View {
                 Text(displayState.detail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, authoritative transcript state, bounded `NextAllowedActions`, archived recent slice truth, and bounded PH1.M `resume context` while typed and explicit voice surfaces produce bounded explicit turn requests only where those surfaces remain lawful.")
+                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, authoritative transcript state, bounded `NextAllowedActions`, archived recent slice truth, bounded PH1.M `resume context`, and bounded recovery posture while typed and explicit voice surfaces produce bounded explicit turn requests only where those surfaces remain lawful.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1827,6 +2074,165 @@ struct SessionShellView: View {
         } label: {
             Text("EXPLICIT_ENTRY_READY")
                 .font(.headline.monospaced())
+        }
+    }
+
+    private func recoveringVisibleCard(_ surface: RecoveryVisibleSurface) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("RECOVERING")
+                    .font(.headline)
+
+                Text("H89 adds bounded inline recovery restriction while the lawful main session surface remains visible and cloud-authored recovery posture is reread from canonical session transport only.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                recoveryVisibleSessionSurface(surface)
+                recoveryPostureCard(surface, state: .recovering)
+                lawfulRecoveryActionsCard(.recovering)
+            }
+        } label: {
+            Text("RECOVERING")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func degradedRecoveryVisibleCard(_ surface: RecoveryVisibleSurface) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("DEGRADED_RECOVERY")
+                    .font(.headline)
+
+                Text("H89 adds bounded degraded recovery restriction while the lawful main session surface remains visible and cloud-authored recovery posture limits normal interaction.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                recoveryVisibleSessionSurface(surface)
+                recoveryPostureCard(surface, state: .degradedRecovery)
+                lawfulRecoveryActionsCard(.degradedRecovery)
+            }
+        } label: {
+            Text("DEGRADED_RECOVERY")
+                .font(.headline.monospaced())
+        }
+    }
+
+    private func quarantinedLocalStateCard(_ surface: RecoveryVisibleSurface) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("QUARANTINED_LOCAL_STATE")
+                    .font(.headline)
+
+                Text("H89 adds a bounded hard takeover when quarantine makes normal interaction unlawful and the shell must reread authoritative state before any canonical retry path is reconsidered.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill(surface.sourceSurfaceTitle)
+                    posturePill("Cloud authoritative")
+                }
+
+                recoveryPostureCard(surface, state: .quarantinedLocalState)
+                lawfulRecoveryActionsCard(.quarantinedLocalState)
+            }
+        } label: {
+            Text("QUARANTINED_LOCAL_STATE")
+                .font(.headline.monospaced())
+        }
+    }
+
+    @ViewBuilder
+    private func recoveryVisibleSessionSurface(_ surface: RecoveryVisibleSurface) -> some View {
+        switch surface {
+        case .sessionOpen(let context):
+            currentSessionBannerCard(context)
+            sessionAttachOutcomeContinuityCard(context)
+        case .sessionActive(let context):
+            liveDualTranscriptCard(context)
+            currentTurnEnvelopeCard(context)
+            currentGovernedOutputSummaryCard(context)
+        case .sessionSoftClosed(let context):
+            archivedRecentSliceCard(context)
+            resumeContextCard(context)
+        }
+    }
+
+    private func recoveryPostureCard(
+        _ surface: RecoveryVisibleSurface,
+        state: ShellDisplayState
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(state.title)
+                    .font(.headline.monospaced())
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill(surface.sourceSurfaceTitle)
+                    posturePill("Cloud authoritative")
+                }
+
+                ForEach(surface.recoveryPostureRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 190, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Overlays change posture, not ownership.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local override, no trust in stale cache, no hidden replay.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Recovery posture")
+                .font(.headline)
+        }
+    }
+
+    private func lawfulRecoveryActionsCard(_ state: ShellDisplayState) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(lawfulRecoveryActionSummary(for: state))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Reread authoritative state") {}
+                    .buttonStyle(.borderedProminent)
+                    .disabled(true)
+
+                Button("Retry only through canonical entry path") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+
+                Button("Inspect failure details") {}
+                    .buttonStyle(.bordered)
+                    .disabled(true)
+            }
+        } label: {
+            Text("Lawful recovery actions")
+                .font(.headline)
+        }
+    }
+
+    private func lawfulRecoveryActionSummary(for state: ShellDisplayState) -> String {
+        switch state {
+        case .recovering:
+            return "Recovery remains active cloud-side, so bounded reread and canonical retry posture stay visible while normal local interaction is restricted."
+        case .degradedRecovery:
+            return "Degraded recovery remains active cloud-side, so bounded reread and canonical retry posture stay visible while normal local interaction is further restricted."
+        case .quarantinedLocalState:
+            return "Quarantine removes lawful normal interaction from the visible surface until authoritative state is reread and the canonical recovery path clears cloud-side."
+        default:
+            return "Only bounded reread, canonical retry posture, and failure-detail inspection remain visible here."
         }
     }
 
