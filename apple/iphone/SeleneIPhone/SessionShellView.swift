@@ -540,6 +540,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let resumeBufferLive: Bool?
     let resumeBufferTopicHint: String?
     let interruptClarifyQuestion: String?
+    let interruptClarifyWhatIsMissing: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -616,6 +617,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let interruptClarifyQuestion = Self.boundedClarifyQuestion(
             Self.firstQueryValue(in: queryItems, name: "interrupt_clarify_question")
         )
+        let interruptClarifyWhatIsMissing = Self.interruptClarifyWhatIsMissing(in: queryItems)
         let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
@@ -648,6 +650,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.resumeBufferLive = resumeBufferLive
         self.resumeBufferTopicHint = resumeBufferTopicHint
         self.interruptClarifyQuestion = interruptClarifyQuestion
+        self.interruptClarifyWhatIsMissing = interruptClarifyWhatIsMissing
         self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
@@ -937,6 +940,31 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return trimmed
+    }
+
+    private static func boundedClarifyMissingField(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= 128,
+              !trimmed.contains("\n"),
+              !trimmed.contains("\r") else {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private static func interruptClarifyWhatIsMissing(in queryItems: [URLQueryItem]) -> String? {
+        let values = queryItems.filter { $0.name.lowercased() == "interrupt_clarify_what_is_missing" }
+        guard values.count == 1 else {
+            return nil
+        }
+
+        return boundedClarifyMissingField(values[0].value)
     }
 
     private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
@@ -2836,6 +2864,10 @@ struct SessionShellView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                if let interruptClarifyWhatIsMissing = context.interruptClarifyWhatIsMissing {
+                    interruptClarifyBoundaryCard(interruptClarifyWhatIsMissing)
+                }
+
                 ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                     if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                         Button(answerFormat) {
@@ -2854,6 +2886,38 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Cloud-authored clarify directive")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifyBoundaryCard(_ missingField: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("One question, one missing field")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Cloud-authored field key only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Missing field")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(missingField)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("No local field inference, no multi-field bundling.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Clarify boundary")
                 .font(.headline)
         }
     }
