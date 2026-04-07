@@ -24,8 +24,10 @@ struct SeleneIPhoneApp: App {
             // `SESSION_ACTIVE_VISIBLE` live dual transcript plus current
             // governed-output summary path, and now also allows bounded
             // `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance,
-            // archived recent slice, and bounded PH1.M `resume context` only,
-            // all while remaining cloud-authoritative and session-bound.
+            // archived recent slice, and bounded PH1.M `resume context`,
+            // plus bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover,
+            // suspended-status explanation, and allowed next step only, all
+            // while remaining cloud-authoritative and session-bound.
             .onOpenURL { url in
                 explicitEntryRouter.receive(url: url)
             }

@@ -1,0 +1,79 @@
+# H88 APP_IPHONE: First Canonical `SESSION_SUSPENDED_VISIBLE` Hard Full Takeover / Suspended-Status Explanation / Allowed-Next-Step-Only Native Shell Implementation Build
+
+## Objective
+
+This is the first canonical APP_IPHONE `SESSION_SUSPENDED_VISIBLE` hard full takeover / suspended-status explanation / allowed-next-step-only native shell implementation build.
+
+- H87 implementation remains live and the native iPhone shell already exposes bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
+- H87 route seeding remains live through exact `session_state`, `session_id`, `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, repeated `resume_summary_bullets`, `resume_tier`, `archived_user_turn_text`, and `archived_selene_turn_text` handling for bounded `SESSION_SOFT_CLOSED_VISIBLE` preview, and this H88 run preserves that contract while adding bounded suspended preview inputs.
+- H86 implementation remains live and the native iPhone shell already exposes bounded `SESSION_ACTIVE_VISIBLE` live dual transcript and current governed-output summary in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
+- H86 route seeding remains live through exact `session_state`, `session_id`, `turn_id`, `current_user_turn_text`, `current_selene_turn_text`, and `current_governed_output_summary` handling for bounded `SESSION_ACTIVE_VISIBLE` preview, and this H88 run preserves that contract.
+- H85 implementation remains live and the native iPhone shell already exposes bounded `SESSION_OPEN_VISIBLE` current session banner and attach-outcome continuity label in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
+- H85 route seeding remains live through exact `session_state`, `session_id`, and `session_attach_outcome` handling for bounded `SESSION_OPEN_VISIBLE` preview, and this H88 run preserves that contract.
+- H84 implementation remains live and the native iPhone shell already exposes bounded `EXPLICIT_ENTRY_READY` explicit voice-turn request production in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
+- H83 implementation remains live and the native iPhone shell already exposes bounded `EXPLICIT_ENTRY_READY` typed-turn request production in lawful `EXPLICIT_ONLY` cloud-authoritative posture.
+- H82 implementation remains live and the native iPhone shell already exposes bounded `EXPLICIT_ENTRY_READY` `Needs Attention` actionable queue and required-human-action visibility in read-only non-producing posture.
+- H81 implementation remains live and the native iPhone shell already exposes bounded `EXPLICIT_ENTRY_READY` `System Activity` operational queue, `Pending` visibility, and `Failed` visibility in read-only non-producing posture.
+- H80 implementation remains live and the native iPhone shell already exposes bounded `EXPLICIT_ENTRY_READY` history side drawer, incremental history expansion, and archived session recall in read-only non-producing posture.
+- H79 implementation remains live as the first canonical recent thread window / typed input affordance / explicit voice entry affordance native shell implementation build, and this H88 run advances only `SESSION_SUSPENDED_VISIBLE` while preserving the H79-H87 surfaces.
+- H78 publication remains live and the post-H77 exact APP_IPHONE onboarding-continue voice-artifact sync behavior / access-engine activation winner remains `NOT_EXPLICIT`.
+- H77 implementation remains live and the native iPhone shell already exposes `voice_artifact_sync_receipt_ref` and `access_engine_instance_id`.
+- H76 implementation remains live and the native iPhone shell already exposes `blocking_field`, `blocking_question`, and `remaining_missing_fields`.
+- H75 implementation remains live and the native iPhone shell already exposes `onboarding_status` and `remaining_platform_receipt_kinds`.
+- H74 implementation remains live and the native iPhone shell already exposes `onboarding_session_id`, `next_step`, `required_fields`, and `required_verification_gates`.
+- H73 implementation remains live and the native iPhone shell already exposes `onOpenURL`, `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, and exact setup-receipt display including `ios_side_button_configured`.
+- H72 publication remains live and the post-H71 exact APP_IPHONE side-button producer winner remains `NOT_EXPLICIT`.
+- H71 publication remains live and the post-H70 exact APP_IPHONE wake-parity winner remains `NOT_EXPLICIT`.
+- H69 implementation remains live and `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- H70 implementation remains live and `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- H67 publication remains live and `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- H68 publication remains live and `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- H66 publication remains live and the post-H65 Section 11 next exact winner remains `NOT_EXPLICIT`.
+- Phase F freeze truth remains live.
+- Phase G freeze truth remains live.
+- current strict dependency order still places `APP_IPHONE` before `APP_MAC_DESKTOP`.
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- no proven live side-button producer claim is lawful in this run.
+- no wake parity claim is lawful in this run.
+- no autonomous unlock claim is lawful in this run.
+
+## Current Repo Truth
+
+- current shared source still preserves `SessionState::{Closed, Open, Active, SoftClosed, Suspended}`.
+- current shared source still preserves `RuntimeExecutionEnvelope`, `RuntimeExecutionEnvelope.session_id`, `RuntimeExecutionEnvelope.turn_id`, `RuntimeExecutionEnvelope.session_attach_outcome`, `RuntimeExecutionEnvelope.governance_state`, `RuntimeExecutionEnvelope.proof_state`, `RuntimeExecutionEnvelope.computation_state`, `RuntimeExecutionEnvelope.identity_state`, `RuntimeExecutionEnvelope.memory_state`, `RuntimeExecutionEnvelope.authority_state`, and `RuntimeExecutionEnvelope.artifact_trust_state`.
+- current shared source still preserves `NextAllowedActions`, `SessionSnapshot.next_allowed_actions`, `PersistenceRecoveryMode`, `ReconciliationDecision`, PH1.M resume-select carriers `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, `resume_tier`, and `resume_summary_bullets`, and append-only `conversation_ledger` truth with append-only overwrite forbidden.
+- G1 already freezes `SESSION_SUSPENDED_VISIBLE` as the dominant suspended session surface with hard full takeover, explanation, and allowed next step only.
+- the pre-H88 native iPhone shell already preserved `EXPLICIT_ENTRY_READY`, `ONBOARDING_ENTRY_ACTIVE`, `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, `SESSION_SOFT_CLOSED_VISIBLE`, exact setup-receipt display, the H74 / H75 / H76 / H77 takeover fields, the H79 / H80 / H81 / H82 surfaces, the H83 typed-turn request production surface, the H84 explicit voice-turn request production surface, and the H85 / H86 / H87 session surfaces, but did not yet expose `SESSION_SUSPENDED_VISIBLE`, suspended-status explanation, or allowed-next-step-only takeover posture.
+- the pre-H88 native iPhone `Info.plist` already exposed `NSMicrophoneUsageDescription` and `NSSpeechRecognitionUsageDescription`, and those keys remain unchanged in this run.
+- native iPhone source tree and local Xcode project remain exposed in-tree.
+- native macOS source tree and local Xcode project remain exposed in-tree.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- APP_MAC_DESKTOP remains later in dependency order and is not selected in this run.
+
+## Implementation Result
+
+- this run adds bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- this run preserves the H84 `Info.plist` permission-key truth without editing `Info.plist`.
+- this run preserves exact setup-receipt visibility including `ios_side_button_configured`.
+- this run preserves the H74 fields `onboarding_session_id`, `next_step`, `required_fields`, and `required_verification_gates`.
+- this run preserves the H75 fields `onboarding_status` and `remaining_platform_receipt_kinds`.
+- this run preserves the H76 fields `blocking_field`, `blocking_question`, and `remaining_missing_fields`.
+- this run preserves the H77 fields `voice_artifact_sync_receipt_ref` and `access_engine_instance_id`.
+- this run preserves the H79-H87 surfaces and exact typed / voice / open / active / soft-closed request-visibility copy.
+- this run preserves H85 open-session route seeding through exact `session_state`, `session_id`, and `session_attach_outcome` handling, preserves H86 active-session route seeding through exact `session_state`, `session_id`, `turn_id`, `current_user_turn_text`, `current_selene_turn_text`, and `current_governed_output_summary` handling, preserves H87 soft-closed route seeding through exact `session_state`, `session_id`, `selected_thread_id`, `selected_thread_title`, `pending_work_order_id`, repeated `resume_summary_bullets`, `resume_tier`, `archived_user_turn_text`, and `archived_selene_turn_text` handling, and adds bounded suspended preview seeding through `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`.
+- native iPhone shell now exposes bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- this run does not add `RECOVERING`, `DEGRADED_RECOVERY`, `QUARANTINED_LOCAL_STATE`, `INTERRUPT_VISIBLE`, explicit active-session interrupt controls, heavy governed-content loaders, wake-word behavior, side-button producer wiring, wake parity, or autonomous unlock.
+- this run does not add local transcript authority, local assistant fabrication, local queue repair authority, hidden auto-heal claim, local completion of pending work, local unsuspend, or silent disappearance of failed work.
+
+## Out Of Scope
+
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- no proven live side-button producer claim is lawful in this run.
+- no wake parity claim is lawful in this run.
+- no autonomous unlock claim is lawful in this run.
+- APP_MAC_DESKTOP remains later in dependency order and is not selected in this run.
+- no post-H88 next exact winner is published in this run.

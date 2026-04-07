@@ -7,12 +7,14 @@ final class ExplicitEntryRouter: ObservableObject {
     @Published private(set) var latestContext: ExplicitEntryContext?
     @Published private(set) var latestSessionActiveVisibleContext: SessionActiveVisibleContext?
     @Published private(set) var latestSessionSoftClosedVisibleContext: SessionSoftClosedVisibleContext?
+    @Published private(set) var latestSessionSuspendedVisibleContext: SessionSuspendedVisibleContext?
     @Published private(set) var latestSessionOpenVisibleContext: SessionOpenVisibleContext?
 
     func receive(url: URL) {
         if let sessionActiveContext = SessionActiveVisibleContext(url: url) {
             latestSessionActiveVisibleContext = sessionActiveContext
             latestSessionSoftClosedVisibleContext = nil
+            latestSessionSuspendedVisibleContext = nil
             latestSessionOpenVisibleContext = nil
             latestContext = nil
             return
@@ -21,6 +23,16 @@ final class ExplicitEntryRouter: ObservableObject {
         if let sessionSoftClosedContext = SessionSoftClosedVisibleContext(url: url) {
             latestSessionActiveVisibleContext = nil
             latestSessionSoftClosedVisibleContext = sessionSoftClosedContext
+            latestSessionSuspendedVisibleContext = nil
+            latestSessionOpenVisibleContext = nil
+            latestContext = nil
+            return
+        }
+
+        if let sessionSuspendedContext = SessionSuspendedVisibleContext(url: url) {
+            latestSessionActiveVisibleContext = nil
+            latestSessionSoftClosedVisibleContext = nil
+            latestSessionSuspendedVisibleContext = sessionSuspendedContext
             latestSessionOpenVisibleContext = nil
             latestContext = nil
             return
@@ -29,6 +41,7 @@ final class ExplicitEntryRouter: ObservableObject {
         if let sessionOpenContext = SessionOpenVisibleContext(url: url) {
             latestSessionActiveVisibleContext = nil
             latestSessionSoftClosedVisibleContext = nil
+            latestSessionSuspendedVisibleContext = nil
             latestSessionOpenVisibleContext = sessionOpenContext
             latestContext = nil
             return
@@ -40,6 +53,7 @@ final class ExplicitEntryRouter: ObservableObject {
 
         latestSessionActiveVisibleContext = nil
         latestSessionSoftClosedVisibleContext = nil
+        latestSessionSuspendedVisibleContext = nil
         latestSessionOpenVisibleContext = nil
         latestContext = context
     }
@@ -51,6 +65,7 @@ private enum ShellDisplayState: String {
     case sessionOpenVisible = "SESSION_OPEN_VISIBLE"
     case sessionActiveVisible = "SESSION_ACTIVE_VISIBLE"
     case sessionSoftClosedVisible = "SESSION_SOFT_CLOSED_VISIBLE"
+    case sessionSuspendedVisible = "SESSION_SUSPENDED_VISIBLE"
 
     var title: String {
         rawValue
@@ -68,6 +83,8 @@ private enum ShellDisplayState: String {
             return "A lawful app-open route has been parsed and is being rendered as a bounded active-session surface with live dual transcript, current turn envelope, and current governed-output summary only."
         case .sessionSoftClosedVisible:
             return "A lawful app-open route has been parsed and is being rendered as a bounded soft-closed session surface with explicit resume affordance, archived recent slice, and bounded PH1.M resume context only."
+        case .sessionSuspendedVisible:
+            return "A lawful app-open route has been parsed and is being rendered as a bounded suspended-session hard full takeover with suspended-status explanation and allowed next step only."
         }
     }
 }
@@ -616,6 +633,228 @@ struct SessionSoftClosedVisibleContext: Identifiable, Equatable {
         }
 
         return "\(trimmed.prefix(137))..."
+    }
+}
+
+struct SessionSuspendedVisibleContext: Identifiable, Equatable {
+    let id: String
+    let sessionID: String
+    let sessionState: String
+    let nextAllowedActionsMaySpeak: Bool
+    let nextAllowedActionsMustWait: Bool
+    let nextAllowedActionsMustRewake: Bool
+    let recoveryMode: String?
+    let reconciliationDecision: String?
+
+    init?(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        let scheme = (components.scheme ?? "").lowercased()
+        guard ["selene", "https", "http"].contains(scheme) else {
+            return nil
+        }
+
+        let host = (components.host ?? "no-host").lowercased()
+        let path = components.path.isEmpty ? "/" : components.path
+        let lowerPath = path.lowercased()
+        let queryItems = components.queryItems ?? []
+        let inviteLike = host.contains("invite") || lowerPath.contains("invite") || lowerPath.contains("onboarding")
+        let appOpenLike = host.contains("open")
+            || lowerPath.contains("open")
+            || lowerPath.contains("entry")
+            || Self.hasQueryItem(in: queryItems, name: "session_state")
+
+        let sessionState = Self.canonicalSessionState(
+            Self.firstQueryValue(in: queryItems, name: "session_state")
+        )
+        let sessionID = Self.boundedHint(
+            Self.firstQueryValue(in: queryItems, name: "session_id")
+        )
+        let nextAllowedActionsMaySpeak = Self.canonicalBoolean(
+            Self.firstQueryValue(in: queryItems, name: "next_allowed_actions_may_speak")
+        )
+        let nextAllowedActionsMustWait = Self.canonicalBoolean(
+            Self.firstQueryValue(in: queryItems, name: "next_allowed_actions_must_wait")
+        )
+        let nextAllowedActionsMustRewake = Self.canonicalBoolean(
+            Self.firstQueryValue(in: queryItems, name: "next_allowed_actions_must_rewake")
+        )
+        let recoveryMode = Self.canonicalRecoveryMode(
+            Self.firstQueryValue(in: queryItems, name: "recovery_mode")
+        )
+        let reconciliationDecision = Self.canonicalReconciliationDecision(
+            Self.firstQueryValue(in: queryItems, name: "reconciliation_decision")
+        )
+
+        guard !inviteLike,
+              appOpenLike,
+              let sessionState,
+              let sessionID,
+              let nextAllowedActionsMaySpeak,
+              let nextAllowedActionsMustWait,
+              let nextAllowedActionsMustRewake else {
+            return nil
+        }
+
+        self.id = url.absoluteString
+        self.sessionID = sessionID
+        self.sessionState = sessionState
+        self.nextAllowedActionsMaySpeak = nextAllowedActionsMaySpeak
+        self.nextAllowedActionsMustWait = nextAllowedActionsMustWait
+        self.nextAllowedActionsMustRewake = nextAllowedActionsMustRewake
+        self.recoveryMode = recoveryMode
+        self.reconciliationDecision = reconciliationDecision
+    }
+
+    var suspendedStatusRows: [EntryMetadataRow] {
+        var rows = [
+            EntryMetadataRow(label: "session_state", value: sessionState),
+            EntryMetadataRow(label: "session_id", value: sessionID),
+        ]
+
+        if let recoveryMode {
+            rows.append(EntryMetadataRow(label: "recovery_mode", value: recoveryMode))
+        }
+
+        if let reconciliationDecision {
+            rows.append(EntryMetadataRow(label: "reconciliation_decision", value: reconciliationDecision))
+        }
+
+        return rows
+    }
+
+    var allowedNextStepRows: [EntryMetadataRow] {
+        [
+            EntryMetadataRow(
+                label: "next_allowed_actions_may_speak",
+                value: Self.booleanValue(nextAllowedActionsMaySpeak)
+            ),
+            EntryMetadataRow(
+                label: "next_allowed_actions_must_wait",
+                value: Self.booleanValue(nextAllowedActionsMustWait)
+            ),
+            EntryMetadataRow(
+                label: "next_allowed_actions_must_rewake",
+                value: Self.booleanValue(nextAllowedActionsMustRewake)
+            ),
+        ]
+    }
+
+    var allowedNextStepSummary: String {
+        if nextAllowedActionsMustRewake {
+            return "Must re-wake through the lawful explicit-entry path before any next turn can be requested."
+        }
+
+        if nextAllowedActionsMustWait {
+            return "Must wait for authoritative reread or cloud-side recovery review before any next turn can be requested."
+        }
+
+        if nextAllowedActionsMaySpeak {
+            return "A later explicit next step may become lawful only after the authoritative suspended posture clears cloud-side."
+        }
+
+        return "No next turn is currently lawful from this bounded suspended surface."
+    }
+
+    private static func hasQueryItem(in queryItems: [URLQueryItem], name: String) -> Bool {
+        queryItems.contains { $0.name.lowercased() == name }
+    }
+
+    private static func firstQueryValue(in queryItems: [URLQueryItem], name: String) -> String? {
+        queryItems.first(where: { $0.name.lowercased() == name })?.value
+    }
+
+    private static func canonicalSessionState(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let normalized = rawValue.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalized == "SUSPENDED" else {
+            return nil
+        }
+
+        return "SessionState::Suspended"
+    }
+
+    private static func canonicalBoolean(_ rawValue: String?) -> Bool? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true":
+            return true
+        case "false":
+            return false
+        default:
+            return nil
+        }
+    }
+
+    private static func canonicalRecoveryMode(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedEnumToken(rawValue) {
+        case "normal":
+            return "PersistenceRecoveryMode::Normal"
+        case "recovering":
+            return "PersistenceRecoveryMode::Recovering"
+        case "degradedrecovery":
+            return "PersistenceRecoveryMode::DegradedRecovery"
+        case "quarantinedlocalstate":
+            return "PersistenceRecoveryMode::QuarantinedLocalState"
+        default:
+            return nil
+        }
+    }
+
+    private static func canonicalReconciliationDecision(_ rawValue: String?) -> String? {
+        guard let rawValue else {
+            return nil
+        }
+
+        switch normalizedEnumToken(rawValue) {
+        case "retrysameoperation":
+            return "ReconciliationDecision::RetrySameOperation"
+        case "reusepriorauthoritativeoutcome":
+            return "ReconciliationDecision::ReusePriorAuthoritativeOutcome"
+        case "rejectstaleoperation":
+            return "ReconciliationDecision::RejectStaleOperation"
+        case "requestfreshsessionstate":
+            return "ReconciliationDecision::RequestFreshSessionState"
+        case "quarantinelocalstate":
+            return "ReconciliationDecision::QuarantineLocalState"
+        default:
+            return nil
+        }
+    }
+
+    private static func normalizedEnumToken(_ rawValue: String) -> String {
+        rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func boundedHint(_ rawValue: String?) -> String? {
+        guard let rawValue, !rawValue.isEmpty else {
+            return nil
+        }
+
+        if rawValue.count <= 18 {
+            return rawValue
+        }
+
+        return "\(rawValue.prefix(8))...\(rawValue.suffix(4))"
+    }
+
+    private static func booleanValue(_ value: Bool) -> String {
+        value ? "true" : "false"
     }
 }
 
@@ -1282,6 +1521,7 @@ struct SessionShellView: View {
     @State private var activeContext: ExplicitEntryContext?
     @State private var activeSessionActiveContext: SessionActiveVisibleContext?
     @State private var activeSessionSoftClosedContext: SessionSoftClosedVisibleContext?
+    @State private var activeSessionSuspendedContext: SessionSuspendedVisibleContext?
     @State private var activeSessionOpenContext: SessionOpenVisibleContext?
     @State private var typedTurnDraft: String = ""
     @State private var typedTurnPendingRequest: TypedTurnRequestState?
@@ -1427,6 +1667,8 @@ struct SessionShellView: View {
                     sessionActiveVisibleCard(activeSessionActiveContext)
                 } else if displayState == .sessionSoftClosedVisible, let activeSessionSoftClosedContext {
                     sessionSoftClosedVisibleCard(activeSessionSoftClosedContext)
+                } else if displayState == .sessionSuspendedVisible, let activeSessionSuspendedContext {
+                    sessionSuspendedVisibleCard(activeSessionSuspendedContext)
                 } else if displayState == .sessionOpenVisible, let activeSessionOpenContext {
                     sessionOpenVisibleCard(activeSessionOpenContext)
                 } else {
@@ -1436,7 +1678,7 @@ struct SessionShellView: View {
                 setupReceiptCard
                 boundedSurfaceCard(
                     title: "Session",
-                    detail: "One dominant session surface remains primary. Bounded typed-turn request production lives in lawful explicit-ready / open / active posture while bounded soft-closed posture remains limited to explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only."
+                    detail: "One dominant session surface remains primary. Bounded typed-turn request production lives in lawful explicit-ready / open / active posture while bounded soft-closed posture remains limited to explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only, and bounded suspended posture remains limited to hard full takeover, suspended-status explanation, and allowed next step only."
                 )
             }
             .padding(24)
@@ -1450,6 +1692,7 @@ struct SessionShellView: View {
 
             activeSessionActiveContext = nil
             activeSessionSoftClosedContext = nil
+            activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeContext = newContext
             displayState = .onboardingEntryActive
@@ -1461,6 +1704,7 @@ struct SessionShellView: View {
 
             activeContext = nil
             activeSessionSoftClosedContext = nil
+            activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeSessionActiveContext = newContext
             displayState = .sessionActiveVisible
@@ -1472,9 +1716,22 @@ struct SessionShellView: View {
 
             activeContext = nil
             activeSessionActiveContext = nil
+            activeSessionSuspendedContext = nil
             activeSessionOpenContext = nil
             activeSessionSoftClosedContext = newContext
             displayState = .sessionSoftClosedVisible
+        }
+        .onChange(of: router.latestSessionSuspendedVisibleContext) { _, newContext in
+            guard let newContext else {
+                return
+            }
+
+            activeContext = nil
+            activeSessionActiveContext = nil
+            activeSessionSoftClosedContext = nil
+            activeSessionOpenContext = nil
+            activeSessionSuspendedContext = newContext
+            displayState = .sessionSuspendedVisible
         }
         .onChange(of: router.latestSessionOpenVisibleContext) { _, newContext in
             guard let newContext else {
@@ -1484,11 +1741,14 @@ struct SessionShellView: View {
             activeContext = nil
             activeSessionActiveContext = nil
             activeSessionSoftClosedContext = nil
+            activeSessionSuspendedContext = nil
             activeSessionOpenContext = newContext
             displayState = .sessionOpenVisible
         }
         .onChange(of: displayState) { _, newState in
-            if newState == .onboardingEntryActive || newState == .sessionSoftClosedVisible {
+            if newState == .onboardingEntryActive
+                || newState == .sessionSoftClosedVisible
+                || newState == .sessionSuspendedVisible {
                 explicitVoiceController.haltCaptureSession()
             }
         }
@@ -1517,7 +1777,7 @@ struct SessionShellView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text("H87 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, the H74-H77 takeover surfaces, the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam, the H86 bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary seam, and now also adds bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance, archived recent slice, and bounded PH1.M `resume context` only.")
+            Text("H88 preserves the H79 recent thread window, the H83 typed-turn request production posture, the H84 explicit voice-turn request production posture, the H80 history side-drawer recall, the H81 System Activity operational queue with separate Pending and Failed visibility, the H82 Needs Attention actionable queue, the H74-H77 takeover surfaces, the H85 bounded `SESSION_OPEN_VISIBLE` current session banner plus attach-outcome continuity seam, the H86 bounded `SESSION_ACTIVE_VISIBLE` live dual transcript plus current governed-output summary seam, the H87 bounded `SESSION_SOFT_CLOSED_VISIBLE` explicit resume affordance plus archived recent slice plus bounded PH1.M `resume context`, and now also adds bounded `SESSION_SUSPENDED_VISIBLE` hard full takeover, suspended-status explanation, and allowed next step only.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
@@ -1532,7 +1792,7 @@ struct SessionShellView: View {
                 Text(displayState.detail)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, authoritative transcript state, archived recent slice truth, and bounded PH1.M `resume context` while typed and explicit voice surfaces produce bounded explicit turn requests only where those surfaces remain lawful.")
+                Text("This shell remains session-bound and cloud-authoritative for onboarding, session truth, identity, governance, runtime law, authoritative transcript state, bounded `NextAllowedActions`, archived recent slice truth, and bounded PH1.M `resume context` while typed and explicit voice surfaces produce bounded explicit turn requests only where those surfaces remain lawful.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1549,7 +1809,7 @@ struct SessionShellView: View {
                 Text("Waiting for lawful app-open / invite-open ingress.")
                     .font(.headline)
 
-                Text("H87 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, or `SESSION_SOFT_CLOSED_VISIBLE` route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
+                Text("H88 keeps `EXPLICIT_ENTRY_READY` as the bounded explicit-entry surface when no lawful `SESSION_OPEN_VISIBLE`, `SESSION_ACTIVE_VISIBLE`, `SESSION_SOFT_CLOSED_VISIBLE`, or `SESSION_SUSPENDED_VISIBLE` route is active. Recent thread, typed input, explicit voice, history recall, `System Activity`, and `Needs Attention` remain bounded, `EXPLICIT_ONLY`, session-bound, and cloud-authoritative while typed input and explicit voice continue to produce bounded explicit turn requests.")
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 recentThreadWindowCard
@@ -1664,6 +1924,51 @@ struct SessionShellView: View {
         }
     }
 
+    private func sessionSuspendedVisibleCard(_ context: SessionSuspendedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Session suspended cloud-side")
+                    .font(.headline)
+
+                Text("H88 adds a bounded native `SESSION_SUSPENDED_VISIBLE` surface aligned to `SessionState::Suspended`, bounded `NextAllowedActions`, and optional bounded `PersistenceRecoveryMode` / `ReconciliationDecision` explanation while preserving the H85 open-session, H86 active-session, and H87 soft-closed route-seeding contracts.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 8) {
+                    posturePill("EXPLICIT_ONLY")
+                    posturePill("SessionState::Suspended")
+                    posturePill("Cloud authoritative")
+                }
+
+                suspendedStatusCard(context)
+                allowedNextStepCard(context)
+
+                Text("Suspended posture is cloud-authored.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local unsuspend and no silent continuation.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("This hard full takeover keeps typed-turn request production, explicit voice-turn request production, local session resurrection, and local decision shortcuts out of the bounded suspended surface itself.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button("Return to EXPLICIT_ENTRY_READY") {
+                    activeSessionSuspendedContext = nil
+                    displayState = .explicitEntryReady
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        } label: {
+            Text("SESSION_SUSPENDED_VISIBLE")
+                .font(.headline.monospaced())
+        }
+    }
+
     private func archivedRecentSliceCard(_ context: SessionSoftClosedVisibleContext) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
@@ -1747,6 +2052,63 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume context")
+                .font(.headline)
+        }
+    }
+
+    private func suspendedStatusCard(_ context: SessionSuspendedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.suspendedStatusRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 190, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Suspended status remains bounded to session identity, optional recovery explanation, and optional reconciliation explanation only.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Suspended status")
+                .font(.headline)
+        }
+    }
+
+    private func allowedNextStepCard(_ context: SessionSuspendedVisibleContext) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(context.allowedNextStepRows) { row in
+                    HStack(alignment: .top, spacing: 12) {
+                        Text(row.label)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 230, alignment: .leading)
+
+                        Text(row.value)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text(context.allowedNextStepSummary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Allowed next step remains authoritative posture only; this surface does not produce turns, unsuspend locally, or continue silently.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Allowed next step")
                 .font(.headline)
         }
     }
