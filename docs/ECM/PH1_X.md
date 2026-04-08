@@ -110,7 +110,7 @@ Thread continuity state contract fields:
 - `return_check_expires_at`
 
 Fail-closed rule:
-- If relation is missing/uncertain or confidence is insufficient for safe routing, PH1.X must emit one clarify and block dispatch/action.
+- when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one clarify and must not dispatch.
 - If `tts_resume_snapshot` is present, PH1.X must fail closed when interruption timing is stale/misaligned or when `spoken_cursor_byte` leaves no unsaid remainder.
 - If relation is `SAME` with sufficient confidence and resume buffer is active, PH1.X must emit one merged `respond` outcome, set `interrupt_continuity_outcome=SAME_SUBJECT_APPEND`, and stamp `interrupt_resume_policy=RESUME_NOW`.
 - If relation is `SWITCH` with sufficient confidence and resume buffer is active, PH1.X must emit one `respond` outcome that includes a return-check question, keep resume buffer intact, set `interrupt_continuity_outcome=SWITCH_TOPIC_THEN_RETURN_CHECK`, and stamp `interrupt_resume_policy=RESUME_LATER`.

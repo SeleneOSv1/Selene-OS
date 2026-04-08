@@ -158,7 +158,7 @@ State/boundary constraints:
     - `interrupt_continuity_outcome` in `SAME_SUBJECT_APPEND | SWITCH_TOPIC_THEN_RETURN_CHECK` (optional)
     - `interrupt_resume_policy` in `RESUME_NOW | RESUME_LATER | DISCARD` (optional)
   - fail-closed rule:
-    - when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one `clarify` and must not dispatch.
+    - when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one clarify and must not dispatch.
     - when `tts_resume_snapshot` is present:
       - `interruption.t_event` must be `<= now`
       - snapshot age relative to interruption must be bounded
