@@ -907,6 +907,11 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         interruptClarifySensitivityLevel != nil
     }
 
+    var hasLawfulInterruptSubjectReferences: Bool {
+        interruptSubjectRelation != nil
+            && (activeSubjectRef != nil || interruptedSubjectRef != nil)
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -2941,6 +2946,13 @@ struct SessionShellView: View {
                 Text(context.acceptedInterruptPostureSummary)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                if context.hasLawfulInterruptSubjectReferences {
+                    interruptSubjectReferencesCard(
+                        activeSubjectRef: context.activeSubjectRef,
+                        interruptedSubjectRef: context.interruptedSubjectRef
+                    )
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3253,6 +3265,60 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Clarify sensitivity")
+                .font(.headline)
+        }
+    }
+
+    private func interruptSubjectReferencesCard(
+        activeSubjectRef: String?,
+        interruptedSubjectRef: String?
+    ) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored continuity subject evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Subject posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let activeSubjectRef {
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("Active subject ref")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 140, alignment: .leading)
+
+                        Text(activeSubjectRef)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                if let interruptedSubjectRef {
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("Interrupted subject ref")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 140, alignment: .leading)
+
+                        Text(interruptedSubjectRef)
+                            .font(.body.monospaced())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
+                Text("Exact cloud-authored subject refs only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local subject binding, no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Subject references")
                 .font(.headline)
         }
     }
