@@ -1,0 +1,36 @@
+# H103 APP_MAC_DESKTOP First Post-H70 Canonical Native-Shell Placeholder Expansion Frontier `NOT_EXPLICIT` Publication Correction Build Plan
+
+- This is the first canonical post-H70 APP_MAC_DESKTOP native-shell placeholder expansion frontier `NOT_EXPLICIT` publication correction.
+- H70 implementation remains live and the native macOS source tree and local Xcode project remain exposed in-tree.
+- H68 publication remains live and `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- H69 implementation remains live and `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- H67 publication remains live and `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- H102 publication remains live and the exact post-H101 APP_IPHONE interrupt resume-buffer heavy-detail hydration winner is now `NOT_EXPLICIT`.
+- H101 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-topic-hint visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H100 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-live visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H99-H88 implementation truth remains live in substance.
+- current source still preserves `DesktopMicProducer`.
+- current source still preserves `VoiceIdentityEmbeddingGateProfiles::mvp_v1_phone_first()` with `desktop_explicit` and `desktop_wake` set to `optional()`.
+- current native macOS shell still consists of a posture panel plus bounded placeholder `Session`, `History`, `System Activity`, and `Needs Attention` cards.
+- current native macOS shell source does not parse or render exact `session_state`, `session_id`, `turn_id`, `current_user_turn_text`, `current_selene_turn_text`, `current_governed_output_summary`, `selected_thread_id`, `resume_buffer_live`, `resume_buffer_topic_hint`, or interruption continuity carriers.
+- current repo truth does not yet expose one smaller exact APP_MAC_DESKTOP carrier-backed native shell winner after H70.
+- H103 is now published as the first post-H70 canonical APP_MAC_DESKTOP native-shell placeholder expansion frontier `NOT_EXPLICIT` publication correction.
+- therefore the exact post-H70 APP_MAC_DESKTOP native-shell placeholder expansion winner is now `NOT_EXPLICIT`.
+- APP_MAC_DESKTOP remains first-class but non-authority, wake-word or explicit-entry as designed, cloud-authoritative, and session-bound.
+- no local authority / proof / governance / law claim is lawful in this run.
+- no autonomous unlock claim is lawful in this run.
+- no proven native macOS wake-listener integration claim is lawful in this run.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- the Section 04 / Section 07 adjacent gap remains `NOT_EXPLICIT` under H19.
+- the Section 05 next winner remains `NOT_EXPLICIT` under H20.
+- the Section 06 next exact winner remains `NOT_EXPLICIT` under H39.
+- the Section 08 next exact winner remains `NOT_EXPLICIT` under H55.
+- the Section 09 next exact winner remains `NOT_EXPLICIT` under H62.
+- the Section 10 next exact winner remains `NOT_EXPLICIT` under H63.
+- the post-H65 Section 11 next exact winner remains `NOT_EXPLICIT` under H66.
+- no source code change is required in this run.
+- no post-H103 next exact winner is published in this run.
