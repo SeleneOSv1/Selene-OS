@@ -1,0 +1,29 @@
+# H102 APP_IPHONE First Post-H101 Canonical Interrupt Resume-Buffer Heavy-Detail Hydration Frontier `NOT_EXPLICIT` Publication Correction Build Plan
+
+- This is the first canonical post-H101 APP_IPHONE interrupt resume-buffer heavy-detail hydration frontier `NOT_EXPLICIT` publication correction.
+- H101 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-topic-hint visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H100 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-live visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H99-H88 implementation truth remains live in substance.
+- H88 route seeding remains live through exact `session_state=suspended`, `session_id`, `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`, and this H102 publication preserves that contract.
+- H87 / H86 / H85 route seeding remains live, and this H102 publication preserves those contracts.
+- H79-H101 surfaces remain preserved.
+- current native iPhone shell source parses bounded resume-buffer evidence only through exact `resume_buffer_live` and exact `resume_buffer_topic_hint`.
+- current native iPhone shell source does not parse or render exact `resume_buffer_answer_id`, `resume_buffer_spoken_prefix`, `resume_buffer_unsaid_remainder`, or `tts_resume_snapshot`.
+- current shared source already preserves PH1.X contract fields `resume_buffer.answer_id`, `resume_buffer.topic_hint`, `resume_buffer.spoken_prefix`, `resume_buffer.unsaid_remainder`, and `tts_resume_snapshot`.
+- current repo truth does not yet expose one smaller exact APP_IPHONE native-shell carrier-backed winner for dedicated heavy resume-buffer detail hydration after H101.
+- therefore the exact post-H101 APP_IPHONE interrupt resume-buffer heavy-detail hydration winner is now `NOT_EXPLICIT`.
+- PH1.N `requires_confirmation` remains non-authoritative downstream UX/audit metadata and never grants authority or action unlock.
+- PH1.N ambiguity flags remain non-authoritative downstream UX/audit metadata and never grant authority.
+- PH1.N routing hints remain non-authoritative downstream UX/audit metadata and must never bypass Access/Simulation gates.
+- `if both clarify-directive detail and \`return_check_pending=true\` appear together, fail closed into read-only \`INTERRUPT_VISIBLE\` and do not enable continuity-response production.`
+- `when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one clarify and must not dispatch.`
+- `if \`thread_state.active_subject_ref != request.subject_ref\` while a pending state exists: PH1.X emits a single clarify (\`X_CONTINUITY_SUBJECT_MISMATCH\`) and does not dispatch.`
+- `if \`return_check_expires_at <= now\`, PH1.X clears \`return_check_pending\` and \`return_check_expires_at\`.`
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- no source code change is required in this run.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- no post-H102 next exact winner is published in this run.
