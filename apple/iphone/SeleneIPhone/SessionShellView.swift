@@ -912,6 +912,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
             && (activeSubjectRef != nil || interruptedSubjectRef != nil)
     }
 
+    var hasLawfulInterruptReturnCheckExpiry: Bool {
+        returnCheckPending == true && returnCheckExpiresAt != nil
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -2953,6 +2957,11 @@ struct SessionShellView: View {
                     )
                 }
 
+                if let returnCheckExpiresAt = context.returnCheckExpiresAt,
+                   context.hasLawfulInterruptReturnCheckExpiry {
+                    interruptReturnCheckExpiryCard(returnCheckExpiresAt)
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3355,6 +3364,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Subject relation confidence")
+                .font(.headline)
+        }
+    }
+
+    private func interruptReturnCheckExpiryCard(_ returnCheckExpiresAt: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored return-check expiry evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Expiry posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Return-check expires at")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(returnCheckExpiresAt)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored expiry only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local countdown, no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Return-check expiry")
                 .font(.headline)
         }
     }
