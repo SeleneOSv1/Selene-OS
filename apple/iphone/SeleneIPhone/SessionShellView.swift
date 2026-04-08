@@ -916,6 +916,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         returnCheckPending == true && returnCheckExpiresAt != nil
     }
 
+    var hasLawfulInterruptResumeBufferLive: Bool {
+        resumeBufferLive == true
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -2962,6 +2966,11 @@ struct SessionShellView: View {
                     interruptReturnCheckExpiryCard(returnCheckExpiresAt)
                 }
 
+                if let resumeBufferLive = context.resumeBufferLive,
+                   context.hasLawfulInterruptResumeBufferLive {
+                    interruptResumeBufferLiveCard(resumeBufferLive)
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3400,6 +3409,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Return-check expiry")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferLiveCard(_ resumeBufferLive: Bool) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer liveness evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Resume posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Resume buffer live")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferLive ? "true" : "false")
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored liveness truth only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local resume authoring, no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume buffer")
                 .font(.headline)
         }
     }
