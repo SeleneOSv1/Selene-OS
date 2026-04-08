@@ -283,6 +283,20 @@ private enum CanonicalInterruptClarifyRoutingHint: String, CaseIterable, Identif
     }
 }
 
+private enum CanonicalInterruptClarifySensitivityLevel: String, CaseIterable, Identifiable {
+    case `public` = "public"
+    case `private` = "private"
+    case confidential = "confidential"
+
+    var id: String {
+        rawValue
+    }
+
+    static func parse(_ rawValue: String) -> CanonicalInterruptClarifySensitivityLevel? {
+        Self(rawValue: rawValue.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+}
+
 private enum CanonicalReturnCheckResponse: String, CaseIterable, Identifiable {
     case yes = "Yes"
     case no = "No"
@@ -575,6 +589,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
     let interruptClarifyAmbiguityFlags: [String]
     let interruptClarifyRoutingHints: [String]
     let interruptClarifyRequiresConfirmation: Bool?
+    let interruptClarifySensitivityLevel: String?
     let interruptAcceptedAnswerFormats: [String]
 
     init?(url: URL) {
@@ -657,6 +672,9 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         let interruptClarifyRequiresConfirmation = Self.interruptClarifyRequiresConfirmation(
             in: queryItems
         )
+        let interruptClarifySensitivityLevel = Self.interruptClarifySensitivityLevel(
+            in: queryItems
+        )
         let interruptAcceptedAnswerFormats = Self.interruptAcceptedAnswerFormats(in: queryItems)
 
         guard !inviteLike,
@@ -693,6 +711,7 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         self.interruptClarifyAmbiguityFlags = interruptClarifyAmbiguityFlags
         self.interruptClarifyRoutingHints = interruptClarifyRoutingHints
         self.interruptClarifyRequiresConfirmation = interruptClarifyRequiresConfirmation
+        self.interruptClarifySensitivityLevel = interruptClarifySensitivityLevel
         self.interruptAcceptedAnswerFormats = interruptAcceptedAnswerFormats
     }
 
@@ -877,6 +896,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
 
     var hasLawfulInterruptClarifyRequiresConfirmation: Bool {
         interruptClarifyRequiresConfirmation != nil
+    }
+
+    var hasLawfulInterruptClarifySensitivityLevel: Bool {
+        interruptClarifySensitivityLevel != nil
     }
 
     var hasInterruptResponseConflict: Bool {
@@ -1072,6 +1095,20 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         }
 
         return canonicalBoolean(values[0].value)
+    }
+
+    private static func interruptClarifySensitivityLevel(in queryItems: [URLQueryItem]) -> String? {
+        let values = queryItems.filter {
+            $0.name.lowercased() == "interrupt_clarify_sensitivity_level"
+        }
+        guard values.count == 1,
+              let value = values[0].value,
+              let canonicalValue = CanonicalInterruptClarifySensitivityLevel.parse(value)?.rawValue
+        else {
+            return nil
+        }
+
+        return canonicalValue
     }
 
     private static func interruptAcceptedAnswerFormats(in queryItems: [URLQueryItem]) -> [String] {
@@ -2988,6 +3025,11 @@ struct SessionShellView: View {
                     interruptClarifyConfirmationCard(interruptClarifyRequiresConfirmation)
                 }
 
+                if let interruptClarifySensitivityLevel = context.interruptClarifySensitivityLevel,
+                   context.hasLawfulInterruptClarifySensitivityLevel {
+                    interruptClarifySensitivityCard(interruptClarifySensitivityLevel)
+                }
+
                 ForEach(context.interruptAcceptedAnswerFormats, id: \.self) { answerFormat in
                     if answerFormat == CanonicalInterruptAcceptedAnswerFormat.continuePreviousTopic.rawValue {
                         Button(answerFormat) {
@@ -3136,6 +3178,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Clarify confirmation")
+                .font(.headline)
+        }
+    }
+
+    private func interruptClarifySensitivityCard(_ sensitivityLevel: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored sensitivity evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Sensitivity posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Sensitivity level")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(sensitivityLevel)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored sensitivity level only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local sensitivity policy, no local authority upgrade.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Clarify sensitivity")
                 .font(.headline)
         }
     }
