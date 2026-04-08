@@ -920,6 +920,10 @@ struct SessionActiveVisibleContext: Identifiable, Equatable {
         resumeBufferLive == true
     }
 
+    var hasLawfulInterruptResumeBufferTopicHint: Bool {
+        resumeBufferLive == true && resumeBufferTopicHint != nil
+    }
+
     var hasLawfulInterruptSubjectRelationConfidence: Bool {
         interruptSubjectRelation != nil && interruptSubjectRelationConfidence != nil
     }
@@ -2971,6 +2975,11 @@ struct SessionShellView: View {
                     interruptResumeBufferLiveCard(resumeBufferLive)
                 }
 
+                if let resumeBufferTopicHint = context.resumeBufferTopicHint,
+                   context.hasLawfulInterruptResumeBufferTopicHint {
+                    interruptResumeBufferTopicHintCard(resumeBufferTopicHint)
+                }
+
                 if let interruptSubjectRelationConfidence = context.interruptSubjectRelationConfidence,
                    context.hasLawfulInterruptSubjectRelationConfidence {
                     interruptSubjectRelationConfidenceCard(interruptSubjectRelationConfidence)
@@ -3445,6 +3454,42 @@ struct SessionShellView: View {
             }
         } label: {
             Text("Resume buffer")
+                .font(.headline)
+        }
+    }
+
+    private func interruptResumeBufferTopicHintCard(_ resumeBufferTopicHint: String) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Cloud-authored resume-buffer topic-hint evidence only")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("Topic posture")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text("Resume buffer topic hint")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 140, alignment: .leading)
+
+                    Text(resumeBufferTopicHint)
+                        .font(.body.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Text("Exact cloud-authored topic hint only")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text("No local topic synthesis, no local dispatch unlock.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } label: {
+            Text("Resume topic hint")
                 .font(.headline)
         }
     }

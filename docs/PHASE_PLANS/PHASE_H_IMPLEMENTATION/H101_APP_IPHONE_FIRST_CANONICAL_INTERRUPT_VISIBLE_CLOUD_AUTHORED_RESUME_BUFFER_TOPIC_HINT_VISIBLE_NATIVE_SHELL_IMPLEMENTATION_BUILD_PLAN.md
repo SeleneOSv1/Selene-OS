@@ -1,0 +1,39 @@
+# H101 APP_IPHONE First Canonical `INTERRUPT_VISIBLE` Cloud-Authored Resume-Buffer-Topic-Hint Visible Native Shell Implementation Build Plan
+
+- This is the first canonical APP_IPHONE `INTERRUPT_VISIBLE` cloud-authored resume-buffer-topic-hint visible native shell implementation build.
+- H100 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored resume-buffer-live visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H99 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored return-check-expiry visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H98 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored subject-references visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H97 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored subject-relation-confidence visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H96 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify sensitivity-level visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H95 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify requires-confirmation visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H94 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify routing-hint visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H93 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify ambiguity-flag visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H92 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify missing-field boundary visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H91 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` cloud-authored clarify-directive and return-check response-production posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H90 implementation remains live and the native iPhone shell already exposes bounded `INTERRUPT_VISIBLE` interruption continuity posture in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- H89 implementation remains live and the native iPhone shell already exposes bounded `RECOVERING`, `DEGRADED_RECOVERY`, and `QUARANTINED_LOCAL_STATE` recovery posture.
+- H88 implementation remains live and the native iPhone shell already exposes bounded `SESSION_SUSPENDED_VISIBLE`.
+- H88 route seeding remains live through exact `session_state=suspended`, `session_id`, `next_allowed_actions_may_speak`, `next_allowed_actions_must_wait`, `next_allowed_actions_must_rewake`, `recovery_mode`, and `reconciliation_decision`, and this H101 run preserves that contract.
+- H87 / H86 / H85 route seeding remains live and this H101 run preserves those contracts.
+- current shared source already preserves `InterruptSubjectRelation::{Same, Switch, Uncertain}`, `interrupt_subject_relation_confidence`, `InterruptContinuityOutcome::{SameSubjectAppend, SwitchTopicThenReturnCheck}`, `InterruptResumePolicy::{ResumeNow, ResumeLater, Discard}`, `ConfirmAnswer::{Yes, No}`, `ClarifyDirective`, PH1.N `requires_confirmation`, PH1.N `ambiguity_flags`, PH1.N `routing_hints`, `SensitivityLevel::{Public, Private, Confidential}`, PH1.X continuity state including `active_subject_ref`, `interrupted_subject_ref`, `return_check_pending`, `return_check_expires_at`, PH1.L `resume_buffer_live`, and H90 continuity seeding `resume_buffer_topic_hint`.
+- cloud-authored resume-buffer-topic-hint evidence remains evidence-only downstream posture and never upgrades local topic synthesis, resume authoring, or dispatch posture.
+- PH1.N `requires_confirmation` is non-authoritative downstream UX/audit metadata and never grants authority or action unlock.
+- PH1.N ambiguity flags are non-authoritative downstream UX/audit metadata and never grant authority.
+- PH1.N routing hints are non-authoritative downstream UX/audit metadata and must never bypass Access/Simulation gates.
+- G1 freezes interruption posture as rendered, not authored, and allows cloud-authored continuity / clarify / return-check / resume-buffer posture without local interrupt law.
+- if both clarify-directive detail and `return_check_pending=true` appear together, fail closed into read-only `INTERRUPT_VISIBLE` and do not enable continuity-response production.
+- when relation is missing/uncertain or confidence is insufficient, PH1.X must emit one clarify and must not dispatch.
+- if `thread_state.active_subject_ref != request.subject_ref` while a pending state exists: PH1.X emits a single clarify (`X_CONTINUITY_SUBJECT_MISMATCH`) and does not dispatch.
+- if `return_check_expires_at <= now`, PH1.X clears `return_check_pending` and `return_check_expires_at`.
+- this run adds bounded resume-buffer-topic-hint visibility only.
+- this run preserves H79-H100 surfaces, exact H83 / H84 / H85 / H86 / H87 / H88 / H89 / H90 / H91 / H92 / H93 / H94 / H95 / H96 / H97 / H98 / H99 / H100 copy, H74-H77 takeover fields, exact setup-receipt visibility, and H83 / H84 producer copy.
+- this run does not add local interrupt authoring, local ambiguity inference, local field inference, local routing guidance, local confirmation law, local sensitivity policy, local threshold law, local timer law, local subject binding, local identity resolution, local subject reconciliation authority, local onboarding authority, local gate bypass, local topic synthesis, heavy resume-buffer detail hydration, `resume_buffer_answer_id`, `resume_buffer_spoken_prefix`, `resume_buffer_unsaid_remainder`, `tts_resume_snapshot`, wake parity, side-button producer wiring, or autonomous unlock.
+- APP_IPHONE remains first-class but non-authority, `EXPLICIT_ONLY`, and cloud-authoritative parity only.
+- native iPhone shell now exposes bounded `INTERRUPT_VISIBLE` resume-buffer-topic-hint visibility in lawful `EXPLICIT_ONLY` cloud-authored posture.
+- `APP_IPHONE-04` remains `PARTIAL`.
+- `APP_IPHONE-05` remains `PROVEN_COMPLETE`.
+- `APP_IPHONE-06` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-05` remains `PROVEN_COMPLETE`.
+- `APP_MAC_DESKTOP-06` remains `PROVEN_COMPLETE`.
+- no post-H101 next exact winner is published in this run.
