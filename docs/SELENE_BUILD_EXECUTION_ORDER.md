@@ -458,6 +458,40 @@ Build Sections 01–11 define the engineering execution plan.
 
 This document defines the only valid order in which those sections may be built.
 
+Exact Executable-Unit Selection Law
+
+H112 is now published as the first post-H111 docs-only permanent executable-unit anti-loop selection-law publication by [H112_POST_H111_PERMANENT_EXECUTABLE_UNIT_ANTI_LOOP_SELECTION_LAW_CHANGE_AND_SECTION05_RESIDUAL_FRONTIER_RECLASSIFICATION_BUILD_PLAN.md#L1](/Users/selene/Documents/Selene-OS/docs/PHASE_PLANS/PHASE_H_IMPLEMENTATION/H112_POST_H111_PERMANENT_EXECUTABLE_UNIT_ANTI_LOOP_SELECTION_LAW_CHANGE_AND_SECTION05_RESIDUAL_FRONTIER_RECLASSIFICATION_BUILD_PLAN.md#L1).
+
+The repo now has an exact executable-unit selection law.
+
+Future next-build selection must operate on one exact executable unit, not automatically on one unresolved row.
+
+An exact executable unit may be either:
+
+one exact row that passes the uniqueness gate
+
+one exact coupled cluster of unresolved rows that share the same canonical carrier and proof surface
+
+The uniqueness gate requires:
+
+one unique primary canonical carrier
+
+one unique smallest blocker
+
+one unique proof target
+
+one unique completion evidence path
+
+and no preserved exclusion class
+
+If multiple unresolved rows share the same carrier and proof surface and no one row is uniquely smaller, those rows must be reclassified as one exact coupled cluster before future selection proceeds.
+
+same-pool row-level discovery is prohibited after one narrowed `NOT_EXPLICIT` pass unless repo truth changes.
+
+When unique exact discovery still fails after executable-unit reclassification, manual cluster selection under H104 remains lawful.
+
+This law applies generally to future frontiers, not only to Section 05.
+
 Final Rule
 
 Selene must never be built feature-first.
