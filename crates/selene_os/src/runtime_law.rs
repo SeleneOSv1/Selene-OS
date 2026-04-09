@@ -22,9 +22,9 @@ use selene_kernel_contracts::runtime_governance::{
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawBlastRadiusScope, RuntimeLawBuilderInput, RuntimeLawDecisionLogEntry,
     RuntimeLawDryRunEvaluationState, RuntimeLawEvaluationContext, RuntimeLawExecutionState,
-    RuntimeLawLearningInput, RuntimeLawOverrideState, RuntimeLawPolicyWindow,
-    RuntimeLawResponseClass, RuntimeLawRollbackReadinessState, RuntimeLawRuleCategory,
-    RuntimeLawRuleDescriptor, RuntimeLawSelfHealInput, RuntimeLawSeverity,
+    RuntimeLawIndependentVerificationSupport, RuntimeLawLearningInput, RuntimeLawOverrideState,
+    RuntimeLawPolicyWindow, RuntimeLawResponseClass, RuntimeLawRollbackReadinessState,
+    RuntimeLawRuleCategory, RuntimeLawRuleDescriptor, RuntimeLawSelfHealInput, RuntimeLawSeverity,
     RuntimeProtectedActionClass,
 };
 
@@ -209,6 +209,18 @@ impl RuntimeLawRuntime {
 
     pub fn policy_version(&self) -> &str {
         &self.config.policy_window.law_policy_version
+    }
+
+    pub fn independent_verification_support(&self) -> RuntimeLawIndependentVerificationSupport {
+        let snapshot = self.snapshot();
+        RuntimeLawIndependentVerificationSupport::v1(
+            self.config.runtime_node_id.clone(),
+            snapshot.policy_window,
+            snapshot.rule_registry,
+            snapshot.safe_mode_active,
+            snapshot.quarantined_scopes,
+        )
+        .expect("runtime law independent verification support must validate")
     }
 
     pub fn evaluate(
@@ -403,7 +415,9 @@ impl RuntimeLawRuntime {
                     RuntimeLawSeverity::Blocking,
                     RuntimeLawBlastRadiusScope::SubsystemScope,
                 )),
-                Some(artifact_trust_state) if !artifact_trust_evidence_complete(artifact_trust_state) => {
+                Some(artifact_trust_state)
+                    if !artifact_trust_evidence_complete(artifact_trust_state) =>
+                {
                     triggered_rules.push(trigger(
                         RULE_ARTIFACT_TRUST_EVIDENCE,
                         SUBSYSTEM_ARTIFACT_AUTHORITY,
@@ -414,7 +428,8 @@ impl RuntimeLawRuntime {
                     ))
                 }
                 Some(artifact_trust_state) => {
-                    if let Some(failure_class) = strongest_artifact_trust_failure(artifact_trust_state)
+                    if let Some(failure_class) =
+                        strongest_artifact_trust_failure(artifact_trust_state)
                     {
                         let (response_class, severity, blast_radius_scope) =
                             artifact_trust_failure_posture(failure_class);
@@ -687,6 +702,18 @@ impl RuntimeLawRuntime {
         } else {
             law_state
         };
+        let law_state = law_state
+            .with_independent_verification_support(Some(
+                RuntimeLawIndependentVerificationSupport::v1(
+                    self.config.runtime_node_id.clone(),
+                    self.config.policy_window.clone(),
+                    self.rule_registry.clone(),
+                    guard.safe_mode_active,
+                    guard.quarantined_scopes.iter().cloned().collect(),
+                )
+                .expect("runtime law independent verification support must validate"),
+            ))
+            .expect("runtime law independent verification support must attach");
 
         let entry = RuntimeLawDecisionLogEntry::v1(
             sequence,
@@ -702,7 +729,12 @@ impl RuntimeLawRuntime {
             envelope
                 .artifact_trust_state
                 .as_ref()
-                .and_then(|value| value.proof_record_ref.as_ref().map(|proof_record_ref| proof_record_ref.0.clone()))
+                .and_then(|value| {
+                    value
+                        .proof_record_ref
+                        .as_ref()
+                        .map(|proof_record_ref| proof_record_ref.0.clone())
+                })
                 .or_else(|| {
                     envelope
                         .proof_state
@@ -721,15 +753,16 @@ impl RuntimeLawRuntime {
         .expect("runtime law decision log entry must validate");
         let entry = if let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() {
             let linkage = artifact_trust_law_linkage(artifact_trust_state);
-            entry.with_artifact_trust_linkage(
-                linkage.decision_ids,
-                linkage.proof_entry_refs,
-                linkage.policy_snapshot_refs,
-                linkage.trust_set_snapshot_refs,
-                linkage.basis_fingerprints,
-                linkage.negative_result_refs,
-            )
-            .expect("runtime law decision log artifact trust linkage must validate")
+            entry
+                .with_artifact_trust_linkage(
+                    linkage.decision_ids,
+                    linkage.proof_entry_refs,
+                    linkage.policy_snapshot_refs,
+                    linkage.trust_set_snapshot_refs,
+                    linkage.basis_fingerprints,
+                    linkage.negative_result_refs,
+                )
+                .expect("runtime law decision log artifact trust linkage must validate")
         } else {
             entry
         };
@@ -900,7 +933,9 @@ fn strongest_artifact_trust_failure(
     state: &ArtifactTrustExecutionState,
 ) -> Option<ArtifactVerificationFailureClass> {
     state.decision_records.iter().find_map(|decision| {
-        if decision.artifact_verification_result.artifact_verification_outcome
+        if decision
+            .artifact_verification_result
+            .artifact_verification_outcome
             == ArtifactVerificationOutcome::Failed
         {
             decision
@@ -914,7 +949,9 @@ fn strongest_artifact_trust_failure(
 
 fn artifact_trust_is_degraded(state: &ArtifactTrustExecutionState) -> bool {
     state.decision_records.iter().any(|decision| {
-        decision.artifact_verification_result.artifact_verification_outcome
+        decision
+            .artifact_verification_result
+            .artifact_verification_outcome
             == ArtifactVerificationOutcome::DegradedVerified
     })
 }
@@ -951,12 +988,11 @@ fn blast_radius_scope_from_artifact_trust_state(
     state.decision_records.iter().fold(
         RuntimeLawBlastRadiusScope::SubsystemScope,
         |current, decision| {
-            let candidate = match normalize_blast_radius_scope(
-                &decision.control_hints.blast_radius_scope,
-            ) {
-                Some(scope) => scope,
-                None => RuntimeLawBlastRadiusScope::SubsystemScope,
-            };
+            let candidate =
+                match normalize_blast_radius_scope(&decision.control_hints.blast_radius_scope) {
+                    Some(scope) => scope,
+                    None => RuntimeLawBlastRadiusScope::SubsystemScope,
+                };
             if blast_radius_rank(candidate) > blast_radius_rank(current) {
                 candidate
             } else {
@@ -1525,16 +1561,14 @@ fn default_rule_registry() -> Vec<RuntimeLawRuleDescriptor> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::Validate;
+    use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
     use selene_kernel_contracts::ph1art::{
         ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
         ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
         ArtifactTrustExecutionState, ArtifactTrustProofEntryRef, ArtifactTrustProofRecordRef,
-        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
-        ArtifactVerificationResult, TrustPolicySnapshotRef, TrustSetSnapshotRef,
-        VerificationBasisFingerprint,
+        ArtifactVerificationFailureClass, ArtifactVerificationOutcome, ArtifactVerificationResult,
+        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
-    use selene_kernel_contracts::ph1_voice_id::{IdentityTierV2, SpoofLivenessStatus, UserId};
     use selene_kernel_contracts::ph1builder::{
         BuilderApprovalState, BuilderApprovalStateStatus, BuilderChangeClass,
         BuilderMetricsSnapshot, BuilderPostDeployDecisionAction, BuilderPostDeployJudgeResult,
@@ -1557,14 +1591,14 @@ mod tests {
         AuthorityExecutionState, ClientCompatibilityStatus, ClientIntegrityStatus,
         DeviceTrustClass, IdentityExecutionState, IdentityExecutionStateInput,
         IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
-        MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState,
-        MemoryTrustLevel, OnboardingReadinessState, PlatformRuntimeContext,
-        SimulationCertificationState,
+        MemoryConsistencyLevel, MemoryEligibilityDecision, MemoryExecutionState, MemoryTrustLevel,
+        OnboardingReadinessState, PlatformRuntimeContext, SimulationCertificationState,
     };
     use selene_kernel_contracts::runtime_governance::{
         GovernanceClusterConsistency, GovernanceDriftSignal, GovernanceExecutionState,
         GovernancePolicyWindow, GovernanceResponseClass, GovernanceSeverity,
     };
+    use selene_kernel_contracts::Validate;
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
     fn base_envelope() -> RuntimeExecutionEnvelope {
@@ -1713,9 +1747,7 @@ mod tests {
                     trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                         "policy.snap.law.1".to_string(),
                     ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.law.1".to_string(),
-                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.law.1".to_string()),
                     verification_basis_fingerprint: VerificationBasisFingerprint(
                         "basis.fp.law.1".to_string(),
                     ),
@@ -1736,9 +1768,7 @@ mod tests {
                     trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                         "policy.snap.law.1".to_string(),
                     ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.law.1".to_string(),
-                    ),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.law.1".to_string()),
                     evidence_refs: vec!["evidence.law.1".to_string()],
                     historical_snapshot_ref: None,
                     replay_reconstructable: true,
@@ -2261,7 +2291,9 @@ mod tests {
             Some("artifact.trust.proof.record.law.1")
         );
         let log = runtime.decision_log_snapshot();
-        let last = log.last().expect("runtime law decision log entry must exist");
+        let last = log
+            .last()
+            .expect("runtime law decision log entry must exist");
         assert_eq!(
             last.artifact_trust_proof_entry_refs,
             vec!["artifact.trust.proof.entry.law.1".to_string()]
@@ -2278,7 +2310,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2301,7 +2336,10 @@ mod tests {
             .expect("restricted-device envelope must remain contract-valid");
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::RestrictedDevice
@@ -2356,11 +2394,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_COMPATIBILITY);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2390,7 +2426,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2406,15 +2445,17 @@ mod tests {
 
         envelope.platform_context.device_trust_class = DeviceTrustClass::StandardDevice;
         envelope.platform_context.integrity_status = ClientIntegrityStatus::IntegrityVerified;
-        envelope.platform_context.compatibility_status =
-            ClientCompatibilityStatus::UpgradeRequired;
+        envelope.platform_context.compatibility_status = ClientCompatibilityStatus::UpgradeRequired;
 
         envelope
             .validate()
             .expect("upgrade-required envelope must remain contract-valid");
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2469,11 +2510,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_COMPATIBILITY);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2503,7 +2542,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2527,7 +2569,10 @@ mod tests {
             .expect("unsupported-client envelope must remain contract-valid");
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2582,11 +2627,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_TRUST);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2616,7 +2659,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2639,7 +2685,10 @@ mod tests {
             .expect("untrusted-device envelope must remain contract-valid");
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::UntrustedDevice
@@ -2694,11 +2743,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_TRUST);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2728,7 +2775,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2804,11 +2854,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_TRUST_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_TRUST);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2838,7 +2886,10 @@ mod tests {
         let mut envelope = base_envelope();
 
         assert_eq!(envelope.platform, AppPlatform::Desktop);
-        assert_eq!(envelope.platform_context.platform_type, AppPlatform::Desktop);
+        assert_eq!(
+            envelope.platform_context.platform_type,
+            AppPlatform::Desktop
+        );
         assert_eq!(
             envelope.platform_context.device_trust_class,
             DeviceTrustClass::StandardDevice
@@ -2914,11 +2965,9 @@ mod tests {
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_PLATFORM_RUNTIME.to_string()]
         );
-        assert!(
-            !decision
-                .reason_codes
-                .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string())
-        );
+        assert!(!decision
+            .reason_codes
+            .contains(&reason_codes::LAW_PLATFORM_COMPATIBILITY_REQUIRED.to_string()));
         assert_ne!(decision.primary_rule_id, RULE_PLATFORM_COMPATIBILITY);
         assert_ne!(
             envelope.platform_context.device_trust_class,
@@ -2989,14 +3038,19 @@ mod tests {
             decision.reason_codes,
             vec![reason_codes::LAW_GOVERNANCE_POLICY_DRIFT.to_string()]
         );
-        assert_eq!(decision.law_state.law_policy_version, runtime.policy_version());
+        assert_eq!(
+            decision.law_state.law_policy_version,
+            runtime.policy_version()
+        );
         assert_eq!(
             decision.law_state.subsystem_inputs,
             vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()]
         );
 
         let log = runtime.decision_log_snapshot();
-        let last = log.last().expect("runtime law decision log entry must exist");
+        let last = log
+            .last()
+            .expect("runtime law decision log entry must exist");
         assert_eq!(last.law_policy_version, runtime.policy_version());
         assert_eq!(
             last.subsystem_inputs,
@@ -3053,8 +3107,14 @@ mod tests {
             )
             .expect("cluster-policy drift artifact authority should degrade, not block");
 
-        let law_state = result.law_state.as_ref().expect("law state must be attached");
-        assert_eq!(law_state.final_law_response_class, RuntimeLawResponseClass::Degrade);
+        let law_state = result
+            .law_state
+            .as_ref()
+            .expect("law state must be attached");
+        assert_eq!(
+            law_state.final_law_response_class,
+            RuntimeLawResponseClass::Degrade
+        );
         assert_eq!(law_state.law_policy_version, runtime.policy_version());
         assert!(law_state
             .law_reason_codes
@@ -3066,8 +3126,75 @@ mod tests {
             law_state.subsystem_inputs,
             vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()]
         );
+        result.validate().expect(
+            "runtime execution envelope transport must remain aligned after govern_completion",
+        );
+    }
+
+    #[test]
+    fn at_runtime_law_23_independent_verification_support_surface_exposes_policy_window_and_rules()
+    {
+        let runtime = RuntimeLawRuntime::default();
+        let support = runtime.independent_verification_support();
+
+        assert_eq!(support.runtime_node_id, "runtime-law-node-a");
+        assert_eq!(
+            support.policy_window.law_policy_version,
+            runtime.policy_version()
+        );
+        assert!(support
+            .rule_registry
+            .iter()
+            .any(|descriptor| descriptor.rule_id == RULE_GOVERNANCE_POLICY_DRIFT));
+        assert!(support.quarantined_scopes.is_empty());
+    }
+
+    #[test]
+    fn at_runtime_law_24_evaluate_attaches_independent_verification_support_to_law_state() {
+        let runtime = RuntimeLawRuntime::default();
+        let decision = runtime.evaluate(
+            &base_envelope(),
+            RuntimeProtectedActionClass::ProofRequired,
+            &RuntimeLawEvaluationContext::default(),
+        );
+
+        let support = decision
+            .law_state
+            .independent_verification_support
+            .as_ref()
+            .expect("independent verification support must attach to runtime law state");
+        assert_eq!(
+            support.policy_window.law_policy_version,
+            runtime.policy_version()
+        );
+        assert!(support
+            .rule_registry
+            .iter()
+            .any(|descriptor| descriptor.rule_id == decision.law_state.triggered_rule_ids[0]));
+    }
+
+    #[test]
+    fn at_runtime_law_25_govern_completion_transports_independent_verification_support() {
+        let runtime = RuntimeLawRuntime::default();
+        let result = runtime
+            .govern_completion(
+                &base_envelope(),
+                RuntimeProtectedActionClass::ProofRequired,
+                &RuntimeLawEvaluationContext::default(),
+            )
+            .expect("baseline proof-required execution should transport runtime law support");
+
+        let support = result
+            .law_state
+            .as_ref()
+            .and_then(|law_state| law_state.independent_verification_support.as_ref())
+            .expect("transported runtime law state must preserve independent verification support");
+        assert_eq!(
+            support.policy_window.law_policy_version,
+            runtime.policy_version()
+        );
         result
             .validate()
-            .expect("runtime execution envelope transport must remain aligned after govern_completion");
+            .expect("runtime execution envelope transport must remain valid with independent verification support");
     }
 }

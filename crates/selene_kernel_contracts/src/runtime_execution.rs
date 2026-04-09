@@ -1,10 +1,9 @@
 #![forbid(unsafe_code)]
 
-use crate::ph1art::{
-    ArtifactIdentityRef, ArtifactTrustExecutionState, TrustPolicySnapshotRef,
-    TrustSetSnapshotRef,
-};
 use crate::ph1_voice_id::{IdentityTierV2, Ph1VoiceIdResponse, SpoofLivenessStatus, UserId};
+use crate::ph1art::{
+    ArtifactIdentityRef, ArtifactTrustExecutionState, TrustPolicySnapshotRef, TrustSetSnapshotRef,
+};
 use crate::ph1comp::ComputationExecutionState;
 use crate::ph1d::PolicyContextRef;
 use crate::ph1j::{
@@ -1672,6 +1671,12 @@ impl Validate for RuntimeExecutionEnvelope {
         }
         if let Some(state) = self.law_state.as_ref() {
             state.validate()?;
+            if state.independent_verification_support.is_none() {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.law_state.independent_verification_support",
+                    reason: "must be present when law_state is present",
+                });
+            }
         }
         if let Some(assertion) = self.voice_identity_assertion.as_ref() {
             assertion.validate()?;
@@ -1747,23 +1752,25 @@ impl Validate for RuntimeExecutionEnvelope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ph1art::{
-        ArtifactTrustControlHints, ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance,
-        ArtifactTrustDecisionRecord, ArtifactTrustExecutionState, ArtifactTrustBindingRef,
-        ArtifactVerificationOutcome, ArtifactVerificationResult, ArtifactIdentityRef,
-        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
-    };
     use crate::ph1_voice_id::{
         DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionUnknown,
         SpeakerLabel,
+    };
+    use crate::ph1art::{
+        ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
+        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
+        ArtifactTrustExecutionState, ArtifactVerificationOutcome, ArtifactVerificationResult,
+        TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
     use crate::runtime_governance::{
         GovernanceClusterConsistency, GovernanceDriftSignal, GovernanceExecutionState,
         GovernanceResponseClass, GovernanceSeverity,
     };
     use crate::runtime_law::{
-        RuntimeLawBlastRadiusScope, RuntimeLawExecutionState, RuntimeLawResponseClass,
-        RuntimeLawRollbackReadinessState, RuntimeProtectedActionClass,
+        RuntimeLawBlastRadiusScope, RuntimeLawExecutionState,
+        RuntimeLawIndependentVerificationSupport, RuntimeLawPolicyWindow, RuntimeLawResponseClass,
+        RuntimeLawRollbackReadinessState, RuntimeLawRuleCategory, RuntimeLawRuleDescriptor,
+        RuntimeProtectedActionClass,
     };
     use crate::{MonotonicTimeNs, ReasonCodeId};
 
@@ -1789,12 +1796,8 @@ mod tests {
                     artifact_trust_binding_ref: ArtifactTrustBindingRef(
                         "artifact.trust.binding.1".to_string(),
                     ),
-                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
-                        "policy.snap.1".to_string(),
-                    ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.1".to_string(),
-                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                     verification_basis_fingerprint: VerificationBasisFingerprint(
                         "fingerprint.runtime.1".to_string(),
                     ),
@@ -1812,12 +1815,8 @@ mod tests {
                 provenance: ArtifactTrustDecisionProvenance {
                     verifier_owner: "SECTION_04_AUTHORITY".to_string(),
                     verifier_version: "v1".to_string(),
-                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
-                        "policy.snap.1".to_string(),
-                    ),
-                    trust_set_snapshot_ref: TrustSetSnapshotRef(
-                        "trust.set.snap.1".to_string(),
-                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
+                    trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                     evidence_refs: vec!["artifact.ref.1".to_string()],
                     historical_snapshot_ref: None,
                     replay_reconstructable: true,
@@ -1843,14 +1842,12 @@ mod tests {
             SpeakerAssertionUnknown::v1(
                 IdentityConfidence::Medium,
                 ReasonCodeId(1),
-                vec![
-                    DiarizationSegment::v1(
-                        MonotonicTimeNs(1),
-                        MonotonicTimeNs(2),
-                        Some(SpeakerLabel::speaker_a()),
-                    )
-                    .expect("diarization segment must validate"),
-                ],
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("diarization segment must validate")],
             )
             .expect("voice assertion must validate"),
         )
@@ -1902,32 +1899,43 @@ mod tests {
         final_law_response_class: RuntimeLawResponseClass,
         subsystem_inputs: Vec<String>,
     ) -> RuntimeLawExecutionState {
-        let (final_law_severity, law_reason_codes, triggered_rule_ids) = match final_law_response_class {
-            RuntimeLawResponseClass::Allow => (
-                crate::runtime_law::RuntimeLawSeverity::Info,
-                vec!["LAW_ALLOW_BASELINE".to_string()],
-                vec!["RL-BASE-001".to_string()],
-            ),
-            RuntimeLawResponseClass::AllowWithWarning | RuntimeLawResponseClass::Degrade => (
-                crate::runtime_law::RuntimeLawSeverity::Warning,
-                vec!["LAW_GOVERNANCE_POLICY_DRIFT".to_string()],
-                vec!["RL-GOV-003".to_string()],
-            ),
-            RuntimeLawResponseClass::Block => (
-                crate::runtime_law::RuntimeLawSeverity::Blocking,
-                vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
-                vec!["RL-GOV-002".to_string()],
-            ),
-            RuntimeLawResponseClass::Quarantine => (
-                crate::runtime_law::RuntimeLawSeverity::QuarantineRequired,
-                vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
-                vec!["RL-GOV-002".to_string()],
-            ),
-            RuntimeLawResponseClass::SafeMode => (
-                crate::runtime_law::RuntimeLawSeverity::Critical,
-                vec!["LAW_GOVERNANCE_SAFE_MODE".to_string()],
-                vec!["RL-GOV-001".to_string()],
-            ),
+        let (final_law_severity, law_reason_codes, triggered_rule_ids) =
+            match final_law_response_class {
+                RuntimeLawResponseClass::Allow => (
+                    crate::runtime_law::RuntimeLawSeverity::Info,
+                    vec!["LAW_ALLOW_BASELINE".to_string()],
+                    vec!["RL-BASE-001".to_string()],
+                ),
+                RuntimeLawResponseClass::AllowWithWarning | RuntimeLawResponseClass::Degrade => (
+                    crate::runtime_law::RuntimeLawSeverity::Warning,
+                    vec!["LAW_GOVERNANCE_POLICY_DRIFT".to_string()],
+                    vec!["RL-GOV-003".to_string()],
+                ),
+                RuntimeLawResponseClass::Block => (
+                    crate::runtime_law::RuntimeLawSeverity::Blocking,
+                    vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
+                    vec!["RL-GOV-002".to_string()],
+                ),
+                RuntimeLawResponseClass::Quarantine => (
+                    crate::runtime_law::RuntimeLawSeverity::QuarantineRequired,
+                    vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
+                    vec!["RL-GOV-002".to_string()],
+                ),
+                RuntimeLawResponseClass::SafeMode => (
+                    crate::runtime_law::RuntimeLawSeverity::Critical,
+                    vec!["LAW_GOVERNANCE_SAFE_MODE".to_string()],
+                    vec!["RL-GOV-001".to_string()],
+                ),
+            };
+        let law_policy_version = "2026.03.08.law.v1".to_string();
+        let safe_mode_active = final_law_response_class == RuntimeLawResponseClass::SafeMode;
+        let quarantined_scopes = if final_law_response_class == RuntimeLawResponseClass::Quarantine
+        {
+            vec![RuntimeLawBlastRadiusScope::ClusterScope
+                .as_str()
+                .to_string()]
+        } else {
+            Vec::new()
         };
 
         RuntimeLawExecutionState::v1(
@@ -1935,16 +1943,95 @@ mod tests {
             final_law_response_class,
             final_law_severity,
             law_reason_codes,
-            "2026.03.08.law.v1".to_string(),
+            law_policy_version.clone(),
             None,
             RuntimeLawRollbackReadinessState::NotRequired,
             RuntimeLawBlastRadiusScope::ClusterScope,
             None,
-            triggered_rule_ids,
+            triggered_rule_ids.clone(),
             subsystem_inputs,
             "LAW-DEC-0000000001".to_string(),
         )
         .expect("runtime law state must validate")
+        .with_independent_verification_support(Some(sample_law_verification_support(
+            law_policy_version,
+            triggered_rule_ids,
+            safe_mode_active,
+            quarantined_scopes,
+        )))
+        .expect("independent verification support must attach")
+    }
+
+    fn sample_law_verification_support(
+        law_policy_version: String,
+        triggered_rule_ids: Vec<String>,
+        safe_mode_active: bool,
+        quarantined_scopes: Vec<String>,
+    ) -> RuntimeLawIndependentVerificationSupport {
+        let support_rule_ids = ["RL-BASE-001", "RL-GOV-001", "RL-GOV-002", "RL-GOV-003"];
+        let mut rule_registry = Vec::new();
+        for rule_id in support_rule_ids {
+            let category = if rule_id == "RL-BASE-001" {
+                RuntimeLawRuleCategory::Envelope
+            } else {
+                RuntimeLawRuleCategory::Governance
+            };
+            let description = match rule_id {
+                "RL-BASE-001" => "baseline allow rule",
+                "RL-GOV-001" => "governance safe mode rule",
+                "RL-GOV-002" => "governance cluster divergence rule",
+                "RL-GOV-003" => "governance policy version drift rule",
+                _ => "runtime law verification rule",
+            };
+            rule_registry.push(
+                RuntimeLawRuleDescriptor::v1(
+                    rule_id.to_string(),
+                    category,
+                    true,
+                    law_policy_version.clone(),
+                    if category == RuntimeLawRuleCategory::Envelope {
+                        "RUNTIME_LAW".to_string()
+                    } else {
+                        SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()
+                    },
+                    description.to_string(),
+                )
+                .expect("runtime law rule descriptor must validate"),
+            );
+        }
+
+        for triggered_rule_id in triggered_rule_ids {
+            if rule_registry
+                .iter()
+                .all(|descriptor| descriptor.rule_id != triggered_rule_id)
+            {
+                rule_registry.push(
+                    RuntimeLawRuleDescriptor::v1(
+                        triggered_rule_id,
+                        RuntimeLawRuleCategory::Governance,
+                        true,
+                        law_policy_version.clone(),
+                        SUBSYSTEM_RUNTIME_GOVERNANCE.to_string(),
+                        "runtime law triggered rule".to_string(),
+                    )
+                    .expect("triggered runtime law rule descriptor must validate"),
+                );
+            }
+        }
+
+        RuntimeLawIndependentVerificationSupport::v1(
+            "runtime-law-node-a".to_string(),
+            RuntimeLawPolicyWindow::v1(
+                law_policy_version.clone(),
+                law_policy_version.clone(),
+                law_policy_version,
+            )
+            .expect("runtime law policy window must validate"),
+            rule_registry,
+            safe_mode_active,
+            quarantined_scopes,
+        )
+        .expect("runtime law independent verification support must validate")
     }
 
     #[test]
@@ -2346,5 +2433,86 @@ mod tests {
                 .final_law_response_class,
             RuntimeLawResponseClass::Degrade
         );
+    }
+
+    #[test]
+    fn at_runtime_execution_14_law_state_transport_requires_independent_verification_support() {
+        let law_state = RuntimeLawExecutionState::v1(
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            RuntimeLawResponseClass::Allow,
+            crate::runtime_law::RuntimeLawSeverity::Info,
+            vec!["LAW_ALLOW_BASELINE".to_string()],
+            "2026.03.08.law.v1".to_string(),
+            None,
+            RuntimeLawRollbackReadinessState::NotRequired,
+            RuntimeLawBlastRadiusScope::ClusterScope,
+            None,
+            vec!["RL-BASE-001".to_string()],
+            vec!["RUNTIME_LAW".to_string()],
+            "LAW-DEC-0000000002".to_string(),
+        )
+        .expect("runtime law state must validate without support before envelope transport");
+
+        let envelope =
+            RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+                "request:law:3".to_string(),
+                "trace:law:3".to_string(),
+                "idem:law:3".to_string(),
+                UserId::new("user_runtime_law_3").expect("valid actor user id"),
+                DeviceId::new("device_runtime_law_3").expect("valid device id"),
+                AppPlatform::Android,
+                sample_platform_context(),
+                Some(SessionId(1)),
+                TurnId(1),
+                Some(1),
+                AdmissionState::SessionResolved,
+                None,
+            )
+            .expect("baseline envelope must validate");
+
+        let err = envelope
+            .with_law_state(Some(law_state))
+            .expect_err("law-state transport must require independent verification support");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "runtime_execution_envelope.law_state.independent_verification_support"
+                );
+                assert_eq!(reason, "must be present when law_state is present");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_15_law_state_transport_accepts_independent_verification_support() {
+        let envelope =
+            RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+                "request:law:4".to_string(),
+                "trace:law:4".to_string(),
+                "idem:law:4".to_string(),
+                UserId::new("user_runtime_law_4").expect("valid actor user id"),
+                DeviceId::new("device_runtime_law_4").expect("valid device id"),
+                AppPlatform::Android,
+                sample_platform_context(),
+                Some(SessionId(1)),
+                TurnId(1),
+                Some(1),
+                AdmissionState::SessionResolved,
+                None,
+            )
+            .expect("baseline envelope must validate")
+            .with_law_state(Some(sample_law_state(
+                RuntimeLawResponseClass::AllowWithWarning,
+                vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()],
+            )))
+            .expect("law-state transport with verification support must validate");
+
+        assert!(envelope
+            .law_state
+            .and_then(|law_state| law_state.independent_verification_support)
+            .is_some());
     }
 }

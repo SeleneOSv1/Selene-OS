@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::ph1builder::{
-    BuilderApprovalState, BuilderPostDeployJudgeResult, BuilderReleaseState,
-};
+use crate::ph1builder::{BuilderApprovalState, BuilderPostDeployJudgeResult, BuilderReleaseState};
 use crate::ph1learn::LearnArtifactPackageBuildOk;
 use crate::ph1selfheal::{FixCard, PromotionDecision};
 use crate::{ContractViolation, MonotonicTimeNs, Validate};
@@ -60,6 +58,17 @@ fn validate_ascii_token_vec(
         validate_ascii_token(field, value, max_len)?;
     }
     Ok(())
+}
+
+fn rule_registry_covers_triggered_rules(
+    rule_registry: &[RuntimeLawRuleDescriptor],
+    triggered_rule_ids: &[String],
+) -> bool {
+    triggered_rule_ids.iter().all(|triggered_rule_id| {
+        rule_registry
+            .iter()
+            .any(|descriptor| descriptor.rule_id == *triggered_rule_id)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -309,6 +318,68 @@ impl Validate for RuntimeLawRuleDescriptor {
             "runtime_law_rule_descriptor.description",
             &self.description,
             256,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeLawIndependentVerificationSupport {
+    pub runtime_node_id: String,
+    pub policy_window: RuntimeLawPolicyWindow,
+    pub rule_registry: Vec<RuntimeLawRuleDescriptor>,
+    pub safe_mode_active: bool,
+    pub quarantined_scopes: Vec<String>,
+}
+
+impl RuntimeLawIndependentVerificationSupport {
+    pub fn v1(
+        runtime_node_id: String,
+        policy_window: RuntimeLawPolicyWindow,
+        rule_registry: Vec<RuntimeLawRuleDescriptor>,
+        safe_mode_active: bool,
+        quarantined_scopes: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let support = Self {
+            runtime_node_id,
+            policy_window,
+            rule_registry,
+            safe_mode_active,
+            quarantined_scopes,
+        };
+        support.validate()?;
+        Ok(support)
+    }
+}
+
+impl Validate for RuntimeLawIndependentVerificationSupport {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        validate_ascii_token(
+            "runtime_law_independent_verification_support.runtime_node_id",
+            &self.runtime_node_id,
+            128,
+        )?;
+        self.policy_window.validate()?;
+        if self.rule_registry.is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "runtime_law_independent_verification_support.rule_registry",
+                reason: "must not be empty",
+            });
+        }
+        if self.rule_registry.len() > 64 {
+            return Err(ContractViolation::InvalidValue {
+                field: "runtime_law_independent_verification_support.rule_registry",
+                reason: "too many entries",
+            });
+        }
+        for descriptor in &self.rule_registry {
+            descriptor.validate()?;
+        }
+        validate_ascii_token_vec(
+            "runtime_law_independent_verification_support.quarantined_scopes",
+            &self.quarantined_scopes,
+            64,
+            32,
         )?;
         Ok(())
     }
@@ -587,6 +658,7 @@ pub struct RuntimeLawExecutionState {
     pub triggered_rule_ids: Vec<String>,
     pub subsystem_inputs: Vec<String>,
     pub decision_log_ref: String,
+    pub independent_verification_support: Option<RuntimeLawIndependentVerificationSupport>,
     pub artifact_trust_decision_ids: Vec<String>,
     pub artifact_trust_proof_entry_refs: Vec<String>,
     pub artifact_trust_proof_record_ref: Option<String>,
@@ -625,6 +697,7 @@ impl RuntimeLawExecutionState {
             triggered_rule_ids,
             subsystem_inputs,
             decision_log_ref,
+            independent_verification_support: None,
             artifact_trust_decision_ids: Vec::new(),
             artifact_trust_proof_entry_refs: Vec::new(),
             artifact_trust_proof_record_ref: None,
@@ -655,6 +728,15 @@ impl RuntimeLawExecutionState {
         self.artifact_trust_set_snapshot_refs = artifact_trust_set_snapshot_refs;
         self.artifact_trust_basis_fingerprints = artifact_trust_basis_fingerprints;
         self.artifact_trust_negative_result_refs = artifact_trust_negative_result_refs;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_independent_verification_support(
+        mut self,
+        independent_verification_support: Option<RuntimeLawIndependentVerificationSupport>,
+    ) -> Result<Self, ContractViolation> {
+        self.independent_verification_support = independent_verification_support;
         self.validate()?;
         Ok(self)
     }
@@ -696,6 +778,42 @@ impl Validate for RuntimeLawExecutionState {
             &self.decision_log_ref,
             64,
         )?;
+        if let Some(value) = self.independent_verification_support.as_ref() {
+            value.validate()?;
+            if value.policy_window.law_policy_version != self.law_policy_version {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_law_execution_state.independent_verification_support.policy_window.law_policy_version",
+                    reason: "must match runtime_law_execution_state.law_policy_version",
+                });
+            }
+            if !rule_registry_covers_triggered_rules(&value.rule_registry, &self.triggered_rule_ids)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field:
+                        "runtime_law_execution_state.independent_verification_support.rule_registry",
+                    reason: "must cover runtime_law_execution_state.triggered_rule_ids",
+                });
+            }
+            if self.final_law_response_class == RuntimeLawResponseClass::SafeMode
+                && !value.safe_mode_active
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_law_execution_state.independent_verification_support.safe_mode_active",
+                    reason: "must be true when final_law_response_class=SAFE_MODE",
+                });
+            }
+            if self.final_law_response_class == RuntimeLawResponseClass::Quarantine
+                && !value
+                    .quarantined_scopes
+                    .iter()
+                    .any(|scope| scope == self.blast_radius_scope.as_str())
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_law_execution_state.independent_verification_support.quarantined_scopes",
+                    reason: "must include blast_radius_scope when final_law_response_class=QUARANTINE",
+                });
+            }
+        }
         validate_ascii_token_vec(
             "runtime_law_execution_state.artifact_trust_decision_ids",
             &self.artifact_trust_decision_ids,
@@ -941,5 +1059,108 @@ impl Validate for RuntimeLawDecisionLogEntry {
             32,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_rule_descriptor(rule_id: &str) -> RuntimeLawRuleDescriptor {
+        RuntimeLawRuleDescriptor::v1(
+            rule_id.to_string(),
+            RuntimeLawRuleCategory::Governance,
+            true,
+            "2026.03.08.law.v1".to_string(),
+            "RUNTIME_GOVERNANCE".to_string(),
+            "runtime law verification rule".to_string(),
+        )
+        .expect("runtime law rule descriptor must validate")
+    }
+
+    fn sample_verification_support(
+        rule_ids: Vec<String>,
+    ) -> RuntimeLawIndependentVerificationSupport {
+        RuntimeLawIndependentVerificationSupport::v1(
+            "runtime-law-node-a".to_string(),
+            RuntimeLawPolicyWindow::v1(
+                "2026.03.08.law.v1".to_string(),
+                "2026.03.08.law.v1".to_string(),
+                "2026.03.08.law.v1".to_string(),
+            )
+            .expect("runtime law policy window must validate"),
+            rule_ids
+                .iter()
+                .map(|rule_id| sample_rule_descriptor(rule_id))
+                .collect(),
+            false,
+            Vec::new(),
+        )
+        .expect("runtime law independent verification support must validate")
+    }
+
+    #[test]
+    fn runtime_law_independent_verification_support_requires_rule_registry_entries() {
+        let err = RuntimeLawIndependentVerificationSupport::v1(
+            "runtime-law-node-a".to_string(),
+            RuntimeLawPolicyWindow::v1(
+                "2026.03.08.law.v1".to_string(),
+                "2026.03.08.law.v1".to_string(),
+                "2026.03.08.law.v1".to_string(),
+            )
+            .expect("runtime law policy window must validate"),
+            Vec::new(),
+            false,
+            Vec::new(),
+        )
+        .expect_err("independent verification support must require rule registry entries");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "runtime_law_independent_verification_support.rule_registry"
+                );
+                assert_eq!(reason, "must not be empty");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn runtime_law_execution_state_support_must_cover_triggered_rule_ids() {
+        let err = RuntimeLawExecutionState::v1(
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            RuntimeLawResponseClass::Degrade,
+            RuntimeLawSeverity::Warning,
+            vec!["LAW_GOVERNANCE_POLICY_DRIFT".to_string()],
+            "2026.03.08.law.v1".to_string(),
+            None,
+            RuntimeLawRollbackReadinessState::NotRequired,
+            RuntimeLawBlastRadiusScope::ClusterScope,
+            None,
+            vec!["RL-GOV-003".to_string()],
+            vec!["RUNTIME_GOVERNANCE".to_string()],
+            "LAW-DEC-0000000001".to_string(),
+        )
+        .expect("runtime law execution state must validate before support attachment")
+        .with_independent_verification_support(Some(sample_verification_support(vec![
+            "RL-GOV-002".to_string(),
+        ])))
+        .expect_err("support rule registry must cover triggered rule ids");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "runtime_law_execution_state.independent_verification_support.rule_registry"
+                );
+                assert_eq!(
+                    reason,
+                    "must cover runtime_law_execution_state.triggered_rule_ids"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
     }
 }
