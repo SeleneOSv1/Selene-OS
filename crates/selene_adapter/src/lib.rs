@@ -4456,6 +4456,11 @@ impl AdapterRuntime {
             .state
             .lock()
             .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        validate_persistence_state_integrity(&guard).map_err(|err| {
+            format!(
+                "persistence state integrity check failed before authoritative outcome reuse: {err}"
+            )
+        })?;
         let Some(outcome) = guard.authoritative_outcomes.get(&lookup_key).cloned() else {
             return Ok(None);
         };
@@ -4557,6 +4562,9 @@ impl AdapterRuntime {
             .state
             .lock()
             .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        validate_persistence_state_integrity(&guard).map_err(|err| {
+            format!("persistence state integrity check failed before prepare: {err}")
+        })?;
         let mut reconciliation_decision = None;
         let mut conflict_severity = None;
         match persistence_mode {
@@ -4906,6 +4914,9 @@ impl AdapterRuntime {
             .state
             .lock()
             .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        validate_persistence_state_integrity(&guard).map_err(|err| {
+            format!("persistence state integrity check failed before finalize: {err}")
+        })?;
         let record_snapshot = guard
             .outbox_records
             .get(&prepared.operation_id)
@@ -5140,6 +5151,11 @@ impl AdapterRuntime {
                 .state
                 .lock()
                 .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+            validate_persistence_state_integrity(&guard).map_err(|err| {
+                format!(
+                    "persistence state integrity check failed before reconciliation replay: {err}"
+                )
+            })?;
             let pending = sorted_pending_outbox_operation_ids(&guard);
             if !pending.is_empty() {
                 set_persistence_recovery_mode_locked(
@@ -5390,23 +5406,8 @@ impl AdapterRuntime {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(AdapterPersistenceState::default());
         };
-        let raw = fs::read_to_string(&persistence.state_path).map_err(|err| {
-            format!(
-                "failed reading adapter persistence state '{}': {}",
-                persistence.state_path.display(),
-                err
-            )
-        })?;
-        if raw.trim().is_empty() {
-            return Ok(AdapterPersistenceState::default());
-        }
-        match serde_json::from_str::<AdapterPersistenceState>(&raw) {
-            Ok(state) if state.schema_version == 2 => Ok(state),
-            Ok(state) => Err(format!(
-                "unsupported adapter persistence schema_version={}",
-                state.schema_version
-            )),
-            Err(err) => {
+        let quarantine_state_with_note =
+            |suffix: &str, note: String| -> Result<AdapterPersistenceState, String> {
                 let mut quarantined = AdapterPersistenceState {
                     recovery_mode: PersistenceRecoveryMode::QuarantinedLocalState,
                     ..AdapterPersistenceState::default()
@@ -5423,13 +5424,9 @@ impl AdapterRuntime {
                     None,
                     Some(PersistenceConflictSeverity::QuarantineRequired),
                     &self.runtime_node_id,
-                    Some(format!(
-                        "corrupted persistence state quarantined: {} ({err})",
-                        persistence.state_path.display()
-                    )),
+                    Some(note),
                 );
-                let quarantine_path =
-                    quarantined_persistence_path(&persistence.state_path, "state_corrupt");
+                let quarantine_path = quarantined_persistence_path(&persistence.state_path, suffix);
                 fs::rename(&persistence.state_path, &quarantine_path).map_err(|rename_err| {
                     format!(
                         "failed quarantining adapter persistence state '{}' -> '{}': {}",
@@ -5446,7 +5443,42 @@ impl AdapterRuntime {
                     )
                 })?;
                 Ok(quarantined)
+            };
+        let raw = fs::read_to_string(&persistence.state_path).map_err(|err| {
+            format!(
+                "failed reading adapter persistence state '{}': {}",
+                persistence.state_path.display(),
+                err
+            )
+        })?;
+        if raw.trim().is_empty() {
+            return Ok(AdapterPersistenceState::default());
+        }
+        match serde_json::from_str::<AdapterPersistenceState>(&raw) {
+            Ok(state) if state.schema_version == 2 => {
+                if let Err(err) = validate_persistence_state_integrity(&state) {
+                    quarantine_state_with_note(
+                        "state_integrity",
+                        format!(
+                            "persistence state integrity validation quarantined: {} ({err})",
+                            persistence.state_path.display()
+                        ),
+                    )
+                } else {
+                    Ok(state)
+                }
             }
+            Ok(state) => Err(format!(
+                "unsupported adapter persistence schema_version={}",
+                state.schema_version
+            )),
+            Err(err) => quarantine_state_with_note(
+                "state_corrupt",
+                format!(
+                    "corrupted persistence state quarantined: {} ({err})",
+                    persistence.state_path.display()
+                ),
+            ),
         }
     }
 
@@ -5457,6 +5489,9 @@ impl AdapterRuntime {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(());
         };
+        validate_persistence_state_integrity(state).map_err(|err| {
+            format!("refusing to persist adapter state with integrity violation: {err}")
+        })?;
         let json = serde_json::to_vec_pretty(state)
             .map_err(|err| format!("failed encoding adapter persistence state: {err}"))?;
         let tmp_path = persistence.state_path.with_extension("json.tmp");
@@ -5661,6 +5696,307 @@ fn validate_persistence_ascii_token(
     if !value.is_ascii() {
         return Err(format!("{field} must be ASCII"));
     }
+    Ok(())
+}
+
+fn validate_optional_persistence_ascii_token(
+    field: &str,
+    value: &Option<String>,
+    max_len: usize,
+) -> Result<(), String> {
+    if let Some(value) = value.as_ref() {
+        validate_persistence_ascii_token(field, value, max_len)?;
+    }
+    Ok(())
+}
+
+fn validate_persistence_state_integrity(state: &AdapterPersistenceState) -> Result<(), String> {
+    if state.schema_version != 2 {
+        return Err(format!(
+            "persistence schema_version={} is not supported for integrity validation",
+            state.schema_version
+        ));
+    }
+
+    for (operation_key, record) in &state.outbox_records {
+        let expected_operation_id =
+            derived_operation_id(&record.actor_user_id, &record.idempotency_key);
+        if operation_key != &record.operation_id {
+            return Err(format!(
+                "outbox key '{operation_key}' must match outbox.operation_id '{}'",
+                record.operation_id
+            ));
+        }
+        if record.operation_id != expected_operation_id {
+            return Err(format!(
+                "outbox.operation_id '{}' must match derived operation_id '{}'",
+                record.operation_id, expected_operation_id
+            ));
+        }
+        if record.acknowledgement_state
+            == PersistenceAcknowledgementState::PendingCloudAcknowledgement
+            && record.cleared_from_active_outbox_at_ns.is_some()
+        {
+            return Err(format!(
+                "pending outbox record '{}' must not already be cleared from the active outbox",
+                record.operation_id
+            ));
+        }
+        if record.acknowledgement_state
+            != PersistenceAcknowledgementState::PendingCloudAcknowledgement
+            && record.cleared_from_active_outbox_at_ns.is_none()
+        {
+            return Err(format!(
+                "non-pending outbox record '{}' must record cleared_from_active_outbox_at_ns",
+                record.operation_id
+            ));
+        }
+    }
+
+    let mut expected_journal_sequence = 1_u64;
+    for entry in &state.operation_journal {
+        if entry.sequence != expected_journal_sequence {
+            return Err(format!(
+                "operation_journal sequence {} must equal expected contiguous sequence {}",
+                entry.sequence, expected_journal_sequence
+            ));
+        }
+        expected_journal_sequence = expected_journal_sequence.saturating_add(1);
+        validate_persistence_ascii_token(
+            "operation_journal.operation_id",
+            &entry.operation_id,
+            128,
+        )?;
+        validate_persistence_ascii_token("operation_journal.request_id", &entry.request_id, 256)?;
+        validate_persistence_ascii_token("operation_journal.trace_id", &entry.trace_id, 256)?;
+        validate_persistence_ascii_token(
+            "operation_journal.actor_user_id",
+            &entry.actor_user_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "operation_journal.idempotency_key",
+            &entry.idempotency_key,
+            256,
+        )?;
+        validate_optional_persistence_ascii_token(
+            "operation_journal.session_id",
+            &entry.session_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "operation_journal.runtime_node_id",
+            &entry.runtime_node_id,
+            128,
+        )?;
+        if matches!(entry.turn_id, Some(0)) {
+            return Err(format!(
+                "operation_journal entry '{}' must not record turn_id=0",
+                entry.operation_id
+            ));
+        }
+        if matches!(entry.device_turn_sequence, Some(0)) {
+            return Err(format!(
+                "operation_journal entry '{}' must not record device_turn_sequence=0",
+                entry.operation_id
+            ));
+        }
+        if entry.request_id == "unknown_request" || entry.trace_id == "unknown_trace" {
+            return Err(format!(
+                "operation_journal entry '{}' must not rely on placeholder request or trace identity",
+                entry.operation_id
+            ));
+        }
+        let record = state
+            .outbox_records
+            .get(&entry.operation_id)
+            .ok_or_else(|| {
+                format!(
+                    "operation_journal entry '{}' must reference a live durable outbox record",
+                    entry.operation_id
+                )
+            })?;
+        if entry.request_id != record.request_id {
+            return Err(format!(
+                "operation_journal entry '{}' request_id '{}' must match outbox request_id '{}'",
+                entry.operation_id, entry.request_id, record.request_id
+            ));
+        }
+        if entry.trace_id != record.trace_id {
+            return Err(format!(
+                "operation_journal entry '{}' trace_id '{}' must match outbox trace_id '{}'",
+                entry.operation_id, entry.trace_id, record.trace_id
+            ));
+        }
+        if entry.actor_user_id != record.actor_user_id {
+            return Err(format!(
+                "operation_journal entry '{}' actor_user_id '{}' must match outbox actor_user_id '{}'",
+                entry.operation_id, entry.actor_user_id, record.actor_user_id
+            ));
+        }
+        if entry.idempotency_key != record.idempotency_key {
+            return Err(format!(
+                "operation_journal entry '{}' idempotency_key '{}' must match outbox idempotency_key '{}'",
+                entry.operation_id, entry.idempotency_key, record.idempotency_key
+            ));
+        }
+    }
+    if state.next_journal_sequence != expected_journal_sequence {
+        return Err(format!(
+            "next_journal_sequence={} must equal contiguous next sequence {}",
+            state.next_journal_sequence, expected_journal_sequence
+        ));
+    }
+
+    let mut expected_audit_sequence = 1_u64;
+    for entry in &state.audit_trail {
+        if entry.sequence != expected_audit_sequence {
+            return Err(format!(
+                "audit_trail sequence {} must equal expected contiguous sequence {}",
+                entry.sequence, expected_audit_sequence
+            ));
+        }
+        expected_audit_sequence = expected_audit_sequence.saturating_add(1);
+        validate_optional_persistence_ascii_token(
+            "audit_trail.operation_id",
+            &entry.operation_id,
+            128,
+        )?;
+        validate_optional_persistence_ascii_token(
+            "audit_trail.actor_user_id",
+            &entry.actor_user_id,
+            128,
+        )?;
+        validate_optional_persistence_ascii_token(
+            "audit_trail.idempotency_key",
+            &entry.idempotency_key,
+            256,
+        )?;
+        validate_optional_persistence_ascii_token(
+            "audit_trail.session_id",
+            &entry.session_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "audit_trail.runtime_node_id",
+            &entry.runtime_node_id,
+            128,
+        )?;
+        if matches!(entry.turn_id, Some(0)) {
+            return Err("audit_trail turn_id must not be 0".to_string());
+        }
+        if let Some(operation_id) = entry.operation_id.as_ref() {
+            let record = state.outbox_records.get(operation_id).ok_or_else(|| {
+                format!(
+                    "audit_trail entry '{}' must reference a live durable outbox record",
+                    operation_id
+                )
+            })?;
+            if entry.actor_user_id.as_deref() != Some(record.actor_user_id.as_str()) {
+                return Err(format!(
+                    "audit_trail entry '{}' actor_user_id must match durable outbox actor_user_id",
+                    operation_id
+                ));
+            }
+            if entry.idempotency_key.as_deref() != Some(record.idempotency_key.as_str()) {
+                return Err(format!(
+                    "audit_trail entry '{}' idempotency_key must match durable outbox idempotency_key",
+                    operation_id
+                ));
+            }
+        }
+    }
+    if state.next_audit_sequence != expected_audit_sequence {
+        return Err(format!(
+            "next_audit_sequence={} must equal contiguous next sequence {}",
+            state.next_audit_sequence, expected_audit_sequence
+        ));
+    }
+
+    for (lookup_key, outcome) in &state.authoritative_outcomes {
+        validate_persistence_ascii_token(
+            "authoritative_outcome.actor_user_id",
+            &outcome.actor_user_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "authoritative_outcome.idempotency_key",
+            &outcome.idempotency_key,
+            256,
+        )?;
+        validate_optional_persistence_ascii_token(
+            "authoritative_outcome.session_id",
+            &outcome.session_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "authoritative_outcome.device_id",
+            &outcome.device_id,
+            128,
+        )?;
+        validate_persistence_ascii_token(
+            "authoritative_outcome.runtime_node_id",
+            &outcome.runtime_node_id,
+            128,
+        )?;
+        let expected_lookup_key =
+            actor_idempotency_lookup_key(&outcome.actor_user_id, &outcome.idempotency_key);
+        if lookup_key != &expected_lookup_key {
+            return Err(format!(
+                "authoritative_outcome key '{lookup_key}' must match actor-idempotency lookup key '{expected_lookup_key}'"
+            ));
+        }
+        let operation_id = derived_operation_id(&outcome.actor_user_id, &outcome.idempotency_key);
+        let record = state.outbox_records.get(&operation_id).ok_or_else(|| {
+            format!(
+                "authoritative_outcome '{}' must reference a live durable outbox record",
+                operation_id
+            )
+        })?;
+        if record.actor_user_id != outcome.actor_user_id {
+            return Err(format!(
+                "authoritative_outcome '{}' actor_user_id must match durable outbox actor_user_id",
+                operation_id
+            ));
+        }
+        if record.idempotency_key != outcome.idempotency_key {
+            return Err(format!(
+                "authoritative_outcome '{}' idempotency_key must match durable outbox idempotency_key",
+                operation_id
+            ));
+        }
+        match &outcome.result {
+            AdapterPersistedAuthoritativeResult::Success(response) => {
+                if response.session_id != outcome.session_id {
+                    return Err(format!(
+                        "authoritative_outcome '{}' success session_id must match stored outcome session_id",
+                        operation_id
+                    ));
+                }
+                if response.turn_id != outcome.turn_id {
+                    return Err(format!(
+                        "authoritative_outcome '{}' success turn_id must match stored outcome turn_id",
+                        operation_id
+                    ));
+                }
+            }
+            AdapterPersistedAuthoritativeResult::Failure(error) => {
+                if error.session_id != outcome.session_id {
+                    return Err(format!(
+                        "authoritative_outcome '{}' failure session_id must match stored outcome session_id",
+                        operation_id
+                    ));
+                }
+                if error.turn_id != outcome.turn_id {
+                    return Err(format!(
+                        "authoritative_outcome '{}' failure turn_id must match stored outcome turn_id",
+                        operation_id
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -5925,7 +6261,12 @@ fn sorted_pending_outbox_operation_ids(state: &AdapterPersistenceState) -> Vec<S
 fn recompute_persistence_recovery_mode_locked(
     state: &AdapterPersistenceState,
 ) -> PersistenceRecoveryMode {
-    if state.outbox_records.values().any(|row| {
+    if state.audit_trail.iter().any(|entry| {
+        entry.decision == AdapterPersistenceAuditDecision::QuarantineAction
+            && entry.operation_id.is_none()
+    }) {
+        PersistenceRecoveryMode::QuarantinedLocalState
+    } else if state.outbox_records.values().any(|row| {
         row.acknowledgement_state == PersistenceAcknowledgementState::QuarantinedLocalState
     }) {
         PersistenceRecoveryMode::QuarantinedLocalState
@@ -10772,6 +11113,7 @@ mod tests {
         let state_path = adapter_persistence_state_path(journal_path);
         let _ = std::fs::remove_file(&state_path);
         let _ = std::fs::remove_file(quarantined_persistence_path(&state_path, "state_corrupt"));
+        let _ = std::fs::remove_file(quarantined_persistence_path(&state_path, "state_integrity"));
         let _ = std::fs::remove_file(quarantined_persistence_path(
             journal_path,
             "legacy_journal_corrupt",
@@ -15136,6 +15478,161 @@ mod tests {
         }));
         assert_eq!(after.recovery_mode, PersistenceRecoveryMode::Normal);
         assert!(after.last_reconciled_at_ns.is_some());
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_08_outbox_identity_integrity_break_is_quarantined_on_bootstrap() {
+        let journal_path = temp_persistence_journal_path("outbox_identity_integrity");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+        let request = base_request();
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id = derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+
+        runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(request.now_ns.expect("request now must be present")),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        let mut state = read_persistence_state_for_test(&journal_path);
+        let row = state
+            .outbox_records
+            .get_mut(&operation_id)
+            .expect("pending outbox record must exist");
+        row.operation_id = "op_integrity_mismatch".to_string();
+        write_persistence_state_for_test(&journal_path, &state);
+        drop(runtime_one);
+
+        let ingress_two = AppServerIngressRuntime::default();
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            ingress_two.clone(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must quarantine structurally invalid outbox state");
+
+        let after = read_persistence_state_for_test(&journal_path);
+        assert_eq!(
+            after.recovery_mode,
+            PersistenceRecoveryMode::QuarantinedLocalState
+        );
+        assert!(after.outbox_records.is_empty());
+        assert!(after.audit_trail.iter().any(|entry| {
+            entry.decision == AdapterPersistenceAuditDecision::QuarantineAction
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note.contains("integrity validation quarantined"))
+                    .unwrap_or(false)
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note.contains("outbox key"))
+                    .unwrap_or(false)
+        }));
+        let quarantined_state_path = quarantined_persistence_path(
+            &adapter_persistence_state_path(&journal_path),
+            "state_integrity",
+        );
+        assert!(quarantined_state_path.exists());
+        assert!(ingress_two
+            .runtime_governance_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_code
+                    == selene_os::runtime_governance::reason_codes::GOV_PERSISTENCE_QUARANTINE_REQUIRED
+            }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_09_journal_sequence_integrity_break_is_quarantined_on_bootstrap() {
+        let journal_path = temp_persistence_journal_path("journal_sequence_integrity");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+        let request = base_request();
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+
+        runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(request.now_ns.expect("request now must be present")),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        let mut state = read_persistence_state_for_test(&journal_path);
+        let first_entry = state
+            .operation_journal
+            .first_mut()
+            .expect("operation journal must contain created entry");
+        first_entry.sequence = 9;
+        write_persistence_state_for_test(&journal_path, &state);
+        drop(runtime_one);
+
+        let ingress_two = AppServerIngressRuntime::default();
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            ingress_two.clone(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must quarantine structurally invalid journal state");
+
+        let after = read_persistence_state_for_test(&journal_path);
+        assert_eq!(
+            after.recovery_mode,
+            PersistenceRecoveryMode::QuarantinedLocalState
+        );
+        assert!(after.operation_journal.is_empty());
+        assert!(after.audit_trail.iter().any(|entry| {
+            entry.decision == AdapterPersistenceAuditDecision::QuarantineAction
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note.contains("integrity validation quarantined"))
+                    .unwrap_or(false)
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note.contains("operation_journal sequence"))
+                    .unwrap_or(false)
+        }));
+        let quarantined_state_path = quarantined_persistence_path(
+            &adapter_persistence_state_path(&journal_path),
+            "state_integrity",
+        );
+        assert!(quarantined_state_path.exists());
+        assert!(ingress_two
+            .runtime_governance_decision_log_snapshot()
+            .iter()
+            .any(|entry| {
+                entry.reason_code
+                    == selene_os::runtime_governance::reason_codes::GOV_PERSISTENCE_QUARANTINE_REQUIRED
+            }));
 
         cleanup_persistence_files_for_test(&journal_path);
     }
