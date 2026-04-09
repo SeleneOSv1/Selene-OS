@@ -10,7 +10,7 @@ Architecture baseline updated to System_Core + Build Sections 01–11.
 | PH1.M | PARTIALLY_WIRED | Cloud-authoritative ledger-first memory exists, but architecture closure is not yet final across retention and governance surfaces. |
 | PH1.OS | PARTIALLY_WIRED | Platform runtime exists and tablet support is wired in code, but final architecture closure remains incomplete. |
 | PH1.COMP | PARTIALLY_WIRED | Canonical deterministic computation subsystem exists, but major engines still retain parallel quantitative authority paths. |
-| PH1.LAW | PARTIALLY_WIRED | Final runtime law subsystem exists, but live production wiring is not yet generalized across all protected paths. |
+| PH1.LAW | PARTIALLY_WIRED | Final runtime law subsystem exists, and the H105 Section 11 policy-version and cluster-consistency coupled closure is now explicit on canonical law carriers, but live production wiring is not yet generalized across all protected paths. |
 
 Historical note:
 - The detailed matrix below remains valuable as contract-closure history.

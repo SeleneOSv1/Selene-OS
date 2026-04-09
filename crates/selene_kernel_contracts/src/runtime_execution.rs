@@ -14,10 +14,14 @@ use crate::ph1j::{
 use crate::ph1l::SessionId;
 use crate::ph1link::AppPlatform;
 use crate::ph1m::MemoryConfidence;
-use crate::runtime_governance::GovernanceExecutionState;
-use crate::runtime_law::RuntimeLawExecutionState;
+use crate::runtime_governance::{
+    GovernanceClusterConsistency, GovernanceDriftSignal, GovernanceExecutionState,
+};
+use crate::runtime_law::{RuntimeLawExecutionState, RuntimeLawResponseClass};
 use crate::{ContractViolation, Validate};
 use std::collections::BTreeSet;
+
+const SUBSYSTEM_RUNTIME_GOVERNANCE: &str = "RUNTIME_GOVERNANCE";
 
 fn validate_ascii_token(
     field: &'static str,
@@ -79,6 +83,23 @@ fn validate_unique_ascii_tokens(
         }
     }
     Ok(())
+}
+
+fn governance_cluster_drift_detected(governance_state: &GovernanceExecutionState) -> bool {
+    governance_state.cluster_consistency != GovernanceClusterConsistency::Consistent
+}
+
+fn governance_policy_version_drift_detected(governance_state: &GovernanceExecutionState) -> bool {
+    governance_state
+        .drift_signals
+        .contains(&GovernanceDriftSignal::PolicyVersionDrift)
+}
+
+fn law_state_mentions_runtime_governance(law_state: &RuntimeLawExecutionState) -> bool {
+    law_state
+        .subsystem_inputs
+        .iter()
+        .any(|candidate| candidate == SUBSYSTEM_RUNTIME_GOVERNANCE)
 }
 
 #[derive(
@@ -1655,6 +1676,70 @@ impl Validate for RuntimeExecutionEnvelope {
         if let Some(assertion) = self.voice_identity_assertion.as_ref() {
             assertion.validate()?;
         }
+        if let (Some(governance_state), Some(identity_state)) =
+            (self.governance_state.as_ref(), self.identity_state.as_ref())
+        {
+            if identity_state.cluster_drift_detected
+                != governance_cluster_drift_detected(governance_state)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.identity_state.cluster_drift_detected",
+                    reason: "must match governance_state.cluster_consistency",
+                });
+            }
+        }
+        if let (Some(governance_state), Some(law_state)) =
+            (self.governance_state.as_ref(), self.law_state.as_ref())
+        {
+            let governance_cluster_drift = governance_cluster_drift_detected(governance_state);
+            let governance_policy_drift =
+                governance_policy_version_drift_detected(governance_state);
+            let governance_requires_runtime_law_visibility = governance_state.safe_mode_active
+                || governance_cluster_drift
+                || governance_policy_drift;
+
+            if governance_state.safe_mode_active
+                && law_state.final_law_response_class != RuntimeLawResponseClass::SafeMode
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.law_state.final_law_response_class",
+                    reason: "must be SAFE_MODE when governance_state.safe_mode_active=true",
+                });
+            }
+
+            if governance_cluster_drift
+                && matches!(
+                    law_state.final_law_response_class,
+                    RuntimeLawResponseClass::Allow | RuntimeLawResponseClass::AllowWithWarning
+                )
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.law_state.final_law_response_class",
+                    reason: "must degrade or stronger when governance_state.cluster_consistency is not CONSISTENT",
+                });
+            }
+
+            if governance_policy_drift
+                && matches!(
+                    law_state.final_law_response_class,
+                    RuntimeLawResponseClass::Allow | RuntimeLawResponseClass::AllowWithWarning
+                )
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.law_state.final_law_response_class",
+                    reason: "must degrade or stronger when governance_state.drift_signals includes POLICY_VERSION_DRIFT",
+                });
+            }
+
+            if governance_requires_runtime_law_visibility
+                && !law_state_mentions_runtime_governance(law_state)
+            {
+                return Err(ContractViolation::InvalidValue {
+                    field: "runtime_execution_envelope.law_state.subsystem_inputs",
+                    reason: "must include RUNTIME_GOVERNANCE when governance_state reports safe mode, cluster drift, or policy-version drift",
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -1671,6 +1756,14 @@ mod tests {
     use crate::ph1_voice_id::{
         DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionUnknown,
         SpeakerLabel,
+    };
+    use crate::runtime_governance::{
+        GovernanceClusterConsistency, GovernanceDriftSignal, GovernanceExecutionState,
+        GovernanceResponseClass, GovernanceSeverity,
+    };
+    use crate::runtime_law::{
+        RuntimeLawBlastRadiusScope, RuntimeLawExecutionState, RuntimeLawResponseClass,
+        RuntimeLawRollbackReadinessState, RuntimeProtectedActionClass,
     };
     use crate::{MonotonicTimeNs, ReasonCodeId};
 
@@ -1761,6 +1854,97 @@ mod tests {
             )
             .expect("voice assertion must validate"),
         )
+    }
+
+    fn sample_governance_state(
+        cluster_consistency: GovernanceClusterConsistency,
+        drift_signals: Vec<GovernanceDriftSignal>,
+        safe_mode_active: bool,
+    ) -> GovernanceExecutionState {
+        GovernanceExecutionState::v1(
+            "2026.03.08.gov.v1".to_string(),
+            cluster_consistency,
+            safe_mode_active,
+            vec![],
+            vec![],
+            drift_signals,
+            Some("RG-RULE-0001".to_string()),
+            Some(if safe_mode_active {
+                GovernanceSeverity::Critical
+            } else {
+                GovernanceSeverity::Warning
+            }),
+            Some(if safe_mode_active {
+                GovernanceResponseClass::SafeMode
+            } else {
+                GovernanceResponseClass::Degrade
+            }),
+            Some("GOV-DEC-0000000001".to_string()),
+        )
+        .expect("governance execution state must validate")
+    }
+
+    fn sample_identity_state(cluster_drift_detected: bool) -> IdentityExecutionState {
+        IdentityExecutionState::v1(IdentityExecutionStateInput {
+            consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+            trust_tier: IdentityTrustTier::Verified,
+            identity_tier_v2: IdentityTierV2::Confirmed,
+            spoof_liveness_status: SpoofLivenessStatus::Live,
+            step_up_required: false,
+            recovery_state: IdentityRecoveryState::None,
+            cluster_drift_detected,
+            reason_code: None,
+        })
+        .expect("identity execution state must validate")
+    }
+
+    fn sample_law_state(
+        final_law_response_class: RuntimeLawResponseClass,
+        subsystem_inputs: Vec<String>,
+    ) -> RuntimeLawExecutionState {
+        let (final_law_severity, law_reason_codes, triggered_rule_ids) = match final_law_response_class {
+            RuntimeLawResponseClass::Allow => (
+                crate::runtime_law::RuntimeLawSeverity::Info,
+                vec!["LAW_ALLOW_BASELINE".to_string()],
+                vec!["RL-BASE-001".to_string()],
+            ),
+            RuntimeLawResponseClass::AllowWithWarning | RuntimeLawResponseClass::Degrade => (
+                crate::runtime_law::RuntimeLawSeverity::Warning,
+                vec!["LAW_GOVERNANCE_POLICY_DRIFT".to_string()],
+                vec!["RL-GOV-003".to_string()],
+            ),
+            RuntimeLawResponseClass::Block => (
+                crate::runtime_law::RuntimeLawSeverity::Blocking,
+                vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
+                vec!["RL-GOV-002".to_string()],
+            ),
+            RuntimeLawResponseClass::Quarantine => (
+                crate::runtime_law::RuntimeLawSeverity::QuarantineRequired,
+                vec!["LAW_GOVERNANCE_DIVERGENCE".to_string()],
+                vec!["RL-GOV-002".to_string()],
+            ),
+            RuntimeLawResponseClass::SafeMode => (
+                crate::runtime_law::RuntimeLawSeverity::Critical,
+                vec!["LAW_GOVERNANCE_SAFE_MODE".to_string()],
+                vec!["RL-GOV-001".to_string()],
+            ),
+        };
+
+        RuntimeLawExecutionState::v1(
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            final_law_response_class,
+            final_law_severity,
+            law_reason_codes,
+            "2026.03.08.law.v1".to_string(),
+            None,
+            RuntimeLawRollbackReadinessState::NotRequired,
+            RuntimeLawBlastRadiusScope::ClusterScope,
+            None,
+            triggered_rule_ids,
+            subsystem_inputs,
+            "LAW-DEC-0000000001".to_string(),
+        )
+        .expect("runtime law state must validate")
     }
 
     #[test]
@@ -2026,5 +2210,141 @@ mod tests {
             }
             _ => panic!("expected invalid-value contract violation"),
         }
+    }
+
+    #[test]
+    fn at_runtime_execution_11_cluster_drift_requires_identity_alignment() {
+        let envelope =
+            RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+                "request:cluster:1".to_string(),
+                "trace:cluster:1".to_string(),
+                "idem:cluster:1".to_string(),
+                UserId::new("user_runtime_cluster_1").expect("valid actor user id"),
+                DeviceId::new("device_runtime_cluster_1").expect("valid device id"),
+                AppPlatform::Android,
+                sample_platform_context(),
+                Some(SessionId(1)),
+                TurnId(1),
+                Some(1),
+                AdmissionState::SessionResolved,
+                None,
+            )
+            .expect("baseline envelope must validate")
+            .with_governance_state(Some(sample_governance_state(
+                GovernanceClusterConsistency::Diverged,
+                vec![],
+                false,
+            )))
+            .expect("governance state must validate");
+
+        let err = envelope
+            .with_identity_state(Some(sample_identity_state(false)))
+            .expect_err("identity cluster drift must align with governance cluster consistency");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "runtime_execution_envelope.identity_state.cluster_drift_detected"
+                );
+                assert_eq!(reason, "must match governance_state.cluster_consistency");
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_12_policy_version_drift_requires_governed_law_posture() {
+        let envelope =
+            RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+                "request:law:1".to_string(),
+                "trace:law:1".to_string(),
+                "idem:law:1".to_string(),
+                UserId::new("user_runtime_law_1").expect("valid actor user id"),
+                DeviceId::new("device_runtime_law_1").expect("valid device id"),
+                AppPlatform::Android,
+                sample_platform_context(),
+                Some(SessionId(1)),
+                TurnId(1),
+                Some(1),
+                AdmissionState::SessionResolved,
+                None,
+            )
+            .expect("baseline envelope must validate")
+            .with_governance_state(Some(sample_governance_state(
+                GovernanceClusterConsistency::Consistent,
+                vec![GovernanceDriftSignal::PolicyVersionDrift],
+                false,
+            )))
+            .expect("governance state must validate");
+
+        let err = envelope
+            .with_law_state(Some(sample_law_state(
+                RuntimeLawResponseClass::Allow,
+                vec!["RUNTIME_LAW".to_string()],
+            )))
+            .expect_err("policy-version drift must require a governed non-allow law posture");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(
+                    field,
+                    "runtime_execution_envelope.law_state.final_law_response_class"
+                );
+                assert_eq!(
+                    reason,
+                    "must degrade or stronger when governance_state.drift_signals includes POLICY_VERSION_DRIFT"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_13_cluster_and_policy_drift_accept_governed_law_visibility_transport() {
+        let envelope =
+            RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
+                "request:law:2".to_string(),
+                "trace:law:2".to_string(),
+                "idem:law:2".to_string(),
+                UserId::new("user_runtime_law_2").expect("valid actor user id"),
+                DeviceId::new("device_runtime_law_2").expect("valid device id"),
+                AppPlatform::Android,
+                sample_platform_context(),
+                Some(SessionId(1)),
+                TurnId(1),
+                Some(1),
+                AdmissionState::SessionResolved,
+                None,
+            )
+            .expect("baseline envelope must validate")
+            .with_governance_state(Some(sample_governance_state(
+                GovernanceClusterConsistency::CompatibilityWindow,
+                vec![GovernanceDriftSignal::PolicyVersionDrift],
+                false,
+            )))
+            .expect("governance state must validate")
+            .with_identity_state(Some(sample_identity_state(true)))
+            .expect("identity state must validate when cluster drift is aligned")
+            .with_law_state(Some(sample_law_state(
+                RuntimeLawResponseClass::Degrade,
+                vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()],
+            )))
+            .expect("governed law-state transport must validate");
+
+        assert_eq!(
+            envelope
+                .identity_state
+                .expect("identity state must be present")
+                .cluster_drift_detected,
+            true
+        );
+        assert_eq!(
+            envelope
+                .law_state
+                .expect("law state must be present")
+                .final_law_response_class,
+            RuntimeLawResponseClass::Degrade
+        );
     }
 }

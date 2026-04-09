@@ -16,7 +16,9 @@ use selene_kernel_contracts::runtime_execution::{
     DeviceTrustClass, IdentityRecoveryState, IdentityTrustTier, MemoryEligibilityDecision,
     RuntimeExecutionEnvelope, SimulationCertificationState,
 };
-use selene_kernel_contracts::runtime_governance::GovernanceClusterConsistency;
+use selene_kernel_contracts::runtime_governance::{
+    GovernanceClusterConsistency, GovernanceDriftSignal,
+};
 use selene_kernel_contracts::runtime_law::{
     RuntimeLawBlastRadiusScope, RuntimeLawBuilderInput, RuntimeLawDecisionLogEntry,
     RuntimeLawDryRunEvaluationState, RuntimeLawEvaluationContext, RuntimeLawExecutionState,
@@ -39,6 +41,7 @@ pub mod reason_codes {
     pub const LAW_PROOF_CHAIN_BROKEN: &str = "LAW_PROOF_CHAIN_BROKEN";
     pub const LAW_GOVERNANCE_SAFE_MODE: &str = "LAW_GOVERNANCE_SAFE_MODE";
     pub const LAW_GOVERNANCE_DIVERGENCE: &str = "LAW_GOVERNANCE_DIVERGENCE";
+    pub const LAW_GOVERNANCE_POLICY_DRIFT: &str = "LAW_GOVERNANCE_POLICY_DRIFT";
     pub const LAW_PLATFORM_COMPATIBILITY_REQUIRED: &str = "LAW_PLATFORM_COMPATIBILITY_REQUIRED";
     pub const LAW_PLATFORM_TRUST_REQUIRED: &str = "LAW_PLATFORM_TRUST_REQUIRED";
     pub const LAW_BUILDER_APPROVAL_REQUIRED: &str = "LAW_BUILDER_APPROVAL_REQUIRED";
@@ -81,6 +84,7 @@ const RULE_PROOF_REQUIRED: &str = "RL-PROOF-001";
 const RULE_PROOF_CHAIN_BROKEN: &str = "RL-PROOF-002";
 const RULE_GOVERNANCE_SAFE_MODE: &str = "RL-GOV-001";
 const RULE_GOVERNANCE_DIVERGENCE: &str = "RL-GOV-002";
+const RULE_GOVERNANCE_POLICY_DRIFT: &str = "RL-GOV-003";
 const RULE_PLATFORM_COMPATIBILITY: &str = "RL-PLAT-001";
 const RULE_PLATFORM_TRUST: &str = "RL-PLAT-002";
 const RULE_BUILDER_APPROVAL: &str = "RL-BUILD-001";
@@ -270,6 +274,27 @@ impl RuntimeLawRuntime {
                     RULE_GOVERNANCE_DIVERGENCE,
                     SUBSYSTEM_RUNTIME_GOVERNANCE,
                     reason_codes::LAW_GOVERNANCE_DIVERGENCE,
+                    if action_class == RuntimeProtectedActionClass::InfrastructureCritical {
+                        RuntimeLawResponseClass::SafeMode
+                    } else {
+                        RuntimeLawResponseClass::Degrade
+                    },
+                    if action_class == RuntimeProtectedActionClass::InfrastructureCritical {
+                        RuntimeLawSeverity::Critical
+                    } else {
+                        RuntimeLawSeverity::Warning
+                    },
+                    RuntimeLawBlastRadiusScope::ClusterScope,
+                ));
+            }
+            if governance_state
+                .drift_signals
+                .contains(&GovernanceDriftSignal::PolicyVersionDrift)
+            {
+                triggered_rules.push(trigger(
+                    RULE_GOVERNANCE_POLICY_DRIFT,
+                    SUBSYSTEM_RUNTIME_GOVERNANCE,
+                    reason_codes::LAW_GOVERNANCE_POLICY_DRIFT,
                     if action_class == RuntimeProtectedActionClass::InfrastructureCritical {
                         RuntimeLawResponseClass::SafeMode
                     } else {
@@ -1428,6 +1453,12 @@ fn default_rule_registry() -> Vec<RuntimeLawRuleDescriptor> {
             "governance cluster divergence degrades or safe-modes final law posture",
         ),
         (
+            RULE_GOVERNANCE_POLICY_DRIFT,
+            RuntimeLawRuleCategory::Governance,
+            SUBSYSTEM_RUNTIME_GOVERNANCE,
+            "governance policy-version drift must surface through final runtime-law posture",
+        ),
+        (
             RULE_PLATFORM_COMPATIBILITY,
             RuntimeLawRuleCategory::Platform,
             SUBSYSTEM_PLATFORM_RUNTIME,
@@ -1531,8 +1562,8 @@ mod tests {
         SimulationCertificationState,
     };
     use selene_kernel_contracts::runtime_governance::{
-        GovernanceClusterConsistency, GovernanceExecutionState, GovernancePolicyWindow,
-        GovernanceResponseClass, GovernanceSeverity,
+        GovernanceClusterConsistency, GovernanceDriftSignal, GovernanceExecutionState,
+        GovernancePolicyWindow, GovernanceResponseClass, GovernanceSeverity,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId};
 
@@ -2909,5 +2940,134 @@ mod tests {
             envelope.platform_context.compatibility_status,
             ClientCompatibilityStatus::UnsupportedClient
         );
+    }
+
+    #[test]
+    fn at_runtime_law_21_policy_version_drift_degrades_artifact_authority_and_records_policy_version(
+    ) {
+        let runtime = RuntimeLawRuntime::default();
+        let mut envelope = base_envelope();
+        envelope.platform_context.device_trust_class = DeviceTrustClass::StandardDevice;
+        envelope.platform_context.integrity_status = ClientIntegrityStatus::IntegrityVerified;
+        envelope.platform_context.compatibility_status = ClientCompatibilityStatus::Compatible;
+        envelope
+            .validate()
+            .expect("compatible artifact-authority envelope must validate");
+
+        let envelope = envelope
+            .with_governance_state(Some(
+                GovernanceExecutionState::v1(
+                    "2026.03.08.v1".to_string(),
+                    GovernanceClusterConsistency::Consistent,
+                    false,
+                    vec![],
+                    vec![],
+                    vec![GovernanceDriftSignal::PolicyVersionDrift],
+                    Some("RG-GOV-002".to_string()),
+                    Some(GovernanceSeverity::Warning),
+                    Some(GovernanceResponseClass::Degrade),
+                    Some("GOV-DEC-0000000011".to_string()),
+                )
+                .unwrap(),
+            ))
+            .unwrap()
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+
+        let decision = runtime.evaluate(
+            &envelope,
+            RuntimeProtectedActionClass::ArtifactAuthority,
+            &RuntimeLawEvaluationContext::default(),
+        );
+
+        assert_eq!(decision.primary_rule_id, RULE_GOVERNANCE_POLICY_DRIFT);
+        assert_eq!(decision.response_class, RuntimeLawResponseClass::Degrade);
+        assert_eq!(decision.severity, RuntimeLawSeverity::Warning);
+        assert_eq!(
+            decision.reason_codes,
+            vec![reason_codes::LAW_GOVERNANCE_POLICY_DRIFT.to_string()]
+        );
+        assert_eq!(decision.law_state.law_policy_version, runtime.policy_version());
+        assert_eq!(
+            decision.law_state.subsystem_inputs,
+            vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()]
+        );
+
+        let log = runtime.decision_log_snapshot();
+        let last = log.last().expect("runtime law decision log entry must exist");
+        assert_eq!(last.law_policy_version, runtime.policy_version());
+        assert_eq!(
+            last.subsystem_inputs,
+            vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()]
+        );
+        assert_eq!(
+            last.reason_codes,
+            vec![reason_codes::LAW_GOVERNANCE_POLICY_DRIFT.to_string()]
+        );
+    }
+
+    #[test]
+    fn at_runtime_law_22_govern_completion_keeps_cluster_policy_drift_transport_aligned() {
+        let runtime = RuntimeLawRuntime::default();
+        let mut envelope = base_envelope();
+        envelope.platform_context.device_trust_class = DeviceTrustClass::StandardDevice;
+        envelope.platform_context.integrity_status = ClientIntegrityStatus::IntegrityVerified;
+        envelope.platform_context.compatibility_status = ClientCompatibilityStatus::Compatible;
+        let mut identity_state = envelope
+            .identity_state
+            .clone()
+            .expect("base envelope must carry identity state");
+        identity_state.cluster_drift_detected = true;
+        envelope.identity_state = Some(identity_state);
+        envelope.governance_state = Some(
+            GovernanceExecutionState::v1(
+                "2026.03.08.v1".to_string(),
+                GovernanceClusterConsistency::CompatibilityWindow,
+                false,
+                vec![],
+                vec![],
+                vec![GovernanceDriftSignal::PolicyVersionDrift],
+                Some("RG-GOV-003".to_string()),
+                Some(GovernanceSeverity::Warning),
+                Some(GovernanceResponseClass::Degrade),
+                Some("GOV-DEC-0000000012".to_string()),
+            )
+            .unwrap(),
+        );
+        envelope
+            .validate()
+            .expect("aligned governance and identity drift posture must validate");
+        envelope = envelope
+            .with_artifact_trust_state(Some(verified_artifact_trust_state()))
+            .unwrap()
+            .with_proof_state(None)
+            .unwrap();
+
+        let result = runtime
+            .govern_completion(
+                &envelope,
+                RuntimeProtectedActionClass::ArtifactAuthority,
+                &RuntimeLawEvaluationContext::default(),
+            )
+            .expect("cluster-policy drift artifact authority should degrade, not block");
+
+        let law_state = result.law_state.as_ref().expect("law state must be attached");
+        assert_eq!(law_state.final_law_response_class, RuntimeLawResponseClass::Degrade);
+        assert_eq!(law_state.law_policy_version, runtime.policy_version());
+        assert!(law_state
+            .law_reason_codes
+            .contains(&reason_codes::LAW_GOVERNANCE_DIVERGENCE.to_string()));
+        assert!(law_state
+            .law_reason_codes
+            .contains(&reason_codes::LAW_GOVERNANCE_POLICY_DRIFT.to_string()));
+        assert_eq!(
+            law_state.subsystem_inputs,
+            vec![SUBSYSTEM_RUNTIME_GOVERNANCE.to_string()]
+        );
+        result
+            .validate()
+            .expect("runtime execution envelope transport must remain aligned after govern_completion");
     }
 }
