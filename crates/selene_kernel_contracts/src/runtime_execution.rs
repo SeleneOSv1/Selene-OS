@@ -853,6 +853,32 @@ impl ReconciliationDecision {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum PersistenceConvergenceState {
+    PendingCloudTruth,
+    ConvergedToCloudTruth,
+    CloudTruthPreserved,
+    QuarantinedLocalState,
+}
+
+impl Default for PersistenceConvergenceState {
+    fn default() -> Self {
+        Self::PendingCloudTruth
+    }
+}
+
+impl PersistenceConvergenceState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            PersistenceConvergenceState::PendingCloudTruth => "PENDING_CLOUD_TRUTH",
+            PersistenceConvergenceState::ConvergedToCloudTruth => "CONVERGED_TO_CLOUD_TRUTH",
+            PersistenceConvergenceState::CloudTruthPreserved => "CLOUD_TRUTH_PRESERVED",
+            PersistenceConvergenceState::QuarantinedLocalState => "QUARANTINED_LOCAL_STATE",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PersistenceExecutionState {
     pub recovery_mode: PersistenceRecoveryMode,
@@ -860,6 +886,8 @@ pub struct PersistenceExecutionState {
     pub reconciliation_decision: Option<ReconciliationDecision>,
     pub conflict_severity: Option<PersistenceConflictSeverity>,
     pub cross_node_dedupe_applied: bool,
+    #[serde(default)]
+    pub convergence_state: PersistenceConvergenceState,
     pub audit_ref: Option<String>,
 }
 
@@ -870,6 +898,7 @@ impl PersistenceExecutionState {
         reconciliation_decision: Option<ReconciliationDecision>,
         conflict_severity: Option<PersistenceConflictSeverity>,
         cross_node_dedupe_applied: bool,
+        convergence_state: PersistenceConvergenceState,
         audit_ref: Option<String>,
     ) -> Result<Self, ContractViolation> {
         let state = Self {
@@ -878,6 +907,7 @@ impl PersistenceExecutionState {
             reconciliation_decision,
             conflict_severity,
             cross_node_dedupe_applied,
+            convergence_state,
             audit_ref,
         };
         state.validate()?;
@@ -892,6 +922,166 @@ impl Validate for PersistenceExecutionState {
             &self.audit_ref,
             256,
         )?;
+        if self.cross_node_dedupe_applied
+            && self.reconciliation_decision
+                != Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "persistence_execution_state.cross_node_dedupe_applied",
+                reason: "requires REUSE_PRIOR_AUTHORITATIVE_OUTCOME",
+            });
+        }
+        match self.reconciliation_decision {
+            Some(ReconciliationDecision::RetrySameOperation) => {
+                if self.acknowledgement_state
+                    != PersistenceAcknowledgementState::PendingCloudAcknowledgement
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.acknowledgement_state",
+                        reason: "RETRY_SAME_OPERATION requires PENDING_CLOUD_ACKNOWLEDGEMENT",
+                    });
+                }
+                if self.conflict_severity != Some(PersistenceConflictSeverity::Retryable) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.conflict_severity",
+                        reason: "RETRY_SAME_OPERATION requires RETRYABLE conflict_severity",
+                    });
+                }
+                if self.convergence_state != PersistenceConvergenceState::PendingCloudTruth {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.convergence_state",
+                        reason: "RETRY_SAME_OPERATION requires PENDING_CLOUD_TRUTH",
+                    });
+                }
+            }
+            Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome) => {
+                if self.acknowledgement_state
+                    != PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.acknowledgement_state",
+                        reason: "REUSE_PRIOR_AUTHORITATIVE_OUTCOME requires AUTHORITATIVELY_ACKNOWLEDGED",
+                    });
+                }
+                if self.conflict_severity != Some(PersistenceConflictSeverity::Info) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.conflict_severity",
+                        reason: "REUSE_PRIOR_AUTHORITATIVE_OUTCOME requires INFO conflict_severity",
+                    });
+                }
+                if self.convergence_state != PersistenceConvergenceState::ConvergedToCloudTruth {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.convergence_state",
+                        reason:
+                            "REUSE_PRIOR_AUTHORITATIVE_OUTCOME requires CONVERGED_TO_CLOUD_TRUTH",
+                    });
+                }
+            }
+            Some(ReconciliationDecision::RejectStaleOperation) => {
+                if self.acknowledgement_state != PersistenceAcknowledgementState::StaleRejected {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.acknowledgement_state",
+                        reason: "REJECT_STALE_OPERATION requires STALE_REJECTED",
+                    });
+                }
+                if self.conflict_severity != Some(PersistenceConflictSeverity::StaleRejected) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.conflict_severity",
+                        reason: "REJECT_STALE_OPERATION requires STALE_REJECTED conflict_severity",
+                    });
+                }
+                if self.convergence_state != PersistenceConvergenceState::CloudTruthPreserved {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.convergence_state",
+                        reason: "REJECT_STALE_OPERATION requires CLOUD_TRUTH_PRESERVED",
+                    });
+                }
+            }
+            Some(ReconciliationDecision::RequestFreshSessionState) => {
+                if self.acknowledgement_state
+                    != PersistenceAcknowledgementState::PendingCloudAcknowledgement
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.acknowledgement_state",
+                        reason:
+                            "REQUEST_FRESH_SESSION_STATE requires PENDING_CLOUD_ACKNOWLEDGEMENT",
+                    });
+                }
+                if self.conflict_severity.is_some() {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.conflict_severity",
+                        reason: "REQUEST_FRESH_SESSION_STATE requires empty conflict_severity",
+                    });
+                }
+                if self.convergence_state != PersistenceConvergenceState::PendingCloudTruth {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.convergence_state",
+                        reason: "REQUEST_FRESH_SESSION_STATE requires PENDING_CLOUD_TRUTH",
+                    });
+                }
+            }
+            Some(ReconciliationDecision::QuarantineLocalState) => {
+                if self.acknowledgement_state
+                    != PersistenceAcknowledgementState::QuarantinedLocalState
+                {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.acknowledgement_state",
+                        reason: "QUARANTINE_LOCAL_STATE requires QUARANTINED_LOCAL_STATE",
+                    });
+                }
+                if self.conflict_severity != Some(PersistenceConflictSeverity::QuarantineRequired) {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.conflict_severity",
+                        reason:
+                            "QUARANTINE_LOCAL_STATE requires QUARANTINE_REQUIRED conflict_severity",
+                    });
+                }
+                if self.convergence_state != PersistenceConvergenceState::QuarantinedLocalState {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.convergence_state",
+                        reason: "QUARANTINE_LOCAL_STATE requires QUARANTINED_LOCAL_STATE",
+                    });
+                }
+            }
+            None => match self.acknowledgement_state {
+                PersistenceAcknowledgementState::PendingCloudAcknowledgement => {
+                    if self.conflict_severity.is_some() {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "persistence_execution_state.conflict_severity",
+                            reason: "PENDING_CLOUD_ACKNOWLEDGEMENT without reconciliation decision requires empty conflict_severity",
+                        });
+                    }
+                    if self.convergence_state != PersistenceConvergenceState::PendingCloudTruth {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "persistence_execution_state.convergence_state",
+                            reason: "PENDING_CLOUD_ACKNOWLEDGEMENT without reconciliation decision requires PENDING_CLOUD_TRUTH",
+                        });
+                    }
+                }
+                PersistenceAcknowledgementState::AuthoritativelyAcknowledged => {
+                    if self.convergence_state != PersistenceConvergenceState::ConvergedToCloudTruth
+                    {
+                        return Err(ContractViolation::InvalidValue {
+                            field: "persistence_execution_state.convergence_state",
+                            reason:
+                                "AUTHORITATIVELY_ACKNOWLEDGED requires CONVERGED_TO_CLOUD_TRUTH",
+                        });
+                    }
+                }
+                PersistenceAcknowledgementState::StaleRejected => {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.reconciliation_decision",
+                        reason: "STALE_REJECTED requires REJECT_STALE_OPERATION",
+                    });
+                }
+                PersistenceAcknowledgementState::QuarantinedLocalState => {
+                    return Err(ContractViolation::InvalidValue {
+                        field: "persistence_execution_state.reconciliation_decision",
+                        reason: "QUARANTINED_LOCAL_STATE requires QUARANTINE_LOCAL_STATE",
+                    });
+                }
+            },
+        }
         Ok(())
     }
 }
@@ -2214,10 +2404,11 @@ mod tests {
     fn at_runtime_execution_09_envelope_accepts_persistence_state_transport() {
         let persistence_state = PersistenceExecutionState::v1(
             PersistenceRecoveryMode::Recovering,
-            PersistenceAcknowledgementState::StaleRejected,
-            Some(ReconciliationDecision::RejectStaleOperation),
-            Some(PersistenceConflictSeverity::StaleRejected),
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged,
+            Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome),
+            Some(PersistenceConflictSeverity::Info),
             true,
+            PersistenceConvergenceState::ConvergedToCloudTruth,
             Some("audit.persistence.runtime.1".to_string()),
         )
         .expect("persistence execution state must validate");
@@ -2259,6 +2450,10 @@ mod tests {
             transported.cross_node_dedupe_applied,
             persistence_state.cross_node_dedupe_applied
         );
+        assert_eq!(
+            transported.convergence_state,
+            persistence_state.convergence_state
+        );
         assert_eq!(transported.audit_ref, persistence_state.audit_ref);
     }
 
@@ -2270,6 +2465,7 @@ mod tests {
             reconciliation_decision: Some(ReconciliationDecision::RejectStaleOperation),
             conflict_severity: Some(PersistenceConflictSeverity::StaleRejected),
             cross_node_dedupe_applied: false,
+            convergence_state: PersistenceConvergenceState::CloudTruthPreserved,
             audit_ref: Some("审计.persistence.runtime.1".to_string()),
         };
         let err = RuntimeExecutionEnvelope::v1_with_platform_context_device_turn_sequence_and_attach_outcome(
@@ -2514,5 +2710,53 @@ mod tests {
             .law_state
             .and_then(|law_state| law_state.independent_verification_support)
             .is_some());
+    }
+
+    #[test]
+    fn at_runtime_execution_16_persistence_state_requires_lawful_retry_policy_shape() {
+        let err = PersistenceExecutionState::v1(
+            PersistenceRecoveryMode::DegradedRecovery,
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+            Some(ReconciliationDecision::RetrySameOperation),
+            None,
+            false,
+            PersistenceConvergenceState::PendingCloudTruth,
+            Some("audit.persistence.retry.1".to_string()),
+        )
+        .expect_err("retry policy without retryable conflict_severity must be rejected");
+
+        match err {
+            ContractViolation::InvalidValue { field, reason } => {
+                assert_eq!(field, "persistence_execution_state.conflict_severity");
+                assert_eq!(
+                    reason,
+                    "RETRY_SAME_OPERATION requires RETRYABLE conflict_severity"
+                );
+            }
+            _ => panic!("expected invalid-value contract violation"),
+        }
+    }
+
+    #[test]
+    fn at_runtime_execution_17_persistence_state_accepts_fresh_session_reconciliation_shape() {
+        let state = PersistenceExecutionState::v1(
+            PersistenceRecoveryMode::Recovering,
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+            Some(ReconciliationDecision::RequestFreshSessionState),
+            None,
+            false,
+            PersistenceConvergenceState::PendingCloudTruth,
+            Some("audit.persistence.reconcile.1".to_string()),
+        )
+        .expect("fresh-session reconciliation state must validate");
+
+        assert_eq!(
+            state.reconciliation_decision,
+            Some(ReconciliationDecision::RequestFreshSessionState)
+        );
+        assert_eq!(
+            state.convergence_state,
+            PersistenceConvergenceState::PendingCloudTruth
+        );
     }
 }

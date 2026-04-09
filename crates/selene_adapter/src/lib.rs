@@ -107,9 +107,9 @@ use selene_kernel_contracts::runtime_execution::{
     supported_capabilities_for_platform, AdmissionState, ClientCompatibilityStatus,
     ClientIntegrityStatus, DeviceCapability, DeviceClass, DeviceTrustClass, FailureClass,
     NetworkProfile, PersistenceAcknowledgementState, PersistenceConflictSeverity,
-    PersistenceExecutionState, PersistenceRecoveryMode, PlatformRuntimeContext,
-    PlatformTriggerPolicy, ReconciliationDecision, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
-    SessionAttachOutcome,
+    PersistenceConvergenceState, PersistenceExecutionState, PersistenceRecoveryMode,
+    PlatformRuntimeContext, PlatformTriggerPolicy, ReconciliationDecision, RuntimeEntryTrigger,
+    RuntimeExecutionEnvelope, SessionAttachOutcome,
 };
 use selene_kernel_contracts::runtime_governance::GovernanceProtectedActionClass;
 use selene_kernel_contracts::{
@@ -3373,12 +3373,12 @@ impl AdapterRuntime {
             .map_err(storage_error_to_string)?;
 
         for (idx, vad) in bundle.vad_events.iter().enumerate() {
-                store
-                    .ph1k_runtime_event_commit(
-                        now,
-                        tenant_id.clone(),
-                        device_id.clone(),
-                        session_id,
+            store
+                .ph1k_runtime_event_commit(
+                    now,
+                    tenant_id.clone(),
+                    device_id.clone(),
+                    session_id,
                     Ph1kRuntimeEventKind::VadEvent,
                     Some(vad.stream_id.0),
                     None,
@@ -4558,7 +4558,7 @@ impl AdapterRuntime {
             .lock()
             .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
         let mut reconciliation_decision = None;
-        let conflict_severity = None;
+        let mut conflict_severity = None;
         match persistence_mode {
             PersistenceInvocationMode::Standard => {
                 if let Some(existing_snapshot) = guard.outbox_records.get(&operation_id).cloned() {
@@ -4798,9 +4798,11 @@ impl AdapterRuntime {
                     existing.retry_counter = existing.retry_counter.saturating_add(1);
                 }
                 reconciliation_decision = Some(ReconciliationDecision::RetrySameOperation);
+                conflict_severity = Some(PersistenceConflictSeverity::Retryable);
                 if existing_snapshot.session_id.is_some() {
                     reconciliation_decision =
                         Some(ReconciliationDecision::RequestFreshSessionState);
+                    conflict_severity = None;
                     append_persistence_operation_journal_locked(
                         &mut guard,
                         now,
@@ -4815,7 +4817,7 @@ impl AdapterRuntime {
                         existing_snapshot.acknowledgement_state,
                         recovery_mode,
                         reconciliation_decision,
-                        None,
+                        conflict_severity,
                         Some("session snapshot refresh requested before replay".to_string()),
                         &self.runtime_node_id,
                     );
@@ -4834,7 +4836,7 @@ impl AdapterRuntime {
                     existing_snapshot.acknowledgement_state,
                     recovery_mode,
                     reconciliation_decision,
-                    None,
+                    conflict_severity,
                     None,
                     &self.runtime_node_id,
                 );
@@ -4874,15 +4876,18 @@ impl AdapterRuntime {
         self.save_persistence_state_to_disk_locked(&guard)?;
         Ok(Some(PreparedPersistenceOperation {
             operation_id,
-            persistence_state: PersistenceExecutionState::v1(
+            persistence_state: build_persistence_execution_state(
                 guard.recovery_mode,
-                PersistenceAcknowledgementState::PendingCloudAcknowledgement,
+                if reconciliation_decision == Some(ReconciliationDecision::RejectStaleOperation) {
+                    PersistenceAcknowledgementState::StaleRejected
+                } else {
+                    PersistenceAcknowledgementState::PendingCloudAcknowledgement
+                },
                 reconciliation_decision,
                 conflict_severity,
                 false,
                 audit_ref,
-            )
-            .map_err(|err| format!("invalid persistence execution state: {err:?}"))?,
+            )?,
         }))
     }
 
@@ -5216,27 +5221,53 @@ impl AdapterRuntime {
                     );
                     continue;
                 }
-                let stale_error = stale_replay_error_for_record(&self.ingress, &guard, &record);
+                let stale_decision =
+                    stale_replay_error_for_record(&self.ingress, &guard, &record, None)
+                        .map(|_| ReconciliationDecision::RejectStaleOperation);
+                let stale_conflict =
+                    stale_decision.map(|_| PersistenceConflictSeverity::StaleRejected);
+                let stale_audit_ref = if stale_decision.is_some() {
+                    Some(
+                        append_persistence_audit_locked(
+                            &mut guard,
+                            MonotonicTimeNs(1),
+                            AdapterPersistenceAuditDecision::ReconciliationDecision,
+                            Some(operation_id.clone()),
+                            Some(record.actor_user_id.clone()),
+                            Some(record.idempotency_key.clone()),
+                            record.session_id.clone(),
+                            record.turn_id,
+                            stale_decision,
+                            stale_conflict,
+                            &self.runtime_node_id,
+                            Some("stale replay policy decision recorded".to_string()),
+                        )
+                        .to_string(),
+                    )
+                } else {
+                    None
+                };
                 let prepared = PreparedPersistenceOperation {
                     operation_id: operation_id.clone(),
-                    persistence_state: PersistenceExecutionState::v1(
+                    persistence_state: build_persistence_execution_state(
                         guard.recovery_mode,
-                        PersistenceAcknowledgementState::PendingCloudAcknowledgement,
-                        if stale_error.is_some() {
-                            Some(ReconciliationDecision::RejectStaleOperation)
+                        if stale_decision == Some(ReconciliationDecision::RejectStaleOperation) {
+                            PersistenceAcknowledgementState::StaleRejected
                         } else {
-                            None
+                            PersistenceAcknowledgementState::PendingCloudAcknowledgement
                         },
-                        if stale_error.is_some() {
-                            Some(PersistenceConflictSeverity::StaleRejected)
-                        } else {
-                            None
-                        },
+                        stale_decision,
+                        stale_conflict,
                         false,
-                        None,
-                    )
-                    .map_err(|err| format!("invalid persistence execution state: {err:?}"))?,
+                        stale_audit_ref,
+                    )?,
                 };
+                let stale_error = stale_replay_error_for_record(
+                    &self.ingress,
+                    &guard,
+                    &record,
+                    Some(prepared.persistence_state.clone()),
+                );
                 (record, stale_error, prepared)
             };
             if let Some(error) = maybe_stale_error {
@@ -5633,6 +5664,59 @@ fn validate_persistence_ascii_token(
     Ok(())
 }
 
+fn persistence_convergence_state_for(
+    acknowledgement_state: PersistenceAcknowledgementState,
+    reconciliation_decision: Option<ReconciliationDecision>,
+) -> PersistenceConvergenceState {
+    match reconciliation_decision {
+        Some(ReconciliationDecision::ReusePriorAuthoritativeOutcome) => {
+            PersistenceConvergenceState::ConvergedToCloudTruth
+        }
+        Some(ReconciliationDecision::RejectStaleOperation) => {
+            PersistenceConvergenceState::CloudTruthPreserved
+        }
+        Some(ReconciliationDecision::QuarantineLocalState) => {
+            PersistenceConvergenceState::QuarantinedLocalState
+        }
+        Some(ReconciliationDecision::RetrySameOperation)
+        | Some(ReconciliationDecision::RequestFreshSessionState)
+        | None => match acknowledgement_state {
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement => {
+                PersistenceConvergenceState::PendingCloudTruth
+            }
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged => {
+                PersistenceConvergenceState::ConvergedToCloudTruth
+            }
+            PersistenceAcknowledgementState::StaleRejected => {
+                PersistenceConvergenceState::CloudTruthPreserved
+            }
+            PersistenceAcknowledgementState::QuarantinedLocalState => {
+                PersistenceConvergenceState::QuarantinedLocalState
+            }
+        },
+    }
+}
+
+fn build_persistence_execution_state(
+    recovery_mode: PersistenceRecoveryMode,
+    acknowledgement_state: PersistenceAcknowledgementState,
+    reconciliation_decision: Option<ReconciliationDecision>,
+    conflict_severity: Option<PersistenceConflictSeverity>,
+    cross_node_dedupe_applied: bool,
+    audit_ref: Option<String>,
+) -> Result<PersistenceExecutionState, String> {
+    PersistenceExecutionState::v1(
+        recovery_mode,
+        acknowledgement_state,
+        reconciliation_decision,
+        conflict_severity,
+        cross_node_dedupe_applied,
+        persistence_convergence_state_for(acknowledgement_state, reconciliation_decision),
+        audit_ref,
+    )
+    .map_err(|err| format!("invalid persistence execution state: {err:?}"))
+}
+
 fn validate_outbox_record(record: &AdapterOutboxRecord) -> Result<(), String> {
     validate_persistence_ascii_token("outbox.operation_id", &record.operation_id, 128)?;
     validate_persistence_ascii_token("outbox.request_id", &record.request_id, 256)?;
@@ -5889,6 +5973,7 @@ fn stale_replay_error_for_record(
     ingress: &AppServerIngressRuntime,
     state: &AdapterPersistenceState,
     record: &AdapterOutboxRecord,
+    persistence_state: Option<PersistenceExecutionState>,
 ) -> Option<VoiceTurnIngressError> {
     let record_session_id = record.session_id.as_ref()?;
     let record_device_turn_sequence = record.device_turn_sequence?;
@@ -5928,8 +6013,8 @@ fn stale_replay_error_for_record(
             AdmissionState::IngressValidated,
         )
         .ok()?
-        .with_persistence_state(Some(
-            PersistenceExecutionState::v1(
+        .with_persistence_state(Some(persistence_state.unwrap_or_else(|| {
+            build_persistence_execution_state(
                 PersistenceRecoveryMode::Recovering,
                 PersistenceAcknowledgementState::StaleRejected,
                 Some(ReconciliationDecision::RejectStaleOperation),
@@ -5937,8 +6022,8 @@ fn stale_replay_error_for_record(
                 false,
                 None,
             )
-            .ok()?,
-        ))
+            .expect("static stale-replay persistence state must validate")
+        })))
         .ok()?;
         let decision = ingress.govern_persistence_signal(
             Some(&envelope),
@@ -9139,8 +9224,7 @@ fn append_ph1k_live_eval_snapshot_csv(
             .vad_events
             .last()
             .map(|ev| {
-                ((ev.t_end.0.saturating_sub(ev.t_start.0)) / 1_000_000)
-                    .clamp(1, 2_000) as u32
+                ((ev.t_end.0.saturating_sub(ev.t_start.0)) / 1_000_000).clamp(1, 2_000) as u32
             })
             .unwrap_or(180)
     });
@@ -9829,94 +9913,106 @@ fn synth_health_issue_events(
     }
 
     if health.sync.queue.dead_letter_count > 0 {
-        add_event(&mut out, HealthIssueEventSeed {
-            tenant,
-            now_ns,
-            issue_id: "sync_dead_letter",
-            engine_owner_id: "PH1.OS",
-            severity: HealthSeverity::Critical,
-            status: HealthIssueStatus::Escalated,
-            reason_code: reason_codes::ADAPTER_SYNC_DEADLETTER,
-            bcast_id: Some("bcast_sync_dead_letter".to_string()),
-            ack_state: Some(HealthAckState::Waiting),
-            impact_summary: Some(
-                "Critical sync dead letters are blocking artifact continuity.".to_string(),
-            ),
-            attempted_fix_actions: vec!["retry queued artifacts".to_string()],
-            current_monitoring_evidence: Some(format!(
-                "dead_letter_count={} replay_due_count={}",
-                health.sync.queue.dead_letter_count, health.sync.queue.replay_due_count
-            )),
-            unresolved_reason_exact: Some("dead letters remain after retry budget".to_string()),
-            issue_fingerprint: Some("sync_dead_letter_fingerprint".to_string()),
-            recurrence_observed: Some(true),
-        });
+        add_event(
+            &mut out,
+            HealthIssueEventSeed {
+                tenant,
+                now_ns,
+                issue_id: "sync_dead_letter",
+                engine_owner_id: "PH1.OS",
+                severity: HealthSeverity::Critical,
+                status: HealthIssueStatus::Escalated,
+                reason_code: reason_codes::ADAPTER_SYNC_DEADLETTER,
+                bcast_id: Some("bcast_sync_dead_letter".to_string()),
+                ack_state: Some(HealthAckState::Waiting),
+                impact_summary: Some(
+                    "Critical sync dead letters are blocking artifact continuity.".to_string(),
+                ),
+                attempted_fix_actions: vec!["retry queued artifacts".to_string()],
+                current_monitoring_evidence: Some(format!(
+                    "dead_letter_count={} replay_due_count={}",
+                    health.sync.queue.dead_letter_count, health.sync.queue.replay_due_count
+                )),
+                unresolved_reason_exact: Some("dead letters remain after retry budget".to_string()),
+                issue_fingerprint: Some("sync_dead_letter_fingerprint".to_string()),
+                recurrence_observed: Some(true),
+            },
+        );
     }
 
     if health.sync.queue.retry_pending_count > 0 {
-        add_event(&mut out, HealthIssueEventSeed {
-            tenant,
-            now_ns,
-            issue_id: "sync_retry_backlog",
-            engine_owner_id: "PH1.OS",
-            severity: HealthSeverity::Warn,
-            status: HealthIssueStatus::Open,
-            reason_code: reason_codes::ADAPTER_SYNC_RETRY,
-            bcast_id: None,
-            ack_state: None,
-            impact_summary: Some("Retry queue backlog is above zero.".to_string()),
-            attempted_fix_actions: vec!["retry worker pass".to_string()],
-            current_monitoring_evidence: Some(format!(
-                "retry_pending_count={}",
-                health.sync.queue.retry_pending_count
-            )),
-            unresolved_reason_exact: Some("retry queue has not drained yet".to_string()),
-            issue_fingerprint: Some("sync_retry_fingerprint".to_string()),
-            recurrence_observed: Some(true),
-        });
+        add_event(
+            &mut out,
+            HealthIssueEventSeed {
+                tenant,
+                now_ns,
+                issue_id: "sync_retry_backlog",
+                engine_owner_id: "PH1.OS",
+                severity: HealthSeverity::Warn,
+                status: HealthIssueStatus::Open,
+                reason_code: reason_codes::ADAPTER_SYNC_RETRY,
+                bcast_id: None,
+                ack_state: None,
+                impact_summary: Some("Retry queue backlog is above zero.".to_string()),
+                attempted_fix_actions: vec!["retry worker pass".to_string()],
+                current_monitoring_evidence: Some(format!(
+                    "retry_pending_count={}",
+                    health.sync.queue.retry_pending_count
+                )),
+                unresolved_reason_exact: Some("retry queue has not drained yet".to_string()),
+                issue_fingerprint: Some("sync_retry_fingerprint".to_string()),
+                recurrence_observed: Some(true),
+            },
+        );
     }
 
     if health.sync.queue.replay_due_count > 0 {
-        add_event(&mut out, HealthIssueEventSeed {
-            tenant,
-            now_ns,
-            issue_id: "sync_replay_due",
-            engine_owner_id: "PH1.OS",
-            severity: HealthSeverity::Critical,
-            status: HealthIssueStatus::Open,
-            reason_code: reason_codes::ADAPTER_SYNC_REPLAY_DUE,
-            bcast_id: None,
-            ack_state: None,
-            impact_summary: Some("Replay-due jobs exceeded threshold.".to_string()),
-            attempted_fix_actions: vec!["replay scan".to_string()],
-            current_monitoring_evidence: Some(format!(
-                "replay_due_count={}",
-                health.sync.queue.replay_due_count
-            )),
-            unresolved_reason_exact: Some("replay-due jobs remain unresolved".to_string()),
-            issue_fingerprint: Some("sync_replay_due_fingerprint".to_string()),
-            recurrence_observed: Some(true),
-        });
+        add_event(
+            &mut out,
+            HealthIssueEventSeed {
+                tenant,
+                now_ns,
+                issue_id: "sync_replay_due",
+                engine_owner_id: "PH1.OS",
+                severity: HealthSeverity::Critical,
+                status: HealthIssueStatus::Open,
+                reason_code: reason_codes::ADAPTER_SYNC_REPLAY_DUE,
+                bcast_id: None,
+                ack_state: None,
+                impact_summary: Some("Replay-due jobs exceeded threshold.".to_string()),
+                attempted_fix_actions: vec!["replay scan".to_string()],
+                current_monitoring_evidence: Some(format!(
+                    "replay_due_count={}",
+                    health.sync.queue.replay_due_count
+                )),
+                unresolved_reason_exact: Some("replay-due jobs remain unresolved".to_string()),
+                issue_fingerprint: Some("sync_replay_due_fingerprint".to_string()),
+                recurrence_observed: Some(true),
+            },
+        );
     }
 
     if out.is_empty() {
-        add_event(&mut out, HealthIssueEventSeed {
-            tenant,
-            now_ns,
-            issue_id: "health_nominal",
-            engine_owner_id: "PH1.HEALTH",
-            severity: HealthSeverity::Info,
-            status: HealthIssueStatus::Resolved,
-            reason_code: ReasonCodeId(health_reason_codes::PH1_HEALTH_OK_REPORT_QUERY_READ.0),
-            bcast_id: None,
-            ack_state: Some(HealthAckState::Acknowledged),
-            impact_summary: Some("No active unresolved health issues.".to_string()),
-            attempted_fix_actions: vec!["daily health scan".to_string()],
-            current_monitoring_evidence: Some("no recurrence detected".to_string()),
-            unresolved_reason_exact: Some("resolved by live verification".to_string()),
-            issue_fingerprint: Some("health_nominal_fingerprint".to_string()),
-            recurrence_observed: Some(false),
-        });
+        add_event(
+            &mut out,
+            HealthIssueEventSeed {
+                tenant,
+                now_ns,
+                issue_id: "health_nominal",
+                engine_owner_id: "PH1.HEALTH",
+                severity: HealthSeverity::Info,
+                status: HealthIssueStatus::Resolved,
+                reason_code: ReasonCodeId(health_reason_codes::PH1_HEALTH_OK_REPORT_QUERY_READ.0),
+                bcast_id: None,
+                ack_state: Some(HealthAckState::Acknowledged),
+                impact_summary: Some("No active unresolved health issues.".to_string()),
+                attempted_fix_actions: vec!["daily health scan".to_string()],
+                current_monitoring_evidence: Some("no recurrence detected".to_string()),
+                unresolved_reason_exact: Some("resolved by live verification".to_string()),
+                issue_fingerprint: Some("health_nominal_fingerprint".to_string()),
+                recurrence_observed: Some(false),
+            },
+        );
     }
 
     out
@@ -14693,6 +14789,16 @@ mod tests {
             entry.operation_id == stale_operation_id
                 && entry.conflict_severity == Some(PersistenceConflictSeverity::StaleRejected)
         }));
+        assert!(after.audit_trail.iter().any(|entry| {
+            entry.operation_id.as_deref() == Some(stale_operation_id.as_str())
+                && entry.decision == AdapterPersistenceAuditDecision::ReconciliationDecision
+                && entry.conflict_severity == Some(PersistenceConflictSeverity::StaleRejected)
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note == "stale replay policy decision recorded")
+                    .unwrap_or(false)
+        }));
         assert!(ingress_two
             .runtime_governance_decision_log_snapshot()
             .iter()
@@ -14950,6 +15056,91 @@ mod tests {
     }
 
     #[test]
+    fn at_persistence_07_restart_reconciliation_requests_fresh_session_state_and_converges() {
+        let journal_path = temp_persistence_journal_path("fresh_session_state_reconcile");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+
+        let mut request = base_request();
+        request.correlation_id = 31_007;
+        request.turn_id = 41_007;
+        request.now_ns = Some(70);
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id = derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+
+        runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(70),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        let mut state = read_persistence_state_for_test(&journal_path);
+        let row = state
+            .outbox_records
+            .get_mut(&operation_id)
+            .expect("pending outbox record must exist");
+        row.session_id = Some("1".to_string());
+        row.turn_id = Some(request.turn_id);
+        write_persistence_state_for_test(&journal_path, &state);
+        drop(runtime_one);
+
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must reconcile with fresh-session-state request");
+
+        let after = read_persistence_state_for_test(&journal_path);
+        let record = after
+            .outbox_records
+            .get(&operation_id)
+            .expect("reconciled outbox record must remain visible");
+        assert_eq!(
+            record.acknowledgement_state,
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+        );
+        assert_eq!(
+            record.last_reconciliation_decision,
+            Some(ReconciliationDecision::RequestFreshSessionState)
+        );
+        assert_eq!(
+            record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::Info)
+        );
+        assert!(after.operation_journal.iter().any(|entry| {
+            entry.operation_id == operation_id
+                && entry.event_kind == AdapterOperationJournalEventKind::FreshSessionStateRequested
+                && entry.reconciliation_decision
+                    == Some(ReconciliationDecision::RequestFreshSessionState)
+        }));
+        assert!(after.audit_trail.iter().any(|entry| {
+            entry.operation_id.as_deref() == Some(operation_id.as_str())
+                && entry.decision == AdapterPersistenceAuditDecision::ReconciliationDecision
+                && entry
+                    .note
+                    .as_deref()
+                    .map(|note| note == "reconciliation policy decision recorded")
+                    .unwrap_or(false)
+        }));
+        assert_eq!(after.recovery_mode, PersistenceRecoveryMode::Normal);
+        assert!(after.last_reconciled_at_ns.is_some());
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
     fn at_adapter_08_sync_worker_pass_runs_after_multi_platform_turns() {
         let runtime = AdapterRuntime::default();
 
@@ -15103,7 +15294,9 @@ mod tests {
         ) = {
             let mut store = runtime.store.lock().expect("store lock should succeed");
             let feedback_before = store.ph1feedback_audit_rows(correlation_id).len();
-            let bundle_before = store.ph1feedback_learn_signal_bundle_rows(correlation_id).len();
+            let bundle_before = store
+                .ph1feedback_learn_signal_bundle_rows(correlation_id)
+                .len();
             let outcome_before = store
                 .outcome_utilization_ledger_rows()
                 .iter()
@@ -15157,7 +15350,9 @@ mod tests {
                 .expect("improvement metrics update should succeed");
 
             let feedback_after = store.ph1feedback_audit_rows(correlation_id).len();
-            let bundle_after = store.ph1feedback_learn_signal_bundle_rows(correlation_id).len();
+            let bundle_after = store
+                .ph1feedback_learn_signal_bundle_rows(correlation_id)
+                .len();
             let outcome_after = store
                 .outcome_utilization_ledger_rows()
                 .iter()
@@ -15251,7 +15446,10 @@ mod tests {
             original_retry_row_after.sync_job_id,
             original_retry_row_before.sync_job_id
         );
-        assert_eq!(original_retry_row_after.state, original_retry_row_before.state);
+        assert_eq!(
+            original_retry_row_after.state,
+            original_retry_row_before.state
+        );
         assert_eq!(
             original_retry_row_after.attempt_count,
             original_retry_row_before.attempt_count
@@ -15273,8 +15471,14 @@ mod tests {
             original_retry_row_before.last_attempted_at
         );
         assert_eq!(queue_after.in_flight_count, queue_before.in_flight_count);
-        assert_eq!(queue_after.retry_pending_count, queue_before.retry_pending_count);
-        assert_eq!(queue_after.dead_letter_count, queue_before.dead_letter_count);
+        assert_eq!(
+            queue_after.retry_pending_count,
+            queue_before.retry_pending_count
+        );
+        assert_eq!(
+            queue_after.dead_letter_count,
+            queue_before.dead_letter_count
+        );
         assert_eq!(queue_after.replay_due_count, queue_before.replay_due_count);
         assert_eq!(queue_after.queued_count, queue_before.queued_count + 1);
         assert_eq!(

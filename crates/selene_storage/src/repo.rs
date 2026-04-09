@@ -84,15 +84,15 @@ use crate::ph1f::{
     MemoryEmotionalThreadLedgerRow, MemoryGraphEdgeRecord, MemoryGraphNodeRecord, MemoryLedgerRow,
     MemoryMetricLedgerRow, MemoryRetentionPreferenceRecord, MemorySuppressionRuleRecord,
     MemoryThreadCurrentRecord, MemoryThreadEventKind, MemoryThreadLedgerRow, MemoryThreadRefRecord,
-    MobileArtifactSyncQueueRecord, OnboardingSessionRecord, Ph1cTranscriptOkCommitResult,
-    Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth, Ph1kFeedbackCaptureInput,
-    Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields, Ph1kRuntimeCurrentRecord,
-    Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord, PositionLifecycleEventRecord,
-    SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow, SelfHealProblemCardLedgerRow,
-    SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError, TenantCompanyRecord,
-    VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord, VoiceProfileRecord,
-    WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord, WakeRuntimeEventRecord,
-    WakeSampleResult,
+    MobileArtifactSyncQueueRecord, MobileArtifactSyncState, OnboardingSessionRecord,
+    Ph1cTranscriptOkCommitResult, Ph1cTranscriptRejectCommitResult, Ph1fStore, Ph1kDeviceHealth,
+    Ph1kFeedbackCaptureInput, Ph1kFeedbackCaptureRecord, Ph1kInterruptCandidateExtendedFields,
+    Ph1kRuntimeCurrentRecord, Ph1kRuntimeEventKind, Ph1kRuntimeEventRecord,
+    PositionLifecycleEventRecord, SelfHealFailureEventLedgerRow, SelfHealFixCardLedgerRow,
+    SelfHealProblemCardLedgerRow, SelfHealPromotionDecisionLedgerRow, SessionRecord, StorageError,
+    TenantCompanyRecord, VoiceEnrollmentSampleRecord, VoiceEnrollmentSessionRecord,
+    VoiceProfileRecord, WakeEnrollmentSampleRecord, WakeEnrollmentSessionRecord,
+    WakeRuntimeEventRecord, WakeSampleResult,
 };
 
 /// Typed repository interface for PH1.F foundational storage wiring.
@@ -347,6 +347,15 @@ pub trait Ph1VidEnrollmentRepo {
 }
 
 /// Typed repository interface for phone-local artifact sync queue lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobileArtifactSyncConvergenceState {
+    PendingCloudTruth,
+    RetryPending,
+    ReplayDue,
+    ConvergedToCloudTruth,
+    DeadLettered,
+}
+
 pub trait Ph1MobileArtifactSyncRepo {
     fn mobile_artifact_sync_queue_rows(&self) -> &[MobileArtifactSyncQueueRecord];
 
@@ -388,6 +397,43 @@ pub trait Ph1MobileArtifactSyncRepo {
         worker_id: Option<&str>,
         last_error: String,
     ) -> Result<(), StorageError>;
+
+    fn mobile_artifact_sync_convergence_state_for_receipt(
+        &self,
+        receipt_ref: &str,
+        now: MonotonicTimeNs,
+    ) -> Result<Option<MobileArtifactSyncConvergenceState>, StorageError> {
+        let Some(row) = self
+            .mobile_artifact_sync_queue_rows()
+            .iter()
+            .find(|row| row.receipt_ref == receipt_ref)
+        else {
+            return Ok(None);
+        };
+        let replay_due = self
+            .mobile_artifact_sync_replay_due_rows(now)
+            .into_iter()
+            .any(|candidate| candidate.sync_job_id == row.sync_job_id);
+        let state = match row.state {
+            MobileArtifactSyncState::Queued => {
+                MobileArtifactSyncConvergenceState::PendingCloudTruth
+            }
+            MobileArtifactSyncState::InFlight if replay_due => {
+                MobileArtifactSyncConvergenceState::ReplayDue
+            }
+            MobileArtifactSyncState::InFlight if row.last_error.is_some() => {
+                MobileArtifactSyncConvergenceState::RetryPending
+            }
+            MobileArtifactSyncState::InFlight => {
+                MobileArtifactSyncConvergenceState::PendingCloudTruth
+            }
+            MobileArtifactSyncState::Acked => {
+                MobileArtifactSyncConvergenceState::ConvergedToCloudTruth
+            }
+            MobileArtifactSyncState::DeadLetter => MobileArtifactSyncConvergenceState::DeadLettered,
+        };
+        Ok(Some(state))
+    }
 }
 
 /// Typed repository interface for PH1.ACCESS.001 + PH2.ACCESS.002 DB wiring.

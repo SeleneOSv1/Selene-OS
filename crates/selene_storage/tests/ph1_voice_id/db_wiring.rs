@@ -10,7 +10,10 @@ use selene_storage::ph1f::{
     DeviceRecord, IdentityRecord, IdentityStatus, MobileArtifactSyncKind, MobileArtifactSyncState,
     OnboardingVoiceRuntimeMode, Ph1fStore, StorageError, VoiceEnrollStatus,
 };
-use selene_storage::repo::{Ph1VidEnrollmentRepo, Ph1fFoundationRepo};
+use selene_storage::repo::{
+    MobileArtifactSyncConvergenceState, Ph1MobileArtifactSyncRepo, Ph1VidEnrollmentRepo,
+    Ph1fFoundationRepo,
+};
 
 fn user(id: &str) -> UserId {
     UserId::new(id).unwrap()
@@ -924,6 +927,126 @@ fn at_vid_db_09b_mobile_sync_dead_letter_commit_moves_row_out_of_replay() {
         )
         .unwrap();
     assert!(none_left.is_empty());
+}
+
+#[test]
+fn at_vid_db_09c_mobile_sync_retry_replay_ack_converges_to_cloud_truth() {
+    let mut s = Ph1fStore::new_in_memory();
+    let u = user("tenant_a:user_sync_converge");
+    let d = device("tenant_a_device_sync_converge");
+    seed_identity_device(&mut s, u.clone(), d.clone());
+    let onb = seed_onboarding_session(&mut s, u, "fp_sync_converge", 1_140);
+
+    let started = s
+        .ph1vid_enroll_start_draft_row(MonotonicTimeNs(1_150), onb, d, true, 8, 120_000, 2)
+        .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1_151),
+        started.voice_enrollment_session_id.clone(),
+        "sample_converge_1".to_string(),
+        1,
+        1_340,
+        0.92,
+        17.4,
+        0.4,
+        0.0,
+        "vid-converge-sample-1".to_string(),
+    )
+    .unwrap();
+    s.ph1vid_enroll_sample_commit_row(
+        MonotonicTimeNs(1_152),
+        started.voice_enrollment_session_id.clone(),
+        "sample_converge_2".to_string(),
+        2,
+        1_350,
+        0.93,
+        17.8,
+        0.3,
+        0.0,
+        "vid-converge-sample-2".to_string(),
+    )
+    .unwrap();
+    let completed = s
+        .ph1vid_enroll_complete_commit_row(
+            MonotonicTimeNs(1_153),
+            started.voice_enrollment_session_id,
+            "vid-converge-complete".to_string(),
+        )
+        .unwrap();
+    let receipt = completed
+        .voice_artifact_sync_receipt_ref
+        .expect("voice receipt must exist");
+    let sync_job_id = s
+        .mobile_artifact_sync_queue_row_for_receipt(&receipt)
+        .expect("sync queue row must exist")
+        .sync_job_id
+        .clone();
+
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(&receipt, MonotonicTimeNs(1_153))
+            .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::PendingCloudTruth)
+    );
+
+    s.mobile_artifact_sync_dequeue_batch(
+        MonotonicTimeNs(1_154),
+        1,
+        30_000,
+        "worker_vid_converge_1".to_string(),
+    )
+    .unwrap();
+    s.mobile_artifact_sync_fail_commit(
+        MonotonicTimeNs(1_155),
+        &sync_job_id,
+        Some("worker_vid_converge_1"),
+        "network timeout".to_string(),
+        5_000,
+    )
+    .unwrap();
+
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(&receipt, MonotonicTimeNs(1_156))
+            .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::RetryPending)
+    );
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(
+            &receipt,
+            MonotonicTimeNs(5_000_001_156)
+        )
+        .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::ReplayDue)
+    );
+
+    let replay = s
+        .mobile_artifact_sync_dequeue_batch(
+            MonotonicTimeNs(5_000_001_157),
+            1,
+            30_000,
+            "worker_vid_converge_2".to_string(),
+        )
+        .unwrap();
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].sync_job_id, sync_job_id);
+
+    s.mobile_artifact_sync_ack_commit(
+        MonotonicTimeNs(5_000_001_158),
+        &sync_job_id,
+        Some("worker_vid_converge_2"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(
+            &receipt,
+            MonotonicTimeNs(5_000_001_159)
+        )
+        .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::ConvergedToCloudTruth)
+    );
+    assert!(s
+        .mobile_artifact_sync_replay_due_rows(MonotonicTimeNs(5_000_001_159))
+        .is_empty());
 }
 
 #[test]
