@@ -4996,17 +4996,28 @@ impl AdapterRuntime {
                     || (error.failure_class == FailureClass::SessionConflict
                         && !is_stale_conflict_reason(&error.reason_code));
                 if retryable {
-                    {
+                    let (record_session_id, record_turn_id, acknowledgement_state) = {
                         let record = guard
                             .outbox_records
                             .get_mut(&prepared.operation_id)
                             .expect("outbox record must still exist");
+                        if error.session_id.is_some() {
+                            record.session_id = error.session_id.clone();
+                        }
+                        if let Some(turn_id) = error.turn_id {
+                            record.turn_id = Some(turn_id);
+                        }
                         record.retry_counter = record.retry_counter.saturating_add(1);
                         record.last_reconciliation_decision =
                             Some(ReconciliationDecision::RetrySameOperation);
                         record.last_conflict_severity =
                             Some(PersistenceConflictSeverity::Retryable);
-                    }
+                        (
+                            record.session_id.clone(),
+                            record.turn_id,
+                            record.acknowledgement_state,
+                        )
+                    };
                     let recovery_mode = guard.recovery_mode;
                     append_persistence_operation_journal_locked(
                         &mut guard,
@@ -5015,11 +5026,11 @@ impl AdapterRuntime {
                         &prepared.operation_id,
                         &record_snapshot.actor_user_id,
                         idempotency_key,
-                        record_snapshot.session_id.clone(),
-                        record_snapshot.turn_id,
+                        record_session_id,
+                        record_turn_id,
                         &record_snapshot.device_id,
                         record_snapshot.device_turn_sequence,
-                        record_snapshot.acknowledgement_state,
+                        acknowledgement_state,
                         recovery_mode,
                         Some(ReconciliationDecision::RetrySameOperation),
                         Some(PersistenceConflictSeverity::Retryable),
@@ -15633,6 +15644,149 @@ mod tests {
                 entry.reason_code
                     == selene_os::runtime_governance::reason_codes::GOV_PERSISTENCE_QUARANTINE_REQUIRED
             }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn at_persistence_10_retryable_post_session_failure_recovers_pending_state_after_restart() {
+        let journal_path = temp_persistence_journal_path("retryable_post_session_restart");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("runtime with persistence must construct");
+
+        let mut request = base_request();
+        request.correlation_id = 31_010;
+        request.turn_id = 41_010;
+        request.now_ns = Some(90);
+        let envelope = fallback_runtime_execution_envelope_for_voice_turn_request(&request)
+            .expect("fallback runtime execution envelope must build");
+        let operation_id = derived_operation_id(&request.actor_user_id, &envelope.idempotency_key);
+        let prepared = runtime_one
+            .prepare_persistence_operation(
+                &request,
+                &envelope,
+                MonotonicTimeNs(90),
+                PersistenceInvocationMode::Standard,
+            )
+            .expect("persistence prepare must succeed")
+            .expect("prepared persistence operation must exist");
+
+        runtime_one
+            .finalize_persistence_operation(
+                &prepared,
+                MonotonicTimeNs(90),
+                &DeviceId::new(
+                    request
+                        .device_id
+                        .clone()
+                        .expect("device_id must exist for restart recovery test"),
+                )
+                .expect("device_id must parse"),
+                &envelope.idempotency_key,
+                &Err(voice_turn_ingress_error(
+                    FailureClass::RetryableRuntime,
+                    "RETRY_RESULT_MISSING".to_string(),
+                    Some("retry_result_missing".to_string()),
+                    Some("1".to_string()),
+                    Some(request.turn_id),
+                    Some(SessionState::Active),
+                )),
+            )
+            .expect("retryable persistence finalization must succeed");
+
+        let state_after_failure = read_persistence_state_for_test(&journal_path);
+        let degraded_record = state_after_failure
+            .outbox_records
+            .get(&operation_id)
+            .expect("degraded outbox record must exist");
+        assert_eq!(degraded_record.session_id.as_deref(), Some("1"));
+        assert_eq!(degraded_record.turn_id, Some(request.turn_id));
+        assert_eq!(
+            degraded_record.acknowledgement_state,
+            PersistenceAcknowledgementState::PendingCloudAcknowledgement
+        );
+        assert_eq!(
+            degraded_record.last_reconciliation_decision,
+            Some(ReconciliationDecision::RetrySameOperation)
+        );
+        assert_eq!(
+            degraded_record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::Retryable)
+        );
+        assert_eq!(
+            state_after_failure.recovery_mode,
+            PersistenceRecoveryMode::DegradedRecovery
+        );
+        assert_eq!(
+            sorted_pending_outbox_operation_ids(&state_after_failure),
+            vec![operation_id.clone()]
+        );
+        assert!(state_after_failure.operation_journal.iter().any(|entry| {
+            entry.operation_id == operation_id
+                && entry.event_kind == AdapterOperationJournalEventKind::RetryAttempted
+                && entry.session_id.as_deref() == Some("1")
+                && entry.turn_id == Some(request.turn_id)
+                && entry.reconciliation_decision
+                    == Some(ReconciliationDecision::RetrySameOperation)
+        }));
+
+        drop(runtime_one);
+
+        let _runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("restart runtime must reconcile retryable pending operation");
+
+        let after_restart = read_persistence_state_for_test(&journal_path);
+        let recovered_record = after_restart
+            .outbox_records
+            .get(&operation_id)
+            .expect("recovered outbox record must remain visible");
+        assert_eq!(
+            recovered_record.acknowledgement_state,
+            PersistenceAcknowledgementState::AuthoritativelyAcknowledged
+        );
+        assert_eq!(recovered_record.session_id.as_deref(), Some("1"));
+        assert_eq!(recovered_record.turn_id, Some(request.turn_id));
+        assert_eq!(recovered_record.retry_counter, 2);
+        assert_eq!(
+            recovered_record.last_reconciliation_decision,
+            Some(ReconciliationDecision::RequestFreshSessionState)
+        );
+        assert_eq!(
+            recovered_record.last_conflict_severity,
+            Some(PersistenceConflictSeverity::Info)
+        );
+        assert!(recovered_record
+            .cleared_from_active_outbox_at_ns
+            .is_some());
+        assert!(after_restart.operation_journal.iter().any(|entry| {
+            entry.operation_id == operation_id
+                && entry.event_kind == AdapterOperationJournalEventKind::FreshSessionStateRequested
+                && entry.session_id.as_deref() == Some("1")
+                && entry.reconciliation_decision
+                    == Some(ReconciliationDecision::RequestFreshSessionState)
+        }));
+        let transitions = after_restart
+            .audit_trail
+            .iter()
+            .filter(|entry| {
+                entry.decision == AdapterPersistenceAuditDecision::RecoveryModeTransition
+            })
+            .map(|entry| entry.recovery_mode)
+            .collect::<Vec<_>>();
+        assert!(transitions.contains(&PersistenceRecoveryMode::DegradedRecovery));
+        assert!(transitions.contains(&PersistenceRecoveryMode::Recovering));
+        assert_eq!(after_restart.recovery_mode, PersistenceRecoveryMode::Normal);
+        assert!(after_restart.last_reconciled_at_ns.is_some());
 
         cleanup_persistence_files_for_test(&journal_path);
     }

@@ -831,6 +831,19 @@ fn at_vid_db_09_mobile_sync_fail_commit_records_error_and_retry_window() {
         row.lease_expires_at,
         Some(MonotonicTimeNs(1_115 + 5_000_000_000))
     );
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(&receipt, MonotonicTimeNs(1_116))
+            .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::RetryPending)
+    );
+    assert_eq!(
+        s.mobile_artifact_sync_convergence_state_for_receipt(
+            &receipt,
+            MonotonicTimeNs(5_000_001_116)
+        )
+        .unwrap(),
+        Some(MobileArtifactSyncConvergenceState::ReplayDue)
+    );
 }
 
 #[test]
