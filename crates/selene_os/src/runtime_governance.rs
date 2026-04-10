@@ -2700,6 +2700,7 @@ mod tests {
                     Some(selene_kernel_contracts::runtime_execution::ReconciliationDecision::QuarantineLocalState),
                     Some(PersistenceConflictSeverity::QuarantineRequired),
                     false,
+                    selene_kernel_contracts::runtime_execution::PersistenceConvergenceState::QuarantinedLocalState,
                     Some("audit_1".to_string()),
                 )
                 .unwrap(),
