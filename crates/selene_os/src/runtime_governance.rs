@@ -2686,6 +2686,24 @@ mod tests {
         )
     }
 
+    fn device_claim_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                Some(user_id),
+                None,
+            )
+            .expect("device-claim voice assertion must validate"),
+        )
+    }
+
     fn reenrollment_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
@@ -3540,6 +3558,37 @@ mod tests {
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReauthRequired
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_22_device_claim_required_assertion_maps_to_restricted_step_up_identity_state(
+    ) {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &device_claim_required_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("device-claim assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for device-claim posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReauthRequired
+        );
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0))
         );
     }
 

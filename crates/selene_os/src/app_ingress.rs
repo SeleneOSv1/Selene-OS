@@ -4539,6 +4539,19 @@ fn classify_identity_recovery_fail_closed_outcome(
     }
     let identity_state = out.runtime_execution_envelope.identity_state.as_ref()?;
     match identity_state.recovery_state {
+        IdentityRecoveryState::ReauthRequired
+            if identity_reason_code(identity_state)
+                == Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED) =>
+        {
+            Some(IdentityRecoveryFailClosedBehavior {
+                reason_code: identity_reason_code_or(
+                    identity_state,
+                    voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                ),
+                user_message: "I need you to confirm this device before I can continue.",
+                audit_response_kind: "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED",
+            })
+        }
         IdentityRecoveryState::ReauthRequired => Some(IdentityRecoveryFailClosedBehavior {
             reason_code: identity_reason_code_or(
                 identity_state,
@@ -6169,6 +6182,24 @@ mod tests {
         )
     }
 
+    fn device_claim_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .unwrap()],
+                Some(user_id),
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
     fn reenrollment_required_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(
             SpeakerAssertionUnknown::v1_with_candidate(
@@ -7689,6 +7720,90 @@ mod tests {
     }
 
     #[test]
+    fn at_harmonize_02c_device_claim_required_identity_attaches_step_up_and_restricted_trust() {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:harmonize_device_claim_user").unwrap();
+        let device_id = DeviceId::new("harmonize_device_claim_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9523),
+            TurnId(9623),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = device_claim_required_voice_assertion(actor_user_id);
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9523),
+                    turn_id: TurnId(9623),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReauthRequired
+        );
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED.0))
+        );
+        let memory_state = envelope
+            .memory_state
+            .expect("memory state should be attached");
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::IdentityScopeBlocked
+        );
+    }
+
+    #[test]
     fn at_harmonize_02b_spoof_risk_identity_is_rejected_and_recovery_restricted() {
         let runtime = AppServerIngressRuntime::default();
         let actor_user_id = UserId::new("tenant_1:harmonize_spoof_user").unwrap();
@@ -8053,6 +8168,47 @@ mod tests {
                     .unwrap_or(false)
             }),
             "spoof-risk recovery fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_04_device_claim_required_protected_voice_turn_fails_closed_with_explicit_device_claim_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_device_claim_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_device_claim_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let out = run_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            device_claim_required_voice_assertion(actor_user_id),
+            CorrelationId(9823),
+            TurnId(9923),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I need you to confirm this device before I can continue.")
+        );
+        assert_eq!(
+            out.reason_code,
+            Some(voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED)
+        );
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9823));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "IDENTITY_DEVICE_CLAIM_REQUIRED_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "device-claim recovery fail-closed response must emit PH1.X audit row"
         );
     }
 
