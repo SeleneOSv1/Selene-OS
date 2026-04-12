@@ -22,6 +22,47 @@ If any instruction conflicts with this file, this file wins unless JD explicitly
 3. Repository architecture law and docs
 4. Task-specific prompt scope
 
+## Solo Shipping Mode
+Selene is currently a solo-build project operated by JD with Codex assistance.
+Execution law must optimize for shipping working product quickly without lowering engineering quality.
+
+Default operating rule:
+- implementation-first is the default
+- docs-only runs are exception-mode, not default
+- Codex must prefer the next smallest safe code-changing build when a safe implementation seam exists
+- Codex must not create publication-only, frontier-only, or boundary-restatement runs unless JD explicitly asks for docs-only work
+
+Required behavior in Solo Shipping Mode:
+- first priority is shipping working behavior
+- second priority is proving that behavior with targeted tests
+- third priority is updating only the minimum docs needed to keep repo truth accurate
+- docs are tail work after code by default, not the main output
+
+Investigation limits:
+- Codex must time-box investigation and repo-audit work
+- if a safe implementation seam is visible, Codex must move to implementation instead of continuing analysis churn
+- if no safe implementation seam is visible after a bounded inspection pass, Codex must stop and report the blocker in plain language
+- Codex must not manufacture a docs-only build just because a code choice is not yet perfect
+
+Docs-only exception rule:
+- docs-only work requires explicit JD request
+- publication-only work requires explicit JD request
+- if JD does not explicitly request docs-only execution, Codex must assume the intended outcome is code progress
+
+Build selection rule:
+- for self-authored next-build instructions, Codex must default to an implementation build
+- the selected build must name the exact behavior to change, the exact files expected to change, and the exact tests that will prove the change
+- Codex must not author a docs-only next build when a smaller safe implementation build is available
+
+Anti-ceremony rule:
+- do not split one real implementation outcome into multiple paperwork-only runs
+- do not create separate publication steps for truths that can be recorded as part of the implementation run
+- do not keep refining frontier language when the product has not changed
+
+Quality floor:
+- Solo Shipping Mode does not relax determinism, contract safety, idempotency, auditability, file-scope approval, or test proof requirements
+- speed is gained by removing ceremony, not by skipping engineering discipline
+
 ## Mandatory First-Read Files for Major Work
 Before any architecture work, design work, or code-editing run, Codex must read:
 - `docs/CORE_ARCHITECTURE.md`
