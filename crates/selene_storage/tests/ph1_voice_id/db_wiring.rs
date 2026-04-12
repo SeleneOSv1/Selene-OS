@@ -1176,3 +1176,116 @@ fn at_vid_db_13_emo_artifact_manifest_changes_enqueue_sync_rows() {
         assert_eq!(row.sync_kind, MobileArtifactSyncKind::EmoArtifactManifest);
     }
 }
+
+#[test]
+fn at_vid_db_14_voice_artifact_revocation_commit_blocks_revoked_version_and_enqueues_manifest_sync(
+) {
+    let mut s = Ph1fStore::new_in_memory();
+    let tenant_id = "tenant_a".to_string();
+
+    s.ph1builder_active_artifact_commit(
+        MonotonicTimeNs(6_000),
+        tenant_id.clone(),
+        ArtifactScopeType::Tenant,
+        tenant_id.clone(),
+        ArtifactType::VoiceIdThresholdPack,
+        ArtifactVersion(1),
+        "pkg_hash_voice_revocation_v1".to_string(),
+        "payload_ref_voice_revocation_v1".to_string(),
+        "prov_voice_revocation_v1".to_string(),
+        "idem_voice_revocation_v1".to_string(),
+    )
+    .unwrap();
+    s.ph1builder_active_artifact_commit(
+        MonotonicTimeNs(6_001),
+        tenant_id.clone(),
+        ArtifactScopeType::Tenant,
+        tenant_id.clone(),
+        ArtifactType::VoiceIdThresholdPack,
+        ArtifactVersion(2),
+        "pkg_hash_voice_revocation_v2".to_string(),
+        "payload_ref_voice_revocation_v2".to_string(),
+        "prov_voice_revocation_v2".to_string(),
+        "idem_voice_revocation_v2".to_string(),
+    )
+    .unwrap();
+    assert_eq!(s.mobile_artifact_sync_queue_rows().len(), 2);
+
+    let revoked = s
+        .ph1builder_voice_artifact_revocation_commit(
+            MonotonicTimeNs(6_002),
+            tenant_id.clone(),
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(2),
+            "decision_voice_revoke_v2".to_string(),
+            "idem_voice_revoke_v2".to_string(),
+        )
+        .unwrap();
+    assert_eq!(revoked.artifact_version, ArtifactVersion(2));
+    assert_eq!(s.voice_artifact_revocation_rows().len(), 1);
+    assert!(s.voice_artifact_is_revoked(
+        &tenant_id,
+        ArtifactType::VoiceIdThresholdPack,
+        ArtifactVersion(2)
+    ));
+
+    let queue_rows = s.mobile_artifact_sync_queue_rows();
+    assert_eq!(queue_rows.len(), 3);
+    assert_eq!(
+        queue_rows[2].sync_kind,
+        MobileArtifactSyncKind::VoiceArtifactManifest
+    );
+
+    let replay = s
+        .ph1builder_voice_artifact_revocation_commit(
+            MonotonicTimeNs(6_003),
+            tenant_id.clone(),
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(2),
+            "decision_voice_revoke_v2".to_string(),
+            "idem_voice_revoke_v2".to_string(),
+        )
+        .unwrap();
+    assert_eq!(replay.revocation_event_id, revoked.revocation_event_id);
+    assert_eq!(s.voice_artifact_revocation_rows().len(), 1);
+    assert_eq!(s.mobile_artifact_sync_queue_rows().len(), 3);
+
+    let duplicate_err = s
+        .ph1builder_voice_artifact_revocation_commit(
+            MonotonicTimeNs(6_004),
+            tenant_id.clone(),
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(2),
+            "decision_voice_revoke_v2_duplicate".to_string(),
+            "idem_voice_revoke_v2_duplicate".to_string(),
+        )
+        .expect_err("distinct revocation replays must fail closed once revoked");
+    assert!(matches!(duplicate_err, StorageError::DuplicateKey { .. }));
+
+    let unknown_err = s
+        .ph1builder_voice_artifact_revocation_commit(
+            MonotonicTimeNs(6_005),
+            tenant_id.clone(),
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(99),
+            "decision_voice_revoke_missing".to_string(),
+            "idem_voice_revoke_missing".to_string(),
+        )
+        .expect_err("unknown artifact version must fail closed");
+    assert!(matches!(unknown_err, StorageError::ForeignKeyViolation { .. }));
+
+    let non_voice_err = s
+        .ph1builder_voice_artifact_revocation_commit(
+            MonotonicTimeNs(6_006),
+            tenant_id,
+            ArtifactType::SttRoutingPolicyPack,
+            ArtifactVersion(1),
+            "decision_non_voice_revoke".to_string(),
+            "idem_non_voice_revoke".to_string(),
+        )
+        .expect_err("non-voice artifact revocation must fail closed");
+    assert!(matches!(
+        non_voice_err,
+        StorageError::ContractViolation(_)
+    ));
+}

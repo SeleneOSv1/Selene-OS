@@ -1717,6 +1717,12 @@ pub struct Ph1fStore {
     voice_enrollment_samples: Vec<VoiceEnrollmentSampleRecord>,
     voice_profiles: BTreeMap<String, VoiceProfileRecord>,
     voice_profile_bindings: BTreeMap<(OnboardingSessionId, DeviceId), String>,
+    voice_artifact_revocation_ledger: Vec<VoiceArtifactRevocationRecord>,
+    // Unique revocation binding: (tenant_id, artifact_type, artifact_version) -> revocation_event_id.
+    voice_artifact_revoked_version_index: BTreeMap<(String, ArtifactType, ArtifactVersion), u64>,
+    // Idempotency: (tenant_id, artifact_type, artifact_version, idempotency_key) -> revocation_event_id.
+    voice_artifact_revocation_idempotency_index:
+        BTreeMap<(String, ArtifactType, ArtifactVersion, String), u64>,
 
     // Idempotency indexes for voice-id enrollment simulations.
     // (onboarding_session_id, device_id) -> voice_enrollment_session_id
@@ -1939,6 +1945,7 @@ pub struct Ph1fStore {
     next_wake_artifact_apply_event_id: u64,
     next_wake_promotion_event_id: u64,
     next_wake_learn_signal_row_id: u64,
+    next_voice_artifact_revocation_event_id: u64,
 
     // Idempotency detection for memory ledger writes: (user_id, key) -> ledger_id.
     memory_idempotency_index: BTreeMap<(UserId, String), u64>,
@@ -2904,6 +2911,19 @@ pub struct VoiceProfileRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceArtifactRevocationRecord {
+    pub schema_version: SchemaVersion,
+    pub revocation_event_id: u64,
+    pub created_at: MonotonicTimeNs,
+    pub tenant_id: String,
+    pub artifact_type: ArtifactType,
+    pub artifact_version: ArtifactVersion,
+    pub artifact_id: u64,
+    pub decision_ref: String,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedbackLearnSignalBundleRecord {
     pub schema_version: SchemaVersion,
     pub bundle_id: u64,
@@ -3497,6 +3517,9 @@ impl Ph1fStore {
             voice_enrollment_samples: Vec::new(),
             voice_profiles: BTreeMap::new(),
             voice_profile_bindings: BTreeMap::new(),
+            voice_artifact_revocation_ledger: Vec::new(),
+            voice_artifact_revoked_version_index: BTreeMap::new(),
+            voice_artifact_revocation_idempotency_index: BTreeMap::new(),
             voice_start_idempotency_index: BTreeMap::new(),
             voice_sample_idempotency_index: BTreeMap::new(),
             voice_complete_idempotency_index: BTreeMap::new(),
@@ -3609,6 +3632,7 @@ impl Ph1fStore {
             next_wake_artifact_apply_event_id: 1,
             next_wake_promotion_event_id: 1,
             next_wake_learn_signal_row_id: 1,
+            next_voice_artifact_revocation_event_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
@@ -6788,6 +6812,23 @@ impl Ph1fStore {
         self.artifacts_ledger_rows
             .iter()
             .find(|r| r.artifact_id == *artifact_id)
+    }
+
+    pub fn voice_artifact_revocation_rows(&self) -> &[VoiceArtifactRevocationRecord] {
+        &self.voice_artifact_revocation_ledger
+    }
+
+    pub fn voice_artifact_is_revoked(
+        &self,
+        tenant_id: &str,
+        artifact_type: ArtifactType,
+        artifact_version: ArtifactVersion,
+    ) -> bool {
+        self.voice_artifact_revoked_version_index.contains_key(&(
+            tenant_id.to_string(),
+            artifact_type,
+            artifact_version,
+        ))
     }
 
     pub fn attempt_overwrite_artifact_ledger_row(
@@ -13259,6 +13300,15 @@ impl Ph1fStore {
         &mut self,
         row: ArtifactLedgerRow,
     ) -> Result<(), StorageError> {
+        self.enqueue_artifact_manifest_sync_for_change(row.created_at, &row, None)
+    }
+
+    fn enqueue_artifact_manifest_sync_for_change(
+        &mut self,
+        enqueued_at: MonotonicTimeNs,
+        row: &ArtifactLedgerRow,
+        change_ref: Option<&str>,
+    ) -> Result<(), StorageError> {
         let (sync_kind, manifest_prefix) = match row.artifact_type {
             ArtifactType::VoiceIdThresholdPack
             | ArtifactType::VoiceIdConfusionPairPack
@@ -13282,16 +13332,28 @@ impl Ph1fStore {
             ArtifactScopeType::User => "user",
             ArtifactScopeType::Device => "device",
         };
-        let receipt_ref = format!(
-            "{manifest_prefix}_sync_{}",
-            hash_hex_64(&format!(
+        let receipt_material = match change_ref {
+            Some(change_ref) => format!(
+                "{}:{}:{:?}:{}:{:?}:{}",
+                scope_type_label,
+                row.scope_id,
+                row.artifact_type,
+                row.artifact_version.0,
+                row.status,
+                change_ref
+            ),
+            None => format!(
                 "{}:{}:{:?}:{}:{:?}",
                 scope_type_label,
                 row.scope_id,
                 row.artifact_type,
                 row.artifact_version.0,
                 row.status
-            ))
+            ),
+        };
+        let receipt_ref = format!(
+            "{manifest_prefix}_sync_{}",
+            hash_hex_64(&receipt_material)
         );
         let artifact_profile_id = format!(
             "{manifest_prefix}_{}",
@@ -13305,9 +13367,13 @@ impl Ph1fStore {
                 row.payload_ref
             ))
         );
-        let idempotency_key = row
-            .idempotency_key
-            .unwrap_or_else(|| format!("{manifest_prefix}_sync:{}", row.artifact_id));
+        let idempotency_key = match change_ref {
+            Some(change_ref) => format!("{manifest_prefix}_sync:{change_ref}"),
+            None => row
+                .idempotency_key
+                .clone()
+                .unwrap_or_else(|| format!("{manifest_prefix}_sync:{}", row.artifact_id)),
+        };
         let user_id = if row.scope_type == ArtifactScopeType::User {
             UserId::new(row.scope_id.clone()).ok()
         } else {
@@ -13327,7 +13393,7 @@ impl Ph1fStore {
         };
 
         self.enqueue_mobile_artifact_sync(
-            row.created_at,
+            enqueued_at,
             sync_kind,
             receipt_ref,
             artifact_profile_id,
@@ -20732,6 +20798,25 @@ impl Ph1fStore {
         Ok(())
     }
 
+    fn validate_voice_artifact_type(artifact_type: ArtifactType) -> Result<(), StorageError> {
+        Self::validate_ph1learn_artifact_type(artifact_type)?;
+        if !matches!(
+            artifact_type,
+            ArtifactType::VoiceIdThresholdPack
+                | ArtifactType::VoiceIdConfusionPairPack
+                | ArtifactType::VoiceIdSpoofPolicyPack
+                | ArtifactType::VoiceIdProfileDeltaPack
+        ) {
+            return Err(StorageError::ContractViolation(
+                ContractViolation::InvalidValue {
+                    field: "ph1builder_voice_artifact_revocation_commit.artifact_type",
+                    reason: "must be one of the canonical PH1.VOICE.ID rollout artifact packs",
+                },
+            ));
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn ph1feedback_event_commit(
         &mut self,
@@ -21111,6 +21196,100 @@ impl Ph1fStore {
         )?;
 
         self.append_artifact_ledger_row(input)
+    }
+
+    pub fn ph1builder_voice_artifact_revocation_commit(
+        &mut self,
+        now: MonotonicTimeNs,
+        tenant_id: String,
+        artifact_type: ArtifactType,
+        artifact_version: ArtifactVersion,
+        decision_ref: String,
+        idempotency_key: String,
+    ) -> Result<VoiceArtifactRevocationRecord, StorageError> {
+        Self::validate_ph1learn_tenant_id(&tenant_id)?;
+        Self::validate_voice_artifact_type(artifact_type)?;
+        artifact_version.validate()?;
+        Self::validate_ph1learn_bounded_text(
+            "ph1builder_voice_artifact_revocation_commit.decision_ref",
+            &decision_ref,
+            128,
+        )?;
+        Self::validate_ph1learn_idempotency(
+            "ph1builder_voice_artifact_revocation_commit.idempotency_key",
+            &idempotency_key,
+        )?;
+
+        let idem_idx = (
+            tenant_id.clone(),
+            artifact_type,
+            artifact_version,
+            idempotency_key.clone(),
+        );
+        if let Some(existing_event_id) = self
+            .voice_artifact_revocation_idempotency_index
+            .get(&idem_idx)
+        {
+            return self
+                .voice_artifact_revocation_ledger
+                .iter()
+                .find(|row| row.revocation_event_id == *existing_event_id)
+                .cloned()
+                .ok_or(StorageError::ForeignKeyViolation {
+                    table: "voice_artifact_revocation.revocation_event_id",
+                    key: existing_event_id.to_string(),
+                });
+        }
+
+        let unique_idx = (tenant_id.clone(), artifact_type, artifact_version);
+        if let Some(existing_event_id) = self.voice_artifact_revoked_version_index.get(&unique_idx)
+        {
+            return Err(StorageError::DuplicateKey {
+                table: "voice_artifact_revocation.tenant_artifact_type_artifact_version",
+                key: existing_event_id.to_string(),
+            });
+        }
+
+        let artifact_row = self
+            .artifact_ledger_row(
+                ArtifactScopeType::Tenant,
+                &tenant_id,
+                artifact_type,
+                artifact_version,
+            )
+            .cloned()
+            .ok_or(StorageError::ForeignKeyViolation {
+                table: "artifacts_ledger.scope_type_scope_id_artifact_type_artifact_version",
+                key: format!(
+                    "Tenant:{tenant_id}:{artifact_type:?}:{}",
+                    artifact_version.0
+                ),
+            })?;
+
+        let revocation_event_id = self.next_voice_artifact_revocation_event_id;
+        self.next_voice_artifact_revocation_event_id = self
+            .next_voice_artifact_revocation_event_id
+            .saturating_add(1);
+
+        let record = VoiceArtifactRevocationRecord {
+            schema_version: SchemaVersion(1),
+            revocation_event_id,
+            created_at: now,
+            tenant_id: tenant_id.clone(),
+            artifact_type,
+            artifact_version,
+            artifact_id: artifact_row.artifact_id,
+            decision_ref,
+            idempotency_key: idempotency_key.clone(),
+        };
+        self.voice_artifact_revocation_ledger.push(record.clone());
+        self.voice_artifact_revoked_version_index
+            .insert(unique_idx, revocation_event_id);
+        self.voice_artifact_revocation_idempotency_index
+            .insert(idem_idx, revocation_event_id);
+        let change_ref = format!("revocation:{revocation_event_id}");
+        self.enqueue_artifact_manifest_sync_for_change(now, &artifact_row, Some(&change_ref))?;
+        Ok(record)
     }
 
     pub fn ph1learn_artifact_rows(

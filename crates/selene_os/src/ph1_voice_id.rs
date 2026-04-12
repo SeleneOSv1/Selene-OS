@@ -612,15 +612,29 @@ fn select_artifact_pointer_set(
         return VoiceArtifactPointerSet::default();
     }
 
-    let active_idx = rows
+    let selected_idx = rows
         .iter()
         .position(|row| row.status == ArtifactStatus::Active)
         .unwrap_or(0);
-    let active_row = rows[active_idx];
-    let rollback_row =
-        rows.iter()
+    let is_revoked = |row: &&selene_kernel_contracts::ph1art::ArtifactLedgerRow| {
+        store.voice_artifact_is_revoked(tenant_id, artifact_type, row.artifact_version)
+    };
+    let active_idx = if is_revoked(&rows[selected_idx]) {
+        match rows
+            .iter()
             .enumerate()
-            .find_map(|(idx, row)| if idx > active_idx { Some(*row) } else { None });
+            .find_map(|(idx, row)| (idx > selected_idx && !is_revoked(&row)).then_some(idx))
+        {
+            Some(idx) => idx,
+            None => return VoiceArtifactPointerSet::default(),
+        }
+    } else {
+        selected_idx
+    };
+    let active_row = rows[active_idx];
+    let rollback_row = rows.iter().enumerate().find_map(|(idx, row)| {
+        (idx > active_idx && !is_revoked(&row)).then_some(*row)
+    });
 
     VoiceArtifactPointerSet {
         active: Some(VoiceArtifactPointer {
@@ -2215,7 +2229,92 @@ mod tests {
     }
 
     #[test]
-    fn at_vid_live_gate_13_contract_migration_stage_m1_emits_shadow_audit_with_v1_read_mode() {
+    fn at_vid_live_gate_13_revoked_active_voice_artifact_falls_back_to_last_good_pointer() {
+        let mut store = Ph1fStore::new_in_memory();
+        let runtime = Ph1VoiceIdLiveRuntime::default();
+        let tenant_id = "tenant_vid_revocation_fallback";
+
+        commit_voice_artifact(
+            &mut store,
+            tenant_id,
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(1),
+            "threshold_v1".to_string(),
+            ArtifactStatus::Active,
+            301,
+            "idem_threshold_v1",
+        );
+        commit_voice_artifact(
+            &mut store,
+            tenant_id,
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(2),
+            "threshold_v2".to_string(),
+            ArtifactStatus::RolledBack,
+            302,
+            "idem_threshold_v2",
+        );
+        commit_voice_artifact(
+            &mut store,
+            tenant_id,
+            ArtifactType::VoiceIdThresholdPack,
+            ArtifactVersion(3),
+            "threshold_v3".to_string(),
+            ArtifactStatus::Active,
+            303,
+            "idem_threshold_v3",
+        );
+        commit_voice_artifact(
+            &mut store,
+            tenant_id,
+            ArtifactType::VoiceIdConfusionPairPack,
+            ArtifactVersion(1),
+            "confusion_v1".to_string(),
+            ArtifactStatus::Active,
+            304,
+            "idem_confusion_v1",
+        );
+
+        store
+            .ph1builder_voice_artifact_revocation_commit(
+                MonotonicTimeNs(305),
+                tenant_id.to_string(),
+                ArtifactType::VoiceIdThresholdPack,
+                ArtifactVersion(3),
+                "decision_threshold_revoke".to_string(),
+                "idem_threshold_revoke".to_string(),
+            )
+            .expect("threshold revocation must succeed");
+        store
+            .ph1builder_voice_artifact_revocation_commit(
+                MonotonicTimeNs(306),
+                tenant_id.to_string(),
+                ArtifactType::VoiceIdConfusionPairPack,
+                ArtifactVersion(1),
+                "decision_confusion_revoke".to_string(),
+                "idem_confusion_revoke".to_string(),
+            )
+            .expect("confusion revocation must succeed");
+
+        let pointers = runtime.tenant_artifact_pointers(&store, tenant_id);
+        let threshold_active = pointers
+            .threshold_pack
+            .active
+            .expect("threshold must fall back to the highest lower non-revoked version");
+        let threshold_rollback = pointers
+            .threshold_pack
+            .rollback
+            .expect("threshold must still expose rollback visibility");
+        assert_eq!(threshold_active.artifact_version, ArtifactVersion(2));
+        assert_eq!(threshold_active.status, ArtifactStatus::RolledBack);
+        assert_eq!(threshold_rollback.artifact_version, ArtifactVersion(1));
+        assert_eq!(threshold_rollback.status, ArtifactStatus::Active);
+        assert!(pointers.confusion_pair_pack.active.is_none());
+        assert!(pointers.confusion_pair_pack.rollback.is_none());
+    }
+
+    #[test]
+    fn at_vid_live_gate_14_contract_migration_stage_m1_emits_shadow_audit_with_v1_read_mode() {
         let mut store = Ph1fStore::new_in_memory();
         let actor = UserId::new("tenant_mig:user_1").unwrap();
         let device = DeviceId::new("voice-mig-device-1").unwrap();
