@@ -2704,6 +2704,28 @@ mod tests {
         )
     }
 
+    fn spoof_risk_voice_assertion(user_id: UserId) -> Ph1VoiceIdResponse {
+        Ph1VoiceIdResponse::SpeakerAssertionUnknown(
+            SpeakerAssertionUnknown::v1_with_metrics_and_candidate(
+                IdentityConfidence::Medium,
+                voice_id_reason_codes::VID_SPOOF_RISK,
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
+                4500,
+                None,
+                SpoofLivenessStatus::SuspectedSpoof,
+                vec![],
+                Some(user_id),
+                None,
+            )
+            .expect("spoof-risk voice assertion must validate"),
+        )
+    }
+
     fn allowed_authority_state() -> AuthorityExecutionState {
         AuthorityExecutionState::v1(
             Some(PolicyContextRef::v1(false, false, SafetyTier::Standard)),
@@ -3544,6 +3566,40 @@ mod tests {
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReEnrollmentRequired
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_21_spoof_risk_assertion_maps_to_rejected_identity_state() {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let artifact_governed = artifact_governed_envelope(&runtime);
+        let out = runtime
+            .govern_artifact_activation_identity_state_execution(
+                &artifact_governed,
+                &spoof_risk_voice_assertion(artifact_governed.actor_identity.clone()),
+            )
+            .expect("spoof-risk assertion must still produce bounded identity state");
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for spoof-risk posture");
+        assert_eq!(
+            identity_state.consistency_level,
+            IdentityVerificationConsistencyLevel::RecoveryRestricted
+        );
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Rejected);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::RecoveryRestricted
+        );
+        assert_eq!(
+            identity_state.reason_code,
+            Some(u64::from(voice_id_reason_codes::VID_SPOOF_RISK.0))
+        );
+        assert_eq!(
+            identity_state.spoof_liveness_status,
+            SpoofLivenessStatus::SuspectedSpoof
         );
     }
 

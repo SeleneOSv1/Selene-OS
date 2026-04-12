@@ -4521,6 +4521,13 @@ fn identity_reason_code_or(
         .unwrap_or(fallback)
 }
 
+fn identity_reason_code(identity_state: &IdentityExecutionState) -> Option<ReasonCodeId> {
+    identity_state
+        .reason_code
+        .and_then(|code| u32::try_from(code).ok())
+        .map(ReasonCodeId)
+}
+
 fn classify_identity_recovery_fail_closed_outcome(
     out: &AppVoiceTurnExecutionOutcome,
 ) -> Option<IdentityRecoveryFailClosedBehavior> {
@@ -4548,6 +4555,19 @@ fn classify_identity_recovery_fail_closed_outcome(
             user_message: "I need you to re-enroll your voice before I can continue.",
             audit_response_kind: "IDENTITY_REENROLLMENT_REQUIRED_FAIL_CLOSED",
         }),
+        IdentityRecoveryState::RecoveryRestricted
+            if identity_reason_code(identity_state)
+                == Some(voice_id_reason_codes::VID_SPOOF_RISK) =>
+        {
+            Some(IdentityRecoveryFailClosedBehavior {
+                reason_code: identity_reason_code_or(
+                    identity_state,
+                    voice_id_reason_codes::VID_SPOOF_RISK,
+                ),
+                user_message: "I detected a possible spoofing risk, so I can't continue.",
+                audit_response_kind: "IDENTITY_SPOOF_RISK_FAIL_CLOSED",
+            })
+        }
         IdentityRecoveryState::None | IdentityRecoveryState::RecoveryRestricted => None,
     }
 }
@@ -7995,6 +8015,44 @@ mod tests {
                     .unwrap_or(false)
             }),
             "reenrollment-required recovery fail-closed response must emit PH1.X audit row"
+        );
+    }
+
+    #[test]
+    fn at_identity_recovery_03_spoof_risk_protected_voice_turn_fails_closed_with_explicit_spoof_response(
+    ) {
+        let runtime = runtime_with_search_tool_fixtures();
+        let actor_user_id = UserId::new("tenant_1:identity_spoof_runtime_user").unwrap();
+        let device_id = DeviceId::new("identity_spoof_runtime_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let out = run_protected_response_turn_with_identity_assertion(
+            &runtime,
+            &mut store,
+            actor_user_id.clone(),
+            device_id,
+            spoof_risk_voice_assertion(actor_user_id),
+            CorrelationId(9822),
+            TurnId(9922),
+        );
+
+        assert_eq!(out.next_move, AppVoiceTurnNextMove::Refused);
+        assert_eq!(
+            out.response_text.as_deref(),
+            Some("I detected a possible spoofing risk, so I can't continue.")
+        );
+        assert_eq!(out.reason_code, Some(voice_id_reason_codes::VID_SPOOF_RISK));
+        let response_rows = store.ph1x_audit_rows(CorrelationId(9822));
+        assert!(
+            response_rows.iter().any(|row| {
+                row.payload_min
+                    .entries
+                    .get(&PayloadKey::new("response_kind").unwrap())
+                    .map(|value| value.as_str() == "IDENTITY_SPOOF_RISK_FAIL_CLOSED")
+                    .unwrap_or(false)
+            }),
+            "spoof-risk recovery fail-closed response must emit PH1.X audit row"
         );
     }
 
