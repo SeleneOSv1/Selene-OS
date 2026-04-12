@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 
 use selene_engines::ph1_voice_id::{
-    reason_codes as voice_id_reason_codes, simulation_profile_embedding_from_seed,
-    EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
+    simulation_profile_embedding_from_seed, EnrolledSpeaker as EngineEnrolledSpeaker,
+    VoiceIdObservation as EngineVoiceIdObservation,
 };
 use selene_engines::ph1e::{Ph1eConfig, Ph1eRuntime};
 use selene_engines::ph1emocore::{
@@ -21,9 +21,8 @@ use selene_engines::ph1simfinder::{
     FinderSimulationCatalogEntry, Ph1SimFinderRuntime,
 };
 use selene_kernel_contracts::ph1_voice_id::{
-    IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpeakerId, UserId,
-    VoiceEmbeddingCaptureRef, VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT,
-    VOICE_ID_ENROLL_START_DRAFT,
+    Ph1VoiceIdRequest, SpeakerId, UserId, VoiceEmbeddingCaptureRef,
+    VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
 };
 use selene_kernel_contracts::ph1agent::AgentInputPacket;
 use selene_kernel_contracts::ph1d::{PolicyContextRef, SafetyTier};
@@ -86,11 +85,10 @@ use selene_kernel_contracts::ph1x::{
 };
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
-    IdentityExecutionStateInput, IdentityRecoveryState, IdentityTrustTier,
-    IdentityVerificationConsistencyLevel, MemoryConsistencyLevel, MemoryEligibilityDecision,
-    MemoryExecutionState, MemoryTrustLevel, OnboardingReadinessState,
-    PlatformRuntimeContext, ProofExecutionState, RuntimeEntryTrigger,
-    RuntimeExecutionEnvelope, SimulationCertificationState,
+    IdentityRecoveryState, IdentityTrustTier, MemoryConsistencyLevel, MemoryEligibilityDecision,
+    MemoryExecutionState, MemoryTrustLevel, OnboardingReadinessState, PlatformRuntimeContext,
+    ProofExecutionState, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
+    SimulationCertificationState,
 };
 use selene_kernel_contracts::runtime_governance::{
     GovernanceClusterConsistency, GovernanceDecisionLogEntry, GovernanceExecutionState,
@@ -118,7 +116,10 @@ use crate::ph1os::{
 };
 use crate::ph1w::Ph1wRuntime;
 use crate::ph1x::{Ph1xConfig, Ph1xRuntime};
-use crate::runtime_governance::{RuntimeGovernanceDecision, RuntimeGovernanceRuntime};
+use crate::runtime_governance::{
+    attach_identity_state_for_governed_voice_turn, RuntimeGovernanceDecision,
+    RuntimeGovernanceRuntime,
+};
 use crate::runtime_law::{RuntimeLawDecision, RuntimeLawRuntime};
 use crate::simulation_executor::{
     simulation_id_for_intent_draft_v1, SimulationDispatchOutcome, SimulationExecutor,
@@ -727,22 +728,11 @@ impl AppServerIngressRuntime {
     ) -> Result<RuntimeExecutionEnvelope, StorageError> {
         let runtime_execution_envelope = &out.runtime_execution_envelope;
         let law_action_class = voice_turn_runtime_law_action_class(out);
-        let law_context = RuntimeLawEvaluationContext::v1(
-            None,
-            None,
-            None,
-            None,
-            executed_at,
-            false,
-        )
-        .map_err(StorageError::ContractViolation)?;
+        let law_context =
+            RuntimeLawEvaluationContext::v1(None, None, None, None, executed_at, false)
+                .map_err(StorageError::ContractViolation)?;
         let (simulation_id, simulation_version, simulation_certification_state) =
-            proof_simulation_trace_for_voice_turn(
-                store,
-                out,
-                finder_terminal,
-                actor_tenant_id,
-            )?;
+            proof_simulation_trace_for_voice_turn(store, out, finder_terminal, actor_tenant_id)?;
         let proof_request = ProtectedProofWriteRequest::v1(
             runtime_execution_envelope.clone(),
             voice_turn_protected_action_class(out),
@@ -886,11 +876,10 @@ impl AppServerIngressRuntime {
         let outcome = self
             .executor
             .execute_os_voice_live_turn(store, live_turn_input)?;
-        let enriched_envelope =
-            runtime_execution_envelope_with_identity_state_for_voice_outcome(
-                &governed_runtime_execution_envelope,
-                &outcome,
-            )?;
+        let enriched_envelope = runtime_execution_envelope_with_identity_state_for_voice_outcome(
+            &governed_runtime_execution_envelope,
+            &outcome,
+        )?;
         let enriched_outcome =
             attach_runtime_execution_envelope_to_voice_outcome(outcome, &enriched_envelope)?;
         Ok((enriched_outcome, enriched_envelope))
@@ -1109,15 +1098,12 @@ impl AppServerIngressRuntime {
                 ));
             }
         }
-        let effective_tenant = request_tenant
-            .or(session_tenant)
-            .or(link_tenant)
-            .ok_or({
-                StorageError::ContractViolation(ContractViolation::InvalidValue {
-                    field: "app_onboarding_continue_request.tenant_id",
-                    reason: "missing tenant scope for onboarding continuation",
-                })
-            })?;
+        let effective_tenant = request_tenant.or(session_tenant).or(link_tenant).ok_or({
+            StorageError::ContractViolation(ContractViolation::InvalidValue {
+                field: "app_onboarding_continue_request.tenant_id",
+                reason: "missing tenant scope for onboarding continuation",
+            })
+        })?;
         let turn_id = TurnId(1);
 
         match action {
@@ -3221,7 +3207,10 @@ impl AppServerIngressRuntime {
             .proof_state
             .as_ref()
             .and_then(|state| state.proof_record_ref.clone())
-            .or(out.dispatch_outcome.as_ref().map(dispatch_outcome_proof_ref_token));
+            .or(out
+                .dispatch_outcome
+                .as_ref()
+                .map(dispatch_outcome_proof_ref_token));
         let idempotency_key = format!(
             "agent_exec:{}:{}:{}:{}",
             correlation_id.0, turn_id.0, finder_packet_kind, execution_stage
@@ -3518,19 +3507,20 @@ impl AppServerIngressRuntime {
         x_build: AppVoicePh1xBuildInput,
     ) -> Result<AgentInputPacket, StorageError> {
         *self.agent_input_packet_build_count.borrow_mut() += 1;
-        let identity_state = identity_execution_state_from_voice_assertion(
-            &forwarded.voice_identity_assertion,
+        let runtime_execution_envelope = attach_identity_state_for_governed_voice_turn(
             &forwarded.runtime_execution_envelope,
-        )?;
-        let runtime_execution_envelope = forwarded
-            .runtime_execution_envelope
+            &forwarded.voice_identity_assertion,
+        )
+        .map_err(StorageError::ContractViolation)?;
+        let identity_state = runtime_execution_envelope
+            .identity_state
             .clone()
-            .with_identity_state(Some(identity_state.clone()))
-            .map_err(StorageError::ContractViolation)?;
+            .expect("canonical runtime governance helper must attach identity state");
         let topic_hint = memory_topic_hint_from_nlp_output(x_build.nlp_output.as_ref());
         let runtime_memory_candidates = if memory_governance_blocked(&runtime_execution_envelope) {
             Vec::new()
-        } else if identity_state_allows_memory_scope(&identity_state) && forwarded.identity_confirmed()
+        } else if identity_state_allows_memory_scope(&identity_state)
+            && forwarded.identity_confirmed()
         {
             self.executor
                 .collect_context_memory_candidates_for_voice_turn(
@@ -3663,10 +3653,7 @@ fn runtime_governance_storage_error(
     })
 }
 
-fn runtime_law_storage_error(
-    field: &'static str,
-    decision: &RuntimeLawDecision,
-) -> StorageError {
+fn runtime_law_storage_error(field: &'static str, decision: &RuntimeLawDecision) -> StorageError {
     StorageError::ContractViolation(ContractViolation::InvalidValue {
         field,
         reason: runtime_law_reason_literal(decision),
@@ -3709,14 +3696,17 @@ fn proof_failure_class_for_storage_error(error: &StorageError) -> ProofFailureCl
     }
 }
 
-fn proof_execution_state_from_error(error: &StorageError) -> Result<ProofExecutionState, StorageError> {
+fn proof_execution_state_from_error(
+    error: &StorageError,
+) -> Result<ProofExecutionState, StorageError> {
     let failure_class = proof_failure_class_for_storage_error(error);
     ProofExecutionState::v1(
         None,
         selene_kernel_contracts::ph1j::ProofWriteOutcome::Failed,
         Some(failure_class),
         match failure_class {
-            ProofFailureClass::ProofChainIntegrityFailure | ProofFailureClass::ProofSignatureFailure => {
+            ProofFailureClass::ProofChainIntegrityFailure
+            | ProofFailureClass::ProofSignatureFailure => {
                 selene_kernel_contracts::ph1j::ProofChainStatus::ChainBreakDetected
             }
             _ => selene_kernel_contracts::ph1j::ProofChainStatus::NotChecked,
@@ -3748,7 +3738,9 @@ fn voice_turn_runtime_law_action_class(
     }
 }
 
-fn voice_turn_protected_action_class(out: &AppVoiceTurnExecutionOutcome) -> ProofProtectedActionClass {
+fn voice_turn_protected_action_class(
+    out: &AppVoiceTurnExecutionOutcome,
+) -> ProofProtectedActionClass {
     match out.dispatch_outcome {
         Some(SimulationDispatchOutcome::MemoryPropose(_))
         | Some(SimulationDispatchOutcome::MemoryRecall(_))
@@ -3774,7 +3766,11 @@ fn voice_turn_protected_action_class(out: &AppVoiceTurnExecutionOutcome) -> Proo
 
 fn voice_turn_failure_class_token(out: &AppVoiceTurnExecutionOutcome) -> Option<String> {
     if matches!(out.next_move, AppVoiceTurnNextMove::Refused) {
-        Some(selene_kernel_contracts::runtime_execution::FailureClass::PolicyViolation.as_str().to_string())
+        Some(
+            selene_kernel_contracts::runtime_execution::FailureClass::PolicyViolation
+                .as_str()
+                .to_string(),
+        )
     } else {
         None
     }
@@ -3796,7 +3792,9 @@ fn voice_turn_execution_outcome_token(out: &AppVoiceTurnExecutionOutcome) -> Str
     }
 }
 
-fn proof_policy_rule_identifiers(runtime_execution_envelope: &RuntimeExecutionEnvelope) -> Vec<String> {
+fn proof_policy_rule_identifiers(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+) -> Vec<String> {
     runtime_execution_envelope
         .governance_state
         .as_ref()
@@ -3839,7 +3837,9 @@ fn proof_verifier_metadata_ref(runtime_execution_envelope: &RuntimeExecutionEnve
     if let Some(session_id) = runtime_execution_envelope.session_id {
         format!(
             "session:{}:turn:{}:request:{}",
-            session_id.0, runtime_execution_envelope.turn_id.0, runtime_execution_envelope.request_id
+            session_id.0,
+            runtime_execution_envelope.turn_id.0,
+            runtime_execution_envelope.request_id
         )
     } else {
         format!("request:{}", runtime_execution_envelope.request_id)
@@ -3860,17 +3860,25 @@ fn proof_simulation_trace_for_voice_turn(
         ),
         _ => proof_simulation_id_from_voice_outcome(out)?,
     };
-    let simulation_version = if let (Some(tenant_id), Some(simulation_id)) = (actor_tenant_id, simulation_id.as_ref()) {
-        let tenant_id = TenantId::new(tenant_id.to_string()).map_err(StorageError::ContractViolation)?;
-        store.simulation_catalog_current_row(&tenant_id, simulation_id).map(|row| row.simulation_version)
-    } else {
-        None
-    };
+    let simulation_version =
+        if let (Some(tenant_id), Some(simulation_id)) = (actor_tenant_id, simulation_id.as_ref()) {
+            let tenant_id =
+                TenantId::new(tenant_id.to_string()).map_err(StorageError::ContractViolation)?;
+            store
+                .simulation_catalog_current_row(&tenant_id, simulation_id)
+                .map(|row| row.simulation_version)
+        } else {
+            None
+        };
     let simulation_certification_state = runtime_execution_envelope
         .authority_state
         .as_ref()
         .map(|state| state.simulation_certification_state.as_str().to_string());
-    Ok((simulation_id, simulation_version, simulation_certification_state))
+    Ok((
+        simulation_id,
+        simulation_version,
+        simulation_certification_state,
+    ))
 }
 
 fn proof_simulation_id_from_voice_outcome(
@@ -3922,7 +3930,6 @@ fn runtime_execution_envelope_with_voice_turn_proof(
 }
 
 const GOVERNED_SUBSYSTEM_MEMORY_ENGINE: &str = "MEMORY_ENGINE";
-const GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE: &str = "IDENTITY_VOICE_ENGINE";
 const GOVERNED_SUBSYSTEM_AUTHORITY_LAYER: &str = "AUTHORITY_LAYER";
 
 fn attach_runtime_execution_envelope_to_voice_outcome(
@@ -3930,7 +3937,9 @@ fn attach_runtime_execution_envelope_to_voice_outcome(
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
 ) -> Result<OsVoiceLiveTurnOutcome, StorageError> {
     match outcome {
-        OsVoiceLiveTurnOutcome::NotInvokedDisabled => Ok(OsVoiceLiveTurnOutcome::NotInvokedDisabled),
+        OsVoiceLiveTurnOutcome::NotInvokedDisabled => {
+            Ok(OsVoiceLiveTurnOutcome::NotInvokedDisabled)
+        }
         OsVoiceLiveTurnOutcome::Refused(refuse) => Ok(OsVoiceLiveTurnOutcome::Refused(refuse)),
         OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) => {
             forwarded.runtime_execution_envelope = runtime_execution_envelope.clone();
@@ -3953,7 +3962,8 @@ fn missing_simulation_runtime_execution_envelope(
         )
         .map_err(|_| {
             StorageError::ContractViolation(ContractViolation::InvalidValue {
-                field: "app_voice_turn_execution_outcome.runtime_execution_envelope.computation_state",
+                field:
+                    "app_voice_turn_execution_outcome.runtime_execution_envelope.computation_state",
                 reason: "ph1comp_missing_simulation_computation_failed",
             })
         })?;
@@ -3969,153 +3979,11 @@ fn runtime_execution_envelope_with_identity_state_for_voice_outcome(
     let OsVoiceLiveTurnOutcome::Forwarded(forwarded) = outcome else {
         return Ok(runtime_execution_envelope.clone());
     };
-    let identity_state = identity_execution_state_from_voice_assertion(
+    attach_identity_state_for_governed_voice_turn(
+        &forwarded.runtime_execution_envelope,
         &forwarded.voice_identity_assertion,
-        runtime_execution_envelope,
-    )?;
-    runtime_execution_envelope
-        .clone()
-        .with_identity_state(Some(identity_state))
-        .map_err(StorageError::ContractViolation)
-}
-
-fn identity_execution_state_from_voice_assertion(
-    assertion: &Ph1VoiceIdResponse,
-    runtime_execution_envelope: &RuntimeExecutionEnvelope,
-) -> Result<IdentityExecutionState, StorageError> {
-    let governance_identity_quarantined = runtime_execution_envelope
-        .governance_state
-        .as_ref()
-        .map(|state| {
-            state.safe_mode_active
-                || governance_quarantines_subsystem(state, GOVERNED_SUBSYSTEM_IDENTITY_VOICE_ENGINE)
-        })
-        .unwrap_or(false);
-    let cluster_drift_detected = runtime_execution_envelope
-        .governance_state
-        .as_ref()
-        .map(|state| state.cluster_consistency != GovernanceClusterConsistency::Consistent)
-        .unwrap_or(false);
-    let identity_state = match assertion {
-        Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => {
-            let mut consistency_level = match ok.identity_v2.identity_tier_v2 {
-                IdentityTierV2::Confirmed => {
-                    IdentityVerificationConsistencyLevel::StrictVerified
-                }
-                IdentityTierV2::Probable => {
-                    IdentityVerificationConsistencyLevel::HighConfidenceVerified
-                }
-                IdentityTierV2::Unknown => {
-                    IdentityVerificationConsistencyLevel::DegradedVerification
-                }
-            };
-            let mut trust_tier = match ok.identity_v2.identity_tier_v2 {
-                IdentityTierV2::Confirmed => IdentityTrustTier::Verified,
-                IdentityTierV2::Probable => IdentityTrustTier::HighConfidence,
-                IdentityTierV2::Unknown => IdentityTrustTier::Conditional,
-            };
-            let mut step_up_required = false;
-            let mut recovery_state = IdentityRecoveryState::None;
-            if cluster_drift_detected
-                && consistency_level == IdentityVerificationConsistencyLevel::StrictVerified
-            {
-                consistency_level = IdentityVerificationConsistencyLevel::HighConfidenceVerified;
-            }
-            if ok.spoof_liveness_status == selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::SuspectedSpoof
-            {
-                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
-                trust_tier = IdentityTrustTier::Rejected;
-                step_up_required = true;
-                recovery_state = IdentityRecoveryState::RecoveryRestricted;
-            } else if governance_identity_quarantined {
-                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
-                trust_tier = IdentityTrustTier::Restricted;
-                step_up_required = true;
-                recovery_state = IdentityRecoveryState::RecoveryRestricted;
-            }
-            IdentityExecutionState::v1(IdentityExecutionStateInput {
-                consistency_level,
-                trust_tier,
-                identity_tier_v2: ok.identity_v2.identity_tier_v2,
-                spoof_liveness_status: ok.spoof_liveness_status,
-                step_up_required,
-                recovery_state,
-                cluster_drift_detected,
-                reason_code: ok.reason_code.map(|code| u64::from(code.0)),
-            })
-        }
-        Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
-            let (mut consistency_level, mut trust_tier, step_up_required, recovery_state) =
-                match unknown.reason_code {
-                    code
-                        if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
-                            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
-                    {
-                        (
-                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
-                            IdentityTrustTier::Restricted,
-                            true,
-                            IdentityRecoveryState::ReauthRequired,
-                        )
-                    }
-                    code
-                        if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
-                            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
-                    {
-                        (
-                            IdentityVerificationConsistencyLevel::RecoveryRestricted,
-                            IdentityTrustTier::Restricted,
-                            false,
-                            IdentityRecoveryState::ReEnrollmentRequired,
-                        )
-                    }
-                    code if code == voice_id_reason_codes::VID_SPOOF_RISK => (
-                        IdentityVerificationConsistencyLevel::RecoveryRestricted,
-                        IdentityTrustTier::Rejected,
-                        true,
-                        IdentityRecoveryState::RecoveryRestricted,
-                    ),
-                    _ if unknown.candidate_user_id.is_some() => (
-                        IdentityVerificationConsistencyLevel::DegradedVerification,
-                        IdentityTrustTier::Conditional,
-                        false,
-                        IdentityRecoveryState::None,
-                    ),
-                    _ => (
-                        IdentityVerificationConsistencyLevel::DegradedVerification,
-                        IdentityTrustTier::Restricted,
-                        false,
-                        IdentityRecoveryState::None,
-                    ),
-                };
-            if cluster_drift_detected
-                && consistency_level == IdentityVerificationConsistencyLevel::HighConfidenceVerified
-            {
-                consistency_level = IdentityVerificationConsistencyLevel::DegradedVerification;
-            }
-            if unknown.spoof_liveness_status
-                == selene_kernel_contracts::ph1_voice_id::SpoofLivenessStatus::SuspectedSpoof
-            {
-                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
-                trust_tier = IdentityTrustTier::Rejected;
-            } else if governance_identity_quarantined {
-                consistency_level = IdentityVerificationConsistencyLevel::RecoveryRestricted;
-                trust_tier = IdentityTrustTier::Restricted;
-            }
-            IdentityExecutionState::v1(IdentityExecutionStateInput {
-                consistency_level,
-                trust_tier,
-                identity_tier_v2: unknown.identity_v2.identity_tier_v2,
-                spoof_liveness_status: unknown.spoof_liveness_status,
-                step_up_required,
-                recovery_state,
-                cluster_drift_detected,
-                reason_code: Some(u64::from(unknown.reason_code.0)),
-            })
-        }
-    }
-    .map_err(StorageError::ContractViolation)?;
-    Ok(identity_state)
+    )
+    .map_err(StorageError::ContractViolation)
 }
 
 fn identity_state_allows_memory_scope(identity_state: &IdentityExecutionState) -> bool {
@@ -4347,11 +4215,8 @@ fn runtime_execution_envelope_with_authority_state_for_outcome(
             .with_memory_state(Some(memory_state))
             .map_err(StorageError::ContractViolation)?;
     }
-    let authority_state = authority_execution_state_for_outcome(
-        out,
-        finder_terminal,
-        &runtime_execution_envelope,
-    )?;
+    let authority_state =
+        authority_execution_state_for_outcome(out, finder_terminal, &runtime_execution_envelope)?;
     runtime_execution_envelope
         .with_authority_state(Some(authority_state))
         .map_err(StorageError::ContractViolation)
@@ -4362,7 +4227,10 @@ fn authority_execution_state_for_outcome(
     finder_terminal: Option<&FinderTerminalPacket>,
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
 ) -> Result<AuthorityExecutionState, StorageError> {
-    let policy_context_ref = out.ph1x_request.as_ref().map(|request| request.policy_context_ref);
+    let policy_context_ref = out
+        .ph1x_request
+        .as_ref()
+        .map(|request| request.policy_context_ref);
     let simulation_certification_state =
         simulation_certification_state_for_outcome(out, finder_terminal);
     let policy_decision = authority_policy_decision_for_outcome(out);
@@ -4416,7 +4284,10 @@ fn simulation_certification_state_for_outcome(
             _ => SimulationCertificationState::CertifiedActive,
         };
     }
-    if matches!(finder_terminal, Some(FinderTerminalPacket::MissingSimulation(_))) {
+    if matches!(
+        finder_terminal,
+        Some(FinderTerminalPacket::MissingSimulation(_))
+    ) {
         return SimulationCertificationState::MissingSimulationPath;
     }
     if out.reason_code
@@ -6009,7 +5880,10 @@ fn memory_topic_hint_from_nlp_output(nlp_output: Option<&Ph1nResponse>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_governance::RuntimeGovernanceConfig;
+    use crate::runtime_governance::{
+        attach_identity_state_for_governed_voice_turn, RuntimeGovernanceConfig,
+    };
+    use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
     use selene_engines::ph1_voice_id::VoiceIdObservation as EngineVoiceIdObservation;
     use selene_engines::ph1e::{Ph1eProviderConfig, Ph1eProxyConfig, Ph1eProxyMode};
     use selene_kernel_contracts::ph1_voice_id::{
@@ -7477,7 +7351,10 @@ mod tests {
             .memory_state
             .expect("memory state should be attached");
         assert!(memory_state.cloud_authoritative);
-        assert_eq!(memory_state.eligibility_decision, MemoryEligibilityDecision::Eligible);
+        assert_eq!(
+            memory_state.eligibility_decision,
+            MemoryEligibilityDecision::Eligible
+        );
         assert_eq!(memory_state.candidate_count, 1);
     }
 
@@ -7548,7 +7425,10 @@ mod tests {
             .expect("identity state should be attached");
         assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
         assert!(identity_state.step_up_required);
-        assert_eq!(identity_state.recovery_state, IdentityRecoveryState::ReauthRequired);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReauthRequired
+        );
         let memory_state = envelope
             .memory_state
             .expect("memory state should be attached");
@@ -7638,10 +7518,8 @@ mod tests {
         let device_id = DeviceId::new("harmonize_drift_device_1").unwrap();
         let mut store = Ph1fStore::new_in_memory();
         seed_actor(&mut store, &actor_user_id, &device_id);
-        let _ = runtime.observe_runtime_governance_node_policy_version(
-            "node_drift",
-            Some("2026.04.01.v1"),
-        );
+        let _ = runtime
+            .observe_runtime_governance_node_policy_version("node_drift", Some("2026.04.01.v1"));
 
         let request = AppVoiceIngressRequest::v1(
             CorrelationId(9523),
@@ -7725,6 +7603,87 @@ mod tests {
         );
         assert_eq!(memory_state.candidate_count, 0);
         assert_eq!(runtime.executor.debug_memory_context_lookup_count(), 0);
+    }
+
+    #[test]
+    fn at_ingress_04b_forwarded_voice_outcome_attaches_identity_state_from_canonical_runtime_governance(
+    ) {
+        let runtime = AppServerIngressRuntime::default();
+        let actor_user_id = UserId::new("tenant_1:ingress_canonical_user").unwrap();
+        let device_id = DeviceId::new("ingress_canonical_device_1").unwrap();
+        let mut store = Ph1fStore::new_in_memory();
+        seed_actor(&mut store, &actor_user_id, &device_id);
+
+        let request = AppVoiceIngressRequest::v1(
+            CorrelationId(9525),
+            TurnId(9625),
+            AppPlatform::Desktop,
+            OsVoiceTrigger::Explicit,
+            sample_voice_id_request(MonotonicTimeNs(3), actor_user_id.clone()),
+            actor_user_id.clone(),
+            Some("tenant_1".to_string()),
+            Some(device_id),
+            Vec::new(),
+            no_observation(),
+        )
+        .unwrap();
+        let outcome = runtime.run_voice_turn(&mut store, request).unwrap();
+        let OsVoiceLiveTurnOutcome::Forwarded(mut forwarded) = outcome else {
+            panic!("expected forwarded voice turn");
+        };
+        forwarded.voice_identity_assertion = reauth_required_voice_assertion(actor_user_id);
+
+        let expected_envelope = attach_identity_state_for_governed_voice_turn(
+            &forwarded.runtime_execution_envelope,
+            &forwarded.voice_identity_assertion,
+        )
+        .expect("canonical runtime governance helper must attach identity state");
+
+        let x_build = AppVoicePh1xBuildInput {
+            now: MonotonicTimeNs(7),
+            thread_key: None,
+            thread_state: ThreadState::empty_v1(),
+            session_state: SessionState::Active,
+            policy_context_ref: PolicyContextRef::v1(false, false, SafetyTier::Standard),
+            memory_candidates: vec![],
+            confirm_answer: None,
+            nlp_output: Some(invite_link_draft_missing_contact("Jane", "tenant_1")),
+            tool_response: None,
+            interruption: None,
+            locale: None,
+            last_failure_reason_code: None,
+        };
+        runtime
+            .build_ph1x_request_for_forwarded_voice(
+                &mut store,
+                ForwardedVoicePh1xRequestInput {
+                    correlation_id: CorrelationId(9525),
+                    turn_id: TurnId(9625),
+                    app_platform: AppPlatform::Desktop,
+                    forwarded: &forwarded,
+                    request_session_id: None,
+                    tenant_id: Some("tenant_1"),
+                    x_build,
+                },
+            )
+            .unwrap();
+
+        let packet = runtime
+            .debug_last_agent_input_packet()
+            .expect("agent packet should be captured");
+        let envelope = packet
+            .runtime_execution_envelope
+            .expect("agent packet should carry runtime execution envelope");
+        assert_eq!(envelope.identity_state, expected_envelope.identity_state);
+        let identity_state = envelope
+            .identity_state
+            .expect("identity state should be attached");
+        assert_eq!(identity_state.trust_tier, IdentityTrustTier::Restricted);
+        assert!(identity_state.step_up_required);
+        assert_eq!(
+            identity_state.recovery_state,
+            IdentityRecoveryState::ReauthRequired
+        );
     }
 
     #[test]
@@ -8365,14 +8324,14 @@ mod tests {
                 | RuntimeLawResponseClass::Degrade
         ));
         let proof_rows = store
-            .proof_records_by_request_id_bounded(
-                &out_2.runtime_execution_envelope.request_id,
-                4,
-            )
+            .proof_records_by_request_id_bounded(&out_2.runtime_execution_envelope.request_id, 4)
             .unwrap();
         assert_eq!(proof_rows.len(), 1);
         assert_eq!(
-            proof_rows[0].simulation_id.as_ref().map(|value| value.as_str()),
+            proof_rows[0]
+                .simulation_id
+                .as_ref()
+                .map(|value| value.as_str()),
             Some(LINK_INVITE_GENERATE_DRAFT)
         );
         assert_eq!(proof_rows[0].simulation_version, Some(SimulationVersion(1)));
@@ -8568,9 +8527,10 @@ mod tests {
             .runtime_law_decision_log_snapshot()
             .iter()
             .any(|entry| {
-                entry.reason_codes.contains(
-                    &crate::runtime_law::reason_codes::LAW_PROOF_REQUIRED.to_string(),
-                ) && entry.turn_id == Some(99_121)
+                entry
+                    .reason_codes
+                    .contains(&crate::runtime_law::reason_codes::LAW_PROOF_REQUIRED.to_string())
+                    && entry.turn_id == Some(99_121)
             }));
         assert!(runtime
             .runtime_governance_decision_log_snapshot()
@@ -8861,7 +8821,10 @@ mod tests {
             authority_state.simulation_certification_state,
             SimulationCertificationState::CertifiedActive
         );
-        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Allowed);
+        assert_eq!(
+            authority_state.policy_decision,
+            AuthorityPolicyDecision::Allowed
+        );
         assert_eq!(
             authority_state.onboarding_readiness_state,
             OnboardingReadinessState::NotApplicable
@@ -8919,7 +8882,10 @@ mod tests {
             authority_state.simulation_certification_state,
             SimulationCertificationState::MissingSimulationPath
         );
-        assert_eq!(authority_state.policy_decision, AuthorityPolicyDecision::Denied);
+        assert_eq!(
+            authority_state.policy_decision,
+            AuthorityPolicyDecision::Denied
+        );
     }
 
     #[test]

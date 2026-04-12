@@ -4,13 +4,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
+use selene_kernel_contracts::ph1_voice_id::{
+    IdentityTierV2, Ph1VoiceIdResponse, SpoofLivenessStatus,
+};
 use selene_kernel_contracts::ph1art::{
     ArtifactTrustExecutionState, ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
 };
 use selene_kernel_contracts::ph1j::ProofFailureClass;
-use selene_kernel_contracts::ph1_voice_id::{
-    IdentityTierV2, Ph1VoiceIdResponse, SpoofLivenessStatus,
-};
 use selene_kernel_contracts::runtime_execution::{
     AdmissionState, FailureClass, IdentityExecutionState, IdentityExecutionStateInput,
     IdentityRecoveryState, IdentityTrustTier, IdentityVerificationConsistencyLevel,
@@ -1134,9 +1134,8 @@ impl RuntimeGovernanceRuntime {
             ))));
         }
         let Some(artifact_trust_state) = envelope.artifact_trust_state.as_ref() else {
-            return Err(Box::new(
-                self.apply_violation_with_artifact_trust(
-                    governance_violation_spec!(
+            return Err(Box::new(self.apply_violation_with_artifact_trust(
+                governance_violation_spec!(
                         RULE_ARTIFACT_TRUST_REQUIRED,
                         SUBSYSTEM_ARTIFACT_AUTHORITY,
                         GovernanceDecisionOutcome::Failed,
@@ -1153,16 +1152,14 @@ impl RuntimeGovernanceRuntime {
                         Some(GovernanceCertificationStatus::Warning),
                         Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     ),
-                    None,
-                ),
-            ));
+                None,
+            )));
         };
 
         let linkage = artifact_trust_governance_linkage(artifact_trust_state);
         if !artifact_trust_evidence_complete(artifact_trust_state) {
-            return Err(Box::new(
-                self.apply_violation_with_artifact_trust(
-                    governance_violation_spec!(
+            return Err(Box::new(self.apply_violation_with_artifact_trust(
+                governance_violation_spec!(
                         RULE_ARTIFACT_TRUST_EVIDENCE,
                         SUBSYSTEM_ARTIFACT_AUTHORITY,
                         GovernanceDecisionOutcome::Failed,
@@ -1179,9 +1176,8 @@ impl RuntimeGovernanceRuntime {
                         Some(GovernanceCertificationStatus::Warning),
                         Some(SUBSYSTEM_ARTIFACT_AUTHORITY.to_string()),
                     ),
-                    Some(&linkage),
-                ),
-            ));
+                Some(&linkage),
+            )));
         }
 
         if let Some(failure_class) = strongest_artifact_trust_failure(artifact_trust_state) {
@@ -1305,16 +1301,18 @@ impl RuntimeGovernanceRuntime {
                     ),
                 );
                 drop(guard);
-                return Err(Box::new(self.record_governance_decision(
-                    decision,
-                    Some(
-                        "safe mode blocks canonical non-app identity-state construction"
-                            .to_string(),
+                return Err(Box::new(
+                    self.record_governance_decision(
+                        decision,
+                        Some(
+                            "safe mode blocks canonical non-app identity-state construction"
+                                .to_string(),
+                        ),
+                        None,
+                        None,
+                        None,
                     ),
-                    None,
-                    None,
-                    None,
-                )));
+                ));
             }
         }
         if envelope.session_id.is_none() {
@@ -1693,12 +1691,10 @@ impl RuntimeGovernanceRuntime {
         if let Some(signal) = spec.drift_signal {
             guard.drift_signals.insert(signal);
         }
-        if let (Some(subsystem), Some(status)) =
-            (
-                spec.certification_subsystem.as_deref(),
-                spec.certification_status,
-            )
-        {
+        if let (Some(subsystem), Some(status)) = (
+            spec.certification_subsystem.as_deref(),
+            spec.certification_status,
+        ) {
             self.update_certification_locked(&mut guard, subsystem, status);
         }
         match spec.decision.response_class {
@@ -2011,6 +2007,46 @@ fn governance_quarantines_subsystem(
         .any(|candidate| candidate == subsystem_id)
 }
 
+pub fn attach_identity_state_for_governed_voice_turn(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    assertion: &Ph1VoiceIdResponse,
+) -> Result<RuntimeExecutionEnvelope, ContractViolation> {
+    if runtime_execution_envelope.session_id.is_none() {
+        return Err(ContractViolation::InvalidValue {
+            field: "runtime_execution_envelope.session_id",
+            reason: "governed_voice_identity_state_requires_session",
+        });
+    }
+    if runtime_execution_envelope.admission_state != AdmissionState::ExecutionAdmitted {
+        return Err(ContractViolation::InvalidValue {
+            field: "runtime_execution_envelope.admission_state",
+            reason: "governed_voice_identity_state_requires_execution_admission",
+        });
+    }
+    if runtime_execution_envelope.device_turn_sequence.is_none() {
+        return Err(ContractViolation::InvalidValue {
+            field: "runtime_execution_envelope.device_turn_sequence",
+            reason: "governed_voice_identity_state_requires_device_turn_sequence",
+        });
+    }
+    let Some(governance_state) = runtime_execution_envelope.governance_state.as_ref() else {
+        return Err(ContractViolation::InvalidValue {
+            field: "runtime_execution_envelope.governance_state",
+            reason: "governed_voice_identity_state_requires_governance_state",
+        });
+    };
+    if governance_state.decision_log_ref.is_none() {
+        return Err(ContractViolation::InvalidValue {
+            field: "runtime_execution_envelope.governance_state.decision_log_ref",
+            reason: "governed_voice_identity_state_requires_governance_decision_log",
+        });
+    }
+    assertion.validate()?;
+    let identity_state =
+        identity_execution_state_from_voice_assertion(assertion, runtime_execution_envelope)?;
+    runtime_execution_envelope.with_identity_state(Some(identity_state))
+}
+
 fn identity_execution_state_from_voice_assertion(
     assertion: &Ph1VoiceIdResponse,
     runtime_execution_envelope: &RuntimeExecutionEnvelope,
@@ -2032,9 +2068,7 @@ fn identity_execution_state_from_voice_assertion(
     match assertion {
         Ph1VoiceIdResponse::SpeakerAssertionOk(ok) => {
             let mut consistency_level = match ok.identity_v2.identity_tier_v2 {
-                IdentityTierV2::Confirmed => {
-                    IdentityVerificationConsistencyLevel::StrictVerified
-                }
+                IdentityTierV2::Confirmed => IdentityVerificationConsistencyLevel::StrictVerified,
                 IdentityTierV2::Probable => {
                     IdentityVerificationConsistencyLevel::HighConfidenceVerified
                 }
@@ -2079,9 +2113,8 @@ fn identity_execution_state_from_voice_assertion(
         Ph1VoiceIdResponse::SpeakerAssertionUnknown(unknown) => {
             let (mut consistency_level, mut trust_tier, step_up_required, recovery_state) =
                 match unknown.reason_code {
-                    code
-                        if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
-                            || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
+                    code if code == voice_id_reason_codes::VID_REAUTH_REQUIRED
+                        || code == voice_id_reason_codes::VID_DEVICE_CLAIM_REQUIRED =>
                     {
                         (
                             IdentityVerificationConsistencyLevel::RecoveryRestricted,
@@ -2090,9 +2123,8 @@ fn identity_execution_state_from_voice_assertion(
                             IdentityRecoveryState::ReauthRequired,
                         )
                     }
-                    code
-                        if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
-                            || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
+                    code if code == voice_id_reason_codes::VID_ENROLLMENT_REQUIRED
+                        || code == voice_id_reason_codes::VID_FAIL_PROFILE_NOT_ENROLLED =>
                     {
                         (
                             IdentityVerificationConsistencyLevel::RecoveryRestricted,
@@ -2444,6 +2476,10 @@ pub fn governance_runtime_reason(decision: &RuntimeGovernanceDecision) -> String
 mod tests {
     use super::*;
     use crate::runtime_law::RuntimeLawRuntime;
+    use selene_kernel_contracts::ph1_voice_id::{
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
+        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel, UserId,
+    };
     use selene_kernel_contracts::ph1art::{
         ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
         ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactTrustDecisionRecord,
@@ -2455,14 +2491,10 @@ mod tests {
     use selene_kernel_contracts::ph1j::{DeviceId, TurnId};
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
-    use selene_kernel_contracts::ph1_voice_id::{
-        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
-        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel, UserId,
-    };
     use selene_kernel_contracts::runtime_execution::{
-        AuthorityExecutionState, AuthorityPolicyDecision, OnboardingReadinessState,
-        IdentityExecutionState, IdentityExecutionStateInput, IdentityRecoveryState,
-        IdentityTrustTier, IdentityVerificationConsistencyLevel, PlatformRuntimeContext,
+        AuthorityExecutionState, AuthorityPolicyDecision, IdentityExecutionState,
+        IdentityExecutionStateInput, IdentityRecoveryState, IdentityTrustTier,
+        IdentityVerificationConsistencyLevel, OnboardingReadinessState, PlatformRuntimeContext,
         ProofExecutionState, RuntimeEntryTrigger, RuntimeExecutionEnvelope,
         SimulationCertificationState,
     };
@@ -2624,14 +2656,12 @@ mod tests {
             SpeakerAssertionOk::v1(
                 SpeakerId::new("spk_runtime_gov_confirmed").expect("speaker id must validate"),
                 Some(user_id),
-                vec![
-                    DiarizationSegment::v1(
-                        MonotonicTimeNs(1),
-                        MonotonicTimeNs(2),
-                        Some(SpeakerLabel::speaker_a()),
-                    )
-                    .expect("segment must validate"),
-                ],
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
                 SpeakerLabel::speaker_a(),
             )
             .expect("confirmed voice assertion must validate"),
@@ -2643,14 +2673,12 @@ mod tests {
             SpeakerAssertionUnknown::v1_with_candidate(
                 IdentityConfidence::Medium,
                 voice_id_reason_codes::VID_REAUTH_REQUIRED,
-                vec![
-                    DiarizationSegment::v1(
-                        MonotonicTimeNs(1),
-                        MonotonicTimeNs(2),
-                        Some(SpeakerLabel::speaker_a()),
-                    )
-                    .expect("segment must validate"),
-                ],
+                vec![DiarizationSegment::v1(
+                    MonotonicTimeNs(1),
+                    MonotonicTimeNs(2),
+                    Some(SpeakerLabel::speaker_a()),
+                )
+                .expect("segment must validate")],
                 Some(user_id),
                 None,
             )
@@ -3345,7 +3373,10 @@ mod tests {
         );
         assert_eq!(out.governance_state, artifact_governed.governance_state);
         assert_eq!(out.proof_state, artifact_governed.proof_state);
-        assert_eq!(out.artifact_trust_state, artifact_governed.artifact_trust_state);
+        assert_eq!(
+            out.artifact_trust_state,
+            artifact_governed.artifact_trust_state
+        );
         assert!(out.persistence_state.is_none());
         assert!(out.computation_state.is_none());
         assert!(out.memory_state.is_none());
@@ -3469,6 +3500,55 @@ mod tests {
         assert_eq!(
             identity_state.recovery_state,
             IdentityRecoveryState::ReauthRequired
+        );
+    }
+
+    #[test]
+    fn at_runtime_gov_19_governed_voice_turn_identity_attachment_constructs_canonical_non_app_identity_state(
+    ) {
+        let runtime = RuntimeGovernanceRuntime::default();
+        let governed_voice_turn = runtime
+            .govern_voice_turn_execution(&base_envelope())
+            .expect("governed voice turn envelope must validate");
+        let assertion = confirmed_voice_assertion(governed_voice_turn.actor_identity.clone());
+
+        let out = attach_identity_state_for_governed_voice_turn(&governed_voice_turn, &assertion)
+            .expect("governed voice turn must attach canonical identity state");
+
+        assert_eq!(out.request_id, governed_voice_turn.request_id);
+        assert_eq!(out.trace_id, governed_voice_turn.trace_id);
+        assert_eq!(out.idempotency_key, governed_voice_turn.idempotency_key);
+        assert_eq!(out.session_id, governed_voice_turn.session_id);
+        assert_eq!(out.turn_id, governed_voice_turn.turn_id);
+        assert_eq!(
+            out.device_turn_sequence,
+            governed_voice_turn.device_turn_sequence
+        );
+        assert_eq!(out.governance_state, governed_voice_turn.governance_state);
+        assert!(out.proof_state.is_none());
+        assert!(out.artifact_trust_state.is_none());
+        assert!(out.persistence_state.is_none());
+        assert!(out.computation_state.is_none());
+        assert!(out.memory_state.is_none());
+        assert!(out.authority_state.is_none());
+        assert!(out.law_state.is_none());
+        let identity_state = out
+            .identity_state
+            .as_ref()
+            .expect("identity state must attach for governed voice turn");
+        assert_eq!(
+            *identity_state,
+            IdentityExecutionState::v1(IdentityExecutionStateInput {
+                consistency_level: IdentityVerificationConsistencyLevel::StrictVerified,
+                trust_tier: IdentityTrustTier::Verified,
+                identity_tier_v2: IdentityTierV2::Confirmed,
+                spoof_liveness_status: SpoofLivenessStatus::Unknown,
+                step_up_required: false,
+                recovery_state: IdentityRecoveryState::None,
+                cluster_drift_detected: false,
+                reason_code: None,
+            })
+            .expect("expected identity state must validate")
         );
     }
 }
